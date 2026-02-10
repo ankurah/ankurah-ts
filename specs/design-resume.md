@@ -1,8 +1,20 @@
 # ankurah-ts Design Resume
 
-**Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts design and implementation work. Read this first, then `architectural-decisions.md`, then refer to other specs as needed.
+**Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts design and implementation work. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
 
 **Last updated**: 2026-02-10
+
+**Status**: All design decisions resolved. Monorepo scaffolding and `@ankurah/proto` implementation in progress.
+
+## Supervision Model
+
+A human supervisor remains in the loop throughout implementation. Agents are dispatched to perform implementation work in parallel, but the supervisor:
+- Reviews agent output before committing
+- Makes all architectural and design decisions
+- Resolves conflicts between agent work products
+- Manages the overall implementation sequence
+
+Agents should surface uncertainties, ambiguities, and potential conflicts to the supervisor rather than making assumptions.
 
 ## Project Goal
 
@@ -12,33 +24,63 @@ Create a **fully faithful TypeScript port** of [ankurah](https://github.com/anku
 
 ```
 /Users/daniel/ak/
-├── ankurah/                 # Rust implementation (source of truth)
+├── ankurah/                 # Rust implementation (source of truth, main branch)
+├── ankurah-ts-support/      # Rust worktree on ts-port-support branch (fixtures, integration test infra)
 ├── ankurah-ts/              # TypeScript port (this project)
+│   ├── packages/            # bun workspace packages
+│   ├── scripts/             # Audit and tooling scripts
 │   └── specs/               # Design documents (this directory)
 │       └── _agent-work/     # Detailed agent research outputs
+├── ankurah-react-hooks/     # Existing React hooks package (absorbed into @ankurah/react)
 /Users/daniel/code/
 └── domcorder/               # Reference project for bincode TS patterns
     └── proto-ts/            # Bincode codec reference implementation
 ```
 
-ankurah-ts assumes a sibling checkout of `ankurah/` for test fixtures and structural comparison.
+**Sibling Rust checkout required**: `ANKURAH_RS_PATH` env var (default `../ankurah`). Defined in `.env` (gitignored), documented in `.env.example`. Tests hard-fail if missing.
 
-## Key Architectural Decisions (User-Confirmed)
+## Key Architectural Decisions (All Resolved)
 
 See `architectural-decisions.md` for the full authoritative list. Summary:
 
-1. **Fully faithful port** — Mirror Rust 1:1 for agentic maintainability. Error types, file structure, naming all track Rust.
-2. **Bincode wire format only** — No JSON alternative. Reference implementation: `/Users/daniel/code/domcorder/proto-ts/`.
-3. **ankurah/proto structs are authoritative** — Specs must not duplicate or paraphrase proto type definitions. The Rust source is the single source of truth.
-4. **Yrs V2 encoding** — Rust uses V2 exclusively. TS must use `Y.applyUpdateV2()` / `Y.encodeStateAsUpdateV2()`. NOT V1.
-5. **Phase 1 scope — nearly everything**:
-   - **In scope**: proto, core, signals, ankql, Entity/Model/View/Mutable, LWW + Yjs backends, Transaction, Node, Context, Reactor, LiveQuery, AnkQL parser, expo-sqlite, better-sqlite3 (Node testing), in-memory storage, WebSocket client, local connector, React Native hooks, `Attested<T>`, `CausalRelation`, lineage types.
-   - **Out of scope**: WebSocket server, PostgreSQL storage, Sled storage, PN Counter backend only.
-6. **CLI codegen dropped from Phase 1** — Hand-write model wrappers. Advantage over WASM: no macro monomorphization needed.
-7. **Error handling: parity with Rust** — Mirror `MutationError`, `RetrievalError`, `StateError`, `PropertyError`, `DecodeError` as TS Error subclasses.
-8. **Monorepo tooling: exploring bun** — pnpm+Turborepo is fallback. domcorder already uses bun workspaces. Decision pending research.
-9. **Reference fixtures** at `ankurah/proto/test/fixtures/` — Rust tests generate bincode fixtures, TS tests read from sibling checkout.
-10. **Polyfills**: `expo-crypto` (crypto.getRandomValues) + `fast-text-encoding` (TextDecoder). Import before any ankurah/Yjs code.
+1. **Fully faithful port** — Mirror Rust 1:1. Zero freestyling. See `port-rules.md` for exhaustive mapping rules and exception citations.
+2. **Bincode wire format only** — No JSON alternative. Reference: `/Users/daniel/code/domcorder/proto-ts/`.
+3. **ankurah/proto structs are authoritative** — Rust source is the single source of truth.
+4. **Yrs V2 encoding** — `Y.applyUpdateV2()` / `Y.encodeStateAsUpdateV2()`. NOT V1.
+5. **Phase 1 scope — nearly everything** (see architectural-decisions.md for full list).
+6. **`defineModel()` API from day one** — TS equivalent of `#[derive(Model)]`. No decorator requirement. Optional legacy decorator sugar for non-RN environments.
+7. **No TC39 decorators** — Broken on Hermes/Expo Go (`_initClass` runtime error, unresolved). `Symbol.metadata` unavailable.
+8. **bun workspaces + bun test + tsc** — No turborepo, no separate test framework.
+9. **Fully async StorageEngine** — All methods return Promises. Matches Rust `async_trait`.
+10. **Two separate SQLite packages** — `@ankurah/storage-expo-sqlite` + `@ankurah/storage-better-sqlite3`.
+11. **Hand-written recursive descent AnkQL parser** — Parse + local predicate evaluation.
+12. **Signals-first React integration** — `useObserve()` + `signalObserver()` HOC via `useSyncExternalStore`. Absorbed from existing `ankurah-react-hooks` into `@ankurah/react`.
+13. **Every test must be ported** — All unit/integration tests in every in-scope crate. No exceptions except de-scoped crates.
+14. **Programmatic audit script** — `scripts/audit-port.ts` validates bidirectional mapping. Runs in CI.
+15. **Co-development branch** — `ts-port-support` branch/worktree in Rust repo for fixtures and integration test infra.
+
+## Package Structure
+
+**Mirroring Rust crates:**
+
+| TS Package | Rust Crate | Notes |
+|-----------|------------|-------|
+| `@ankurah/proto` | `ankurah-proto` | Types + bincode codec |
+| `@ankurah/core` | `ankurah-core` | Entity, Transaction, Node, Reactor, etc. |
+| `@ankurah/signals` | `ankurah-signals` | Reactive signal library |
+| `@ankurah/ankql` | `ankql` | Hand-written recursive descent parser |
+| `@ankurah/storage-common` | `ankurah-storage-common` | Traits + types |
+| `@ankurah/connector-websocket` | `ankurah-websocket-client` | WebSocket client |
+| `@ankurah/connector-local` | `ankurah-connector-local-process` | Local connector |
+
+**TS-only packages:**
+
+| TS Package | Purpose |
+|-----------|---------|
+| `@ankurah/react` | React hooks (from ankurah-react-hooks) |
+| `@ankurah/storage-expo-sqlite` | Expo Go SQLite storage |
+| `@ankurah/storage-better-sqlite3` | Node.js SQLite storage |
+| `@ankurah/storage-memory` | In-memory storage (testing) |
 
 ## Rust Architecture (Verified Against Source)
 
@@ -82,86 +124,62 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - `TransactionId`/`RequestId`/`QueryId`/`UpdateId`: derived serde on `Ulid` — 26-char string (34 bytes: u64 length + 26 ASCII)
 - `Value::Json`: uses `json_as_bytes` — JSON → `serde_json::to_vec()` → bincode `Vec<u8>`
 
-### Key File Locations in ankurah/ (Corrected)
-
-- Derive macro: `derive/src/model/{view,mutable,model,description,backend_registry,backend}.rs`
-- Entity: `core/src/entity.rs`
-- Model traits: `core/src/model.rs`
-- Backends: `core/src/property/backend/{lww,yrs}.rs`
-- Active types: `core/src/property/value/{lww,yrs,entity_ref,json,pn_counter}.rs`
-- Transaction: `core/src/transaction.rs`
-- Node: `core/src/node.rs`
-- Context: `core/src/context.rs`
-- Reactor: `core/src/reactor.rs` + `core/src/reactor/{watcherset,property_path,update,candidate_changes,comparison_index,fetch_gap,subscription,subscription_state}.rs`
-- Signals: `signals/src/{signal,broadcast,observer,context,reactive_graph,porcelain,value}.rs` + subtypes
-- Proto: `proto/src/{data,message,request,update,clock,id,sys,auth,peering,subscription,transaction,collection,human_id,error}.rs` (14 modules)
-- Storage traits: `storage/common/src/{traits,types,bounds,filtering,planner,predicate,sorting}.rs` (7 modules, NOT "just traits")
-- SQLite storage: `storage/sqlite/src/`
-- WS client: `connectors/websocket-client/src/`
-- Local connector: `connectors/local-process/src/`
-- AnkQL: `ankql/src/{grammar,ast,conversion,parser,selection,error}.rs` + `ankql.pest`
-
-### PR #236 (Property Registration)
-
-WIP. Current `proto/src/sys.rs` only has `SysRoot`/`Collection`/`Other`. No `BackendKind`/`ValueType` enums yet. NOT a blocker for Phase 1.
-
-## Answers to Previously Open Questions
-
-1. **Yrs client IDs**: Random. `yrs::Doc::new()` with no explicit assignment. TS: use default `new Y.Doc()`.
-2. **Bincode configuration**: Legacy bincode 1.3.x default. Fixed u64 lengths, u32 enum variants, LE. See table above.
-3. **domcorder bincode patterns**: Access granted. Agent investigation in progress. See `_agent-work/domcorder-analysis.md`.
-4. **Yrs/Yjs version compat**: Yrs 0.24.0 ↔ Yjs 13.6.x. V2 encoding is compatible. See `_agent-work/yrs-yjs-interop-findings.md`.
-
-## Remaining Open Questions
-
-See `_agent-work/remaining-questions.md` for the full list (~30 items). Key clusters:
-
-- **Bincode details**: ULID string serialization for non-EntityId types, BTreeMap sort order, BigInt vs Number API
-- **AnkQL parser**: hand-written vs Peggy vs Chevrotain; parse-only vs parse+evaluate
-- **Entity lifecycle in TS**: identity without pointer equality, transaction cleanup without Drop, WeakRef on Hermes
-- **Signals**: which types needed for Phase 1 minimum, BroadcastId without pointer identity
-- **Storage interface**: sync vs async, in-memory engine, how much of storage-common's 7 modules needed client-side
-- **Reactor scope**: how much of the 8+ file reactor is client-relevant vs server-only
-- **React hooks**: API design, field-level vs entity-level subscriptions
-- **Monorepo**: bun vs pnpm (research in progress), build tooling, test framework
-- **Spec cleanup**: correct vs delete stale specs (tracked in `ankurah-rs-spec-cleanup.md`)
-
 ## Spec Files
 
-| # | File | Contents | Status |
-|---|------|----------|--------|
-| 1 | `design-resume.md` | This file. Start here. | **Updated 2026-02-10** |
-| 2 | `architectural-decisions.md` | All user-confirmed decisions | **Updated 2026-02-10** |
-| 3 | `architecture.md` | Module mapping, package structure | Has errors (see cleanup tracker) |
-| 4 | `ecosystem-research.md` | expo-sqlite, Yjs viability, Expo Go constraints | Has errors (V1 refs) |
-| 5 | `structural-mapping-analysis.md` | 1:1 mapping analysis | Undercounts files |
-| 6 | `schema-registry-and-codegen.md` | PR #236, codegen flow | Valid but codegen deferred |
-| 7 | `wire-format-interop.md` | Bincode strategy | Has errors (wrong Operation shape) |
-| 8 | `yrs-yjs-interop-validation.md` | Yrs/Yjs compat plan | Has errors (says V1, should be V2) |
-| 9 | `initial-porting-workflow.md` | 13-phase porting guide | Phase ordering issues noted |
-| 10 | `ongoing-maintenance-workflow.md` | Drift detection CI | Valid |
-| - | `ankurah-rs-spec-cleanup.md` | Checklist of spec errors to fix | **New 2026-02-10** |
-| - | `_agent-work/*.md` | Detailed research outputs | **New 2026-02-10** |
+| File | Contents | Status |
+|------|----------|--------|
+| `design-resume.md` | This file. Start here. | **Current** |
+| `architectural-decisions.md` | All user-confirmed decisions | **Current** |
+| `port-rules.md` | Bidirectional mapping rules, exceptions, validation | **Current** |
+| `architecture.md` | Module mapping, package structure | Has errors (see cleanup tracker) |
+| `ecosystem-research.md` | expo-sqlite, Yjs viability, Expo Go constraints | Has errors (V1 refs) |
+| `structural-mapping-analysis.md` | 1:1 mapping analysis | Superseded by port-rules.md |
+| `schema-registry-and-codegen.md` | PR #236, codegen flow | Valid but codegen deferred |
+| `wire-format-interop.md` | Bincode strategy | Has errors (wrong Operation shape) |
+| `yrs-yjs-interop-validation.md` | Yrs/Yjs compat plan | Has errors (says V1, should be V2) |
+| `initial-porting-workflow.md` | 13-phase porting guide | Phase ordering issues noted |
+| `ongoing-maintenance-workflow.md` | Drift detection CI | Valid |
+| `ankurah-rs-spec-cleanup.md` | Checklist of spec errors to fix | Active |
+| `_agent-work/*.md` | Detailed research outputs | Reference |
 
-**Note**: Several specs contain factual errors identified by cross-checking against the actual Rust source. See `ankurah-rs-spec-cleanup.md` for the full list. The authoritative sources are: (1) `architectural-decisions.md` for decisions, (2) the Rust source code for type definitions.
+**Authoritative sources**: (1) `architectural-decisions.md` for decisions, (2) `port-rules.md` for structural rules, (3) the Rust source code for type definitions.
 
-## Next Steps for a Continuing Agent
+## Current Status
 
-### Priority 1: Resolve remaining open questions
+### Completed
+- **Monorepo scaffolding** — All 11 packages created with correct dependencies, bun install works, tsc passes
+- **Audit script** — `scripts/audit-port.ts` validates bidirectional mapping (runs via `bun run scripts/audit-port.ts`)
+- **`@ankurah/proto` implementation** — 16 source files: bincode codec, all ID types, Clock, auth types, data types (Event, State, Operation, EntityState), sys, peering, request/response, update, message, human_id. Zero external deps. All annotations correct.
+- **Rust worktree** — `ts-port-support` branch at `/Users/daniel/ak/ankurah-ts-support/`
 
-Present the remaining questions from `_agent-work/remaining-questions.md` to the user for decisions. Key blockers:
-- AnkQL parser strategy
-- Storage interface (sync vs async)
-- Monorepo tooling (bun research pending)
-- Reactor scope for client
+### Audit results (latest run)
+- **4 PASS**: All TS annotations valid, all MIRRORS point to real Rust files, no orphans, no exception citation gaps
+- **139 FAIL**: Expected — these are missing source files and test files for packages not yet implemented (core, signals, ankql, storage, connectors, react)
+- tsc compiles proto with zero errors
 
-### Priority 2: Scaffold and begin implementation
+### Next up
+1. **Review proto output** — Supervisor should spot-check codec, ID types, and complex types (request.ts, message.ts) against Rust source for field order correctness
+2. **Proto tests** — Write bincode round-trip tests; generate Rust-side fixtures on ts-port-support branch
+3. **Yrs↔Yjs V2 interop** — Generate Yrs fixtures in Rust, load in Yjs, verify round-trip
+4. **`@ankurah/signals`** — Core signal types (Broadcast, Mut, Read, Subscribe, ListenerGuard)
+5. **`@ankurah/ankql`** — Hand-written recursive descent parser matching Rust AST
+6. **`@ankurah/core`** — Entity, Transaction, Node, Context, Reactor
+7. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
+8. **Connectors** — WebSocket client, local connector
+9. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
+10. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
 
-1. **Scaffold the monorepo** — packages per `architectural-decisions.md`
-2. **Start with @ankurah/proto** — type definitions + bincode codec, following domcorder patterns
-3. **Generate Rust-side fixtures** — add test to `ankurah/proto` that writes reference .bin files to `proto/test/fixtures/`
-4. **Validate Yrs↔Yjs V2 interop** — generate Yrs fixtures, load in Yjs, verify round-trip
+### Rust-side work (ts-port-support branch)
+- Bincode fixture generation tests
+- Integration test server binary
+- Any spec cleanup PRs
 
-### Priority 3: Clean up specs
+## Instructions for a Continuing Agent
 
-Apply fixes from `ankurah-rs-spec-cleanup.md`. Delete sections that duplicate proto struct definitions.
+1. **Read `architectural-decisions.md`** — all decisions are finalized
+2. **Read `port-rules.md`** — structural mapping rules are non-negotiable
+3. **Check active work** — look at recent commits and open branches to understand what's in flight
+4. **Surface uncertainties** — do not assume; ask the supervisor
+5. **Follow port-rules.md strictly** — every file needs line 1 annotation, every exception needs a rule citation
+6. **Port tests** — every test in every in-scope crate must have a TS equivalent
+7. **Run the audit script** — `bun run scripts/audit-port.ts` to check compliance

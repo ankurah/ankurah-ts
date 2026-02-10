@@ -1,0 +1,23 @@
+{
+  "name": "@ankurah/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ankurah/proto": "workspace:*",
+    "@ankurah/signals": "workspace:*",
+    "@ankurah/ankql": "workspace:*",
+    "@ankurah/storage-common": "workspace:*",
+    "yjs": "^13.6.0"
+  },
+  "files": [
+    "src/"
+  ]
+}

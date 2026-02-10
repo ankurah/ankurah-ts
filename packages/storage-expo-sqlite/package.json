@@ -1,0 +1,23 @@
+{
+  "name": "@ankurah/storage-expo-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ankurah/storage-common": "workspace:*",
+    "@ankurah/proto": "workspace:*"
+  },
+  "peerDependencies": {
+    "expo-sqlite": ">=14.0.0"
+  },
+  "files": [
+    "src/"
+  ]
+}
