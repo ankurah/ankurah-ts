@@ -104,7 +104,7 @@ The spec shows `Operation` having a `backend` field. In reality, the backend nam
 
 ### 1.4 CLI Codegen: In-Scope vs De-Scoped Contradiction
 
-**design-resume.md, line 25:**
+**continue-implementation.md, line 25:**
 > "**No code generation initially** - Hand-write TypeScript model wrappers to match Rust structs. CLI codegen is a later optimization."
 
 **architectural-decisions.md, lines 23-25:**
@@ -117,11 +117,11 @@ The spec shows `Operation` having a `backend` field. In reality, the backend nam
 **initial-porting-workflow.md, Phase 11 (lines 275-304):**
 > Phase 11 explicitly includes building the CLI codegen as part of the initial port.
 
-The architecture.md lists CLI codegen as "In Scope" for Phase 1, and the porting workflow includes it as Phase 11. But design-resume.md and architectural-decisions.md both say "no code generation initially." Either the workflow has 13 phases that go beyond Phase 1, or Phase 1 scope is inconsistent.
+The architecture.md lists CLI codegen as "In Scope" for Phase 1, and the porting workflow includes it as Phase 11. But continue-implementation.md and architectural-decisions.md both say "no code generation initially." Either the workflow has 13 phases that go beyond Phase 1, or Phase 1 scope is inconsistent.
 
 ### 1.5 Wire Format Decision: Bincode-Only vs JSON-Allowed
 
-**design-resume.md, line 22:**
+**continue-implementation.md, line 22:**
 > "**Bincode wire format required** - No JSON wire format alternative."
 
 **architectural-decisions.md, line 4:**
@@ -133,7 +133,7 @@ The architecture.md lists CLI codegen as "In Scope" for Phase 1, and the porting
 **architecture.md, lines 131-132:**
 > "**Alternative**: Use JSON as the wire format between TS and Rust nodes (simpler, but larger payloads)."
 
-The design-resume and architectural-decisions explicitly reject JSON wire format. But wire-format-interop.md actively recommends starting with JSON, and architecture.md presents it as a viable alternative. These documents fundamentally disagree on a core architectural decision.
+The continue-implementation and architectural-decisions explicitly reject JSON wire format. But wire-format-interop.md actively recommends starting with JSON, and architecture.md presents it as a viable alternative. These documents fundamentally disagree on a core architectural decision.
 
 ---
 
@@ -146,7 +146,7 @@ The design-resume and architectural-decisions explicitly reject JSON wire format
 > - String/Vec lengths: u64 (8 bytes)
 > - Enum variant index: u32 (4 bytes)
 
-**design-resume.md, line 119:**
+**continue-implementation.md, line 119:**
 > "What bincode configuration does ankurah use? (default config? varint lengths? fixed-size integers?) Need to examine `bincode::serialize` calls."
 
 This is still listed as an open question, yet ecosystem-research.md asserts specific answers (u64 lengths, u32 variants). The Rust code uses `bincode::serialize()` which uses default bincode v1 configuration (fixed-size integers, u64 lengths). However, bincode v2 uses different defaults (varint lengths). The specs assume v1 defaults but do not verify which version of the `bincode` crate is in use.
@@ -223,7 +223,7 @@ The spec lists 7 files; the actual codebase has 16+. This is more than double th
 
 ### 3.1 No Proto Module Inventory
 
-The specs reference `proto/src/{data,message,request,update,clock,id,sys}.rs` (design-resume.md, line 58).
+The specs reference `proto/src/{data,message,request,update,clock,id,sys}.rs` (continue-implementation.md, line 58).
 
 **Actual proto modules** at `/Users/daniel/ak/ankurah/proto/src/lib.rs`:
 ```
@@ -318,7 +318,7 @@ The specs note that `i64` maps to `bigint` in TypeScript. However:
 
 ### 4.1 Referenced File Paths That Don't Match Reality
 
-**design-resume.md, lines 47-63** lists "Key File Locations in ankurah/":
+**continue-implementation.md, lines 47-63** lists "Key File Locations in ankurah/":
 
 | Spec Claim | Actual Status |
 |---|---|
@@ -332,7 +332,7 @@ The specs note that `i64` maps to `bigint` in TypeScript. However:
 
 ### 4.2 `domcorder` Reference Still Unresolved
 
-**design-resume.md, lines 22-23 and 126-136:**
+**continue-implementation.md, lines 22-23 and 126-136:**
 > "See `~/code/domcorder` for a reference implementation (agent couldn't access it - needs manual investigation)"
 > "Priority 1: Investigate domcorder for bincode patterns"
 
@@ -340,7 +340,7 @@ This is flagged as Priority 1 and marked as unresolved. The `domcorder-patterns.
 
 ### 4.3 PR #236 Status Unknown
 
-**design-resume.md, line 67:**
+**continue-implementation.md, line 67:**
 > "Most implementation work remains (backend refactoring, registration flow, derive macro updates)."
 
 **schema-registry-and-codegen.md, lines 28-33** lists incomplete items. No spec verifies the current status of PR #236. If it has been merged or abandoned since the specs were written, the codegen strategy may need revision.
@@ -545,7 +545,7 @@ In reality, the reactor is both `core/src/reactor.rs` (module root) AND a `core/
 
 ### 8.7 `Event.operations` Is `OperationSet`, Not `Vec<Operation>`
 
-**design-resume.md, line 116:**
+**continue-implementation.md, line 116:**
 > `EventId is a SHA256 hash of bincode::serialize(entity_id) || bincode::serialize(operations) || bincode::serialize(parent)`
 
 This is correct but the spec elsewhere describes operations as `Vec<Operation>`. The actual `Event` struct at `/Users/daniel/ak/ankurah/proto/src/data.rs` line 106:

@@ -1,6 +1,6 @@
-# ankurah-ts Design Resume
+# ankurah-ts Implementation Continuation
 
-**Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts design and implementation work. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
+**Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts implementation. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
 
 **Last updated**: 2026-02-10
 
@@ -128,7 +128,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 
 | File | Contents | Status |
 |------|----------|--------|
-| `design-resume.md` | This file. Start here. | **Current** |
+| `continue-implementation.md` | This file. Start here. | **Current** |
 | `architectural-decisions.md` | All user-confirmed decisions | **Current** |
 | `port-rules.md` | Bidirectional mapping rules, exceptions, validation | **Current** |
 | `architecture.md` | Module mapping, package structure | Has errors (see cleanup tracker) |
@@ -144,7 +144,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 
 **Authoritative sources**: (1) `architectural-decisions.md` for decisions, (2) `port-rules.md` for structural rules, (3) the Rust source code for type definitions.
 
-## Current Status
+## Current Implementation Status
 
 ### Completed
 - **Monorepo scaffolding** — All 11 packages created with correct dependencies, bun install works, tsc passes

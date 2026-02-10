@@ -17,7 +17,7 @@ The Rust codebase exclusively uses **V2 encoding** for all Yrs operations. Every
 - [ ] `yrs-yjs-interop-validation.md` line 275: "ankurah currently uses **V1 encoding** (`encode_state_as_update_v1`). The TS port should also use V1 for maximum compatibility." -- entirely wrong; must state V2
 - [ ] `architectural-decisions.md` line 30: "Use V1 encoding (not V2) for maximum cross-implementation compatibility" -- must be reversed: use V2
 - [ ] `ecosystem-research.md` line 39: "ankurah's Yrs (Rust) is a port OF Yjs, so state encoding should be compatible (V1 format)" -- must say V2 format
-- [ ] `design-resume.md` line 92: "Yrs/Yjs state: Yjs V1 update encoding (should be Yrs-compatible, needs validation)" -- must say V2
+- [ ] `continue-implementation.md` line 92: "Yrs/Yjs state: Yjs V1 update encoding (should be Yrs-compatible, needs validation)" -- must say V2
 
 ---
 
@@ -50,7 +50,7 @@ These are concrete factual errors in struct/enum shapes that differ from the act
 
 Spec file lists significantly undercount the actual Rust source files. Each needs updating.
 
-- [ ] `design-resume.md` lines 58-63 and `initial-porting-workflow.md` lines 73-78 (Phase 1): Proto module inventory lists ~7 files (`data`, `message`, `request`, `update`, `clock`, `id`, `sys`). Actual proto has 14 modules: `auth`, `clock`, `collection`, `data`, `error`, `human_id`, `id`, `message`, `peering`, `request`, `subscription`, `sys`, `transaction`, `update`. Missing 7 modules including `auth.rs` (critical for `Attested<T>`, `AuthData`), `peering.rs` (`Presence`), `subscription.rs` (`QueryId`).
+- [ ] `continue-implementation.md` lines 58-63 and `initial-porting-workflow.md` lines 73-78 (Phase 1): Proto module inventory lists ~7 files (`data`, `message`, `request`, `update`, `clock`, `id`, `sys`). Actual proto has 14 modules: `auth`, `clock`, `collection`, `data`, `error`, `human_id`, `id`, `message`, `peering`, `request`, `subscription`, `sys`, `transaction`, `update`. Missing 7 modules including `auth.rs` (critical for `Attested<T>`, `AuthData`), `peering.rs` (`Presence`), `subscription.rs` (`QueryId`).
 - [ ] `initial-porting-workflow.md` lines 104-110 (Phase 2): Signals file list has 7 entries. Actual `signals/src/` has 16+ files including `context.rs`, `reactive_graph.rs`, `porcelain/subscribe.rs`, `porcelain/wait.rs`, `signal/map.rs`, `value.rs`, `react.rs`, `react_native.rs`. More than double the estimated scope.
 - [ ] `initial-porting-workflow.md` line 228 (Phase 8): Reactor listed as single `reactor.rs -> reactor.ts` with 7 files total in the phase. Actual reactor is a module root with 8+ sub-files: `watcherset.rs`, `property_path.rs`, `update.rs`, `candidate_changes.rs`, `comparison_index.rs`, `fetch_gap.rs`, `subscription.rs`, `subscription_state.rs`.
 - [ ] `initial-porting-workflow.md` lines 155-159 (Phase 4): Storage common described as "a small package - just trait definitions" with 1 file (`lib.rs -> index.ts`). Actual `storage/common/src/` has 7 modules: `bounds`, `filtering`, `planner`, `predicate`, `sorting`, `traits`, `types`. Includes a query planner and filtering engine.
@@ -60,18 +60,18 @@ Spec file lists significantly undercount the actual Rust source files. Each need
 
 ## 5. Scope Corrections
 
-The de-scoped items lists in `design-resume.md` and `architecture.md` need updating.
+The de-scoped items lists in `continue-implementation.md` and `architecture.md` need updating.
 
-- [ ] `design-resume.md` line 24: De-scoped list says "lineage attestation" -- this is too broad. Only **cryptographic verification** is de-scoped. The `Attested<T>` wrapper type and `AttestationSet` must still be ported (as wire protocol types), and `CausalRelation`, `CausalAssertion`, `CausalAssertionFragment`, `KnownEntity` must be at least stub-ported for bincode compatibility.
+- [ ] `continue-implementation.md` line 24: De-scoped list says "lineage attestation" -- this is too broad. Only **cryptographic verification** is de-scoped. The `Attested<T>` wrapper type and `AttestationSet` must still be ported (as wire protocol types), and `CausalRelation`, `CausalAssertion`, `CausalAssertionFragment`, `KnownEntity` must be at least stub-ported for bincode compatibility.
 - [ ] `architecture.md` lines 227-235: De-scoped list says "Lineage attestation / cryptographic verification" -- same issue. The types are wire protocol types and must exist even if verification logic is stubbed.
-- [ ] `architecture.md` line 224: In-scope list includes "CLI code generator for typed wrappers" but `design-resume.md` line 26 and `architectural-decisions.md` lines 23-25 say "No code generation initially." This contradiction should be resolved -- clarify that CLI codegen is Phase 11 (later), not Phase 1.
+- [ ] `architecture.md` line 224: In-scope list includes "CLI code generator for typed wrappers" but `continue-implementation.md` line 26 and `architectural-decisions.md` lines 23-25 say "No code generation initially." This contradiction should be resolved -- clarify that CLI codegen is Phase 11 (later), not Phase 1.
 - [ ] Only truly de-scoped items: PostgreSQL storage, Sled storage, WebSocket **server** (client is in scope), PN Counter backend. Everything else mentioned in de-scope lists (`Attested<T>`, lineage types, policy agent traits) needs at least stub implementations.
 
 ---
 
 ## 6. TODO Spec Files
 
-These spec files are listed in `design-resume.md` (lines 112-114) as TODO and have not been written.
+These spec files are listed in `continue-implementation.md` (lines 112-114) as TODO and have not been written.
 
 - [ ] `rust-changes-required.md` (line 112): "Minimal Rust-side changes needed. **Not yet written** - was drafted but rejected (had JSON wire format). Needs rewrite: complete PR #236, schema export CLI, bincode fixtures. No JSON wire format." Status: TODO. Note: the `_agent-work/rust-architecture-findings.md` partially covers Rust-side analysis but does not replace this spec.
 - [ ] `codebase-organization.md` (line 113): "How to organize TS source into 1:1 mapped / completely different / bridge zones with inline annotations. **Not yet written.**" Status: TODO.

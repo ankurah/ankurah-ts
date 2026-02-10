@@ -186,7 +186,7 @@ The spec-cross-check found major errors in several spec files (wrong V1/V2, wron
 - `yrs-yjs-interop-validation.md` (V1 claims are wrong)
 - `wire-format-interop.md` (Operation struct shape is wrong)
 - `architecture.md` (NodeMessageBody type doesn't exist)
-- `design-resume.md` (open questions that are now answered)
+- `continue-implementation.md` (open questions that are now answered)
 
 ### 12.2 Should stale spec content be archived or removed?
 Some specs contain useful context alongside incorrect details. Should incorrect sections be struck through, or should we maintain a clean set of specs with only correct information?
