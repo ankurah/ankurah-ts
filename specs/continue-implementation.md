@@ -4,7 +4,7 @@
 
 **Last updated**: 2026-02-10
 
-**Status**: All design decisions resolved. Monorepo scaffolding and `@ankurah/proto` implementation in progress.
+**Status**: Proto, signals, and ankql implemented. Rust bincode fixtures generated. Next: TS fixture parity tests, then core.
 
 ## Supervision Model
 
@@ -149,29 +149,31 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 ### Completed
 - **Monorepo scaffolding** — All 11 packages created with correct dependencies, bun install works, tsc passes
 - **Audit script** — `scripts/audit-port.ts` validates bidirectional mapping (runs via `bun run scripts/audit-port.ts`)
-- **`@ankurah/proto` implementation** — 16 source files: bincode codec, all ID types, Clock, auth types, data types (Event, State, Operation, EntityState), sys, peering, request/response, update, message, human_id. Zero external deps. All annotations correct.
+- **`@ankurah/proto` implementation** — 16 source files: bincode codec, all ID types, Clock, auth types, data types (Event, State, Operation, EntityState), sys, peering, request/response, update, message, human_id. Zero external deps. All annotations correct. Spot-checked against Rust: all field orders, enum variant orders, and encoding patterns match.
 - **Rust worktree** — `ts-port-support` branch at `/Users/daniel/ak/ankurah-ts-support/`
+- **Rust bincode fixtures** — 12 test functions in `proto/tests/bincode_fixtures.rs`, 12 `.bin` files in `proto/test_fixtures/`. Covers all proto types: IDs, Clock, auth, data, request/response, causal relations, deltas, updates, messages, presence, system items. Uses `OVERWRITE_FIXTURES` env var to toggle between compare and regenerate modes. All deterministic (no random ULIDs).
+- **`@ankurah/signals`** — 10 source files + 4 stubs (deferred: Calculated, Map, Memo, Observer auto-tracking). Core types: Broadcast, BroadcastId, Mut, Read, Signal, Get, Peek, With, Subscribe, SubscriptionGuard, ListenerGuard, ValueCell, ReadValueCell. 45 tests passing. Zero external deps.
+- **`@ankurah/ankql`** — 8 source files. Hand-written recursive descent parser with lexer, full AST types (Expr, Predicate, Selection, PathExpr, Literal, etc.), SQL generation, conversion utilities. 76 tests passing. Zero external deps.
 
 ### Audit results (latest run)
-- **4 PASS**: All TS annotations valid, all MIRRORS point to real Rust files, no orphans, no exception citation gaps
-- **139 FAIL**: Expected — these are missing source files and test files for packages not yet implemented (core, signals, ankql, storage, connectors, react)
-- tsc compiles proto with zero errors
+- **4 PASS**: All TS annotations valid (52 files), all MIRRORS point to real Rust files (47), no orphans, all exception citations present (4 E12 citations)
+- **115 FAIL**: Expected — missing source files and test files for packages not yet implemented (core, storage, connectors, react)
+- tsc compiles proto, signals, and ankql with zero errors
+- 121 total tests passing (45 signals + 76 ankql)
 
 ### Next up
-1. **Review proto output** — Supervisor should spot-check codec, ID types, and complex types (request.ts, message.ts) against Rust source for field order correctness
-2. **Proto tests** — Write bincode round-trip tests; generate Rust-side fixtures on ts-port-support branch
-3. **Yrs↔Yjs V2 interop** — Generate Yrs fixtures in Rust, load in Yjs, verify round-trip
-4. **`@ankurah/signals`** — Core signal types (Broadcast, Mut, Read, Subscribe, ListenerGuard)
-5. **`@ankurah/ankql`** — Hand-written recursive descent parser matching Rust AST
-6. **`@ankurah/core`** — Entity, Transaction, Node, Context, Reactor
-7. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
-8. **Connectors** — WebSocket client, local connector
-9. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
-10. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
+1. **Proto fixture parity tests** — Write TS tests in `packages/proto/__tests__/` that read the Rust-generated `.bin` fixtures from `../ankurah-ts-support/proto/test_fixtures/` and validate TS decoding matches. Also write TS-side round-trip tests (encode → decode → verify).
+2. **Yrs↔Yjs V2 interop** — Generate Yrs fixtures in Rust, load in Yjs, verify round-trip
+3. **`@ankurah/core`** — Entity, Transaction, Node, Context, Reactor
+4. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
+5. **Connectors** — WebSocket client, local connector
+6. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
+7. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
 
 ### Rust-side work (ts-port-support branch)
-- Bincode fixture generation tests
+- ~~Bincode fixture generation tests~~ DONE (12 tests, 12 `.bin` files)
 - Integration test server binary
+- Yrs V2 fixture generation
 - Any spec cleanup PRs
 
 ## Instructions for a Continuing Agent
