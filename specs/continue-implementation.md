@@ -4,7 +4,7 @@
 
 **Last updated**: 2026-02-10
 
-**Status**: Proto, signals, and ankql implemented. Rust bincode fixtures generated. Next: TS fixture parity tests, then core.
+**Status**: Proto (with cross-language fixture parity), signals, and ankql fully implemented and tested. Next: Yrs↔Yjs V2 interop, then core.
 
 ## Supervision Model
 
@@ -152,6 +152,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **`@ankurah/proto` implementation** — 16 source files: bincode codec, all ID types, Clock, auth types, data types (Event, State, Operation, EntityState), sys, peering, request/response, update, message, human_id. Zero external deps. All annotations correct. Spot-checked against Rust: all field orders, enum variant orders, and encoding patterns match.
 - **Rust worktree** — `ts-port-support` branch at `/Users/daniel/ak/ankurah-ts-support/`
 - **Rust bincode fixtures** — 12 test functions in `proto/tests/bincode_fixtures.rs`, 12 `.bin` files in `proto/test_fixtures/`. Covers all proto types: IDs, Clock, auth, data, request/response, causal relations, deltas, updates, messages, presence, system items. Uses `OVERWRITE_FIXTURES` env var to toggle between compare and regenerate modes. All deterministic (no random ULIDs).
+- **Proto fixture parity tests** — 24 TS tests in `packages/proto/__tests__/fixtures.test.ts` (decode + round-trip for all 12 `.bin` files). Validates TS codec reads Rust output correctly and encodes byte-identical bincode. 244 assertions. Fixture path resolves to `../ankurah-ts-support/proto/test_fixtures/`.
 - **`@ankurah/signals`** — 10 source files + 4 stubs (deferred: Calculated, Map, Memo, Observer auto-tracking). Core types: Broadcast, BroadcastId, Mut, Read, Signal, Get, Peek, With, Subscribe, SubscriptionGuard, ListenerGuard, ValueCell, ReadValueCell. 45 tests passing. Zero external deps.
 - **`@ankurah/ankql`** — 8 source files. Hand-written recursive descent parser with lexer, full AST types (Expr, Predicate, Selection, PathExpr, Literal, etc.), SQL generation, conversion utilities. 76 tests passing. Zero external deps.
 
@@ -159,22 +160,45 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **4 PASS**: All TS annotations valid (52 files), all MIRRORS point to real Rust files (47), no orphans, all exception citations present (4 E12 citations)
 - **115 FAIL**: Expected — missing source files and test files for packages not yet implemented (core, storage, connectors, react)
 - tsc compiles proto, signals, and ankql with zero errors
-- 121 total tests passing (45 signals + 76 ankql)
+- **145 total tests passing** (24 proto fixture + 45 signals + 76 ankql), 463 assertions
 
 ### Next up
-1. **Proto fixture parity tests** — Write TS tests in `packages/proto/__tests__/` that read the Rust-generated `.bin` fixtures from `../ankurah-ts-support/proto/test_fixtures/` and validate TS decoding matches. Also write TS-side round-trip tests (encode → decode → verify).
-2. **Yrs↔Yjs V2 interop** — Generate Yrs fixtures in Rust, load in Yjs, verify round-trip
-3. **`@ankurah/core`** — Entity, Transaction, Node, Context, Reactor
-4. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
-5. **Connectors** — WebSocket client, local connector
-6. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
-7. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
+1. **Yrs↔Yjs V2 interop** — Generate Yrs fixtures in Rust, load in Yjs, verify round-trip
+2. **`@ankurah/core`** — Entity, Transaction, Node, Context, Reactor (biggest package ~63 files)
+3. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
+4. **Connectors** — WebSocket client, local connector
+5. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
+6. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
 
 ### Rust-side work (ts-port-support branch)
 - ~~Bincode fixture generation tests~~ DONE (12 tests, 12 `.bin` files)
 - Integration test server binary
 - Yrs V2 fixture generation
 - Any spec cleanup PRs
+
+## Agent Working Notes
+
+### Annotation format
+- Line 1: `// MIRRORS: ankurah/<crate>/src/<path>.rs` — bare path only, NO extra text like `[E2]` or `(tests module)`
+- Exception citations go on a SEPARATE line 2: `// Exception E12: file-with-submodules pattern`
+- Test files: `// MIRRORS: ankurah/<crate>/src/<path>.rs` (same as source, bare path)
+- TS-only files: `// TS-ONLY: <reason>`
+
+### Fixture path convention
+- Rust fixtures: `/Users/daniel/ak/ankurah-ts-support/proto/test_fixtures/`
+- TS tests resolve via: `path.resolve(__dirname, '../../../../ankurah-ts-support/proto/test_fixtures')`
+- Hard-fail with descriptive error if fixture dir missing
+
+### ULID serialization (confirmed)
+- `ulid` crate v1.2.1 serializes as 26-char Crockford Base32 string (always, no `is_human_readable` check)
+- In bincode: 8-byte u64 length (=26) + 26 ASCII bytes = 34 bytes total
+- Deterministic test ULIDs constructed via: `"0000000000000000000000" + decimal(seed).padStart(4, '0')`
+
+### Sub-agent tips
+- Grant `.cargo/registry` read permission proactively for Rust source exploration
+- MIRRORS annotations must be bare paths — audit script validates
+- After implementation, always run: `npx tsc --noEmit -p packages/<pkg>/tsconfig.json` and `bun test packages/<pkg>/`
+- Run `bun run scripts/audit-port.ts` to verify structural compliance
 
 ## Instructions for a Continuing Agent
 
@@ -185,3 +209,4 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 5. **Follow port-rules.md strictly** — every file needs line 1 annotation, every exception needs a rule citation
 6. **Port tests** — every test in every in-scope crate must have a TS equivalent
 7. **Run the audit script** — `bun run scripts/audit-port.ts` to check compliance
+8. **Delegate to sub-agents** — preserve supervisor context by dispatching implementation work to background agents
