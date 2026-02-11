@@ -2,9 +2,9 @@
 
 **Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts implementation. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
 
-**Last updated**: 2026-02-11 (Layer 6a in progress, last commit f1df6b6)
+**Last updated**: 2026-02-11 (Layer 6b complete, last commit 7294de3)
 
-**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-5c fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. **Layer 6a in progress**: livequery.ts created (726 lines), storage-memory implemented (188 lines), node.ts + context.ts updated with reactor wiring. **Two integration bugs remain** (MockContext missing query(), EntityChange.create() MutationError in Phase 7). Nothing committed yet for Layer 6a. **Next: fix integration bugs → commit Layer 6a → Layer 6b (livequery tests, storage-memory tests) → Layer 7 (networking).**
+**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-5c fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. **Layer 6a committed**: livequery.ts (726 lines), storage-memory (188 lines), node.ts + context.ts updated with reactor wiring, all integration bugs fixed. **Layer 6b committed**: 11 storage-memory tests, 6 LiveQuery integration tests, TestWatcher utility, queryWait helper, ReactorUpdate barrel export fix, NodeLikeAdapter GC bug fix. **371 tests passing**, 990 assertions, 21 test files. **Next: Layer 6b remaining (JSON path tests, pagination tests — deferred until property types ported) → Layer 7 (networking) → Layer 8 (connectors + React).**
 
 ## Supervision Model
 
@@ -203,34 +203,46 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **`@ankurah/core` Layer 5c — Reactor top-layer** — Subscription state (reactor/subscription_state.ts: Subscription class with evaluateChanges, QueryState, gap filling, 815 lines), ReactorSubscription (reactor/subscription.ts: public handle with Signal/Subscribe + dispose), Reactor main (reactor/index.ts: three-phase notifyChange pipeline, subscribe/unsubscribe, addQueryAndNotify/updateQueryAndNotify, PromiseMutex for async serialization, 499 lines). 3 source files.
 - **`@ankurah/core` supporting types** — schema.ts (CollectionSchema interface), query_value.ts (QueryValue discriminated union), connector.ts (PeerSender, NodeComms interfaces), collectionset.ts (CollectionSet lazy-init cache), retrieval.ts (TEvent, TClock, GetEvents, LocalRetriever). 5 source files.
 - **`@ankurah/storage-common` implementation** — 6 source files: types.ts (Plan, KeyBounds, OrderByComponents), predicate.ts (ConjunctFinder), bounds.ts (normalize KeyBounds to CanonicalRange), sorting.ts (async generators: sortedIterable, limitedIterable, topKIterable), filtering.ts (filterPredicate, sortBy, limit, topK), planner.ts (full query planner with ORDER-FIRST and INEQ-FIRST strategies). Rust Stream to TS AsyncIterable.
-- **Drift detection** — SHA-256 hash manifest in scripts/rust-source-hashes.json tracking 94 Rust source files. audit-port.ts supports --backpopulate and --update-manifest commands. port-rules.md updated with section G6.
+- **Drift detection** — SHA-256 hash manifest in scripts/rust-source-hashes.json tracking 155 files (85 source + 70 test). audit-port.ts supports --backpopulate and --update-manifest commands. port-rules.md updated with section G6.
 - **`@ankurah/core` lineage.ts** — Bidirectional BFS DAG comparison engine (~600 lines TS from ~1004 lines Rust). Generic interfaces (LClock, LEvent, LGetEvents, LAttested) for flexible ID types. EventAccumulator, Ordering discriminated union (6 variants), compare/compareUnstoredEvent/compareWithAccumulator. 13 tests (linear history, concurrent, incomparable, empty clocks, budget exceeded, self comparison, multiple roots, unstored events, redundant delivery, event accumulator variants). Rust SmallVec→Array, BTreeSet→Set, saturating_sub→Math.max(0, x-y).
 - **`@ankurah/core` system.ts** — SystemManager (~325 lines TS from ~316 lines Rust). Constants SYSTEM_COLLECTION_ID/_PROTECTED_COLLECTIONS. Methods: root(), getItems(), isLoaded/isSystemReady/waitLoaded/waitSystemReady, collection(), create(), joinSystem(), hardReset(), loadSystemCatalog(). sysItemToValue/sysItemFromValue for cross-language JSON interop. Deferred Promise pattern replacing Rust tokio::sync::Notify. 23 tests (round-trip, construction, lifecycle, joins, reset).
 - **Layer 5 reactor tests** — 9 unit tests ported from Rust: ComparisonIndex (2: field_index, not_equal), CandidateChanges (3: empty, add_query, entity_level), FetchGap (3: single_column_asc, multi_column, infer_value_type), Reactor end-to-end (1: entity_remains_watched_after_predicate_stops_matching). Uses sortQueryIds() helper for Rust BTreeSet→TS ordering parity.
 
-### Layer 6a — In Progress (uncommitted)
-
-The following files were created/modified by background agents but have NOT been committed yet. Two integration bugs remain.
+### Layer 6a — COMMITTED (commits 46ba45b, 01a2c55)
 
 **New files:**
 - **`@ankurah/core` livequery.ts** (726 lines) — EntityLiveQuery, WeakEntityLiveQuery, LiveQuery<V> generic typed wrapper, RemoteQuerySubscriber interface (stub), ChangeSet<V>, liveQueryChangeSetFrom(). Async init via fire-and-forget (`void me.activate(1).then(...)`). Promise-based Notify replacement for `wait_initialized()`. Signal/Get/Peek/Subscribe trait impls for reactive integration. Mirrors `ankurah/core/src/livequery.rs` (~399 lines Rust).
 - **`@ankurah/storage-memory` src/index.ts** (188 lines, was 6-line stub) — MemoryStorageEngine (lazy-creates collections), MemoryStorageCollection (Map-backed in-memory storage). `entityStateAsFilterable()` helper reconstructs PropertyBackends from StateBuffers for predicate evaluation. `compareForSort()` helper for ORDER BY with valuePartialCmp. TS-only package (no Rust counterpart).
 
 **Modified files:**
-- **node.ts** (now 360 lines, was 327) — Added `readonly reactor: Reactor` field (default-constructed if not provided in options). Added `readonly subscriptionRelay: null = null` Phase 1 stub. Added Phase 7 reactor notification in `commitLocalTrx()`: collects `EntityChange` per entity, calls `reactor.notifyChange(entityChanges)`. Added `NodeAndContext.query()` method (throws "not yet ported" for now).
+- **node.ts** (now 360 lines, was 327) — Added `readonly reactor: Reactor` field (default-constructed if not provided in options). Added `readonly subscriptionRelay: null = null` Phase 1 stub. Added Phase 7 reactor notification in `commitLocalTrx()`: collects `EntityChange` per entity, calls `reactor.notifyChange(entityChanges)`. Added `NodeAndContext.query()` method wired to `EntityLiveQuery.create()`.
 - **context.ts** (now 156 lines, was 128) — Added `query(collectionId, args)` to TContext interface. Added `query()` to Context class delegating to `this.inner.query()`.
 - **changes.ts** — Added ChangeSet<V> interface (batch of changes for LiveQuery subscriptions).
 - **index.ts** — Added exports for livequery types, valuePartialCmp, backendFromString.
 - **storage-memory/package.json** — Added `@ankurah/core` and `@ankurah/ankql` dependencies.
 
-**Integration bugs (must fix before committing):**
-1. **MockContext missing `query()` method** — `packages/core/__tests__/transaction.test.ts` line 38: `MockContext` doesn't implement the new `query()` method added to `TContext`. Fix: add `query(): unknown { throw new Error('not implemented'); }` to MockContext.
-2. **EntityChange.create() MutationError in Phase 7** — `packages/core/__tests__/node.test.ts`: "edit existing entity and commit" and "independent transactions are isolated" fail. The new Phase 7 code in `commitLocalTrx()` (node.ts:352) calls `EntityChange.create(canonicalEntity, [attested])`, but the `attested` event fails validation — likely `head.contains(event.payload.id())` returns false because the head clock on `canonicalEntity` doesn't yet contain the newly-generated event at the point where Phase 7 runs. Need to investigate the ordering of `applyEvent()` → `toState()` → `EntityChange.create()` in the Phase 5 loop.
-
 **New spec files:**
 - `specs/livequery-port-spec.md` — Comprehensive port spec for livequery.ts (21 sections)
 - `specs/storage-memory-impl-spec.md` — Implementation spec for storage-memory package
 - `specs/_agent-work/node-context-gap-analysis.md` — Gap analysis for node.ts + context.ts reactor integration
+
+### Layer 6b — COMMITTED (commits bb58066, 7294de3)
+
+**New test files:**
+- **`@ankurah/storage-memory` __tests__/storage-memory.test.ts** — 11 tests: set/get/list/filter/sort/limit/missing-collection/concurrent-writes/state-round-trip/delete/empty-filter.
+- **`@ankurah/core` __tests__/livequery.test.ts** — 6 LiveQuery integration tests: basic subscription, complex transitions, signal semantics, predicate update, single-node gap filling, multi-gap filling.
+
+**Test infrastructure:**
+- **TestWatcher utility** — Reusable watcher for tracking LiveQuery change events in tests.
+- **queryWait helper** — Async helper that creates a LiveQuery and waits for initialization before returning.
+- **Test model definitions** — Shared defineModel() definitions for use across LiveQuery tests.
+
+**Bug fixes:**
+- **ReactorUpdate barrel export fix** — Added type-only re-export of ReactorUpdate from reactor barrel (was missing, caused import errors in tests).
+- **NodeLikeAdapter GC bug fix in EntityLiveQuery** — Fixed issue where FinalizationRegistry/WeakRef GC in NodeLikeAdapter caused premature cleanup of entities referenced by live queries.
+
+**Drift detection:**
+- Hash manifest expanded to 155 files (85 source + 70 test).
 
 ### Core source files (45 total in packages/core/src/)
 ```
@@ -250,7 +262,7 @@ src/connector.ts                     — PeerSender, NodeComms interfaces
 src/collectionset.ts                 — CollectionSet lazy-init cache
 src/retrieval.ts                     — TEvent, TClock, GetEvents, LocalRetriever
 src/resultset.ts                     — EntityResultSet (ordered entity list, sort keys, LIMIT, gap_dirty)
-src/livequery.ts                     — EntityLiveQuery, LiveQuery<V>, WeakEntityLiveQuery, RemoteQuerySubscriber (Layer 6a, uncommitted)
+src/livequery.ts                     — EntityLiveQuery, LiveQuery<V>, WeakEntityLiveQuery, RemoteQuerySubscriber (Layer 6a)
 src/lineage.ts                       — EventAccumulator, Ordering, compare/compareUnstoredEvent (BFS DAG comparison)
 src/system.ts                        — SystemManager, SYSTEM_COLLECTION_ID, sysItemToValue/sysItemFromValue
 src/value/index.ts                   — Value enum, ValueType, comparison operators, extractAtPath
@@ -280,9 +292,8 @@ src/selection/filter.ts              — Filterable interface, evaluatePredicate
 src/index.ts                         — Package entry with exports
 ```
 
-### Test counts (latest stable: commit f1df6b6)
-- At commit f1df6b6: tsc zero errors, **354 tests passing**, 889 assertions across 19 test files
-- **Current working tree** (with Layer 6a uncommitted changes): tsc has 22 errors (all MockContext missing `query`), **352 pass / 2 fail**, 885 assertions across 19 test files
+### Test counts (latest stable: commit 7294de3)
+- At commit 7294de3: tsc zero errors, **371 tests passing**, 990 assertions across 21 test files
   - 24 proto fixture parity tests (244 assertions)
   - 45 signals tests
   - 76 ankql tests
@@ -290,37 +301,30 @@ src/index.ts                         — Package entry with exports
   - 55+ core backend tests (LWW + Yjs backend + YrsString)
   - 30 entity tests (construction, state round-trip, backends, snapshot isolation, event generation)
   - 33 transaction tests (create, get, edit, commit, rollback, isolation, EntityChange, ItemChange, Event.id())
-  - 34 node tests (was 36, 2 now failing due to Phase 7 EntityChange.create bug)
+  - 36 node tests (construction, commit pipeline, isolation, query wiring)
   - 13 lineage tests (linear/concurrent/incomparable history, budget, accumulator, unstored events)
   - 23 system tests (sysItem round-trip, construction, create, join, reset lifecycle)
   - 9 reactor tests (ComparisonIndex, CandidateChanges, FetchGap, end-to-end watcher)
+  - 11 storage-memory tests (set/get/list/filter/sort/limit/missing-collection/concurrent-writes/state-round-trip/delete/empty-filter)
+  - 6 livequery tests (basic subscription, complex transitions, signal semantics, predicate update, single-node gap filling, multi-gap filling)
 
 ### Next up
 
-**Layer 6a — Fix integration bugs and commit (IMMEDIATE):**
-1. **Fix MockContext in transaction.test.ts** — Add `query()` stub method to MockContext class (~1 line). This is the only tsc error.
-2. **Fix EntityChange.create() MutationError in Phase 7** — In `commitLocalTrx()` (node.ts ~line 352), `EntityChange.create(canonicalEntity, [attested])` throws because `head.contains(event.payload.id())` fails. Investigate: does `canonicalEntity.applyEvent()` (line 332) update the head clock to include the new event? If not, the head check in EntityChange.create() will rightfully fail. Check whether the Rust code uses the post-applyEvent entity or pre-applyEvent entity in `EntityChange::new()`. Read `ankurah/core/src/node.rs` Phase 5-7 to confirm the exact ordering.
-3. **Wire query() properly** — `NodeAndContext.query()` currently throws "not yet ported". Wire it to `EntityLiveQuery.create()` (from livequery.ts).
-4. **Commit Layer 6a checkpoint** — After all tests pass and tsc is clean.
-
-**Layer 6b — Tests + full system (needs 6a committed):**
-5. **LiveQuery tests** — Port livequery tests from Rust. Detailed spec in `specs/livequery-port-spec.md`.
-6. **Storage-memory tests** — 11 test scenarios identified in `specs/storage-memory-impl-spec.md` (set/get/list/filter/sort/limit/missing-collection/concurrent-writes/state-round-trip/delete/empty-filter).
-
-**Layer 6b — Storage + first working system (needs 6a):**
-3. **`@ankurah/storage-memory`** — In-memory StorageEngine for testing. TS-only package. Enables first working single-node system with queries and subscriptions.
+**Layer 6b remaining (deferred until property types ported):**
+1. **JSON path tests** — Needs `Json` property type (currently deferred in property/value/json.ts).
+2. **Pagination tests** — Needs `Ref` property type (currently deferred in property/value/entity_ref.ts).
 
 **Layer 7 — Networking (needs 6a-6b):**
-4. **`@ankurah/core` node_applier.ts** — Remote update application (296 lines). apply_updates() for stream updates, apply_deltas() for batch delta handling. Handles UpdateContent::StateAndEvent/EventOnly, DeltaContent::StateSnapshot/EventBridge. Validates with PolicyAgent. Batches reactor notifications.
-5. **`@ankurah/core` peer_subscription/** — Client relay (971 lines, complex async state machine: SubscriptionRelay routes queries to durable peers), server (175 lines: SubscriptionHandler). RemoteQuerySubscriber trait for callback state.
-6. **Complete node.rs networking** — Remaining ~400 lines: register_peer/deregister_peer, handle_message/handle_request/handle_update, relay_to_required_peers, commit_remote_transaction, TNodeErased full impl.
+3. **`@ankurah/core` node_applier.ts** — Remote update application (296 lines). apply_updates() for stream updates, apply_deltas() for batch delta handling. Handles UpdateContent::StateAndEvent/EventOnly, DeltaContent::StateSnapshot/EventBridge. Validates with PolicyAgent. Batches reactor notifications.
+4. **`@ankurah/core` peer_subscription/** — Client relay (971 lines, complex async state machine: SubscriptionRelay routes queries to durable peers), server (175 lines: SubscriptionHandler). RemoteQuerySubscriber trait for callback state.
+5. **Complete node.rs networking** — Remaining ~400 lines: register_peer/deregister_peer, handle_message/handle_request/handle_update, relay_to_required_peers, commit_remote_transaction, TNodeErased full impl.
 
 **Layer 8 — Connectors + React (needs 7):**
-7. **Connectors** — connector-local (simple), connector-websocket (with reconnection).
-8. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals.
+6. **Connectors** — connector-local (simple), connector-websocket (with reconnection).
+7. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals.
 
 **Layer 9 — Integration:**
-9. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop.
+8. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop.
 
 **Out of scope / deferred:**
 - `type_resolver.rs` (240 lines) — Type inference for JSON/collection schema. Phase 3 placeholder.
@@ -336,9 +340,9 @@ The entire Reactor subsystem is complete: 8 source files + 9 tests. All three ph
 - **All 8 files ported**: update.ts, property-path.ts, comparison-index.ts, candidate-changes.ts, watcher_set.ts, fetch_gap.ts, subscription_state.ts (815 lines), subscription.ts, index.ts (499 lines)
 - **All key methods present**: subscribe/unsubscribe, addQueryAndNotify/updateQueryAndNotify, notifyChange (3-phase), systemReset
 - **9 tests passing**: ComparisonIndex (2), CandidateChanges (3), FetchGap (3), Reactor end-to-end (1)
-- **Node integration status**: `reactor` field added to Node ✓. Phase 7 `reactor.notifyChange()` added ✓ (but has EntityChange.create bug). `query()` added to TContext ✓ (but throws "not yet ported"). Needs: wire query() to EntityLiveQuery.create(), fix Phase 7 bug.
+- **Node integration status**: `reactor` field added to Node ✓. Phase 7 `reactor.notifyChange()` added ✓. `query()` added to TContext ✓, wired to `EntityLiveQuery.create()` ✓. All integration bugs fixed and committed.
 
-### LiveQuery — ported (uncommitted, see Layer 6a section above)
+### LiveQuery — ported and tested (committed, see Layer 6a/6b sections above)
 The livequery.ts file (726 lines) has been created. It mirrors `ankurah/core/src/livequery.rs` (399 lines Rust). Key patterns:
 - `EntityLiveQuery` (Arc<Inner>) → class EntityLiveQuery (plain instance)
 - `LiveQuery<R>` wraps EntityLiveQuery + generic R type. Implements Signal, Get, Peek, Subscribe via delegation.
@@ -351,9 +355,9 @@ Files in ankurah/core/src/ that still need work:
 
 | Rust file | Lines | TS status | Notes |
 |-----------|-------|-----------|-------|
-| livequery.rs | 399 | PORTED (726 lines, uncommitted) | EntityLiveQuery, LiveQuery<V>, WeakEntityLiveQuery. 2 bugs to fix. |
-| node.rs | 889 | PARTIAL (360 lines, uncommitted changes) | Reactor field + Phase 7 added. query() stub. No peers/networking. |
-| context.rs | 389 | PARTIAL (156 lines, uncommitted changes) | query() added to TContext. No subscribe(). |
+| livequery.rs | 399 | PORTED + TESTED (6 tests) | EntityLiveQuery, LiveQuery<V>, WeakEntityLiveQuery. Committed. |
+| node.rs | 889 | PARTIAL (360 lines, committed) | Reactor field + Phase 7 + query() wired. No peers/networking. |
+| context.rs | 389 | PARTIAL (156 lines, committed) | query() added to TContext. No subscribe(). |
 | node_applier.rs | 296 | **NOT PORTED** | Remote update/delta application |
 | peer_subscription/client_relay.rs | 971 | **NOT PORTED** | Complex async state machine |
 | peer_subscription/server.rs | 175 | **NOT PORTED** | Subscription handler |
@@ -409,7 +413,7 @@ New TS files should include `// SOURCE-HASH: <sha256>` on line 2 (after the MIRR
 - **`require('@ankurah/proto')` in node.ts**: Used for Attested constructor in commit pipeline to avoid top-level import issues. Should be cleaned up eventually.
 
 ### Rust source hash manifest (drift detection)
-- A hash manifest at `scripts/rust-source-hashes.json` tracks SHA-256 hashes of 94 Rust source files
+- A hash manifest at `scripts/rust-source-hashes.json` tracks SHA-256 hashes of 155 files (85 source + 70 test)
 - The audit script now checks for drift: if a Rust file changes since last port, the audit warns
 - **After porting Rust changes to TS**: run `bun run scripts/audit-port.ts --update-manifest` to record the new hashes
 - **To bootstrap from scratch**: run `bun run scripts/audit-port.ts --backpopulate` to scan all MIRRORS annotations and compute current hashes
