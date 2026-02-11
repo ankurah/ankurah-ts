@@ -132,4 +132,7 @@ export type { ReactorUpdate as ReactorUpdateType } from './reactor/update.ts';
 export { EntityLiveQuery, WeakEntityLiveQuery, LiveQuery } from './livequery.ts';
 export type { RemoteQuerySubscriber } from './livequery.ts';
 
-// TODO: Port remaining types from ankurah/core/src/ (node_applier, peer_subscription)
+// ── NodeApplier ──
+export { NodeApplier } from './node_applier.ts';
+
+// TODO: Port remaining types from ankurah/core/src/ (peer_subscription)
