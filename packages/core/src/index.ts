@@ -106,7 +106,7 @@ export { entityWatcherIdKey, watcherChangeAdd, watcherChangeRemove } from './rea
 export type { GapFetcher } from './reactor/fetch_gap.ts';
 export { QueryGapFetcher, buildContinuationPredicate, inferValueTypeForField } from './reactor/fetch_gap.ts';
 export type { MembershipChange, ReactorUpdateItem } from './reactor/update.ts';
-export { ReactorUpdate } from './reactor/update.ts';
+export type { ReactorUpdate } from './reactor/update.ts';
 
 // ── Lineage ──
 export { EventAccumulator, compare, compareUnstoredEvent, compareWithAccumulator } from './lineage.ts';
