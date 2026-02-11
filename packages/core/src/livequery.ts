@@ -104,6 +104,10 @@ export class EntityLiveQuery {
   private readonly _selection: Mut<{ selection: Selection; version: number }>;
   readonly collectionId: CollectionId;
   private readonly gapFetcher: GapFetcher;
+  // Strong reference to the NodeLikeAdapter to prevent GC from collecting it
+  // while the QueryGapFetcher holds only a WeakRef.
+  // Divergence: Rust Arc prevents drop; TS needs explicit strong ref [E8].
+  private readonly _nodeLikeAdapter: NodeLike;
 
   // -- Initialization tracking --
   // Divergence: Rust uses AtomicU32; TS uses plain number (single-threaded JS) [E8].
@@ -123,6 +127,7 @@ export class EntityLiveQuery {
     selection: Mut<{ selection: Selection; version: number }>,
     collectionId: CollectionId,
     gapFetcher: GapFetcher,
+    nodeLikeAdapter: NodeLike,
   ) {
     this.queryId = queryId;
     this.node = node;
@@ -132,6 +137,7 @@ export class EntityLiveQuery {
     this._selection = selection;
     this.collectionId = collectionId;
     this.gapFetcher = gapFetcher;
+    this._nodeLikeAdapter = nodeLikeAdapter;
     this.initializedVersion = 0;
     this.currentVersion = 1;
 
@@ -188,7 +194,10 @@ export class EntityLiveQuery {
     // Step 7: Create gapFetcher
     // Rust: Arc::new(QueryGapFetcher::new(&node, cdata.clone()))
     // Divergence: TS QueryGapFetcher takes NodeLike; wrap Node+cdata with adapter [E8].
-    const gapFetcher: GapFetcher = new QueryGapFetcher(new NodeLikeAdapter(node, cdata));
+    // The adapter is stored as a strong ref in EntityLiveQuery to prevent GC while
+    // QueryGapFetcher holds only a WeakRef to it.
+    const nodeLikeAdapter = new NodeLikeAdapter(node, cdata);
+    const gapFetcher: GapFetcher = new QueryGapFetcher(nodeLikeAdapter);
 
     // Step 8: Construct instance
     const me = new EntityLiveQuery(
@@ -200,6 +209,7 @@ export class EntityLiveQuery {
       new Mut({ selection: args.selection, version: 1 }),
       collectionId,
       gapFetcher,
+      nodeLikeAdapter,
     );
 
     // Step 9: Determine relay status

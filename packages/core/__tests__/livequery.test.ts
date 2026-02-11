@@ -521,3 +521,274 @@ describe('LiveQuery - resultset_vs_livequery_signal_semantics', () => {
     livequeryGuard.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Helper: extract years from a LiveQuery's current items (ordered)
+// Mirrors Rust fn years(query: &LiveQuery<AlbumView>) -> Vec<String>
+// ---------------------------------------------------------------------------
+
+function years(lq: LiveQuery<ViewInstance>): string[] {
+  return lq.peek().map((item) => {
+    // AlbumDef View has .year() accessor
+    // The accessor returns either a plain string or a Value object { type: 'String', value: string }
+    const raw = (item as any).year();
+    if (typeof raw === 'string') return raw;
+    if (raw && typeof raw === 'object' && 'value' in raw) return String(raw.value);
+    return String(raw);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helper: create N albums with sequential years, returns [EntityId, ...]
+// Mirrors Rust fn create_albums(ctx, years) -> Vec<EntityId>
+// ---------------------------------------------------------------------------
+
+async function createAlbums(
+  node: Node,
+  yearStart: number,
+  yearEnd: number,
+): Promise<import('@ankurah/proto').EntityId[]> {
+  const ctx = node.context();
+  const trx = ctx.begin();
+  const ids: import('@ankurah/proto').EntityId[] = [];
+
+  for (let y = yearStart; y <= yearEnd; y++) {
+    const borrow = await trx.create(AlbumDef, {});
+    const entity = borrow.inner.entity();
+    getYrsStringHandle(entity, 'name').insert(0, `Album ${y}`);
+    getYrsStringHandle(entity, 'year').insert(0, String(y));
+    ids.push(borrow.inner.id());
+  }
+
+  await trx.commit();
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: test_predicate_update (MIRRORS: ankurah/tests/tests/update_predicate.rs)
+// ---------------------------------------------------------------------------
+
+describe('LiveQuery - predicate_update', () => {
+  test('updateSelectionWait changes the predicate and notifies watchers of membership changes', async () => {
+    const node = createTestNode();
+    const ctx = node.context();
+
+    // Create 3 albums: Alpha (2020), Bravo (2021), Charlie (2022)
+    const trx = ctx.begin();
+
+    const alphaBorrow = await trx.create(AlbumDef, {});
+    const alphaEntity = alphaBorrow.inner.entity();
+    getYrsStringHandle(alphaEntity, 'name').insert(0, 'Alpha');
+    getYrsStringHandle(alphaEntity, 'year').insert(0, '2020');
+    const alphaId = alphaBorrow.inner.id();
+
+    const bravoBorrow = await trx.create(AlbumDef, {});
+    const bravoEntity = bravoBorrow.inner.entity();
+    getYrsStringHandle(bravoEntity, 'name').insert(0, 'Bravo');
+    getYrsStringHandle(bravoEntity, 'year').insert(0, '2021');
+    const bravoId = bravoBorrow.inner.id();
+
+    const charlieBorrow = await trx.create(AlbumDef, {});
+    const charlieEntity = charlieBorrow.inner.entity();
+    getYrsStringHandle(charlieEntity, 'name').insert(0, 'Charlie');
+    getYrsStringHandle(charlieEntity, 'year').insert(0, '2022');
+    const charlieId = charlieBorrow.inner.id();
+
+    await trx.commit();
+
+    // LiveQuery: year > '2020' -- should match Bravo + Charlie
+    const lq = await queryWait(node, AlbumDef, "year > '2020'");
+    guards.push(lq);
+
+    const watcher = new TestWatcher();
+    const subGuard = lq.subscribe(watcher.listener());
+    guards.push(subGuard);
+
+    // Verify initial state: Bravo + Charlie
+    const expectedInitialIds = [bravoId, charlieId].sort((a, b) => {
+      const aBytes = a.toBytes();
+      const bBytes = b.toBytes();
+      for (let i = 0; i < Math.min(aBytes.length, bBytes.length); i++) {
+        if (aBytes[i] < bBytes[i]) return -1;
+        if (aBytes[i] > bBytes[i]) return 1;
+      }
+      return aBytes.length - bBytes.length;
+    });
+    expect(lq.idsSorted().length).toBe(2);
+    for (let i = 0; i < expectedInitialIds.length; i++) {
+      expect(lq.idsSorted()[i].equals(expectedInitialIds[i])).toBe(true);
+    }
+    expect(await watcher.quiesce()).toBe(0); // no changes yet
+
+    // Update predicate to be MORE restrictive: year > '2021' -- removes Bravo
+    await lq.inner.updateSelectionWait("year > '2021'");
+
+    // Verify only Charlie remains
+    expect(lq.ids().length).toBe(1);
+    expect(lq.ids()[0].equals(charlieId)).toBe(true);
+
+    // Watcher should get Remove for Bravo
+    const removeNotification = await watcher.takeOne();
+    expect(removeNotification.length).toBe(1);
+    expect(removeNotification[0][0].equals(bravoId)).toBe(true);
+    expect(removeNotification[0][1]).toBe('Remove');
+
+    // Update predicate to be LESS restrictive: year >= '2020' -- adds Alpha + Bravo
+    await lq.inner.updateSelectionWait("year >= '2020'");
+
+    // Verify all 3 albums are now in the result
+    const expectedAllIds = [alphaId, bravoId, charlieId].sort((a, b) => {
+      const aBytes = a.toBytes();
+      const bBytes = b.toBytes();
+      for (let i = 0; i < Math.min(aBytes.length, bBytes.length); i++) {
+        if (aBytes[i] < bBytes[i]) return -1;
+        if (aBytes[i] > bBytes[i]) return 1;
+      }
+      return aBytes.length - bBytes.length;
+    });
+    expect(lq.idsSorted().length).toBe(3);
+    for (let i = 0; i < expectedAllIds.length; i++) {
+      expect(lq.idsSorted()[i].equals(expectedAllIds[i])).toBe(true);
+    }
+
+    // Watcher should get Initial for Alpha + Bravo (sorted by entity ID for determinism)
+    const addNotification = watcher.drain();
+    expect(addNotification.length).toBe(1); // single batch
+    const batch = addNotification[0];
+    expect(batch.length).toBe(2);
+
+    const sortedBatch = [...batch].sort((a, b) => {
+      const aBytes = a[0].toBytes();
+      const bBytes = b[0].toBytes();
+      for (let i = 0; i < Math.min(aBytes.length, bBytes.length); i++) {
+        if (aBytes[i] < bBytes[i]) return -1;
+        if (aBytes[i] > bBytes[i]) return 1;
+      }
+      return aBytes.length - bBytes.length;
+    });
+    const expectedInitials = [alphaId, bravoId].sort((a, b) => {
+      const aBytes = a.toBytes();
+      const bBytes = b.toBytes();
+      for (let i = 0; i < Math.min(aBytes.length, bBytes.length); i++) {
+        if (aBytes[i] < bBytes[i]) return -1;
+        if (aBytes[i] > bBytes[i]) return 1;
+      }
+      return aBytes.length - bBytes.length;
+    });
+    expect(sortedBatch[0][0].equals(expectedInitials[0])).toBe(true);
+    expect(sortedBatch[0][1]).toBe('Initial');
+    expect(sortedBatch[1][0].equals(expectedInitials[1])).toBe(true);
+    expect(sortedBatch[1][1]).toBe('Initial');
+
+    // Should have no more changes
+    expect(await watcher.quiesce()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: test_single_node_gap_filling (MIRRORS: ankurah/tests/tests/limit_gap_filling.rs)
+// ---------------------------------------------------------------------------
+
+describe('LiveQuery - single_node_gap_filling', () => {
+  test('ORDER BY + LIMIT gap filling fetches next entity when one exits the query', async () => {
+    const node = createTestNode();
+    const ctx = node.context();
+
+    // Create 5 albums with years 2020-2024
+    const ids = await createAlbums(node, 2020, 2024);
+
+    // LiveQuery: year >= '2020' ORDER BY year ASC LIMIT 3
+    // Should initially contain [2020, 2021, 2022]
+    const lq = await queryWait(node, AlbumDef, "year >= '2020' ORDER BY year ASC LIMIT 3");
+    guards.push(lq);
+
+    const watcher = new TestWatcher();
+    const subGuard = lq.subscribe(watcher.listener());
+    guards.push(subGuard);
+
+    // Verify initial state
+    expect(await watcher.quiesce()).toBe(0);
+    expect(lq.peek().length).toBe(3);
+    expect(years(lq)).toEqual(['2020', '2021', '2022']);
+
+    // Update album with year 2021 to 1999 (exits the query: year < '2020')
+    {
+      const trx = ctx.begin();
+      const albumBorrow = await trx.get(AlbumDef, ids[1]); // 2021
+      const albumEntity = albumBorrow.inner.entity();
+      getYrsStringHandle(albumEntity, 'year').overwrite(0, 4, '1999');
+      await trx.commit();
+    }
+
+    // Wait for gap filling: Remove for 2021, Add for 2023
+    const notification = await watcher.takeOne();
+    expect(notification.length).toBe(2);
+    expect(notification[0][0].equals(ids[1])).toBe(true); // 2021
+    expect(notification[0][1]).toBe('Remove');
+    expect(notification[1][0].equals(ids[3])).toBe(true); // 2023
+    expect(notification[1][1]).toBe('Add');
+
+    // Final state should be [2020, 2022, 2023]
+    expect(years(lq)).toEqual(['2020', '2022', '2023']);
+    expect(await watcher.quiesce()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 6: test_single_node_multiple_gap_filling (MIRRORS: ankurah/tests/tests/limit_gap_filling.rs)
+// ---------------------------------------------------------------------------
+
+describe('LiveQuery - single_node_multiple_gap_filling', () => {
+  test('ORDER BY + LIMIT gap filling fetches multiple entities when multiple exit the query', async () => {
+    const node = createTestNode();
+    const ctx = node.context();
+
+    // Create 11 albums with years 2020-2030
+    const ids = await createAlbums(node, 2020, 2030);
+
+    // LiveQuery: year >= '2020' ORDER BY year ASC LIMIT 5
+    // Should initially contain [2020, 2021, 2022, 2023, 2024]
+    const lq = await queryWait(node, AlbumDef, "year >= '2020' ORDER BY year ASC LIMIT 5");
+    guards.push(lq);
+
+    const watcher = new TestWatcher();
+    const subGuard = lq.subscribe(watcher.listener());
+    guards.push(subGuard);
+
+    // Verify initial state
+    expect(await watcher.quiesce()).toBe(0);
+    expect(years(lq)).toEqual(['2020', '2021', '2022', '2023', '2024']);
+
+    // Remove 2 albums (2021 and 2023) in same transaction
+    {
+      const trx = ctx.begin();
+      const album2021Borrow = await trx.get(AlbumDef, ids[1]); // 2021
+      const album2021Entity = album2021Borrow.inner.entity();
+      getYrsStringHandle(album2021Entity, 'year').overwrite(0, 4, '1999');
+
+      const album2023Borrow = await trx.get(AlbumDef, ids[3]); // 2023
+      const album2023Entity = album2023Borrow.inner.entity();
+      getYrsStringHandle(album2023Entity, 'year').overwrite(0, 4, '1999');
+
+      await trx.commit();
+    }
+
+    // Wait for consolidated gap filling: 2 removes + 2 adds
+    const notification = await watcher.takeOne();
+    expect(notification.length).toBe(4);
+
+    // Verify the changes: Remove for 2021, Remove for 2023, Add for 2025, Add for 2026
+    expect(notification[0][0].equals(ids[1])).toBe(true); // 2021
+    expect(notification[0][1]).toBe('Remove');
+    expect(notification[1][0].equals(ids[3])).toBe(true); // 2023
+    expect(notification[1][1]).toBe('Remove');
+    expect(notification[2][0].equals(ids[5])).toBe(true); // 2025
+    expect(notification[2][1]).toBe('Add');
+    expect(notification[3][0].equals(ids[6])).toBe(true); // 2026
+    expect(notification[3][1]).toBe('Add');
+
+    // Final state: [2020, 2022, 2024, 2025, 2026]
+    expect(years(lq)).toEqual(['2020', '2022', '2024', '2025', '2026']);
+    expect(await watcher.quiesce()).toBe(0);
+  });
+});
