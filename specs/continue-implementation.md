@@ -34,9 +34,10 @@ Layer 0 (no deps):     error.ts, value/*.ts, property/traits.ts, property/backen
 Layer 1 (needs L0):    backend/lww.ts, backend/yjs.ts, property/value/*.ts, model.ts, define-model.ts
 Layer 2 (needs L1):    entity.ts (the central type)
 Layer 3 (needs L2):    transaction.ts
-Layer 4 (needs L2-3):  context.ts, node.ts
+Layer 4 (needs L2-3):  context.ts, node.ts, storage.ts, policy.ts
 Layer 5 (needs L2-4):  reactor/*.ts (8 files)
 Supporting (any time):  changes.ts, lineage.ts, selection.ts, etc.
+Post-core:             storage-memory, storage engines, connectors, react
 ```
 
 ## Project Goal
@@ -224,7 +225,7 @@ src/index.ts                         — Package entry with exports
   - 36 node tests (Node, NodeAndContext, Context integration, full commit pipeline, OpenPolicy, StorageEngine mock)
 
 ### Next up
-1. **`@ankurah/core` Layer 5 — Reactor** — 8 files: WatcherSet, ComparisonIndex, Subscription, CandidateChanges, three-phase notify.
+1. **`@ankurah/core` Layer 5 — Reactor** — 8 files: WatcherSet, ComparisonIndex, Subscription, CandidateChanges, three-phase notify. **Reactor research already completed** — see agent output at `/private/tmp/claude-501/-Users-daniel-ak/tasks/aff5721.output` (comprehensive spec covering all structs, three-phase notification pipeline, gap filling, dependencies).
 3. **`@ankurah/core` supporting types** — Lineage, LiveQuery, ResultSet, Selection, PeerSubscription.
 6. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
 7. **Connectors** — WebSocket client, local connector
@@ -241,7 +242,7 @@ src/index.ts                         — Package entry with exports
 - **Entity**: `Arc<EntityInner>` → plain class in TS. `RwLock<EntityInnerState>` → plain mutable fields (JS single-threaded). `EntityKind.Primary | EntityKind.Transacted { trxAlive, upstream }`. `snapshot()` forks all backends for transaction isolation.
 - **Transaction**: `AppendOnlyVec<Entity>` → regular array. `alive: Arc<AtomicBool>` → plain boolean. `commit()` generates events, validates via PolicyAgent, stores, relays to peers, notifies Reactor.
 - **Reactor**: Three-phase notification. Phase 1: enumerate watchers (WatcherSet has index/wildcard/entity tiers). Phase 2: evaluate changes per subscription (filter entities against predicates, compute membership changes). Phase 3: broadcast ReactorUpdate to subscribers via signals.
-- **defineModel() API**: Returns `{ View, Mutable, collection(), fields }`. View has typed getters returning projected types. Mutable has typed getters returning active type handles (LWW<T>, YrsString). Field helpers: `lww<T>()`, `yrsText()`, `ephemeral<T>()`. Placeholder wiring — actual backend access deferred to Entity implementation.
+- **defineModel() API**: Returns `{ View, Mutable, collection(), fields }`. View has typed getters returning projected types (via entity.getPropertyValue). Mutable has typed getters returning active type handles (via entity.getActiveHandle). Field helpers: `lww<T>()`, `yrsText()`, `ephemeral<T>()`. initializeNewEntity() delegates to entity.initializeProperty() per field.
 
 ## Agent Working Notes
 
@@ -260,6 +261,11 @@ src/index.ts                         — Package entry with exports
 - `ulid` crate v1.2.1 serializes as 26-char Crockford Base32 string (always, no `is_human_readable` check)
 - In bincode: 8-byte u64 length (=26) + 26 ASCII bytes = 34 bytes total
 - Deterministic test ULIDs constructed via: `"0000000000000000000000" + decimal(seed).padStart(4, '0')`
+
+### Known patterns and workarounds
+- **Circular dependency**: `context.ts` ↔ `transaction.ts` — resolved via `require('./transaction.ts')` in `context.ts:begin()` (inline import). This is the only circular dep in the codebase.
+- **Rust→TS concurrency mapping**: `Arc<AtomicBool>` → `{ value: boolean }` (shared reference), `RwLock` → plain fields, `AppendOnlyVec` → array, `DashMap` → Map. All documented as Exception E8 in individual files.
+- **`require('@ankurah/proto')` in node.ts**: Used for Attested constructor in commit pipeline to avoid top-level import issues. Should be cleaned up eventually.
 
 ### Sub-agent tips
 - Grant `.cargo/registry` read permission proactively for Rust source exploration
