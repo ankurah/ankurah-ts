@@ -22,6 +22,7 @@ export type { CastError } from './value/cast.ts';
 export type { PropertyName, Property } from './property/index.ts';
 export { PropertyError } from './property/traits.ts';
 export type { PropertyBackend } from './property/backend/index.ts';
+export { backendFromString } from './property/backend/index.ts';
 export { LWWBackend } from './property/backend/lww.ts';
 export { YjsBackend } from './property/backend/yjs.ts';
 export { LWW as LWWValue } from './property/value/lww.ts';
@@ -48,7 +49,7 @@ export type { TContext } from './context.ts';
 
 // ── Changes ──
 export { EntityChange, itemChangeItem, itemChangeEvents, itemChangeKind } from './changes.ts';
-export type { ItemChange, ChangeKind } from './changes.ts';
+export type { ItemChange, ChangeKind, ChangeSet } from './changes.ts';
 
 // ── Node ──
 export { Node, NodeAndContext, matchArgs } from './node.ts';
@@ -118,4 +119,17 @@ export { evaluatePredicate } from './selection/filter.ts';
 // ── System ──
 export { SystemManager, SYSTEM_COLLECTION_ID, PROTECTED_COLLECTIONS, sysItemToValue, sysItemFromValue } from './system.ts';
 
-// TODO: Port remaining types from ankurah/core/src/ (Reactor main, LiveQuery, Subscription)
+// ── Reactor main ──
+export { Reactor } from './reactor/index.ts';
+export type { PreNotifyHook, ReactorNodeLike } from './reactor/index.ts';
+export { Subscription, VecAccumulator, NoopAccumulator, buildKeySpecFromSelection } from './reactor/subscription_state.ts';
+export type { ChangeNotification, UpdateItemAccumulator, QueryState } from './reactor/subscription_state.ts';
+export { ReactorSubscription } from './reactor/subscription.ts';
+export { hasMembershipChange } from './reactor/update.ts';
+export type { ReactorUpdate as ReactorUpdateType } from './reactor/update.ts';
+
+// ── LiveQuery ──
+export { EntityLiveQuery, WeakEntityLiveQuery, LiveQuery } from './livequery.ts';
+export type { RemoteQuerySubscriber } from './livequery.ts';
+
+// TODO: Port remaining types from ankurah/core/src/ (node_applier, peer_subscription)

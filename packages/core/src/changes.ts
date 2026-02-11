@@ -112,3 +112,18 @@ export function itemChangeEvents<I>(change: ItemChange<I>): ReadonlyArray<Attest
 export function itemChangeKind<I>(change: ItemChange<I>): ChangeKind {
   return change.kind;
 }
+
+// ---------------------------------------------------------------------------
+// ChangeSet<V>
+// ---------------------------------------------------------------------------
+
+/**
+ * Batch of changes for a LiveQuery subscription.
+ *
+ * Rust: used inline in livequery.rs Subscribe impl
+ * V is a ViewInstance type (e.g., the view class created by defineModel)
+ */
+export interface ChangeSet<V> {
+  readonly changes: ReadonlyArray<ItemChange<V>>;
+  readonly resultset: import('./resultset.ts').EntityResultSet;
+}

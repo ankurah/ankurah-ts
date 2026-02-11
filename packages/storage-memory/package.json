@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@ankurah/storage-common": "workspace:*",
-    "@ankurah/proto": "workspace:*"
+    "@ankurah/proto": "workspace:*",
+    "@ankurah/core": "workspace:*",
+    "@ankurah/ankql": "workspace:*"
   },
   "files": [
     "src/"

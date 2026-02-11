@@ -410,8 +410,12 @@ export class Entity {
       return true;
     }
 
-    // For non-creation events: simplified merge (full lineage deferred)
+    // For non-creation events: simplified merge
+    // Full lineage comparison would determine Descends vs NotDescends, but for the
+    // local commit pipeline events always descend from the canonical entity's head.
+    // Rust Ordering::Descends: new_head = event.id().into()
     this.applyOperations(event.operations);
+    this.state.head = Clock.fromEventId(event.id());
     this.broadcast.send();
     return true;
   }

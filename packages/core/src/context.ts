@@ -1,9 +1,12 @@
 // MIRRORS: ankurah/core/src/context.rs
 
 import type { CollectionId, EntityId } from '@ankurah/proto';
+import type { Selection } from '@ankurah/ankql';
 import type { Entity } from './entity.ts';
 import type { AccessDenied, MutationError, RetrievalError } from './error.ts';
 import type { Transaction } from './transaction.ts';
+import type { MatchArgs } from './node.ts';
+import type { EntityLiveQuery } from './livequery.ts';
 
 // ---------------------------------------------------------------------------
 // TContext — abstract interface for transaction context
@@ -72,6 +75,13 @@ export interface TContext {
    * Rust: `async fn commit_local_trx(&self, trx: &Transaction) -> Result<(), MutationError>`
    */
   commitLocalTrx(trx: Transaction): Promise<void>;
+
+  /**
+   * Create a live query for a collection with the given match args.
+   *
+   * Rust: `fn query(&self, collection_id: CollectionId, args: MatchArgs) -> Result<EntityLiveQuery, RetrievalError>`
+   */
+  query(collectionId: CollectionId, args: MatchArgs): EntityLiveQuery;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +127,20 @@ export class Context {
     // Inline import to avoid circular dependency (Transaction imports TContext from this file)
     const { Transaction: TransactionClass } = require('./transaction.ts');
     return new TransactionClass(this.inner);
+  }
+
+  /**
+   * Query entities matching a predicate, returning a LiveQuery.
+   *
+   * Rust: `pub fn query<R: View>(&self, args: impl TryInto<MatchArgs>) -> Result<LiveQuery<R>, RetrievalError>`
+   * [context.rs lines 145-149]
+   *
+   * Divergence: Takes collectionId + args explicitly instead of using View::Model::collection() [E8].
+   */
+  query(collectionId: CollectionId, args: MatchArgs): EntityLiveQuery {
+    // Rust: self.0.query(R::Model::collection(), args)?.map::<R>()
+    // Delegates to NodeAndContext.query() which creates EntityLiveQuery
+    return this.inner.query(collectionId, args);
   }
 
   /**

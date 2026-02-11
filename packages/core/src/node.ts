@@ -17,9 +17,11 @@ import { Context, type TContext } from './context.ts';
 import type { Transaction } from './transaction.ts';
 import { MutationError, RetrievalError } from './error.ts';
 import type { AccessDenied } from './error.ts';
-import type { EntityChange } from './changes.ts';
+import { EntityChange } from './changes.ts';
 import type { StorageEngine, StorageCollection } from './storage.ts';
 import type { PolicyAgent } from './policy.ts';
+import { Reactor } from './reactor/index.ts';
+import { EntityLiveQuery } from './livequery.ts';
 
 // ---------------------------------------------------------------------------
 // MatchArgs — query parameters
@@ -74,6 +76,14 @@ export class Node {
   /** Policy agent for access control */
   readonly policyAgent: PolicyAgent<unknown>;
 
+  /** Reactor for subscription management and change notification
+   * Rust: `pub(crate) reactor: Reactor` in NodeInner */
+  readonly reactor: Reactor;
+
+  /** Subscription relay for peer networking — Phase 1 stub
+   * Rust: `pub(crate) subscription_relay: Option<SubscriptionRelay<...>>` in NodeInner */
+  readonly subscriptionRelay: null = null; // TODO: SubscriptionRelay for peer networking
+
   /** Context data factory — creates context data for new contexts */
   private readonly defaultContextData: unknown;
 
@@ -83,12 +93,14 @@ export class Node {
     storageEngine: StorageEngine;
     policyAgent: PolicyAgent<unknown>;
     contextData?: unknown;
+    reactor?: Reactor;
   }) {
     this.id = options.id ?? EntityIdClass.new();
     this.durable = options.durable ?? false;
     this.entities = new WeakEntitySet();
     this.storageEngine = options.storageEngine;
     this.policyAgent = options.policyAgent;
+    this.reactor = options.reactor ?? new Reactor();
     this.defaultContextData = options.contextData ?? null;
   }
 
@@ -219,6 +231,19 @@ export class NodeAndContext implements TContext {
   }
 
   /**
+   * Create a live query for a collection with the given match args.
+   *
+   * Rust: `fn query(&self, collection_id, args) -> Result<EntityLiveQuery, RetrievalError>`
+   * in TContext impl for NodeAndContext [context.rs line 70-72]:
+   *   `EntityLiveQuery::new(&self.node, collection_id, args, self.cdata.clone())`
+   *
+   * Divergence: Returns unknown until EntityLiveQuery is ported (Layer 6b).
+   */
+  query(collectionId: CollectionId, args: MatchArgs): EntityLiveQuery {
+    return EntityLiveQuery.create(this.node, collectionId, args, this.cdata);
+  }
+
+  /**
    * Commit a local transaction — the full commit pipeline.
    *
    * Rust: `commit_local_trx()` in context.rs (NodeAndContext impl)
@@ -228,10 +253,9 @@ export class NodeAndContext implements TContext {
    * 2. Generate commit events from each entity
    * 3. Policy validation and attestation
    * 4. Store events and update heads
-   * 5. Persist canonical state
-   *
-   * Note: Peer replication (Phase 5 in Rust) and reactor notification (Phase 7)
-   * are deferred until those subsystems are ported.
+   * 5. Persist canonical state + collect EntityChanges
+   * 6. Peer replication (deferred until connector layer is ported)
+   * 7. Reactor notification [Rust: node.reactor.notify_change(changes)]
    */
   async commitLocalTrx(trx: Transaction): Promise<void> {
     // Phase 1: Prevent double-commit
@@ -295,6 +319,8 @@ export class NodeAndContext implements TContext {
     }
 
     // Phase 5: Persist canonical state (apply events to upstream entities)
+    // Rust: builds Vec<EntityChange> during state persistence [context.rs commit_local_trx]
+    const entityChanges: EntityChange[] = [];
     for (const { entity, attested } of attestedEvents) {
       const collection = await this.node.storageEngine.collection(attested.payload.collection);
 
@@ -319,9 +345,15 @@ export class NodeAndContext implements TContext {
       const { Attested } = require('@ankurah/proto');
       const attestedState = Attested.opt(entityState, attestation);
       await collection.setState(attestedState);
+
+      // Collect entity change for reactor notification
+      // Rust: `changes.push(EntityChange::new(canonical_entity, vec![attested_event])?)`
+      entityChanges.push(EntityChange.create(canonicalEntity, [attested]));
     }
 
     // Phase 6: Peer replication — deferred until connector layer is ported
-    // Phase 7: Reactor notification — deferred until reactor is ported
+
+    // Phase 7: Notify Reactor of entity changes [Rust: node.reactor.notify_change(entity_changes)]
+    await this.node.reactor.notifyChange(entityChanges);
   }
 }

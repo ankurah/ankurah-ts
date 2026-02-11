@@ -72,6 +72,10 @@ class MockContext implements TContext {
     return [...this.entities.values()];
   }
 
+  query(_collectionId: any, _args: unknown): unknown {
+    throw new Error('not implemented');
+  }
+
   async commitLocalTrx(trx: Transaction): Promise<void> {
     if (this.commitShouldFail) {
       throw new Error('Commit failed');
