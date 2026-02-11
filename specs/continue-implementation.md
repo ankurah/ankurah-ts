@@ -8,24 +8,35 @@
 
 ## Supervision Model
 
-A human supervisor remains in the loop throughout implementation. The supervisor orchestrates work by dispatching background agents heavily — this is the primary working pattern. The supervisor:
-- Reviews agent output before committing
-- Makes all architectural and design decisions
-- Resolves conflicts between agent work products
-- Manages the overall implementation sequence
+**You (the Claude Code agent) are a SUPERVISOR, not an implementor.** Your role is to orchestrate background agents that do the actual work. A human supervisor remains in the loop above you, reviewing output and making decisions.
 
-Agents should surface uncertainties, ambiguities, and potential conflicts to the supervisor rather than making assumptions.
+### Your Role as Supervisor Agent
+
+**DO:**
+- Dispatch background `Task` agents for ALL research and implementation work
+- Read files to understand structure and verify agent output
+- Run `tsc` and `bun test` to verify correctness after agents complete
+- Fix small integration issues (import conflicts, type mismatches between agent outputs)
+- Commit checkpoint commits after each verified layer
+- Surface uncertainties to the human supervisor
+
+**DO NOT:**
+- Write implementation code yourself (this burns context that should be preserved for orchestration)
+- Read large Rust source files inline (dispatch an Explore agent instead)
+- Hold detailed implementation knowledge in your context (delegate it to agents)
+
+The reason for this discipline is **context management**. This project regularly overflows context windows. Every line of code you write inline, every Rust file you read directly, consumes context that could instead be used for 2-3 more rounds of agent orchestration. Background agents get their own fresh context windows — use them.
 
 ### Background Agent Pattern (CRITICAL)
 
-This project uses **aggressive background agent parallelism**. The supervisor agent (you) should:
+This project uses **aggressive background agent parallelism**. As supervisor you should:
 
-1. **Dispatch research agents first** — Before implementing anything, send Explore-type agents to read Rust source files and produce detailed specs. Launch 3-6 research agents in parallel for independent subsystems.
-2. **Implement in layers** — Identify dependency order, then dispatch implementation agents for each independent layer simultaneously. Example: Layer 0 (errors, Value, traits) has no internal deps → 3 parallel agents. Layer 1 (LWWBackend, YjsBackend, defineModel) depends on L0 but not on each other → 3 parallel agents after L0 lands.
-3. **Use `run_in_background: true`** — All research and implementation agents run in the background. Check on them with `TaskOutput` (non-blocking). Wait for all agents in a layer before dispatching the next layer.
-4. **Verify after each layer** — Run `npx tsc --noEmit -p packages/core/tsconfig.json` and `bun test` after each layer completes. Fix conflicts from concurrent agents editing shared files (e.g., `backend/index.ts`).
-5. **Context management** — This project regularly overflows context. When that happens, the supervisor rewinds (`/clear`), re-reads this file, recovers agent outputs from `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output` (JSONL format — use `tail -1 | python3 -c "import sys,json; ..."` to extract), and continues.
-6. **Agent prompts must be self-contained** — Each background agent gets a fresh context. Include: (a) which Rust files to read, (b) which TS files to create, (c) the annotation format, (d) what to import from which packages, (e) verification commands to run.
+1. **Dispatch research agents first** — Before implementing anything, send Task agents (subagent_type: "general-purpose" or "Explore") to read Rust source files and produce detailed specs. Launch 3-6 research agents in parallel for independent subsystems. Use `run_in_background: true`.
+2. **Dispatch implementation agents** — After research completes, send Task agents to write the TS files. Each agent gets a self-contained prompt with: (a) which Rust files to read, (b) which TS files to create/modify, (c) the annotation format from port-rules.md, (d) what to import from which packages, (e) verification commands to run. Use `run_in_background: true`.
+3. **Implement in layers** — Identify dependency order, then dispatch implementation agents for each independent file simultaneously. Example: Layer 0 (errors, Value, traits) has no internal deps → 3 parallel agents. Layer 1 (LWWBackend, YjsBackend, defineModel) depends on L0 but not on each other → 3 parallel agents after L0 lands.
+4. **Verify after each layer** — Run `npx tsc --noEmit` and `bun test` after each layer's agents complete. Fix conflicts from concurrent agents editing shared files (e.g., `index.ts` exports).
+5. **Commit after each layer** — Create a checkpoint commit so work is preserved across context rewinds.
+6. **Context management** — This project regularly overflows context. When that happens, the human supervisor rewinds (`/clear`), you re-read this file, recover agent outputs from `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output`, and continue from the "Next up" list.
 
 ### Proven layer pattern for @ankurah/core
 
@@ -282,5 +293,5 @@ src/index.ts                         — Package entry with exports
 5. **Follow port-rules.md strictly** — every file needs line 1 annotation, every exception needs a rule citation
 6. **Port tests** — every test in every in-scope crate must have a TS equivalent
 7. **Run the audit script** — `bun run scripts/audit-port.ts` to check compliance
-8. **Work primarily through background agents** — You are the supervisor. Dispatch `Task` agents with `run_in_background: true` for ALL research and implementation work. Maximize parallelism within each layer. Keep your own context lean by delegating. See "Background Agent Pattern" section above for the full protocol.
-9. **After context rewinds** — Re-read this file first. Check `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output` for recent agent outputs. Run `bun test` and `tsc` to verify current state. Then continue from the "Next up" list.
+8. **You are the SUPERVISOR, not the implementor** — Never write implementation code yourself. Dispatch `Task` agents with `run_in_background: true` for ALL research and implementation work. Your job is: dispatch agents → verify output → fix integration conflicts → commit. See "Supervision Model" section above. This is not a preference — it is a context management necessity.
+9. **After context rewinds** — Re-read this file first. Run `bun test` and `tsc` to verify current state. Check `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output` for recent agent outputs if needed. Then continue from the "Next up" list.
