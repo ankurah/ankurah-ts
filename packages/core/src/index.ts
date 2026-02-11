@@ -60,4 +60,32 @@ export type { StorageEngine, StorageCollection } from './storage.ts';
 export type { PolicyAgent } from './policy.ts';
 export { OpenPolicy } from './policy.ts';
 
-// TODO: Port remaining types from ankurah/core/src/ (Reactor, LiveQuery)
+// ── Indexing ──
+export { IndexDirection, NullsOrder, IndexSpecMatch } from './indexing/index.ts';
+export type { IndexKeyPart, KeySpec } from './indexing/index.ts';
+export { IndexError, encodeTupleValuesWithKeySpec } from './indexing/index.ts';
+export {
+  indexKeyPartAsc, indexKeyPartDesc, indexKeyPartFromPath, indexKeyPartFromFlatPath,
+  keySpecNew, keySpecEquals,
+} from './indexing/index.ts';
+
+// ── ResultSet ──
+export { EntityResultSet, ResultSetWrite, ResultSetRead } from './resultset.ts';
+
+// ── Reactor ──
+export { ComparisonIndex } from './reactor/comparison-index.ts';
+export { PropertyPath } from './reactor/property-path.ts';
+export { CandidateChanges } from './reactor/candidate-changes.ts';
+export { ReactorSubscriptionId, WatcherSet } from './reactor/watcher_set.ts';
+export type { WatcherOp, EntityWatcherId, WatcherChange, WatcherIdPair } from './reactor/watcher_set.ts';
+export { entityWatcherIdKey, watcherChangeAdd, watcherChangeRemove } from './reactor/watcher_set.ts';
+export type { GapFetcher } from './reactor/fetch_gap.ts';
+export { QueryGapFetcher, buildContinuationPredicate, inferValueTypeForField } from './reactor/fetch_gap.ts';
+export type { MembershipChange, ReactorUpdateItem } from './reactor/update.ts';
+export { ReactorUpdate } from './reactor/update.ts';
+
+// ── Selection/Filter ──
+export type { Filterable } from './selection/filter.ts';
+export { evaluatePredicate } from './selection/filter.ts';
+
+// TODO: Port remaining types from ankurah/core/src/ (Reactor main, LiveQuery, Subscription)
