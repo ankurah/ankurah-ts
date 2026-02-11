@@ -4,7 +4,7 @@
 
 **Last updated**: 2026-02-10
 
-**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-4 implemented (error types, Value, PropertyBackend, LWWBackend, YjsBackend, Model traits, defineModel, Entity, Transaction, Context, Changes, Node, StorageEngine/PolicyAgent interfaces, OpenPolicy). Next: Reactor, then storage engines/connectors.
+**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-4 fully implemented. Layer 5a (Reactor sub-layer: foundational types) implemented — update.ts, property-path.ts, comparison-index.ts, candidate-changes.ts, selection/filter.ts. Next: Layer 5b (WatcherSet, fetch-gap, EntityResultSet), then 5c (Subscription, Reactor main), then supporting types + storage engines/connectors.
 
 ## Supervision Model
 
@@ -196,8 +196,9 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **`@ankurah/core` Layer 2 — Entity** — Entity class, EntityKind (Primary | Transacted), WeakEntitySet (with WeakRef/FinalizationRegistry). All forward references replaced with real imports. 1 source file + 1 test file (30 tests).
 - **`@ankurah/core` Layer 3 — Transaction + Context + Changes** — Transaction class (create/get/edit/commit/rollback), TContext interface, Context wrapper, EntityChange (validated), ItemChange discriminated union, ChangeKind. Also added Event.id() and EventId.fromParts() to proto. 3 source files + 1 test file (33 tests).
 - **`@ankurah/core` Layer 4 — Node + Storage + Policy** — Node class, NodeAndContext (full TContext impl with 5-phase commit pipeline), MatchArgs, StorageEngine/StorageCollection interfaces, PolicyAgent interface, OpenPolicy. Fixed applyEvent() to use EventId.fromParts for head clock (was TODO). 3 source files + 1 test file (36 tests).
+- **`@ankurah/core` Layer 5a — Reactor foundational types** — ReactorUpdate/ReactorUpdateItem/MembershipChange (reactor/update.ts), PropertyPath with value extraction (reactor/property-path.ts), ComparisonIndex with sorted-array BTreeMap substitute for gt/lt range queries (reactor/comparison-index.ts), CandidateChanges zero-copy wrapper with per-query and entity offset maps (reactor/candidate-changes.ts), Filterable interface + evaluatePredicate recursive predicate evaluator (selection/filter.ts). 5 source files. Also fixed tsc errors in node.test.ts (CollectionId branded type + OpenPolicy arg count).
 
-### Core source files (24 total in packages/core/src/)
+### Core source files (30 total in packages/core/src/)
 ```
 src/error.ts                         — All error types (AccessDenied, MutationError, RetrievalError, StateError, etc.)
 src/model.ts                         — Model/View/Mutable trait interfaces, MutableBorrow
@@ -220,6 +221,11 @@ src/property/backend/lww.ts          — LWWBackend (bincode serialization, fiel
 src/property/backend/yjs.ts          — YjsBackend (V2 encoding, state vector diffs)
 src/property/value/lww.ts            — LWW<T> active type wrapper
 src/property/value/yrs_string.ts     — YrsString active type wrapper
+src/reactor/update.ts                — MembershipChange, ReactorUpdate, ReactorUpdateItem
+src/reactor/property-path.ts         — PropertyPath (field path with JSON sub-path support)
+src/reactor/comparison-index.ts      — ComparisonIndex<T> (field-level index for watcher matching)
+src/reactor/candidate-changes.ts     — CandidateChanges<C>, QueryCandidate<C> (zero-copy change wrapper)
+src/selection/filter.ts              — Filterable interface, evaluatePredicate()
 src/index.ts                         — Package entry with exports
 ```
 
@@ -236,12 +242,32 @@ src/index.ts                         — Package entry with exports
   - 36 node tests (Node, NodeAndContext, Context integration, full commit pipeline, OpenPolicy, StorageEngine mock)
 
 ### Next up
-1. **`@ankurah/core` Layer 5 — Reactor** — 8 files: WatcherSet, ComparisonIndex, Subscription, CandidateChanges, three-phase notify. **Reactor research already completed** — see agent output at `/private/tmp/claude-501/-Users-daniel-ak/tasks/aff5721.output` (comprehensive spec covering all structs, three-phase notification pipeline, gap filling, dependencies).
-3. **`@ankurah/core` supporting types** — Lineage, LiveQuery, ResultSet, Selection, PeerSubscription.
+1. **`@ankurah/core` Layer 5b — Reactor mid-layer** — 3 files needed next:
+   - `reactor/watcherset.ts` — WatcherSet (three registries: index/wildcard/entity watchers, uses ComparisonIndex + PropertyPath). Central dispatch for ENUMERATE phase.
+   - `reactor/fetch-gap.ts` — GapFetcher trait + QueryGapFetcher, build_continuation_predicate, infer_value_type_for_field.
+   - `resultset.ts` — EntityResultSet (sorted order + index + key_spec + limit + gap_dirty, write/read guards).
+2. **`@ankurah/core` Layer 5c — Reactor top-layer** — 3 files:
+   - `reactor/subscription-state.ts` — Subscription internal state (queries, entity_subscriptions, entities cache, evaluate_changes).
+   - `reactor/subscription.ts` — ReactorSubscription public handle (subscribe/unsubscribe, auto-cleanup).
+   - `reactor/reactor.ts` — Reactor main coordinator (three-phase notify_change pipeline, add_query, update_query).
+3. **`@ankurah/core` Layer 5 tests** — Port 9 unit tests: 2 comparison-index, 3 candidate-changes, 3 fetch-gap, 1 reactor end-to-end.
+4. **`@ankurah/core` supporting types** — Lineage, LiveQuery, ResultSet (typed wrapper), ChangeSet, PeerSubscription.
+5. **Node + Context integration** — Add `reactor` field to Node, wire Phase 7 in commitLocalTrx(), add `query()` method to Context.
 6. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
 7. **Connectors** — WebSocket client, local connector
 8. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
 9. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
+
+### Reactor research completed
+All research for the Reactor subsystem has been done. Key findings:
+- **Reactor structure**: 9 Rust files (reactor.rs + 7 in reactor/ + resultset.rs + livequery.rs). Three-phase notification: enumerate (WatcherSet) → evaluate (Subscription) → notify (broadcast ReactorUpdate).
+- **WatcherSet**: Three registries — index watchers (field-specific via ComparisonIndex), wildcard watchers (collection-wide for Predicate::True), entity watchers (explicit entity subscriptions). `accumulate_interested_watchers()` is the hot path.
+- **ComparisonIndex**: Sorted-array substitute for BTreeMap. Handles eq/ne/gt/lt range queries on collatable bytes. Already ported.
+- **EntityResultSet**: Ordered entity list with HashMap index. Supports ORDER BY sort keys, LIMIT, gap_dirty flag. Write guard does sorted insert/remove. Read guard for consistent reads. Broadcasts on mutation.
+- **Subscription internal state**: Holds queries map, entity_subscriptions set, entities cache. `evaluate_changes()` is the core — for each candidate, evaluate predicate, compare to resultset membership, compute MembershipChange (Initial/Add/Remove), update resultset, accumulate ReactorUpdateItems, generate deferred WatcherChanges.
+- **GapFetcher**: Fills gaps when LIMIT-constrained queries lose members. Builds continuation predicates from ORDER BY.
+- **Node integration**: Node needs `reactor` field. `commitLocalTrx()` Phase 7 calls `reactor.notifyChange(entityChanges)`. Context needs `query()` method returning LiveQuery.
+- **TS simplifications**: No Arc/Mutex (JS single-threaded). notify_lock → async queue/promise chain. BTreeMap → sorted array. IVec → plain array. Drop → dispose()/Symbol.dispose. tokio::spawn → fire-and-forget async.
 
 ### Rust-side work (ts-port-support branch)
 - ~~Bincode fixture generation tests~~ DONE (12 tests, 12 `.bin` files)
@@ -293,5 +319,6 @@ src/index.ts                         — Package entry with exports
 5. **Follow port-rules.md strictly** — every file needs line 1 annotation, every exception needs a rule citation
 6. **Port tests** — every test in every in-scope crate must have a TS equivalent
 7. **Run the audit script** — `bun run scripts/audit-port.ts` to check compliance
-8. **You are the SUPERVISOR, not the implementor** — Never write implementation code yourself. Dispatch `Task` agents with `run_in_background: true` for ALL research and implementation work. Your job is: dispatch agents → verify output → fix integration conflicts → commit. See "Supervision Model" section above. This is not a preference — it is a context management necessity.
-9. **After context rewinds** — Re-read this file first. Run `bun test` and `tsc` to verify current state. Check `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output` for recent agent outputs if needed. Then continue from the "Next up" list.
+8. **You are the SUPERVISOR, not the implementor** — **THIS IS NON-NEGOTIABLE.** Never write implementation code yourself. Never run `tsc` or `bun test` yourself. Never read large Rust source files yourself. Dispatch `Task` agents with `run_in_background: true` for ALL of these. Your job is ONLY: dispatch agents → wait for results → fix small integration conflicts → commit. See "Supervision Model" section above. This is not a suggestion — every line of code you write inline, every test you run directly, every file you read consumes context that burns through the window and forces a `/clear`. Background agents get their own fresh context windows — use them aggressively.
+9. **Dispatch agents in parallel** — Always launch 3-6 independent agents simultaneously. Never wait for one agent to finish before dispatching unrelated work. The proven pattern is: research agents first (parallel) → implementation agents (parallel per sub-layer) → verification agent (background) → commit.
+10. **After context rewinds** — Re-read this file first. Dispatch a background agent to run `bun test` and `tsc` to verify current state. Check `/private/tmp/claude-501/-Users-daniel-ak/tasks/*.output` for recent agent outputs if needed. Then continue from the "Next up" list.

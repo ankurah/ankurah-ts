@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   EntityId,
+  CollectionId,
   Clock,
   Event,
   Operation,
@@ -19,7 +20,7 @@ import { Entity, WeakEntitySet } from '../src/entity.ts';
 import { Node, NodeAndContext, matchArgs } from '../src/node.ts';
 import { Context } from '../src/context.ts';
 import { Transaction } from '../src/transaction.ts';
-import { OpenPolicy } from '../src/policy.ts';
+import { OpenPolicy, type PolicyAgent } from '../src/policy.ts';
 import type { StorageEngine, StorageCollection } from '../src/storage.ts';
 import { defineModel, lww, yrsText } from '../src/define-model.ts';
 import { LWWBackend } from '../src/property/backend/lww.ts';
@@ -64,11 +65,12 @@ class MockStorageCollection implements StorageCollection {
 class MockStorageEngine implements StorageEngine {
   readonly collections = new Map<string, MockStorageCollection>();
 
-  async collection(id: string): Promise<StorageCollection> {
-    let col = this.collections.get(id);
+  async collection(id: CollectionId): Promise<StorageCollection> {
+    const key = id.toString();
+    let col = this.collections.get(key);
     if (!col) {
       col = new MockStorageCollection();
-      this.collections.set(id, col);
+      this.collections.set(key, col);
     }
     return col;
   }
@@ -172,7 +174,7 @@ describe('Node', () => {
   test('fetchEntitiesFromLocal returns empty for empty storage', async () => {
     const { node } = createNode();
     const selection = { predicate: { type: 'True' } } as unknown as Selection;
-    const entities = await node.fetchEntitiesFromLocal('test_node', selection);
+    const entities = await node.fetchEntitiesFromLocal(CollectionId.from('test_node'), selection);
     expect(entities).toHaveLength(0);
   });
 
@@ -186,11 +188,11 @@ describe('Node', () => {
     const entityState = new EntityState(entityId, 'test_node' as any, state);
     const attested = new Attested(entityState);
 
-    const col = await storage.collection('test_node') as MockStorageCollection;
+    const col = await storage.collection(CollectionId.from('test_node')) as MockStorageCollection;
     col.states.set(entityId.toString(), attested);
 
     const selection = { predicate: { type: 'True' } } as unknown as Selection;
-    const entities = await node.fetchEntitiesFromLocal('test_node', selection);
+    const entities = await node.fetchEntitiesFromLocal(CollectionId.from('test_node'), selection);
     expect(entities).toHaveLength(1);
     expect(entities[0].id().equals(entityId)).toBe(true);
   });
@@ -213,7 +215,7 @@ describe('NodeAndContext', () => {
 
     expect(entity.kind.type).toBe('Transacted');
     expect(entity.isWritable()).toBe(true);
-    expect(entity.collection()).toBe('test_node');
+    expect(entity.collection().toString()).toBe('test_node');
   });
 
   test('createEntity() registers primary in WeakEntitySet', () => {
@@ -245,7 +247,7 @@ describe('NodeAndContext', () => {
     const stateBuffers = new StateBuffers(new Map());
     const state = new State(stateBuffers, Clock.empty());
     const entityState = new EntityState(entityId, 'test_node' as any, state);
-    const col = await storage.collection('test_node') as MockStorageCollection;
+    const col = await storage.collection(CollectionId.from('test_node')) as MockStorageCollection;
     col.states.set(entityId.toString(), new Attested(entityState));
 
     const entity = await nac.getEntity(entityId, 'test_node' as any, false);
@@ -299,7 +301,7 @@ describe('NodeAndContext', () => {
     const stateBuffers = new StateBuffers(new Map());
     const state = new State(stateBuffers, Clock.empty());
     const entityState = new EntityState(entityId, 'test_node' as any, state);
-    const col = await storage.collection('test_node') as MockStorageCollection;
+    const col = await storage.collection(CollectionId.from('test_node')) as MockStorageCollection;
     col.states.set(entityId.toString(), new Attested(entityState));
 
     const selection = { predicate: { type: 'True' } } as unknown as Selection;
@@ -484,7 +486,7 @@ describe('Node integration', () => {
 // ── OpenPolicy Tests ──
 
 describe('OpenPolicy', () => {
-  const policy = new OpenPolicy();
+  const policy: PolicyAgent = new OpenPolicy();
 
   test('checkWrite allows everything', () => {
     const entity = Entity.create(EntityId.new(), 'test' as any);
@@ -494,13 +496,13 @@ describe('OpenPolicy', () => {
 
   test('canAccessCollection allows everything', () => {
     // Should not throw
-    policy.canAccessCollection(null, 'any_collection' as any);
+    policy.canAccessCollection(null, CollectionId.from('any_collection'));
   });
 
   test('checkEvent returns null attestation', () => {
     const entity = Entity.create(EntityId.new(), 'test' as any);
     const ops = new OperationSet(new Map());
-    const event = new Event('test' as any, entity.id(), ops, Clock.empty());
+    const event = new Event(CollectionId.from('test'), entity.id(), ops, Clock.empty());
     const result = policy.checkEvent(null, entity, entity, event);
     expect(result).toBeNull();
   });
@@ -508,7 +510,7 @@ describe('OpenPolicy', () => {
   test('attestState returns null', () => {
     const entityId = EntityId.new();
     const state = new State(new StateBuffers(new Map()), Clock.empty());
-    const entityState = new EntityState(entityId, 'test' as any, state);
+    const entityState = new EntityState(entityId, CollectionId.from('test'), state);
     const result = policy.attestState(entityState);
     expect(result).toBeNull();
   });
