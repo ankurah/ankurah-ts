@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@ankurah/proto": "workspace:*",
-    "@ankurah/ankql": "workspace:*"
+    "@ankurah/ankql": "workspace:*",
+    "@ankurah/core": "workspace:*"
   },
   "files": [
     "src/"

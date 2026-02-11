@@ -1,11 +1,15 @@
 // MIRRORS: ankurah/storage/common/src/lib.rs
 //
-// @ankurah/storage-common — Storage engine trait and shared types.
-//
-// Defines the StorageEngine interface that all storage backends implement.
-// All methods are async (matching Rust async_trait).
+// @ankurah/storage-common -- Storage engine shared types, planner, and query utilities.
 //
 // Rust crate: ankurah-storage-common
-// Key types: StorageEngine (interface), StorageEntity, StorageQuery
-//
-// TODO: Port StorageEngine trait and types from ankurah/storage/common/src/
+// Re-exports mirror Rust lib.rs `pub use` / `pub mod` statements.
+
+// ── Modules (matching Rust `pub mod` declarations) ──
+
+export * from './types.ts';
+export * from './bounds.ts';
+export * from './predicate.ts';
+export * from './sorting.ts';
+export * from './filtering.ts';
+export * from './planner.ts';
