@@ -16,7 +16,7 @@ export { AccessDenied, MutationError, RetrievalError, StateError, SubscriptionEr
 // ── Value types ──
 export type { Value } from './value/index.ts';
 export { ValueType, valueType, valueFromLiteral, valuePartialCmp, valueEquals, valueGt, valueGe, valueLt, valueLe } from './value/index.ts';
-export { CastError } from './value/cast.ts';
+export type { CastError } from './value/cast.ts';
 
 // ── Property system ──
 export type { PropertyName, Property } from './property/index.ts';
@@ -107,8 +107,15 @@ export { QueryGapFetcher, buildContinuationPredicate, inferValueTypeForField } f
 export type { MembershipChange, ReactorUpdateItem } from './reactor/update.ts';
 export { ReactorUpdate } from './reactor/update.ts';
 
+// ── Lineage ──
+export { EventAccumulator, compare, compareUnstoredEvent, compareWithAccumulator } from './lineage.ts';
+export type { Ordering, LClock, LEvent, LGetEvents, LAttested } from './lineage.ts';
+
 // ── Selection/Filter ──
 export type { Filterable } from './selection/filter.ts';
 export { evaluatePredicate } from './selection/filter.ts';
+
+// ── System ──
+export { SystemManager, SYSTEM_COLLECTION_ID, PROTECTED_COLLECTIONS, sysItemToValue, sysItemFromValue } from './system.ts';
 
 // TODO: Port remaining types from ankurah/core/src/ (Reactor main, LiveQuery, Subscription)

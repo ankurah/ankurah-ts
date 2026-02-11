@@ -4,7 +4,8 @@ import { EntityId } from '@ankurah/proto';
 import type { Literal } from '@ankurah/ankql';
 
 // Re-export sub-modules (matching Rust mod.rs pub use / pub mod)
-export { CastError, CastErrorException, castTo, tryCastTo } from './cast';
+export type { CastError } from './cast';
+export { CastErrorException, castTo, tryCastTo } from './cast';
 export type { CollectionSchema } from './cast_predicate';
 export { castPredicateTypes } from './cast_predicate';
 export { valueCollatableToBytes, valueCollatableSuccessorBytes, valueCollatablePredecessorBytes, valueCollatableIsMinimum, valueCollatableIsMaximum, valueCollatableCompare } from './collatable';
