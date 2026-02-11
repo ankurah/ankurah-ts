@@ -2,9 +2,9 @@
 
 **Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts implementation. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
 
-**Last updated**: 2026-02-11 (Layer 6b complete, last commit 7294de3)
+**Last updated**: 2026-02-11 (Layer 7 in progress, last commit e86d01e)
 
-**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-5c fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. **Layer 6a committed**: livequery.ts (726 lines), storage-memory (188 lines), node.ts + context.ts updated with reactor wiring, all integration bugs fixed. **Layer 6b committed**: 11 storage-memory tests, 6 LiveQuery integration tests, TestWatcher utility, queryWait helper, ReactorUpdate barrel export fix, NodeLikeAdapter GC bug fix. **371 tests passing**, 990 assertions, 21 test files. **Next: Layer 6b remaining (JSON path tests, pagination tests — deferred until property types ported) → Layer 7 (networking) → Layer 8 (connectors + React).**
+**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-6b fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. Layer 6a+6b committed: livequery, storage-memory, integration tests, GC bug fix. **Layer 7 in progress**: ReadyChunks utility (5 tests), PolicyAgent validation methods added, NodeApplier implemented (422 lines). Peer subscription and node networking methods remain. **376 tests passing**, 1016 assertions, 22 test files. **Next: peer_subscription/ → node networking methods → Layer 8 (connectors + React).**
 
 ## Supervision Model
 
@@ -289,11 +289,13 @@ src/indexing/key_spec.ts             — KeySpec, IndexKeyPart, IndexDirection, 
 src/indexing/encoding.ts             — IndexError, encodeTupleValuesWithKeySpec
 src/indexing/index.ts                — Barrel export for indexing module
 src/selection/filter.ts              — Filterable interface, evaluatePredicate()
+src/node_applier.ts                  — NodeApplier (remote update/delta application, ReadyChunks batching)
+src/util/ready_chunks.ts             — ReadyChunks<T> async iterable (batched concurrent promise resolution)
 src/index.ts                         — Package entry with exports
 ```
 
-### Test counts (latest stable: commit 7294de3)
-- At commit 7294de3: tsc zero errors, **371 tests passing**, 990 assertions across 21 test files
+### Test counts (latest stable: commit e86d01e)
+- At commit e86d01e: tsc zero errors, **376 tests passing**, 1016 assertions across 22 test files
   - 24 proto fixture parity tests (244 assertions)
   - 45 signals tests
   - 76 ankql tests
@@ -307,6 +309,7 @@ src/index.ts                         — Package entry with exports
   - 9 reactor tests (ComparisonIndex, CandidateChanges, FetchGap, end-to-end watcher)
   - 11 storage-memory tests (set/get/list/filter/sort/limit/missing-collection/concurrent-writes/state-round-trip/delete/empty-filter)
   - 6 livequery tests (basic subscription, complex transitions, signal semantics, predicate update, single-node gap filling, multi-gap filling)
+  - 5 ready-chunks tests (simultaneous drain, pending-until-ready, empty, mixed, len/isEmpty tracking)
 
 ### Next up
 
@@ -314,10 +317,12 @@ src/index.ts                         — Package entry with exports
 1. **JSON path tests** — Needs `Json` property type (currently deferred in property/value/json.ts).
 2. **Pagination tests** — Needs `Ref` property type (currently deferred in property/value/entity_ref.ts).
 
-**Layer 7 — Networking (needs 6a-6b):**
-3. **`@ankurah/core` node_applier.ts** — Remote update application (296 lines). apply_updates() for stream updates, apply_deltas() for batch delta handling. Handles UpdateContent::StateAndEvent/EventOnly, DeltaContent::StateSnapshot/EventBridge. Validates with PolicyAgent. Batches reactor notifications.
-4. **`@ankurah/core` peer_subscription/** — Client relay (971 lines, complex async state machine: SubscriptionRelay routes queries to durable peers), server (175 lines: SubscriptionHandler). RemoteQuerySubscriber trait for callback state.
-5. **Complete node.rs networking** — Remaining ~400 lines: register_peer/deregister_peer, handle_message/handle_request/handle_update, relay_to_required_peers, commit_remote_transaction, TNodeErased full impl.
+**Layer 7 — Networking (in progress):**
+3. ~~**`@ankurah/core` node_applier.ts**~~ — DONE (commit e86d01e). 422 lines. applyUpdates (guarded until SubscriptionRelay), applyDeltas (ReadyChunks concurrent), DeltaContent/UpdateContent handlers.
+4. ~~**ReadyChunks utility**~~ — DONE (commit a1c6780). Async iterable batching concurrent promises. 5 tests.
+5. ~~**PolicyAgent validation methods**~~ — DONE (commit a1c6780). validateReceivedEvent/validateReceivedState added.
+6. **`@ankurah/core` peer_subscription/** — Client relay (SubscriptionRelay: 5-state machine, 10 public methods, retry timer), server (SubscriptionHandler: per-peer reactor subscription). Detailed spec available in agent research output.
+7. **Complete node.rs networking** — PeerState struct, register_peer/deregister_peer, request/sendUpdate (RPC correlation), handleMessage dispatcher, handleRequest/handleUpdate, relayToRequiredPeers, commitRemoteTransaction, TNodeErased full impl.
 
 **Layer 8 — Connectors + React (needs 7):**
 6. **Connectors** — connector-local (simple), connector-websocket (with reconnection).
@@ -358,7 +363,7 @@ Files in ankurah/core/src/ that still need work:
 | livequery.rs | 399 | PORTED + TESTED (6 tests) | EntityLiveQuery, LiveQuery<V>, WeakEntityLiveQuery. Committed. |
 | node.rs | 889 | PARTIAL (360 lines, committed) | Reactor field + Phase 7 + query() wired. No peers/networking. |
 | context.rs | 389 | PARTIAL (156 lines, committed) | query() added to TContext. No subscribe(). |
-| node_applier.rs | 296 | **NOT PORTED** | Remote update/delta application |
+| node_applier.rs | 296 | PORTED (422 lines, commit e86d01e) | applyUpdates (guarded), applyDeltas (ReadyChunks). |
 | peer_subscription/client_relay.rs | 971 | **NOT PORTED** | Complex async state machine |
 | peer_subscription/server.rs | 175 | **NOT PORTED** | Subscription handler |
 | peer_subscription/mod.rs | ~50 | **NOT PORTED** | Module re-exports |
@@ -385,6 +390,60 @@ Files in ankurah/core/src/ that still need work:
 - **Transaction**: `AppendOnlyVec<Entity>` → regular array. `alive: Arc<AtomicBool>` → plain boolean. `commit()` generates events, validates via PolicyAgent, stores, relays to peers, notifies Reactor.
 - **Reactor**: Three-phase notification. Phase 1: enumerate watchers (WatcherSet has index/wildcard/entity tiers). Phase 2: evaluate changes per subscription (filter entities against predicates, compute membership changes). Phase 3: broadcast ReactorUpdate to subscribers via signals.
 - **defineModel() API**: Returns `{ View, Mutable, collection(), fields }`. View has typed getters returning projected types (via entity.getPropertyValue). Mutable has typed getters returning active type handles (via entity.getActiveHandle). Field helpers: `lww<T>()`, `yrsText()`, `ephemeral<T>()`. initializeNewEntity() delegates to entity.initializeProperty() per field.
+
+## Rust Ownership → JS GC Translation (CRITICAL)
+
+This section documents how Rust's reference-counted ownership paradigm (Arc, Weak, Drop) is translated to JavaScript's garbage-collected paradigm. Two formal exception rules govern all divergences:
+
+- **E8 (Concurrency Primitives Eliminated)**: `Arc<T>`, `Rc<T>`, `RwLock<T>`, `Mutex<T>`, `AtomicBool`, `Send + Sync` → plain references, plain properties, plain booleans. JS is single-threaded.
+- **E11 (Drop Semantics → Dispose Pattern)**: Rust `impl Drop` → explicit `dispose()` methods + `Symbol.dispose` (ES2023 `using` declarations). JS has no deterministic destructors.
+
+### Pattern-by-Pattern Mapping
+
+| Rust Construct | TS Equivalent | Deterministic? | Primary Risk |
+|---|---|---|---|
+| `Arc<T>` / `Rc<T>` | Plain reference | N/A (GC handles) | None |
+| `Weak<T>` | `WeakRef<T>` | No (GC timing) | **Must ensure a strong ref exists elsewhere** |
+| `impl Drop` | `dispose()` + `[Symbol.dispose]()` | Only if called | Leaks if caller forgets |
+| `FinalizationRegistry` | Safety-net destructor | No (best-effort) | May never fire per spec |
+| `RwLock<T>` / `Mutex<T>` | Plain property | N/A | Write guards need manual `done()` |
+| `AtomicBool/U32` | `boolean` / `number` | N/A | None in single-threaded |
+| Lifetime params (`'a`) | Runtime `alive` flag check | No (no auto-drop) | Dangling mutable if Transaction not committed/rolled back |
+
+### Layered Defense Strategy
+
+The codebase uses four layers of defense for lifetime management:
+
+1. **Primary: explicit `dispose()` calls.** Every resource-owning type has a `dispose()` method. Tests always call it. API supports `[Symbol.dispose]()` for `using` declarations.
+2. **Secondary: `FinalizationRegistry` safety net.** Used for `WeakEntitySet` (cleans stale map entries) and `liveQueryRegistry` (eventually calls `unsubscribe_remote_predicate`). These catch cases where dispose was forgotten.
+3. **Structural: `WeakRef<T>`** for non-owning references that mirror Rust's `Weak<T>`. Prevents cycles and allows natural GC of unused objects.
+4. **Runtime guards: boolean flags** (`disposed`, `alive.value`) checked at mutation points to catch use-after-dispose. These replace Rust's compile-time lifetime enforcement.
+
+### Known Gotchas and Bugs Encountered
+
+**1. WeakRef without strong holder (NodeLikeAdapter GC bug — fixed in bb58066)**
+In `EntityLiveQuery`, a `NodeLikeAdapter` bridge object was created and passed to `QueryGapFetcher` which held only a `WeakRef` to it. Since no strong reference existed anywhere, the GC could collect it immediately, causing "Node has been dropped" errors during gap filling. Fix: added `private readonly _nodeLikeAdapter` field to `EntityLiveQuery` to hold a strong reference. **Lesson: in Rust, the `Arc` ownership graph guarantees the strong ref exists. In JS, you must manually ensure someone holds a strong reference for every WeakRef target.**
+
+**2. Transaction alive flag — no auto-Drop**
+Rust's `impl Drop for Transaction` automatically sets `alive = false` when the transaction goes out of scope. In TS, the `alive` flag is a shared `{ value: boolean }` object that only gets set to `false` when `commit()` or `rollback()` is explicitly called. If neither is called, forked entities remain writable indefinitely. **This is a genuine semantic gap.** Mitigated by test discipline (always commit/rollback) and documented in transaction.ts.
+
+**3. ResultSetWrite.done() — must be called manually**
+Rust's `MutexGuard` broadcasts changes on `Drop` when the write guard goes out of scope. TS uses an explicit `done()` method. Forgetting to call `done()` silently drops change notifications — no error, just silent data loss. Every call site in `subscription_state.ts` shows the pattern: `const rw = queryState.resultset.write(); rw.add(entity); rw.done();`
+
+**4. ListenerGuard / SubscriptionGuard leak risk**
+In Rust, dropping a `ListenerGuard` auto-unsubscribes the listener. In TS, if `dispose()` is never called, the listener stays registered forever — a classic JS memory leak. Tests explicitly verify idempotent dispose (signals/basic.test.ts).
+
+**5. WeakRef timing non-determinism**
+`WeakRef<T>.deref()` in JS is not deterministic about *when* the referent becomes unreachable. The spec allows engines to return a live reference even after all strong references are gone (within the same microtask turn). In Rust, `Weak::upgrade()` returns `None` the instant the last `Arc` is dropped. In practice this rarely causes bugs but means JS WeakRef is "weaker" in its guarantees.
+
+### Rules for New Code
+
+1. **Every `WeakRef` must have a corresponding strong reference holder.** Before creating a `WeakRef`, identify which object holds the strong reference and for how long. Document it with a comment.
+2. **Every `dispose()` method must be idempotent.** Use a `disposed` boolean flag. Test idempotency.
+3. **Every write guard (`ResultSetWrite`, etc.) must have `done()` called.** Consider `try/finally` patterns.
+4. **Prefer `using` declarations** where the scope is clear: `using sub = reactor.subscribe(...)`. This provides Rust-like scope-based cleanup.
+5. **`FinalizationRegistry` is a safety net, never a primary mechanism.** Always pair with explicit `dispose()`.
+6. **Test lifecycle behavior explicitly.** Port all Rust Drop-related tests. Add tests that verify dispose prevents further notifications.
 
 ## Agent Working Notes
 
