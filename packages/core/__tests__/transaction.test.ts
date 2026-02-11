@@ -72,7 +72,7 @@ class MockContext implements TContext {
     return [...this.entities.values()];
   }
 
-  query(_collectionId: any, _args: unknown): unknown {
+  query(_collectionId: any, _args: unknown): never {
     throw new Error('not implemented');
   }
 
