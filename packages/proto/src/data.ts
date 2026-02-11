@@ -269,6 +269,15 @@ export class Event {
     this.parent = parent;
   }
 
+  /**
+   * Compute the EventId for this event (SHA-256 of bincode-serialized entity_id || operations || parent).
+   *
+   * Rust: `pub fn id(&self) -> EventId { EventId::from_parts(&self.entity_id, &self.operations, &self.parent) }`
+   */
+  id(): EventId {
+    return EventId.fromParts(this.entityId, this.operations, this.parent);
+  }
+
   /** Whether this event represents entity creation (empty parent clock). */
   isEntityCreate(): boolean {
     return this.parent.isEmpty();

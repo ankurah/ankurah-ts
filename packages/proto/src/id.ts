@@ -308,6 +308,24 @@ export class EventId {
     const bytes = reader.readRawBytes(32);
     return new EventId(new Uint8Array(bytes));
   }
+
+  /**
+   * Compute an EventId from entity_id, operations, and parent clock.
+   *
+   * Rust: `pub fn from_parts(entity_id: &EntityId, operations: &OperationSet, parent: &Clock) -> Self`
+   * SHA-256 hash of bincode-serialized (entity_id || operations || parent).
+   *
+   * NOTE: This import is lazy to avoid circular dependencies with data.ts.
+   */
+  static fromParts(entityId: EntityId, operations: { encode(w: BincodeWriter): void }, parent: { encode(w: BincodeWriter): void }): EventId {
+    const { createHash } = require('crypto') as typeof import('crypto');
+    const w = new BincodeWriter();
+    entityId.encode(w);
+    operations.encode(w);
+    parent.encode(w);
+    const hash = createHash('sha256').update(w.finish()).digest();
+    return new EventId(new Uint8Array(hash));
+  }
 }
 
 // ─── ULID wrapper IDs (derived serde) ───────────────────────────────────────

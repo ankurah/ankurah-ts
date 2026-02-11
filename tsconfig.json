@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "noEmit": false,
-    "lib": ["ES2020"],
+    "lib": ["ES2021"],
     "types": ["bun"]
   },
   "exclude": ["node_modules", "dist"]
