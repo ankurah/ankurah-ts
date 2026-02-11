@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/policy.rs
 
-import type { CollectionId, Attestation, EntityState, Event } from '@ankurah/proto';
+import type { CollectionId, Attestation, Attested, EntityId, EntityState, Event } from '@ankurah/proto';
 import type { Entity } from './entity.ts';
 import type { AccessDenied } from './error.ts';
 
@@ -56,6 +56,26 @@ export interface PolicyAgent<ContextData = unknown> {
   attestState(state: EntityState): Attestation | null;
 
   /**
+   * Validate an event received from a remote peer.
+   *
+   * Rust: `fn validate_received_event(&self, node: &Node, from_peer_id: EntityId, event: Attested<Event>) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   *
+   * Divergence: `node` parameter omitted to avoid circular import (node.ts imports policy.ts) [A6].
+   */
+  validateReceivedEvent(fromPeerId: EntityId, event: Attested<Event>): void;
+
+  /**
+   * Validate a state received from a remote peer.
+   *
+   * Rust: `fn validate_received_state(&self, node: &Node, from_peer_id: EntityId, state: Attested<EntityState>) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   *
+   * Divergence: `node` parameter omitted to avoid circular import (node.ts imports policy.ts) [A6].
+   */
+  validateReceivedState(fromPeerId: EntityId, state: Attested<EntityState>): void;
+
+  /**
    * Filter predicate for collection access control.
    *
    * Rust: `fn filter_predicate(&self, cdata: &CD, collection: &CollectionId, predicate: Predicate) -> Result<Predicate, AccessDenied>`
@@ -92,5 +112,13 @@ export class OpenPolicy implements PolicyAgent<unknown> {
 
   attestState(): Attestation | null {
     return null; // No attestation
+  }
+
+  validateReceivedEvent(_fromPeerId: EntityId, _event: Attested<Event>): void {
+    // Allow all received events
+  }
+
+  validateReceivedState(_fromPeerId: EntityId, _state: Attested<EntityState>): void {
+    // Allow all received states
   }
 }
