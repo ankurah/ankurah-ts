@@ -2,9 +2,9 @@
 
 **Purpose**: This document provides sufficient context for a fresh agent to continue the ankurah-ts implementation. Read this first, then `architectural-decisions.md`, then `port-rules.md`, then refer to other specs as needed.
 
-**Last updated**: 2026-02-10
+**Last updated**: 2026-02-11
 
-**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-4 fully implemented. Layer 5a (Reactor sub-layer: foundational types) implemented — update.ts, property-path.ts, comparison-index.ts, candidate-changes.ts, selection/filter.ts. Next: Layer 5b (WatcherSet, fetch-gap, EntityResultSet), then 5c (Subscription, Reactor main), then supporting types + storage engines/connectors.
+**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-5b fully implemented. Layer 5b (Reactor mid-layer: WatcherSet, fetch-gap, EntityResultSet, indexing types) complete. Next: Layer 5c (Subscription, Reactor main), then supporting types + storage engines/connectors.
 
 ## Supervision Model
 
@@ -197,8 +197,9 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **`@ankurah/core` Layer 3 — Transaction + Context + Changes** — Transaction class (create/get/edit/commit/rollback), TContext interface, Context wrapper, EntityChange (validated), ItemChange discriminated union, ChangeKind. Also added Event.id() and EventId.fromParts() to proto. 3 source files + 1 test file (33 tests).
 - **`@ankurah/core` Layer 4 — Node + Storage + Policy** — Node class, NodeAndContext (full TContext impl with 5-phase commit pipeline), MatchArgs, StorageEngine/StorageCollection interfaces, PolicyAgent interface, OpenPolicy. Fixed applyEvent() to use EventId.fromParts for head clock (was TODO). 3 source files + 1 test file (36 tests).
 - **`@ankurah/core` Layer 5a — Reactor foundational types** — ReactorUpdate/ReactorUpdateItem/MembershipChange (reactor/update.ts), PropertyPath with value extraction (reactor/property-path.ts), ComparisonIndex with sorted-array BTreeMap substitute for gt/lt range queries (reactor/comparison-index.ts), CandidateChanges zero-copy wrapper with per-query and entity offset maps (reactor/candidate-changes.ts), Filterable interface + evaluatePredicate recursive predicate evaluator (selection/filter.ts). 5 source files. Also fixed tsc errors in node.test.ts (CollectionId branded type + OpenPolicy arg count).
+- **`@ankurah/core` Layer 5b — Reactor mid-layer** — WatcherSet (reactor/watcher_set.ts), fetch-gap (reactor/fetch_gap.ts), EntityResultSet (resultset.ts), indexing types (indexing/key_spec.ts, indexing/encoding.ts). WatcherSet implements three registries (index/wildcard/entity watchers) with accumulate_interested_watchers as the hot path. EntityResultSet provides ordered entity list with HashMap index, ORDER BY sort keys, LIMIT, gap_dirty flag, and write/read guard semantics. Indexing types provide KeySpec, IndexKeyPart, encoding for tuple values. GapFetcher trait + QueryGapFetcher build continuation predicates from ORDER BY for LIMIT-constrained queries. 6 source files (including indexing/index.ts barrel).
 
-### Core source files (30 total in packages/core/src/)
+### Core source files (36 total in packages/core/src/)
 ```
 src/error.ts                         — All error types (AccessDenied, MutationError, RetrievalError, StateError, etc.)
 src/model.ts                         — Model/View/Mutable trait interfaces, MutableBorrow
@@ -225,13 +226,20 @@ src/reactor/update.ts                — MembershipChange, ReactorUpdate, Reacto
 src/reactor/property-path.ts         — PropertyPath (field path with JSON sub-path support)
 src/reactor/comparison-index.ts      — ComparisonIndex<T> (field-level index for watcher matching)
 src/reactor/candidate-changes.ts     — CandidateChanges<C>, QueryCandidate<C> (zero-copy change wrapper)
+src/reactor/watcher_set.ts           — WatcherSet (three registries: index/wildcard/entity watchers)
+src/reactor/fetch_gap.ts             — GapFetcher trait, QueryGapFetcher, build_continuation_predicate
+src/reactor/subscription.ts          — Subscription internal state (queries, entity cache, evaluate_changes)
+src/resultset.ts                     — EntityResultSet (ordered entity list, sort keys, LIMIT, gap_dirty)
+src/indexing/key_spec.ts             — KeySpec, IndexKeyPart, IndexDirection, NullsOrder, IndexSpecMatch
+src/indexing/encoding.ts             — IndexError, encodeTupleValuesWithKeySpec
+src/indexing/index.ts                — Barrel export for indexing module
 src/selection/filter.ts              — Filterable interface, evaluatePredicate()
 src/index.ts                         — Package entry with exports
 ```
 
 ### Test counts (latest run)
 - tsc compiles all packages with zero errors
-- **309 total tests passing**, 793 assertions across 15 test files
+- **309 total tests passing**, 793 assertions across 16 test files
   - 24 proto fixture parity tests (244 assertions)
   - 45 signals tests
   - 76 ankql tests
@@ -242,21 +250,16 @@ src/index.ts                         — Package entry with exports
   - 36 node tests (Node, NodeAndContext, Context integration, full commit pipeline, OpenPolicy, StorageEngine mock)
 
 ### Next up
-1. **`@ankurah/core` Layer 5b — Reactor mid-layer** — 3 files needed next:
-   - `reactor/watcherset.ts` — WatcherSet (three registries: index/wildcard/entity watchers, uses ComparisonIndex + PropertyPath). Central dispatch for ENUMERATE phase.
-   - `reactor/fetch-gap.ts` — GapFetcher trait + QueryGapFetcher, build_continuation_predicate, infer_value_type_for_field.
-   - `resultset.ts` — EntityResultSet (sorted order + index + key_spec + limit + gap_dirty, write/read guards).
-2. **`@ankurah/core` Layer 5c — Reactor top-layer** — 3 files:
-   - `reactor/subscription-state.ts` — Subscription internal state (queries, entity_subscriptions, entities cache, evaluate_changes).
-   - `reactor/subscription.ts` — ReactorSubscription public handle (subscribe/unsubscribe, auto-cleanup).
+1. **`@ankurah/core` Layer 5c — Reactor top-layer** — 2 files:
    - `reactor/reactor.ts` — Reactor main coordinator (three-phase notify_change pipeline, add_query, update_query).
-3. **`@ankurah/core` Layer 5 tests** — Port 9 unit tests: 2 comparison-index, 3 candidate-changes, 3 fetch-gap, 1 reactor end-to-end.
-4. **`@ankurah/core` supporting types** — Lineage, LiveQuery, ResultSet (typed wrapper), ChangeSet, PeerSubscription.
-5. **Node + Context integration** — Add `reactor` field to Node, wire Phase 7 in commitLocalTrx(), add `query()` method to Context.
-6. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
-7. **Connectors** — WebSocket client, local connector
-8. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
-9. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
+   - Wire subscription.ts evaluate_changes and ReactorSubscription public handle (subscribe/unsubscribe, auto-cleanup) — subscription.ts already exists from Layer 5b, may need completion for top-layer integration.
+2. **`@ankurah/core` Layer 5 tests** — Port 9 unit tests: 2 comparison-index, 3 candidate-changes, 3 fetch-gap, 1 reactor end-to-end.
+3. **`@ankurah/core` supporting types** — Lineage, LiveQuery, ResultSet (typed wrapper), ChangeSet, PeerSubscription.
+4. **Node + Context integration** — Add `reactor` field to Node, wire Phase 7 in commitLocalTrx(), add `query()` method to Context.
+5. **Storage engines** — storage-common traits, then expo-sqlite and better-sqlite3
+6. **Connectors** — WebSocket client, local connector
+7. **`@ankurah/react`** — Absorb ankurah-react-hooks, wire to TS signals
+8. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
 
 ### Reactor research completed
 All research for the Reactor subsystem has been done. Key findings:
@@ -289,6 +292,9 @@ All research for the Reactor subsystem has been done. Key findings:
 - Test files: `// MIRRORS: ankurah/<crate>/src/<path>.rs` (same as source, bare path)
 - TS-only files: `// TS-ONLY: <reason>`
 
+### SOURCE-HASH annotations
+New TS files should include `// SOURCE-HASH: <sha256>` on line 2 (after the MIRRORS annotation) with the SHA-256 hash of the Rust source file used as the basis for the port. This enables automated drift detection.
+
 ### Fixture path convention
 - Rust fixtures: `/Users/daniel/ak/ankurah-ts-support/proto/test_fixtures/`
 - TS tests resolve via: `path.resolve(__dirname, '../../../../ankurah-ts-support/proto/test_fixtures')`
@@ -303,6 +309,13 @@ All research for the Reactor subsystem has been done. Key findings:
 - **Circular dependency**: `context.ts` ↔ `transaction.ts` — resolved via `require('./transaction.ts')` in `context.ts:begin()` (inline import). This is the only circular dep in the codebase.
 - **Rust→TS concurrency mapping**: `Arc<AtomicBool>` → `{ value: boolean }` (shared reference), `RwLock` → plain fields, `AppendOnlyVec` → array, `DashMap` → Map. All documented as Exception E8 in individual files.
 - **`require('@ankurah/proto')` in node.ts**: Used for Attested constructor in commit pipeline to avoid top-level import issues. Should be cleaned up eventually.
+
+### Rust source hash manifest (drift detection)
+- A hash manifest at `scripts/rust-source-hashes.json` tracks SHA-256 hashes of every Rust file referenced by a MIRRORS annotation
+- The audit script now checks for drift: if a Rust file changes since last port, the audit warns
+- **After porting Rust changes to TS**: run `bun run scripts/audit-port.ts --update-manifest` to record the new hashes
+- **To bootstrap from scratch**: run `bun run scripts/audit-port.ts --backpopulate` to scan all MIRRORS annotations and compute current hashes
+- The manifest file should be committed alongside TS changes
 
 ### Sub-agent tips
 - Grant `.cargo/registry` read permission proactively for Rust source exploration

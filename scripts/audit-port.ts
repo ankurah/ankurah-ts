@@ -3,7 +3,8 @@
 // Usage: bun run scripts/audit-port.ts
 // Env:   ANKURAH_RS_PATH (default: ../ankurah)
 
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { createHash } from "crypto";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { basename, dirname, join, relative, resolve } from "path";
 
 // ---------------------------------------------------------------------------
@@ -12,6 +13,7 @@ import { basename, dirname, join, relative, resolve } from "path";
 
 const RS_PATH = resolve(process.env.ANKURAH_RS_PATH ?? join(__dirname, "..", "..", "ankurah"));
 const TS_ROOT = resolve(join(__dirname, ".."));
+const MANIFEST_PATH = join(TS_ROOT, "scripts", "rust-source-hashes.json");
 
 /** Crate-path (relative to RS_PATH) -> array of TS package paths (relative to TS_ROOT/packages/) */
 const CRATE_TO_PACKAGES: Record<string, string[]> = {
@@ -135,6 +137,58 @@ function rustFileHasTests(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Utility: compute SHA-256 hash of a file
+// ---------------------------------------------------------------------------
+
+function sha256File(filePath: string): string | null {
+  try {
+    const content = readFileSync(filePath);
+    return createHash("sha256").update(content).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manifest: Rust source file hash tracking for drift detection
+// ---------------------------------------------------------------------------
+
+/** Maps Rust file paths (relative to RS_PATH, e.g. "proto/src/id.rs") to their SHA-256 hashes */
+type HashManifest = Record<string, string>;
+
+function loadManifest(): HashManifest {
+  try {
+    const raw = readFileSync(MANIFEST_PATH, "utf-8");
+    return JSON.parse(raw) as HashManifest;
+  } catch {
+    return {};
+  }
+}
+
+function saveManifest(manifest: HashManifest): void {
+  // Sort keys for stable, diffable output
+  const sorted: HashManifest = {};
+  for (const key of Object.keys(manifest).sort()) {
+    sorted[key] = manifest[key];
+  }
+  writeFileSync(MANIFEST_PATH, JSON.stringify(sorted, null, 2) + "\n", "utf-8");
+}
+
+// ---------------------------------------------------------------------------
+// Utility: extract MIRRORS annotation Rust path from a TS file
+// ---------------------------------------------------------------------------
+
+/** Returns the Rust relative path (e.g. "core/src/entity.rs") from a MIRRORS annotation, or null */
+function extractMirrorsPath(tsFile: string): string | null {
+  const firstLine = readFirstLine(tsFile);
+  if (!firstLine) return null;
+  const match = firstLine.match(/^\/\/\s*MIRRORS:\s*(.+)$/);
+  if (!match) return null;
+  // Strip the "ankurah/" prefix if present
+  return match[1].trim().replace(/^ankurah\//, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +735,179 @@ function checkTestCoverage() {
 }
 
 // ---------------------------------------------------------------------------
+// Check 8: Rust source drift detection (hash manifest)
+// ---------------------------------------------------------------------------
+
+function checkRustSourceDrift() {
+  const CHECK = "Rust source drift";
+
+  const manifest = loadManifest();
+  const manifestKeys = Object.keys(manifest);
+
+  if (manifestKeys.length === 0) {
+    warn(CHECK, "No hash manifest found at scripts/rust-source-hashes.json -- run with --backpopulate to create one");
+    return;
+  }
+
+  let totalChecked = 0;
+  let upToDate = 0;
+  let drifted = 0;
+  let missingRs = 0;
+
+  for (const rsRelPath of manifestKeys) {
+    const rsAbsPath = join(RS_PATH, rsRelPath);
+
+    if (!existsSync(rsAbsPath)) {
+      missingRs++;
+      warn(CHECK, `Manifest references Rust file that no longer exists: ${rsRelPath}`);
+      continue;
+    }
+
+    totalChecked++;
+    const currentHash = sha256File(rsAbsPath);
+    if (!currentHash) {
+      warn(CHECK, `Could not hash Rust file: ${rsRelPath}`);
+      continue;
+    }
+
+    if (currentHash !== manifest[rsRelPath]) {
+      drifted++;
+      warn(
+        CHECK,
+        `Rust file has changed since last port: ${rsRelPath} (manifest: ${manifest[rsRelPath].slice(0, 12)}... current: ${currentHash.slice(0, 12)}...)`,
+      );
+    } else {
+      upToDate++;
+    }
+  }
+
+  if (drifted === 0 && totalChecked > 0) {
+    pass(CHECK, `All ${upToDate} tracked Rust files match their manifest hashes (no drift)`);
+  } else if (drifted > 0) {
+    warn(
+      CHECK,
+      `${drifted} of ${totalChecked} tracked Rust files have drifted since last port -- TS files may need updating`,
+    );
+  }
+
+  if (missingRs > 0) {
+    warn(CHECK, `${missingRs} Rust files in manifest no longer exist (deleted or moved)`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Back-population: scan all MIRRORS annotations and build hash manifest
+// ---------------------------------------------------------------------------
+
+function backpopulateManifest(): void {
+  const packagesDir = join(TS_ROOT, "packages");
+  if (!existsSync(packagesDir)) {
+    console.error("ERROR: packages/ directory does not exist.");
+    process.exit(1);
+  }
+
+  const manifest: HashManifest = {};
+  let scanned = 0;
+  let hashed = 0;
+  let skippedMissing = 0;
+
+  const pkgDirs = readdirSync(packagesDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+
+  for (const pkg of pkgDirs) {
+    const srcDir = join(packagesDir, pkg, "src");
+    if (!existsSync(srcDir)) continue;
+
+    const tsFiles = walkDir(srcDir, ".ts");
+
+    // Also check __tests__/ directory
+    const testsDir = join(packagesDir, pkg, "__tests__");
+    if (existsSync(testsDir)) {
+      tsFiles.push(...walkDir(testsDir, ".ts"));
+    }
+
+    for (const tsFile of tsFiles) {
+      const rsRelPath = extractMirrorsPath(tsFile);
+      if (!rsRelPath) continue;
+
+      scanned++;
+      const rsAbsPath = join(RS_PATH, rsRelPath);
+
+      if (!existsSync(rsAbsPath)) {
+        skippedMissing++;
+        console.log(`  SKIP (missing): ${rsRelPath} (referenced by ${relative(TS_ROOT, tsFile)})`);
+        continue;
+      }
+
+      const hash = sha256File(rsAbsPath);
+      if (hash) {
+        manifest[rsRelPath] = hash;
+        hashed++;
+      }
+    }
+  }
+
+  saveManifest(manifest);
+
+  console.log("");
+  console.log("Back-population complete:");
+  console.log(`  Scanned:  ${scanned} MIRRORS annotations`);
+  console.log(`  Hashed:   ${hashed} Rust source files`);
+  if (skippedMissing > 0) {
+    console.log(`  Skipped:  ${skippedMissing} (Rust file not found)`);
+  }
+  console.log(`  Written:  ${MANIFEST_PATH}`);
+  console.log("");
+}
+
+// ---------------------------------------------------------------------------
+// Update manifest: recompute hashes for all tracked Rust files
+// ---------------------------------------------------------------------------
+
+function updateManifest(): void {
+  const manifest = loadManifest();
+  const keys = Object.keys(manifest);
+
+  if (keys.length === 0) {
+    console.error("ERROR: No existing manifest to update. Run with --backpopulate first.");
+    process.exit(1);
+  }
+
+  let updated = 0;
+  let removed = 0;
+
+  for (const rsRelPath of keys) {
+    const rsAbsPath = join(RS_PATH, rsRelPath);
+    if (!existsSync(rsAbsPath)) {
+      delete manifest[rsRelPath];
+      removed++;
+      console.log(`  REMOVED (file gone): ${rsRelPath}`);
+      continue;
+    }
+
+    const hash = sha256File(rsAbsPath);
+    if (hash && hash !== manifest[rsRelPath]) {
+      console.log(`  UPDATED: ${rsRelPath} (${manifest[rsRelPath].slice(0, 12)}... -> ${hash.slice(0, 12)}...)`);
+      manifest[rsRelPath] = hash;
+      updated++;
+    }
+  }
+
+  saveManifest(manifest);
+
+  console.log("");
+  console.log("Manifest update complete:");
+  console.log(`  Checked:  ${keys.length} entries`);
+  console.log(`  Updated:  ${updated}`);
+  if (removed > 0) {
+    console.log(`  Removed:  ${removed} (Rust files no longer exist)`);
+  }
+  console.log(`  Written:  ${MANIFEST_PATH}`);
+  console.log("");
+}
+
+// ---------------------------------------------------------------------------
 // Print report
 // ---------------------------------------------------------------------------
 
@@ -772,6 +999,8 @@ function printReport() {
 // ---------------------------------------------------------------------------
 
 function main() {
+  const args = process.argv.slice(2);
+
   // Verify Rust repo exists
   if (!existsSync(RS_PATH)) {
     console.error(
@@ -781,10 +1010,42 @@ function main() {
     process.exit(1);
   }
 
+  // Handle special modes
+  if (args.includes("--backpopulate")) {
+    console.log("Back-populating hash manifest from current MIRRORS annotations...");
+    backpopulateManifest();
+    return;
+  }
+
+  if (args.includes("--update-manifest")) {
+    console.log("Updating hash manifest with current Rust file hashes...");
+    updateManifest();
+    return;
+  }
+
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(`
+Usage: bun run scripts/audit-port.ts [OPTIONS]
+
+Options:
+  (no args)           Run all audit checks including drift detection
+  --backpopulate      Scan all MIRRORS annotations, compute SHA-256 of each
+                      referenced Rust file, and write scripts/rust-source-hashes.json
+  --update-manifest   Recompute hashes for all files already in the manifest
+                      (use after reviewing/porting drifted files)
+  --help, -h          Show this help message
+
+Environment:
+  ANKURAH_RS_PATH     Path to Rust ankurah repo (default: ../ankurah)
+`);
+    return;
+  }
+
   // Run all checks
   checkRustFileCoverage();
   checkTsAnnotations();
   checkTestCoverage();
+  checkRustSourceDrift();
 
   // Print report and exit
   const failures = printReport();

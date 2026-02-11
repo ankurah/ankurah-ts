@@ -478,6 +478,27 @@ Or for integration tests:
 // MIRRORS: ankurah/tests/tests/basic.rs
 ```
 
+### G6. Rust Source Hash Manifest (Drift Detection)
+
+A hash manifest file at `scripts/rust-source-hashes.json` tracks the SHA-256 hash of each Rust source file that has been ported. This enables automated drift detection: when a Rust file changes, the audit script flags the corresponding TS file as potentially needing an update.
+
+**Manifest format** (`scripts/rust-source-hashes.json`):
+```json
+{
+  "core/src/entity.rs": "a1b2c3d4e5f6...",
+  "proto/src/id.rs": "f6e5d4c3b2a1..."
+}
+```
+
+Keys are Rust file paths relative to the Rust repo root (e.g. `proto/src/id.rs`, NOT `ankurah/proto/src/id.rs`). Values are full SHA-256 hex digests of the file contents.
+
+**Workflow:**
+1. **Bootstrap**: Run `bun run scripts/audit-port.ts --backpopulate` to scan all existing MIRRORS annotations and compute hashes of the current Rust files. This creates the initial manifest.
+2. **Audit**: The regular audit (`bun run scripts/audit-port.ts`) compares current Rust file hashes against the manifest and warns about any drift.
+3. **After porting changes**: Run `bun run scripts/audit-port.ts --update-manifest` to record the new Rust file hashes after reviewing/porting the changes.
+
+**Rule**: When porting a Rust file change to TS, always update the manifest afterward so the drift detection stays current. The manifest file should be committed alongside the TS changes.
+
 ---
 
 ## H. Validation Checklist
@@ -495,3 +516,4 @@ Use this checklist to verify port compliance:
 - [ ] Intra-package imports use relative paths
 - [ ] Test files are adjacent to source (`.test.ts`) or in `__tests__/`
 - [ ] Re-export chains in `index.ts` match Rust `lib.rs` / `mod.rs` re-exports
+- [ ] Hash manifest (`scripts/rust-source-hashes.json`) is updated after porting Rust changes
