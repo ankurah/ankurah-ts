@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/storage.rs
 
-import type { CollectionId, EntityId, Attested, EntityState, Event } from '@ankurah/proto';
+import type { CollectionId, EntityId, EventId, Attested, EntityState, Event } from '@ankurah/proto';
 import type { Selection } from '@ankurah/ankql';
 import type { RetrievalError, StateError } from './error.ts';
 
@@ -37,6 +37,13 @@ export interface StorageCollection {
    * Rust: `async fn add_event(&self, event: &Attested<Event>) -> Result<(), MutationError>`
    */
   addEvent(event: Attested<Event>): Promise<void>;
+
+  /**
+   * Retrieve a list of events by their IDs.
+   *
+   * Rust: `async fn get_events(&self, event_ids: Vec<EventId>) -> Result<Vec<Attested<Event>>, RetrievalError>`
+   */
+  getEvents(eventIds: EventId[]): Promise<Attested<Event>[]>;
 
   /**
    * Fetch entity states matching a selection predicate.

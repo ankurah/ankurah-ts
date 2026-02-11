@@ -14,7 +14,6 @@
     "@ankurah/proto": "workspace:*",
     "@ankurah/signals": "workspace:*",
     "@ankurah/ankql": "workspace:*",
-    "@ankurah/storage-common": "workspace:*",
     "yjs": "^13.6.0"
   },
   "files": [

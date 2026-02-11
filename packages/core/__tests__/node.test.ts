@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   EntityId,
+  EventId,
   CollectionId,
   Clock,
   Event,
@@ -53,6 +54,10 @@ class MockStorageCollection implements StorageCollection {
 
   async addEvent(event: Attested<Event>): Promise<void> {
     this.events.push(event);
+  }
+
+  async getEvents(eventIds: EventId[]): Promise<Attested<Event>[]> {
+    return this.events.filter((e) => eventIds.some((id) => id.equals(e.payload.id())));
   }
 
   async fetchStates(_selection: Selection): Promise<Attested<EntityState>[]> {

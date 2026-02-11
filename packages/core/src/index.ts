@@ -15,6 +15,7 @@ export { AccessDenied, MutationError, RetrievalError, StateError, SubscriptionEr
 
 // ── Value types ──
 export type { Value } from './value/index.ts';
+export { ValueType, valueType, valueFromLiteral, valuePartialCmp, valueEquals, valueGt, valueGe, valueLt, valueLe } from './value/index.ts';
 export { CastError } from './value/cast.ts';
 
 // ── Property system ──
@@ -53,8 +54,29 @@ export type { ItemChange, ChangeKind } from './changes.ts';
 export { Node, NodeAndContext, matchArgs } from './node.ts';
 export type { MatchArgs } from './node.ts';
 
+// ── Schema ──
+export type { CollectionSchema } from './schema.ts';
+
+// ── Query Value ──
+export type { QueryValue } from './query_value.ts';
+export {
+  queryValueString, queryValueInt, queryValueFloat, queryValueBool, queryValueEntityId,
+  queryValueToExpr,
+} from './query_value.ts';
+
+// ── Connector ──
+export { SendError } from './connector.ts';
+export type { PeerSender, NodeComms } from './connector.ts';
+
 // ── Storage ──
 export type { StorageEngine, StorageCollection } from './storage.ts';
+
+// ── Retrieval ──
+export type { TEvent, TClock, GetEvents, Retrieve } from './retrieval.ts';
+export { clockMembers, eventAsTEvent, LocalRetriever } from './retrieval.ts';
+
+// ── CollectionSet ──
+export { CollectionSet } from './collectionset.ts';
 
 // ── Policy ──
 export type { PolicyAgent } from './policy.ts';
@@ -66,7 +88,8 @@ export type { IndexKeyPart, KeySpec } from './indexing/index.ts';
 export { IndexError, encodeTupleValuesWithKeySpec } from './indexing/index.ts';
 export {
   indexKeyPartAsc, indexKeyPartDesc, indexKeyPartFromPath, indexKeyPartFromFlatPath,
-  keySpecNew, keySpecEquals,
+  indexKeyPartAscPath, indexKeyPartDescPath, indexKeyPartFullPath,
+  keySpecNew, keySpecEquals, keySpecNameWith,
 } from './indexing/index.ts';
 
 // ── ResultSet ──
