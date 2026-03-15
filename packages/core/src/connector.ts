@@ -1,92 +1,39 @@
 // MIRRORS: ankurah/core/src/connector.rs
-
 import type { EntityId, NodeMessage, Presence, Attested, EntityState } from '@ankurah/proto';
-import { SendError } from './error.ts';
 
-// Re-export SendError for convenience (defined in error.ts, mirroring Rust connector.rs)
+// TODO redesign this such that:
+// - the sender and receiver are disconnected at the same time
+// - a connection id or dyn Ord/Eq/Hash is used to identify the connection for deregistration
+//   so that we can have multiple connections to the same node without things getting mixed up
+
+// ── PeerSender ───────────────────────────────────────────────────────────────
+// Rust: #[async_trait] pub trait PeerSender: Send + Sync
+// Divergence: No Send/Sync bounds — single-threaded JS [E8].
+
+export interface PeerSender {
+  sendMessage(message: NodeMessage): void; // Divergence: Rust returns Result<(), SendError>; TS throws SendError [E3]
+  recipientNodeId(): EntityId;
+  cloned(): PeerSender; // Divergence: Rust returns Box<dyn PeerSender>; TS uses interface [E7]
+}
+
+// ── SendError ────────────────────────────────────────────────────────────────
+// Defined in error.ts — re-export for consumers who expect it from connector.
 export { SendError } from './error.ts';
 
-// ---------------------------------------------------------------------------
-// PeerSender — trait for sending messages to a peer
-// ---------------------------------------------------------------------------
+// ── NodeComms ────────────────────────────────────────────────────────────────
+// Rust: #[async_trait] pub trait NodeComms: Send + Sync
+// Divergence: No Send/Sync bounds — single-threaded JS [E8].
 
-/**
- * Interface for sending messages to a connected peer node.
- *
- * Rust: `pub trait PeerSender: Send + Sync`
- * Divergence: No Send/Sync bounds — single-threaded JS [E8].
- * Divergence: No `cloned()` method — JS objects are reference types [E8].
- */
-export interface PeerSender {
-  /**
-   * Send a message to the peer.
-   *
-   * Rust: `fn send_message(&self, message: proto::NodeMessage) -> Result<(), SendError>`
-   * Throws SendError on failure [A8].
-   */
-  sendMessage(message: NodeMessage): void;
-
-  /**
-   * The node ID of the recipient of this message.
-   *
-   * Rust: `fn recipient_node_id(&self) -> proto::EntityId`
-   */
-  recipientNodeId(): EntityId;
-}
-
-// ---------------------------------------------------------------------------
-// NodeComms — trait for node communication
-// ---------------------------------------------------------------------------
-
-/**
- * Interface for node communication. Implemented by Node.
- *
- * Rust: `pub trait NodeComms: Send + Sync`
- * Divergence: No Send/Sync bounds — single-threaded JS [E8].
- * Divergence: No `cloned()` method — JS objects are reference types [E8].
- */
 export interface NodeComms {
-  /**
-   * The node ID.
-   *
-   * Rust: `fn id(&self) -> proto::EntityId`
-   */
   id(): EntityId;
-
-  /**
-   * Whether this node has durable storage.
-   *
-   * Rust: `fn durable(&self) -> bool`
-   */
   durable(): boolean;
-
-  /**
-   * The attested system root state, if any.
-   *
-   * Rust: `fn system_root(&self) -> Option<Attested<EntityState>>`
-   */
-  systemRoot(): Attested<EntityState> | null;
-
-  /**
-   * Register a peer with its presence and sender.
-   *
-   * Rust: `fn register_peer(&self, presence: proto::Presence, sender: Box<dyn PeerSender>)`
-   * Divergence: No Box<dyn> needed — JS uses plain interface [E8].
-   */
-  registerPeer(presence: Presence, sender: PeerSender): void;
-
-  /**
-   * Deregister a peer by node ID.
-   *
-   * Rust: `fn deregister_peer(&self, node_id: proto::EntityId)`
-   */
+  systemRoot(): Attested<EntityState> | null; // Divergence: Option<T> → T | null [E3]
+  registerPeer(presence: Presence, sender: PeerSender): void; // Divergence: Rust takes Box<dyn PeerSender>; TS uses interface [E7]
   deregisterPeer(nodeId: EntityId): void;
-
-  /**
-   * Handle an incoming message from a peer.
-   *
-   * Rust: `async fn handle_message(&self, message: proto::NodeMessage) -> anyhow::Result<()>`
-   * Throws on failure [A8].
-   */
-  handleMessage(message: NodeMessage): Promise<void>;
+  handleMessage(message: NodeMessage): Promise<void>; // Divergence: Rust returns anyhow::Result<()>; TS throws [E3]
+  cloned(): NodeComms; // Divergence: Rust returns Box<dyn NodeComms>; TS uses interface [E7]
 }
+
+// ── impl NodeComms for Node ──────────────────────────────────────────────────
+// Divergence: The Rust `impl NodeComms for Node<SE, PA>` block lives in this file,
+// but in TS the implementation belongs on the Node class in node.ts [E7].

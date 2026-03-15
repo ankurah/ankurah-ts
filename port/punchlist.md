@@ -33,8 +33,8 @@ Every in-scope Rust source file and its target TS path.
 |---|-----------|-----------|--------|
 | 16 | core/src/changes.rs | packages/core/src/changes.ts | DONE |
 | 17 | core/src/collation.rs | packages/core/src/collation.ts | DONE |
-| 18 | core/src/collectionset.rs | packages/core/src/collectionset.ts | YES |
-| 19 | core/src/connector.rs | packages/core/src/connector.ts | YES |
+| 18 | core/src/collectionset.rs | packages/core/src/collectionset.ts | DONE |
+| 19 | core/src/connector.rs | packages/core/src/connector.ts | DONE |
 | 20 | core/src/context.rs | packages/core/src/context.ts | YES |
 | 21 | core/src/entity.rs | packages/core/src/entity.ts | DONE |
 | 22 | core/src/error.rs | packages/core/src/error.ts | DONE |
@@ -52,16 +52,16 @@ Every in-scope Rust source file and its target TS path.
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | NO |
 | 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | NO |
 | 35 | core/src/policy.rs | packages/core/src/policy.ts | YES |
-| 36 | core/src/property/backend/lww.rs | packages/core/src/property/backend/lww.ts | YES |
-| 37 | core/src/property/backend/mod.rs | packages/core/src/property/backend/index.ts | YES |
+| 36 | core/src/property/backend/lww.rs | packages/core/src/property/backend/lww.ts | DONE |
+| 37 | core/src/property/backend/mod.rs | packages/core/src/property/backend/index.ts | DONE |
 | 38 | core/src/property/backend/pn_counter.rs | packages/core/src/property/backend/pn_counter.ts | NO |
-| 39 | core/src/property/backend/yrs.rs | packages/core/src/property/backend/yjs.ts | YES |
+| 39 | core/src/property/backend/yrs.rs | packages/core/src/property/backend/yjs.ts | DONE |
 | 40 | core/src/property/mod.rs | packages/core/src/property/index.ts | DONE |
 | 41 | core/src/property/traits.rs | packages/core/src/property/traits.ts | DONE |
 | 42 | core/src/property/value/entity_ref.rs | packages/core/src/property/value/entity_ref.ts | NO |
 | 43 | core/src/property/value/json.rs | packages/core/src/property/value/json.ts | NO |
 | 44 | core/src/property/value/lww.rs | packages/core/src/property/value/lww.ts | YES |
-| 45 | core/src/property/value/mod.rs | packages/core/src/property/value/index.ts | NO |
+| 45 | core/src/property/value/mod.rs | packages/core/src/property/value/index.ts | DONE |
 | 46 | core/src/property/value/pn_counter.rs | packages/core/src/property/value/pn_counter.ts | NO |
 | 47 | core/src/property/value/yrs.rs | packages/core/src/property/value/yjs.ts | NO |
 | 48 | core/src/query_value.rs | packages/core/src/query_value.ts | YES |
@@ -95,8 +95,9 @@ Every in-scope Rust source file and its target TS path.
 | 76 | core/src/util/safeset.rs | packages/core/src/util/safeset.ts | NO |
 | 77 | core/src/value/cast.rs | packages/core/src/value/cast.ts | DONE |
 | 77.1 | core/src/value/cast.rs (tests) | packages/core/__tests__/cast.test.ts | DONE |
-| 78 | core/src/value/cast_predicate.rs | packages/core/src/value/cast_predicate.ts | YES |
-| 79 | core/src/value/collatable.rs | packages/core/src/value/collatable.ts | YES |
+| 78 | core/src/value/cast_predicate.rs | packages/core/src/value/cast_predicate.ts | DONE |
+| 78.1 | core/src/value/cast_predicate.rs (tests) | packages/core/__tests__/cast_predicate.test.ts | DONE |
+| 79 | core/src/value/collatable.rs | packages/core/src/value/collatable.ts | DONE |
 | 80 | core/src/value/mod.rs | packages/core/src/value/index.ts | DONE |
 | - | core/src/value/wasm.rs | SKIP | E9 |
 

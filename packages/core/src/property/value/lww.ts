@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/property/value/lww.rs
 
-import type { BroadcastId, Listener, Signal } from '@ankurah/signals';
-import { ListenerGuard } from '@ankurah/signals';
+import type { BroadcastId, Listener, Signal, Subscribe } from '@ankurah/signals';
+import { ListenerGuard, SubscriptionGuard } from '@ankurah/signals';
 
 import type { LWWBackend } from '../backend/lww.ts';
 import type { PropertyName, PropertyFromValue, PropertyIntoValue } from '../index.ts';
@@ -24,7 +24,7 @@ import type { Entity } from '../../entity.ts';
  * Divergence: Rust uses PhantomData<T> for the type parameter; TS uses conversion functions [E4].
  * Divergence: Rust uses Arc<LWWBackend>; TS uses plain reference [E8].
  */
-export class LWW<T> implements Signal {
+export class LWW<T> implements Signal, Subscribe<T> {
   readonly propertyName: PropertyName;
   readonly backend: LWWBackend;
   readonly entity: Entity;
@@ -64,7 +64,7 @@ export class LWW<T> implements Signal {
    * Rust: `pub fn set(&self, value: &T) -> Result<(), PropertyError>`
    */
   set(value: T): void {
-    if (this.entity && typeof this.entity.isWritable === 'function' && !this.entity.isWritable()) {
+    if (!this.entity.isWritable()) {
       throw PropertyError.transactionClosed();
     }
     const converted = this.intoValue(value);
@@ -109,6 +109,26 @@ export class LWW<T> implements Signal {
    */
   broadcastId(): BroadcastId {
     return this.backend.fieldBroadcastId(this.propertyName);
+  }
+
+  // ── Subscribe interface ──
+
+  /**
+   * Subscribe to changes with a listener that receives the new value.
+   *
+   * Rust: `impl<T: Property> Subscribe<T> for LWW<T>`
+   */
+  subscribe(listener: (value: T) => void): SubscriptionGuard {
+    const guard = this.listen(() => {
+      // Get current value when the broadcast fires
+      try {
+        const currentValue = this.get();
+        listener(currentValue);
+      } catch {
+        // Mirrors Rust: if let Ok(current_value) = lww.get() — silently ignore errors
+      }
+    });
+    return new SubscriptionGuard(guard);
   }
 
   // ── Debug ──

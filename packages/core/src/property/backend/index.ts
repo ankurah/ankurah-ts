@@ -28,6 +28,17 @@ export { YjsBackend };
  * Divergence: Rust `as_arc_dyn_any` and `as_debug` are Rust-specific trait-object helpers; omitted in TS [E8].
  */
 export interface PropertyBackend {
+  // Rust: fn as_arc_dyn_any — omitted, Rust-specific trait-object helper [E8]
+  // Rust: fn as_debug — omitted, Rust-specific trait-object helper [E8]
+
+  /**
+   * Create a fork (deep copy) of this backend.
+   *
+   * Rust: `fn fork(&self) -> Arc<dyn PropertyBackend>`
+   * Divergence: Returns plain PropertyBackend, not Arc [E8].
+   */
+  fork(): PropertyBackend;
+
   /**
    * Get the list of property names managed by this backend.
    *
@@ -76,20 +87,11 @@ export interface PropertyBackend {
   applyOperations(operations: Operation[]): void;
 
   /**
-   * Create a fork (deep copy) of this backend.
-   *
-   * Rust: `fn fork(&self) -> Arc<dyn PropertyBackend>`
-   * Divergence: Returns plain PropertyBackend, not Arc [E8].
-   */
-  fork(): PropertyBackend;
-
-  /**
    * Listen to changes for a specific field managed by this backend.
    * Auto-creates the broadcast if it doesn't exist yet.
    * Returns a subscription guard that will unsubscribe when disposed.
    *
    * Rust: `fn listen_field(&self, field_name: &PropertyName, listener: Listener) -> ListenerGuard`
-   * Divergence: Rust returns ankurah_signals::signal::ListenerGuard [E8].
    */
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard;
 }
@@ -128,27 +130,25 @@ export interface PropertyBackendStatic {
 }
 
 // ---------------------------------------------------------------------------
-// backendFromString — factory function (signature only, implementation deferred)
+// backendFromString — factory function
 // ---------------------------------------------------------------------------
 
 /**
  * Create a PropertyBackend by name, optionally hydrating from a state buffer.
- * Throws RetrievalError for unknown backend names.
+ * Throws for unknown backend names.
  *
  * Rust: `pub fn backend_from_string(name: &str, buffer: Option<&Vec<u8>>) -> Result<Arc<dyn PropertyBackend>, RetrievalError>`
- *
- * NOTE: Implementation deferred until YjsBackend and LWWBackend are ported.
- * For now, this is a placeholder that will throw.
  */
 export function backendFromString(
   name: string,
   buffer?: Uint8Array,
 ): PropertyBackend {
-  if (name === 'lww') {
-    return buffer ? LWWBackend.fromStateBuffer(buffer) : new LWWBackend();
-  }
-  if (name === 'yjs') {
+  if (name === 'yrs' || name === 'yjs') {
+    // Divergence: Rust checks "yrs"; TS accepts both "yrs" (wire name) and "yjs" (local name) [E5]
     return buffer ? YjsBackend.fromStateBuffer(buffer) : new YjsBackend();
+  } else if (name === 'lww') {
+    return buffer ? LWWBackend.fromStateBuffer(buffer) : new LWWBackend();
+  } else {
+    throw new Error(`Unknown backend: "${name}"`);
   }
-  throw new Error(`Unknown backend: "${name}"`);
 }

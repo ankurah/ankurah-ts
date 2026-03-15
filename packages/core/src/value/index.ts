@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
 
 import { EntityId } from '@ankurah/proto';
-import type { Literal } from '@ankurah/ankql';
+import { Literal } from '@ankurah/ankql';
 import { PropertyError } from '../property/traits.ts';
 
 // Re-export sub-modules (matching Rust mod.rs pub use / pub mod)
@@ -311,40 +311,42 @@ export function extractAtPath(value: Value, path: string[]): Value | null {
 
 /** Convert an AnkQL Literal to a Value. Mirrors Rust From<ankql::ast::Literal> for Value. */
 export function valueFromLiteral(literal: Literal): Value {
+  // Literal is Enum<LiteralV> — literal.value is the variant data object { value: <inner> }
+  const inner = (literal.value as { value: unknown }).value;
   switch (literal.type) {
-    case 'I16': return { type: 'I16', value: literal.value };
-    case 'I32': return { type: 'I32', value: literal.value };
-    case 'I64': return { type: 'I64', value: Number(literal.value) };
-    case 'F64': return { type: 'F64', value: literal.value };
-    case 'Bool': return { type: 'Bool', value: literal.value };
-    case 'String': return { type: 'String', value: literal.value };
-    case 'EntityId': return { type: 'EntityId', value: EntityId.fromBytes(literal.value) };
-    case 'Object': return { type: 'Object', value: literal.value };
-    case 'Binary': return { type: 'Binary', value: literal.value };
-    case 'Json': return { type: 'Json', value: literal.value };
+    case 'I16': return { type: 'I16', value: inner as number };
+    case 'I32': return { type: 'I32', value: inner as number };
+    case 'I64': return { type: 'I64', value: Number(inner as bigint) };
+    case 'F64': return { type: 'F64', value: inner as number };
+    case 'Bool': return { type: 'Bool', value: inner as boolean };
+    case 'String': return { type: 'String', value: inner as string };
+    case 'EntityId': return { type: 'EntityId', value: EntityId.fromBytes(inner as Uint8Array) };
+    case 'Object': return { type: 'Object', value: inner as Uint8Array };
+    case 'Binary': return { type: 'Binary', value: inner as Uint8Array };
+    case 'Json': return { type: 'Json', value: inner };
   }
 }
 
 /** Convert a Value to an AnkQL Literal. Mirrors Rust From<Value> for ankql::ast::Literal. */
 export function valueToLiteral(value: Value): Literal {
   switch (value.type) {
-    case 'I16': return { type: 'I16', value: value.value };
-    case 'I32': return { type: 'I32', value: value.value };
-    case 'I64': return { type: 'I64', value: BigInt(value.value) };
-    case 'F64': return { type: 'F64', value: value.value };
-    case 'Bool': return { type: 'Bool', value: value.value };
-    case 'String': return { type: 'String', value: value.value };
-    case 'EntityId': return { type: 'EntityId', value: value.value.toBytes() };
+    case 'I16': return Literal.I16(value.value);
+    case 'I32': return Literal.I32(value.value);
+    case 'I64': return Literal.I64(BigInt(value.value));
+    case 'F64': return Literal.F64(value.value);
+    case 'Bool': return Literal.Bool(value.value);
+    case 'String': return Literal.String(value.value);
+    case 'EntityId': return Literal.EntityId(value.value.toBytes());
     case 'Object': {
       // Mirrors Rust: Object bytes -> String via lossy UTF-8
       const text = new TextDecoder('utf-8', { fatal: false }).decode(value.value);
-      return { type: 'String', value: text };
+      return Literal.String(text);
     }
     case 'Binary': {
       // Mirrors Rust: Binary bytes -> String via lossy UTF-8
       const text = new TextDecoder('utf-8', { fatal: false }).decode(value.value);
-      return { type: 'String', value: text };
+      return Literal.String(text);
     }
-    case 'Json': return { type: 'Json', value: value.value };
+    case 'Json': return Literal.Json(value.value);
   }
 }

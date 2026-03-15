@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/value/cast_predicate.rs
 
-import type { Expr, Literal, Predicate } from '@ankurah/ankql';
+import { Expr, Literal, Predicate, PathExpr, ComparisonOperator } from '@ankurah/ankql';
 import type { Value } from './index';
 import { ValueType, valueFromLiteral, valueToLiteral } from './index';
 import { castTo, CastErrorException } from './cast';
@@ -13,78 +13,65 @@ import type { CollectionSchema } from '../schema.ts';
 /** Cast all literals in a predicate based on field names using a CollectionSchema.
  *  Mirrors Rust cast_predicate_types(). */
 export function castPredicateTypes(predicate: Predicate, schema: CollectionSchema): Predicate {
-  switch (predicate.type) {
-    case 'Comparison': {
-      const { left, operator, right } = predicate;
+  return predicate.match({
+    Comparison: (v) => {
+      const { left, operator, right } = v;
 
       // Handle both cases: field = literal AND literal = field
-      if (left.type === 'Path' && right.type === 'Literal') {
+      if (left.is('Path') && right.is('Literal')) {
         // Case 1: field = literal (cast literal to field type)
-        const targetType = schema.fieldType(left.value);
-        const castLiteral = castLiteralToType(right.value, targetType);
-        return { type: 'Comparison', left, operator, right: castLiteral };
+        const path = (left.value as { path: PathExpr }).path;
+        const literal = (right.value as { literal: Literal }).literal;
+        const targetType = schema.fieldType(path);
+        const castLit = castLiteralToType(literal, targetType);
+        return Predicate.Comparison(left, operator, castLit);
       }
-      if (left.type === 'Literal' && right.type === 'Path') {
+      if (left.is('Literal') && right.is('Path')) {
         // Case 2: literal = field (cast literal to field type)
-        const targetType = schema.fieldType(right.value);
-        const castLiteral = castLiteralToType(left.value, targetType);
-        return { type: 'Comparison', left: castLiteral, operator, right };
+        const literal = (left.value as { literal: Literal }).literal;
+        const path = (right.value as { path: PathExpr }).path;
+        const targetType = schema.fieldType(path);
+        const castLit = castLiteralToType(literal, targetType);
+        return Predicate.Comparison(castLit, operator, right);
       }
 
       // For all other cases, recursively cast both sides
       const castLeft = castExprTypes(left, schema);
       const castRight = castExprTypes(right, schema);
-      return { type: 'Comparison', left: castLeft, operator, right: castRight };
-    }
-    case 'IsNull':
-      return { type: 'IsNull', expr: castExprTypes(predicate.expr, schema) };
-    case 'And':
-      return {
-        type: 'And',
-        left: castPredicateTypes(predicate.left, schema),
-        right: castPredicateTypes(predicate.right, schema),
-      };
-    case 'Or':
-      return {
-        type: 'Or',
-        left: castPredicateTypes(predicate.left, schema),
-        right: castPredicateTypes(predicate.right, schema),
-      };
-    case 'Not':
-      return { type: 'Not', predicate: castPredicateTypes(predicate.predicate, schema) };
-    case 'True':
-    case 'False':
-    case 'Placeholder':
-      return predicate;
-  }
+      return Predicate.Comparison(castLeft, operator, castRight);
+    },
+    IsNull: (v) => Predicate.IsNull(castExprTypes(v.expr, schema)),
+    And: (v) => Predicate.And(
+      castPredicateTypes(v.left, schema),
+      castPredicateTypes(v.right, schema),
+    ),
+    Or: (v) => Predicate.Or(
+      castPredicateTypes(v.left, schema),
+      castPredicateTypes(v.right, schema),
+    ),
+    Not: (v) => Predicate.Not(castPredicateTypes(v.predicate, schema)),
+    True: () => predicate,
+    False: () => predicate,
+    Placeholder: () => predicate,
+  });
 }
 
 // ── castExprTypes (private) ──────────────────────────────────────────
 
 /** Cast all literals in an expression based on field names. Mirrors Rust cast_expr_types(). */
 function castExprTypes(expr: Expr, schema: CollectionSchema): Expr {
-  switch (expr.type) {
-    case 'Literal':
-      return expr; // Literals are cast in context
-    case 'Path':
-      return expr;
-    case 'Predicate':
-      return { type: 'Predicate', value: castPredicateTypes(expr.value, schema) };
-    case 'InfixExpr':
-      return {
-        type: 'InfixExpr',
-        left: castExprTypes(expr.left, schema),
-        operator: expr.operator,
-        right: castExprTypes(expr.right, schema),
-      };
-    case 'ExprList':
-      return {
-        type: 'ExprList',
-        values: expr.values.map((e) => castExprTypes(e, schema)),
-      };
-    case 'Placeholder':
-      return expr;
-  }
+  return expr.match({
+    Literal: () => expr, // Literals are cast in context
+    Path: () => expr,
+    Predicate: (v) => Expr.Predicate(castPredicateTypes(v.predicate, schema)),
+    InfixExpr: (v) => Expr.InfixExpr(
+      castExprTypes(v.left, schema),
+      v.operator,
+      castExprTypes(v.right, schema),
+    ),
+    ExprList: (v) => Expr.ExprList(v.exprs.map((e) => castExprTypes(e, schema))),
+    Placeholder: () => expr,
+  });
 }
 
 // ── castLiteralToType (private) ──────────────────────────────────────
@@ -97,7 +84,7 @@ function castLiteralToType(literal: Literal, targetType: ValueType): Expr {
   try {
     const castValue = castTo(value, targetType);
     const castLiteral = valueToLiteral(castValue);
-    return { type: 'Literal', value: castLiteral };
+    return Expr.Literal(castLiteral);
   } catch (e) {
     if (e instanceof CastErrorException) {
       throw RetrievalError.storageError(new Error(`Type casting error: ${e.message}`));
