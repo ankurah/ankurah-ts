@@ -48,22 +48,38 @@ Port scripts live in `port/` and are self-documenting (`--help` or read the sour
 - `audit-port.ts --backpopulate` — bootstraps hash manifest from MIRRORS annotations
 - `audit-port.ts --update-manifest` — updates hashes after porting Rust changes
 
-## How to Port a New Rust File
+## How to Port a Rust File
 
-1. **Identify the target package** — use the crate-to-package mapping in [translation-rules.md](translation-rules.md)
-2. **Create the TS file** — same path under `packages/<pkg>/src/`, same snake_case filename
+1. **Read the Rust file** — understand every line
+2. **Create/overwrite the TS file** — same path under `packages/<pkg>/src/`, same snake_case filename
 3. **Add line 1 annotation** — `// MIRRORS: ankurah/<crate>/src/<path>.rs`
-4. **Translate** — apply the rules in [translation-rules.md](translation-rules.md) mechanically:
-   - Rust types → TS types (see type mapping table)
+4. **Translate mechanically** — apply [translation-rules.md](translation-rules.md):
+   - `struct Foo` → `class Foo extends Struct` (from `@ankurah/base`)
+   - `enum Foo` → `class Foo extends Enum<FooV>` with static variant constructors
+   - `impl Drop for T` → `class T extends Drop`, override `drop()`
+   - `Arc<T>` → `Arc<T>`, `Weak<T>` → `Weak<T>` (from `@ankurah/base`)
+   - `&T` in fields → `Borrow<T>`, `&mut T` → `BorrowMut<T>`
+   - `Mutex<T>` / `RwLock<T>` → `Mutex<T>`, `RefCell<T>` → `RefCell<T>`
    - `snake_case` → `camelCase` for functions/variables
-   - `Arc<T>` / `Rc<T>` → delete wrapper, use `T` directly
-   - `Mutex<T>` / `RefCell<T>` → use provided types 1:1 (see [ownership.md](ownership.md))
-   - `impl Drop` → `extends Disposable` (see [ownership.md](ownership.md))
-   - Cite exception rules for any divergence: `// Divergence: <what> [E8]`
-5. **Port tests** — Rust `#[cfg(test)] mod tests` → `<filename>.test.ts`
-6. **Add exports** — update the package's `index.ts` to re-export
-7. **Verify** — `npx tsc --noEmit && bun test`
-8. **Update manifest** — `bun run port/audit-port.ts --update-manifest`
+   - `match` → `.match({})`, `if let` → `.is()`
+   - Cite divergences: `// Divergence: <what> [E8]`
+5. **Match the Rust code as closely as possible** — same declaration order, same `use` statement order, same structure. The goal is line-for-line correspondence.
+6. **Bincode**: For proto types, encode/decode as methods on the class. Reference `/Users/daniel/code/domcorder/proto-ts/` for bincode codec patterns.
+7. **Do NOT run tests** — a separate test agent handles that
+8. **Do NOT edit files outside your assigned file**
+
+## Agent Rules of Engagement
+
+When porting agents are dispatched to do the work:
+
+1. Each agent works on **ONE file at a time**
+2. The task is: read ONE Rust file, write/overwrite ONE TS file
+3. Agents must **await positive confirmation from the team lead** before proceeding to the next file
+4. **No editing outside the assigned file** — no touching index.ts, no touching other source files
+5. **No tests run by porting agents** — a separate test agent runs tsc + bun test when dependencies are met
+6. **No splitting or merging** — one Rust file maps to one TS file, period
+7. **Audit every line** — the goal is for the TS to match the Rust as closely as possible, right down to declaration order and use statement order. This will be closely reviewed.
+8. **Do not modify spec files** (anything in `port/`) — ever
 
 ## How to Update When Rust Changes
 
