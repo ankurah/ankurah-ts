@@ -39,13 +39,16 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
 
   override [disposeSymbol](): void {
     if (this.isDropped) return;
+    // super handles: #dropped flag, FR, drop(), own-property cascade
+    super[disposeSymbol]();
+    // Then cascade into variant value's fields (not reached by AkObject's cascade
+    // because they're on this.value, not on this)
     for (const key of Object.getOwnPropertyNames(this.value)) {
       const field = (this.value as any)[key];
       if (typeof field?.[disposeSymbol] === 'function') {
         field[disposeSymbol]();
       }
     }
-    super[disposeSymbol]();
   }
 
   toString(): string {
