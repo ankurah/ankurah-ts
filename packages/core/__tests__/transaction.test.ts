@@ -68,11 +68,15 @@ class MockContext implements TContext {
     return this.entities.get(id.toString()) ?? null;
   }
 
-  async fetchEntities(_collection: any, _args: unknown): Promise<Entity[]> {
+  async fetchEntities(_collection: any, _args: any): Promise<Entity[]> {
     return [...this.entities.values()];
   }
 
   query(_collectionId: any, _args: unknown): never {
+    throw new Error('not implemented');
+  }
+
+  async collection(_id: any): Promise<any> {
     throw new Error('not implemented');
   }
 

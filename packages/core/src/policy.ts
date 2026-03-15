@@ -1,8 +1,21 @@
 // MIRRORS: ankurah/core/src/policy.rs
 
-import type { CollectionId, Attestation, Attested, EntityId, EntityState, Event } from '@ankurah/proto';
+import type {
+  CollectionId,
+  Attestation,
+  Attested,
+  AuthData,
+  EntityId,
+  EntityState,
+  Event,
+  NodeRequest,
+  State,
+  CausalAssertion,
+} from '@ankurah/proto';
+import type { Predicate } from '@ankurah/ankql';
 import type { Entity } from './entity.ts';
 import type { AccessDenied } from './error.ts';
+import type { ValidationError } from './error.ts';
 
 // ---------------------------------------------------------------------------
 // PolicyAgent — trait for access control policy implementations
@@ -11,35 +24,38 @@ import type { AccessDenied } from './error.ts';
 /**
  * Interface for policy agent implementations that control access to entities.
  *
- * Rust: `pub trait PolicyAgent: Send + Sync + 'static`
+ * Rust: `pub trait PolicyAgent: Clone + Send + Sync + 'static`
  *
  * The policy agent is generic over ContextData (authentication/authorization context).
  * It validates reads, writes, and event attestation.
  *
  * Divergence: Rust uses associated type `type ContextData: ContextData`; TS uses
  * generic parameter [A6].
+ * Divergence: Rust methods take `node: &Node<SE, Self>` parameter; TS omits it to
+ * avoid circular import (node.ts imports policy.ts) [A6].
  */
 export interface PolicyAgent<ContextData = unknown> {
   /**
-   * Check if the given entity can be written to.
+   * Create relevant auth data for a given request.
    *
-   * Rust: `fn check_write(&self, cdata: &CD, entity: &Entity, event: Option<&Event>) -> Result<(), AccessDenied>`
+   * Rust: `fn sign_request(&self, node: &NodeInner<SE, Self>, cdata: &C, request: &NodeRequest) -> Result<Vec<AuthData>, AccessDenied>`
    * Throws AccessDenied on failure [A8].
    */
-  checkWrite(cdata: ContextData, entity: Entity, event: Event | null): void;
+  signRequest(cdata: ContextData[], request: NodeRequest): AuthData[];
 
   /**
-   * Check if a collection can be accessed.
+   * Validate auth data and yield the context data if valid.
    *
-   * Rust: `fn can_access_collection(&self, cdata: &CD, collection: &CollectionId) -> Result<(), AccessDenied>`
-   * Throws AccessDenied on failure [A8].
+   * Rust: `async fn check_request(&self, node: &Node<SE, Self>, auth: &A, request: &NodeRequest) -> Result<Vec<ContextData>, ValidationError>`
+   * Throws ValidationError on failure [A8].
    */
-  canAccessCollection(cdata: ContextData, collection: CollectionId): void;
+  checkRequest(auth: AuthData[], request: NodeRequest): Promise<ContextData[]>;
 
   /**
    * Check an event against policy and optionally return an attestation.
    *
    * Rust: `fn check_event(&self, node: &Node, cdata: &CD, before: &Entity, after: &Entity, event: &Event) -> Result<Option<Attestation>, AccessDenied>`
+   * Throws AccessDenied on failure [A8].
    */
   checkEvent(
     cdata: ContextData,
@@ -49,6 +65,14 @@ export interface PolicyAgent<ContextData = unknown> {
   ): Attestation | null;
 
   /**
+   * Validate an event received from a remote peer.
+   *
+   * Rust: `fn validate_received_event(&self, node: &Node, from_node: &EntityId, event: &Attested<Event>) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  validateReceivedEvent(fromPeerId: EntityId, event: Attested<Event>): void;
+
+  /**
    * Create an attestation for a state snapshot.
    *
    * Rust: `fn attest_state(&self, node: &Node, state: &EntityState) -> Option<Attestation>`
@@ -56,61 +80,84 @@ export interface PolicyAgent<ContextData = unknown> {
   attestState(state: EntityState): Attestation | null;
 
   /**
-   * Validate an event received from a remote peer.
-   *
-   * Rust: `fn validate_received_event(&self, node: &Node, from_peer_id: EntityId, event: Attested<Event>) -> Result<(), AccessDenied>`
-   * Throws AccessDenied on failure [A8].
-   *
-   * Divergence: `node` parameter omitted to avoid circular import (node.ts imports policy.ts) [A6].
-   */
-  validateReceivedEvent(fromPeerId: EntityId, event: Attested<Event>): void;
-
-  /**
    * Validate a state received from a remote peer.
    *
-   * Rust: `fn validate_received_state(&self, node: &Node, from_peer_id: EntityId, state: Attested<EntityState>) -> Result<(), AccessDenied>`
+   * Rust: `fn validate_received_state(&self, node: &Node, from_node: &EntityId, state: &Attested<EntityState>) -> Result<(), AccessDenied>`
    * Throws AccessDenied on failure [A8].
-   *
-   * Divergence: `node` parameter omitted to avoid circular import (node.ts imports policy.ts) [A6].
    */
   validateReceivedState(fromPeerId: EntityId, state: Attested<EntityState>): void;
 
   /**
-   * Filter predicate for collection access control.
+   * Check if a collection can be accessed.
    *
-   * Rust: `fn filter_predicate(&self, cdata: &CD, collection: &CollectionId, predicate: Predicate) -> Result<Predicate, AccessDenied>`
+   * Rust: `fn can_access_collection(&self, data: &C, collection: &CollectionId) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
    */
-  filterPredicate?(
-    cdata: ContextData,
-    collection: CollectionId,
-    predicate: unknown,
-  ): unknown;
+  canAccessCollection(cdata: ContextData[], collection: CollectionId): void;
+
+  /**
+   * Filter a predicate based on the context data.
+   *
+   * Rust: `fn filter_predicate(&self, data: &C, collection: &CollectionId, predicate: Predicate) -> Result<Predicate, AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  filterPredicate(cdata: ContextData[], collection: CollectionId, predicate: Predicate): Predicate;
+
+  /**
+   * Check if a context can read an entity.
+   *
+   * Rust: `fn check_read(&self, data: &C, id: &EntityId, collection: &CollectionId, state: &State) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  checkRead(cdata: ContextData[], id: EntityId, collection: CollectionId, state: State): void;
+
+  /**
+   * Check if a context can read an event.
+   *
+   * Rust: `fn check_read_event(&self, data: &C, event: &Attested<Event>) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  checkReadEvent(cdata: ContextData[], event: Attested<Event>): void;
+
+  /**
+   * Check if the given entity can be written to.
+   *
+   * Rust: `fn check_write(&self, cdata: &CD, entity: &Entity, event: Option<&Event>) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  checkWrite(cdata: ContextData, entity: Entity, event: Event | null): void;
+
+  /**
+   * Validate a causal assertion from a peer.
+   *
+   * Rust: `fn validate_causal_assertion(&self, node: &Node, peer_id: &EntityId, head_relation: &CausalAssertion) -> Result<(), AccessDenied>`
+   * Throws AccessDenied on failure [A8].
+   */
+  validateCausalAssertion(peerId: EntityId, headRelation: CausalAssertion): void;
 }
 
 // ---------------------------------------------------------------------------
-// OpenPolicy — a policy agent that allows everything
+// PermissiveAgent — a policy agent that allows everything
 // ---------------------------------------------------------------------------
 
 /**
  * A policy agent that allows all operations (no restrictions).
  * Useful for testing and development.
  *
- * Rust: Similar to `impl PolicyAgent for ()` or default implementations.
+ * Rust: `pub struct PermissiveAgent {}`
  */
-export class OpenPolicy implements PolicyAgent<unknown> {
-  checkWrite(): void {
-    // Allow all writes
+export class PermissiveAgent implements PolicyAgent<DefaultContext> {
+  signRequest(_cdata: DefaultContext[], _request: NodeRequest): AuthData[] {
+    // Divergence: Returns empty array. Rust creates one AuthData(vec![]) per context [E8].
+    return [];
   }
 
-  canAccessCollection(): void {
-    // Allow all collection access
+  async checkRequest(auth: AuthData[], _request: NodeRequest): Promise<DefaultContext[]> {
+    // PermissiveAgent accepts all auth attempts and returns one context per auth
+    return auth.map(() => DEFAULT_CONTEXT);
   }
 
   checkEvent(): Attestation | null {
-    return null; // No attestation
-  }
-
-  attestState(): Attestation | null {
     return null; // No attestation
   }
 
@@ -118,7 +165,54 @@ export class OpenPolicy implements PolicyAgent<unknown> {
     // Allow all received events
   }
 
+  attestState(_state: EntityState): Attestation | null {
+    return null; // No attestation
+  }
+
   validateReceivedState(_fromPeerId: EntityId, _state: Attested<EntityState>): void {
     // Allow all received states
   }
+
+  canAccessCollection(): void {
+    // Allow all collection access
+  }
+
+  filterPredicate(_cdata: DefaultContext[], _collection: CollectionId, predicate: Predicate): Predicate {
+    // PermissiveAgent passes predicate through unchanged
+    return predicate;
+  }
+
+  checkRead(): void {
+    // Allow all reads
+  }
+
+  checkReadEvent(): void {
+    // Allow all event reads
+  }
+
+  checkWrite(): void {
+    // Allow all writes
+  }
+
+  validateCausalAssertion(_peerId: EntityId, _headRelation: CausalAssertion): void {
+    // PermissiveAgent trusts all causal assertions
+  }
 }
+
+// Backward compatibility alias
+// Divergence: Rust uses PermissiveAgent; existing TS code uses OpenPolicy [E8].
+export { PermissiveAgent as OpenPolicy };
+
+// ---------------------------------------------------------------------------
+// DefaultContext — default context for PermissiveAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * A default context that is used when no context is needed.
+ *
+ * Rust: `pub struct DefaultContext {}`
+ */
+export class DefaultContext {}
+
+/** Singleton default context instance. Mirrors Rust `DEFAULT_CONTEXT`. */
+export const DEFAULT_CONTEXT = new DefaultContext();

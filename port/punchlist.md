@@ -35,7 +35,7 @@ Every in-scope Rust source file and its target TS path.
 | 17 | core/src/collation.rs | packages/core/src/collation.ts | DONE |
 | 18 | core/src/collectionset.rs | packages/core/src/collectionset.ts | DONE |
 | 19 | core/src/connector.rs | packages/core/src/connector.ts | DONE |
-| 20 | core/src/context.rs | packages/core/src/context.ts | YES |
+| 20 | core/src/context.rs | packages/core/src/context.ts | DONE |
 | 21 | core/src/entity.rs | packages/core/src/entity.ts | DONE |
 | 22 | core/src/error.rs | packages/core/src/error.ts | DONE |
 | 23 | core/src/indexing/encoding.rs | packages/core/src/indexing/encoding.ts | YES |
@@ -51,20 +51,22 @@ Every in-scope Rust source file and its target TS path.
 | 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | NO |
 | 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | NO |
-| 35 | core/src/policy.rs | packages/core/src/policy.ts | YES |
+| 35 | core/src/policy.rs | packages/core/src/policy.ts | DONE |
 | 36 | core/src/property/backend/lww.rs | packages/core/src/property/backend/lww.ts | DONE |
 | 37 | core/src/property/backend/mod.rs | packages/core/src/property/backend/index.ts | DONE |
 | 38 | core/src/property/backend/pn_counter.rs | packages/core/src/property/backend/pn_counter.ts | NO |
 | 39 | core/src/property/backend/yrs.rs | packages/core/src/property/backend/yjs.ts | DONE |
 | 40 | core/src/property/mod.rs | packages/core/src/property/index.ts | DONE |
 | 41 | core/src/property/traits.rs | packages/core/src/property/traits.ts | DONE |
-| 42 | core/src/property/value/entity_ref.rs | packages/core/src/property/value/entity_ref.ts | NO |
-| 43 | core/src/property/value/json.rs | packages/core/src/property/value/json.ts | NO |
-| 44 | core/src/property/value/lww.rs | packages/core/src/property/value/lww.ts | YES |
+| 42 | core/src/property/value/entity_ref.rs | packages/core/src/property/value/entity_ref.ts | DONE |
+| 42.1 | core/src/property/value/entity_ref.rs (tests) | packages/core/__tests__/entity_ref.test.ts | DONE |
+| 43 | core/src/property/value/json.rs | packages/core/src/property/value/json.ts | DONE |
+| 43.1 | core/src/property/value/json.rs (tests) | packages/core/src/property/value/json.test.ts | DONE |
+| 44 | core/src/property/value/lww.rs | packages/core/src/property/value/lww.ts | DONE |
 | 45 | core/src/property/value/mod.rs | packages/core/src/property/value/index.ts | DONE |
 | 46 | core/src/property/value/pn_counter.rs | packages/core/src/property/value/pn_counter.ts | NO |
-| 47 | core/src/property/value/yrs.rs | packages/core/src/property/value/yjs.ts | NO |
-| 48 | core/src/query_value.rs | packages/core/src/query_value.ts | YES |
+| 47 | core/src/property/value/yrs.rs | packages/core/src/property/value/yrs_string.ts | DONE |
+| 48 | core/src/query_value.rs | packages/core/src/query_value.ts | DONE |
 | 49 | core/src/reactor.rs | packages/core/src/reactor/index.ts | YES |
 | 50 | core/src/reactor/candidate_changes.rs | packages/core/src/reactor/candidate_changes.ts | NO |
 | 51 | core/src/reactor/comparison_index.rs | packages/core/src/reactor/comparison_index.ts | NO |
@@ -75,11 +77,11 @@ Every in-scope Rust source file and its target TS path.
 | 56 | core/src/reactor/update.rs | packages/core/src/reactor/update.ts | YES |
 | 57 | core/src/reactor/watcherset.rs | packages/core/src/reactor/watcherset.ts | NO |
 | 58 | core/src/resultset.rs | packages/core/src/resultset.ts | YES |
-| 59 | core/src/retrieval.rs | packages/core/src/retrieval.ts | YES |
-| 60 | core/src/schema.rs | packages/core/src/schema.ts | YES |
+| 59 | core/src/retrieval.rs | packages/core/src/retrieval.ts | DONE |
+| 60 | core/src/schema.rs | packages/core/src/schema.ts | DONE |
 | 61 | core/src/selection/filter.rs | packages/core/src/selection/filter.ts | YES |
 | 62 | core/src/selection/mod.rs | packages/core/src/selection/index.ts | NO |
-| 63 | core/src/storage.rs | packages/core/src/storage.ts | YES |
+| 63 | core/src/storage.rs | packages/core/src/storage.ts | DONE |
 | 64 | core/src/system.rs | packages/core/src/system.ts | YES |
 | 65 | core/src/task.rs | packages/core/src/task.ts | NO |
 | 66 | core/src/traits.rs | packages/core/src/traits.ts | NO |
