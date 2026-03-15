@@ -120,41 +120,60 @@ The TS port must be byte-compatible with the Rust implementation. This is valida
 
 ## Current Status
 
-**376 tests passing** (core port) + **64 lint tests**, tsc clean. Last port commit: `3741182`.
+**707 tests passing, 0 failures**, tsc clean across all packages. Last commit: `edfd9a0`.
 
 ### What's done
-- Proto, signals, ankql, storage-common fully ported with tests
-- Core Layers 0-6b: entity, transaction, node, context, reactor (8 files), livequery, supporting types
-- NodeApplier, ReadyChunks, PolicyAgent validation
-- Disposable base class (needs updating to match finalized ownership spec)
-- Drift detection via hash manifest (155 files tracked)
-- ESLint plugin with 8 ownership rules
-- Memory model / ownership spec finalized
+- **@ankurah/base**: AkObject, Struct, Enum<V>, Drop, Arc, Weak, Borrow, BorrowMut, Mutex, RefCell, AsyncMutex — 68 tests
+- **@ankurah/ankql**: All 8 source files ported, all 76 tests passing. Parity audit PASS (59/59 Rust tests).
+- **@ankurah/proto**: All 15 source files ported, 29 fixture tests + 12 Yrs V2 interop tests passing. Parity audit PASS.
+- **@ankurah/signals**: All 15 source files ported, 68 tests passing. Parity audit PASS (34/34 Rust tests).
+- **@ankurah/storage-common**: All 8 source files ported, 104 tests passing. Parity audit pending (2 planner tests short of Rust's 71).
+- **@ankurah/core**: ~44/65 source files ported, 285 tests (6 skip). tsc clean.
+- **@ankurah/storage-memory**: 15 tests passing. TS-only package.
+- **@ankurah/eslint-plugin**: 8 ownership rules, 64 tests.
+- **Ownership model**: AkObject→Struct/Enum/Drop hierarchy, Arc/Weak refcounting, Borrow non-propagation. Fully tested.
+- **Rust fixtures**: Yrs V2 committed, 4 new bincode fixtures added (CausalAssertion, Principal, Attested<Event>, concurrent_merge).
 
 ### Outstanding Tasks
 
-#### Rust-side (ankurah-ts-support branch)
-1. **Commit Yrs V2 fixture work** — `proto/tests/yrs_v2_fixtures.rs` and `proto/test_fixtures/yrs_v2/` exist locally but are UNCOMMITTED. One `git clean` and they're gone.
-2. **Verify bincode fixture completeness** — only 1 commit (`4d8d04af`). Check if `CausalAssertion` and any other proto types are missing fixtures.
-3. **Rebase onto main** — the support branch is behind main. Main has added `EntityIdRange`, `SubscribeEntity`, `EntitiesSubscribed`, `UnsubscribeEntities` to proto. These need fixtures.
+#### Core — remaining source files (~21)
+- `peer_subscription/mod.rs`, `client_relay.rs`, `server.rs` — networking (Layer 7)
+- `property/value/pn_counter.rs` — deferred (dead code in Rust)
+- `property/backend/pn_counter.rs` — deferred (dead code)
+- `traits.rs`, `task.rs` — small utility files (task.ts created)
+- `type_resolver.rs` — 240 lines, 6 tests depend on it
+- `collation.rs` — created but needs integration
+- `util/mod.rs`, `util/cast.rs`, `util/expand_states.rs`, `util/iterable.rs`, `util/ivec.rs`, `util/safemap.rs`, `util/safeset.rs` — most map to JS primitives
+- `model.rs` as `model/index.ts` (E12) — done
+- `lib.rs` → `index.ts` — needs re-export updates
 
-#### Ownership conformance (existing TS code)
-4. **Update disposable.ts** — add Mutex<T>/MutexGuard<T>, update RefCell to borrow()/borrow_mut() API returning Disposable guards (not withMut closures)
-5. **ResultSetWrite → Disposable guard with `using`** — replace `write()/done()` pattern with Disposable guard. Update all call sites in subscription_state.ts.
-6. **Wire existing types to Disposable** — ReactorSubscription, EntityLiveQuery, LiveQuery, SubscriptionGuard, ListenerGuard, Transaction
-7. **Add alive checks** — Transaction.create/get/edit, property value setters (LWW.set, YrsString.insert)
-8. **Add Symbol.dispose to Transaction** — auto-rollback on scope exit
+#### Storage engines (0/25 files)
+- `@ankurah/storage-sqlite` — 6 files + 5 integration tests
+- `@ankurah/storage-postgres` — 3 files + 12 integration tests
+- `@ankurah/storage-indexeddb` — 16 files + 13 integration tests
 
-#### Layer 7 remaining
-9. **peer_subscription/** — SubscriptionRelay (5-state machine), SubscriptionHandler
-10. **node.ts networking** — PeerState, register/deregister peer, handleMessage dispatcher, RPC correlation
+#### Connectors (0/10 files)
+- `@ankurah/connector-websocket` — 3 files
+- `@ankurah/connector-websocket-server` — 6 files
+- `@ankurah/connector-local` — 1 file
 
-#### Layer 8
-11. **Connectors** — connector-local (simple), connector-websocket (with reconnection)
-12. **@ankurah/react** — React hooks (useObserve, signalObserver HOC)
+#### Facade (0/1)
+- `@ankurah/ankurah` — re-exports
 
-#### Layer 9
-13. **Integration tests** — Spawn Rust WS servers, test TS↔Rust interop
+#### Integration tests (0/52)
+- See punchlist.md T1-T52
+
+#### Parity audits needed
+- storage-common (2 planner tests short)
+- core (once remaining files ported)
+
+#### Known bugs
+- 2 LiveQuery gap-filling test failures (pre-existing logic bug, not Enum migration)
+- 6 skipped tests depend on TypeResolver (not yet ported)
+
+#### Rust-side
+- Support branch needs rebase onto main for new proto types
+- Fixtures need regenerating after rebase
 
 #### Port infrastructure
 14. **Enable eslint-plugin-ankurah** — configure ESLint in the repo to actually run the ownership rules
