@@ -110,28 +110,7 @@ class EntityChangeNotification implements ChangeNotification {
   }
 }
 
-// ── AsyncMutex ───────────────────────────────────────────────────────
-// Serializes async operations. 1:1 equivalent of Rust `tokio::sync::Mutex<()>`.
-
-/**
- * Async mutex for serializing async operations across await points.
- *
- * Rust: `tokio::sync::Mutex<()>` used for notify_lock
- */
-class AsyncMutex {
-  private queue: Promise<void> = Promise.resolve();
-
-  async acquire(): Promise<() => void> {
-    let release!: () => void;
-    const next = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const prev = this.queue;
-    this.queue = next;
-    await prev;
-    return release;
-  }
-}
+import { AsyncMutex } from '@ankurah/base';
 
 // ── Reactor ───────────────────────────────────────────────────────────
 // Mirrors Rust struct Reactor<E, Ev>(Arc<ReactorInner<E, Ev>>).
