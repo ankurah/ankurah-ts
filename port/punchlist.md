@@ -42,11 +42,11 @@ Every in-scope Rust source file and its target TS path.
 | 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | YES |
 | 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | YES |
 | 26 | core/src/lib.rs | packages/core/src/index.ts | YES |
-| 27 | core/src/lineage.rs | packages/core/src/lineage.ts | YES |
+| 27 | core/src/lineage.rs | packages/core/src/lineage.ts | DONE |
 | 28 | core/src/livequery.rs | packages/core/src/livequery.ts | YES |
 | 29 | core/src/model.rs | packages/core/src/model/index.ts | NO |
 | - | core/src/model/tsify.rs | SKIP | tsify |
-| 30 | core/src/node.rs | packages/core/src/node.ts | YES |
+| 30 | core/src/node.rs | packages/core/src/node.ts | DONE |
 | 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | YES |
 | 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | NO |
@@ -79,13 +79,14 @@ Every in-scope Rust source file and its target TS path.
 | 58 | core/src/resultset.rs | packages/core/src/resultset.ts | YES |
 | 59 | core/src/retrieval.rs | packages/core/src/retrieval.ts | DONE |
 | 60 | core/src/schema.rs | packages/core/src/schema.ts | DONE |
-| 61 | core/src/selection/filter.rs | packages/core/src/selection/filter.ts | YES |
-| 62 | core/src/selection/mod.rs | packages/core/src/selection/index.ts | NO |
+| 61 | core/src/selection/filter.rs | packages/core/src/selection/filter.ts | DONE |
+| 61.1 | core/src/selection/filter.rs (tests) | packages/core/src/selection/filter.test.ts | DONE |
+| 62 | core/src/selection/mod.rs | packages/core/src/selection/index.ts | DONE |
 | 63 | core/src/storage.rs | packages/core/src/storage.ts | DONE |
 | 64 | core/src/system.rs | packages/core/src/system.ts | YES |
 | 65 | core/src/task.rs | packages/core/src/task.ts | NO |
 | 66 | core/src/traits.rs | packages/core/src/traits.ts | NO |
-| 67 | core/src/transaction.rs | packages/core/src/transaction.ts | YES |
+| 67 | core/src/transaction.rs | packages/core/src/transaction.ts | DONE |
 | 68 | core/src/type_resolver.rs | packages/core/src/type_resolver.ts | NO |
 | 69 | core/src/util/cast.rs | packages/core/src/util/cast.ts | NO |
 | 70 | core/src/util/expand_states.rs | packages/core/src/util/expand_states.ts | NO |
