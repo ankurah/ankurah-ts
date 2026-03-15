@@ -97,12 +97,12 @@ export {
 export { EntityResultSet, ResultSetWrite, ResultSetRead } from './resultset.ts';
 
 // ── Reactor ──
-export { ComparisonIndex } from './reactor/comparison-index.ts';
+export { ComparisonIndex } from './reactor/comparison_index.ts';
 export { PropertyPath } from './reactor/property_path.ts';
-export { CandidateChanges } from './reactor/candidate-changes.ts';
-export { ReactorSubscriptionId, WatcherSet } from './reactor/watcher_set.ts';
-export type { WatcherOp, EntityWatcherId, WatcherChange, WatcherIdPair } from './reactor/watcher_set.ts';
-export { entityWatcherIdKey, watcherChangeAdd, watcherChangeRemove } from './reactor/watcher_set.ts';
+export { CandidateChanges } from './reactor/candidate_changes.ts';
+export { ReactorSubscriptionId, WatcherSet } from './reactor/watcherset.ts';
+export type { WatcherOp, EntityWatcherId, WatcherChange, WatcherIdPair } from './reactor/watcherset.ts';
+export { entityWatcherIdKey, watcherChangeAdd, watcherChangeRemove } from './reactor/watcherset.ts';
 export type { GapFetcher } from './reactor/fetch_gap.ts';
 export { QueryGapFetcher, buildContinuationPredicate, inferValueTypeForField } from './reactor/fetch_gap.ts';
 export type { MembershipChange, ReactorUpdateItem } from './reactor/update.ts';

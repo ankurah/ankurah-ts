@@ -14,6 +14,7 @@ export class ReadyChunks<T> implements AsyncIterable<T[]> {
   private remaining: number;
   private readonly total: number;
   private readonly ready: T[] = [];
+  private rejectedCount: number = 0;
 
   // Signal mechanism: the iterator awaits `signal`, and settling promises
   // call `notify()` to resolve it.
@@ -27,12 +28,26 @@ export class ReadyChunks<T> implements AsyncIterable<T[]> {
     // Arm the first signal
     this.armSignal();
 
-    // Attach callbacks that push into the ready queue and notify the iterator
+    // Attach callbacks that push into the ready queue and notify the iterator.
+    // Divergence: Rust futures yield Result<T, E> on cancellation; TS callers
+    // encode errors as values (e.g. ApplyErrorItem) so rejections shouldn't
+    // occur in practice. We still attach a no-op rejection handler to prevent
+    // unhandled-rejection crashes, but rejected promises silently reduce
+    // remaining so the iterator terminates [E8].
     for (const p of promises) {
-      p.then((value) => {
-        this.ready.push(value);
-        this.notify();
-      });
+      p.then(
+        (value) => {
+          this.ready.push(value);
+          this.notify();
+        },
+        (_err) => {
+          // Promise rejected — still need to count it as consumed so the
+          // iterator doesn't hang. We push nothing to `ready`; the iterator
+          // handles empty drains via the batch.length === 0 guard.
+          this.rejectedCount++;
+          this.notify();
+        },
+      );
     }
   }
 
@@ -69,11 +84,19 @@ export class ReadyChunks<T> implements AsyncIterable<T[]> {
       // have had their .then() callbacks run.
       await Promise.resolve();
 
+      // Account for any rejected promises (they don't produce values)
+      if (this.rejectedCount > 0) {
+        this.remaining -= this.rejectedCount;
+        this.rejectedCount = 0;
+      }
+
       // Drain the ready queue
       const batch = this.ready.splice(0);
       if (batch.length === 0) {
-        // Shouldn't happen, but guard against spurious wakes
-        this.armSignal();
+        // Woken by rejection(s) only — no values to yield. Re-arm if work remains.
+        if (this.remaining > 0) {
+          this.armSignal();
+        }
         continue;
       }
 

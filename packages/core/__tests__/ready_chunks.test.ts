@@ -79,6 +79,42 @@ describe('ReadyChunks', () => {
     expect(chunks.isEmpty()).toBe(true);
   });
 
+  // Rust: fn includes_cancellations_in_chunk()
+  // Divergence: Rust Canceled futures yield Result::Err which is still an output item;
+  // TS rejected promises are silently consumed (no value pushed) so the iterator
+  // terminates without hanging [E8].
+  test('rejected_promises_dont_hang_iterator', async () => {
+    const rejected = Promise.reject(new Error('canceled'));
+    const chunks = new ReadyChunks<number>([rejected]);
+
+    const batches: number[][] = [];
+    for await (const batch of chunks) {
+      batches.push(batch);
+    }
+
+    // Rejected promise produces no value — iterator terminates with no batches
+    expect(batches.length).toBe(0);
+    expect(chunks.isEmpty()).toBe(true);
+  });
+
+  // Rust: (no direct equivalent — tests mixed resolve+reject)
+  test('mixed_resolve_and_reject', async () => {
+    const resolved = Promise.resolve(42);
+    const rejected = Promise.reject(new Error('canceled'));
+
+    const chunks = new ReadyChunks<number>([resolved, rejected]);
+
+    const batches: number[][] = [];
+    for await (const batch of chunks) {
+      batches.push(batch);
+    }
+
+    // Only the resolved promise produces a value
+    expect(batches.length).toBe(1);
+    expect(batches[0]).toEqual([42]);
+    expect(chunks.isEmpty()).toBe(true);
+  });
+
   test('len_and_isEmpty_track_remaining', async () => {
     const p1 = delay(10, 1);
     const p2 = delay(80, 2);

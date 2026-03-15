@@ -39,12 +39,13 @@ Every in-scope Rust source file and its target TS path.
 | 21 | core/src/entity.rs | packages/core/src/entity.ts | DONE |
 | 22 | core/src/error.rs | packages/core/src/error.ts | DONE |
 | 23 | core/src/indexing/encoding.rs | packages/core/src/indexing/encoding.ts | YES |
-| 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | YES |
-| 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | YES |
+| 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | DONE |
+| 24.1 | core/src/indexing/key_spec.rs (tests) | packages/core/__tests__/key_spec.test.ts | DONE |
+| 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | DONE |
 | 26 | core/src/lib.rs | packages/core/src/index.ts | YES |
 | 27 | core/src/lineage.rs | packages/core/src/lineage.ts | DONE |
 | 28 | core/src/livequery.rs | packages/core/src/livequery.ts | DONE |
-| 29 | core/src/model.rs | packages/core/src/model/index.ts | NO |
+| 29 | core/src/model.rs | packages/core/src/model.ts | DONE |
 | - | core/src/model/tsify.rs | SKIP | tsify |
 | 30 | core/src/node.rs | packages/core/src/node.ts | DONE |
 | 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | DONE |
@@ -77,7 +78,7 @@ Every in-scope Rust source file and its target TS path.
 | 54 | core/src/reactor/subscription.rs | packages/core/src/reactor/subscription.ts | DONE |
 | 55 | core/src/reactor/subscription_state.rs | packages/core/src/reactor/subscription_state.ts | DONE |
 | 56 | core/src/reactor/update.rs | packages/core/src/reactor/update.ts | DONE |
-| 57 | core/src/reactor/watcherset.rs | packages/core/src/reactor/watcherset.ts | NO |
+| 57 | core/src/reactor/watcherset.rs | packages/core/src/reactor/watcherset.ts | DONE |
 | 58 | core/src/resultset.rs | packages/core/src/resultset.ts | DONE |
 | 58.1 | core/src/resultset.rs (tests) | packages/core/src/resultset.test.ts | DONE |
 | 59 | core/src/retrieval.rs | packages/core/src/retrieval.ts | DONE |

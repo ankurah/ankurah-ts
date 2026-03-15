@@ -1,12 +1,12 @@
 // MIRRORS: ankurah/core/src/model.rs
 
+// Divergence: `pub mod tsify` submodule omitted — WASM-only [E9]
+
 import type { CollectionId, EntityId, State } from '@ankurah/proto';
-import type { PropertyError } from './property/traits.ts';
-import type { StateError } from './error.ts';
 import type { Entity } from './entity.ts';
 
 // ---------------------------------------------------------------------------
-// Model trait interface
+// Model trait
 // ---------------------------------------------------------------------------
 
 /**
@@ -44,7 +44,7 @@ export interface ModelDefinition<V extends ViewInstance = ViewInstance, M extend
 }
 
 // ---------------------------------------------------------------------------
-// View trait interface
+// View trait
 // ---------------------------------------------------------------------------
 
 /**
@@ -77,6 +77,11 @@ export interface ViewInstance {
    * Rust: `fn entity(&self) -> &Entity`
    */
   entity(): Entity;
+
+  // Rust: `fn from_entity(inner: Entity) -> Self` — see ViewConstructor below
+
+  // Rust: `fn to_model(&self) -> Result<Self::Model, PropertyError>`
+  // Divergence: Omitted — only used by proc macro generated code; TS uses defineModel() instead [E1]
 }
 
 /**
@@ -95,7 +100,41 @@ export interface ViewConstructor<V extends ViewInstance = ViewInstance> {
 }
 
 // ---------------------------------------------------------------------------
-// Mutable trait interface
+// MutableBorrow — lifetime-constrained wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * A lifetime-constrained wrapper around a Mutable for compile-time transaction safety.
+ *
+ * Rust: `pub struct MutableBorrow<'rec, T: Mutable> { mutable: T, _entity_ref: &'rec Entity }`
+ * Divergence: Rust uses lifetime constraints for compile-time transaction safety;
+ * TS has no lifetime system, so this is a simple wrapper class [E8].
+ *
+ * Rust: `impl Deref for MutableBorrow` / `impl DerefMut for MutableBorrow`
+ * Divergence: TS has no Deref trait; expose inner mutable directly via `.inner` [E8].
+ */
+export class MutableBorrow<T extends MutableInstance> {
+  readonly inner: T;
+  private readonly _entityRef: Entity;
+
+  /** Rust: `pub fn new(entity_ref: &'rec Entity) -> Self` */
+  constructor(entity: Entity, mutableFactory: new (entity: Entity) => T) {
+    this._entityRef = entity;
+    this.inner = new mutableFactory(entity);
+  }
+
+  /**
+   * Extract the core mutable (for WASM usage).
+   *
+   * Rust: `pub fn into_core(self) -> T { self.mutable }`
+   */
+  intoCore(): T {
+    return this.inner;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mutable trait
 // ---------------------------------------------------------------------------
 
 /**
@@ -130,6 +169,8 @@ export interface MutableInstance {
    */
   entity(): Entity;
 
+  // Rust: `fn new(entity: Entity) -> Self` — see MutableConstructor below
+
   /**
    * Get the current state of the entity.
    * Throws StateError on failure.
@@ -156,35 +197,6 @@ export interface MutableConstructor<M extends MutableInstance = MutableInstance>
   new (entity: Entity): M;
 }
 
-// ---------------------------------------------------------------------------
-// MutableBorrow — lifetime-constrained wrapper
-// ---------------------------------------------------------------------------
-
-/**
- * A wrapper around a Mutable that conceptually ties it to an Entity reference.
- *
- * Rust: `pub struct MutableBorrow<'rec, T: Mutable> { mutable: T, _entity_ref: &'rec Entity }`
- * Divergence: Rust uses lifetime constraints for compile-time transaction safety;
- * TS has no lifetime system, so this is a simple wrapper class [E8].
- *
- * In Rust, MutableBorrow implements Deref/DerefMut to T. In TS, we expose the
- * inner mutable directly since TS has no Deref trait.
- */
-export class MutableBorrow<T extends MutableInstance> {
-  readonly inner: T;
-  private readonly _entityRef: Entity;
-
-  constructor(entity: Entity, mutableFactory: new (entity: Entity) => T) {
-    this._entityRef = entity;
-    this.inner = new mutableFactory(entity);
-  }
-
-  /**
-   * Extract the core mutable (for usage where the borrow wrapper is not needed).
-   *
-   * Rust: `pub fn into_core(self) -> T { self.mutable }`
-   */
-  intoCore(): T {
-    return this.inner;
-  }
-}
+// Omitted: wasm_prop, view_subscribe, view_subscribe_no_clone, js_preprocess_ref_field,
+// js_resultset_map, js_livequery_subscribe — all #[doc(hidden)] helpers for Rust proc macro
+// generated code and/or #[cfg(feature = "wasm")] [E1, E9]

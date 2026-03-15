@@ -12,7 +12,7 @@ import {
   SubscriptionGuard,
 } from '@ankurah/signals';
 import { Drop } from '@ankurah/base';
-import { ReactorSubscriptionId } from './watcher_set.ts';
+import { ReactorSubscriptionId } from './watcherset.ts';
 import type { ReactorUpdate } from './update.ts';
 
 // ---------------------------------------------------------------------------

@@ -61,7 +61,7 @@ export class UpdateContent extends Enum<UpdateContentV> {
   intoParts(): { state: StateFragment | null; events: EventFragment[] | null } {
     return this.match({
       EventOnly: (v) => ({ state: null, events: v.events }),
-      StateAndEvent: (v) => ({ state: v.state, events: v.events }),
+      StateAndEvent: (v) => ({ state: v.state as StateFragment | null, events: v.events }),
     });
   }
 

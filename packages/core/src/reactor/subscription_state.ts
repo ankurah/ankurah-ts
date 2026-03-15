@@ -11,15 +11,15 @@ import type { Value } from '../value/index.ts';
 import { ValueType, valueType } from '../value/index.ts';
 import { IndexDirection, NullsOrder, type IndexKeyPart, type KeySpec } from '../indexing/index.ts';
 import type { GapFetcher } from './fetch_gap.ts';
-import { CandidateChanges } from './candidate-changes.ts';
-import type { WatcherChange } from './watcher_set.ts';
+import { CandidateChanges } from './candidate_changes.ts';
+import type { WatcherChange } from './watcherset.ts';
 import {
   ReactorSubscriptionId,
   WatcherSet,
   watcherChangeAdd,
   watcherChangeRemove,
   type WatcherIdPair,
-} from './watcher_set.ts';
+} from './watcherset.ts';
 import type { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './update.ts';
 
 // ── ChangeNotification interface ──────────────────────────────────────

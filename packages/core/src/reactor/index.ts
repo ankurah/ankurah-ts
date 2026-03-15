@@ -21,28 +21,28 @@ import {
   ReactorSubscriptionId,
   WatcherSet,
   type WatcherChange,
-} from './watcher_set.ts';
-import { CandidateChanges } from './candidate-changes.ts';
+} from './watcherset.ts';
+import { CandidateChanges } from './candidate_changes.ts';
 import type { GapFetcher } from './fetch_gap.ts';
 
 // ── Re-exports ────────────────────────────────────────────────────────
 
-export { ComparisonIndex } from './comparison-index.ts';
+export { ComparisonIndex } from './comparison_index.ts';
 export { PropertyPath } from './property_path.ts';
-export { CandidateChanges } from './candidate-changes.ts';
+export { CandidateChanges } from './candidate_changes.ts';
 export {
   ReactorSubscriptionId,
   WatcherSet,
   watcherChangeAdd,
   watcherChangeRemove,
   entityWatcherIdKey,
-} from './watcher_set.ts';
+} from './watcherset.ts';
 export type {
   WatcherOp,
   EntityWatcherId,
   WatcherChange,
   WatcherIdPair,
-} from './watcher_set.ts';
+} from './watcherset.ts';
 export { ReactorSubscription } from './subscription.ts';
 export {
   Subscription,
