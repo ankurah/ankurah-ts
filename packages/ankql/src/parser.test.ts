@@ -2,99 +2,136 @@
 
 import { describe, test, expect } from 'bun:test';
 import { parseSelection } from './parser.ts';
-import { PathExpr, Selection } from './ast.ts';
-import type { Predicate, Expr } from './ast.ts';
+import { PathExpr } from './ast.ts';
+import type { Predicate, Expr, Literal, ComparisonOperator } from './ast.ts';
+
+// ── Helpers ──
+
+/** Assert pred is Comparison(Path(pathName), op, Literal(litType, litValue)). */
+function assertCmpLit(
+  pred: Predicate,
+  pathName: string,
+  op: ComparisonOperator['type'],
+  litType: Literal['type'],
+  litValue: unknown,
+): void {
+  expect(pred.is('Comparison')).toBe(true);
+  if (!pred.is('Comparison')) return;
+  const v = pred.value;
+  assertPath(v.left, pathName);
+  expect(v.operator.type).toBe(op);
+  assertLiteral(v.right, litType, litValue);
+}
+
+/** Assert pred is Comparison(Path(leftPath), op, Path(rightPath)). */
+function assertCmpPaths(
+  pred: Predicate,
+  leftPath: string,
+  op: ComparisonOperator['type'],
+  rightPath: string,
+): void {
+  expect(pred.is('Comparison')).toBe(true);
+  if (!pred.is('Comparison')) return;
+  const v = pred.value;
+  assertPath(v.left, leftPath);
+  expect(v.operator.type).toBe(op);
+  assertPath(v.right, rightPath);
+}
+
+/** Assert expr is Path with given string representation. */
+function assertPath(expr: Expr, pathStr: string): void {
+  expect(expr.is('Path')).toBe(true);
+  if (expr.is('Path')) {
+    expect(expr.value.path.toString()).toBe(pathStr);
+  }
+}
+
+/** Assert expr is Literal with given type and value. */
+function assertLiteral(expr: Expr, litType: Literal['type'], litValue: unknown): void {
+  expect(expr.is('Literal')).toBe(true);
+  if (expr.is('Literal')) {
+    expect(expr.value.literal.type).toBe(litType);
+    expect(expr.value.literal.value.value).toBe(litValue);
+  }
+}
+
+/** Assert expr is Placeholder. */
+function assertPlaceholder(expr: Expr): void {
+  expect(expr.is('Placeholder')).toBe(true);
+}
+
+/** Assert orderBy item at index has given path and direction. */
+function assertOrderBy(
+  orderBy: any[] | null,
+  index: number,
+  pathName: string,
+  dir: string,
+): void {
+  expect(orderBy).not.toBeNull();
+  expect(orderBy!.length).toBeGreaterThan(index);
+  expect(orderBy![index].path.toString()).toBe(pathName);
+  expect(orderBy![index].direction.type).toBe(dir);
+}
+
+// ── Tests ──
 
 describe('parser', () => {
   test('parse selection: status = active', () => {
     const selection = parseSelection("status = 'active'");
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('status') },
-      operator: 'Equal',
-      right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-    });
+    assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
     expect(selection.orderBy).toBeNull();
     expect(selection.limit).toBeNull();
   });
 
   test('parse selection: user AND status', () => {
     const selection = parseSelection("user = 123 AND status = 'active'");
-    expect(selection.predicate).toEqual({
-      type: 'And',
-      left: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('user') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'I32', value: 123 } },
-      },
-      right: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-      },
-    });
+    expect(selection.predicate.is('And')).toBe(true);
+    if (selection.predicate.is('And')) {
+      assertCmpLit(selection.predicate.value.left, 'user', 'Equal', 'I32', 123);
+      assertCmpLit(selection.predicate.value.right, 'status', 'Equal', 'String', 'active');
+    }
   });
 
   test('parse selection: (user OR user) AND status', () => {
     const selection = parseSelection("(user = 123 OR user = 456) AND status = 'active'");
-    expect(selection.predicate).toEqual({
-      type: 'And',
-      left: {
-        type: 'Or',
-        left: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('user') },
-          operator: 'Equal',
-          right: { type: 'Literal', value: { type: 'I32', value: 123 } },
-        },
-        right: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('user') },
-          operator: 'Equal',
-          right: { type: 'Literal', value: { type: 'I32', value: 456 } },
-        },
-      },
-      right: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-      },
-    } satisfies Predicate);
+    expect(selection.predicate.is('And')).toBe(true);
+    if (selection.predicate.is('And')) {
+      const left = selection.predicate.value.left;
+      expect(left.is('Or')).toBe(true);
+      if (left.is('Or')) {
+        assertCmpLit(left.value.left, 'user', 'Equal', 'I32', 123);
+        assertCmpLit(left.value.right, 'user', 'Equal', 'I32', 456);
+      }
+      assertCmpLit(selection.predicate.value.right, 'status', 'Equal', 'String', 'active');
+    }
   });
 
   test('parse selection: status IS NULL', () => {
     const selection = parseSelection('status IS NULL');
-    expect(selection.predicate).toEqual({
-      type: 'IsNull',
-      expr: { type: 'Path', value: PathExpr.simple('status') },
-    });
+    expect(selection.predicate.is('IsNull')).toBe(true);
+    if (selection.predicate.is('IsNull')) {
+      assertPath(selection.predicate.value.expr, 'status');
+    }
   });
 
   test('parse selection: status IS NOT NULL', () => {
     const selection = parseSelection('status IS NOT NULL');
-    expect(selection.predicate).toEqual({
-      type: 'Not',
-      predicate: {
-        type: 'IsNull',
-        expr: { type: 'Path', value: PathExpr.simple('status') },
-      },
-    });
+    expect(selection.predicate.is('Not')).toBe(true);
+    if (selection.predicate.is('Not')) {
+      const inner = selection.predicate.value.predicate;
+      expect(inner.is('IsNull')).toBe(true);
+      if (inner.is('IsNull')) {
+        assertPath(inner.value.expr, 'status');
+      }
+    }
   });
 
   test('unary NOT parenthesized', () => {
     const selection = parseSelection("NOT (status = 'active')");
-    expect(selection.predicate).toEqual({
-      type: 'Not',
-      predicate: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-      },
-    });
+    expect(selection.predicate.is('Not')).toBe(true);
+    if (selection.predicate.is('Not')) {
+      assertCmpLit(selection.predicate.value.predicate, 'status', 'Equal', 'String', 'active');
+    }
   });
 
   test('unary NOT unparenthesized fails', () => {
@@ -103,180 +140,169 @@ describe('parser', () => {
 
   test('parse empty string', () => {
     const selection = parseSelection('');
-    expect(selection.predicate).toEqual({ type: 'True' });
+    expect(selection.predicate.is('True')).toBe(true);
   });
 
   test('parse true literal', () => {
     const selection = parseSelection('true');
-    expect(selection.predicate).toEqual({ type: 'True' });
+    expect(selection.predicate.is('True')).toBe(true);
   });
 
   test('parse false literal', () => {
-    expect(parseSelection('false').predicate).toEqual({ type: 'False' });
+    expect(parseSelection('false').predicate.is('False')).toBe(true);
   });
 
   test('parse selection: IN clause with strings', () => {
     const selection = parseSelection("status IN ('active', 'pending')");
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('status') },
-      operator: 'In',
-      right: {
-        type: 'ExprList',
-        values: [
-          { type: 'Literal', value: { type: 'String', value: 'active' } },
-          { type: 'Literal', value: { type: 'String', value: 'pending' } },
-        ],
-      },
-    });
+    expect(selection.predicate.is('Comparison')).toBe(true);
+    if (selection.predicate.is('Comparison')) {
+      assertPath(selection.predicate.value.left, 'status');
+      expect(selection.predicate.value.operator.type).toBe('In');
+      const right = selection.predicate.value.right;
+      expect(right.is('ExprList')).toBe(true);
+      if (right.is('ExprList')) {
+        expect(right.value.exprs.length).toBe(2);
+        assertLiteral(right.value.exprs[0], 'String', 'active');
+        assertLiteral(right.value.exprs[1], 'String', 'pending');
+      }
+    }
   });
 
   test('parse selection: IN clause with numbers', () => {
     const selection = parseSelection('user_id IN (1, 2, 3)');
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('user_id') },
-      operator: 'In',
-      right: {
-        type: 'ExprList',
-        values: [
-          { type: 'Literal', value: { type: 'I32', value: 1 } },
-          { type: 'Literal', value: { type: 'I32', value: 2 } },
-          { type: 'Literal', value: { type: 'I32', value: 3 } },
-        ],
-      },
-    });
+    expect(selection.predicate.is('Comparison')).toBe(true);
+    if (selection.predicate.is('Comparison')) {
+      assertPath(selection.predicate.value.left, 'user_id');
+      expect(selection.predicate.value.operator.type).toBe('In');
+      const right = selection.predicate.value.right;
+      expect(right.is('ExprList')).toBe(true);
+      if (right.is('ExprList')) {
+        expect(right.value.exprs.length).toBe(3);
+        assertLiteral(right.value.exprs[0], 'I32', 1);
+        assertLiteral(right.value.exprs[1], 'I32', 2);
+        assertLiteral(right.value.exprs[2], 'I32', 3);
+      }
+    }
   });
 
   test('comparison to true', () => {
     const selection = parseSelection('bool_field = true');
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('bool_field') },
-      operator: 'Equal',
-      right: { type: 'Literal', value: { type: 'Bool', value: true } },
-    });
+    assertCmpLit(selection.predicate, 'bool_field', 'Equal', 'Bool', true);
   });
 
   test('comparison to false', () => {
     const selection = parseSelection('bool_field <> false');
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('bool_field') },
-      operator: 'NotEqual',
-      right: { type: 'Literal', value: { type: 'Bool', value: false } },
-    });
+    assertCmpLit(selection.predicate, 'bool_field', 'NotEqual', 'Bool', false);
   });
 
   test('comparison with left operand boolean', () => {
     const selection = parseSelection('false <> bool_field');
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Literal', value: { type: 'Bool', value: false } },
-      operator: 'NotEqual',
-      right: { type: 'Path', value: PathExpr.simple('bool_field') },
-    });
+    expect(selection.predicate.is('Comparison')).toBe(true);
+    if (selection.predicate.is('Comparison')) {
+      assertLiteral(selection.predicate.value.left, 'Bool', false);
+      expect(selection.predicate.value.operator.type).toBe('NotEqual');
+      assertPath(selection.predicate.value.right, 'bool_field');
+    }
   });
 
   describe('placeholders', () => {
     test('single literal placeholder in comparison', () => {
-      expect(parseSelection('user_id = ?').predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('user_id') },
-        operator: 'Equal',
-        right: { type: 'Placeholder' },
-      });
+      const pred = parseSelection('user_id = ?').predicate;
+      expect(pred.is('Comparison')).toBe(true);
+      if (pred.is('Comparison')) {
+        assertPath(pred.value.left, 'user_id');
+        expect(pred.value.operator.type).toBe('Equal');
+        assertPlaceholder(pred.value.right);
+      }
     });
 
     test('multiple literal placeholders in AND expression', () => {
-      expect(parseSelection('user_id = ? AND status = ?').predicate).toEqual({
-        type: 'And',
-        left: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('user_id') },
-          operator: 'Equal',
-          right: { type: 'Placeholder' },
-        },
-        right: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('status') },
-          operator: 'Equal',
-          right: { type: 'Placeholder' },
-        },
-      });
+      const pred = parseSelection('user_id = ? AND status = ?').predicate;
+      expect(pred.is('And')).toBe(true);
+      if (pred.is('And')) {
+        expect(pred.value.left.is('Comparison')).toBe(true);
+        if (pred.value.left.is('Comparison')) {
+          assertPath(pred.value.left.value.left, 'user_id');
+          expect(pred.value.left.value.operator.type).toBe('Equal');
+          assertPlaceholder(pred.value.left.value.right);
+        }
+        expect(pred.value.right.is('Comparison')).toBe(true);
+        if (pred.value.right.is('Comparison')) {
+          assertPath(pred.value.right.value.left, 'status');
+          expect(pred.value.right.value.operator.type).toBe('Equal');
+          assertPlaceholder(pred.value.right.value.right);
+        }
+      }
     });
 
     test('literal placeholders in IN clause', () => {
-      expect(parseSelection('status IN (?, ?, ?)').predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'In',
-        right: {
-          type: 'ExprList',
-          values: [
-            { type: 'Placeholder' },
-            { type: 'Placeholder' },
-            { type: 'Placeholder' },
-          ],
-        },
-      });
+      const pred = parseSelection('status IN (?, ?, ?)').predicate;
+      expect(pred.is('Comparison')).toBe(true);
+      if (pred.is('Comparison')) {
+        assertPath(pred.value.left, 'status');
+        expect(pred.value.operator.type).toBe('In');
+        expect(pred.value.right.is('ExprList')).toBe(true);
+        if (pred.value.right.is('ExprList')) {
+          const exprs = pred.value.right.value.exprs;
+          expect(exprs.length).toBe(3);
+          assertPlaceholder(exprs[0]);
+          assertPlaceholder(exprs[1]);
+          assertPlaceholder(exprs[2]);
+        }
+      }
     });
 
     test('predicate placeholders connected by AND', () => {
-      expect(parseSelection('? AND ?').predicate).toEqual({
-        type: 'And',
-        left: { type: 'Placeholder' },
-        right: { type: 'Placeholder' },
-      });
+      const pred = parseSelection('? AND ?').predicate;
+      expect(pred.is('And')).toBe(true);
+      if (pred.is('And')) {
+        expect(pred.value.left.is('Placeholder')).toBe(true);
+        expect(pred.value.right.is('Placeholder')).toBe(true);
+      }
     });
 
     test('predicate placeholders connected by OR', () => {
-      expect(parseSelection('? OR ?').predicate).toEqual({
-        type: 'Or',
-        left: { type: 'Placeholder' },
-        right: { type: 'Placeholder' },
-      });
+      const pred = parseSelection('? OR ?').predicate;
+      expect(pred.is('Or')).toBe(true);
+      if (pred.is('Or')) {
+        expect(pred.value.left.is('Placeholder')).toBe(true);
+        expect(pred.value.right.is('Placeholder')).toBe(true);
+      }
     });
 
     test('single predicate placeholder', () => {
-      expect(parseSelection('?').predicate).toEqual({ type: 'Placeholder' });
+      expect(parseSelection('?').predicate.is('Placeholder')).toBe(true);
     });
 
     test('mix of predicate and literal placeholders', () => {
-      expect(parseSelection('? AND foo = ?').predicate).toEqual({
-        type: 'And',
-        left: { type: 'Placeholder' },
-        right: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('foo') },
-          operator: 'Equal',
-          right: { type: 'Placeholder' },
-        },
-      });
+      const pred = parseSelection('? AND foo = ?').predicate;
+      expect(pred.is('And')).toBe(true);
+      if (pred.is('And')) {
+        expect(pred.value.left.is('Placeholder')).toBe(true);
+        expect(pred.value.right.is('Comparison')).toBe(true);
+        if (pred.value.right.is('Comparison')) {
+          assertPath(pred.value.right.value.left, 'foo');
+          expect(pred.value.right.value.operator.type).toBe('Equal');
+          assertPlaceholder(pred.value.right.value.right);
+        }
+      }
     });
   });
 
   describe('ORDER BY', () => {
     test('basic ORDER BY', () => {
       const selection = parseSelection("status = 'active' ORDER BY name");
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-      });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('name'), direction: 'Asc' },
-      ]);
+      assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
+      assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
+      expect(selection.orderBy!.length).toBe(1);
       expect(selection.limit).toBeNull();
     });
 
     test('ORDER BY with direction', () => {
       const selection = parseSelection('true ORDER BY created_at DESC');
-      expect(selection.predicate).toEqual({ type: 'True' });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('created_at'), direction: 'Desc' },
-      ]);
+      expect(selection.predicate.is('True')).toBe(true);
+      assertOrderBy(selection.orderBy, 0, 'created_at', 'Desc');
+      expect(selection.orderBy!.length).toBe(1);
     });
 
     test('ORDER BY dotted identifier not supported', () => {
@@ -285,21 +311,19 @@ describe('parser', () => {
 
     test('ORDER BY only', () => {
       const selection = parseSelection('true ORDER BY score');
-      expect(selection.predicate).toEqual({ type: 'True' });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('score'), direction: 'Asc' },
-      ]);
+      expect(selection.predicate.is('True')).toBe(true);
+      assertOrderBy(selection.orderBy, 0, 'score', 'Asc');
+      expect(selection.orderBy!.length).toBe(1);
       expect(selection.limit).toBeNull();
     });
 
     test('ORDER BY multiple items', () => {
       const selection = parseSelection('true ORDER BY name ASC, created_at DESC, id');
-      expect(selection.predicate).toEqual({ type: 'True' });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('name'), direction: 'Asc' },
-        { path: PathExpr.simple('created_at'), direction: 'Desc' },
-        { path: PathExpr.simple('id'), direction: 'Asc' },
-      ]);
+      expect(selection.predicate.is('True')).toBe(true);
+      expect(selection.orderBy!.length).toBe(3);
+      assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
+      assertOrderBy(selection.orderBy, 1, 'created_at', 'Desc');
+      assertOrderBy(selection.orderBy, 2, 'id', 'Asc');
       expect(selection.limit).toBeNull();
     });
   });
@@ -307,19 +331,14 @@ describe('parser', () => {
   describe('LIMIT', () => {
     test('basic LIMIT', () => {
       const selection = parseSelection("status = 'active' LIMIT 10");
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('status') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'active' } },
-      });
+      assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
       expect(selection.orderBy).toBeNull();
       expect(selection.limit).toBe(10);
     });
 
     test('LIMIT only', () => {
       const selection = parseSelection('true LIMIT 100');
-      expect(selection.predicate).toEqual({ type: 'True' });
+      expect(selection.predicate.is('True')).toBe(true);
       expect(selection.orderBy).toBeNull();
       expect(selection.limit).toBe(100);
     });
@@ -328,15 +347,9 @@ describe('parser', () => {
   describe('ORDER BY and LIMIT combined', () => {
     test('both ORDER BY and LIMIT', () => {
       const selection = parseSelection('user_id > 100 ORDER BY created_at DESC LIMIT 5');
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('user_id') },
-        operator: 'GreaterThan',
-        right: { type: 'Literal', value: { type: 'I32', value: 100 } },
-      });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('created_at'), direction: 'Desc' },
-      ]);
+      assertCmpLit(selection.predicate, 'user_id', 'GreaterThan', 'I32', 100);
+      assertOrderBy(selection.orderBy, 0, 'created_at', 'Desc');
+      expect(selection.orderBy!.length).toBe(1);
       expect(selection.limit).toBe(5);
     });
   });
@@ -344,57 +357,36 @@ describe('parser', () => {
   describe('pathological keyword cases', () => {
     test('limit as column name', () => {
       const selection = parseSelection('limit = 1');
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('limit') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'I32', value: 1 } },
-      });
+      assertCmpLit(selection.predicate, 'limit', 'Equal', 'I32', 1);
     });
 
     test('order as column name with ORDER BY', () => {
       const selection = parseSelection('order = 2 ORDER BY name');
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('order') },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'I32', value: 2 } },
-      });
-      expect(selection.orderBy).toEqual([
-        { path: PathExpr.simple('name'), direction: 'Asc' },
-      ]);
+      assertCmpLit(selection.predicate, 'order', 'Equal', 'I32', 2);
+      assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
+      expect(selection.orderBy!.length).toBe(1);
     });
   });
 
   describe('boolean literals', () => {
     test('true parses as Predicate.True', () => {
-      expect(parseSelection('true').predicate).toEqual({ type: 'True' });
+      expect(parseSelection('true').predicate.is('True')).toBe(true);
     });
 
     test('false parses as Predicate.False', () => {
-      expect(parseSelection('false').predicate).toEqual({ type: 'False' });
+      expect(parseSelection('false').predicate.is('False')).toBe(true);
     });
   });
 
   describe('path expressions', () => {
     test('dotted path in comparison', () => {
       const selection = parseSelection("person.name = 'Alice'");
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: new PathExpr(['person', 'name']) },
-        operator: 'Equal',
-        right: { type: 'Literal', value: { type: 'String', value: 'Alice' } },
-      });
+      assertCmpLit(selection.predicate, 'person.name', 'Equal', 'String', 'Alice');
     });
 
     test('dotted paths on both sides', () => {
       const selection = parseSelection('a.foo = b.foo');
-      expect(selection.predicate).toEqual({
-        type: 'Comparison',
-        left: { type: 'Path', value: new PathExpr(['a', 'foo']) },
-        operator: 'Equal',
-        right: { type: 'Path', value: new PathExpr(['b', 'foo']) },
-      });
+      assertCmpPaths(selection.predicate, 'a.foo', 'Equal', 'b.foo');
     });
   });
 
@@ -423,22 +415,15 @@ describe('parser', () => {
     test('IN/in', () => {
       const p1 = parseSelection("x IN (1, 2)").predicate;
       const p2 = parseSelection("x in (1, 2)").predicate;
-      expect(p1.type).toBe('Comparison');
-      expect(p2.type).toBe('Comparison');
-      if (p1.type === 'Comparison' && p2.type === 'Comparison') {
-        expect(p1.operator).toBe('In');
-        expect(p2.operator).toBe('In');
-      }
+      expect(p1.is('Comparison')).toBe(true);
+      expect(p2.is('Comparison')).toBe(true);
+      if (p1.is('Comparison')) expect(p1.value.operator.type).toBe('In');
+      if (p2.is('Comparison')) expect(p2.value.operator.type).toBe('In');
     });
   });
 
   test('!= as NotEqual', () => {
     const selection = parseSelection('a != 1');
-    expect(selection.predicate).toEqual({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('a') },
-      operator: 'NotEqual',
-      right: { type: 'Literal', value: { type: 'I32', value: 1 } },
-    });
+    assertCmpLit(selection.predicate, 'a', 'NotEqual', 'I32', 1);
   });
 });

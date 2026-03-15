@@ -3,8 +3,7 @@
 import { describe, test, expect } from 'bun:test';
 import { generateSelectionSql } from './sql.ts';
 import { parseSelection } from '../parser.ts';
-import { PathExpr } from '../ast.ts';
-import type { Predicate, Expr } from '../ast.ts';
+import { PathExpr, Predicate, Expr, Literal, ComparisonOperator } from '../ast.ts';
 import { PlaceholderCountMismatchError } from '../error.ts';
 
 describe('sql generation', () => {
@@ -95,23 +94,21 @@ describe('sql generation', () => {
   });
 
   test('string escaping: single quotes', () => {
-    const predicate: Predicate = {
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('name') },
-      operator: 'Equal',
-      right: { type: 'Literal', value: { type: 'String', value: "O'Brien" } },
-    };
+    const predicate = Predicate.Comparison(
+      Expr.Path(PathExpr.simple('name')),
+      ComparisonOperator.Equal(),
+      Expr.Literal(Literal.String("O'Brien")),
+    );
     const sql = generateSelectionSql(predicate);
     expect(sql).toBe('"name" = \'O\'\'Brien\'');
   });
 
   test('null byte handling', () => {
-    const predicate: Predicate = {
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('data') },
-      operator: 'Equal',
-      right: { type: 'Literal', value: { type: 'String', value: 'test\0data' } },
-    };
+    const predicate = Predicate.Comparison(
+      Expr.Path(PathExpr.simple('data')),
+      ComparisonOperator.Equal(),
+      Expr.Literal(Literal.String('test\0data')),
+    );
     const sql = generateSelectionSql(predicate);
     expect(sql).toBe('"data" = \'testdata\'');
   });
