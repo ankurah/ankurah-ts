@@ -1,6 +1,6 @@
 // TS-ONLY: Tests for @ankurah/base ownership primitives
 import { describe, test, expect } from 'bun:test';
-import { AkObject, Struct, Enum, Drop, Arc, Weak, Borrow, BorrowMut, Mutex, RefCell, disposeSymbol } from '../src/index.ts';
+import { AkObject, Struct, Enum, Drop, DropGuard, Arc, Weak, Borrow, BorrowMut, Mutex, RefCell, AsyncMutex, disposeSymbol } from '../src/index.ts';
 
 // ── Test helpers ──
 
@@ -342,5 +342,215 @@ describe('Composition', () => {
     const a = new A(inner);
     a[disposeSymbol]();
     expect(inner.dropCount).toBe(1);
+  });
+
+  test('Multi-owner Arc — dispose one clone, inner survives', () => {
+    const inner = new Inner();
+    const a1 = Arc.new(inner);
+    const a2 = a1.clone();
+    class Holder extends Struct {
+      ref: Arc<Inner>;
+      constructor(arc: Arc<Inner>) { super(); this.ref = arc; }
+    }
+    const h1 = new Holder(a1);
+    h1[disposeSymbol]();
+    expect(inner.dropCount).toBe(0); // a2 still alive
+    a2.drop();
+    expect(inner.dropCount).toBe(1);
+  });
+
+  test('Arc wrapping non-Drop AkObject cascades fields', () => {
+    class Plain extends Struct {
+      child: Inner;
+      constructor() { super(); this.child = new Inner(); }
+    }
+    const p = new Plain();
+    const childRef = p.child;
+    const arc = Arc.new(p);
+    arc.drop();
+    expect(p.isDropped).toBe(true);
+    expect(childRef.dropCount).toBe(1);
+  });
+});
+
+// ── BorrowMut ──
+
+describe('BorrowMut', () => {
+  test('value getter and setter', () => {
+    const bm = new BorrowMut(42);
+    expect(bm.value).toBe(42);
+    bm.value = 99;
+    expect(bm.value).toBe(99);
+  });
+
+  test('dispose is no-op — does not propagate', () => {
+    const inner = new Inner();
+    class Holder extends Struct {
+      ref: BorrowMut<Inner>;
+      constructor(inner: Inner) { super(); this.ref = new BorrowMut(inner); }
+    }
+    const h = new Holder(inner);
+    h[disposeSymbol]();
+    expect(inner.dropCount).toBe(0);
+  });
+});
+
+// ── DropGuard ──
+
+describe('DropGuard', () => {
+  test('markDropped and assertNotDropped', () => {
+    class Host {
+      guard = new DropGuard(this);
+      check(): void { this.guard.assertNotDropped(); }
+      cleanup(): void { this.guard.markDropped(this); }
+    }
+    const h = new Host();
+    h.check(); // should not throw
+    h.cleanup();
+    expect(h.guard.isDropped).toBe(true);
+    expect(() => h.check()).toThrow('has already been dropped');
+  });
+
+  test('markDropped is idempotent', () => {
+    class Host {
+      guard = new DropGuard(this);
+      cleanup(): void { this.guard.markDropped(this); }
+    }
+    const h = new Host();
+    h.cleanup();
+    h.cleanup(); // should not throw
+    expect(h.guard.isDropped).toBe(true);
+  });
+});
+
+// ── AsyncMutex ──
+
+describe('AsyncMutex', () => {
+  test('acquire and release', async () => {
+    const m = new AsyncMutex();
+    const release = await m.acquire();
+    release();
+  });
+
+  test('serializes async operations', async () => {
+    const m = new AsyncMutex();
+    const order: number[] = [];
+
+    const op = async (id: number, delay: number) => {
+      const release = await m.acquire();
+      order.push(id);
+      await new Promise(r => setTimeout(r, delay));
+      order.push(id * 10);
+      release();
+    };
+
+    await Promise.all([op(1, 20), op(2, 10)]);
+    // op1 acquires first, runs to completion (1, 10), then op2 runs (2, 20)
+    expect(order).toEqual([1, 10, 2, 20]);
+  });
+
+  test('re-acquire after release', async () => {
+    const m = new AsyncMutex();
+    const r1 = await m.acquire();
+    r1();
+    const r2 = await m.acquire();
+    r2();
+  });
+});
+
+// ── Guard post-dispose ──
+
+describe('Guard post-dispose throws', () => {
+  test('MutexGuard.value throws after dispose', () => {
+    const m = new Mutex({ x: 1 });
+    const g = m.lock();
+    g[disposeSymbol]();
+    expect(() => g.value).toThrow('has already been dropped');
+  });
+
+  test('Ref.value throws after dispose', () => {
+    const cell = new RefCell({ x: 1 });
+    const r = cell.borrow();
+    r[disposeSymbol]();
+    expect(() => r.value).toThrow('has already been dropped');
+  });
+
+  test('RefMut.value throws after dispose', () => {
+    const cell = new RefCell({ x: 1 });
+    const w = cell.borrow_mut();
+    w[disposeSymbol]();
+    expect(() => w.value).toThrow('has already been dropped');
+  });
+});
+
+// ── RefCell extras ──
+
+describe('RefCell extras', () => {
+  test('onMutRelease callback fires after borrow_mut release', () => {
+    let released = false;
+    const cell = new RefCell({ x: 1 }, { onMutRelease: () => { released = true; } });
+    {
+      using w = cell.borrow_mut();
+      expect(released).toBe(false);
+    }
+    expect(released).toBe(true);
+  });
+
+  test('borrow_mut after borrow release works', () => {
+    const cell = new RefCell({ x: 1 });
+    { using r = cell.borrow(); }
+    { using w = cell.borrow_mut(); w.value.x = 2; }
+    { using r = cell.borrow(); expect(r.value.x).toBe(2); }
+  });
+});
+
+// ── Weak lifecycle ──
+
+describe('Weak lifecycle', () => {
+  test('upgrade, use, drop — full pattern', () => {
+    const inner = new Inner();
+    const arc = Arc.new(inner);
+    const weak = arc.downgrade();
+
+    // Upgrade while alive
+    const upgraded = weak.upgrade();
+    expect(upgraded).not.toBeNull();
+    expect(upgraded!.value).toBe(inner);
+    expect(arc.strongCount).toBe(2);
+
+    // Drop original
+    arc.drop();
+    expect(inner.dropCount).toBe(0); // upgraded still holds
+
+    // Drop upgraded
+    upgraded!.drop();
+    expect(inner.dropCount).toBe(1); // last strong ref gone
+
+    // Weak upgrade returns null
+    expect(weak.upgrade()).toBeNull();
+    weak.drop();
+  });
+});
+
+// ── Private field limitation ──
+
+describe('Private field limitation', () => {
+  test('#private fields are invisible to cascade (documented limitation)', () => {
+    class WithPrivate extends Struct {
+      #secret: Inner;
+      public exposed: Inner;
+      constructor() {
+        super();
+        this.#secret = new Inner();
+        this.exposed = new Inner();
+      }
+      getSecret(): Inner { return this.#secret; }
+    }
+    const w = new WithPrivate();
+    const secret = w.getSecret();
+    const exposed = w.exposed;
+    w[disposeSymbol]();
+    expect(exposed.dropCount).toBe(1); // cascade reached public field
+    expect(secret.dropCount).toBe(0);  // cascade missed #private field
   });
 });

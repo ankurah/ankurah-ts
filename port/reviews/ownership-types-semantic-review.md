@@ -6,127 +6,43 @@ Scope: AkObject, Struct, Enum, Drop, Arc, Weak, Borrow, BorrowMut, Mutex, RefCel
 
 ---
 
-## Critical Issues
+## Status
 
-### C1. Arc.drop() calls value.drop() but NOT value[Symbol.dispose]() — cascade is skipped
-
-**File**: `packages/base/src/std/arc.ts:82-86`
-
-When the last Arc drops, the code does:
-```ts
-if (val && typeof (val as any).drop === 'function') {
-  (val as any).drop();
-}
-```
-
-This calls the custom `drop()` method but **does not call `[disposeSymbol]()`**. That means the auto-cascade walk in `AkObject[disposeSymbol]()` never runs. If the inner value is a `Drop` subclass that owns other disposable fields, those fields are **never cleaned up**.
-
-**Concrete scenario**: `ReactorSubInner` has `impl Drop` and owns a `Broadcast<ReactorUpdate>`. In Rust, dropping ReactorSubInner runs its `drop()` impl, then Rust's compiler-generated drop glue cascades to all fields. In the TS port, `Arc.drop()` would call `inner.drop()` but never trigger the cascade to owned fields like the broadcast.
-
-**Fix**: Call `val[disposeSymbol]()` instead of `val.drop()`. The `[disposeSymbol]()` method in AkObject already calls `this.drop()` first and then cascades — that's exactly the right sequence.
-
-```ts
-if (val && typeof (val as any)[disposeSymbol] === 'function') {
-  (val as any)[disposeSymbol]();
-}
-```
-
-### C2. Enum[disposeSymbol]() double-disposes variant value fields
-
-**File**: `packages/base/src/enum.ts:40-48`
-
-The override walks `this.value`'s own properties and disposes them, then calls `super[disposeSymbol]()`. But `super[disposeSymbol]()` (in AkObject) walks `Object.getOwnPropertyNames(this)`, which includes `type` and `value`. The `value` object itself doesn't have `[disposeSymbol]` (it's a plain object), so it's harmless in that direction — **but** the AkObject cascade also walks all own properties, and `type`/`value` are set in the constructor as instance properties.
-
-The actual problem is subtler: if `this.value` is itself an AkObject (e.g., an enum variant that holds a single struct), the Enum override disposes it, and then the AkObject cascade in `super[disposeSymbol]()` disposes it **again**. The idempotency guard in AkObject protects against double-drop of AkObjects, so this is not a correctness bug per se, but it's a semantic smell — the code accidentally relies on idempotency for correctness.
-
-**Severity**: Low (idempotency saves it), but worth a comment or restructuring the override to delegate entirely to super.
-
-### C3. Arc does not extend AkObject — invisible to parent cascade and leak detector
-
-**File**: `packages/base/src/std/arc.ts:36`
-
-`Arc<T>` is a plain class, not an `AkObject`. This means:
-1. **No leak detection**: Arc instances are not registered with the `FinalizationRegistry`. If someone creates an Arc and forgets to drop it, no warning is emitted.
-2. **Not visible to parent cascade**: If an AkObject has an `Arc<T>` field, the parent's `[disposeSymbol]()` cascade sees it has `[disposeSymbol]` and calls it — that part works. But the Arc itself doesn't participate in the leak registry.
-
-This is a design choice, not necessarily a bug — but it diverges from the principle that "all ported Rust types inherit AkObject." An `Arc` is a ported Rust type.
-
-**Risk**: Leaked Arcs holding Drop-implementing inners will never warn. The inner's FinalizationRegistry entry won't fire either because the Arc holds a strong JS reference to it.
-
-### C4. Arc.drop() is not idempotent per-handle — calling drop() twice on the same Arc decrements twice
-
-**File**: `packages/base/src/std/arc.ts:77-87`
-
-```ts
-drop(): void {
-    if (this.#inner.strongCount <= 0) return; // already fully released
-    this.#inner.strongCount--;
-    ...
-}
-```
-
-The guard checks if `strongCount <= 0`, but there's no per-instance `#dropped` flag. If you call `arc.drop()` twice on the same Arc handle:
-- First call: strongCount goes from N to N-1. Fine.
-- Second call: strongCount goes from N-1 to N-2. **Bug** — this Arc handle was already dropped, it shouldn't decrement again.
-
-In Rust this can't happen because drop takes ownership (`self`, not `&self`). In JS, nothing prevents calling `.drop()` twice on the same reference.
-
-**Fix**: Add a per-instance `#dropped = false` flag and bail early if already dropped.
-
-```ts
-#dropped = false;
-
-drop(): void {
-    if (this.#dropped) return;
-    this.#dropped = true;
-    this.#inner.strongCount--;
-    if (this.#inner.strongCount === 0) {
-        this.#inner.dropped = true;
-        const val = this.#inner.value;
-        if (val && typeof (val as any)[disposeSymbol] === 'function') {
-            (val as any)[disposeSymbol]();
-        }
-    }
-}
-```
-
-Similarly, `[disposeSymbol]()` delegates to `drop()` so this fix covers both paths.
+The current implementation is sound. Earlier drafts of Arc had critical bugs (calling `.drop()` instead of `[disposeSymbol]()`, no per-handle idempotency, no leak registry). These have all been fixed in the current code. The review below covers remaining issues only.
 
 ---
 
 ## Moderate Issues
 
-### M1. Weak.upgrade() constructs Arc via `new (Arc as any)(this.#inner)` — bypasses private constructor intent
+### M1. Enum[disposeSymbol]() double-disposes variant value fields
 
-**File**: `packages/base/src/std/arc.ts:138-139`
+**File**: `packages/base/src/enum.ts:40-48`
 
-This works but is fragile. If Arc's constructor signature changes, this breaks silently at runtime. Consider adding a `static fromInner<T>(inner: ArcInner<T>): Arc<T>` private/internal factory method.
+The override walks `this.value`'s own properties and disposes them, then calls `super[disposeSymbol]()`. The AkObject cascade in `super[disposeSymbol]()` walks `Object.getOwnPropertyNames(this)`, which includes `type` and `value`. The `value` property is a plain object (no `[disposeSymbol]`), so the AkObject cascade skips it. However, the individual fields inside `this.value` that ARE disposable get disposed by the Enum override first, and then if any of those same objects are also direct properties of `this`, they'd be hit again.
 
-### M2. Weak has no protection against double-drop
+In practice this is harmless — AkObject's idempotency guard (`#dropped` check) prevents double-drop. But the code structurally relies on idempotency for correctness rather than having a clean single-responsibility cascade.
 
-**File**: `packages/base/src/std/arc.ts:145-149`
+**Severity**: Low. Worth a comment noting the intentional reliance on idempotency.
 
-Same pattern as C4 — calling `weak.drop()` twice decrements `weakCount` twice. Needs a per-instance `#dropped` flag.
+### M2. Weak.upgrade() constructs Arc via `new (Arc as any)(this.#inner)` — bypasses private constructor
 
-### M3. AkObject cascade walks only own *enumerable* property names — private fields (#field) are invisible
+**File**: `packages/base/src/std/arc.ts:82`
+
+Works but is fragile. If Arc's constructor signature changes, this breaks silently at runtime.
+
+### M3. AkObject cascade walks only own string-keyed properties — `#private` fields are invisible
 
 **File**: `packages/base/src/object.ts:23`
 
-`Object.getOwnPropertyNames(this)` returns string-keyed own properties. It does **not** return:
-- Private fields (`#foo`) — these are not properties at all in JS, they're slots
+`Object.getOwnPropertyNames(this)` does **not** return:
+- Private fields (`#foo`) — these are slots, not properties
 - Symbol-keyed properties
 
-This means if a ported struct stores an owned disposable value in a `#private` field, cascade won't reach it. This is actually **correct behavior** for the current code since `Borrow`, `Arc`, etc. use `#private` fields precisely to hide their internals. But it means the translation rule must be: "owned fields that need cascade must be public or at least non-private instance properties."
+This means owned disposable values stored in `#private` fields are invisible to cascade. This is **correct and intentional** for the provided types (Borrow, Arc, Mutex, RefCell all use `#private` to hide internals from cascade). But it's a constraint that translators must know: **owned fields that need cascade must be public instance properties**.
 
-**Action**: Document this constraint clearly. It's not a bug, but it's a footgun for translators.
+**Action**: Document this rule in the translation guidelines.
 
-### M4. MutexGuard, Ref, RefMut extend Drop (which extends AkObject) — cascade walks their fields
-
-**File**: `packages/base/src/std/sync.ts:50`, `packages/base/src/std/cell.ts:98,125`
-
-These guards store their values in `#private` fields, so cascade can't reach them — which is correct since guards don't own the guarded value. But if they stored values as public fields, the cascade would try to dispose the guarded value on guard drop. The current implementation is safe because of the `#private` field pattern, but this is an implicit invariant worth documenting.
-
-### M5. ownership.md is stale relative to the actual implementation
+### M4. ownership.md is stale relative to the actual implementation
 
 **File**: `port/ownership.md`
 
@@ -135,7 +51,13 @@ The spec says:
 - `Weak<T>` → `WeakRef<T>` — **contradicts** the actual `Weak<T>` implementation
 - `impl Drop` → `extends Disposable` — **contradicts** the actual `extends Drop` class name
 
-The spec appears to be from an earlier design iteration before the decision to provide 1:1 ownership types. It should be updated to reflect the current implementation, or clearly marked as superseded.
+The spec appears to be from an earlier design iteration. It should be updated or marked as superseded.
+
+### M5. Mutex does not extend AkObject — not registered with leak detector
+
+**File**: `packages/base/src/std/sync.ts:20`
+
+`Mutex<T>` is a plain class. If someone creates a Mutex and never uses it, no leak warning. This is probably fine since Mutex itself has no cleanup, but it diverges from the "all ported types extend AkObject" principle. Arc was updated to register with leakRegistry even though it doesn't extend AkObject — Mutex could do the same if desired.
 
 ---
 
@@ -148,58 +70,28 @@ An empty `Struct` (no fields) correctly: registers with leak detector in constru
 `new MyEnum('UnitVariant', {})` — the `value` is `{}`. The Enum override walks `Object.getOwnPropertyNames({})` which is empty. Correct.
 
 ### E3. Nested Arcs — `Arc<Arc<T>>`
-Works correctly in principle: outer Arc's drop decrements outer refcount; when it hits zero, it drops the inner Arc (which decrements inner refcount). However, combined with C1, the outer Arc's drop would call `innerArc.drop()` directly, which is actually fine for Arc since Arc.drop() is the intended method. But if the fix for C1 changes to call `[disposeSymbol]()`, that also works since Arc's `[disposeSymbol]()` delegates to `drop()`.
+Outer Arc's drop decrements outer refcount; when it hits zero, calls `inner[disposeSymbol]()` which calls `innerArc.drop()`, decrementing inner refcount. Correct.
 
 ### E4. Weak.upgrade() after all Arcs dropped
-```ts
-const a = Arc.new(value);
-const w = a.downgrade();
-a.drop();
-const upgraded = w.upgrade(); // returns null ✓
-```
-Correct — `this.#inner.dropped` is `true`, returns `null`.
+Returns `null` when `this.#inner.dropped` is `true`. Correct.
 
 ### E5. Struct that owns an Arc that wraps a type with impl Drop
-```ts
-class MyStruct extends Struct {
-    inner: Arc<MyDropType>;
-    constructor(inner: Arc<MyDropType>) {
-        super();
-        this.inner = inner;
-    }
-}
-```
-When MyStruct is disposed:
-1. AkObject cascade finds `this.inner` (an Arc), calls `inner[disposeSymbol]()`
-2. Arc's `[disposeSymbol]()` calls `this.drop()`, which decrements refcount
-3. If refcount hits zero, calls `value.drop()` (C1 bug — should call `[disposeSymbol]()`)
-
-With C1 fixed, this chain works correctly.
+Full cascade chain: `Struct[disposeSymbol]()` → walks fields → `Arc[disposeSymbol]()` → `Arc.drop()` → decrements refcount → if zero, `inner[disposeSymbol]()` → `inner.drop()` (custom) → cascade inner's fields. Correct.
 
 ### E6. Borrow fields are correctly skipped by cascade
-```ts
-class MyStruct extends Struct {
-    ref: Borrow<SomeDropType>;
-}
-```
-Cascade finds `this.ref`, calls `ref[disposeSymbol]()` which is a no-op. The borrowed value is not dropped. Correct.
+Cascade finds `this.ref` (a Borrow), calls `ref[disposeSymbol]()` which is a no-op. Borrowed value not dropped. Correct.
 
 ### E7. Clone-then-drop-original pattern
-```ts
-const a = Arc.new(myDropValue);
-const b = a.clone(); // strongCount = 2
-a[disposeSymbol]();  // strongCount = 1, inner NOT dropped
-b[disposeSymbol]();  // strongCount = 0, inner dropped ✓
-```
-Correct.
+`a.clone()` increments refcount. `a.drop()` decrements, `b.drop()` decrements to zero and triggers inner disposal. Correct.
 
 ### E8. Arc.clone() after drop
-```ts
-const a = Arc.new(value);
-a.drop();            // strongCount = 0, inner dropped
-a.clone();           // throws "cannot clone — inner value has been dropped" ✓
-```
-Correct.
+Throws "cannot clone — inner already dropped". Correct.
+
+### E9. Double-drop on same Arc handle
+`#released` flag prevents second decrement. Correct.
+
+### E10. Double-drop on same Weak handle
+`#released` flag prevents second decrement. Correct.
 
 ---
 
@@ -207,23 +99,49 @@ Correct.
 
 | Scenario | Status | Notes |
 |----------|--------|-------|
-| AkObject auto-cascade | OK | Walks own properties, calls [disposeSymbol] |
+| AkObject auto-cascade | OK | Walks own string-keyed properties, calls [disposeSymbol] |
 | Borrow blocks cascade | OK | No-op [disposeSymbol] |
-| Arc refcount lifecycle | BUG | C1: calls drop() not [disposeSymbol](); C4: no per-handle idempotency |
-| Weak upgrade/drop | OK (minor) | M2: no double-drop guard |
-| Enum variant cascade | OK (minor) | C2: double-dispose masked by idempotency |
-| Struct owns Arc owns Drop | BUG | Cascade works but inner's sub-fields lost (C1) |
+| Arc refcount lifecycle | OK | Per-handle #released flag, calls [disposeSymbol] on inner |
+| Arc leak detection | OK | Registers with leakRegistry in constructor |
+| Weak upgrade/drop | OK | #released flag, null-on-dropped |
+| Enum variant cascade | OK (minor) | M1: double-dispose masked by idempotency |
+| Struct owns Arc owns Drop | OK | Full cascade chain verified |
 | Drop subclass cleanup | OK | Abstract drop() called before cascade |
-| Mutex/RefCell guards | OK | Guards don't cascade to guarded value (correct) |
-| Leak detection | GAP | C3: Arc not registered; leaked Arc = silent |
+| Mutex/RefCell guards | OK | Guards use #private fields, don't cascade to guarded value |
 
 ---
 
-## Recommended Fix Priority
+## Real-Usage Test Review
 
-1. **C1** — Arc inner disposal must call `[disposeSymbol]()` not `.drop()` — correctness bug, fields will leak
-2. **C4** — Arc per-handle idempotency flag — correctness bug, double-drop corrupts refcount
-3. **M5** — Update ownership.md to match implementation — spec drift causes translator confusion
-4. **C3** — Register Arc with leak detector — observability gap
-5. **M2** — Weak double-drop guard — minor correctness
-6. **C2** — Enum cascade restructure — code clarity
+Reviewed `packages/base/__tests__/real_usage.test.ts` — 22 tests, all passing.
+
+### Mock Fidelity Issues
+
+1. **EntityKind.Transacted `trxAlive`**: Rust has `Arc<AtomicBool>`, test uses `{ value: boolean }`. Should use `Arc.new({ value: boolean })` to model the shared-ownership aspect (multiple snapshots share one liveness flag).
+
+2. **NodeMessage missing `UnsubscribeEntities` variant**: Rust has 6 variants, test has 5.
+
+3. **NodeRequest** in Rust has `body: NodeRequestBody` (an enum). Test mock only has `id/to/from`.
+
+4. **NodeResponse** in Rust has `request_id/from/to/body`. Test mock only has `requestId`.
+
+5. **CausalAssertionFragment** in Rust has `relation: CausalRelation` (an enum) + `attestations: AttestationSet`. Test mock has `relation: string`.
+
+### Missing Ownership Scenarios
+
+1. **Multi-owner Entity via Arc**: Test "Transacted variant owns upstream entity" creates a sole-owner Entity. Should also test: dispose EntityKind::Transacted when another Entity clone exists — inner must survive.
+
+2. **Entity.snapshot()** pattern: Creating a transacted fork sharing `trx_alive`, killing the transaction, verifying `is_writable()` returns false. Core Rust pattern, not tested.
+
+3. **Nested ownership: LiveQuery → ReactorSubscription**: `Inner` in livequery.rs holds `subscription: ReactorSubscription`. When LiveQuery's inner drops, it runs `impl Drop` and cascades to the subscription. No test for this multi-layer chain.
+
+4. **Borrow in a real struct**: No test shows a struct with a `Borrow<T>` field surviving cascade (parent drops, borrowed value lives).
+
+5. **WeakEntity pattern**: Weak→upgrade→None-after-drop with Entity shapes (not just raw Arc).
+
+### Tests Verified Correct
+
+- ReactorSubscription single/multi-owner drop, using block, cascade to broadcast — all correctly exercise the Arc→Drop cascade chain.
+- Entity clone, mutex access, cascade — correct.
+- Enum match/is/cascade for EntityKind, DeltaContent, NodeMessage — correct.
+- Proto structs (ProtoEvent, Clock) — correct plain-data cascade.
