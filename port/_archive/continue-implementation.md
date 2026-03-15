@@ -4,7 +4,7 @@
 
 **Last updated**: 2026-02-11 (Layer 7 in progress, last commit e86d01e)
 
-**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-6b fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. Layer 6a+6b committed: livequery, storage-memory, integration tests, GC bug fix. **Layer 7 in progress**: ReadyChunks utility (5 tests), PolicyAgent validation methods added, NodeApplier implemented (422 lines). Peer subscription and node networking methods remain. **376 tests passing**, 1016 assertions, 22 test files. **Next: peer_subscription/ → node networking methods → Layer 8 (connectors + React).**
+**Status**: Proto, signals, ankql fully done. Yrs↔Yjs V2 interop validated. Core Layers 0-6b fully implemented. Reactor complete (8 files + 9 tests). Supporting types done. storage-common fully ported. lineage.ts + system.ts done with tests. Layer 6a+6b committed: livequery, storage-memory, integration tests, GC bug fix. **Layer 7 in progress**: ReadyChunks utility (5 tests), PolicyAgent validation methods added, NodeApplier implemented (422 lines). Peer subscription and node networking methods remain. disposable.ts implemented (Disposable base class, DisposeGuard, RefCell<T>). memory-model spec written (two-axis severity model: correctness-critical with hard-fail FinalizationRegistry, resource-hygiene with warn; disposable.ts needs severity parameter update, naming TBD). **376 tests passing**, 1016 assertions, 22 test files. **Next: peer_subscription/ → node networking methods → Layer 8 (connectors + React).**
 
 ## Supervision Model
 
@@ -93,6 +93,7 @@ See `architectural-decisions.md` for the full authoritative list. Summary:
 13. **Every test must be ported** — All unit/integration tests in every in-scope crate. No exceptions except de-scoped crates.
 14. **Programmatic audit script** — `scripts/audit-port.ts` validates bidirectional mapping. Runs in CI.
 15. **Co-development branch** — `ts-port-support` branch/worktree in Rust repo for fixtures and integration test infra.
+16. **Memory model — Disposable base class + RefCell + two-tier FinalizationRegistry** — See `memory-model.md`. Three patterns: scope-guaranteed (RefCell for correctness-critical), user-managed (Disposable for resource hygiene), decision-required (Transaction). Two FinalizationRegistry severities: hard-fail for correctness-critical, warn for resource hygiene.
 
 ## Package Structure
 
@@ -177,6 +178,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 | `ankurah-rs-spec-cleanup.md` | Checklist of spec errors to fix | Active |
 | `port-maintainability-analysis.md` | Assessment of port's automated update readiness | **Current** (score: 7.5/10) |
 | `progress-and-parallelism-review.md` | Remaining work breakdown + parallelization plan | **Current** |
+| `memory-model.md` | Lifecycle management, Disposable base class, RefCell, FinalizationRegistry policy | **Current** |
 | `_agent-work/*.md` | Detailed research outputs (incl. reactor-main-spec.md) | Reference |
 
 **Authoritative sources**: (1) `architectural-decisions.md` for decisions, (2) `port-rules.md` for structural rules, (3) the Rust source code for type definitions.
@@ -206,6 +208,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 - **Drift detection** — SHA-256 hash manifest in scripts/rust-source-hashes.json tracking 155 files (85 source + 70 test). audit-port.ts supports --backpopulate and --update-manifest commands. port-rules.md updated with section G6.
 - **`@ankurah/core` lineage.ts** — Bidirectional BFS DAG comparison engine (~600 lines TS from ~1004 lines Rust). Generic interfaces (LClock, LEvent, LGetEvents, LAttested) for flexible ID types. EventAccumulator, Ordering discriminated union (6 variants), compare/compareUnstoredEvent/compareWithAccumulator. 13 tests (linear history, concurrent, incomparable, empty clocks, budget exceeded, self comparison, multiple roots, unstored events, redundant delivery, event accumulator variants). Rust SmallVec→Array, BTreeSet→Set, saturating_sub→Math.max(0, x-y).
 - **`@ankurah/core` system.ts** — SystemManager (~325 lines TS from ~316 lines Rust). Constants SYSTEM_COLLECTION_ID/_PROTECTED_COLLECTIONS. Methods: root(), getItems(), isLoaded/isSystemReady/waitLoaded/waitSystemReady, collection(), create(), joinSystem(), hardReset(), loadSystemCatalog(). sysItemToValue/sysItemFromValue for cross-language JSON interop. Deferred Promise pattern replacing Rust tokio::sync::Notify. 23 tests (round-trip, construction, lifecycle, joins, reset).
+- **`@ankurah/core` disposable.ts** — Disposable abstract base class (FinalizationRegistry diagnostic, idempotent dispose, assertNotDisposed guard, Symbol.dispose support), DisposeGuard composition helper, RefCell<T> runtime borrow checking (withMut/withRef, re-entrancy protection, onMutRelease callback). Exports: Disposable, DisposeGuard, RefCell, disposeSymbol. **Open**: disposable.ts needs severity parameter (correctness-critical types should hard-fail via queueMicrotask+throw, resource-hygiene types should console.error). Category naming still TBD. See memory-model.md Section 3 + 8.
 - **Layer 5 reactor tests** — 9 unit tests ported from Rust: ComparisonIndex (2: field_index, not_equal), CandidateChanges (3: empty, add_query, entity_level), FetchGap (3: single_column_asc, multi_column, infer_value_type), Reactor end-to-end (1: entity_remains_watched_after_predicate_stops_matching). Uses sortQueryIds() helper for Rust BTreeSet→TS ordering parity.
 
 ### Layer 6a — COMMITTED (commits 46ba45b, 01a2c55)
@@ -249,6 +252,7 @@ These facts are verified against the actual Rust source code (2026-02-10). Detai
 src/error.ts                         — All error types (AccessDenied, MutationError, RetrievalError, StateError, etc.)
 src/model.ts                         — Model/View/Mutable trait interfaces, MutableBorrow
 src/define-model.ts                  — defineModel() + field helpers (lww, yrsText, ephemeral)
+src/disposable.ts                    — Disposable base class, DisposeGuard, RefCell<T>, disposeSymbol (TS-ONLY)
 src/entity.ts                        — Entity, EntityKind, WeakEntitySet
 src/transaction.ts                   — Transaction (create, get, edit, commit, rollback)
 src/context.ts                       — TContext interface, Context wrapper
@@ -316,6 +320,12 @@ src/index.ts                         — Package entry with exports
 **Layer 6b remaining (deferred until property types ported):**
 1. **JSON path tests** — Needs `Json` property type (currently deferred in property/value/json.ts).
 2. **Pagination tests** — Needs `Ref` property type (currently deferred in property/value/entity_ref.ts).
+
+**Memory model integration (pending, can be done before or alongside Layer 7):**
+- **disposable.ts severity parameter** — Add `severity: 'fatal' | 'warning'` to Disposable/DisposeGuard. Fatal uses `queueMicrotask(() => { throw ... })`, warning uses `console.error`. See memory-model.md Section 8.
+- **ResultSetWrite → RefCell** — Refactor resultset.ts to use RefCell.withMut() instead of write()/done(). Update 5 call sites in subscription_state.ts.
+- **Existing types → Disposable** — Wire ReactorSubscription, EntityLiveQuery, LiveQuery, SubscriptionGuard to extend Disposable base class.
+- **Category naming** — Finalize naming for the two severity levels and three completion mechanisms.
 
 **Layer 7 — Networking (in progress):**
 3. ~~**`@ankurah/core` node_applier.ts**~~ — DONE (commit e86d01e). 422 lines. applyUpdates (guarded until SubscriptionRelay), applyDeltas (ReadyChunks concurrent), DeltaContent/UpdateContent handlers.
@@ -392,6 +402,8 @@ Files in ankurah/core/src/ that still need work:
 - **defineModel() API**: Returns `{ View, Mutable, collection(), fields }`. View has typed getters returning projected types (via entity.getPropertyValue). Mutable has typed getters returning active type handles (via entity.getActiveHandle). Field helpers: `lww<T>()`, `yrsText()`, `ephemeral<T>()`. initializeNewEntity() delegates to entity.initializeProperty() per field.
 
 ## Rust Ownership → JS GC Translation (CRITICAL)
+
+See `specs/memory-model.md` for the complete design. The patterns below are summarized here for quick reference.
 
 This section documents how Rust's reference-counted ownership paradigm (Arc, Weak, Drop) is translated to JavaScript's garbage-collected paradigm. Two formal exception rules govern all divergences:
 
@@ -488,6 +500,7 @@ New TS files should include `// SOURCE-HASH: <sha256>` on line 2 (after the MIRR
 
 1. **Read `architectural-decisions.md`** — all decisions are finalized
 2. **Read `port-rules.md`** — structural mapping rules are non-negotiable
+2b. **Read `memory-model.md`** — lifecycle management patterns are non-negotiable
 3. **Check active work** — look at recent commits and open branches to understand what's in flight
 4. **Surface uncertainties** — do not assume; ask the supervisor
 5. **Follow port-rules.md strictly** — every file needs line 1 annotation, every exception needs a rule citation

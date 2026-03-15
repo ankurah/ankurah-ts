@@ -1,8 +1,10 @@
-# Memory Model: Rust Ownership to TypeScript GC
+# Ownership: Rust to TypeScript
 
 **Goal**: Translated TS code should read as close to the Rust source as possible while preserving equivalent semantics. Provided types absorb JS-specific complexity so translation stays 1:1.
 
-See also: [decisions.md](decisions.md), [provided-types.md](provided-types.md), [lint-rules.md](lint-rules.md).
+See also: [decisions.md](decisions.md) (architectural choices), [ownership/provided-types.md](ownership/provided-types.md) (API reference for Disposable, Mutex, RefCell, PromiseMutex).
+
+Ownership rules are enforced by `eslint-plugin-ankurah`. Run the linter to validate compliance.
 
 ---
 

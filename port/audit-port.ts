@@ -1,6 +1,6 @@
 // TS-ONLY: Programmatic audit script validating bidirectional mapping between Rust and TS repos
 //
-// Usage: bun run scripts/audit-port.ts
+// Usage: bun run port/audit-port.ts
 // Env:   ANKURAH_RS_PATH (default: ../ankurah)
 
 import { createHash } from "crypto";
@@ -13,7 +13,7 @@ import { basename, dirname, join, relative, resolve } from "path";
 
 const RS_PATH = resolve(process.env.ANKURAH_RS_PATH ?? join(__dirname, "..", "..", "ankurah"));
 const TS_ROOT = resolve(join(__dirname, ".."));
-const MANIFEST_PATH = join(TS_ROOT, "scripts", "rust-source-hashes.json");
+const MANIFEST_PATH = join(TS_ROOT, "port", ".rust-source-hashes.json");
 
 /** Crate-path (relative to RS_PATH) -> array of TS package paths (relative to TS_ROOT/packages/) */
 const CRATE_TO_PACKAGES: Record<string, string[]> = {
