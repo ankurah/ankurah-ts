@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
 
-import { Disposable } from '@ankurah/std';
+import { Drop } from '@ankurah/std';
 
 /**
  * A unique identifier for a broadcast that cannot be forged or extracted.
@@ -49,9 +49,9 @@ export interface TListenerGuard {
 
 /**
  * A subscription handle that can be used to unsubscribe from notifications.
- * Divergence: impl Drop -> extends Disposable [E11].
+ * Divergence: impl Drop -> extends Drop [E11].
  */
-export class ListenerGuard<T = void> extends Disposable implements TListenerGuard {
+export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   private inner: Inner<T> | null;
   private id: number;
   private _broadcastId: BroadcastId;
@@ -70,7 +70,7 @@ export class ListenerGuard<T = void> extends Disposable implements TListenerGuar
   }
 
   /** Unsubscribe from the broadcast (mirrors Rust's Drop) */
-  protected onDispose(): void {
+  protected onDrop(): void {
     if (this.inner !== null) {
       this.inner.listeners.delete(this.id);
       this.inner = null;

@@ -42,14 +42,14 @@ describe('Broadcast', () => {
     sender.send(undefined as void);
     expect(counter).toBe(11); // 1 + 10
 
-    // Dispose one subscription
-    sub2.dispose();
+    // Drop one subscription
+    sub2.drop();
 
     // Send again - only first callback should be called
     sender.send(undefined as void);
     expect(counter).toBe(12); // 11 + 1 (only sub1)
 
-    sub1.dispose();
+    sub1.drop();
   });
 
   test('notify-only listeners', () => {
@@ -99,7 +99,7 @@ describe('Broadcast', () => {
       callback: () => {},
     });
     expect(guard.broadcastId().equals(sender.id())).toBe(true);
-    guard.dispose();
+    guard.drop();
   });
 
   test('reentrant subscription during send', () => {
@@ -119,8 +119,8 @@ describe('Broadcast', () => {
             // This callback doesn't matter for the test
           },
         });
-        // temp_sub will be disposed here
-        tempSub.dispose();
+        // temp_sub will be dropped here
+        tempSub.drop();
       },
     });
 
@@ -133,7 +133,7 @@ describe('Broadcast', () => {
     expect(counter).toBe(2);
   });
 
-  test('dispose is idempotent', () => {
+  test('drop is idempotent', () => {
     const sender = new Broadcast<void>();
     let counter = 0;
 
@@ -145,10 +145,10 @@ describe('Broadcast', () => {
     sender.send(undefined as void);
     expect(counter).toBe(1);
 
-    // Dispose multiple times should not error
-    sub.dispose();
-    sub.dispose();
-    sub.dispose();
+    // Drop multiple times should not error
+    sub.drop();
+    sub.drop();
+    sub.drop();
 
     sender.send(undefined as void);
     expect(counter).toBe(1); // Not called again

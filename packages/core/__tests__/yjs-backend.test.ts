@@ -193,7 +193,7 @@ describe('YjsBackend', () => {
     expect(notifyCount).toBe(1);
 
     // Unsubscribe
-    guard.dispose();
+    guard.drop();
 
     // Second change should not notify
     backend1.insert('content', 5, ', World!');
@@ -327,7 +327,7 @@ describe('YrsString', () => {
 
     expect(notified).toBe(true);
 
-    guard.dispose();
+    guard.drop();
   });
 
   test('stringFromYrsString extracts string', () => {

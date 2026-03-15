@@ -1,7 +1,7 @@
 // TS-ONLY: ESLint plugin enforcing Rust ownership semantics
 //
 // Rule: ankurah/no-guard-escape
-// Flag assignments of Disposable-typed values to variables declared in an
+// Flag assignments of Drop-typed values to variables declared in an
 // outer scope from inside using blocks. This is the `using` escape hatch —
 // the bug pattern where a guard reference leaks beyond its intended scope.
 

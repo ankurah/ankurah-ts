@@ -3,22 +3,22 @@
 // Rule: ankurah/require-using-for-guards
 // Rust equivalent: Guard values are always dropped at scope exit.
 //
-// Methods returning a Disposable guard type must be called with `using`,
-// not bare `const`/`let`. Without `using`, dispose() may never fire.
+// Methods returning a Drop guard type must be called with `using`,
+// not bare `const`/`let`. Without `using`, drop() may never fire.
 
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 import type { TSESTree } from '@typescript-eslint/utils';
 
 export const RULE_NAME = 'require-using-for-guards';
 
-// Method names that return Disposable guards and must use `using`.
+// Method names that return Drop guards and must use `using`.
 // This list should be maintained as the codebase grows.
 const GUARD_FACTORY_METHODS = new Set([
-  'write',      // ResultSet.write() -> ResultSetWrite (Disposable guard)
-  'subscribe',  // node.subscribe() -> Subscription (Disposable)
+  'write',      // ResultSet.write() -> ResultSetWrite (Drop guard)
+  'subscribe',  // node.subscribe() -> Subscription (Drop)
 ]);
 
-// Type names that are Disposable guards (short-lived, must be disposed)
+// Type names that are Drop guards (short-lived, must be dropped)
 const GUARD_TYPE_NAMES = new Set([
   'ResultSetWrite',
   'Subscription',
@@ -41,17 +41,17 @@ export const rule = ESLintUtils.RuleCreator(
     type: 'problem',
     docs: {
       description:
-        'Methods returning Disposable guard types must use `using` declarations. ' +
+        'Methods returning Drop guard types must use `using` declarations. ' +
         'This replaces Rust automatic guard Drop at scope exit.',
     },
     messages: {
       requireUsing:
-        'Call to "{{methodName}}" returns a Disposable guard and must use `using` instead of `{{declarationKind}}`. ' +
-        'Without `using`, dispose() (and its side effects like broadcasts) may never fire, causing silent data staleness. ' +
+        'Call to "{{methodName}}" returns a Drop guard and must use `using` instead of `{{declarationKind}}`. ' +
+        'Without `using`, drop() (and its side effects like broadcasts) may never fire, causing silent data staleness. ' +
         '(Rust equivalent: guard values are automatically Dropped at scope exit.)',
       requireUsingForNew:
-        '`new {{className}}(...)` creates a Disposable and should use `using` instead of `{{declarationKind}}`. ' +
-        'Without `using`, dispose() may never fire. ' +
+        '`new {{className}}(...)` creates a Drop type and should use `using` instead of `{{declarationKind}}`. ' +
+        'Without `using`, drop() may never fire. ' +
         '(Rust equivalent: RAII values are automatically Dropped at scope exit.)',
     },
     schema: [
@@ -61,12 +61,12 @@ export const rule = ESLintUtils.RuleCreator(
           guardFactoryMethods: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Additional method names that return Disposable guards',
+            description: 'Additional method names that return Drop guards',
           },
           guardTypeNames: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Additional type names that are Disposable guards',
+            description: 'Additional type names that are Drop guards',
           },
         },
         additionalProperties: false,

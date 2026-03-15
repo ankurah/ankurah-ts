@@ -159,12 +159,12 @@ function getYrsStringHandle(entity: import('../src/entity.ts').Entity, fieldName
 // Cleanup tracking
 // ---------------------------------------------------------------------------
 
-const guards: Array<{ dispose(): void }> = [];
+const guards: Array<{ drop(): void }> = [];
 
 afterEach(() => {
   for (const guard of guards) {
-    if ('dispose' in guard && typeof guard.dispose === 'function') {
-      guard.dispose();
+    if ('drop' in guard && typeof guard.drop === 'function') {
+      guard.drop();
     }
   }
   guards.length = 0;
@@ -517,8 +517,8 @@ describe('LiveQuery - resultset_vs_livequery_signal_semantics', () => {
     expect(livequeryFireCount).toBe(1);
 
     // Clean up listener guards
-    resultsetGuard.dispose();
-    livequeryGuard.dispose();
+    resultsetGuard.drop();
+    livequeryGuard.drop();
   });
 });
 

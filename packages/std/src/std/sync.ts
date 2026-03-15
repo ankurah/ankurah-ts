@@ -9,7 +9,7 @@
 //
 // See port/ownership.md and port/ownership/provided-types.md for API spec.
 
-import { Disposable } from './dispose.ts';
+import { Drop } from './drop.ts';
 
 // ── Mutex<T> ─────────────────────────────────────────────────────────────
 //
@@ -45,9 +45,9 @@ export class Mutex<T> {
 
 /**
  * Guard returned by Mutex.lock(). Provides access to the guarded value.
- * On dispose, releases the lock and fires any drop side-effects.
+ * On drop, releases the lock and fires any drop side-effects.
  */
-export class MutexGuard<T> extends Disposable {
+export class MutexGuard<T> extends Drop {
   #value: T;
   readonly #release: () => void;
 
@@ -59,16 +59,16 @@ export class MutexGuard<T> extends Disposable {
   }
 
   get value(): T {
-    this.assertNotDisposed();
+    this.assertNotDropped();
     return this.#value;
   }
 
   set value(v: T) {
-    this.assertNotDisposed();
+    this.assertNotDropped();
     this.#value = v;
   }
 
-  protected onDispose(): void {
+  protected onDrop(): void {
     this.#release();
   }
 }

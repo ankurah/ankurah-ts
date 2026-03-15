@@ -145,7 +145,7 @@ describe('LWWBackend', () => {
     receiver.applyOperations(ops);
     expect(notified).toBe(true);
 
-    guard.dispose();
+    guard.drop();
   });
 
   test('listenField creates broadcast lazily', () => {
@@ -154,8 +154,8 @@ describe('LWWBackend', () => {
     const guard2 = backend.listenField('field1', () => {});
     // Both guards should share the same broadcast ID
     expect(guard1.broadcastId().equals(guard2.broadcastId())).toBe(true);
-    guard1.dispose();
-    guard2.dispose();
+    guard1.drop();
+    guard2.drop();
   });
 
   test('fieldBroadcastId returns consistent ID', () => {

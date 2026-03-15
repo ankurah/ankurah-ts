@@ -46,7 +46,7 @@ describe('Read', () => {
     mutable.set(1);
     expect(notified).toBe(true);
 
-    guard.dispose();
+    guard.drop();
   });
 
   test('listen guard unsubscribes', () => {
@@ -61,7 +61,7 @@ describe('Read', () => {
     mutable.set(1);
     expect(count).toBe(1);
 
-    guard.dispose();
+    guard.drop();
 
     mutable.set(2);
     expect(count).toBe(1); // Not called again
@@ -82,7 +82,7 @@ describe('Read', () => {
 
     expect(received).toEqual([1, 2, 3]);
 
-    subscription.dispose();
+    subscription.drop();
   });
 
   test('subscribe does not fire on initial value', () => {
@@ -96,7 +96,7 @@ describe('Read', () => {
 
     expect(called).toBe(false);
 
-    subscription.dispose();
+    subscription.drop();
   });
 
   test('broadcastId matches parent mutable', () => {
@@ -124,7 +124,7 @@ describe('Read', () => {
     expect(cell.getValue()).toBe(100);
   });
 
-  test('subscription guard dispose stops notifications', () => {
+  test('subscription guard drop stops notifications', () => {
     const mutable = new Mut(0);
     const read = mutable.read();
     const received: number[] = [];
@@ -136,9 +136,9 @@ describe('Read', () => {
     mutable.set(1);
     expect(received).toEqual([1]);
 
-    subscription.dispose();
+    subscription.drop();
 
     mutable.set(2);
-    expect(received).toEqual([1]); // No new values after dispose
+    expect(received).toEqual([1]); // No new values after drop
   });
 });

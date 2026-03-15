@@ -136,6 +136,6 @@ export type { RemoteQuerySubscriber } from './livequery.ts';
 export { NodeApplier } from './node_applier.ts';
 
 // ── std (TS-ONLY: Rust std-equivalent provided types for ownership model, see E11)
-export { Disposable, DisposeGuard, disposeSymbol, RefCell, Ref, RefMut, Mutex, MutexGuard } from '@ankurah/std';
+export { Drop, DropGuard, disposeSymbol, RefCell, Ref, RefMut, Mutex, MutexGuard } from '@ankurah/std';
 
 // TODO: Port remaining types from ankurah/core/src/ (peer_subscription)

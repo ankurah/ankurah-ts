@@ -7,7 +7,7 @@
 //
 // See port/ownership.md and port/ownership/provided-types.md for API spec.
 
-import { Disposable } from './dispose.ts';
+import { Drop } from './drop.ts';
 
 // ── BorrowState ──────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ type BorrowState =
 // 1:1 equivalent of Rust's std::cell::RefCell<T>. Runtime borrow checking —
 // panics on double mutable borrow, just like Rust.
 //
-// Returns Ref<T> / RefMut<T> Disposable guards (used with `using`).
+// Returns Ref<T> / RefMut<T> Drop guards (used with `using`).
 //
 // Usage:
 //   const cell = new RefCell(value);
@@ -46,7 +46,7 @@ export class RefCell<T> {
   }
 
   /**
-   * Shared read-only borrow. Returns a Ref<T> Disposable guard.
+   * Shared read-only borrow. Returns a Ref<T> Drop guard.
    * Throws if a mutable borrow is active.
    * Multiple shared borrows can be active simultaneously.
    */
@@ -71,7 +71,7 @@ export class RefCell<T> {
   }
 
   /**
-   * Exclusive mutable borrow. Returns a RefMut<T> Disposable guard.
+   * Exclusive mutable borrow. Returns a RefMut<T> Drop guard.
    * Throws if any borrow (shared or mutable) is active.
    */
   borrow_mut(): RefMut<T> {
@@ -95,7 +95,7 @@ export class RefCell<T> {
  * Shared read-only borrow guard for RefCell<T>.
  * Equivalent to Rust's std::cell::Ref<T>.
  */
-export class Ref<T> extends Disposable {
+export class Ref<T> extends Drop {
   readonly #value: T;
   readonly #release: () => void;
 
@@ -107,11 +107,11 @@ export class Ref<T> extends Disposable {
   }
 
   get value(): T {
-    this.assertNotDisposed();
+    this.assertNotDropped();
     return this.#value;
   }
 
-  protected onDispose(): void {
+  protected onDrop(): void {
     this.#release();
   }
 }
@@ -122,7 +122,7 @@ export class Ref<T> extends Disposable {
  * Exclusive mutable borrow guard for RefCell<T>.
  * Equivalent to Rust's std::cell::RefMut<T>.
  */
-export class RefMut<T> extends Disposable {
+export class RefMut<T> extends Drop {
   #value: T;
   readonly #release: () => void;
 
@@ -134,16 +134,16 @@ export class RefMut<T> extends Disposable {
   }
 
   get value(): T {
-    this.assertNotDisposed();
+    this.assertNotDropped();
     return this.#value;
   }
 
   set value(v: T) {
-    this.assertNotDisposed();
+    this.assertNotDropped();
     this.#value = v;
   }
 
-  protected onDispose(): void {
+  protected onDrop(): void {
     this.#release();
   }
 }

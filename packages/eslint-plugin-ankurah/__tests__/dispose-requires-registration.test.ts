@@ -12,39 +12,39 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('dispose-requires-registration', rule, {
   valid: [
-    // Class with dispose() that extends Disposable
+    // Class with drop() that extends Drop
     {
       code: `
-        class MyService extends Disposable {
-          dispose() {
-            super.dispose();
+        class MyService extends Drop {
+          drop() {
+            super.drop();
           }
         }
       `,
     },
-    // Class with dispose() that has DisposeGuard
-    {
-      code: `
-        class MyService {
-          guard = new DisposeGuard(this, 'MyService');
-          dispose() {
-            this.guard.markDisposed(this);
-          }
-        }
-      `,
-    },
-    // Class with DisposeGuard type annotation
+    // Class with drop() that has DropGuard
     {
       code: `
         class MyService {
-          guard: DisposeGuard;
-          dispose() {
-            this.guard.markDisposed(this);
+          guard = new DropGuard(this, 'MyService');
+          drop() {
+            this.guard.markDropped(this);
           }
         }
       `,
     },
-    // Class without dispose() — no check needed
+    // Class with DropGuard type annotation
+    {
+      code: `
+        class MyService {
+          guard: DropGuard;
+          drop() {
+            this.guard.markDropped(this);
+          }
+        }
+      `,
+    },
+    // Class without drop() — no check needed
     {
       code: `
         class RegularService {
@@ -56,22 +56,22 @@ ruleTester.run('dispose-requires-registration', rule, {
     },
   ],
   invalid: [
-    // Class with dispose() but no Disposable/DisposeGuard
+    // Class with drop() but no Drop/DropGuard
     {
       code: `
         class MyService {
-          dispose() {
+          drop() {
             this.cleanup();
           }
         }
       `,
       errors: [{ messageId: 'noRegistration' }],
     },
-    // Ad-hoc dispose without any registration
+    // Ad-hoc drop without any registration
     {
       code: `
         class LeakyConnection {
-          dispose() {
+          drop() {
             this.socket.close();
           }
         }

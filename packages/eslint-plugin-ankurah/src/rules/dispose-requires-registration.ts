@@ -1,8 +1,8 @@
 // TS-ONLY: ESLint plugin enforcing Rust ownership semantics
 //
 // Rule: ankurah/dispose-requires-registration
-// Any class with a dispose() method must extend Disposable or use DisposeGuard.
-// Ad-hoc dispose() without FR registration means leaked instances produce zero diagnostics.
+// Any class with a drop() method must extend Drop or use DropGuard.
+// Ad-hoc drop() without FR registration means leaked instances produce zero diagnostics.
 
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 import type { TSESTree } from '@typescript-eslint/utils';
@@ -17,13 +17,13 @@ export const rule = ESLintUtils.RuleCreator(
     type: 'problem',
     docs: {
       description:
-        'Classes with dispose() must extend Disposable or use DisposeGuard for FinalizationRegistry leak detection.',
+        'Classes with drop() must extend Drop or use DropGuard for FinalizationRegistry leak detection.',
     },
     messages: {
       noRegistration:
-        'Class "{{className}}" has a dispose() method but does not extend Disposable or use DisposeGuard. ' +
+        'Class "{{className}}" has a drop() method but does not extend Drop or use DropGuard. ' +
         'Without FinalizationRegistry registration, leaked instances produce zero diagnostics. ' +
-        'Either extend Disposable or add a DisposeGuard field.',
+        'Either extend Drop or add a DropGuard field.',
     },
     schema: [],
   },
@@ -40,26 +40,26 @@ export const rule = ESLintUtils.RuleCreator(
   },
 });
 
-function extendsDisposable(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
+function extendsDrop(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
   if (!node.superClass) return false;
   if (node.superClass.type === AST_NODE_TYPES.Identifier) {
-    return node.superClass.name === 'Disposable';
+    return node.superClass.name === 'Drop';
   }
   if (node.superClass.type === AST_NODE_TYPES.MemberExpression) {
     const prop = node.superClass.property;
-    return prop.type === AST_NODE_TYPES.Identifier && prop.name === 'Disposable';
+    return prop.type === AST_NODE_TYPES.Identifier && prop.name === 'Drop';
   }
   return false;
 }
 
-function hasDisposeGuardField(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
+function hasDropGuardField(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
   return node.body.body.some((member) => {
     if (member.type !== AST_NODE_TYPES.PropertyDefinition) return false;
     const typeAnnotation = member.typeAnnotation?.typeAnnotation;
     if (
       typeAnnotation?.type === AST_NODE_TYPES.TSTypeReference &&
       typeAnnotation.typeName.type === AST_NODE_TYPES.Identifier &&
-      typeAnnotation.typeName.name === 'DisposeGuard'
+      typeAnnotation.typeName.name === 'DropGuard'
     ) {
       return true;
     }
@@ -67,7 +67,7 @@ function hasDisposeGuardField(node: TSESTree.ClassDeclaration | TSESTree.ClassEx
     if (
       value?.type === AST_NODE_TYPES.NewExpression &&
       value.callee.type === AST_NODE_TYPES.Identifier &&
-      value.callee.name === 'DisposeGuard'
+      value.callee.name === 'DropGuard'
     ) {
       return true;
     }
@@ -75,12 +75,12 @@ function hasDisposeGuardField(node: TSESTree.ClassDeclaration | TSESTree.ClassEx
   });
 }
 
-function hasDisposeMethod(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
+function hasDropMethod(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
   return node.body.body.some(
     (member) =>
       member.type === AST_NODE_TYPES.MethodDefinition &&
       member.key.type === AST_NODE_TYPES.Identifier &&
-      member.key.name === 'dispose',
+      member.key.name === 'drop',
   );
 }
 
@@ -92,13 +92,13 @@ function checkClass(
   context: any,
   node: TSESTree.ClassDeclaration | TSESTree.ClassExpression,
 ) {
-  if (!hasDisposeMethod(node)) return;
-  if (extendsDisposable(node)) return;
-  if (hasDisposeGuardField(node)) return;
+  if (!hasDropMethod(node)) return;
+  if (extendsDrop(node)) return;
+  if (hasDropGuardField(node)) return;
 
-  // The Disposable class itself defines dispose() — don't flag it
+  // The Drop class itself defines drop() — don't flag it
   const className = getClassName(node);
-  if (className === 'Disposable' || className === 'DisposeGuard') return;
+  if (className === 'Drop' || className === 'DropGuard') return;
 
   context.report({
     node,

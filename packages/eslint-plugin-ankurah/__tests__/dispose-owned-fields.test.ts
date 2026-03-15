@@ -12,105 +12,105 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('dispose-owned-fields', rule, {
   valid: [
-    // Disposable field properly disposed in onDispose
+    // Drop field properly dropped in onDrop
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           sub: Subscription;
-          protected onDispose() {
-            this.sub.dispose();
+          protected onDrop() {
+            this.sub.drop();
           }
         }
       `,
     },
-    // Private field with # properly disposed
+    // Private field with # properly dropped
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           #watcher: Watcher;
-          protected onDispose() {
-            this.#watcher.dispose();
+          protected onDrop() {
+            this.#watcher.drop();
           }
         }
       `,
     },
-    // No Disposable fields — no onDispose needed
+    // No Drop fields — no onDrop needed
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           name: string;
           count: number;
-          protected onDispose() {}
+          protected onDrop() {}
         }
       `,
     },
-    // Non-Disposable class — no check
+    // Non-Drop class — no check
     {
       code: `
         class RegularService {
           sub: Subscription;
           cleanup() {
-            this.sub.dispose();
+            this.sub.drop();
           }
         }
       `,
     },
-    // Multiple fields all disposed
+    // Multiple fields all dropped
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           sub: Subscription;
           liveQuery: LiveQuery;
-          protected onDispose() {
-            this.sub.dispose();
-            this.liveQuery.dispose();
+          protected onDrop() {
+            this.sub.drop();
+            this.liveQuery.drop();
           }
         }
       `,
     },
   ],
   invalid: [
-    // Disposable field not disposed in onDispose
+    // Drop field not dropped in onDrop
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           sub: Subscription;
-          protected onDispose() {
-            // forgot to dispose sub
+          protected onDrop() {
+            // forgot to drop sub
           }
         }
       `,
       errors: [{ messageId: 'missingFieldDispose' }],
     },
-    // Missing onDispose entirely
+    // Missing onDrop entirely
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           sub: Subscription;
         }
       `,
       errors: [{ messageId: 'missingOnDispose' }],
     },
-    // One of two fields not disposed
+    // One of two fields not dropped
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           sub: Subscription;
           watcher: Watcher;
-          protected onDispose() {
-            this.sub.dispose();
+          protected onDrop() {
+            this.sub.drop();
           }
         }
       `,
       errors: [{ messageId: 'missingFieldDispose' }],
     },
-    // Field created with new DisposeGuard not disposed
+    // Field created with new DropGuard not dropped
     {
       code: `
-        class MyService extends Disposable {
-          guard = new DisposeGuard(this, 'MyService');
-          protected onDispose() {
-            // missing guard.dispose()
+        class MyService extends Drop {
+          guard = new DropGuard(this, 'MyService');
+          protected onDrop() {
+            // missing guard.drop()
           }
         }
       `,

@@ -55,7 +55,7 @@ describe('basic signal tests (from tests/basic.rs)', () => {
     mutable.set(43);
     expect(received).toEqual([43]);
 
-    handle.dispose(); // unsubscribe
+    handle.drop(); // unsubscribe
   });
 
   test('signal Mut subscribe/set integration', () => {
@@ -85,13 +85,13 @@ describe('basic signal tests (from tests/basic.rs)', () => {
     expect(values1).toEqual([10]);
     expect(values2).toEqual([10]);
 
-    sub1.dispose();
+    sub1.drop();
 
     mutable.set(20);
     expect(values1).toEqual([10]); // No longer receiving
     expect(values2).toEqual([10, 20]);
 
-    sub2.dispose();
+    sub2.drop();
   });
 
   test('signal with complex types', () => {
@@ -130,7 +130,7 @@ describe('basic signal tests (from tests/basic.rs)', () => {
     expect(read.with((v) => v + 10)).toBe(15);
   });
 
-  test('listener guard dispose is idempotent', () => {
+  test('listener guard drop is idempotent', () => {
     const mutable = new Mut(0);
     const read = mutable.read();
     let count = 0;
@@ -140,15 +140,15 @@ describe('basic signal tests (from tests/basic.rs)', () => {
     mutable.set(1);
     expect(count).toBe(1);
 
-    // Dispose multiple times
-    guard.dispose();
-    guard.dispose();
+    // Drop multiple times
+    guard.drop();
+    guard.drop();
 
     mutable.set(2);
     expect(count).toBe(1);
   });
 
-  test('subscription guard dispose is idempotent', () => {
+  test('subscription guard drop is idempotent', () => {
     const mutable = new Mut(0);
     const received: number[] = [];
 
@@ -157,9 +157,9 @@ describe('basic signal tests (from tests/basic.rs)', () => {
     mutable.set(1);
     expect(received).toEqual([1]);
 
-    // Dispose multiple times
-    sub.dispose();
-    sub.dispose();
+    // Drop multiple times
+    sub.drop();
+    sub.drop();
 
     mutable.set(2);
     expect(received).toEqual([1]);

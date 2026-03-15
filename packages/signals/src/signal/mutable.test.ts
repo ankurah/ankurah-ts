@@ -33,7 +33,7 @@ describe('Mut', () => {
     signal.set(1);
     expect(notified).toBe(true);
 
-    guard.dispose();
+    guard.drop();
   });
 
   test('listen guard unsubscribes', () => {
@@ -47,7 +47,7 @@ describe('Mut', () => {
     signal.set(1);
     expect(count).toBe(1);
 
-    guard.dispose();
+    guard.drop();
 
     signal.set(2);
     expect(count).toBe(1); // Not called again
@@ -88,7 +88,7 @@ describe('Mut', () => {
     signal.set(100);
     expect(callCount).toBe(1);
 
-    subscription.dispose();
+    subscription.drop();
   });
 
   test('subscribe receives correct value', () => {
@@ -105,7 +105,7 @@ describe('Mut', () => {
 
     expect(received).toEqual([1, 2, 3]);
 
-    subscription.dispose();
+    subscription.drop();
   });
 
   test('subscribe does not fire on initial value', () => {
@@ -118,7 +118,7 @@ describe('Mut', () => {
 
     expect(called).toBe(false);
 
-    subscription.dispose();
+    subscription.drop();
   });
 
   test('multiple listeners', () => {
@@ -133,13 +133,13 @@ describe('Mut', () => {
     expect(count1).toBe(1);
     expect(count2).toBe(1);
 
-    guard1.dispose();
+    guard1.drop();
 
     signal.set(2);
     expect(count1).toBe(1); // Not called again
     expect(count2).toBe(2);
 
-    guard2.dispose();
+    guard2.drop();
   });
 
   test('getReadCell provides shared access', () => {

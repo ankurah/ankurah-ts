@@ -11,7 +11,7 @@ import {
   type Subscribe,
   SubscriptionGuard,
 } from '@ankurah/signals';
-import { Disposable } from '@ankurah/std';
+import { Drop } from '@ankurah/std';
 import { SubscriptionError } from '../error.ts';
 import { ReactorSubscriptionId } from './watcher_set.ts';
 import type { ReactorUpdate } from './update.ts';
@@ -47,9 +47,9 @@ class ReactorSubInner {
 
   /**
    * Mirrors Rust Drop for ReactorSubInner -- automatically unsubscribe from the reactor.
-   * Divergence: JS has no Drop; callers must invoke dispose() explicitly or via Symbol.dispose [E11].
+   * Divergence: JS has no Drop; callers must invoke drop() explicitly or via Symbol.dispose [E11].
    */
-  dispose(): void {
+  drop(): void {
     if (!this.disposed) {
       this.disposed = true;
       this.unsubscribeFn(this.subscriptionId);
@@ -62,7 +62,7 @@ class ReactorSubInner {
 // ---------------------------------------------------------------------------
 
 /**
- * A handle to a reactor subscription that automatically cleans up on dispose.
+ * A handle to a reactor subscription that automatically cleans up on drop.
  *
  * Rust: `pub struct ReactorSubscription<E, Ev>(Arc<ReactorSubInner<E, Ev>>)`
  *
@@ -75,7 +75,7 @@ class ReactorSubInner {
  *
  * Divergence: Rust generics E/Ev exist only for testing; TS uses concrete types [E7].
  */
-export class ReactorSubscription extends Disposable implements Signal, Subscribe<ReactorUpdate> {
+export class ReactorSubscription extends Drop implements Signal, Subscribe<ReactorUpdate> {
   /** @internal */
   private readonly inner: ReactorSubInner;
 
@@ -150,7 +150,7 @@ export class ReactorSubscription extends Disposable implements Signal, Subscribe
   /**
    * Mirrors Rust's Drop impl on ReactorSubInner [E11].
    */
-  protected onDispose(): void {
-    this.inner.dispose();
+  protected onDrop(): void {
+    this.inner.drop();
   }
 }

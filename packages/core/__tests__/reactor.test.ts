@@ -365,7 +365,7 @@ describe('Reactor', () => {
     ]);
 
     // Cleanup
-    guard.dispose();
-    rsub.dispose();
+    guard.drop();
+    rsub.drop();
   });
 });

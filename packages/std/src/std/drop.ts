@@ -5,8 +5,8 @@
 // is non-deterministic and provides no destructor hook.
 //
 // This module provides:
-//   - Disposable: abstract base class for types with mandatory RAII (maps to impl Drop)
-//   - DisposeGuard: composition-based alternative when inheritance isn't possible
+//   - Drop: abstract base class for types with mandatory RAII (maps to impl Drop)
+//   - DropGuard: composition-based alternative when inheritance isn't possible
 //   - disposeSymbol: polyfill for Symbol.dispose
 //
 // See port/ownership.md for the full design rationale.
@@ -24,8 +24,8 @@ export const disposeSymbol: typeof Symbol.dispose =
   (Symbol.dispose ?? Symbol.for('Symbol.dispose')) as typeof Symbol.dispose;
 
 // ── FinalizationRegistry (diagnostic only) ───────────────────────────────
-// Shared by all Disposable instances and DisposeGuard instances.
-// When an object is garbage collected WITHOUT dispose() having been called,
+// Shared by all Drop instances and DropGuard instances.
+// When an object is garbage collected WITHOUT drop() having been called,
 // the severity determines the response:
 //   - 'fatal': queueMicrotask(() => { throw ... }) — crashes hard
 //   - 'warning': console.error — diagnostic only
@@ -38,8 +38,8 @@ interface leak_info {
 
 export const leakRegistry = new FinalizationRegistry<leak_info>((info) => {
   const message =
-    `BUG: ${info.label} was garbage collected without being disposed. ` +
-    `This indicates a missing dispose() call or a missing 'using' declaration.\n` +
+    `BUG: ${info.label} was garbage collected without being dropped. ` +
+    `This indicates a missing drop() call or a missing 'using' declaration.\n` +
     `Allocated at:\n${info.creationStack}`;
 
   if (info.severity === 'fatal') {
@@ -51,26 +51,26 @@ export const leakRegistry = new FinalizationRegistry<leak_info>((info) => {
   }
 });
 
-// ── Disposable base class ────────────────────────────────────────────────
+// ── Drop base class ──────────────────────────────────────────────────────
 //
 // Abstract base class. Standard path for any type with mandatory RAII behavior.
 // "Mandatory RAII" = types that have impl Drop in Rust, OR types that own
 // fields with impl Drop (vicarious RAII — see port/ownership.md).
 //
 // Provides:
-//   - Auto-registration with FinalizationRegistry (diagnostic on GC-without-dispose)
-//   - Idempotent dispose()
-//   - assertNotDisposed() guard for subclass methods
+//   - Auto-registration with FinalizationRegistry (diagnostic on GC-without-drop)
+//   - Idempotent drop()
+//   - assertNotDropped() guard for subclass methods
 //   - [Symbol.dispose]() for `using` declaration support
 //
 // Usage:
-//   class MySubscription extends Disposable {
+//   class MySubscription extends Drop {
 //     constructor() { super('MySubscription'); }
-//     protected onDispose(): void { this.inner.unsubscribe(); }
+//     protected onDrop(): void { this.inner.unsubscribe(); }
 //   }
 
-export abstract class Disposable {
-  #disposed = false;
+export abstract class Drop {
+  #dropped = false;
   readonly #label: string;
 
   /**
@@ -86,66 +86,66 @@ export abstract class Disposable {
 
   /**
    * Subclasses implement this to perform their actual cleanup.
-   * Called exactly once, inside dispose().
+   * Called exactly once, inside drop().
    */
-  protected abstract onDispose(): void;
+  protected abstract onDrop(): void;
 
   /**
    * Release resources. Idempotent: second and subsequent calls are no-ops.
    * Unregisters from the FinalizationRegistry so no false-positive leak
    * warnings are emitted.
    */
-  dispose(): void {
-    if (this.#disposed) return;
-    this.#disposed = true;
+  drop(): void {
+    if (this.#dropped) return;
+    this.#dropped = true;
     leakRegistry.unregister(this);
-    this.onDispose();
+    this.onDrop();
   }
 
   /**
    * Guard for subclass methods. Call at the top of any method that should
-   * not be used after disposal.
+   * not be used after drop.
    *
-   * @throws Error if dispose() has already been called.
+   * @throws Error if drop() has already been called.
    */
-  protected assertNotDisposed(): void {
-    if (this.#disposed) {
-      throw new Error(`${this.#label} has already been disposed`);
+  protected assertNotDropped(): void {
+    if (this.#dropped) {
+      throw new Error(`${this.#label} has already been dropped`);
     }
   }
 
   /**
-   * Whether this instance has been disposed.
+   * Whether this instance has been dropped.
    */
-  get isDisposed(): boolean {
-    return this.#disposed;
+  get isDropped(): boolean {
+    return this.#dropped;
   }
 
   // ES2023 `using` declaration support.
   // `using sub = node.subscribe(...)` calls [Symbol.dispose]() at block exit.
   [disposeSymbol](): void {
-    this.dispose();
+    this.drop();
   }
 }
 
-// ── DisposeGuard ─────────────────────────────────────────────────────────
+// ── DropGuard ────────────────────────────────────────────────────────────
 //
 // Composition-based escape hatch for types that cannot use inheritance
 // (e.g., they already extend another class).
 //
-// Same lifecycle semantics as Disposable but as an embeddable component.
+// Same lifecycle semantics as Drop but as an embeddable component.
 // The host object is registered with the FinalizationRegistry; if it is
-// GC'd without markDisposed(), a diagnostic error is logged.
+// GC'd without markDropped(), a diagnostic error is logged.
 //
 // Usage:
 //   class MyType {
-//     private guard = new DisposeGuard(this, 'MyType');
-//     dispose() { this.guard.markDisposed(); /* cleanup */ }
-//     someMethod() { this.guard.assertNotDisposed(); /* work */ }
+//     private guard = new DropGuard(this, 'MyType');
+//     drop() { this.guard.markDropped(); /* cleanup */ }
+//     someMethod() { this.guard.assertNotDropped(); /* work */ }
 //   }
 
-export class DisposeGuard {
-  #disposed = false;
+export class DropGuard {
+  #dropped = false;
   readonly #label: string;
 
   /**
@@ -160,25 +160,25 @@ export class DisposeGuard {
   }
 
   /**
-   * Mark the host as disposed and unregister from the FinalizationRegistry.
-   * Must be called from the host's dispose()/cleanup method.
+   * Mark the host as dropped and unregister from the FinalizationRegistry.
+   * Must be called from the host's drop()/cleanup method.
    */
-  markDisposed(host: object): void {
-    if (this.#disposed) return;
-    this.#disposed = true;
+  markDropped(host: object): void {
+    if (this.#dropped) return;
+    this.#dropped = true;
     leakRegistry.unregister(host);
   }
 
   /**
-   * Throws if the host has been disposed.
+   * Throws if the host has been dropped.
    */
-  assertNotDisposed(): void {
-    if (this.#disposed) {
-      throw new Error(`${this.#label} has already been disposed`);
+  assertNotDropped(): void {
+    if (this.#dropped) {
+      throw new Error(`${this.#label} has already been dropped`);
     }
   }
 
-  get isDisposed(): boolean {
-    return this.#disposed;
+  get isDropped(): boolean {
+    return this.#dropped;
   }
 }

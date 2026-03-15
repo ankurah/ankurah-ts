@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
 
-import { Disposable } from '@ankurah/std';
+import { Drop } from '@ankurah/std';
 import type { ListenerGuard } from '../signal/index.ts';
 
 /**
@@ -20,9 +20,9 @@ export interface Subscribe<T> {
  *
  * In Rust this uses Box<dyn Any + Send + Sync> to type-erase the inner ListenerGuard.
  * In TS we just hold a reference to the ListenerGuard.
- * Divergence: impl Drop -> extends Disposable [E11].
+ * Divergence: impl Drop -> extends Drop [E11].
  */
-export class SubscriptionGuard extends Disposable {
+export class SubscriptionGuard extends Drop {
   private guard: ListenerGuard | null;
 
   constructor(guard: ListenerGuard) {
@@ -31,9 +31,9 @@ export class SubscriptionGuard extends Disposable {
   }
 
   /** Unsubscribe (mirrors Rust's Drop) */
-  protected onDispose(): void {
+  protected onDrop(): void {
     if (this.guard !== null) {
-      this.guard.dispose();
+      this.guard.drop();
       this.guard = null;
     }
   }

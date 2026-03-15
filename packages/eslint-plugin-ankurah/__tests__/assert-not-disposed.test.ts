@@ -12,12 +12,12 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('assert-not-disposed', rule, {
   valid: [
-    // Public method with assertNotDisposed as first statement
+    // Public method with assertNotDropped as first statement
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           doWork() {
-            this.assertNotDisposed();
+            this.assertNotDropped();
             return 42;
           }
         }
@@ -26,7 +26,7 @@ ruleTester.run('assert-not-disposed', rule, {
     // Private method — not required
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           private internalWork() {
             return 42;
           }
@@ -36,7 +36,7 @@ ruleTester.run('assert-not-disposed', rule, {
     // Protected method — not required
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           protected internalWork() {
             return 42;
           }
@@ -46,44 +46,44 @@ ruleTester.run('assert-not-disposed', rule, {
     // Private name (#) method — not required
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           #internalWork() {
             return 42;
           }
         }
       `,
     },
-    // dispose() is excluded
+    // drop() is excluded
     {
       code: `
-        class MyService extends Disposable {
-          dispose() {
-            super.dispose();
+        class MyService extends Drop {
+          drop() {
+            super.drop();
           }
         }
       `,
     },
-    // onDispose() is excluded
+    // onDrop() is excluded
     {
       code: `
-        class MyService extends Disposable {
-          protected onDispose() {
+        class MyService extends Drop {
+          protected onDrop() {
             this.cleanup();
           }
         }
       `,
     },
-    // isDisposed getter is excluded
+    // isDropped getter is excluded
     {
       code: `
-        class MyService extends Disposable {
-          get isDisposed() {
-            return this.#disposed;
+        class MyService extends Drop {
+          get isDropped() {
+            return this.#dropped;
           }
         }
       `,
     },
-    // Non-Disposable class — no check needed
+    // Non-Drop class — no check needed
     {
       code: `
         class RegularService {
@@ -93,13 +93,13 @@ ruleTester.run('assert-not-disposed', rule, {
         }
       `,
     },
-    // DisposeGuard-based class with guard.assertNotDisposed()
+    // DropGuard-based class with guard.assertNotDropped()
     {
       code: `
         class MyService {
-          guard: DisposeGuard;
+          guard: DropGuard;
           doWork() {
-            this.guard.assertNotDisposed();
+            this.guard.assertNotDropped();
             return 42;
           }
         }
@@ -108,7 +108,7 @@ ruleTester.run('assert-not-disposed', rule, {
     // Constructor is excluded
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           constructor() {
             super('MyService');
           }
@@ -117,10 +117,10 @@ ruleTester.run('assert-not-disposed', rule, {
     },
   ],
   invalid: [
-    // Public method without assertNotDisposed
+    // Public method without assertNotDropped
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           doWork() {
             return 42;
           }
@@ -131,19 +131,19 @@ ruleTester.run('assert-not-disposed', rule, {
     // Empty body method
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           doWork() {}
         }
       `,
       errors: [{ messageId: 'missingAssertNotDisposed' }],
     },
-    // assertNotDisposed is not the first statement
+    // assertNotDropped is not the first statement
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           doWork() {
             const x = 1;
-            this.assertNotDisposed();
+            this.assertNotDropped();
             return x;
           }
         }
@@ -153,9 +153,9 @@ ruleTester.run('assert-not-disposed', rule, {
     // Multiple public methods, some missing
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           goodMethod() {
-            this.assertNotDisposed();
+            this.assertNotDropped();
             return 1;
           }
           badMethod() {
@@ -165,11 +165,11 @@ ruleTester.run('assert-not-disposed', rule, {
       `,
       errors: [{ messageId: 'missingAssertNotDisposed' }],
     },
-    // DisposeGuard class without guard check
+    // DropGuard class without guard check
     {
       code: `
         class MyService {
-          guard = new DisposeGuard(this, 'MyService');
+          guard = new DropGuard(this, 'MyService');
           doWork() {
             return 42;
           }
@@ -177,10 +177,10 @@ ruleTester.run('assert-not-disposed', rule, {
       `,
       errors: [{ messageId: 'missingAssertNotDisposed' }],
     },
-    // Getter without assertNotDisposed (getters are public API)
+    // Getter without assertNotDropped (getters are public API)
     {
       code: `
-        class MyService extends Disposable {
+        class MyService extends Drop {
           get value() {
             return this.#value;
           }

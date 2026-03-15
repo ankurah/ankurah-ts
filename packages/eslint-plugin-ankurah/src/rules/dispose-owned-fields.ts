@@ -3,8 +3,8 @@
 // Rule: ankurah/dispose-owned-fields
 // Rust equivalent: Auto-Drop cascade through owned fields.
 //
-// If a class extends Disposable and has fields typed as Disposable (or with
-// a dispose() method), its onDispose() must call .dispose() on each of them.
+// If a class extends Drop and has fields typed as Drop (or with
+// a drop() method), its onDrop() must call .drop() on each of them.
 
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 import type { TSESTree } from '@typescript-eslint/utils';
@@ -19,17 +19,17 @@ export const rule = ESLintUtils.RuleCreator(
     type: 'problem',
     docs: {
       description:
-        'Disposable subclasses must dispose all owned Disposable fields in onDispose(). ' +
+        'Drop subclasses must drop all owned Drop fields in onDrop(). ' +
         'This replaces Rust auto-Drop cascade through owned fields.',
     },
     messages: {
       missingFieldDispose:
-        'Disposable field "{{fieldName}}" is not disposed in onDispose(). ' +
-        'All owned Disposable fields must have .dispose() called in onDispose() to prevent resource leaks. ' +
+        'Drop field "{{fieldName}}" is not dropped in onDrop(). ' +
+        'All owned Drop fields must have .drop() called in onDrop() to prevent resource leaks. ' +
         '(Rust equivalent: Drop is automatically cascaded to all owned fields.)',
       missingOnDispose:
-        'Class extends Disposable and has Disposable fields ({{fieldNames}}) but no onDispose() method. ' +
-        'Implement onDispose() to dispose these fields. ' +
+        'Class extends Drop and has Drop fields ({{fieldNames}}) but no onDrop() method. ' +
+        'Implement onDrop() to drop these fields. ' +
         '(Rust equivalent: Drop auto-cascades; in TS you must do this explicitly.)',
     },
     schema: [],
@@ -47,15 +47,15 @@ export const rule = ESLintUtils.RuleCreator(
   },
 });
 
-// Type names that are known to be Disposable
-const DISPOSABLE_TYPE_NAMES = new Set([
-  'Disposable',
-  'DisposeGuard',
+// Type names that are known to be Drop
+const DROP_TYPE_NAMES = new Set([
+  'Drop',
+  'DropGuard',
 ]);
 
-// Heuristic: type names that likely extend Disposable
+// Heuristic: type names that likely extend Drop
 // (ending in Subscription, Guard, LiveQuery, etc.)
-const DISPOSABLE_SUFFIXES = [
+const DROP_SUFFIXES = [
   'Subscription',
   'LiveQuery',
   'Guard',
@@ -63,26 +63,26 @@ const DISPOSABLE_SUFFIXES = [
   'Connection',
 ];
 
-function isDisposableSubclass(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
+function isDropSubclass(node: TSESTree.ClassDeclaration | TSESTree.ClassExpression): boolean {
   if (!node.superClass) return false;
   if (node.superClass.type === AST_NODE_TYPES.Identifier) {
-    return node.superClass.name === 'Disposable';
+    return node.superClass.name === 'Drop';
   }
   if (node.superClass.type === AST_NODE_TYPES.MemberExpression) {
     const prop = node.superClass.property;
     if (prop.type === AST_NODE_TYPES.Identifier) {
-      return prop.name === 'Disposable';
+      return prop.name === 'Drop';
     }
   }
   return false;
 }
 
-function isDisposableTypeName(name: string): boolean {
-  if (DISPOSABLE_TYPE_NAMES.has(name)) return true;
-  return DISPOSABLE_SUFFIXES.some((suffix) => name.endsWith(suffix));
+function isDropTypeName(name: string): boolean {
+  if (DROP_TYPE_NAMES.has(name)) return true;
+  return DROP_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
-function getFieldDisposableType(member: TSESTree.PropertyDefinition): string | null {
+function getFieldDropType(member: TSESTree.PropertyDefinition): string | null {
   // Check type annotation
   const typeAnnotation = member.typeAnnotation?.typeAnnotation;
   if (typeAnnotation) {
@@ -91,19 +91,19 @@ function getFieldDisposableType(member: TSESTree.PropertyDefinition): string | n
       typeAnnotation.typeName.type === AST_NODE_TYPES.Identifier
     ) {
       const typeName = typeAnnotation.typeName.name;
-      if (isDisposableTypeName(typeName)) {
+      if (isDropTypeName(typeName)) {
         return typeName;
       }
     }
   }
 
-  // Check value for `new SomethingDisposable(...)`
+  // Check value for `new SomethingDrop(...)`
   const value = member.value;
   if (
     value?.type === AST_NODE_TYPES.NewExpression &&
     value.callee.type === AST_NODE_TYPES.Identifier
   ) {
-    if (isDisposableTypeName(value.callee.name)) {
+    if (isDropTypeName(value.callee.name)) {
       return value.callee.name;
     }
   }
@@ -117,77 +117,77 @@ function getFieldName(member: TSESTree.PropertyDefinition): string | null {
   return null;
 }
 
-function getDisposedFieldsInOnDispose(
+function getDroppedFieldsInOnDrop(
   classNode: TSESTree.ClassDeclaration | TSESTree.ClassExpression,
-): { method: TSESTree.MethodDefinition | null; disposedFields: Set<string> } {
-  const onDisposeMethod = classNode.body.body.find(
+): { method: TSESTree.MethodDefinition | null; droppedFields: Set<string> } {
+  const onDropMethod = classNode.body.body.find(
     (member): member is TSESTree.MethodDefinition =>
       member.type === AST_NODE_TYPES.MethodDefinition &&
       member.key.type === AST_NODE_TYPES.Identifier &&
-      member.key.name === 'onDispose',
+      member.key.name === 'onDrop',
   );
 
-  if (!onDisposeMethod?.value.body) {
-    return { method: onDisposeMethod ?? null, disposedFields: new Set() };
+  if (!onDropMethod?.value.body) {
+    return { method: onDropMethod ?? null, droppedFields: new Set() };
   }
 
-  const disposedFields = new Set<string>();
-  collectDisposeCallsFromStatements(onDisposeMethod.value.body.body, disposedFields);
+  const droppedFields = new Set<string>();
+  collectDropCallsFromStatements(onDropMethod.value.body.body, droppedFields);
 
-  return { method: onDisposeMethod, disposedFields };
+  return { method: onDropMethod, droppedFields };
 }
 
-function collectDisposeCallsFromStatements(
+function collectDropCallsFromStatements(
   statements: TSESTree.Statement[],
-  disposedFields: Set<string>,
+  droppedFields: Set<string>,
 ): void {
   for (const stmt of statements) {
-    collectDisposeCallsFromNode(stmt, disposedFields);
+    collectDropCallsFromNode(stmt, droppedFields);
   }
 }
 
 // Keys to skip when traversing the AST (these cause circular references)
 const SKIP_KEYS = new Set(['parent']);
 
-function collectDisposeCallsFromNode(
+function collectDropCallsFromNode(
   node: TSESTree.Node,
-  disposedFields: Set<string>,
+  droppedFields: Set<string>,
   visited?: Set<TSESTree.Node>,
 ): void {
   const seen = visited ?? new Set<TSESTree.Node>();
   if (seen.has(node)) return;
   seen.add(node);
 
-  // Look for this.field.dispose() or this.#field.dispose()
+  // Look for this.field.drop() or this.#field.drop()
   if (
     node.type === AST_NODE_TYPES.CallExpression &&
     node.callee.type === AST_NODE_TYPES.MemberExpression &&
     node.callee.property.type === AST_NODE_TYPES.Identifier &&
-    node.callee.property.name === 'dispose'
+    node.callee.property.name === 'drop'
   ) {
     const obj = node.callee.object;
-    // this.field.dispose()
+    // this.field.drop()
     if (
       obj.type === AST_NODE_TYPES.MemberExpression &&
       obj.object.type === AST_NODE_TYPES.ThisExpression
     ) {
       if (obj.property.type === AST_NODE_TYPES.Identifier) {
-        disposedFields.add(obj.property.name);
+        droppedFields.add(obj.property.name);
       }
       if (obj.property.type === AST_NODE_TYPES.PrivateIdentifier) {
-        disposedFields.add(obj.property.name);
+        droppedFields.add(obj.property.name);
       }
     }
 
-    // Also handle optional chaining: this.field?.dispose()
+    // Also handle optional chaining: this.field?.drop()
     if (
       obj.type === AST_NODE_TYPES.ChainExpression &&
       obj.expression.type === AST_NODE_TYPES.MemberExpression &&
       obj.expression.object.type === AST_NODE_TYPES.ThisExpression
     ) {
       const prop = obj.expression.property;
-      if (prop.type === AST_NODE_TYPES.Identifier) disposedFields.add(prop.name);
-      if (prop.type === AST_NODE_TYPES.PrivateIdentifier) disposedFields.add(prop.name);
+      if (prop.type === AST_NODE_TYPES.Identifier) droppedFields.add(prop.name);
+      if (prop.type === AST_NODE_TYPES.PrivateIdentifier) droppedFields.add(prop.name);
     }
   }
 
@@ -199,11 +199,11 @@ function collectDisposeCallsFromNode(
       if (Array.isArray(child)) {
         for (const item of child) {
           if (item && typeof item === 'object' && 'type' in item) {
-            collectDisposeCallsFromNode(item as TSESTree.Node, disposedFields, seen);
+            collectDropCallsFromNode(item as TSESTree.Node, droppedFields, seen);
           }
         }
       } else if ('type' in child) {
-        collectDisposeCallsFromNode(child as TSESTree.Node, disposedFields, seen);
+        collectDropCallsFromNode(child as TSESTree.Node, droppedFields, seen);
       }
     }
   }
@@ -213,35 +213,35 @@ function checkClass(
   context: any,
   node: TSESTree.ClassDeclaration | TSESTree.ClassExpression,
 ) {
-  if (!isDisposableSubclass(node)) return;
+  if (!isDropSubclass(node)) return;
 
-  // Find all fields typed as Disposable
-  const disposableFields: { name: string; member: TSESTree.PropertyDefinition }[] = [];
+  // Find all fields typed as Drop
+  const dropFields: { name: string; member: TSESTree.PropertyDefinition }[] = [];
   for (const member of node.body.body) {
     if (member.type !== AST_NODE_TYPES.PropertyDefinition) continue;
     const fieldName = getFieldName(member);
     if (!fieldName) continue;
-    const disposableType = getFieldDisposableType(member);
-    if (disposableType) {
-      disposableFields.push({ name: fieldName, member });
+    const dropType = getFieldDropType(member);
+    if (dropType) {
+      dropFields.push({ name: fieldName, member });
     }
   }
 
-  if (disposableFields.length === 0) return;
+  if (dropFields.length === 0) return;
 
-  const { method: onDisposeMethod, disposedFields } = getDisposedFieldsInOnDispose(node);
+  const { method: onDropMethod, droppedFields } = getDroppedFieldsInOnDrop(node);
 
-  if (!onDisposeMethod) {
+  if (!onDropMethod) {
     context.report({
       node: node,
       messageId: 'missingOnDispose',
-      data: { fieldNames: disposableFields.map((f) => f.name).join(', ') },
+      data: { fieldNames: dropFields.map((f) => f.name).join(', ') },
     });
     return;
   }
 
-  for (const field of disposableFields) {
-    if (!disposedFields.has(field.name)) {
+  for (const field of dropFields) {
+    if (!droppedFields.has(field.name)) {
       context.report({
         node: field.member,
         messageId: 'missingFieldDispose',

@@ -15,7 +15,7 @@ import {
 } from '@ankurah/signals';
 
 import type { Entity } from './entity.ts';
-import { Disposable } from '@ankurah/std';
+import { Drop } from '@ankurah/std';
 import { RetrievalError } from './error.ts';
 import type { ViewInstance, ViewConstructor } from './model.ts';
 import { type MatchArgs, Node } from './node.ts';
@@ -80,9 +80,9 @@ export interface RemoteQuerySubscriber {
  *
  * Rust: `pub struct EntityLiveQuery(Arc<Inner>)`
  * Divergence: No Arc -- JS GC handles shared references [E8].
- * Divergence: impl Drop -> extends Disposable [E11].
+ * Divergence: impl Drop -> extends Drop [E11].
  */
-export class EntityLiveQuery extends Disposable {
+export class EntityLiveQuery extends Drop {
   // -- Fields (mirrors Inner) --
   readonly queryId: QueryIdType;
   private readonly node: Node;
@@ -444,12 +444,12 @@ export class EntityLiveQuery extends Disposable {
   /**
    * Rust: `impl Drop for Inner { fn drop(&mut self) { self.node.unsubscribe_remote_predicate(self.query_id); } }`
    */
-  protected onDispose(): void {
+  protected onDrop(): void {
     // Unsubscribe from remote predicate
     // TODO: this.node.unsubscribeRemotePredicate(this.queryId) -- stub for Phase 1
 
     // Clean up reactor subscription
-    this.subscription.dispose();
+    this.subscription.drop();
   }
 }
 
@@ -526,7 +526,7 @@ export class WeakEntityLiveQuery implements RemoteQuerySubscriber {
  * Divergence: Uses ViewConstructor<V> instead of PhantomData [E8].
  * Divergence: No Deref -- delegates explicitly [E8].
  */
-export class LiveQuery<V extends ViewInstance> extends Disposable implements Signal {
+export class LiveQuery<V extends ViewInstance> extends Drop implements Signal {
   readonly inner: EntityLiveQuery;
   private readonly viewCtor: ViewConstructor<V>;
 
@@ -654,8 +654,8 @@ export class LiveQuery<V extends ViewInstance> extends Disposable implements Sig
 
   // ── Cleanup delegation ──────────────────────────────────────────────
 
-  protected onDispose(): void {
-    this.inner.dispose();
+  protected onDrop(): void {
+    this.inner.drop();
   }
 }
 

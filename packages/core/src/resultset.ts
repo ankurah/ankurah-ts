@@ -9,7 +9,7 @@ import {
   type Signal,
 } from '@ankurah/signals';
 
-import { Disposable } from '@ankurah/std';
+import { Drop } from '@ankurah/std';
 import { Entity } from './entity.ts';
 import type { Value } from './value/index.ts';
 import { extractAtPath } from './value/index.ts';
@@ -155,9 +155,9 @@ function binarySearchInsertPos(order: EntityEntry[], entry: EntityEntry): number
 // Rust: `pub struct ResultSetWrite<'a, E: AbstractEntity = Entity>`
 // Divergence: No lifetime parameter — JS has no lifetimes [E8].
 // Divergence: No MutexGuard — single-threaded JS [E8].
-// Divergence: impl Drop -> extends Disposable [E11].
+// Divergence: impl Drop -> extends Drop [E11].
 
-export class ResultSetWrite extends Disposable {
+export class ResultSetWrite extends Drop {
   private resultset: EntityResultSet;
   private changed: boolean;
   private state: ResultSetState;
@@ -377,19 +377,20 @@ export class ResultSetWrite extends Disposable {
   /**
    * Finish the write operation — broadcasts if changed.
    * Mirrors Rust Drop impl for ResultSetWrite [E11].
+   * Called once by drop().
    */
-  protected onDispose(): void {
+  protected onDrop(): void {
     if (this.changed) {
       this.resultset._broadcast();
     }
   }
 
   /**
-   * Compatibility alias — prefer `using` or explicit `dispose()`.
-   * @deprecated Use `dispose()` or `using` instead.
+   * Compatibility alias — prefer `using` or explicit `drop()`.
+   * @deprecated Use `drop()` or `using` instead.
    */
   done(): void {
-    this.dispose();
+    this.drop();
   }
 }
 
