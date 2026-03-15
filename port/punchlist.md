@@ -51,7 +51,7 @@ Every in-scope Rust source file and its target TS path.
 | 30 | core/src/node.rs | packages/core/src/node.ts | DONE |
 | 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | DONE |
 | 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
-| 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | NO |
+| 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | DONE |
 | 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | NO |
 | 35 | core/src/policy.rs | packages/core/src/policy.ts | DONE |
 | 36 | core/src/property/backend/lww.rs | packages/core/src/property/backend/lww.ts | DONE |
@@ -90,17 +90,17 @@ Every in-scope Rust source file and its target TS path.
 | 63 | core/src/storage.rs | packages/core/src/storage.ts | DONE |
 | 64 | core/src/system.rs | packages/core/src/system.ts | DONE |
 | 65 | core/src/task.rs | packages/core/src/task.ts | DONE |
-| 66 | core/src/traits.rs | packages/core/src/traits.ts | NO |
+| 66 | core/src/traits.rs | packages/core/src/traits.ts | DONE |
 | 67 | core/src/transaction.rs | packages/core/src/transaction.ts | DONE |
-| 68 | core/src/type_resolver.rs | packages/core/src/type_resolver.ts | NO |
-| 69 | core/src/util/cast.rs | packages/core/src/util/cast.ts | NO |
-| 70 | core/src/util/expand_states.rs | packages/core/src/util/expand_states.ts | NO |
-| 71 | core/src/util/iterable.rs | packages/core/src/util/iterable.ts | NO |
-| 72 | core/src/util/ivec.rs | packages/core/src/util/ivec.ts | NO |
-| 73 | core/src/util/mod.rs | packages/core/src/util/index.ts | NO |
+| 68 | core/src/type_resolver.rs | packages/core/src/type_resolver.ts | DONE |
+| 69 | core/src/util/cast.rs | packages/core/src/util/cast.ts | DONE |
+| 70 | core/src/util/expand_states.rs | packages/core/src/util/expand_states.ts | DONE |
+| 71 | core/src/util/iterable.rs | packages/core/src/util/iterable.ts | DONE |
+| 72 | core/src/util/ivec.rs | packages/core/src/util/ivec.ts | DONE |
+| 73 | core/src/util/mod.rs | packages/core/src/util/index.ts | DONE |
 | 74 | core/src/util/ready_chunks.rs | packages/core/src/util/ready_chunks.ts | YES |
-| 75 | core/src/util/safemap.rs | packages/core/src/util/safemap.ts | NO |
-| 76 | core/src/util/safeset.rs | packages/core/src/util/safeset.ts | NO |
+| 75 | core/src/util/safemap.rs | packages/core/src/util/safemap.ts | DONE |
+| 76 | core/src/util/safeset.rs | packages/core/src/util/safeset.ts | DONE |
 | 77 | core/src/value/cast.rs | packages/core/src/value/cast.ts | DONE |
 | 77.1 | core/src/value/cast.rs (tests) | packages/core/__tests__/cast.test.ts | DONE |
 | 78 | core/src/value/cast_predicate.rs | packages/core/src/value/cast_predicate.ts | DONE |

@@ -132,6 +132,9 @@ export type { ReactorUpdate as ReactorUpdateType } from './reactor/update.ts';
 export { EntityLiveQuery, WeakEntityLiveQuery, LiveQuery } from './livequery.ts';
 export type { RemoteQuerySubscriber } from './livequery.ts';
 
+// ── TypeResolver ──
+export { TypeResolver } from './type_resolver.ts';
+
 // ── NodeApplier ──
 export { NodeApplier } from './node_applier.ts';
 
