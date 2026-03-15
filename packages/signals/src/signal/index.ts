@@ -8,12 +8,9 @@ import { BroadcastId, type TListenerGuard } from '../broadcast.ts';
 // Rust: pub use calculated::*; pub use map::*; pub use memo::*; pub use mutable::*; pub use read::*;
 export { Mut } from './mutable.ts';
 export { Read } from './read.ts';
-// Calculated is a stub (deferred)
-export { } from './calculated.ts';
-// map.ts not yet ported
-// export { ... } from './map.ts';
-// memo.ts not yet ported
-// export { ... } from './memo.ts';
+export { Calculated } from './calculated.ts';
+export { Map } from './map.ts';
+export { Memo } from './memo.ts';
 
 /**
  * Type alias for listener functions.

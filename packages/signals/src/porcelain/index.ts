@@ -9,5 +9,4 @@
 export { type Subscribe, SubscriptionGuard } from './subscribe.ts';
 
 // Rust: pub use wait::Wait;
-// wait.ts not yet ported (requires async patterns, tokio channels → TS async patterns [E18])
-// export { type Wait } from './wait.ts';
+export { type Wait, type WaitResultValue, waitValue, waitFor } from './wait.ts';
