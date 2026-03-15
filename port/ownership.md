@@ -1,68 +1,72 @@
 # Ownership: Rust to TypeScript
 
-**Goal**: Translated TS code should read as close to the Rust source as possible while preserving equivalent semantics. Provided types absorb JS-specific complexity so translation stays 1:1.
-
-See also: [decisions.md](decisions.md) (architectural choices), [ownership/provided-types.md](ownership/provided-types.md) (API reference for Disposable, Mutex, RefCell, AsyncMutex).
-
-Ownership rules are enforced by `eslint-plugin-ankurah`. Run the linter to validate compliance.
+**Goal**: Translated TS code should read as close to the Rust source as possible. All types live in `@ankurah/base`.
 
 ---
+
+## Type Hierarchy
+
+Every ported Rust type extends `AkObject`, which provides automatic drop glue — when disposed, it cascades to all owned fields.
+
+```
+AkObject          — base for all ported types, auto-cascade [Symbol.dispose]()
+  ├── Struct      — ported Rust structs
+  ├── Enum<V>     — ported Rust enums (match(), is(), typed variants)
+  └── Drop        — types with `impl Drop` (override drop() for custom cleanup)
+```
 
 ## Mapping Rules
 
 | Rust | TS | Notes |
 |------|-----|-------|
-| `impl Drop for T` | `extends Disposable` | `onDispose()` = Drop body. Used with `using`. |
-| Owns Drop-implementing fields | Same — `onDispose()` disposes owned fields | JS has no auto-cascade. |
-| `Arc<T>` / `Rc<T>` | `T` (delete wrapper) | GC provides shared ownership. |
-| `Weak<T>` | `WeakRef<T>` | `deref()` must handle `undefined`. |
-| `Mutex<T>` | `Mutex<T>` | 1:1 provided type. `using guard = mutex.lock()`. |
-| `RwLock<T>` | `Mutex<T>` | No reader/writer distinction needed in JS. |
-| `MutexGuard<T>` | `MutexGuard<T>` (Disposable) | Drop side-effects fire in `onDispose()`. |
-| `RefCell<T>` | `RefCell<T>` | 1:1 provided type. `borrow()` / `borrow_mut()`. |
-| `Ref<T>` / `RefMut<T>` | `Ref<T>` / `RefMut<T>` (Disposable) | `using guard = cell.borrow_mut()`. |
+| `struct Foo` | `class Foo extends Struct` | Auto-cascade drops owned fields. |
+| `enum Foo` | `class Foo extends Enum<V>` | Typed variants, `match()`, cascade into variant fields. |
+| `impl Drop for T` | `class T extends Drop` | Override `drop()` for custom cleanup. |
+| `Arc<T>` | `Arc<T>` | Refcounted shared ownership. Inner drops when last Arc drops. |
+| `Rc<T>` | `Arc<T>` | Same (no threading distinction in JS). |
+| `Weak<T>` | `Weak<T>` | `upgrade()` returns `Arc<T> \| null`. |
+| `&T` | `Borrow<T>` | Non-owning. `[Symbol.dispose]()` is a no-op — does NOT cascade. |
+| `&mut T` | `BorrowMut<T>` | Non-owning mutable. Same no-op dispose. |
+| `Box<T>` | `T` (plain) | Unique ownership. Cascade handles it. |
+| `Mutex<T>` | `Mutex<T>` | `using guard = mutex.lock()`. |
+| `RwLock<T>` | `Mutex<T>` | No reader/writer distinction in JS. |
+| `RefCell<T>` | `RefCell<T>` | `borrow()` / `borrow_mut()` returning guards. |
 | `tokio::sync::Mutex` | `AsyncMutex` | Async serialization across `await` points. |
 | `AtomicBool` / `AtomicU32` | `boolean` / `number` | Single-threaded JS. |
-| Lifetimes (`'a`, `'rec`) | Runtime `alive` flag | Check at mutation points; set `false` on consume. |
+| Lifetimes (`'a`, `'rec`) | Runtime `alive` flag | Check at mutation points. |
 | `fn method(self)` (move) | Runtime `alive` flag | JS has no move semantics. |
 
----
+## Ownership Semantics
 
-## Disposal
+**Default = owned.** A plain field on a Struct/Enum is owned. The cascade drops it automatically.
 
-`impl Drop` → `Disposable` + `using`. Classify each type by severity:
+**`Borrow<T>` / `BorrowMut<T>`** — marks a field as NOT owned. The cascade calls their `[Symbol.dispose]()` which is a no-op. The lint rule uses this to verify cascade correctness.
 
-- **Correctness-critical** (missed cleanup = silent wrong behavior): FR **crashes hard** with file+line.
-- **Resource hygiene** (missed cleanup = waste, nobody sees wrong data): FR **warns**.
+**`Arc<T>`** — shared ownership. Multiple owners hold clones. Inner value drops when the last Arc drops (refcount = 0). `arc.clone()` increments. `arc.drop()` decrements. Bare `const x = arc` does NOT increment — always use `.clone()`.
 
-Test: "if cleanup never runs, does anyone see wrong data?" Yes → crash. No → warn.
+## Drop Glue
 
-### Enforcement
+`[Symbol.dispose]()` on AkObject is the drop glue. It:
+1. Sets `#dropped` flag (idempotent)
+2. Unregisters from FinalizationRegistry
+3. Calls `this.drop()` (custom cleanup — no-op unless type extends `Drop`)
+4. Cascades: walks all own properties, calls `[Symbol.dispose]()` on each
 
-1. **Lint** — catches missing `using` at dev time
-2. **`assertNotDisposed()`** — catches use-after-dispose at call time
-3. **`FinalizationRegistry`** — catches forgot-to-dispose at GC time
+`Enum` overrides cascade to also walk `this.value`'s properties (variant data fields).
 
-FR is a diagnostic backstop, not a cleanup mechanism. If `onDispose()` throws, the object is still considered disposed and FR is unregistered — the throw propagates to the caller.
+`using` calls `[Symbol.dispose]()` at block exit. That's the normal path.
 
----
+## FinalizationRegistry
+
+Leak detection only. If an AkObject (or Arc) is GC'd without being disposed, FR fires a warning with the class name and creation stack trace.
 
 ## Async Serialization
 
-`std::sync::Mutex` semantics are absorbed by the provided `Mutex<T>` (trivial in single-threaded JS). `tokio::sync::Mutex` → `AsyncMutex` (async serialization still matters).
-
-**Rule**: if no `await` between read and write, no protection needed. If fire-and-forget async tasks mutate shared state, `AsyncMutex` is required.
-
----
-
-## WeakRef
-
-`Weak<T>` → `WeakRef<T>`, like-for-like. `deref()` must handle `undefined`. Strong holder must exist. FR cleans stale map entries.
-
----
+`Mutex<T>` absorbs `std::sync::Mutex` (trivial in single-threaded JS). `AsyncMutex` replaces `tokio::sync::Mutex` (async serialization across `await` points).
 
 ## Inherent Limitations
 
-- **No compile-time lifetimes** — `alive` flags + `assertNotDisposed()` + lint are runtime-only.
+- **No compile-time lifetimes** — `alive` flags + `assertNotDropped()` + lint are runtime-only.
 - **FR non-determinism** — may fire late or never. Lint enforcing `using` closes gap at dev time.
 - **No move semantics** — `alive` flag is the only protection against use-after-consume.
+- **`const x = arc` footgun** — bare assignment doesn't increment refcount. Lint should flag this.
