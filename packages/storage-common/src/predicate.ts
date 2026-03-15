@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/common/src/predicate.rs
 
-import type { Predicate } from '@ankurah/ankql';
+import { Predicate } from '@ankurah/ankql';
 
 /**
  * Extracts conjuncts that can be flattened from a predicate tree.
@@ -37,20 +37,22 @@ export class ConjunctFinder {
    * Rust: `fn extract_conjuncts(predicate: &Predicate, conjuncts: &mut Vec<Predicate>)`
    */
   private static extractConjuncts(predicate: Predicate, conjuncts: Predicate[]): void {
-    switch (predicate.type) {
-      case 'And':
+    predicate.match({
+      And: (v) => {
         // Recursively extract from both sides of AND
-        ConjunctFinder.extractConjuncts(predicate.left, conjuncts);
-        ConjunctFinder.extractConjuncts(predicate.right, conjuncts);
-        break;
-      case 'Or':
+        ConjunctFinder.extractConjuncts(v.left, conjuncts);
+        ConjunctFinder.extractConjuncts(v.right, conjuncts);
+      },
+      Or: () => {
         // OR breaks conjunct chains - treat the entire OR as a single conjunct
         conjuncts.push(predicate);
-        break;
-      default:
-        // Base case: Comparison, IsNull, Not, True, False, Placeholder
-        conjuncts.push(predicate);
-        break;
-    }
+      },
+      Comparison: () => { conjuncts.push(predicate); },
+      IsNull: () => { conjuncts.push(predicate); },
+      Not: () => { conjuncts.push(predicate); },
+      True: () => { conjuncts.push(predicate); },
+      False: () => { conjuncts.push(predicate); },
+      Placeholder: () => { conjuncts.push(predicate); },
+    });
   }
 }

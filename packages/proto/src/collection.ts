@@ -1,45 +1,47 @@
 // MIRRORS: ankurah/proto/src/collection.rs
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
-/**
- * CollectionId: newtype wrapper around String.
- * Derived serde — serialized as a bincode String (u64 length + UTF-8 bytes).
- */
-export class CollectionId {
+export class CollectionId extends Struct {
   readonly value: string;
 
   constructor(value: string) {
+    super();
     this.value = value;
   }
 
-  /** Create from a fixed name (system collections). */
+  // impl CollectionId
   static fixedName(name: string): CollectionId {
     return new CollectionId(name);
   }
 
-  /** Create from a string. */
+  // impl From<&str> / From<String> for CollectionId
   static from(value: string): CollectionId {
     return new CollectionId(value);
   }
 
-  asStr(): string {
-    return this.value;
-  }
-
-  toString(): string {
-    return this.value;
-  }
-
-  equals(other: CollectionId): boolean {
-    return this.value === other.value;
-  }
-
+  // impl PartialEq<str> for CollectionId
   equalsStr(other: string): boolean {
     return this.value === other;
   }
 
-  // ── Bincode ──
+  // impl AsRef<str> / as_str
+  asStr(): string {
+    return this.value;
+  }
+
+  // impl PartialEq
+  equals(other: CollectionId): boolean {
+    return this.value === other.value;
+  }
+
+  // impl Display
+  toString(): string {
+    return this.value;
+  }
+
+  // ── Bincode: derived serde — String (u64 length + UTF-8 bytes) ──
 
   encode(writer: BincodeWriter): void {
     writer.writeString(this.value);

@@ -9,8 +9,8 @@
 // Rust crate: ankql
 
 export * from './ast.ts';
+export * from './conversion.ts';
 export * from './error.ts';
 export * from './grammar.ts';
 export * from './parser.ts';
-export * from './conversion.ts';
 export * from './selection/index.ts';

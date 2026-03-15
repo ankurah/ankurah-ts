@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
 
 import { Broadcast, type BroadcastId, type BroadcastListener } from '../broadcast.ts';
+import { CurrentObserver } from '../context.ts';
 import { ValueCell, type ReadValueCell } from '../value.ts';
 import { ListenerGuard, type Signal, type Get, type Peek, type With, type GetReadCell, type Listener } from './index.ts';
 import { Read } from './read.ts';
@@ -28,12 +29,14 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
     this.broadcast.send(undefined as void);
   }
 
-  /**
-   * Get the current value, tracked by the current context.
-   * Phase 1: same as peek() (no observer tracking yet).
-   */
+  /** Get the current value, tracked by the current context */
   get(): T {
-    // Phase 1: no CurrentObserver.track(this) yet
+    CurrentObserver.track(this);
+    return this.valueCell.getValue();
+  }
+
+  /** Returns a clone of the current value - not tracked by the current context */
+  value(): T {
     return this.valueCell.getValue();
   }
 
@@ -42,9 +45,9 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
     return this.valueCell.getValue();
   }
 
-  /** Call a function with a reference to the current value */
+  /** Call a function with a reference to the current value (tracked by CurrentObserver) */
   with<R>(f: (value: T) => R): R {
-    // Phase 1: no CurrentObserver.track(this) yet
+    CurrentObserver.track(this);
     return this.valueCell.with(f);
   }
 

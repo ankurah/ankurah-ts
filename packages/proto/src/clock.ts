@@ -1,36 +1,23 @@
 // MIRRORS: ankurah/proto/src/clock.rs
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { EventId } from './id';
 import { DecodeError } from './error';
 
-/**
- * Clock: Set of EventIds representing a head in a DAG of events.
- * Derived serde — serialized as Vec<EventId> (u64 length + elements).
- * Since EventId has custom serde (raw 32 bytes), each element is 32 bytes.
- */
-export class Clock {
-  /** Sorted array of EventIds. */
+/// Set of event ids which represents a head in a DAG of events
+export class Clock extends Struct {
   private ids: EventId[];
 
   private constructor(ids: EventId[]) {
+    super();
     this.ids = ids;
   }
 
+  // impl Clock
+
   static new(ids: EventId[]): Clock {
     return new Clock([...ids]);
-  }
-
-  static empty(): Clock {
-    return new Clock([]);
-  }
-
-  static default(): Clock {
-    return new Clock([]);
-  }
-
-  static fromEventId(id: EventId): Clock {
-    return new Clock([id]);
   }
 
   asSlice(): readonly EventId[] {
@@ -73,7 +60,7 @@ export class Clock {
     this.ids.splice(idx, 0, id);
   }
 
-  /** Creates a clone of the clock with the given event inserted. */
+  /// Creates a clone of the clock with the given event inserted
   withEvent(id: EventId): Clock {
     const clone = new Clock([...this.ids]);
     clone.insert(id);
@@ -96,6 +83,32 @@ export class Clock {
     return [...this.ids];
   }
 
+  // impl From<Vec<EventId>> for Clock
+  static from(ids: EventId[]): Clock {
+    return new Clock([...ids]);
+  }
+
+  // impl TryInto<Clock> for Vec<Vec<u8>>
+  static fromByteVecs(idBytes: Uint8Array[]): Clock {
+    const ids: EventId[] = [];
+    for (const bytes of idBytes) {
+      if (bytes.length !== 32) throw DecodeError.invalidLength();
+      ids.push(EventId.fromBytes(bytes));
+    }
+    return new Clock(ids);
+  }
+
+  // impl From<EventId> for Clock
+  static fromEventId(id: EventId): Clock {
+    return new Clock([id]);
+  }
+
+  // impl Default
+  static default(): Clock {
+    return new Clock([]);
+  }
+
+  // impl PartialEq
   equals(other: Clock): boolean {
     if (this.ids.length !== other.ids.length) return false;
     for (let i = 0; i < this.ids.length; i++) {
@@ -104,6 +117,7 @@ export class Clock {
     return true;
   }
 
+  // impl Display
   toString(): string {
     return this.toBase64();
   }

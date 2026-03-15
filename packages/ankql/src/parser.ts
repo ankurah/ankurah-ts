@@ -10,12 +10,13 @@ import {
   isIdentCont,
 } from './grammar.ts';
 import {
-  type Expr,
-  type Predicate,
-  type ComparisonOperator,
-  type InfixOperator,
-  type OrderByItem,
-  type OrderDirection,
+  Expr,
+  Literal,
+  Predicate,
+  ComparisonOperator,
+  InfixOperator,
+  OrderByItem,
+  OrderDirection,
   PathExpr,
   Selection,
   exprToPredicate,
@@ -379,7 +380,7 @@ class Parser {
   /** Parse a full selection: predicate [ORDER BY ...] [LIMIT ...] */
   parseSelection(): Selection {
     if (this.isAtEnd()) {
-      return new Selection({ type: 'True' });
+      return new Selection(Predicate.True());
     }
 
     const predicate = this.parseOr();
@@ -415,7 +416,7 @@ class Parser {
     while (this.peek().type === 'Or') {
       this.advance();
       const right = this.parseAnd();
-      left = { type: 'Or', left, right };
+      left = Predicate.Or(left, right);
     }
     return left;
   }
@@ -426,7 +427,7 @@ class Parser {
     while (this.peek().type === 'And') {
       this.advance();
       const right = this.parseNotOrComparison();
-      left = { type: 'And', left, right };
+      left = Predicate.And(left, right);
     }
     return left;
   }
@@ -440,7 +441,7 @@ class Parser {
         throw new SyntaxError(`Expected '(' after NOT at position ${this.peek().pos}`);
       }
       const inner = this.parseNotOrComparison();
-      return { type: 'Not', predicate: inner };
+      return Predicate.Not(inner);
     }
     return this.parseComparison();
   }
@@ -455,8 +456,8 @@ class Parser {
       const hasNot = this.peek().type === 'Not';
       if (hasNot) this.advance();
       this.expect('Null');
-      const isNull: Predicate = { type: 'IsNull', expr: left };
-      return hasNot ? { type: 'Not', predicate: isNull } : isNull;
+      const isNull = Predicate.IsNull(left);
+      return hasNot ? Predicate.Not(isNull) : isNull;
     }
 
     // Comparison operators
@@ -465,7 +466,7 @@ class Parser {
       const op = this.advance();
       const compOp = tokenToComparisonOp(op.type);
       const right = this.parseArithExpr();
-      return { type: 'Comparison', left, operator: compOp, right };
+      return Predicate.Comparison(left, compOp, right);
     }
 
     // No operator → convert expression to predicate
@@ -485,7 +486,7 @@ class Parser {
       const op = this.advance();
       const right = this.parsePrimaryExpr();
       const infixOp = tokenToInfixOp(op.type);
-      left = { type: 'InfixExpr', left, operator: infixOp, right };
+      left = Expr.InfixExpr(left, infixOp, right);
     }
 
     return left;
@@ -506,13 +507,13 @@ class Parser {
         return this.parseStringLiteral();
       case 'True':
         this.advance();
-        return { type: 'Literal', value: { type: 'Bool', value: true } };
+        return Expr.Literal(Literal.Bool(true));
       case 'False':
         this.advance();
-        return { type: 'Literal', value: { type: 'Bool', value: false } };
+        return Expr.Literal(Literal.Bool(false));
       case 'Question':
         this.advance();
-        return { type: 'Placeholder' };
+        return Expr.Placeholder();
       case 'Identifier':
         return this.parsePathExpr();
       case 'LParen':
@@ -536,25 +537,25 @@ class Parser {
       }
       // Check i32 range: -2147483648 to 2147483647
       if (num > -(2 ** 31) && num < 2 ** 31 - 1) {
-        return { type: 'Literal', value: { type: 'I32', value: num } };
+        return Expr.Literal(Literal.I32(num));
       }
       // For large numbers, use BigInt
-      return { type: 'Literal', value: { type: 'I64', value: BigInt(numStr) } };
+      return Expr.Literal(Literal.I64(BigInt(numStr)));
     } catch {
       // If Number fails, try BigInt
-      return { type: 'Literal', value: { type: 'I64', value: BigInt(numStr) } };
+      return Expr.Literal(Literal.I64(BigInt(numStr)));
     }
   }
 
   private parseFloat(): Expr {
     const tok = this.advance();
     const num = parseFloat(tok.value);
-    return { type: 'Literal', value: { type: 'F64', value: num } };
+    return Expr.Literal(Literal.F64(num));
   }
 
   private parseStringLiteral(): Expr {
     const tok = this.advance();
-    return { type: 'Literal', value: { type: 'String', value: tok.value } };
+    return Expr.Literal(Literal.String(tok.value));
   }
 
   private parsePathExpr(): Expr {
@@ -581,7 +582,7 @@ class Parser {
       }
     }
 
-    return { type: 'Path', value: new PathExpr(steps) };
+    return Expr.Path(new PathExpr(steps));
   }
 
   /**
@@ -602,7 +603,7 @@ class Parser {
         items.push(this.parseArithExpr());
       }
       this.expect('RParen');
-      return { type: 'ExprList', values: items };
+      return Expr.ExprList(items);
     }
 
     // Check for comparison/logical operators → this is a parenthesized predicate
@@ -611,7 +612,7 @@ class Parser {
       // Now check for AND/OR within the parens
       const fullPred = this.finishLogicalChain(pred);
       this.expect('RParen');
-      return { type: 'Predicate', value: fullPred };
+      return Expr.Predicate(fullPred);
     }
 
     // Check for AND/OR → the first atom should be convertible to predicate
@@ -619,7 +620,7 @@ class Parser {
       const firstPred = exprToPredicate(firstAtom);
       const fullPred = this.finishLogicalChain(firstPred);
       this.expect('RParen');
-      return { type: 'Predicate', value: fullPred };
+      return Expr.Predicate(fullPred);
     }
 
     // Just a parenthesized expression
@@ -634,15 +635,15 @@ class Parser {
       const hasNot = this.peek().type === 'Not';
       if (hasNot) this.advance();
       this.expect('Null');
-      const isNull: Predicate = { type: 'IsNull', expr: left };
-      return hasNot ? { type: 'Not', predicate: isNull } : isNull;
+      const isNull = Predicate.IsNull(left);
+      return hasNot ? Predicate.Not(isNull) : isNull;
     }
 
     if (isComparisonOp(this.peek().type)) {
       const op = this.advance();
       const compOp = tokenToComparisonOp(op.type);
       const right = this.parseArithExpr();
-      return { type: 'Comparison', left, operator: compOp, right };
+      return Predicate.Comparison(left, compOp, right);
     }
 
     return exprToPredicate(left);
@@ -669,9 +670,9 @@ class Parser {
       }
 
       if (logicType === 'And') {
-        result = { type: 'And', left: result, right: rightPred };
+        result = Predicate.And(result, rightPred);
       } else {
-        result = { type: 'Or', left: result, right: rightPred };
+        result = Predicate.Or(result, rightPred);
       }
     }
 
@@ -697,16 +698,16 @@ class Parser {
 
     const path = PathExpr.simple(tok.value);
 
-    let direction: OrderDirection = 'Asc';
+    let direction = OrderDirection.Asc();
     if (this.peek().type === 'Asc') {
       this.advance();
-      direction = 'Asc';
+      direction = OrderDirection.Asc();
     } else if (this.peek().type === 'Desc') {
       this.advance();
-      direction = 'Desc';
+      direction = OrderDirection.Desc();
     }
 
-    return { path, direction };
+    return new OrderByItem(path, direction);
   }
 }
 
@@ -732,13 +733,13 @@ function isKeywordTokenType(type: TokenType): boolean {
 
 function tokenToComparisonOp(type: TokenType): ComparisonOperator {
   switch (type) {
-    case 'Eq': return 'Equal';
-    case 'NotEq': return 'NotEqual';
-    case 'Gt': return 'GreaterThan';
-    case 'GtEq': return 'GreaterThanOrEqual';
-    case 'Lt': return 'LessThan';
-    case 'LtEq': return 'LessThanOrEqual';
-    case 'In': return 'In';
+    case 'Eq': return ComparisonOperator.Equal();
+    case 'NotEq': return ComparisonOperator.NotEqual();
+    case 'Gt': return ComparisonOperator.GreaterThan();
+    case 'GtEq': return ComparisonOperator.GreaterThanOrEqual();
+    case 'Lt': return ComparisonOperator.LessThan();
+    case 'LtEq': return ComparisonOperator.LessThanOrEqual();
+    case 'In': return ComparisonOperator.In();
     default:
       throw new SyntaxError(`'${type}' is not a comparison operator`);
   }
@@ -746,10 +747,10 @@ function tokenToComparisonOp(type: TokenType): ComparisonOperator {
 
 function tokenToInfixOp(type: TokenType): InfixOperator {
   switch (type) {
-    case 'Add': return 'Add';
-    case 'Subtract': return 'Subtract';
-    case 'Multiply': return 'Multiply';
-    case 'Divide': return 'Divide';
+    case 'Add': return InfixOperator.Add();
+    case 'Subtract': return InfixOperator.Subtract();
+    case 'Multiply': return InfixOperator.Multiply();
+    case 'Divide': return InfixOperator.Divide();
     default:
       throw new SyntaxError(`'${type}' is not an infix operator`);
   }
@@ -763,7 +764,7 @@ function tokenToInfixOp(type: TokenType): InfixOperator {
  */
 export function parseSelection(input: string): Selection {
   if (input.trim() === '') {
-    return new Selection({ type: 'True' });
+    return new Selection(Predicate.True());
   }
 
   const lexer = new Lexer(input);

@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/ankql/src/selection/sql.rs
 
-import type { Expr, Literal, Predicate, ComparisonOperator } from '../ast.ts';
+import { Expr, Literal, Predicate, ComparisonOperator } from '../ast.ts';
 import {
   PlaceholderCountMismatchError,
   InvalidExpressionError,
@@ -13,34 +13,33 @@ function generateExprSql(
   foundPlaceholders: { count: number },
   buffer: string[],
 ): void {
-  switch (expr.type) {
-    case 'Placeholder': {
+  expr.match({
+    Placeholder: () => {
       foundPlaceholders.count++;
       if (expectedCount !== null && foundPlaceholders.count > expectedCount) {
         throw new PlaceholderCountMismatchError(expectedCount, foundPlaceholders.count);
       }
       buffer.push('?');
-      break;
-    }
-    case 'Literal':
-      buffer.push(literalToSql(expr.value));
-      break;
-    case 'Path':
-      buffer.push(expr.value.steps.map((s) => `"${s}"`).join('.'));
-      break;
-    case 'ExprList': {
+    },
+    Literal: (v) => {
+      buffer.push(literalToSql(v.literal));
+    },
+    Path: (v) => {
+      buffer.push(v.path.steps.map((s) => `"${s}"`).join('.'));
+    },
+    ExprList: (v) => {
       buffer.push('(');
-      for (let i = 0; i < expr.values.length; i++) {
+      for (let i = 0; i < v.exprs.length; i++) {
         if (i > 0) buffer.push(', ');
-        const item = expr.values[i];
-        if (item.type === 'Placeholder') {
+        const item = v.exprs[i];
+        if (item.is('Placeholder')) {
           foundPlaceholders.count++;
           if (expectedCount !== null && foundPlaceholders.count > expectedCount) {
             throw new PlaceholderCountMismatchError(expectedCount, foundPlaceholders.count);
           }
           buffer.push('?');
-        } else if (item.type === 'Literal') {
-          buffer.push(literalToSql(item.value));
+        } else if (item.is('Literal')) {
+          buffer.push(literalToSql((item.value as { literal: Literal }).literal));
         } else {
           throw new InvalidExpressionError(
             'Only literal expressions and placeholders are supported in IN lists',
@@ -48,29 +47,30 @@ function generateExprSql(
         }
       }
       buffer.push(')');
-      break;
-    }
-    default:
+    },
+    Predicate: () => {
       throw new InvalidExpressionError(
         'Only literal, identifier, and list expressions are supported',
       );
-  }
+    },
+    InfixExpr: () => {
+      throw new InvalidExpressionError(
+        'Only literal, identifier, and list expressions are supported',
+      );
+    },
+  });
 }
 
 function literalToSql(lit: Literal): string {
-  switch (lit.type) {
-    case 'I16':
-    case 'I32':
-      return String(lit.value);
-    case 'I64':
-      return String(lit.value);
-    case 'F64':
-      return String(lit.value);
-    case 'Bool':
-      return lit.value ? 'true' : 'false';
-    case 'String': {
+  return lit.match({
+    I16: (v) => String(v.value),
+    I32: (v) => String(v.value),
+    I64: (v) => String(v.value),
+    F64: (v) => String(v.value),
+    Bool: (v) => v.value ? 'true' : 'false',
+    String: (v) => {
       let escaped = '';
-      for (const ch of lit.value) {
+      for (const ch of v.value) {
         if (ch === "'") {
           escaped += "''";
         } else if (ch === '\0') {
@@ -81,10 +81,10 @@ function literalToSql(lit: Literal): string {
         }
       }
       return `'${escaped}'`;
-    }
-    case 'EntityId': {
+    },
+    EntityId: (v) => {
       // Base64url encode the ULID bytes
-      const bytes = lit.value;
+      const bytes = v.value;
       let binary = '';
       for (let i = 0; i < bytes.length; i++) {
         binary += String.fromCharCode(bytes[i]);
@@ -94,29 +94,30 @@ function literalToSql(lit: Literal): string {
         .replace(/\//g, '_')
         .replace(/=+$/, '');
       return `'${b64}'`;
-    }
-    case 'Object':
-    case 'Binary': {
-      const decoded = new TextDecoder().decode(lit.value);
+    },
+    Object: (v) => {
+      const decoded = new TextDecoder().decode(v.value);
       return `'${decoded}'`;
-    }
-    case 'Json':
-      return `'${JSON.stringify(lit.value)}'`;
-  }
+    },
+    Binary: (v) => {
+      const decoded = new TextDecoder().decode(v.value);
+      return `'${decoded}'`;
+    },
+    Json: (v) => `'${JSON.stringify(v.value)}'`,
+  });
 }
 
 function comparisonOpToSql(op: ComparisonOperator): string {
-  switch (op) {
-    case 'Equal': return '=';
-    case 'NotEqual': return '<>';
-    case 'GreaterThan': return '>';
-    case 'GreaterThanOrEqual': return '>=';
-    case 'LessThan': return '<';
-    case 'LessThanOrEqual': return '<=';
-    case 'In': return 'IN';
-    case 'Between':
-      throw new UnsupportedOperatorError('BETWEEN operator is not yet supported');
-  }
+  return op.match({
+    Equal: () => '=',
+    NotEqual: () => '<>',
+    GreaterThan: () => '>',
+    GreaterThanOrEqual: () => '>=',
+    LessThan: () => '<',
+    LessThanOrEqual: () => '<=',
+    In: () => 'IN',
+    Between: () => { throw new UnsupportedOperatorError('BETWEEN operator is not yet supported'); },
+  });
 }
 
 function generatePredicateSql(
@@ -125,51 +126,47 @@ function generatePredicateSql(
   foundPlaceholders: { count: number },
   buffer: string[],
 ): void {
-  switch (predicate.type) {
-    case 'Comparison': {
-      generateExprSql(predicate.left, expectedCount, foundPlaceholders, buffer);
+  predicate.match({
+    Comparison: (v) => {
+      generateExprSql(v.left, expectedCount, foundPlaceholders, buffer);
       buffer.push(' ');
-      buffer.push(comparisonOpToSql(predicate.operator));
+      buffer.push(comparisonOpToSql(v.operator));
       buffer.push(' ');
-      generateExprSql(predicate.right, expectedCount, foundPlaceholders, buffer);
-      break;
-    }
-    case 'And': {
-      generatePredicateSql(predicate.left, expectedCount, foundPlaceholders, buffer);
+      generateExprSql(v.right, expectedCount, foundPlaceholders, buffer);
+    },
+    And: (v) => {
+      generatePredicateSql(v.left, expectedCount, foundPlaceholders, buffer);
       buffer.push(' AND ');
-      generatePredicateSql(predicate.right, expectedCount, foundPlaceholders, buffer);
-      break;
-    }
-    case 'Or': {
+      generatePredicateSql(v.right, expectedCount, foundPlaceholders, buffer);
+    },
+    Or: (v) => {
       buffer.push('(');
-      generatePredicateSql(predicate.left, expectedCount, foundPlaceholders, buffer);
+      generatePredicateSql(v.left, expectedCount, foundPlaceholders, buffer);
       buffer.push(' OR ');
-      generatePredicateSql(predicate.right, expectedCount, foundPlaceholders, buffer);
+      generatePredicateSql(v.right, expectedCount, foundPlaceholders, buffer);
       buffer.push(')');
-      break;
-    }
-    case 'Not': {
+    },
+    Not: (v) => {
       buffer.push('NOT (');
-      generatePredicateSql(predicate.predicate, expectedCount, foundPlaceholders, buffer);
+      generatePredicateSql(v.predicate, expectedCount, foundPlaceholders, buffer);
       buffer.push(')');
-      break;
-    }
-    case 'IsNull': {
-      generateExprSql(predicate.expr, expectedCount, foundPlaceholders, buffer);
+    },
+    IsNull: (v) => {
+      generateExprSql(v.expr, expectedCount, foundPlaceholders, buffer);
       buffer.push(' IS NULL');
-      break;
-    }
-    case 'True':
+    },
+    True: () => {
       buffer.push('TRUE');
-      break;
-    case 'False':
+    },
+    False: () => {
       buffer.push('FALSE');
-      break;
-    case 'Placeholder':
+    },
+    Placeholder: () => {
       throw new InvalidExpressionError(
         'Placeholder must be transformed before SQL generation',
       );
-  }
+    },
+  });
 }
 
 /**

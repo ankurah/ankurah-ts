@@ -4,9 +4,13 @@
 //   Custom bincode serde: raw 16 bytes, no length prefix.
 //   Human-readable serde (JSON): base64url-no-pad string.
 //
+// EventId — defined in data.rs in Rust, co-located here in TS.
+//   Custom bincode serde: raw 32 bytes, no length prefix.
+//
 // TransactionId, RequestId, QueryId, UpdateId — ULID wrappers.
 //   Derived serde on Ulid: serialized as 26-char string (u64 length + 26 ASCII bytes in bincode).
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { DecodeError } from './error';
 
@@ -40,7 +44,6 @@ for (let i = 0; i < BASE64URL_CHARS.length; i++) {
 
 function base64urlDecode(str: string): Uint8Array {
   const len = str.length;
-  // Calculate output length accounting for no padding
   const outLen = Math.floor((len * 3) / 4);
   const out = new Uint8Array(outLen);
   let j = 0;
@@ -62,7 +65,6 @@ function base64urlDecode(str: string): Uint8Array {
 
 // ─── ULID utilities ─────────────────────────────────────────────────────────
 
-// Crockford's Base32 encoding (used by ULID)
 const CROCKFORD_CHARS = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CROCKFORD_DECODE = new Map<string, number>();
 for (let i = 0; i < CROCKFORD_CHARS.length; i++) {
@@ -77,10 +79,6 @@ CROCKFORD_DECODE.set('i', 1);
 CROCKFORD_DECODE.set('L', 1);
 CROCKFORD_DECODE.set('l', 1);
 
-/**
- * Generate a new ULID as 16 bytes.
- * ULID = 48-bit timestamp (ms since epoch) + 80-bit random.
- */
 function generateUlidBytes(): Uint8Array {
   const bytes = new Uint8Array(16);
   const now = Date.now();
@@ -102,14 +100,7 @@ function generateUlidBytes(): Uint8Array {
   return bytes;
 }
 
-/**
- * Encode 16 ULID bytes as a 26-char Crockford Base32 string.
- * Matches Rust ulid::Ulid::to_string().
- */
 function ulidBytesToString(bytes: Uint8Array): string {
-  // ULID is 128 bits = 26 Crockford Base32 characters
-  // Big-endian: first byte is MSB
-  // Convert to a BigInt for easy bit extraction
   let value = 0n;
   for (let i = 0; i < 16; i++) {
     value = (value << 8n) | BigInt(bytes[i]);
@@ -122,9 +113,6 @@ function ulidBytesToString(bytes: Uint8Array): string {
   return chars.join('');
 }
 
-/**
- * Parse a 26-char Crockford Base32 ULID string back to 16 bytes.
- */
 function ulidStringToBytes(str: string): Uint8Array {
   if (str.length !== 26) {
     throw new Error(`Invalid ULID string length: ${str.length} (expected 26)`);
@@ -147,33 +135,29 @@ function ulidStringToBytes(str: string): Uint8Array {
 
 // ─── EntityId ───────────────────────────────────────────────────────────────
 
-/**
- * EntityId: 16-byte identifier wrapping a ULID.
- *
- * Bincode serde: custom — raw 16 bytes, no length prefix.
- * JSON serde: base64url-no-pad string.
- */
-export class EntityId {
-  /** Raw 16 bytes (ULID in big-endian byte order). */
+export class EntityId extends Struct {
   readonly bytes: Uint8Array;
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 
-  /** Generate a new random EntityId. */
+  // impl EntityId
   static new(): EntityId {
     return new EntityId(generateUlidBytes());
   }
 
-  /** Create from a 16-byte array. */
   static fromBytes(bytes: Uint8Array | number[]): EntityId {
     const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (arr.length !== 16) throw DecodeError.invalidLength();
     return new EntityId(new Uint8Array(arr));
   }
 
-  /** Parse from base64url-no-pad string. */
+  toBytes(): Uint8Array {
+    return new Uint8Array(this.bytes);
+  }
+
   static fromBase64(input: string): EntityId {
     let decoded: Uint8Array;
     try {
@@ -185,33 +169,31 @@ export class EntityId {
     return new EntityId(decoded);
   }
 
-  /** Encode as base64url-no-pad string. */
   toBase64(): string {
     return base64urlEncode(this.bytes);
   }
 
-  /** Last 6 characters of the base64 encoding (for short display). */
   toBase64Short(): string {
-    const full = this.toBase64();
-    return full.slice(full.length - 6);
+    const value = this.toBase64();
+    return value.slice(value.length - 6);
   }
 
-  /** Convert to 16-byte array. */
-  toBytes(): Uint8Array {
-    return new Uint8Array(this.bytes);
-  }
-
-  /** Display as base64url-no-pad string (matching Rust Display). */
+  // impl Display for EntityId
   toString(): string {
     return this.toBase64();
   }
 
-  /** Value equality. */
+  // impl PartialEq for EntityId
   equals(other: EntityId): boolean {
     for (let i = 0; i < 16; i++) {
       if (this.bytes[i] !== other.bytes[i]) return false;
     }
     return true;
+  }
+
+  // impl Default for EntityId
+  static default(): EntityId {
+    return EntityId.new();
   }
 
   // ── Bincode: custom serde — raw 16 bytes ──
@@ -227,29 +209,37 @@ export class EntityId {
 }
 
 // ─── EventId ────────────────────────────────────────────────────────────────
+// Note: EventId is defined in data.rs in Rust but co-located here in TS
+// to share base64/ULID utilities and avoid circular dependencies.
 
-/**
- * EventId: 32-byte hash identifier (SHA-256 of event content).
- *
- * Bincode serde: custom — raw 32 bytes, no length prefix.
- * JSON serde: base64url-no-pad string.
- */
-export class EventId {
-  /** Raw 32 bytes (SHA-256 hash). */
+export class EventId extends Struct {
   readonly bytes: Uint8Array;
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 
-  /** Create from a 32-byte array. */
-  static fromBytes(bytes: Uint8Array | number[]): EventId {
-    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    if (arr.length !== 32) throw DecodeError.invalidLength();
-    return new EventId(new Uint8Array(arr));
+  // impl EventId
+  static fromParts(entityId: EntityId, operations: { encode(w: BincodeWriter): void }, parent: { encode(w: BincodeWriter): void }): EventId {
+    const { createHash } = require('crypto') as typeof import('crypto');
+    const w = new BincodeWriter();
+    entityId.encode(w);
+    operations.encode(w);
+    parent.encode(w);
+    const hash = createHash('sha256').update(w.finish()).digest();
+    return new EventId(new Uint8Array(hash));
   }
 
-  /** Parse from base64url-no-pad string. */
+  toBase64(): string {
+    return base64urlEncode(this.bytes);
+  }
+
+  toBase64Short(): string {
+    const value = this.toBase64();
+    return value.slice(value.length - 6);
+  }
+
   static fromBase64(input: string): EventId {
     let decoded: Uint8Array;
     try {
@@ -261,28 +251,26 @@ export class EventId {
     return new EventId(decoded);
   }
 
-  /** Encode as base64url-no-pad string. */
-  toBase64(): string {
-    return base64urlEncode(this.bytes);
-  }
-
-  /** Last 6 characters of the base64 encoding (for short display). */
-  toBase64Short(): string {
-    const full = this.toBase64();
-    return full.slice(full.length - 6);
-  }
-
-  /** Convert to 32-byte array. */
   toBytes(): Uint8Array {
     return new Uint8Array(this.bytes);
   }
 
-  /** Display as base64url-no-pad string (matching Rust Display). */
+  static fromBytes(bytes: Uint8Array | number[]): EventId {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (arr.length !== 32) throw DecodeError.invalidLength();
+    return new EventId(new Uint8Array(arr));
+  }
+
+  asBytes(): Uint8Array {
+    return this.bytes;
+  }
+
+  // impl Display for EventId
   toString(): string {
     return this.toBase64();
   }
 
-  /** Byte-wise comparison for sorting (matches Rust Ord). */
+  // impl Ord for EventId
   compareTo(other: EventId): number {
     for (let i = 0; i < 32; i++) {
       if (this.bytes[i] !== other.bytes[i]) return this.bytes[i] - other.bytes[i];
@@ -290,7 +278,7 @@ export class EventId {
     return 0;
   }
 
-  /** Value equality. */
+  // impl PartialEq for EventId
   equals(other: EventId): boolean {
     for (let i = 0; i < 32; i++) {
       if (this.bytes[i] !== other.bytes[i]) return false;
@@ -308,24 +296,6 @@ export class EventId {
     const bytes = reader.readRawBytes(32);
     return new EventId(new Uint8Array(bytes));
   }
-
-  /**
-   * Compute an EventId from entity_id, operations, and parent clock.
-   *
-   * Rust: `pub fn from_parts(entity_id: &EntityId, operations: &OperationSet, parent: &Clock) -> Self`
-   * SHA-256 hash of bincode-serialized (entity_id || operations || parent).
-   *
-   * NOTE: This import is lazy to avoid circular dependencies with data.ts.
-   */
-  static fromParts(entityId: EntityId, operations: { encode(w: BincodeWriter): void }, parent: { encode(w: BincodeWriter): void }): EventId {
-    const { createHash } = require('crypto') as typeof import('crypto');
-    const w = new BincodeWriter();
-    entityId.encode(w);
-    operations.encode(w);
-    parent.encode(w);
-    const hash = createHash('sha256').update(w.finish()).digest();
-    return new EventId(new Uint8Array(hash));
-  }
 }
 
 // ─── ULID wrapper IDs (derived serde) ───────────────────────────────────────
@@ -333,13 +303,11 @@ export class EventId {
 // serde, which serializes the Ulid as a 26-char Crockford Base32 string.
 // In bincode: u64 length (26) + 26 ASCII bytes = 34 bytes total.
 
-/**
- * TransactionId: ULID wrapper for transaction identification.
- */
-export class TransactionId {
+export class TransactionId extends Struct {
   readonly bytes: Uint8Array; // 16-byte ULID
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 
@@ -380,13 +348,11 @@ export class TransactionId {
   }
 }
 
-/**
- * RequestId: ULID wrapper for request identification.
- */
-export class RequestId {
+export class RequestId extends Struct {
   readonly bytes: Uint8Array; // 16-byte ULID
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 
@@ -427,13 +393,11 @@ export class RequestId {
   }
 }
 
-/**
- * QueryId: ULID wrapper for subscription/query identification.
- */
-export class QueryId {
+export class QueryId extends Struct {
   readonly bytes: Uint8Array; // 16-byte ULID
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 
@@ -446,12 +410,7 @@ export class QueryId {
     return new QueryId(new Uint8Array(bytes));
   }
 
-  /** For testing only — matches Rust QueryId::test(id) = Ulid::from_parts(id, 0). */
   static test(id: bigint): QueryId {
-    // Ulid::from_parts(timestamp_ms, random) encodes as:
-    //   bytes[0..6] = timestamp (48 bits, big-endian)
-    //   bytes[6..16] = random (80 bits)
-    // from_parts(id as u64, 0) means timestamp = id, random = 0
     const bytes = new Uint8Array(16);
     bytes[0] = Number((id >> 40n) & 0xffn);
     bytes[1] = Number((id >> 32n) & 0xffn);
@@ -490,13 +449,11 @@ export class QueryId {
   }
 }
 
-/**
- * UpdateId: ULID wrapper for update identification.
- */
-export class UpdateId {
+export class UpdateId extends Struct {
   readonly bytes: Uint8Array; // 16-byte ULID
 
   private constructor(bytes: Uint8Array) {
+    super();
     this.bytes = bytes;
   }
 

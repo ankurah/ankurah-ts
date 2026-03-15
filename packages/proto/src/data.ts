@@ -1,54 +1,175 @@
 // MIRRORS: ankurah/proto/src/data.rs
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter, compareUtf8Bytes } from './codec';
 import { Attested, AttestationSet } from './auth';
 import { Clock } from './clock';
 import { CollectionId } from './collection';
 import { EntityId, EventId } from './id';
 
-// ─── Operation ──────────────────────────────────────────────────────────────
+// Note: EventId is defined in data.rs in Rust but lives in id.ts in the TS port.
+// It is imported above.
 
-/**
- * Operation: a single diff blob.
- * Derived serde — struct { diff: Vec<u8> }.
- */
-export class Operation {
-  readonly diff: Uint8Array;
+export class Event extends Struct {
+  readonly collection: CollectionId;
+  readonly entityId: EntityId;
+  readonly operations: OperationSet;
+  /// The set of concurrent events (usually only one) which is the precursor of this event
+  readonly parent: Clock;
 
-  constructor(diff: Uint8Array) {
-    this.diff = diff;
+  constructor(collection: CollectionId, entityId: EntityId, operations: OperationSet, parent: Clock) {
+    super();
+    this.collection = collection;
+    this.entityId = entityId;
+    this.operations = operations;
+    this.parent = parent;
   }
 
-  equals(other: Operation): boolean {
-    if (this.diff.length !== other.diff.length) return false;
-    for (let i = 0; i < this.diff.length; i++) {
-      if (this.diff[i] !== other.diff[i]) return false;
+  // impl Event
+  isEntityCreate(): boolean {
+    return this.parent.isEmpty();
+  }
+
+  id(): EventId {
+    return EventId.fromParts(this.entityId, this.operations, this.parent);
+  }
+
+  // impl Display for Event
+  toString(): string {
+    const parts: string[] = [];
+    for (const [backend, ops] of this.operations) {
+      const totalBytes = ops.reduce((sum, op) => sum + op.diff.length, 0);
+      parts.push(`${backend} => ${totalBytes}b`);
     }
-    return true;
+    const create = this.isEntityCreate() ? '(create) ' : '';
+    return `Event(${this.id().toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${create}${this.parent.toBase64Short()} ${parts.join(' ')})`;
   }
 
   encode(writer: BincodeWriter): void {
-    writer.writeByteVec(this.diff);
+    this.collection.encode(writer);
+    this.entityId.encode(writer);
+    this.operations.encode(writer);
+    this.parent.encode(writer);
   }
 
-  static decode(reader: BincodeReader): Operation {
-    return new Operation(reader.readByteVec());
+  static decode(reader: BincodeReader): Event {
+    const collection = CollectionId.decode(reader);
+    const entityId = EntityId.decode(reader);
+    const operations = OperationSet.decode(reader);
+    const parent = Clock.decode(reader);
+    return new Event(collection, entityId, operations, parent);
   }
 }
 
-// ─── OperationSet ───────────────────────────────────────────────────────────
+export class EventFragment extends Struct {
+  readonly operations: OperationSet;
+  readonly parent: Clock;
+  readonly attestations: AttestationSet;
 
-/**
- * OperationSet: BTreeMap<String, Vec<Operation>>.
- * Derived serde — serialized as BTreeMap (sorted by key in UTF-8 byte order).
- */
-export class OperationSet {
+  constructor(operations: OperationSet, parent: Clock, attestations: AttestationSet) {
+    super();
+    this.operations = operations;
+    this.parent = parent;
+    this.attestations = attestations;
+  }
+
+  // impl From<Attested<Event>> for EventFragment
+  static fromAttestedEvent(attested: Attested<Event>): EventFragment {
+    return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
+  }
+
+  // impl From<(EntityId, CollectionId, EventFragment)> for Attested<Event>
+  static toAttestedEvent(entityId: EntityId, collection: CollectionId, frag: EventFragment): Attested<Event> {
+    const event = new Event(collection, entityId, frag.operations, frag.parent);
+    return new Attested(event, frag.attestations);
+  }
+
+  equals(other: EventFragment): boolean {
+    return this.operations.equals(other.operations) &&
+      this.parent.equals(other.parent) &&
+      this.attestations.equals(other.attestations);
+  }
+
+  // impl Display for EventFragment
+  toString(): string {
+    return `EventFragment(parent ${this.parent} operations ${this.operations})`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.operations.encode(writer);
+    this.parent.encode(writer);
+    this.attestations.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): EventFragment {
+    const operations = OperationSet.decode(reader);
+    const parent = Clock.decode(reader);
+    const attestations = AttestationSet.decode(reader);
+    return new EventFragment(operations, parent, attestations);
+  }
+}
+
+export class StateFragment extends Struct {
+  readonly state: State;
+  readonly attestations: AttestationSet;
+
+  constructor(state: State, attestations: AttestationSet) {
+    super();
+    this.state = state;
+    this.attestations = attestations;
+  }
+
+  // impl From<Attested<EntityState>> for StateFragment
+  static fromAttestedEntityState(attested: Attested<EntityState>): StateFragment {
+    return new StateFragment(attested.payload.state, attested.attestations);
+  }
+
+  // impl From<(EntityId, CollectionId, StateFragment)> for Attested<EntityState>
+  static toAttestedEntityState(entityId: EntityId, collection: CollectionId, frag: StateFragment): Attested<EntityState> {
+    const entityState = new EntityState(entityId, collection, frag.state);
+    return new Attested(entityState, frag.attestations);
+  }
+
+  equals(other: StateFragment): boolean {
+    return this.state.equals(other.state) && this.attestations.equals(other.attestations);
+  }
+
+  // impl Display for StateFragment
+  toString(): string {
+    return `StateFragment(state ${this.state} attestations: ${this.attestations.length})`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.state.encode(writer);
+    this.attestations.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): StateFragment {
+    const state = State.decode(reader);
+    const attestations = AttestationSet.decode(reader);
+    return new StateFragment(state, attestations);
+  }
+}
+
+export class OperationSet extends Struct {
   readonly map: Map<string, Operation[]>;
 
   constructor(map: Map<string, Operation[]> = new Map()) {
+    super();
     this.map = map;
   }
 
+  // impl Display for OperationSet
+  toString(): string {
+    const parts: string[] = [];
+    for (const [backend, ops] of this.map) {
+      const totalBytes = ops.reduce((sum, op) => sum + op.diff.length, 0);
+      parts.push(`${backend} => ${totalBytes}b`);
+    }
+    return `OperationSet(${parts.join(' ')})`;
+  }
+
+  // impl Deref for OperationSet — target: BTreeMap<String, Vec<Operation>>
   get(key: string): Operation[] | undefined {
     return this.map.get(key);
   }
@@ -59,15 +180,6 @@ export class OperationSet {
 
   entries(): IterableIterator<[string, Operation[]]> {
     return this.map.entries();
-  }
-
-  toString(): string {
-    const parts: string[] = [];
-    for (const [backend, ops] of this.map) {
-      const totalBytes = ops.reduce((sum, op) => sum + op.diff.length, 0);
-      parts.push(`${backend} => ${totalBytes}b`);
-    }
-    return `OperationSet(${parts.join(' ')})`;
   }
 
   equals(other: OperationSet): boolean {
@@ -83,7 +195,7 @@ export class OperationSet {
   }
 
   encode(writer: BincodeWriter): void {
-    // BTreeMap<String, Vec<Operation>> — sorted by key
+    // BTreeMap<String, Vec<Operation>> — sorted by key in UTF-8 byte order
     const entries = [...this.map.entries()].sort((a, b) => compareUtf8Bytes(a[0], b[0]));
     writer.writeLength(entries.length);
     for (const [key, ops] of entries) {
@@ -104,16 +216,114 @@ export class OperationSet {
   }
 }
 
-// ─── StateBuffers ───────────────────────────────────────────────────────────
+export class Operation extends Struct {
+  readonly diff: Uint8Array;
 
-/**
- * StateBuffers: BTreeMap<String, Vec<u8>>.
- * Derived serde — serialized as BTreeMap (sorted by key).
- */
-export class StateBuffers {
+  constructor(diff: Uint8Array) {
+    super();
+    this.diff = diff;
+  }
+
+  equals(other: Operation): boolean {
+    if (this.diff.length !== other.diff.length) return false;
+    for (let i = 0; i < this.diff.length; i++) {
+      if (this.diff[i] !== other.diff[i]) return false;
+    }
+    return true;
+  }
+
+  encode(writer: BincodeWriter): void {
+    writer.writeByteVec(this.diff);
+  }
+
+  static decode(reader: BincodeReader): Operation {
+    return new Operation(reader.readByteVec());
+  }
+}
+
+export class EntityState extends Struct {
+  readonly entityId: EntityId;
+  readonly collection: CollectionId;
+  readonly state: State;
+
+  constructor(entityId: EntityId, collection: CollectionId, state: State) {
+    super();
+    this.entityId = entityId;
+    this.collection = collection;
+    this.state = state;
+  }
+
+  equals(other: EntityState): boolean {
+    return this.entityId.equals(other.entityId) &&
+      this.collection.equals(other.collection) &&
+      this.state.equals(other.state);
+  }
+
+  // impl Display for EntityState
+  toString(): string {
+    return `EntityState(${this.entityId.toBase64Short()} ${this.state})`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.entityId.encode(writer);
+    this.collection.encode(writer);
+    this.state.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): EntityState {
+    const entityId = EntityId.decode(reader);
+    const collection = CollectionId.decode(reader);
+    const state = State.decode(reader);
+    return new EntityState(entityId, collection, state);
+  }
+}
+
+export class State extends Struct {
+  /// The current accumulated state of the entity inclusive of all events up to this point
+  readonly stateBuffers: StateBuffers;
+  /// The set of concurrent events (usually only one) which have been applied to the entity state above
+  readonly head: Clock;
+
+  constructor(stateBuffers: StateBuffers = StateBuffers.default(), head: Clock = Clock.default()) {
+    super();
+    this.stateBuffers = stateBuffers;
+    this.head = head;
+  }
+
+  static default(): State {
+    return new State();
+  }
+
+  equals(other: State): boolean {
+    return this.stateBuffers.equals(other.stateBuffers) && this.head.equals(other.head);
+  }
+
+  // impl Display for State
+  toString(): string {
+    const bufParts: string[] = [];
+    for (const [backend, buf] of this.stateBuffers) {
+      bufParts.push(`${backend} => ${buf.length}b`);
+    }
+    return `State(${this.head.toBase64Short()} buffers ${bufParts.join(' ')})`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.stateBuffers.encode(writer);
+    this.head.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): State {
+    const stateBuffers = StateBuffers.decode(reader);
+    const head = Clock.decode(reader);
+    return new State(stateBuffers, head);
+  }
+}
+
+export class StateBuffers extends Struct {
   readonly map: Map<string, Uint8Array>;
 
   constructor(map: Map<string, Uint8Array> = new Map()) {
+    super();
     this.map = map;
   }
 
@@ -121,6 +331,7 @@ export class StateBuffers {
     return new StateBuffers();
   }
 
+  // impl Deref for StateBuffers — target: BTreeMap<String, Vec<u8>>
   get(key: string): Uint8Array | undefined {
     return this.map.get(key);
   }
@@ -166,239 +377,22 @@ export class StateBuffers {
   }
 }
 
-// ─── State ──────────────────────────────────────────────────────────────────
+// ─── Attested<Event> helpers ─────────────────────────────────────────────────
+// These are impl blocks on Attested<Event> and Attested<EntityState> in Rust.
+// Since Attested is generic and defined in auth.ts, we add free functions here.
 
-/**
- * State: accumulated entity state.
- * Derived serde — struct { state_buffers: StateBuffers, head: Clock }.
- */
-export class State {
-  readonly stateBuffers: StateBuffers;
-  readonly head: Clock;
-
-  constructor(stateBuffers: StateBuffers = StateBuffers.default(), head: Clock = Clock.default()) {
-    this.stateBuffers = stateBuffers;
-    this.head = head;
-  }
-
-  static default(): State {
-    return new State();
-  }
-
-  equals(other: State): boolean {
-    return this.stateBuffers.equals(other.stateBuffers) && this.head.equals(other.head);
-  }
-
-  toString(): string {
-    const bufParts: string[] = [];
-    for (const [backend, buf] of this.stateBuffers) {
-      bufParts.push(`${backend} => ${buf.length}b`);
-    }
-    return `State(${this.head.toBase64Short()} buffers ${bufParts.join(' ')})`;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.stateBuffers.encode(writer);
-    this.head.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): State {
-    const stateBuffers = StateBuffers.decode(reader);
-    const head = Clock.decode(reader);
-    return new State(stateBuffers, head);
-  }
+export function attestedEventCollection(attested: Attested<Event>): CollectionId {
+  return attested.payload.collection;
 }
 
-// ─── EntityState ────────────────────────────────────────────────────────────
-
-/**
- * EntityState: full entity state including identity.
- * Derived serde — struct { entity_id: EntityId, collection: CollectionId, state: State }.
- */
-export class EntityState {
-  readonly entityId: EntityId;
-  readonly collection: CollectionId;
-  readonly state: State;
-
-  constructor(entityId: EntityId, collection: CollectionId, state: State) {
-    this.entityId = entityId;
-    this.collection = collection;
-    this.state = state;
-  }
-
-  equals(other: EntityState): boolean {
-    return this.entityId.equals(other.entityId) &&
-      this.collection.equals(other.collection) &&
-      this.state.equals(other.state);
-  }
-
-  toString(): string {
-    return `EntityState(${this.entityId.toBase64Short()} ${this.state})`;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.entityId.encode(writer);
-    this.collection.encode(writer);
-    this.state.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): EntityState {
-    const entityId = EntityId.decode(reader);
-    const collection = CollectionId.decode(reader);
-    const state = State.decode(reader);
-    return new EntityState(entityId, collection, state);
-  }
+export function attestedEventFromParts(entityId: EntityId, collection: CollectionId, frag: EventFragment): Attested<Event> {
+  return EventFragment.toAttestedEvent(entityId, collection, frag);
 }
 
-// ─── Event ──────────────────────────────────────────────────────────────────
-
-/**
- * Event: a single change event.
- * Derived serde — struct { collection, entity_id, operations, parent }.
- */
-export class Event {
-  readonly collection: CollectionId;
-  readonly entityId: EntityId;
-  readonly operations: OperationSet;
-  readonly parent: Clock;
-
-  constructor(collection: CollectionId, entityId: EntityId, operations: OperationSet, parent: Clock) {
-    this.collection = collection;
-    this.entityId = entityId;
-    this.operations = operations;
-    this.parent = parent;
-  }
-
-  /**
-   * Compute the EventId for this event (SHA-256 of bincode-serialized entity_id || operations || parent).
-   *
-   * Rust: `pub fn id(&self) -> EventId { EventId::from_parts(&self.entity_id, &self.operations, &self.parent) }`
-   */
-  id(): EventId {
-    return EventId.fromParts(this.entityId, this.operations, this.parent);
-  }
-
-  /** Whether this event represents entity creation (empty parent clock). */
-  isEntityCreate(): boolean {
-    return this.parent.isEmpty();
-  }
-
-  toString(): string {
-    const parts: string[] = [];
-    for (const [backend, ops] of this.operations) {
-      const totalBytes = ops.reduce((sum, op) => sum + op.diff.length, 0);
-      parts.push(`${backend} => ${totalBytes}b`);
-    }
-    const create = this.isEntityCreate() ? '(create) ' : '';
-    return `Event(${this.collection}/${this.entityId.toBase64Short()} ${create}${this.parent.toBase64Short()} ${parts.join(' ')})`;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.collection.encode(writer);
-    this.entityId.encode(writer);
-    this.operations.encode(writer);
-    this.parent.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): Event {
-    const collection = CollectionId.decode(reader);
-    const entityId = EntityId.decode(reader);
-    const operations = OperationSet.decode(reader);
-    const parent = Clock.decode(reader);
-    return new Event(collection, entityId, operations, parent);
-  }
+export function attestedEntityStateFromParts(entityId: EntityId, collection: CollectionId, fragment: StateFragment): Attested<EntityState> {
+  return StateFragment.toAttestedEntityState(entityId, collection, fragment);
 }
 
-// ─── EventFragment ──────────────────────────────────────────────────────────
-
-/**
- * EventFragment: event data without entity identity (for wire efficiency).
- * Derived serde — struct { operations, parent, attestations }.
- */
-export class EventFragment {
-  readonly operations: OperationSet;
-  readonly parent: Clock;
-  readonly attestations: AttestationSet;
-
-  constructor(operations: OperationSet, parent: Clock, attestations: AttestationSet) {
-    this.operations = operations;
-    this.parent = parent;
-    this.attestations = attestations;
-  }
-
-  static fromAttestedEvent(attested: Attested<Event>): EventFragment {
-    return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
-  }
-
-  static toAttestedEvent(entityId: EntityId, collection: CollectionId, frag: EventFragment): Attested<Event> {
-    const event = new Event(collection, entityId, frag.operations, frag.parent);
-    return new Attested(event, frag.attestations);
-  }
-
-  equals(other: EventFragment): boolean {
-    return this.operations.equals(other.operations) &&
-      this.parent.equals(other.parent) &&
-      this.attestations.equals(other.attestations);
-  }
-
-  toString(): string {
-    return `EventFragment(parent ${this.parent} operations ${this.operations})`;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.operations.encode(writer);
-    this.parent.encode(writer);
-    this.attestations.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): EventFragment {
-    const operations = OperationSet.decode(reader);
-    const parent = Clock.decode(reader);
-    const attestations = AttestationSet.decode(reader);
-    return new EventFragment(operations, parent, attestations);
-  }
-}
-
-// ─── StateFragment ──────────────────────────────────────────────────────────
-
-/**
- * StateFragment: state data without entity identity (for wire efficiency).
- * Derived serde — struct { state, attestations }.
- */
-export class StateFragment {
-  readonly state: State;
-  readonly attestations: AttestationSet;
-
-  constructor(state: State, attestations: AttestationSet) {
-    this.state = state;
-    this.attestations = attestations;
-  }
-
-  static fromAttestedEntityState(attested: Attested<EntityState>): StateFragment {
-    return new StateFragment(attested.payload.state, attested.attestations);
-  }
-
-  static toAttestedEntityState(entityId: EntityId, collection: CollectionId, frag: StateFragment): Attested<EntityState> {
-    const entityState = new EntityState(entityId, collection, frag.state);
-    return new Attested(entityState, frag.attestations);
-  }
-
-  equals(other: StateFragment): boolean {
-    return this.state.equals(other.state) && this.attestations.equals(other.attestations);
-  }
-
-  toString(): string {
-    return `StateFragment(state ${this.state} attestations: ${this.attestations.length})`;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.state.encode(writer);
-    this.attestations.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): StateFragment {
-    const state = State.decode(reader);
-    const attestations = AttestationSet.decode(reader);
-    return new StateFragment(state, attestations);
-  }
+export function attestedEntityStateToParts(attested: Attested<EntityState>): [EntityId, CollectionId, StateFragment] {
+  return [attested.payload.entityId, attested.payload.collection, new StateFragment(attested.payload.state, attested.attestations)];
 }

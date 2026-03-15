@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/types.rs
 
-import type { Predicate, OrderByItem } from '@ankurah/ankql';
+import { Struct, Enum } from '@ankurah/base';
+import { OrderByItem, Predicate } from '@ankurah/ankql';
 import type { Value, KeySpec } from '@ankurah/core';
 import { ValueType, valueType } from '@ankurah/core';
 
@@ -12,149 +13,155 @@ import { ValueType, valueType } from '@ankurah/core';
  * When an index can only partially satisfy ORDER BY (e.g., mixed directions on IndexedDB),
  * results arrive pre-sorted by `presort` columns but need in-memory sorting by `spill` columns
  * within each partition (group of rows with identical `presort` values).
- *
- * See specs/pushdown/order_by.md for detailed documentation.
- *
- * Rust: `pub struct OrderByComponents { presort, spill }`
  */
-export interface OrderByComponents {
-  /**
-   * ORDER BY columns satisfied by the index scan direction.
-   * These define "partition boundaries" - when these values change,
-   * we're in a new partition that needs independent sorting.
-   * Empty if the entire ORDER BY must be spilled (global sort).
-   */
+export class OrderByComponents extends Struct {
+  /** ORDER BY columns satisfied by the index scan direction. */
   presort: OrderByItem[];
-
-  /**
-   * ORDER BY columns requiring in-memory sort.
-   * Empty if the index fully satisfies the ORDER BY.
-   */
+  /** ORDER BY columns requiring in-memory sort. */
   spill: OrderByItem[];
-}
 
-/** Create a new OrderByComponents. */
-export function orderByComponentsNew(presort: OrderByItem[], spill: OrderByItem[]): OrderByComponents {
-  return { presort, spill };
-}
+  constructor(presort: OrderByItem[], spill: OrderByItem[]) {
+    super();
+    this.presort = presort;
+    this.spill = spill;
+  }
 
-/** Default (empty) OrderByComponents. */
-export function orderByComponentsDefault(): OrderByComponents {
-  return { presort: [], spill: [] };
-}
+  /** Default (empty) OrderByComponents. */
+  static default(): OrderByComponents {
+    return new OrderByComponents([], []);
+  }
 
-/** Returns true if no sorting is needed (index satisfies entire ORDER BY). */
-export function orderByComponentsIsSatisfied(obc: OrderByComponents): boolean {
-  return obc.spill.length === 0;
-}
+  /** Returns true if no sorting is needed (index satisfies entire ORDER BY). */
+  isSatisfied(): boolean {
+    return this.spill.length === 0;
+  }
 
-/** Returns true if the entire ORDER BY must be spilled (global sort). */
-export function orderByComponentsIsGlobalSpill(obc: OrderByComponents): boolean {
-  return obc.presort.length === 0 && obc.spill.length > 0;
+  /** Returns true if the entire ORDER BY must be spilled (global sort). */
+  isGlobalSpill(): boolean {
+    return this.presort.length === 0 && this.spill.length > 0;
+  }
 }
 
 // --- Plan (similar to PG IndexScan/IndexOnlyScan inputs) --------------------------------
 
-export type Plan =
-  | {
-      type: 'Index';
-      indexSpec: KeySpec;
-      scanDirection: ScanDirection;
-      bounds: KeyBounds;
-      remainingPredicate: Predicate;
-      orderBySpill: OrderByComponents;
-    }
-  | {
-      type: 'TableScan';
-      bounds: KeyBounds;
-      scanDirection: ScanDirection;
-      remainingPredicate: Predicate;
-      orderBySpill: OrderByComponents;
-    }
-  | { type: 'EmptyScan' };
+type PlanV = {
+  Index: {
+    indexSpec: KeySpec;
+    scanDirection: ScanDirection;
+    bounds: KeyBounds;
+    remainingPredicate: Predicate;
+    orderBySpill: OrderByComponents;
+  };
+  TableScan: {
+    bounds: KeyBounds;
+    scanDirection: ScanDirection;
+    remainingPredicate: Predicate;
+    orderBySpill: OrderByComponents;
+  };
+  EmptyScan: {};
+};
 
-export type ScanDirection = 'Forward' | 'Reverse';
-
-// --- Types & sentinels -------------------------------------------------------
-
-/**
- * Planner-only atom for a single column position (PG: like a Datum + flags).
- *
- * Rust: `pub enum KeyDatum { Val(Value), NegInfinity(ValueType), PosInfinity(ValueType) }`
- */
-export type KeyDatum =
-  | { type: 'Val'; value: Value }
-  | { type: 'NegInfinity'; valueType: ValueType }
-  | { type: 'PosInfinity'; valueType: ValueType };
-
-/** Get the ValueType of a KeyDatum. Rust: `pub fn ty(&self)` */
-export function keyDatumType(kd: KeyDatum): ValueType {
-  switch (kd.type) {
-    case 'Val': return valueType(kd.value);
-    case 'NegInfinity': return kd.valueType;
-    case 'PosInfinity': return kd.valueType;
+export class Plan extends Enum<PlanV> {
+  static Index(indexSpec: KeySpec, scanDirection: ScanDirection, bounds: KeyBounds, remainingPredicate: Predicate, orderBySpill: OrderByComponents): Plan {
+    return new Plan('Index', { indexSpec, scanDirection, bounds, remainingPredicate, orderBySpill });
+  }
+  static TableScan(bounds: KeyBounds, scanDirection: ScanDirection, remainingPredicate: Predicate, orderBySpill: OrderByComponents): Plan {
+    return new Plan('TableScan', { bounds, scanDirection, remainingPredicate, orderBySpill });
+  }
+  static EmptyScan(): Plan {
+    return new Plan('EmptyScan', {});
   }
 }
 
-/** Create a KeyDatum from a Value. Rust: `impl From<Value> for KeyDatum` */
-export function keyDatumFromValue(v: Value): KeyDatum {
-  return { type: 'Val', value: v };
+// --- ScanDirection ---
+
+type ScanDirectionV = {
+  Forward: {};
+  Reverse: {};
+};
+
+export class ScanDirection extends Enum<ScanDirectionV> {
+  static Forward(): ScanDirection { return new ScanDirection('Forward', {}); }
+  static Reverse(): ScanDirection { return new ScanDirection('Reverse', {}); }
+}
+
+// --- Types & sentinels -------------------------------------------------------
+
+/** Planner-only atom for a single column position (PG: like a Datum + flags). */
+type KeyDatumV = {
+  Val: { value: Value };
+  NegInfinity: { valueType: ValueType };
+  PosInfinity: { valueType: ValueType };
+};
+
+export class KeyDatum extends Enum<KeyDatumV> {
+  static Val(value: Value): KeyDatum { return new KeyDatum('Val', { value }); }
+  static NegInfinity(vt: ValueType): KeyDatum { return new KeyDatum('NegInfinity', { valueType: vt }); }
+  static PosInfinity(vt: ValueType): KeyDatum { return new KeyDatum('PosInfinity', { valueType: vt }); }
+
+  /** Get the ValueType of this KeyDatum. */
+  ty(): ValueType {
+    return this.match({
+      Val: (v) => valueType(v.value),
+      NegInfinity: (v) => v.valueType,
+      PosInfinity: (v) => v.valueType,
+    });
+  }
+
+  /** From<Value> for KeyDatum */
+  static fromValue(v: Value): KeyDatum {
+    return KeyDatum.Val(v);
+  }
 }
 
 // --- Endpoints & per-column bounds (PG: per-column ScanKey / bound) ----------
 
-/**
- * Endpoint for one side of a column bound (PG: strategy + flags collapsed).
- *
- * Rust: `pub enum Endpoint { UnboundedLow(ValueType), UnboundedHigh(ValueType), Value { datum, inclusive } }`
- */
-export type Endpoint =
-  | { type: 'UnboundedLow'; valueType: ValueType }
-  | { type: 'UnboundedHigh'; valueType: ValueType }
-  | { type: 'Value'; datum: KeyDatum; inclusive: boolean };
+/** Endpoint for one side of a column bound (PG: strategy + flags collapsed). */
+type EndpointV = {
+  UnboundedLow: { valueType: ValueType };
+  UnboundedHigh: { valueType: ValueType };
+  Value: { datum: KeyDatum; inclusive: boolean };
+};
 
-/** Create an inclusive Value endpoint. Rust: `Endpoint::incl(v)` */
-export function endpointIncl(v: Value): Endpoint {
-  return { type: 'Value', datum: { type: 'Val', value: v }, inclusive: true };
-}
+export class Endpoint extends Enum<EndpointV> {
+  static UnboundedLow(vt: ValueType): Endpoint { return new Endpoint('UnboundedLow', { valueType: vt }); }
+  static UnboundedHigh(vt: ValueType): Endpoint { return new Endpoint('UnboundedHigh', { valueType: vt }); }
+  static Value(datum: KeyDatum, inclusive: boolean): Endpoint { return new Endpoint('Value', { datum, inclusive }); }
 
-/** Create an exclusive Value endpoint. Rust: `Endpoint::excl(v)` */
-export function endpointExcl(v: Value): Endpoint {
-  return { type: 'Value', datum: { type: 'Val', value: v }, inclusive: false };
+  static incl(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), true); }
+  static excl(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), false); }
 }
 
 // --- Per-column bound --------------------------------------------------------
 
-/**
- * Bound for a single index column, in index key order (PG: per keypart).
- *
- * Rust: `pub struct KeyBoundComponent { column, low, high }`
- */
-export interface KeyBoundComponent {
+/** Bound for a single index column, in index key order (PG: per keypart). */
+export class KeyBoundComponent extends Struct {
   column: string;
   low: Endpoint;
   high: Endpoint;
+
+  constructor(column: string, low: Endpoint, high: Endpoint) {
+    super();
+    this.column = column;
+    this.low = low;
+    this.high = high;
+  }
 }
 
 // --- Multi-column bounds (PG: IndexBounds) -----------------------------------
 
-/**
- * Full multi-column bounds for an index scan (PG: IndexBounds).
- *
- * Rust: `pub struct KeyBounds { keyparts: Vec<KeyBoundComponent> }`
- */
-export interface KeyBounds {
+/** Full multi-column bounds for an index scan (PG: IndexBounds). */
+export class KeyBounds extends Struct {
   keyparts: KeyBoundComponent[];
-}
 
-/** Create new KeyBounds. Rust: `KeyBounds::new(keyparts)` */
-export function keyBoundsNew(keyparts: KeyBoundComponent[]): KeyBounds {
-  return { keyparts };
-}
+  constructor(keyparts: KeyBoundComponent[]) {
+    super();
+    this.keyparts = keyparts;
+  }
 
-/** Create empty KeyBounds. Rust: `KeyBounds::empty()` */
-export function keyBoundsEmpty(): KeyBounds {
-  return { keyparts: [] };
+  static empty(): KeyBounds {
+    return new KeyBounds([]);
+  }
 }
 
 // --- Canonical, lexicographic interval after normalization -------------------
@@ -162,12 +169,58 @@ export function keyBoundsEmpty(): KeyBounds {
 /**
  * Canonical lexicographic interval (possibly open-ended) ready for lowering.
  * lower/upper: [tuple, open?] where open===true means exclusive.
- *
- * Rust: `pub struct CanonicalRange { lower, upper }`
  */
-export interface CanonicalRange {
-  /** None (null) => unbounded low */
+export class CanonicalRange extends Struct {
+  /** null => unbounded low */
   lower: [Value[], boolean] | null;
-  /** None (null) => unbounded high */
+  /** null => unbounded high */
   upper: [Value[], boolean] | null;
+
+  constructor(lower: [Value[], boolean] | null, upper: [Value[], boolean] | null) {
+    super();
+    this.lower = lower;
+    this.upper = upper;
+  }
+}
+
+// --- Backward-compat free functions (delegate to class methods) ---------------
+
+export function orderByComponentsNew(presort: OrderByItem[], spill: OrderByItem[]): OrderByComponents {
+  return new OrderByComponents(presort, spill);
+}
+
+export function orderByComponentsDefault(): OrderByComponents {
+  return OrderByComponents.default();
+}
+
+export function orderByComponentsIsSatisfied(obc: OrderByComponents): boolean {
+  return obc.isSatisfied();
+}
+
+export function orderByComponentsIsGlobalSpill(obc: OrderByComponents): boolean {
+  return obc.isGlobalSpill();
+}
+
+export function keyDatumType(kd: KeyDatum): ValueType {
+  return kd.ty();
+}
+
+export function keyDatumFromValue(v: Value): KeyDatum {
+  return KeyDatum.fromValue(v);
+}
+
+export function endpointIncl(v: Value): Endpoint {
+  return Endpoint.incl(v);
+}
+
+export function endpointExcl(v: Value): Endpoint {
+  return Endpoint.excl(v);
+}
+
+export function keyBoundsNew(keyparts: KeyBoundComponent[]): KeyBounds {
+  return new KeyBounds(keyparts);
+}
+
+export function keyBoundsEmpty(): KeyBounds {
+  return KeyBounds.empty();
 }

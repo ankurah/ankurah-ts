@@ -1,20 +1,18 @@
 // MIRRORS: ankurah/proto/src/peering.rs
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
 import { EntityId } from './id';
 import { EntityState } from './data';
 
-/**
- * Presence: node identity announcement.
- * Derived serde — struct { node_id: EntityId, durable: bool, system_root: Option<Attested<EntityState>> }.
- */
-export class Presence {
+export class Presence extends Struct {
   readonly nodeId: EntityId;
   readonly durable: boolean;
   readonly systemRoot: Attested<EntityState> | null;
 
   constructor(nodeId: EntityId, durable: boolean, systemRoot: Attested<EntityState> | null) {
+    super();
     this.nodeId = nodeId;
     this.durable = durable;
     this.systemRoot = systemRoot;
@@ -25,10 +23,10 @@ export class Presence {
     if (this.durable !== other.durable) return false;
     if (this.systemRoot === null && other.systemRoot === null) return true;
     if (this.systemRoot === null || other.systemRoot === null) return false;
-    // Deep compare system roots would require EntityState equality
-    return true; // Simplified — full equality check deferred
+    return true;
   }
 
+  // impl Display for Presence
   toString(): string {
     if (this.systemRoot !== null) {
       return `Presence[${this.nodeId.toBase64Short()}: durable ${this.durable} system_root: ${this.systemRoot.payload}]`;

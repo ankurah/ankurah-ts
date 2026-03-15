@@ -1,63 +1,68 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
+import { Struct, Drop, Arc, Weak } from '@ankurah/base';
 
-import { Drop } from '@ankurah/base';
+/** A unique identifier for a broadcast that cannot be forged or extracted.
+ * Can only be created by a Broadcast and used for deduplication/comparison. */
+// Divergence: Rust uses pointer-based usize ID; TS uses auto-incrementing counter [E8]
+let nextBroadcastIdCounter = 0;
 
-/**
- * A unique identifier for a broadcast that cannot be forged or extracted.
- * Can only be created by a Broadcast and used for deduplication/comparison.
- *
- * Uses auto-incrementing integer counter (not pointer-based as in Rust) [E8].
- */
-let nextBroadcastId = 0;
-
-export class BroadcastId {
-  readonly value: number;
+export class BroadcastId extends Struct {
+  private readonly inner: number;
 
   /** @internal - only Broadcast should create BroadcastIds */
-  constructor() {
-    this.value = nextBroadcastId++;
+  constructor(id?: number) {
+    super();
+    this.inner = id ?? nextBroadcastIdCounter++;
+  }
+
+  toNumber(): number {
+    return this.inner;
   }
 
   equals(other: BroadcastId): boolean {
-    return this.value === other.value;
+    return this.inner === other.inner;
   }
 
   toString(): string {
-    return `${this.value}`;
+    return `${this.inner}`;
+  }
+
+  clone(): BroadcastId {
+    return new BroadcastId(this.inner);
   }
 }
 
-/**
- * A listener that can be called when broadcast notifications are sent.
- * Supports both full listeners (receive value) and unit listeners (notification only).
- */
-export type BroadcastListener<T> =
+/** A listener that can be called when broadcast notifications are sent.
+ * Supports both full listeners (receive value) and unit listeners (notification only). */
+// Divergence: Rust enum with Arc<dyn Fn> variants; TS uses discriminated union type
+// since callers construct these inline and Enum<V> would break them [E8]
+export type BroadcastListener<T = void> =
   | { type: 'Payload'; callback: (value: T) => void }
   | { type: 'NotifyOnly'; callback: () => void };
 
-/**
- * Trait for types that can be converted into broadcast listeners.
- * In TS, we implement this as overloaded listen() methods on BroadcastRef instead.
- */
+// Trait for types that can be converted into broadcast listeners.
+// In TS, implemented as overloaded listen() methods on BroadcastRef instead.
 
-/**
- * Trait for abstractly representing any broadcast ListenerGuard.
- */
+/** Trait for abstractly representing any ListenerGuard<T> */
 export interface TListenerGuard {
   broadcastId(): BroadcastId;
 }
 
-/**
- * A subscription handle that can be used to unsubscribe from notifications.
- * Divergence: impl Drop -> extends Drop [E11].
- */
+// Internal shared state for a Broadcast.
+class Inner<T> extends Struct {
+  listeners: Map<number, BroadcastListener<T>> = new Map();
+  nextId: number = 0;
+}
+
+/** A subscription handle that can be used to unsubscribe from notifications.
+ * impl Drop -> extends Drop [E11] */
 export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
-  private inner: Inner<T> | null;
+  private inner: Weak<Inner<T>>;
   private id: number;
   private _broadcastId: BroadcastId;
 
   /** @internal */
-  constructor(inner: Inner<T>, id: number, broadcastId: BroadcastId) {
+  constructor(inner: Weak<Inner<T>>, id: number, broadcastId: BroadcastId) {
     super();
     this.inner = inner;
     this.id = id;
@@ -66,47 +71,45 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
 
   /** Get the broadcast ID that this guard is subscribed to */
   broadcastId(): BroadcastId {
+    // A ListenerGuard does not keep the broadcast alive
+    // but the address is reserved until all Arc/Weak references are dropped
+    // Given that we are using the address as the ID, this is safe.
+    // We don't actually care if the broadcast is alive. The point is to
+    // provide a unique id for removing the correct listener.
     return this._broadcastId;
   }
 
-  /** Unsubscribe from the broadcast (mirrors Rust's Drop) */
+  /** Automatically unsubscribes when the subscription handle is dropped. */
   drop(): void {
-    if (this.inner !== null) {
-      this.inner.listeners.delete(this.id);
-      this.inner = null;
+    const upgraded = this.inner.upgrade();
+    if (upgraded !== null) {
+      upgraded.value.listeners.delete(this.id);
+      upgraded.drop();
     }
+    this.inner.drop();
   }
 }
 
-/**
- * Internal shared state for a Broadcast.
- * No Arc/RwLock needed - single-threaded JS [E8].
- */
-class Inner<T> {
-  listeners: Map<number, BroadcastListener<T>> = new Map();
-  nextId: number = 0;
-}
-
-/**
- * A listen-only reference to a broadcast.
- */
-export class BroadcastRef<T = void> {
+/** A listen-only reference to a broadcast */
+// Divergence: Rust Ref<'a, T> uses a borrow of Broadcast; TS holds Arc clone [E8]
+export class BroadcastRef<T = void> extends Struct {
   /** @internal */
-  private inner: Inner<T>;
+  private arc: Arc<Inner<T>>;
   /** @internal */
   private _broadcastId: BroadcastId;
 
   /** @internal */
-  constructor(inner: Inner<T>, broadcastId: BroadcastId) {
-    this.inner = inner;
+  constructor(arc: Arc<Inner<T>>, broadcastId: BroadcastId) {
+    super();
+    this.arc = arc;
     this._broadcastId = broadcastId;
   }
 
-  /** Subscribe to notifications from the associated sender with a notification-only listener. */
+  /** Subscribe to notifications from the associated sender. */
   listen(listener: BroadcastListener<T>): ListenerGuard<T> {
-    const id = this.inner.nextId++;
-    this.inner.listeners.set(id, listener);
-    return new ListenerGuard(this.inner, id, this._broadcastId);
+    const id = this.arc.value.nextId++;
+    this.arc.value.listeners.set(id, listener);
+    return new ListenerGuard(this.arc.downgrade(), id, this._broadcastId);
   }
 
   /** Get a unique identifier for this broadcast (for deduplication purposes) */
@@ -115,19 +118,20 @@ export class BroadcastRef<T = void> {
   }
 }
 
-/**
- * A broadcast sender that notifies multiple subscribers.
- * Uses synchronous function callbacks for immediate notification.
- *
- * No Arc needed - single-threaded JS [E8].
- */
-export class Broadcast<T = void> {
+/** A broadcast sender that notifies multiple subscribers.
+ * Uses synchronous function callbacks for immediate notification. */
+export class Broadcast<T = void> extends Struct {
+  private arc: Arc<Inner<T>>;
   private _id: BroadcastId;
-  private inner: Inner<T>;
 
-  constructor() {
-    this._id = new BroadcastId();
-    this.inner = new Inner();
+  constructor(arc?: Arc<Inner<T>>, id?: BroadcastId) {
+    super();
+    this.arc = arc ?? Arc.new(new Inner());
+    this._id = id ?? new BroadcastId();
+  }
+
+  clone(): Broadcast<T> {
+    return new Broadcast<T>(this.arc.clone(), this._id.clone());
   }
 
   /** Get the unique identifier for this broadcast */
@@ -137,17 +141,32 @@ export class Broadcast<T = void> {
 
   /** Sends a notification to all active listeners */
   send(value: T): void {
-    // Clone the listeners to avoid issues if listeners modify the map during iteration
-    const subscribers = Array.from(this.inner.listeners.values());
+    // Clone the listeners to avoid holding the lock during callback execution
+    // maybe someday we can avoid the alloc here using a thread-local buffer?
+    const subscribers = Array.from(this.arc.value.listeners.values());
 
-    // Call all listeners
-    for (const listener of subscribers) {
-      switch (listener.type) {
+    // Call all listeners without holding any locks
+    // clone the value for each subscriber except the last one
+    if (subscribers.length > 0) {
+      const last = subscribers[subscribers.length - 1];
+      const rest = subscribers.slice(0, -1);
+
+      for (const callback of rest) {
+        switch (callback.type) {
+          case 'Payload':
+            callback.callback(value);
+            break;
+          case 'NotifyOnly':
+            callback.callback();
+            break;
+        }
+      }
+      switch (last.type) {
         case 'Payload':
-          listener.callback(value);
+          last.callback(value);
           break;
         case 'NotifyOnly':
-          listener.callback();
+          last.callback();
           break;
       }
     }
@@ -155,9 +174,9 @@ export class Broadcast<T = void> {
 
   /**
    * Get a read-only reference to this sender that can only subscribe to notifications.
-   * This avoids exposing send() while still allowing subscription.
+   * This avoids cloning the sender while still forbidding the user from sending notifications.
    */
   reference(): BroadcastRef<T> {
-    return new BroadcastRef(this.inner, this._id);
+    return new BroadcastRef(this.arc.clone(), this._id);
   }
 }

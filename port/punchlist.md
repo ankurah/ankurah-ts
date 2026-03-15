@@ -9,22 +9,22 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 1 | proto/src/auth.rs | packages/proto/src/auth.ts | YES |
-| 2 | proto/src/clock.rs | packages/proto/src/clock.ts | YES |
-| 3 | proto/src/collection.rs | packages/proto/src/collection.ts | YES |
-| 4 | proto/src/data.rs | packages/proto/src/data.ts | YES |
-| 5 | proto/src/error.rs | packages/proto/src/error.ts | YES |
-| 6 | proto/src/human_id.rs | packages/proto/src/human_id.ts | YES |
-| 7 | proto/src/id.rs | packages/proto/src/id.ts | YES |
-| 8 | proto/src/lib.rs | packages/proto/src/index.ts | YES |
-| 9 | proto/src/message.rs | packages/proto/src/message.ts | YES |
-| 10 | proto/src/peering.rs | packages/proto/src/peering.ts | YES |
+| 1 | proto/src/auth.rs | packages/proto/src/auth.ts | DONE |
+| 2 | proto/src/clock.rs | packages/proto/src/clock.ts | DONE |
+| 3 | proto/src/collection.rs | packages/proto/src/collection.ts | DONE |
+| 4 | proto/src/data.rs | packages/proto/src/data.ts | DONE |
+| 5 | proto/src/error.rs | packages/proto/src/error.ts | DONE |
+| 6 | proto/src/human_id.rs | packages/proto/src/human_id.ts | DONE |
+| 7 | proto/src/id.rs | packages/proto/src/id.ts | DONE |
+| 8 | proto/src/lib.rs | packages/proto/src/index.ts | DONE |
+| 9 | proto/src/message.rs | packages/proto/src/message.ts | DONE |
+| 10 | proto/src/peering.rs | packages/proto/src/peering.ts | DONE |
 | - | proto/src/postgres.rs | SKIP | E10 |
-| 11 | proto/src/request.rs | packages/proto/src/request.ts | YES |
-| 12 | proto/src/subscription.rs | packages/proto/src/subscription.ts | YES |
-| 13 | proto/src/sys.rs | packages/proto/src/sys.ts | YES |
-| 14 | proto/src/transaction.rs | packages/proto/src/transaction.ts | YES |
-| 15 | proto/src/update.rs | packages/proto/src/update.ts | YES |
+| 11 | proto/src/request.rs | packages/proto/src/request.ts | DONE |
+| 12 | proto/src/subscription.rs | packages/proto/src/subscription.ts | DONE |
+| 13 | proto/src/sys.rs | packages/proto/src/sys.ts | DONE |
+| 14 | proto/src/transaction.rs | packages/proto/src/transaction.ts | DONE |
+| 15 | proto/src/update.rs | packages/proto/src/update.ts | DONE |
 | - | proto/src/wasm.rs | SKIP | E9 |
 
 ## core → @ankurah/core
@@ -103,51 +103,51 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 81 | signals/src/broadcast.rs | packages/signals/src/broadcast.ts | YES |
-| 82 | signals/src/context.rs | packages/signals/src/context.ts | YES |
+| 81 | signals/src/broadcast.rs | packages/signals/src/broadcast.ts | DONE |
+| 82 | signals/src/context.rs | packages/signals/src/context.ts | DONE |
 | - | signals/src/jsvalue.rs | SKIP | jsvalue |
 | 83 | signals/src/lib.rs | packages/signals/src/index.ts | YES |
-| 84 | signals/src/observer.rs | packages/signals/src/observer/index.ts | YES |
-| 85 | signals/src/observer/callback_observer.rs | packages/signals/src/observer/callback_observer.ts | YES |
-| 86 | signals/src/porcelain.rs | packages/signals/src/porcelain/index.ts | YES |
-| 87 | signals/src/porcelain/subscribe.rs | packages/signals/src/porcelain/subscribe.ts | YES |
-| 88 | signals/src/porcelain/wait.rs | packages/signals/src/porcelain/wait.ts | NO |
+| 84 | signals/src/observer.rs | packages/signals/src/observer/index.ts | DONE |
+| 85 | signals/src/observer/callback_observer.rs | packages/signals/src/observer/callback_observer.ts | DONE |
+| 86 | signals/src/porcelain.rs | packages/signals/src/porcelain/index.ts | DONE |
+| 87 | signals/src/porcelain/subscribe.rs | packages/signals/src/porcelain/subscribe.ts | DONE |
+| 88 | signals/src/porcelain/wait.rs | packages/signals/src/porcelain/wait.ts | DONE |
 | - | signals/src/react.rs | SKIP | E14/E15 |
 | - | signals/src/react_native.rs | SKIP | E14/E15 |
 | - | signals/src/reactive_graph.rs | SKIP | E14/E15 |
-| 89 | signals/src/signal.rs | packages/signals/src/signal/index.ts | YES |
-| 90 | signals/src/signal/calculated.rs | packages/signals/src/signal/calculated.ts | YES |
-| 91 | signals/src/signal/map.rs | packages/signals/src/signal/map.ts | NO |
-| 92 | signals/src/signal/memo.rs | packages/signals/src/signal/memo.ts | NO |
+| 89 | signals/src/signal.rs | packages/signals/src/signal/index.ts | DONE |
+| 90 | signals/src/signal/calculated.rs | packages/signals/src/signal/calculated.ts | DONE |
+| 91 | signals/src/signal/map.rs | packages/signals/src/signal/map.ts | DONE |
+| 92 | signals/src/signal/memo.rs | packages/signals/src/signal/memo.ts | DONE |
 | 93 | signals/src/signal/mutable.rs | packages/signals/src/signal/mutable.ts | YES |
 | 94 | signals/src/signal/read.rs | packages/signals/src/signal/read.ts | YES |
-| 95 | signals/src/value.rs | packages/signals/src/value.ts | YES |
+| 95 | signals/src/value.rs | packages/signals/src/value.ts | DONE |
 
 ## ankql → @ankurah/ankql
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 96 | ankql/src/ast.rs | packages/ankql/src/ast.ts | YES |
-| 97 | ankql/src/conversion.rs | packages/ankql/src/conversion.ts | YES |
-| 98 | ankql/src/error.rs | packages/ankql/src/error.ts | YES |
-| 99 | ankql/src/grammar.rs | packages/ankql/src/grammar.ts | YES |
-| 100 | ankql/src/lib.rs | packages/ankql/src/index.ts | YES |
-| 101 | ankql/src/parser.rs | packages/ankql/src/parser.ts | YES |
-| 102 | ankql/src/selection.rs | packages/ankql/src/selection/index.ts | YES |
-| 103 | ankql/src/selection/sql.rs | packages/ankql/src/selection/sql.ts | YES |
+| 96 | ankql/src/ast.rs | packages/ankql/src/ast.ts | DONE |
+| 97 | ankql/src/conversion.rs | packages/ankql/src/conversion.ts | DONE |
+| 98 | ankql/src/error.rs | packages/ankql/src/error.ts | DONE |
+| 99 | ankql/src/grammar.rs | packages/ankql/src/grammar.ts | DONE |
+| 100 | ankql/src/lib.rs | packages/ankql/src/index.ts | DONE |
+| 101 | ankql/src/parser.rs | packages/ankql/src/parser.ts | DONE |
+| 102 | ankql/src/selection.rs | packages/ankql/src/selection/index.ts | DONE |
+| 103 | ankql/src/selection/sql.rs | packages/ankql/src/selection/sql.ts | DONE |
 
 ## storage/common → @ankurah/storage-common
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 104 | storage/common/src/bounds.rs | packages/storage-common/src/bounds.ts | YES |
-| 105 | storage/common/src/filtering.rs | packages/storage-common/src/filtering.ts | YES |
+| 104 | storage/common/src/bounds.rs | packages/storage-common/src/bounds.ts | DONE |
+| 105 | storage/common/src/filtering.rs | packages/storage-common/src/filtering.ts | DONE |
 | 106 | storage/common/src/lib.rs | packages/storage-common/src/index.ts | YES |
 | 107 | storage/common/src/planner.rs | packages/storage-common/src/planner.ts | YES |
-| 108 | storage/common/src/predicate.rs | packages/storage-common/src/predicate.ts | YES |
-| 109 | storage/common/src/sorting.rs | packages/storage-common/src/sorting.ts | YES |
-| 110 | storage/common/src/traits.rs | packages/storage-common/src/traits.ts | NO |
-| 111 | storage/common/src/types.rs | packages/storage-common/src/types.ts | YES |
+| 108 | storage/common/src/predicate.rs | packages/storage-common/src/predicate.ts | DONE |
+| 109 | storage/common/src/sorting.rs | packages/storage-common/src/sorting.ts | DONE |
+| 110 | storage/common/src/traits.rs | packages/storage-common/src/traits.ts | DONE |
+| 111 | storage/common/src/types.rs | packages/storage-common/src/types.ts | DONE |
 
 ## storage/sqlite → @ankurah/storage-sqlite (split to expo-sqlite + better-sqlite3)
 

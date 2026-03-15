@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/bounds.rs
 
 import type { Value } from '@ankurah/core';
-import type { CanonicalRange, KeyBounds } from './types.ts';
+import { CanonicalRange, KeyBounds } from './types.ts';
 
 /**
  * Normalize IndexBounds to a CanonicalRange shape shared across KV engines.
@@ -18,42 +18,52 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
 
   for (const bound of bounds.keyparts) {
     // Check for equality: both endpoints are inclusive Value with same Val datum
+    // Rust: if let (Endpoint::Value { datum: low_datum, inclusive: low_incl },
+    //              Endpoint::Value { datum: high_datum, inclusive: high_incl }) = (&bound.low, &bound.high)
+    //       && let (KeyDatum::Val(low_val), KeyDatum::Val(high_val)) = (low_datum, high_datum)
+    //       && low_val == high_val && *low_incl && *high_incl
     if (
-      bound.low.type === 'Value' && bound.high.type === 'Value' &&
-      bound.low.datum.type === 'Val' && bound.high.datum.type === 'Val' &&
-      bound.low.inclusive && bound.high.inclusive &&
-      valuesEqual(bound.low.datum.value, bound.high.datum.value)
+      bound.low.is('Value') && bound.high.is('Value') &&
+      bound.low.value.datum.is('Val') && bound.high.value.datum.is('Val') &&
+      bound.low.value.inclusive && bound.high.value.inclusive &&
+      valuesEqual(bound.low.value.datum.value.value, bound.high.value.datum.value.value)
     ) {
-      lowerTuple.push(bound.low.datum.value);
-      upperTuple.push(bound.high.datum.value);
-      eqPrefixValues.push(bound.low.datum.value);
+      lowerTuple.push(bound.low.value.datum.value.value);
+      upperTuple.push(bound.high.value.datum.value.value);
+      eqPrefixValues.push(bound.low.value.datum.value.value);
       eqPrefixLen += 1;
       continue;
     }
 
     // Process low endpoint
-    if (bound.low.type === 'Value' && bound.low.datum.type === 'Val') {
-      lowerTuple.push(bound.low.datum.value);
-      lowerOpen = !bound.low.inclusive;
-    } else if (bound.low.type === 'UnboundedLow') {
+    // Rust: match &bound.low { Endpoint::Value { datum: KeyDatum::Val(val), inclusive } => ...
+    let lowHandled = false;
+    if (bound.low.is('Value') && bound.low.value.datum.is('Val')) {
+      lowerTuple.push(bound.low.value.datum.value.value);
+      lowerOpen = !bound.low.value.inclusive;
+      lowHandled = true;
+    } else if (bound.low.is('UnboundedLow')) {
       // No-op for unbounded low
-    } else {
+      lowHandled = true;
+    }
+    if (!lowHandled) {
       break;
     }
 
     // Process high endpoint
-    if (bound.high.type === 'Value' && bound.high.datum.type === 'Val') {
-      upperTuple.push(bound.high.datum.value);
-      upperOpen = !bound.high.inclusive;
-    } else if (bound.high.type === 'UnboundedHigh') {
+    // Rust: match &bound.high { Endpoint::Value { datum: KeyDatum::Val(val), inclusive } => ...
+    if (bound.high.is('Value') && bound.high.value.datum.is('Val')) {
+      upperTuple.push(bound.high.value.datum.value.value);
+      upperOpen = !bound.high.value.inclusive;
+    } else if (bound.high.is('UnboundedHigh')) {
       return [
-        { lower: lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, upper: null },
+        new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
         eqPrefixLen,
         eqPrefixValues,
       ];
     } else {
       return [
-        { lower: lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, upper: null },
+        new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
         eqPrefixLen,
         eqPrefixValues,
       ];
@@ -64,16 +74,16 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
 
   if (eqPrefixLen === bounds.keyparts.length && eqPrefixLen === 1) {
     return [
-      { lower: lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, upper: null },
+      new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
       eqPrefixLen,
       eqPrefixValues,
     ];
   }
 
-  const canonicalRange: CanonicalRange = {
-    lower: lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen],
-    upper: upperTuple.length === 0 ? null : [upperTuple, upperOpen],
-  };
+  const canonicalRange = new CanonicalRange(
+    lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen],
+    upperTuple.length === 0 ? null : [upperTuple, upperOpen],
+  );
 
   return [canonicalRange, eqPrefixLen, eqPrefixValues];
 }

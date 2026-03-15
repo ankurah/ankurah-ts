@@ -5,10 +5,15 @@ import { Drop } from '@ankurah/base';
 import { BroadcastId, type TListenerGuard } from '../broadcast.ts';
 
 // Re-export submodules
+// Rust: pub use calculated::*; pub use map::*; pub use memo::*; pub use mutable::*; pub use read::*;
 export { Mut } from './mutable.ts';
 export { Read } from './read.ts';
 // Calculated is a stub (deferred)
 export { } from './calculated.ts';
+// map.ts not yet ported
+// export { ... } from './map.ts';
+// memo.ts not yet ported
+// export { ... } from './memo.ts';
 
 /**
  * Type alias for listener functions.
@@ -66,8 +71,6 @@ export interface Signal {
 /**
  * Trait for getting the current value of a signal in a way that will be tracked
  * by the current context.
- *
- * Phase 1: get() behaves identically to peek() (no observer tracking yet).
  */
 export interface Get<T> {
   get(): T;
@@ -76,8 +79,6 @@ export interface Get<T> {
 /**
  * Trait for accessing the current value of a signal with a closure in a way that
  * will be tracked by the current context.
- *
- * Phase 1: with() does not track (no observer tracking yet).
  */
 export interface With<T> {
   with<R>(f: (value: T) => R): R;

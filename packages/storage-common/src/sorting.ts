@@ -43,7 +43,7 @@ function compareForSort(a: Value | null, b: Value | null, direction: OrderDirect
   const cmp = valuePartialCmp(a, b);
   if (cmp === null) return 0; // incomparable
 
-  if (direction === 'Asc') return cmp;
+  if (direction.is('Asc')) return cmp;
   return -cmp; // Desc reverses
 }
 
@@ -258,17 +258,17 @@ function heapCompare<T extends Filterable>(a: T, b: T, orderBy: OrderByItem[]): 
     if (aVal === null) {
       // ASC: None is smallest → less "worst" → negative
       // DESC: None is smallest → more "worst" → positive
-      return orderItem.direction === 'Asc' ? -1 : 1;
+      return orderItem.direction.is('Asc') ? -1 : 1;
     }
     if (bVal === null) {
-      return orderItem.direction === 'Asc' ? 1 : -1;
+      return orderItem.direction.is('Asc') ? 1 : -1;
     }
 
     const cmp = valuePartialCmp(aVal, bVal);
     if (cmp === null || cmp === 0) continue;
 
     // ASC: normal order (larger is worse), DESC: reversed (smaller is worse)
-    return orderItem.direction === 'Asc' ? cmp : -cmp;
+    return orderItem.direction.is('Asc') ? cmp : -cmp;
   }
   return 0;
 }

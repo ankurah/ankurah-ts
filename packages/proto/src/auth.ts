@@ -1,15 +1,15 @@
 // MIRRORS: ankurah/proto/src/auth.rs
 
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
-/**
- * AuthData: raw context data transmitted between nodes (e.g., bearer token).
- * Derived serde — serialized as Vec<u8> (u64 length + bytes).
- */
-export class AuthData {
+/// Raw context data that can be transmitted between nodes - this may be a bearer token
+/// or some other arbitrary data at the discretion of the Policy Agent
+export class AuthData extends Struct {
   readonly data: Uint8Array;
 
   constructor(data: Uint8Array = new Uint8Array(0)) {
+    super();
     this.data = data;
   }
 
@@ -26,14 +26,11 @@ export class AuthData {
   }
 }
 
-/**
- * Attestation: opaque attestation bytes.
- * Derived serde — serialized as Vec<u8> (u64 length + bytes).
- */
-export class Attestation {
+export class Attestation extends Struct {
   readonly data: Uint8Array;
 
   constructor(data: Uint8Array = new Uint8Array(0)) {
+    super();
     this.data = data;
   }
 
@@ -58,59 +55,12 @@ export class Attestation {
   }
 }
 
-/**
- * AttestationSet: Vec<Attestation>.
- * Derived serde — serialized as Vec<Attestation>.
- */
-export class AttestationSet {
-  readonly attestations: Attestation[];
-
-  constructor(attestations: Attestation[] = []) {
-    this.attestations = attestations;
-  }
-
-  static default(): AttestationSet {
-    return new AttestationSet();
-  }
-
-  get length(): number {
-    return this.attestations.length;
-  }
-
-  push(attestation: Attestation): void {
-    this.attestations.push(attestation);
-  }
-
-  [Symbol.iterator](): Iterator<Attestation> {
-    return this.attestations[Symbol.iterator]();
-  }
-
-  equals(other: AttestationSet): boolean {
-    if (this.attestations.length !== other.attestations.length) return false;
-    for (let i = 0; i < this.attestations.length; i++) {
-      if (!this.attestations[i].equals(other.attestations[i])) return false;
-    }
-    return true;
-  }
-
-  encode(writer: BincodeWriter): void {
-    writer.writeVec(this.attestations, (w, a) => a.encode(w));
-  }
-
-  static decode(reader: BincodeReader): AttestationSet {
-    return new AttestationSet(reader.readVec(r => Attestation.decode(r)));
-  }
-}
-
-/**
- * Attested<T>: wrapper pairing a payload with attestations.
- * Derived serde — serialized as struct { payload: T, attestations: AttestationSet }.
- */
-export class Attested<T> {
+export class Attested<T> extends Struct {
   payload: T;
   attestations: AttestationSet;
 
   constructor(payload: T, attestations: AttestationSet = AttestationSet.default()) {
+    super();
     this.payload = payload;
     this.attestations = attestations;
   }
@@ -136,11 +86,56 @@ export class Attested<T> {
   }
 }
 
-/**
- * Principal: placeholder type (TODO in Rust).
- * Derived serde — serialized as empty struct (no fields).
- */
-export class Principal {
+export class AttestationSet extends Struct {
+  readonly attestations: Attestation[];
+
+  constructor(attestations: Attestation[] = []) {
+    super();
+    this.attestations = attestations;
+  }
+
+  static default(): AttestationSet {
+    return new AttestationSet();
+  }
+
+  // impl Deref for AttestationSet — target: [Attestation]
+  get length(): number {
+    return this.attestations.length;
+  }
+
+  [Symbol.iterator](): Iterator<Attestation> {
+    return this.attestations[Symbol.iterator]();
+  }
+
+  // impl AttestationSet
+  push(attestation: Attestation): void {
+    this.attestations.push(attestation);
+  }
+
+  equals(other: AttestationSet): boolean {
+    if (this.attestations.length !== other.attestations.length) return false;
+    for (let i = 0; i < this.attestations.length; i++) {
+      if (!this.attestations[i].equals(other.attestations[i])) return false;
+    }
+    return true;
+  }
+
+  encode(writer: BincodeWriter): void {
+    writer.writeVec(this.attestations, (w, a) => a.encode(w));
+  }
+
+  static decode(reader: BincodeReader): AttestationSet {
+    return new AttestationSet(reader.readVec(r => Attestation.decode(r)));
+  }
+}
+
+export class Principal extends Struct {
+  constructor() {
+    super();
+  }
+
+  // TODO — empty struct in Rust
+
   encode(writer: BincodeWriter): void {
     // Empty struct — no fields to encode
   }
