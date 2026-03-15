@@ -31,13 +31,13 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 16 | core/src/changes.rs | packages/core/src/changes.ts | YES |
-| 17 | core/src/collation.rs | packages/core/src/collation.ts | NO |
+| 16 | core/src/changes.rs | packages/core/src/changes.ts | DONE |
+| 17 | core/src/collation.rs | packages/core/src/collation.ts | DONE |
 | 18 | core/src/collectionset.rs | packages/core/src/collectionset.ts | YES |
 | 19 | core/src/connector.rs | packages/core/src/connector.ts | YES |
 | 20 | core/src/context.rs | packages/core/src/context.ts | YES |
-| 21 | core/src/entity.rs | packages/core/src/entity.ts | YES |
-| 22 | core/src/error.rs | packages/core/src/error.ts | YES |
+| 21 | core/src/entity.rs | packages/core/src/entity.ts | DONE |
+| 22 | core/src/error.rs | packages/core/src/error.ts | DONE |
 | 23 | core/src/indexing/encoding.rs | packages/core/src/indexing/encoding.ts | YES |
 | 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | YES |
 | 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | YES |
@@ -56,8 +56,8 @@ Every in-scope Rust source file and its target TS path.
 | 37 | core/src/property/backend/mod.rs | packages/core/src/property/backend/index.ts | YES |
 | 38 | core/src/property/backend/pn_counter.rs | packages/core/src/property/backend/pn_counter.ts | NO |
 | 39 | core/src/property/backend/yrs.rs | packages/core/src/property/backend/yjs.ts | YES |
-| 40 | core/src/property/mod.rs | packages/core/src/property/index.ts | YES |
-| 41 | core/src/property/traits.rs | packages/core/src/property/traits.ts | YES |
+| 40 | core/src/property/mod.rs | packages/core/src/property/index.ts | DONE |
+| 41 | core/src/property/traits.rs | packages/core/src/property/traits.ts | DONE |
 | 42 | core/src/property/value/entity_ref.rs | packages/core/src/property/value/entity_ref.ts | NO |
 | 43 | core/src/property/value/json.rs | packages/core/src/property/value/json.ts | NO |
 | 44 | core/src/property/value/lww.rs | packages/core/src/property/value/lww.ts | YES |
@@ -93,10 +93,11 @@ Every in-scope Rust source file and its target TS path.
 | 74 | core/src/util/ready_chunks.rs | packages/core/src/util/ready_chunks.ts | YES |
 | 75 | core/src/util/safemap.rs | packages/core/src/util/safemap.ts | NO |
 | 76 | core/src/util/safeset.rs | packages/core/src/util/safeset.ts | NO |
-| 77 | core/src/value/cast.rs | packages/core/src/value/cast.ts | YES |
+| 77 | core/src/value/cast.rs | packages/core/src/value/cast.ts | DONE |
+| 77.1 | core/src/value/cast.rs (tests) | packages/core/__tests__/cast.test.ts | DONE |
 | 78 | core/src/value/cast_predicate.rs | packages/core/src/value/cast_predicate.ts | YES |
 | 79 | core/src/value/collatable.rs | packages/core/src/value/collatable.ts | YES |
-| 80 | core/src/value/mod.rs | packages/core/src/value/index.ts | YES |
+| 80 | core/src/value/mod.rs | packages/core/src/value/index.ts | DONE |
 | - | core/src/value/wasm.rs | SKIP | E9 |
 
 ## signals → @ankurah/signals
@@ -106,7 +107,7 @@ Every in-scope Rust source file and its target TS path.
 | 81 | signals/src/broadcast.rs | packages/signals/src/broadcast.ts | DONE |
 | 82 | signals/src/context.rs | packages/signals/src/context.ts | DONE |
 | - | signals/src/jsvalue.rs | SKIP | jsvalue |
-| 83 | signals/src/lib.rs | packages/signals/src/index.ts | YES |
+| 83 | signals/src/lib.rs | packages/signals/src/index.ts | DONE |
 | 84 | signals/src/observer.rs | packages/signals/src/observer/index.ts | DONE |
 | 85 | signals/src/observer/callback_observer.rs | packages/signals/src/observer/callback_observer.ts | DONE |
 | 86 | signals/src/porcelain.rs | packages/signals/src/porcelain/index.ts | DONE |
@@ -119,8 +120,8 @@ Every in-scope Rust source file and its target TS path.
 | 90 | signals/src/signal/calculated.rs | packages/signals/src/signal/calculated.ts | DONE |
 | 91 | signals/src/signal/map.rs | packages/signals/src/signal/map.ts | DONE |
 | 92 | signals/src/signal/memo.rs | packages/signals/src/signal/memo.ts | DONE |
-| 93 | signals/src/signal/mutable.rs | packages/signals/src/signal/mutable.ts | YES |
-| 94 | signals/src/signal/read.rs | packages/signals/src/signal/read.ts | YES |
+| 93 | signals/src/signal/mutable.rs | packages/signals/src/signal/mutable.ts | DONE |
+| 94 | signals/src/signal/read.rs | packages/signals/src/signal/read.ts | DONE |
 | 95 | signals/src/value.rs | packages/signals/src/value.ts | DONE |
 
 ## ankql → @ankurah/ankql
@@ -142,8 +143,8 @@ Every in-scope Rust source file and its target TS path.
 |---|-----------|-----------|--------|
 | 104 | storage/common/src/bounds.rs | packages/storage-common/src/bounds.ts | DONE |
 | 105 | storage/common/src/filtering.rs | packages/storage-common/src/filtering.ts | DONE |
-| 106 | storage/common/src/lib.rs | packages/storage-common/src/index.ts | YES |
-| 107 | storage/common/src/planner.rs | packages/storage-common/src/planner.ts | YES |
+| 106 | storage/common/src/lib.rs | packages/storage-common/src/index.ts | DONE |
+| 107 | storage/common/src/planner.rs | packages/storage-common/src/planner.ts | DONE |
 | 108 | storage/common/src/predicate.rs | packages/storage-common/src/predicate.ts | DONE |
 | 109 | storage/common/src/sorting.rs | packages/storage-common/src/sorting.ts | DONE |
 | 110 | storage/common/src/traits.rs | packages/storage-common/src/traits.ts | DONE |
@@ -220,10 +221,89 @@ Every in-scope Rust source file and its target TS path.
 |---|-----------|-----------|--------|
 | 147 | ankurah/src/lib.rs | packages/ankurah/src/index.ts | NO |
 
+## Integration Tests (tests/ directories)
+
+### signals/tests/
+
+| # | Rust test file | TS target | Exists? |
+|---|---------------|-----------|--------|
+| T1 | signals/tests/basic.rs | packages/signals/__tests__/basic.test.ts | YES |
+| T2 | signals/tests/observer.rs | packages/signals/__tests__/observer.test.ts | NO |
+| T3 | signals/tests/observer_context.rs | packages/signals/__tests__/observer_context.test.ts | NO |
+| T4 | signals/tests/common.rs | (test helper, not a test file) | - |
+
+### storage/sqlite/tests/
+
+| # | Rust test file | TS target | Exists? |
+|---|---------------|-----------|--------|
+| T5 | storage/sqlite/tests/basic.rs | packages/storage-sqlite/__tests__/basic.test.ts | NO |
+| T6 | storage/sqlite/tests/json_property.rs | packages/storage-sqlite/__tests__/json_property.test.ts | NO |
+| T7 | storage/sqlite/tests/sqlite_json_semantics.rs | packages/storage-sqlite/__tests__/sqlite_json_semantics.test.ts | NO |
+| T8 | storage/sqlite/tests/sqlite_undefined_column.rs | packages/storage-sqlite/__tests__/sqlite_undefined_column.test.ts | NO |
+
+### storage/postgres/tests/
+
+| # | Rust test file | TS target | Exists? |
+|---|---------------|-----------|--------|
+| T9 | storage/postgres/tests/basic.rs | packages/storage-postgres/__tests__/basic.test.ts | NO |
+| T10 | storage/postgres/tests/add_event.rs | packages/storage-postgres/__tests__/add_event.test.ts | NO |
+| T11 | storage/postgres/tests/json_property.rs | packages/storage-postgres/__tests__/json_property.test.ts | NO |
+| T12 | storage/postgres/tests/jsonb_semantics.rs | packages/storage-postgres/__tests__/jsonb_semantics.test.ts | NO |
+| T13 | storage/postgres/tests/predicate_checks.rs | packages/storage-postgres/__tests__/predicate_checks.test.ts | NO |
+| T14 | storage/postgres/tests/property_backends.rs | packages/storage-postgres/__tests__/property_backends.test.ts | NO |
+| T15 | storage/postgres/tests/repeatable_read.rs | packages/storage-postgres/__tests__/repeatable_read.test.ts | NO |
+| T16 | storage/postgres/tests/rt165.rs | packages/storage-postgres/__tests__/rt165.test.ts | NO |
+| T17 | storage/postgres/tests/rt176.rs | packages/storage-postgres/__tests__/rt176.test.ts | NO |
+| T18 | storage/postgres/tests/undefined_column.rs | packages/storage-postgres/__tests__/undefined_column.test.ts | NO |
+| T19 | storage/postgres/tests/where_clause.rs | packages/storage-postgres/__tests__/where_clause.test.ts | NO |
+
+### storage/indexeddb-wasm/tests/
+
+| # | Rust test file | TS target | Exists? |
+|---|---------------|-----------|--------|
+| T20 | storage/indexeddb-wasm/tests/basic.rs | packages/storage-indexeddb/__tests__/basic.test.ts | NO |
+| T21 | storage/indexeddb-wasm/tests/database_connection.rs | packages/storage-indexeddb/__tests__/database_connection.test.ts | NO |
+| T22 | storage/indexeddb-wasm/tests/desc_ordering.rs | packages/storage-indexeddb/__tests__/desc_ordering.test.ts | NO |
+| T23 | storage/indexeddb-wasm/tests/duplicate_ref.rs | packages/storage-indexeddb/__tests__/duplicate_ref.test.ts | NO |
+| T24 | storage/indexeddb-wasm/tests/edge_cases.rs | packages/storage-indexeddb/__tests__/edge_cases.test.ts | NO |
+| T25 | storage/indexeddb-wasm/tests/idb_value.rs | packages/storage-indexeddb/__tests__/idb_value.test.ts | NO |
+| T26 | storage/indexeddb-wasm/tests/inclusion_and_ordering.rs | packages/storage-indexeddb/__tests__/inclusion_and_ordering.test.ts | NO |
+| T27 | storage/indexeddb-wasm/tests/index_creation.rs | packages/storage-indexeddb/__tests__/index_creation.test.ts | NO |
+| T28 | storage/indexeddb-wasm/tests/json_property.rs | packages/storage-indexeddb/__tests__/json_property.test.ts | NO |
+| T29 | storage/indexeddb-wasm/tests/multi_column_order_by.rs | packages/storage-indexeddb/__tests__/multi_column_order_by.test.ts | NO |
+| T30 | storage/indexeddb-wasm/tests/predicate_checks.rs | packages/storage-indexeddb/__tests__/predicate_checks.test.ts | NO |
+| T31 | storage/indexeddb-wasm/tests/ref_property.rs | packages/storage-indexeddb/__tests__/ref_property.test.ts | NO |
+
+### ankurah/tests/tests/ (top-level integration)
+
+| # | Rust test file | TS target | Exists? |
+|---|---------------|-----------|--------|
+| T32 | tests/tests/basic.rs | packages/core/__tests__/integration/basic.test.ts | NO |
+| T33 | tests/tests/concurrent_transactions.rs | packages/core/__tests__/integration/concurrent_transactions.test.ts | NO |
+| T34 | tests/tests/inter_node.rs | packages/core/__tests__/integration/inter_node.test.ts | NO |
+| T35 | tests/tests/local_subscription.rs | packages/core/__tests__/integration/local_subscription.test.ts | NO |
+| T36 | tests/tests/system.rs | packages/core/__tests__/integration/system.test.ts | NO |
+| T37 | tests/tests/check_request_error.rs | packages/core/__tests__/integration/check_request_error.test.ts | NO |
+| T38 | tests/tests/desc_inequality.rs | packages/core/__tests__/integration/desc_inequality.test.ts | NO |
+| T39 | tests/tests/json_livequery.rs | packages/core/__tests__/integration/json_livequery.test.ts | NO |
+| T40 | tests/tests/limit_gap_filling.rs | packages/core/__tests__/integration/limit_gap_filling.test.ts | NO |
+| T41 | tests/tests/nonexistent_entity.rs | packages/core/__tests__/integration/nonexistent_entity.test.ts | NO |
+| T42 | tests/tests/pagination_cursor.rs | packages/core/__tests__/integration/pagination_cursor.test.ts | NO |
+| T43 | tests/tests/policy_agent.rs | packages/core/__tests__/integration/policy_agent.test.ts | NO |
+| T44 | tests/tests/predicate_checks.rs | packages/core/__tests__/integration/predicate_checks.test.ts | NO |
+| T45 | tests/tests/property_backends.rs | packages/core/__tests__/integration/property_backends.test.ts | NO |
+| T46 | tests/tests/repeatable_read.rs | packages/core/__tests__/integration/repeatable_read.test.ts | NO |
+| T47 | tests/tests/rt106.rs | packages/core/__tests__/integration/rt106.test.ts | NO |
+| T48 | tests/tests/rt114.rs | packages/core/__tests__/integration/rt114.test.ts | NO |
+| T49 | tests/tests/selection_macro.rs | packages/core/__tests__/integration/selection_macro.test.ts | NO |
+| T50 | tests/tests/update_predicate.rs | packages/core/__tests__/integration/update_predicate.test.ts | NO |
+| T51 | tests/tests/websocket.rs | packages/core/__tests__/integration/websocket.test.ts | NO |
+| T52 | tests/tests/where_clause.rs | packages/core/__tests__/integration/where_clause.test.ts | NO |
+
 ## Summary
 
-- **In-scope files**: 147
-- **TS exists (rewrite)**: 83
-- **TS missing (create)**: 64
+- **Source files in-scope**: 147
+- **Integration test files**: 52
+- **Total**: 199
 - **Skipped**: 8
 

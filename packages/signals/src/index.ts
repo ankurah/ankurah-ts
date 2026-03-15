@@ -6,9 +6,9 @@
 // Used by core for reactive updates and by @ankurah/react for UI bindings.
 //
 // Rust crate: ankurah-signals
-// Key types: Broadcast, Signal, Subscribe, ListenerGuard, BroadcastId
 
-// Public modules
+// Rust: pub mod broadcast;
+// Rust: pub use broadcast::BroadcastId;
 export {
   BroadcastId,
   Broadcast,
@@ -18,13 +18,14 @@ export {
   type TListenerGuard,
 } from './broadcast.ts';
 
-// context.ts is a stub for Phase 1 (no observer tracking)
-// export * from './context.ts';
+// Rust: mod context; pub use context::*;
+export { CurrentObserver } from './context.ts';
 
-// observer/ is a stub for Phase 1 (no observer tracking)
-// export * from './observer/index.ts';
+// Rust: pub mod observer; pub use observer::*;
+export type { Observer } from './observer/index.ts';
+export { CallbackObserver } from './observer/callback_observer.ts';
 
-// Signal types and traits
+// Rust: pub mod signal; pub use signal::*;
 export {
   Mut,
   Read,
@@ -36,9 +37,16 @@ export {
   type GetReadCell,
   type Listener,
 } from './signal/index.ts';
+export { Calculated } from './signal/calculated.ts';
+export { Map } from './signal/map.ts';
+export { Memo } from './signal/memo.ts';
 
-// Value cells (internal storage, but exported for use by other packages)
+// Rust: mod value; (private module, but TS exports for use by other packages)
 export { ValueCell, ReadValueCell } from './value.ts';
 
-// Porcelain (subscribe)
+// Rust: pub mod porcelain; pub use porcelain::*;
 export { type Subscribe, SubscriptionGuard } from './porcelain/index.ts';
+export { type Wait, type WaitResultValue, waitValue, waitFor } from './porcelain/wait.ts';
+
+// Feature-gated modules — all skipped:
+// reactive_graph [E14], react [E9], react_native [E15], jsvalue [E9]

@@ -1,25 +1,26 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
 
-import type { ComparisonOperator, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
+import { Predicate } from '@ankurah/ankql';
+import type { ComparisonOperator, OrderByItem, Selection } from '@ankurah/ankql';
 import type { IndexKeyPart, KeySpec, Value } from '@ankurah/core';
 import { indexKeyPartAscPath, keySpecNew, valueFromLiteral, valuePartialCmp, valueType, ValueType } from '@ankurah/core';
 import { ConjunctFinder } from './predicate.ts';
-import type {
+import {
   Plan,
   ScanDirection,
-  KeyBounds,
   KeyBoundComponent,
   Endpoint,
   KeyDatum,
-  OrderByComponents,
-} from './types.ts';
-import {
   endpointIncl,
   endpointExcl,
   keyBoundsNew,
   keyBoundsEmpty,
   orderByComponentsNew,
   orderByComponentsDefault,
+} from './types.ts';
+import type {
+  KeyBounds,
+  OrderByComponents,
 } from './types.ts';
 
 // ── PlannerConfig ────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ export class Planner {
     const hasPrimaryKeyRanges = this.hasPrimaryKeyRangePredicates(conjuncts, primaryKey);
     const hasPrimaryKeyOrderBy = this.hasPrimaryKeyOrderBy(selection.orderBy, primaryKey);
     const hasNonPrimaryPredicates = conjuncts.some(
-      (pred) => pred.type !== 'True' && !this.isPrimaryKeyPredicate(pred, primaryKey),
+      (pred) => !pred.is('True') && !this.isPrimaryKeyPredicate(pred, primaryKey),
     );
 
     // If we have primary key predicates/ORDER BY but NO other meaningful predicates, skip index generation
@@ -107,7 +108,7 @@ export class Planner {
 
       // Apply the same TableScan fallback logic as the main path
       const deduplicatedPlans = this.deduplicatePlans(plans);
-      const hasEmptyScan = deduplicatedPlans.some((plan) => plan.type === 'EmptyScan');
+      const hasEmptyScan = deduplicatedPlans.some((plan) => plan.is('EmptyScan'));
       if (!hasEmptyScan) {
         const finalPlans = [...deduplicatedPlans];
         const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
@@ -144,7 +145,7 @@ export class Planner {
     const deduplicatedPlans = this.deduplicatePlans(plans);
 
     // Add table scan as fallback ONLY if there's no EmptyScan
-    const hasEmptyScan = deduplicatedPlans.some((plan) => plan.type === 'EmptyScan');
+    const hasEmptyScan = deduplicatedPlans.some((plan) => plan.is('EmptyScan'));
     if (!hasEmptyScan) {
       const finalPlans = [...deduplicatedPlans];
       const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
@@ -192,7 +193,7 @@ export class Planner {
       for (const item of orderBy) {
         if (item.path.isSimple()) {
           const name = item.path.first();
-          if (!broke && item.direction === firstDir) {
+          if (!broke && item.direction.type === firstDir.type) {
             indexKeyparts.push(indexKeyPartAscPath(name, ValueType.String));
           } else {
             broke = true;
@@ -217,8 +218,8 @@ export class Planner {
     const bounds = appliedIneq !== null
       ? this.buildBounds(equalities, [appliedIneq[0], appliedIneq[1]], indexKeyparts)
       : this.buildBounds(equalities, null, indexKeyparts);
-    if (bounds === null) return { type: 'EmptyScan' };
-    if (this.isEmptyBounds(bounds)) return { type: 'EmptyScan' };
+    if (bounds === null) return Plan.EmptyScan();
+    if (this.isEmptyBounds(bounds)) return Plan.EmptyScan();
 
     // Remaining predicate excludes the applied OB inequality if any
     const remainingPredicate = this.calculateRemainingPredicate(
@@ -230,9 +231,9 @@ export class Planner {
     // Scan direction
     let scanDirection: ScanDirection;
     if (this.config.supportsDescIndexes) {
-      scanDirection = 'Forward';
+      scanDirection = ScanDirection.Forward();
     } else {
-      scanDirection = orderBy[0].direction === 'Desc' ? 'Reverse' : 'Forward';
+      scanDirection = orderBy[0].direction.is('Desc') ? ScanDirection.Reverse() : ScanDirection.Forward();
     }
 
     // Build OrderByComponents: presort (satisfied by index) and spill (needs in-memory sort)
@@ -244,7 +245,7 @@ export class Planner {
       let broke = false;
       for (const item of orderBy) {
         if (item.path.isSimple()) {
-          if (!broke && item.direction === firstDir) {
+          if (!broke && item.direction.type === firstDir.type) {
             presort.push(item);
           } else {
             broke = true;
@@ -258,14 +259,7 @@ export class Planner {
       orderByComponents = orderByComponentsNew([...orderBy], []);
     }
 
-    return {
-      type: 'Index',
-      indexSpec: keySpecNew(indexKeyparts),
-      scanDirection,
-      bounds,
-      remainingPredicate,
-      orderBySpill: orderByComponents,
-    };
+    return Plan.Index(keySpecNew(indexKeyparts), scanDirection, bounds, remainingPredicate, orderByComponents);
   }
 
   // ── INEQ-FIRST strategy ──────────────────────────────────────────
@@ -311,8 +305,8 @@ export class Planner {
 
     // Bounds: EQ + primary INEQ (most-restrictive)
     const bounds = this.buildBounds(equalities, [primary[0], primary[1]], indexKeyparts);
-    if (bounds === null) return { type: 'EmptyScan' };
-    if (this.isEmptyBounds(bounds)) return { type: 'EmptyScan' };
+    if (bounds === null) return Plan.EmptyScan();
+    if (this.isEmptyBounds(bounds)) return Plan.EmptyScan();
 
     // Remaining predicate: all inequalities except the primary one
     const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, primary[0]);
@@ -320,9 +314,9 @@ export class Planner {
     // Scan direction
     let scanDirection: ScanDirection;
     if (this.config.supportsDescIndexes) {
-      scanDirection = 'Forward';
+      scanDirection = ScanDirection.Forward();
     } else {
-      scanDirection = orderBy[0].direction === 'Desc' ? 'Reverse' : 'Forward';
+      scanDirection = orderBy[0].direction.is('Desc') ? ScanDirection.Reverse() : ScanDirection.Forward();
     }
 
     // Build OrderByComponents: presort (EQ columns + pivot) and spill (everything else)
@@ -346,14 +340,7 @@ export class Planner {
     }
     const orderByComponents = orderByComponentsNew(presort, spill);
 
-    return {
-      type: 'Index',
-      indexSpec: keySpecNew(indexKeyparts),
-      scanDirection,
-      bounds,
-      remainingPredicate,
-      orderBySpill: orderByComponents,
-    };
+    return Plan.Index(keySpecNew(indexKeyparts), scanDirection, bounds, remainingPredicate, orderByComponents);
   }
 
   // ── Categorize conjuncts ──────────────────────────────────────────
@@ -381,26 +368,17 @@ export class Planner {
       // Skip primary key predicates - they'll be handled by TableScan bounds
       if (field === primaryKey) continue;
 
-      switch (op) {
-        case 'Equal':
-          equalities.push([field, value]);
-          break;
-        case 'GreaterThan':
-        case 'GreaterThanOrEqual':
-        case 'LessThan':
-        case 'LessThanOrEqual': {
-          let vec = inequalities.get(field);
-          if (vec === undefined) {
-            vec = [];
-            inequalities.set(field, vec);
-          }
-          vec.push([op, value]);
-          break;
+      if (op.is('Equal')) {
+        equalities.push([field, value]);
+      } else if (op.is('GreaterThan') || op.is('GreaterThanOrEqual') || op.is('LessThan') || op.is('LessThanOrEqual')) {
+        let vec = inequalities.get(field);
+        if (vec === undefined) {
+          vec = [];
+          inequalities.set(field, vec);
         }
-        default:
-          // NotEqual, In, Between - not supported for index ranges
-          break;
+        vec.push([op, value]);
       }
+      // NotEqual, In, Between - not supported for index ranges
     }
 
     return [equalities, inequalities];
@@ -415,17 +393,18 @@ export class Planner {
    * Rust: `fn extract_comparison(&self, predicate: &Predicate) -> Option<(String, ComparisonOperator, Value)>`
    */
   private extractComparison(predicate: Predicate): [string, ComparisonOperator, Value] | null {
-    if (predicate.type !== 'Comparison') return null;
+    if (!predicate.is('Comparison')) return null;
+    const comp = predicate.value as { left: any; operator: ComparisonOperator; right: any };
 
     // Extract field path from left side (supports multi-step paths)
-    if (predicate.left.type !== 'Path') return null;
-    const fieldPath = predicate.left.value.steps.join('.');
+    if (!comp.left.is('Path')) return null;
+    const fieldPath = (comp.left.value as { path: any }).path.steps.join('.');
 
     // Extract value from right side
-    if (predicate.right.type !== 'Literal') return null;
-    const value = valueFromLiteral(predicate.right.value);
+    if (!comp.right.is('Literal')) return null;
+    const value = valueFromLiteral((comp.right.value as { literal: any }).literal);
 
-    return [fieldPath, predicate.operator, value];
+    return [fieldPath, comp.operator, value];
   }
 
   // ── Inequality plan (no ORDER BY) ─────────────────────────────────
@@ -453,8 +432,8 @@ export class Planner {
 
     // Build bounds
     const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
-    if (bounds === null) return { type: 'EmptyScan' };
-    if (this.isEmptyBounds(bounds)) return { type: 'EmptyScan' };
+    if (bounds === null) return Plan.EmptyScan();
+    if (this.isEmptyBounds(bounds)) return Plan.EmptyScan();
 
     // Calculate remaining predicate (exclude this inequality field)
     const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
@@ -485,14 +464,7 @@ export class Planner {
       orderBySpill = orderByComponentsDefault();
     }
 
-    return {
-      type: 'Index',
-      indexSpec: keySpecNew(indexKeyparts),
-      scanDirection: 'Forward' as ScanDirection,
-      bounds,
-      remainingPredicate,
-      orderBySpill,
-    };
+    return Plan.Index(keySpecNew(indexKeyparts), ScanDirection.Forward(), bounds, remainingPredicate, orderBySpill);
   }
 
   // ── Equality-only plan ────────────────────────────────────────────
@@ -510,20 +482,13 @@ export class Planner {
 
     // Build bounds (exact match on all equality values)
     const bounds = this.buildBounds(equalities, null, indexKeyparts);
-    if (bounds === null) return { type: 'EmptyScan' };
-    if (this.isEmptyBounds(bounds)) return { type: 'EmptyScan' };
+    if (bounds === null) return Plan.EmptyScan();
+    if (this.isEmptyBounds(bounds)) return Plan.EmptyScan();
 
     // Calculate remaining predicate
     const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, null);
 
-    return {
-      type: 'Index',
-      indexSpec: keySpecNew(indexKeyparts),
-      scanDirection: 'Forward' as ScanDirection,
-      bounds,
-      remainingPredicate,
-      orderBySpill: orderByComponentsDefault(),
-    };
+    return Plan.Index(keySpecNew(indexKeyparts), ScanDirection.Forward(), bounds, remainingPredicate, orderByComponentsDefault());
   }
 
   // ── Build bounds ──────────────────────────────────────────────────
@@ -550,53 +515,40 @@ export class Planner {
 
       if (equalityEntry !== undefined) {
         // Equality constraint: both bounds are the same value, inclusive
-        keypartBounds.push({
-          column: fullPath,
-          low: endpointIncl(equalityEntry[1]),
-          high: endpointIncl(equalityEntry[1]),
-        });
+        keypartBounds.push(new KeyBoundComponent(fullPath, endpointIncl(equalityEntry[1]), endpointIncl(equalityEntry[1])));
       } else if (inequality !== null) {
         const [ineqField, ineqValues] = inequality;
         if (ineqField === fullPath) {
           // This column has inequality constraints
-          let low: Endpoint = { type: 'UnboundedLow', valueType: valueType(ineqValues[0][1]) };
-          let high: Endpoint = { type: 'UnboundedHigh', valueType: valueType(ineqValues[0][1]) };
+          let low: Endpoint = Endpoint.UnboundedLow(valueType(ineqValues[0][1]));
+          let high: Endpoint = Endpoint.UnboundedHigh(valueType(ineqValues[0][1]));
 
           // Process all inequalities for this column, choosing most restrictive bounds
           for (const [op, value] of ineqValues) {
-            switch (op) {
-              case 'GreaterThan': {
-                const candidate = endpointExcl(value);
-                if (this.isMoreRestrictiveLower(candidate, low)) {
-                  low = candidate;
-                }
-                break;
+            if (op.is('GreaterThan')) {
+              const candidate = endpointExcl(value);
+              if (this.isMoreRestrictiveLower(candidate, low)) {
+                low = candidate;
               }
-              case 'GreaterThanOrEqual': {
-                const candidate = endpointIncl(value);
-                if (this.isMoreRestrictiveLower(candidate, low)) {
-                  low = candidate;
-                }
-                break;
+            } else if (op.is('GreaterThanOrEqual')) {
+              const candidate = endpointIncl(value);
+              if (this.isMoreRestrictiveLower(candidate, low)) {
+                low = candidate;
               }
-              case 'LessThan': {
-                const candidate = endpointExcl(value);
-                if (this.isMoreRestrictiveUpper(candidate, high)) {
-                  high = candidate;
-                }
-                break;
+            } else if (op.is('LessThan')) {
+              const candidate = endpointExcl(value);
+              if (this.isMoreRestrictiveUpper(candidate, high)) {
+                high = candidate;
               }
-              case 'LessThanOrEqual': {
-                const candidate = endpointIncl(value);
-                if (this.isMoreRestrictiveUpper(candidate, high)) {
-                  high = candidate;
-                }
-                break;
+            } else if (op.is('LessThanOrEqual')) {
+              const candidate = endpointIncl(value);
+              if (this.isMoreRestrictiveUpper(candidate, high)) {
+                high = candidate;
               }
             }
           }
 
-          keypartBounds.push({ column: fullPath, low, high });
+          keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
           break; // Stop at first inequality column
         } else {
           // No constraint on this column - stop here
@@ -619,15 +571,15 @@ export class Planner {
    * Rust: `fn is_more_restrictive_lower(...)`
    */
   private isMoreRestrictiveLower(candidate: Endpoint, current: Endpoint): boolean {
-    if (candidate.type === 'Value' && current.type === 'UnboundedLow') return true;
-    if (candidate.type === 'UnboundedLow' && current.type === 'Value') return false;
+    if (candidate.is('Value') && current.is('UnboundedLow')) return true;
+    if (candidate.is('UnboundedLow') && current.is('Value')) return false;
 
-    if (candidate.type === 'Value' && current.type === 'Value') {
-      if (candidate.datum.type === 'Val' && current.datum.type === 'Val') {
-        const cmp = valuePartialCmp(candidate.datum.value, current.datum.value);
+    if (candidate.is('Value') && current.is('Value')) {
+      if (candidate.value.datum.is('Val') && current.value.datum.is('Val')) {
+        const cmp = valuePartialCmp(candidate.value.datum.value.value, current.value.datum.value.value);
         if (cmp === null) return false;
         if (cmp > 0) return true;  // Higher value is more restrictive for lower bound
-        if (cmp === 0) return !candidate.inclusive && current.inclusive; // Exclusive is more restrictive
+        if (cmp === 0) return !candidate.value.inclusive && current.value.inclusive; // Exclusive is more restrictive
         return false; // Lower value is less restrictive
       }
     }
@@ -641,15 +593,15 @@ export class Planner {
    * Rust: `fn is_more_restrictive_upper(...)`
    */
   private isMoreRestrictiveUpper(candidate: Endpoint, current: Endpoint): boolean {
-    if (candidate.type === 'Value' && current.type === 'UnboundedHigh') return true;
-    if (candidate.type === 'UnboundedHigh' && current.type === 'Value') return false;
+    if (candidate.is('Value') && current.is('UnboundedHigh')) return true;
+    if (candidate.is('UnboundedHigh') && current.is('Value')) return false;
 
-    if (candidate.type === 'Value' && current.type === 'Value') {
-      if (candidate.datum.type === 'Val' && current.datum.type === 'Val') {
-        const cmp = valuePartialCmp(candidate.datum.value, current.datum.value);
+    if (candidate.is('Value') && current.is('Value')) {
+      if (candidate.value.datum.is('Val') && current.value.datum.is('Val')) {
+        const cmp = valuePartialCmp(candidate.value.datum.value.value, current.value.datum.value.value);
         if (cmp === null) return false;
         if (cmp < 0) return true;  // Lower value is more restrictive for upper bound
-        if (cmp === 0) return !candidate.inclusive && current.inclusive; // Exclusive is more restrictive
+        if (cmp === 0) return !candidate.value.inclusive && current.value.inclusive; // Exclusive is more restrictive
         return false; // Higher value is less restrictive
       }
     }
@@ -666,14 +618,14 @@ export class Planner {
    */
   private isEmptyBounds(bounds: KeyBounds): boolean {
     for (const bound of bounds.keyparts) {
-      if (bound.low.type === 'Value' && bound.high.type === 'Value') {
-        if (bound.low.datum.type === 'Val' && bound.high.datum.type === 'Val') {
-          const cmp = valuePartialCmp(bound.low.datum.value, bound.high.datum.value);
+      if (bound.low.is('Value') && bound.high.is('Value')) {
+        if (bound.low.value.datum.is('Val') && bound.high.value.datum.is('Val')) {
+          const cmp = valuePartialCmp(bound.low.value.datum.value.value, bound.high.value.datum.value.value);
           if (cmp === null) continue;
           if (cmp > 0) return true; // low > high = empty
           if (cmp === 0) {
             // Equal values but both exclusive = empty
-            if (!bound.low.inclusive && !bound.high.inclusive) {
+            if (!bound.low.value.inclusive && !bound.high.value.inclusive) {
               return true;
             }
           }
@@ -725,14 +677,14 @@ export class Planner {
 
     // Combine remaining conjuncts with AND
     if (remainingConjuncts.length === 0) {
-      return { type: 'True' };
+      return Predicate.True();
     } else if (remainingConjuncts.length === 1) {
       return remainingConjuncts[0];
     } else {
       // Build AND chain
       let result: Predicate = remainingConjuncts[0];
       for (let i = 1; i < remainingConjuncts.length; i++) {
-        result = { type: 'And', left: result, right: remainingConjuncts[i] };
+        result = Predicate.And(result, remainingConjuncts[i]);
       }
       return result;
     }
@@ -750,31 +702,30 @@ export class Planner {
     const seen = new Set<string>();
 
     for (const plan of plans) {
-      switch (plan.type) {
-        case 'Index': {
+      plan.match({
+        Index: (v) => {
           // Create a string key for deduplication
-          const keypartsStr = plan.indexSpec.keyparts
+          const keypartsStr = v.indexSpec.keyparts
             .map((k) => {
               const fullPath = k.subPath !== null ? [k.column, ...k.subPath].join('.') : k.column;
               return `${fullPath}:${k.direction}:${k.valueType}`;
             })
             .join('|');
-          const key = `${keypartsStr}::${plan.scanDirection}`;
+          const key = `${keypartsStr}::${v.scanDirection.type}`;
           if (!seen.has(key)) {
             seen.add(key);
             uniquePlans.push(plan);
           }
-          break;
-        }
-        case 'EmptyScan':
+        },
+        EmptyScan: () => {
           // Always include empty scans (they're rare and important)
           uniquePlans.push(plan);
-          break;
-        case 'TableScan':
+        },
+        TableScan: () => {
           // Always include table scans (fallback plan)
           uniquePlans.push(plan);
-          break;
-      }
+        },
+      });
     }
 
     return uniquePlans;
@@ -796,24 +747,24 @@ export class Planner {
     const bounds = this.extractEntityIdRange(conjuncts, primaryKey);
 
     // All predicates remain (no index to satisfy any)
-    let remainingPredicate: Predicate = { type: 'True' };
+    let remainingPredicate: Predicate = Predicate.True();
     for (const pred of conjuncts) {
-      if (remainingPredicate.type === 'True') {
+      if (remainingPredicate.is('True')) {
         remainingPredicate = pred;
       } else {
-        remainingPredicate = { type: 'And', left: remainingPredicate, right: pred };
+        remainingPredicate = Predicate.And(remainingPredicate, pred);
       }
     }
 
     // Determine scan direction and ORDER BY components based on primary key ORDER BY
-    let scanDirection: ScanDirection = 'Forward';
+    let scanDirection: ScanDirection = ScanDirection.Forward();
     let orderBySpill: OrderByComponents = orderByComponentsDefault();
 
     if (orderBy !== null && orderBy.length > 0) {
       const firstItem = orderBy[0];
       if (firstItem.path.isSimple() && firstItem.path.first() === primaryKey) {
         // Primary key ORDER BY is satisfied by scan direction
-        scanDirection = firstItem.direction === 'Desc' ? 'Reverse' : 'Forward';
+        scanDirection = firstItem.direction.is('Desc') ? ScanDirection.Reverse() : ScanDirection.Forward();
         // First item is presort (satisfied by scan), rest is spill
         const presort = [firstItem];
         const spill = orderBy.slice(1);
@@ -824,13 +775,7 @@ export class Planner {
       }
     }
 
-    return {
-      type: 'TableScan',
-      bounds,
-      scanDirection,
-      remainingPredicate,
-      orderBySpill,
-    };
+    return Plan.TableScan(bounds, scanDirection, remainingPredicate, orderBySpill);
   }
 
   // ── Entity ID range extraction ────────────────────────────────────
@@ -869,17 +814,20 @@ export class Planner {
    * Rust: `fn extract_primary_key_bound(...)`
    */
   private extractPrimaryKeyBound(predicate: Predicate, primaryKey: string): KeyBoundComponent | null {
-    if (predicate.type !== 'Comparison') return null;
+    if (!predicate.is('Comparison')) return null;
+    const comp = predicate.value as { left: any; operator: ComparisonOperator; right: any };
 
     // Check if this is a primary key comparison
     let value: Value | null = null;
-    if (predicate.left.type === 'Path' && predicate.right.type === 'Literal') {
-      if (predicate.left.value.isSimple() && predicate.left.value.first() === primaryKey) {
-        value = valueFromLiteral(predicate.right.value);
+    if (comp.left.is('Path') && comp.right.is('Literal')) {
+      const leftPath = (comp.left.value as { path: any }).path;
+      if (leftPath.isSimple() && leftPath.first() === primaryKey) {
+        value = valueFromLiteral((comp.right.value as { literal: any }).literal);
       }
-    } else if (predicate.left.type === 'Literal' && predicate.right.type === 'Path') {
-      if (predicate.right.value.isSimple() && predicate.right.value.first() === primaryKey) {
-        value = valueFromLiteral(predicate.left.value);
+    } else if (comp.left.is('Literal') && comp.right.is('Path')) {
+      const rightPath = (comp.right.value as { path: any }).path;
+      if (rightPath.isSimple() && rightPath.first() === primaryKey) {
+        value = valueFromLiteral((comp.left.value as { literal: any }).literal);
       }
     }
 
@@ -888,32 +836,26 @@ export class Planner {
     // Convert comparison operator to bounds
     let low: Endpoint;
     let high: Endpoint;
-    switch (predicate.operator) {
-      case 'Equal':
-        low = { type: 'Value', datum: { type: 'Val', value }, inclusive: true };
-        high = { type: 'Value', datum: { type: 'Val', value }, inclusive: true };
-        break;
-      case 'GreaterThan':
-        low = { type: 'Value', datum: { type: 'Val', value }, inclusive: false };
-        high = { type: 'UnboundedHigh', valueType: valueType(value) };
-        break;
-      case 'GreaterThanOrEqual':
-        low = { type: 'Value', datum: { type: 'Val', value }, inclusive: true };
-        high = { type: 'UnboundedHigh', valueType: valueType(value) };
-        break;
-      case 'LessThan':
-        low = { type: 'UnboundedLow', valueType: valueType(value) };
-        high = { type: 'Value', datum: { type: 'Val', value }, inclusive: false };
-        break;
-      case 'LessThanOrEqual':
-        low = { type: 'UnboundedLow', valueType: valueType(value) };
-        high = { type: 'Value', datum: { type: 'Val', value }, inclusive: true };
-        break;
-      default:
-        return null; // Skip != and other operators
+    if (comp.operator.is('Equal')) {
+      low = Endpoint.Value(KeyDatum.Val(value), true);
+      high = Endpoint.Value(KeyDatum.Val(value), true);
+    } else if (comp.operator.is('GreaterThan')) {
+      low = Endpoint.Value(KeyDatum.Val(value), false);
+      high = Endpoint.UnboundedHigh(valueType(value));
+    } else if (comp.operator.is('GreaterThanOrEqual')) {
+      low = Endpoint.Value(KeyDatum.Val(value), true);
+      high = Endpoint.UnboundedHigh(valueType(value));
+    } else if (comp.operator.is('LessThan')) {
+      low = Endpoint.UnboundedLow(valueType(value));
+      high = Endpoint.Value(KeyDatum.Val(value), false);
+    } else if (comp.operator.is('LessThanOrEqual')) {
+      low = Endpoint.UnboundedLow(valueType(value));
+      high = Endpoint.Value(KeyDatum.Val(value), true);
+    } else {
+      return null; // Skip != and other operators
     }
 
-    return { column: primaryKey, low, high };
+    return new KeyBoundComponent(primaryKey, low, high);
   }
 
   /**
@@ -922,15 +864,15 @@ export class Planner {
    * Rust: `fn intersect_primary_key_bounds(...)`
    */
   private intersectPrimaryKeyBounds(bounds: KeyBoundComponent[], primaryKey: string): KeyBoundComponent {
-    let resultLow: Endpoint = { type: 'UnboundedLow', valueType: ValueType.String };
-    let resultHigh: Endpoint = { type: 'UnboundedHigh', valueType: ValueType.String };
+    let resultLow: Endpoint = Endpoint.UnboundedLow(ValueType.String);
+    let resultHigh: Endpoint = Endpoint.UnboundedHigh(ValueType.String);
 
     for (const bound of bounds) {
       resultLow = this.intersectLowerBounds(resultLow, bound.low);
       resultHigh = this.intersectUpperBounds(resultHigh, bound.high);
     }
 
-    return { column: primaryKey, low: resultLow, high: resultHigh };
+    return new KeyBoundComponent(primaryKey, resultLow, resultHigh);
   }
 
   /**
@@ -939,21 +881,17 @@ export class Planner {
    * Rust: `fn intersect_lower_bounds(...)`
    */
   private intersectLowerBounds(left: Endpoint, right: Endpoint): Endpoint {
-    if (left.type === 'UnboundedLow') return right;
-    if (right.type === 'UnboundedLow') return left;
+    if (left.is('UnboundedLow')) return right;
+    if (right.is('UnboundedLow')) return left;
 
-    if (left.type === 'Value' && right.type === 'Value') {
-      if (left.datum.type === 'Val' && right.datum.type === 'Val') {
-        const cmp = valuePartialCmp(left.datum.value, right.datum.value);
+    if (left.is('Value') && right.is('Value')) {
+      if (left.value.datum.is('Val') && right.value.datum.is('Val')) {
+        const cmp = valuePartialCmp(left.value.datum.value.value, right.value.datum.value.value);
         if (cmp === null) return left;
         if (cmp > 0) return left;
         if (cmp < 0) return right;
         // Same value - use the more restrictive inclusivity
-        return {
-          type: 'Value',
-          datum: left.datum,
-          inclusive: left.inclusive && right.inclusive,
-        };
+        return Endpoint.Value(left.value.datum, left.value.inclusive && right.value.inclusive);
       }
     }
 
@@ -966,21 +904,17 @@ export class Planner {
    * Rust: `fn intersect_upper_bounds(...)`
    */
   private intersectUpperBounds(left: Endpoint, right: Endpoint): Endpoint {
-    if (left.type === 'UnboundedHigh') return right;
-    if (right.type === 'UnboundedHigh') return left;
+    if (left.is('UnboundedHigh')) return right;
+    if (right.is('UnboundedHigh')) return left;
 
-    if (left.type === 'Value' && right.type === 'Value') {
-      if (left.datum.type === 'Val' && right.datum.type === 'Val') {
-        const cmp = valuePartialCmp(left.datum.value, right.datum.value);
+    if (left.is('Value') && right.is('Value')) {
+      if (left.value.datum.is('Val') && right.value.datum.is('Val')) {
+        const cmp = valuePartialCmp(left.value.datum.value.value, right.value.datum.value.value);
         if (cmp === null) return left;
         if (cmp < 0) return left;
         if (cmp > 0) return right;
         // Same value - use the more restrictive inclusivity
-        return {
-          type: 'Value',
-          datum: left.datum,
-          inclusive: left.inclusive && right.inclusive,
-        };
+        return Endpoint.Value(left.value.datum, left.value.inclusive && right.value.inclusive);
       }
     }
 
@@ -995,9 +929,13 @@ export class Planner {
    * Rust: `fn is_primary_key_predicate(...)`
    */
   private isPrimaryKeyPredicate(predicate: Predicate, primaryKey: string): boolean {
-    if (predicate.type !== 'Comparison') return false;
-    if (predicate.left.type === 'Path' && predicate.left.value.isSimple()) {
-      return predicate.left.value.first() === primaryKey;
+    if (!predicate.is('Comparison')) return false;
+    const comp = predicate.value as { left: any; operator: any; right: any };
+    if (comp.left.is('Path')) {
+      const leftPath = (comp.left.value as { path: any }).path;
+      if (leftPath.isSimple()) {
+        return leftPath.first() === primaryKey;
+      }
     }
     return false;
   }
@@ -1020,17 +958,19 @@ export class Planner {
    */
   private hasPrimaryKeyRangePredicates(conjuncts: Predicate[], primaryKey: string): boolean {
     return conjuncts.some((predicate) => {
-      if (predicate.type !== 'Comparison') return false;
-      if (predicate.left.type !== 'Path') return false;
-      if (!predicate.left.value.isSimple()) return false;
-      if (predicate.left.value.first() !== primaryKey) return false;
+      if (!predicate.is('Comparison')) return false;
+      const comp = predicate.value as { left: any; operator: ComparisonOperator; right: any };
+      if (!comp.left.is('Path')) return false;
+      const leftPath = (comp.left.value as { path: any }).path;
+      if (!leftPath.isSimple()) return false;
+      if (leftPath.first() !== primaryKey) return false;
 
       return (
-        predicate.operator === 'Equal' ||
-        predicate.operator === 'GreaterThan' ||
-        predicate.operator === 'GreaterThanOrEqual' ||
-        predicate.operator === 'LessThan' ||
-        predicate.operator === 'LessThanOrEqual'
+        comp.operator.is('Equal') ||
+        comp.operator.is('GreaterThan') ||
+        comp.operator.is('GreaterThanOrEqual') ||
+        comp.operator.is('LessThan') ||
+        comp.operator.is('LessThanOrEqual')
       );
     });
   }

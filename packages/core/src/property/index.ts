@@ -1,7 +1,11 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
 
+// ── Modules (matching Rust `pub mod` declarations) ──
+
 export * from './backend/index.ts';
 export * from './traits.ts';
+export * from './value/lww.ts';
+export * from './value/yrs_string.ts';
 
 import type { Value } from '../value/index.ts';
 

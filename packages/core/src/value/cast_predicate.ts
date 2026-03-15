@@ -1,29 +1,12 @@
 // MIRRORS: ankurah/core/src/value/cast_predicate.rs
 
-import type { Expr, Literal, Predicate, PathExpr } from '@ankurah/ankql';
+import type { Expr, Literal, Predicate } from '@ankurah/ankql';
 import type { Value } from './index';
 import { ValueType, valueFromLiteral, valueToLiteral } from './index';
 import { castTo, CastErrorException } from './cast';
-
-// ── CollectionSchema ─────────────────────────────────────────────────
-// Mirrors Rust trait CollectionSchema from crate::schema.
-// Defined here to avoid circular dependency with schema.ts which may not exist yet.
-
-export interface CollectionSchema {
-  /** Get the ValueType for a given field path. Throws on unknown field. */
-  fieldType(path: PathExpr): ValueType;
-}
-
-// ── Error type ───────────────────────────────────────────────────────
-// Mirrors Rust RetrievalError used as the error type in cast_predicate.
-// Defined inline to avoid importing from error.ts which may not exist yet.
-
-export class CastPredicateError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CastPredicateError';
-  }
-}
+import { RetrievalError } from '../error.ts';
+export type { CollectionSchema } from '../schema.ts';
+import type { CollectionSchema } from '../schema.ts';
 
 // ── castPredicateTypes ───────────────────────────────────────────────
 
@@ -117,7 +100,7 @@ function castLiteralToType(literal: Literal, targetType: ValueType): Expr {
     return { type: 'Literal', value: castLiteral };
   } catch (e) {
     if (e instanceof CastErrorException) {
-      throw new CastPredicateError(`Type casting error: ${e.message}`);
+      throw RetrievalError.storageError(new Error(`Type casting error: ${e.message}`));
     }
     throw e;
   }

@@ -2,6 +2,7 @@
 
 import { EntityId } from '@ankurah/proto';
 import type { Literal } from '@ankurah/ankql';
+import { PropertyError } from '../property/traits.ts';
 
 // Re-export sub-modules (matching Rust mod.rs pub use / pub mod)
 export type { CastError } from './cast';
@@ -62,6 +63,42 @@ export function valueType(v: Value): ValueType {
 /** Create a Json Value from any JSON-serializable value. Mirrors Rust Value::json(). */
 export function valueJson(v: unknown): Value {
   return { type: 'Json', value: v };
+}
+
+/**
+ * Parse this value as JSON into a plain object.
+ * Works for Json, Object, Binary (as bytes) and String variants.
+ * Throws PropertyError for numeric, bool, and EntityId types.
+ * Mirrors Rust Value::parse_as_json().
+ */
+export function parseAsJson(value: Value): unknown {
+  switch (value.type) {
+    case 'Json':
+      // Rust: serde_json::from_value(json.clone()) — round-trip through JSON to get a plain object
+      return JSON.parse(JSON.stringify(value.value));
+    case 'Object':
+    case 'Binary': {
+      const text = new TextDecoder().decode(value.value);
+      return JSON.parse(text);
+    }
+    case 'String':
+      return JSON.parse(value.value);
+    default:
+      throw PropertyError.invalidVariant(value, 'JSON');
+  }
+}
+
+/**
+ * Parse this value as a string.
+ * Only works for Value::String variant.
+ * Throws PropertyError for other types.
+ * Mirrors Rust Value::parse_as_string().
+ */
+export function parseAsString(value: Value): string {
+  if (value.type === 'String') {
+    return value.value;
+  }
+  throw PropertyError.invalidVariant(value, 'string');
 }
 
 // ── PartialOrd / Comparison ──────────────────────────────────────────

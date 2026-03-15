@@ -5,11 +5,12 @@
 // Rust crate: ankurah-storage-common
 // Re-exports mirror Rust lib.rs `pub use` / `pub mod` statements.
 
-// ── Modules (matching Rust `pub mod` declarations) ──
+// ── Modules (matching Rust `pub mod` declarations, alphabetical) ──
 
-export * from './types.ts';
 export * from './bounds.ts';
-export * from './predicate.ts';
-export * from './sorting.ts';
 export * from './filtering.ts';
 export * from './planner.ts';
+export * from './predicate.ts';
+export * from './sorting.ts';
+export * from './traits.ts';
+export * from './types.ts';

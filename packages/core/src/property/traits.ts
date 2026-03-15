@@ -11,6 +11,31 @@ type CastError = CastErrorException;
 import type { PropertyName } from './index.ts';
 
 // ---------------------------------------------------------------------------
+// InitializeWith<T>
+// ---------------------------------------------------------------------------
+
+/**
+ * Trait for types that can be initialized with a value on an entity.
+ *
+ * Rust: `trait InitializeWith<T> { fn initialize_with(entity: &Entity, property_name: PropertyName, value: &T) -> Self; }`
+ */
+export interface InitializeWith<T> {
+  // Note: In Rust this is a static method on the trait. In TS, interfaces cannot have
+  // static methods. Implementors should provide a static `initializeWith` factory or
+  // a constructor that accepts these arguments.
+}
+
+/**
+ * Factory function type for InitializeWith. Implementors provide a function matching
+ * this signature rather than implementing an interface with a static method.
+ */
+export type InitializeWithFactory<T, R> = (
+  entity: Entity,
+  propertyName: PropertyName,
+  value: T,
+) => R;
+
+// ---------------------------------------------------------------------------
 // PropertyError
 // ---------------------------------------------------------------------------
 
@@ -90,31 +115,6 @@ export class PropertyError extends Error {
     return PropertyError.retrievalError(err);
   }
 }
-
-// ---------------------------------------------------------------------------
-// InitializeWith<T>
-// ---------------------------------------------------------------------------
-
-/**
- * Trait for types that can be initialized with a value on an entity.
- *
- * Rust: `trait InitializeWith<T> { fn initialize_with(entity: &Entity, property_name: PropertyName, value: &T) -> Self; }`
- */
-export interface InitializeWith<T> {
-  // Note: In Rust this is a static method on the trait. In TS, interfaces cannot have
-  // static methods. Implementors should provide a static `initializeWith` factory or
-  // a constructor that accepts these arguments.
-}
-
-/**
- * Factory function type for InitializeWith. Implementors provide a function matching
- * this signature rather than implementing an interface with a static method.
- */
-export type InitializeWithFactory<T, R> = (
-  entity: Entity,
-  propertyName: PropertyName,
-  value: T,
-) => R;
 
 // ---------------------------------------------------------------------------
 // FromEntity
