@@ -1,11 +1,13 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
 
 import {
-  type Predicate,
+  Predicate,
   type Selection,
   Selection as SelectionClass,
   type OrderByItem,
-  type ComparisonOperator,
+  ComparisonOperator,
+  Expr,
+  Literal,
   PathExpr,
 } from '@ankurah/ankql';
 import type { CollectionId } from '@ankurah/proto';
@@ -133,42 +135,35 @@ export function buildContinuationPredicate(
     const literal = valueToLiteral(fieldValue);
 
     const operator: ComparisonOperator =
-      orderItem.direction === 'Asc'
-        ? 'GreaterThanOrEqual'
-        : 'LessThanOrEqual';
+      orderItem.direction.is('Asc')
+        ? ComparisonOperator.GreaterThanOrEqual()
+        : ComparisonOperator.LessThanOrEqual();
 
-    const condition: Predicate = {
-      type: 'Comparison',
-      left: { type: 'Path', value: orderItem.path },
+    const condition: Predicate = Predicate.Comparison(
+      Expr.Path(orderItem.path),
       operator,
-      right: { type: 'Literal', value: literal },
-    };
+      Expr.Literal(literal),
+    );
 
     gapConditions.push(condition);
   }
 
   // 3. Add entity ID exclusion to avoid fetching the last entity again
-  const idExclusion: Predicate = {
-    type: 'Comparison',
-    left: { type: 'Path', value: PathExpr.simple('id') },
-    operator: 'NotEqual',
-    right: {
-      type: 'Literal',
-      value: { type: 'EntityId', value: lastEntity.id().toBytes() },
-    },
-  };
+  const idExclusion: Predicate = Predicate.Comparison(
+    Expr.Path(PathExpr.simple('id')),
+    ComparisonOperator.NotEqual(),
+    Expr.Literal(Literal.EntityId(lastEntity.id().toBytes())),
+  );
   gapConditions.push(idExclusion);
 
   // 4. Combine all conditions with AND
   if (gapConditions.length === 0) {
-    return { type: 'True' };
+    return Predicate.True();
   }
 
-  return gapConditions.reduce((acc: Predicate, condition: Predicate): Predicate => ({
-    type: 'And',
-    left: acc,
-    right: condition,
-  }));
+  return gapConditions.reduce((acc: Predicate, condition: Predicate): Predicate =>
+    Predicate.And(acc, condition),
+  );
 }
 
 // ── inferValueTypeForField ────────────────────────────────────────────

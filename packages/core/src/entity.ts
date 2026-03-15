@@ -107,7 +107,7 @@ export class Entity {
       id,
       collection,
       { type: 'Primary' },
-      { head: Clock.empty(), backends: new Map() },
+      { head: Clock.default(), backends: new Map() },
     );
   }
 

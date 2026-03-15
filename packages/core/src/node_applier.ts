@@ -72,10 +72,10 @@ export class NodeApplier {
     const { entityId, collection: collectionId, content } = update;
     const collection = await node.collections.get(collectionId);
 
-    switch (content.type) {
-      case 'EventOnly': {
+    await content.match({
+      EventOnly: async (v) => {
         const events = await NodeApplier.saveEvents(
-          node, fromPeerId, entityId, collectionId, content.events, collection,
+          node, fromPeerId, entityId, collectionId, v.events, collection,
         );
 
         // We did not receive an entity fragment, so we need to retrieve it from local
@@ -97,16 +97,15 @@ export class NodeApplier {
         if (appliedEvents.length > 0) {
           changes.push(EntityChange.create(entity, appliedEvents));
         }
-        break;
-      }
+      },
 
-      case 'StateAndEvent': {
+      StateAndEvent: async (v) => {
         const events = await NodeApplier.saveEvents(
-          node, fromPeerId, entityId, collectionId, content.events, collection,
+          node, fromPeerId, entityId, collectionId, v.events, collection,
         );
 
         const attestedState = StateFragment.toAttestedEntityState(
-          entityId, collectionId, content.state,
+          entityId, collectionId, v.state,
         );
         node.policyAgent.validateReceivedState(fromPeerId, attestedState);
 
@@ -122,9 +121,8 @@ export class NodeApplier {
           await NodeApplier.saveState(node, entity, collection);
           changes.push(EntityChange.create(entity, events));
         }
-        break;
-      }
-    }
+      },
+    });
   }
 
   // Rust: async fn save_events(node, from_peer_id, entity_id, collection_id, fragments, collection) -> Result<Vec<Attested<Event>>, MutationError>
@@ -242,10 +240,10 @@ export class NodeApplier {
   ): Promise<EntityChange | null> {
     const collection = await node.collections.get(delta.collection);
 
-    switch (delta.content.type) {
-      case 'StateSnapshot': {
+    return delta.content.match({
+      StateSnapshot: async (v) => {
         const attestedState = StateFragment.toAttestedEntityState(
-          delta.entityId, delta.collection, delta.content.state,
+          delta.entityId, delta.collection, v.state,
         );
         node.policyAgent.validateReceivedState(fromPeerId, attestedState);
 
@@ -258,10 +256,10 @@ export class NodeApplier {
 
         // Phase 1: Return EntityChange with empty events
         return EntityChange.create(entity, []);
-      }
+      },
 
-      case 'EventBridge': {
-        const attestedEvents: Attested<Event>[] = delta.content.events.map((f) =>
+      EventBridge: async (v) => {
+        const attestedEvents: Attested<Event>[] = v.events.map((f: EventFragment) =>
           EventFragment.toAttestedEvent(delta.entityId, delta.collection, f),
         );
 
@@ -284,15 +282,15 @@ export class NodeApplier {
 
         // Phase 1: Return EntityChange with empty events
         return EntityChange.create(entity, []);
-      }
+      },
 
-      case 'StateAndRelation': {
+      StateAndRelation: async (_v) => {
         // Phase 2: Will validate causal assertion and apply state
         throw MutationError.general(
           new Error('StateAndRelation not yet implemented in Phase 1'),
         );
-      }
-    }
+      },
+    });
   }
 
   // Rust: node.entities.get_retrieve_or_create(retriever, collection_id, entity_id)

@@ -270,15 +270,15 @@ describe('filter json_tests', () => {
 
 describe.skip('filter json_type_casting (requires TypeResolver)', () => {
   // Rust: fn test_json_numeric_casting_same_type()
-  test.todo('json numeric casting same type');
+  test.todo('json numeric casting same type', () => {});
   // Rust: fn test_json_numeric_casting_float_to_int()
-  test.todo('json numeric casting float to int');
+  test.todo('json numeric casting float to int', () => {});
   // Rust: fn test_json_string_to_number_no_cast()
-  test.todo('json string to number no cast');
+  test.todo('json string to number no cast', () => {});
   // Rust: fn test_json_number_to_string_no_cast()
-  test.todo('json number to string no cast');
+  test.todo('json number to string no cast', () => {});
   // Rust: fn test_json_string_equality_works()
-  test.todo('json string equality works');
+  test.todo('json string equality works', () => {});
   // Rust: fn test_json_comparison_operators()
-  test.todo('json comparison operators');
+  test.todo('json comparison operators', () => {});
 });

@@ -71,8 +71,8 @@ export function itemChangeKind<I>(change: ItemChange<I>): ChangeKind {
 }
 
 // impl<I> Display for ItemChange<I> where I: View
-export function itemChangeToString<I extends ViewInstance>(change: ItemChange<I>, ctor: ViewConstructor<I>): string {
-  const collection = ctor.collection();
+export function itemChangeToString<I extends ViewInstance>(change: ItemChange<I>, _ctor: ViewConstructor<I>): string {
+  const collection = change.item.collection();
   switch (change.kind) {
     case 'Initial': return `Initial ${collection}/${change.item.id()}`;
     case 'Add': return `Add ${collection}/${change.item.id()}`;

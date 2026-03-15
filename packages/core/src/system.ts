@@ -6,8 +6,8 @@ import {
   EntityState,
   Clock,
 } from '@ankurah/proto';
-import type { Item } from '@ankurah/proto'; // sys::Item
-import { Selection } from '@ankurah/ankql';
+import { Item } from '@ankurah/proto'; // sys::Item
+import { Selection, Predicate } from '@ankurah/ankql';
 
 import { CollectionSet } from './collectionset.ts';
 import { Entity, WeakEntitySet } from './entity.ts';
@@ -55,19 +55,12 @@ function createDeferred<T>(): Deferred<T> {
  *   Other -> "Other"
  */
 export function sysItemToValue(item: Item): Value | null {
-  // Convert TS discriminated union to Rust serde_json externally-tagged format
-  let serdeObj: unknown;
-  switch (item.type) {
-    case 'SysRoot':
-      serdeObj = 'SysRoot';
-      break;
-    case 'Collection':
-      serdeObj = { Collection: { name: item.name } };
-      break;
-    case 'Other':
-      serdeObj = 'Other';
-      break;
-  }
+  // Convert Enum<ItemV> to Rust serde_json externally-tagged format
+  const serdeObj = item.match<unknown>({
+    SysRoot: () => 'SysRoot',
+    Collection: (v) => ({ Collection: { name: v.name } }),
+    Other: () => 'Other',
+  });
   return { type: 'String', value: JSON.stringify(serdeObj) };
 }
 
@@ -79,10 +72,10 @@ export function sysItemToValue(item: Item): Value | null {
 export function sysItemFromValue(value: Value | null): Item {
   if (value !== null && value.type === 'String') {
     const parsed = JSON.parse(value.value);
-    if (parsed === 'SysRoot') return { type: 'SysRoot' };
-    if (parsed === 'Other') return { type: 'Other' };
+    if (parsed === 'SysRoot') return new Item('SysRoot', {});
+    if (parsed === 'Other') return new Item('Other', {});
     if (typeof parsed === 'object' && parsed !== null && 'Collection' in parsed) {
-      return { type: 'Collection', name: parsed.Collection.name };
+      return new Item('Collection', { name: parsed.Collection.name });
     }
   }
   throw PropertyError.invalidValue('', 'sys::Item');
@@ -260,7 +253,7 @@ export class SystemManager {
     const systemEntity = this.entities.create(collectionId);
 
     const lwwBackend = systemEntity.getBackend(LWWBackend);
-    lwwBackend.set('item', sysItemToValue({ type: 'SysRoot' }));
+    lwwBackend.set('item', sysItemToValue(new Item('SysRoot', {})));
 
     const event = systemEntity.generateCommitEvent();
     if (event === null) {
@@ -399,7 +392,7 @@ export class SystemManager {
     let rootState: Attested<EntityState> | null = null;
 
     // Fetch all states with a "true" predicate
-    const selection = new Selection({ type: 'True' });
+    const selection = new Selection(Predicate.True());
     const states = await storage.fetchStates(selection);
 
     for (const state of states) {

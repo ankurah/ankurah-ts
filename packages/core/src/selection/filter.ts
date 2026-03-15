@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
 
-import type { Predicate, Expr, ComparisonOperator, PathExpr, Literal } from '@ankurah/ankql';
+import { type Predicate, type Expr, type ComparisonOperator, type PathExpr, type Literal } from '@ankurah/ankql';
 import type { Value } from '../value/index.ts';
 import { valueFromLiteral, valueEquals, valueGt, valueLt, valueGe, valueLe, extractAtPath } from '../value/index.ts';
 import { valueType } from '../value/index.ts';
@@ -100,22 +100,22 @@ export interface Filterable {
 
 /** Rust: `fn evaluate_expr<I: Filterable>(item: &I, expr: &Expr) -> Result<ExprOutput<Value>, Error>` */
 function evaluateExpr(item: Filterable, expr: Expr): ExprOutput | FilterError {
-  switch (expr.type) {
-    case 'Placeholder':
-      return FilterError.propertyNotFound('Placeholder values must be replaced before filtering');
+  return expr.match({
+    Placeholder: () =>
+      FilterError.propertyNotFound('Placeholder values must be replaced before filtering'),
 
-    case 'Literal':
-      return { type: 'Value', value: valueFromLiteral(expr.value) };
+    Literal: (v) =>
+      ({ type: 'Value', value: valueFromLiteral(v.literal) }) as ExprOutput,
 
-    case 'Path': {
-      const path: PathExpr = expr.value;
+    Path: (v) => {
+      const path = v.path;
 
       // For simple paths, use the first step as the property name
       if (path.isSimple()) {
         const name = path.first();
         const val = item.value(name);
         if (val === null) return FilterError.propertyNotFound(name);
-        return { type: 'Value', value: val };
+        return { type: 'Value', value: val } as ExprOutput;
       }
 
       // Multi-step path - could be:
@@ -132,7 +132,7 @@ function evaluateExpr(item: Filterable, expr: Expr): ExprOutput | FilterError {
           const name = remaining[0];
           const val = item.value(name);
           if (val === null) return FilterError.propertyNotFound(name);
-          return { type: 'Value', value: val };
+          return { type: 'Value', value: val } as ExprOutput;
         }
         // collection.property.nested... - get property and traverse sub-path
         const propertyName = remaining[0];
@@ -144,21 +144,23 @@ function evaluateExpr(item: Filterable, expr: Expr): ExprOutput | FilterError {
       const propertyName = first;
       const subPath = path.steps.slice(1);
       return evaluateSubPath(item, propertyName, subPath);
-    }
+    },
 
-    case 'ExprList': {
+    ExprList: (v) => {
       const results: ExprOutput[] = [];
-      for (const e of expr.values) {
+      for (const e of v.exprs) {
         const result = evaluateExpr(item, e);
         if (result instanceof FilterError) return result;
         results.push(result);
       }
-      return { type: 'List', items: results };
-    }
+      return { type: 'List', items: results } as ExprOutput;
+    },
 
-    default:
-      return FilterError.unsupportedExpression('Only literal, path, and list expressions are supported');
-  }
+    Predicate: () =>
+      FilterError.unsupportedExpression('Only literal, path, and list expressions are supported'),
+    InfixExpr: () =>
+      FilterError.unsupportedExpression('Only literal, path, and list expressions are supported'),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -230,106 +232,101 @@ function compareValuesWithCast(left: Value, right: Value, op: (a: Value, b: Valu
  * Use evaluatePredicateChecked for error propagation, or evaluatePredicate for simple boolean.
  */
 export function evaluatePredicateChecked(item: Filterable, predicate: Predicate): [boolean, FilterError | null] {
-  switch (predicate.type) {
-    case 'True':
-      return [true, null];
+  return predicate.match({
+    True: () => [true, null] as [boolean, FilterError | null],
 
-    case 'False':
-      return [false, null];
+    False: () => [false, null] as [boolean, FilterError | null],
 
-    case 'Placeholder':
-      return [false, FilterError.propertyNotFound('Placeholder must be transformed before filtering')];
+    Placeholder: () =>
+      [false, FilterError.propertyNotFound('Placeholder must be transformed before filtering')] as [boolean, FilterError | null],
 
-    case 'And': {
-      const [left, leftErr] = evaluatePredicateChecked(item, predicate.left);
+    And: (v) => {
+      const [left, leftErr] = evaluatePredicateChecked(item, v.left);
       if (leftErr) return [false, leftErr];
       if (!left) return [false, null];
-      return evaluatePredicateChecked(item, predicate.right);
-    }
+      return evaluatePredicateChecked(item, v.right);
+    },
 
-    case 'Or': {
-      const [left, leftErr] = evaluatePredicateChecked(item, predicate.left);
+    Or: (v) => {
+      const [left, leftErr] = evaluatePredicateChecked(item, v.left);
       if (leftErr) return [false, leftErr];
       if (left) return [true, null];
-      return evaluatePredicateChecked(item, predicate.right);
-    }
+      return evaluatePredicateChecked(item, v.right);
+    },
 
-    case 'Not': {
-      const [result, err] = evaluatePredicateChecked(item, predicate.predicate);
+    Not: (v) => {
+      const [result, err] = evaluatePredicateChecked(item, v.predicate);
       if (err) return [false, err];
       return [!result, null];
-    }
+    },
 
-    case 'IsNull': {
-      const result = evaluateExpr(item, predicate.expr);
+    IsNull: (v) => {
+      const result = evaluateExpr(item, v.expr);
       if (result instanceof FilterError) return [false, result];
       return [exprOutputIsNone(result), null];
-    }
+    },
 
-    case 'Comparison': {
-      const leftVal = evaluateExpr(item, predicate.left);
+    Comparison: (v) => {
+      const leftVal = evaluateExpr(item, v.left);
       if (leftVal instanceof FilterError) return [false, leftVal];
-      const rightVal = evaluateExpr(item, predicate.right);
+      const rightVal = evaluateExpr(item, v.right);
       if (rightVal instanceof FilterError) return [false, rightVal];
 
-      const op = predicate.operator;
-
-      if (op === 'Equal') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => valueEquals(a, b)), null];
-      }
-      if (op === 'NotEqual') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => !valueEquals(a, b)), null];
-      }
-      if (op === 'GreaterThan') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => valueGt(a, b)), null];
-      }
-      if (op === 'GreaterThanOrEqual') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => valueGe(a, b)), null];
-      }
-      if (op === 'LessThan') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => valueLt(a, b)), null];
-      }
-      if (op === 'LessThanOrEqual') {
-        const l = exprOutputAsValue(leftVal);
-        const r = exprOutputAsValue(rightVal);
-        if (l === null || r === null) return [false, null];
-        return [compareValuesWithCast(l, r, (a, b) => valueLe(a, b)), null];
-      }
-      if (op === 'In') {
-        const value = exprOutputAsValue(leftVal);
-        const list = exprOutputAsList(rightVal);
-        if (value === null || list === null) {
-          if (value === null) return [false, FilterError.propertyNotFound('Expected single value for IN left operand')];
-          return [false, FilterError.propertyNotFound('Expected list for IN right operand')];
-        }
-        return [list.some((listItem) => {
-          const v = exprOutputAsValue(listItem);
-          if (v === null) return false;
-          return compareValuesWithCast(value, v, (a, b) => valueEquals(a, b));
-        }), null];
-      }
-      if (op === 'Between') {
-        return [false, FilterError.unsupportedOperator('BETWEEN operator not yet supported')];
-      }
-
-      return [false, null];
-    }
-  }
+      return v.operator.match({
+        Equal: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => valueEquals(a, b)), null];
+        },
+        NotEqual: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => !valueEquals(a, b)), null];
+        },
+        GreaterThan: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => valueGt(a, b)), null];
+        },
+        GreaterThanOrEqual: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => valueGe(a, b)), null];
+        },
+        LessThan: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => valueLt(a, b)), null];
+        },
+        LessThanOrEqual: () => {
+          const l = exprOutputAsValue(leftVal);
+          const r = exprOutputAsValue(rightVal);
+          if (l === null || r === null) return [false, null] as [boolean, FilterError | null];
+          return [compareValuesWithCast(l, r, (a, b) => valueLe(a, b)), null];
+        },
+        In: () => {
+          const value = exprOutputAsValue(leftVal);
+          const list = exprOutputAsList(rightVal);
+          if (value === null || list === null) {
+            if (value === null) return [false, FilterError.propertyNotFound('Expected single value for IN left operand')] as [boolean, FilterError | null];
+            return [false, FilterError.propertyNotFound('Expected list for IN right operand')] as [boolean, FilterError | null];
+          }
+          return [list.some((listItem) => {
+            const lv = exprOutputAsValue(listItem);
+            if (lv === null) return false;
+            return compareValuesWithCast(value, lv, (a, b) => valueEquals(a, b));
+          }), null] as [boolean, FilterError | null];
+        },
+        Between: () =>
+          [false, FilterError.unsupportedOperator('BETWEEN operator not yet supported')] as [boolean, FilterError | null],
+      });
+    },
+  });
 }
 
 /**

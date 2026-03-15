@@ -19,7 +19,7 @@ import { Drop } from '@ankurah/base';
 import { RetrievalError } from './error.ts';
 import type { ViewInstance, ViewConstructor } from './model.ts';
 import { type MatchArgs, Node } from './node.ts';
-import type { ItemChange, ChangeSet } from './changes.ts';
+import { ChangeSet, type ItemChange } from './changes.ts';
 import { EntityResultSet } from './resultset.ts';
 import {
   type ReactorNodeLike,
@@ -151,13 +151,13 @@ export class EntityLiveQuery extends Drop {
   ): EntityLiveQuery {
     // Step 1: Policy check
     // Rust: node.policy_agent.can_access_collection(&cdata, &collection_id)?;
-    node.policyAgent.canAccessCollection(cdata, collectionId);
+    node.policyAgent.canAccessCollection(cdata as unknown[], collectionId);
 
     // Step 2: Filter predicate
     // Rust: args.selection.predicate = node.policy_agent.filter_predicate(&cdata, &collection_id, args.selection.predicate)?;
     if (node.policyAgent.filterPredicate) {
       args.selection.predicate = node.policyAgent.filterPredicate(
-        cdata,
+        cdata as unknown[],
         collectionId,
         args.selection.predicate,
       ) as Selection['predicate'];
@@ -705,5 +705,5 @@ function liveQueryChangeSetFrom<V extends ViewInstance>(
     }
   }
 
-  return { changes, resultset };
+  return new ChangeSet(resultset, changes);
 }

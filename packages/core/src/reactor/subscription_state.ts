@@ -793,7 +793,7 @@ export function buildKeySpecFromSelection(
     }
 
     const direction: IndexDirection =
-      item.direction === 'Asc' ? IndexDirection.Asc : IndexDirection.Desc;
+      item.direction.is('Asc') ? IndexDirection.Asc : IndexDirection.Desc;
 
     keyparts.push({
       column,

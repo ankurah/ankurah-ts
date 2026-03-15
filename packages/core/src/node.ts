@@ -228,7 +228,7 @@ export class NodeAndContext implements TContext {
 
   // Rust: async fn fetch_entities(&self, collection, args) -> Result<Vec<Entity>, RetrievalError>
   async fetchEntities(collection: CollectionId, args: MatchArgs): Promise<Entity[]> {
-    this.node.policyAgent.canAccessCollection(this.cdata, collection);
+    this.node.policyAgent.canAccessCollection(this.cdata as unknown[], collection);
 
     // Rust: modifies args.selection via policy_agent.filter_predicate and type_resolver
     // Deferred: filter_predicate and type_resolver (Layer 7)

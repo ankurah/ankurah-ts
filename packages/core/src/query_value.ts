@@ -2,8 +2,7 @@
 
 import type { EntityId } from '@ankurah/proto';
 import { EntityId as EntityIdClass } from '@ankurah/proto';
-import type { Expr, Literal } from '@ankurah/ankql';
-import { ParseError } from '@ankurah/ankql';
+import { Expr, Literal, ParseError } from '@ankurah/ankql';
 
 // ---------------------------------------------------------------------------
 // QueryValue — value type for query parameter substitution
@@ -69,20 +68,20 @@ export function queryValueEntityId(id: EntityId): QueryValue {
 export function queryValueToExpr(qv: QueryValue): Expr {
   switch (qv.type) {
     case 'String':
-      return { type: 'Literal', value: { type: 'String', value: qv.value } satisfies Literal };
+      return Expr.Literal(Literal.String(qv.value));
     case 'Int':
       // Divergence: Rust uses i64 -> Literal::I64(bigint). TS uses number -> I64(bigint) [E3].
-      return { type: 'Literal', value: { type: 'I64', value: BigInt(qv.value) } satisfies Literal };
+      return Expr.Literal(Literal.I64(BigInt(qv.value)));
     case 'Float':
-      return { type: 'Literal', value: { type: 'F64', value: qv.value } satisfies Literal };
+      return Expr.Literal(Literal.F64(qv.value));
     case 'Bool':
-      return { type: 'Literal', value: { type: 'Bool', value: qv.value } satisfies Literal };
+      return Expr.Literal(Literal.Bool(qv.value));
     case 'EntityId': {
       const id = EntityIdClass.fromBase64(qv.value);
       if (!id) {
         throw new ParseError(`Invalid EntityId: ${qv.value}`);
       }
-      return { type: 'Literal', value: { type: 'EntityId', value: id.toBytes() } satisfies Literal };
+      return Expr.Literal(Literal.EntityId(id.toBytes()));
     }
   }
 }
