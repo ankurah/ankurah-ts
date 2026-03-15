@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
 
-import type { ComparisonOperator, Literal } from '@ankurah/ankql';
+import { ComparisonOperator, Literal } from '@ankurah/ankql';
 import type { Value } from '../value/index.ts';
 import {
   valueFromLiteral,
@@ -10,8 +10,10 @@ import {
 } from '../value/index.ts';
 
 // ── Byte-array helpers ──────────────────────────────────────────────
+// Divergence: Rust uses Vec<u8> as HashMap/BTreeMap keys directly;
+// JS Maps use reference equality for objects, so we hex-encode to string keys [E8]
 
-/** Hex-encode a Uint8Array so it can be used as a Map key (JS Maps use reference equality for objects). */
+/** Hex-encode a Uint8Array so it can be used as a Map key. */
 function bytesToKey(bytes: Uint8Array): string {
   let s = '';
   for (let i = 0; i < bytes.length; i++) {
@@ -33,6 +35,8 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 }
 
 // ── Literal → collatable bytes helpers ──────────────────────────────
+// Divergence: Rust Collatable trait is called directly on Literal/Value;
+// TS uses free functions since Literal/Value are not class-based [E7]
 
 /** Convert a Literal to collatable bytes (Literal → Value → bytes). */
 function literalToCollatableBytes(literal: Literal): Uint8Array {
@@ -59,29 +63,36 @@ function literalSuccessorBytes(literal: Literal): Uint8Array | null {
  * Not efficient for large datasets — if this ends up being used in production
  * we should consider a more efficient index structure like a B+ tree with
  * subscription registrations on intermediate nodes for range comparisons.
+ *
+ * Rust: `pub(crate) struct ComparisonIndex<T>`
+ * Divergence: HashMap → Map<string,...>, BTreeMap → sorted array with binary search [E8]
  */
 export class ComparisonIndex<T> {
-  /** Exact-match: collated-bytes-key → subscribers */
+  /** Exact-match: collated-bytes-key → subscribers. Rust: `eq: HashMap<Vec<u8>, Vec<T>>` */
   private eq: Map<string, T[]> = new Map();
 
-  /** Not-equal: collated-bytes-key → subscribers */
+  /** Not-equal: collated-bytes-key → subscribers. Rust: `ne: HashMap<Vec<u8>, Vec<T>>` */
   private ne: Map<string, T[]> = new Map();
 
   /**
    * Greater-than: entries sorted by collated bytes.
-   * Each entry is [raw bytes, hex key, subscribers].
-   * Kept sorted in ascending byte order for range scans.
+   * Rust: `gt: BTreeMap<Vec<u8>, Vec<T>>`
+   * Divergence: BTreeMap → sorted array with binary search [E8]
    */
   private gt: Array<{ bytes: Uint8Array; key: string; subs: T[] }> = [];
 
   /**
    * Less-than: entries sorted by collated bytes.
-   * Each entry is [raw bytes, hex key, subscribers].
-   * Kept sorted in ascending byte order for range scans.
+   * Rust: `lt: BTreeMap<Vec<u8>, Vec<T>>`
+   * Divergence: BTreeMap → sorted array with binary search [E8]
    */
   private lt: Array<{ bytes: Uint8Array; key: string; subs: T[] }> = [];
 
-  // ── Private helpers ─────────────────────────────────────────────
+  // ── impl Default ──
+
+  // Default constructor (fields initialized inline above)
+
+  // ── impl ComparisonIndex ──
 
   /** Get or create an entry in a sorted array (gt or lt), maintaining sort order. */
   private getOrInsertSorted(
@@ -101,7 +112,6 @@ export class ComparisonIndex<T> {
       } else if (cmp > 0) {
         hi = mid;
       } else {
-        // Found existing entry
         return arr[mid].subs;
       }
     }
@@ -115,6 +125,8 @@ export class ComparisonIndex<T> {
   /**
    * Access the subscriber list for a given operator + collated bytes,
    * creating it if necessary. Calls `f` with the mutable subscriber list.
+   *
+   * Rust: `fn for_entry<F, V>(&mut self, value: V, op: ast::ComparisonOperator, f: F)`
    */
   private forEntry(
     collatableBytes: Uint8Array,
@@ -122,7 +134,7 @@ export class ComparisonIndex<T> {
     f: (entries: T[]) => void,
     literal: Literal,
   ): void {
-    switch (op) {
+    switch (op.type) {
       case 'Equal': {
         const key = bytesToKey(collatableBytes);
         let entries = this.eq.get(key);
@@ -174,28 +186,21 @@ export class ComparisonIndex<T> {
           f(entries);
         }
         // If no successor exists, the condition can never be satisfied
-        // beyond the threshold, so we don't add anything.
         break;
       }
       default:
-        throw new Error(`Unsupported operator: ${op}`);
+        throw new Error(`Unsupported operator: ${op.type}`);
     }
   }
 
-  // ── Public API ──────────────────────────────────────────────────
-
-  /** Add a subscriber for the given comparison operator and literal threshold. */
+  /** Rust: `pub fn add<V: Collatable>(&mut self, value: V, op: ast::ComparisonOperator, watcher_id: T)` */
   add(literal: Literal, op: ComparisonOperator, subscriberId: T): void {
     const bytes = literalToCollatableBytes(literal);
     this.forEntry(bytes, op, (entries) => entries.push(subscriberId), literal);
   }
 
-  /** Remove a subscriber for the given comparison operator and literal threshold. */
-  remove(
-    literal: Literal,
-    op: ComparisonOperator,
-    subscriberId: T,
-  ): void {
+  /** Rust: `pub fn remove<V: Collatable>(&mut self, value: V, op: ast::ComparisonOperator, watcher_id: T)` */
+  remove(literal: Literal, op: ComparisonOperator, subscriberId: T): void {
     const bytes = literalToCollatableBytes(literal);
     this.forEntry(
       bytes,
@@ -213,11 +218,8 @@ export class ComparisonIndex<T> {
   /**
    * Find all subscribers whose conditions match the given probe value.
    *
-   * Logic:
-   * - eq: exact byte match on probe
-   * - ne: all entries EXCEPT the one whose bytes match probe
-   * - gt: all entries where threshold < probe (threshold bytes < probe bytes)
-   * - lt: all entries where threshold > probe (threshold bytes > probe bytes)
+   * Rust: `pub fn find_matching<V: Collatable>(&self, value: V) -> BTreeSet::IntoIter<T>`
+   * Divergence: Returns sorted, deduplicated array instead of BTreeSet iterator [E8]
    */
   findMatching(probeValue: Value): T[] {
     const probeBytes = valueCollatableToBytes(probeValue);
@@ -232,7 +234,7 @@ export class ComparisonIndex<T> {
       }
     };
 
-    // Check exact matches (eq)
+    // Check exact matches
     const eqSubs = this.eq.get(probeKey);
     if (eqSubs) {
       for (const id of eqSubs) {
@@ -240,8 +242,7 @@ export class ComparisonIndex<T> {
       }
     }
 
-    // Check not-equal — iterate all != conditions; include those whose
-    // stored bytes differ from probe
+    // Check not equal - iterate through all != conditions
     for (const [storedKey, subs] of this.ne) {
       if (probeKey !== storedKey) {
         for (const id of subs) {
@@ -250,8 +251,7 @@ export class ComparisonIndex<T> {
       }
     }
 
-    // Check greater-than (x > threshold): subscriber matches when
-    // probe > threshold, i.e. threshold < probe.
+    // Check greater than matches (x > threshold)
     // gt array is sorted ascending by threshold bytes.
     // All entries with threshold bytes < probeBytes match.
     for (const entry of this.gt) {
@@ -260,21 +260,15 @@ export class ComparisonIndex<T> {
           addUnique(id);
         }
       } else {
-        // Since gt is sorted ascending, once we hit threshold >= probe
-        // all remaining will also be >=, so we can break.
         break;
       }
     }
 
-    // Check less-than (x < threshold): subscriber matches when
-    // probe < threshold, i.e. threshold > probe.
+    // Check less than matches (x < threshold)
     // lt array is sorted ascending by threshold bytes.
     // All entries with threshold bytes > probeBytes match.
-    // We need successor bytes of probe to find the start of matching range.
     const probeSucc = valueCollatableSuccessorBytes(probeValue);
     if (probeSucc !== null) {
-      // Find the first entry in lt where threshold >= probeSucc
-      // (since threshold > probe is equivalent to threshold >= successor(probe))
       for (const entry of this.lt) {
         if (compareBytes(entry.bytes, probeSucc) >= 0) {
           for (const id of entry.subs) {

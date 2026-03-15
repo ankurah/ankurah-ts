@@ -6,25 +6,16 @@ import {
   Selection as SelectionClass,
   type OrderByItem,
   type ComparisonOperator,
-  type Expr,
-  type Literal,
   PathExpr,
 } from '@ankurah/ankql';
 import type { CollectionId } from '@ankurah/proto';
 import type { Entity } from '../entity.ts';
-import type { Value } from '../value/index.ts';
 import { ValueType, valueType, valueToLiteral } from '../value/index.ts';
 
-// ── GapFetcher Interface ────────────────────────────────────────────
+// ── GapFetcher ────────────────────────────────────────────────────────
+// Rust: pub trait GapFetcher<E: AbstractEntity>: Send + Sync + 'static
+// Divergence: No generic E — uses concrete Entity [E8].
 
-/**
- * Interface for fetching entities to fill gaps when LIMIT causes entities
- * to be evicted from a result set.
- *
- * MIRRORS: Rust trait GapFetcher<E: AbstractEntity>
- * Divergence: No generic E -- uses concrete Entity [E8].
- * Divergence: No Send + Sync bounds -- JS single-threaded [E8].
- */
 export interface GapFetcher {
   fetchGap(
     collectionId: CollectionId,
@@ -34,16 +25,10 @@ export interface GapFetcher {
   ): Promise<Entity[]>;
 }
 
-// ── NodeLike Interface ──────────────────────────────────────────────
+// ── NodeLike ──────────────────────────────────────────────────────────
+// Rust: Uses NodeAndContext::fetch_entities() directly.
+// Divergence: Placeholder interface to break circular import [E8].
 
-/**
- * Minimal interface for the Node dependency used by QueryGapFetcher.
- * Will be replaced by the actual Node type when the node module is
- * fully integrated.
- *
- * MIRRORS: Rust NodeAndContext::fetch_entities()
- * Divergence: Placeholder interface instead of concrete NodeAndContext [E8].
- */
 export interface NodeLike {
   fetchEntities(
     collectionId: CollectionId,
@@ -51,34 +36,31 @@ export interface NodeLike {
   ): Promise<Entity[]>;
 }
 
-// ── QueryGapFetcher ─────────────────────────────────────────────────
+// ── QueryGapFetcher ───────────────────────────────────────────────────
+// Rust: pub struct QueryGapFetcher<SE, PA> { weak_node: Weak<NodeInner<SE, PA>>, cdata: PA::ContextData }
+// Divergence: No SE/PA type params [E8].
+// Divergence: WeakRef instead of Weak<NodeInner> [E8].
+// Divergence: No cdata — node context handles this internally [E8].
 
-/**
- * Concrete implementation of GapFetcher using a Node reference.
- *
- * MIRRORS: Rust struct QueryGapFetcher<SE, PA>
- * Divergence: No StorageEngine/PolicyAgent type params [E8].
- * Divergence: WeakRef instead of Weak<NodeInner> [E8].
- * Divergence: No cdata -- node context handles this internally [E8].
- */
 export class QueryGapFetcher implements GapFetcher {
-  /** Divergence: WeakRef<NodeLike> instead of Weak<NodeInner<SE, PA>> [E8]. */
+  // Rust: weak_node: Weak<NodeInner<SE, PA>>
   private nodeRef: WeakRef<NodeLike>;
 
+  // Rust: pub fn new(node: &Node<SE, PA>, cdata: PA::ContextData) -> Self
   constructor(node: NodeLike) {
     this.nodeRef = new WeakRef(node);
   }
 
+  // Rust: async fn fetch_gap(&self, collection_id, selection, last_entity, gap_size)
   async fetchGap(
     collectionId: CollectionId,
     selection: Selection,
     lastEntity: Entity | null,
     gapSize: number,
   ): Promise<Entity[]> {
-    // Upgrade weak reference -- mirrors Rust self.weak_node.upgrade()
+    // Upgrade weak reference — mirrors Rust self.weak_node.upgrade()
     const node = this.nodeRef.deref();
     if (!node) {
-      // Divergence: throws Error instead of RetrievalError::storage [E7].
       throw new Error('Node has been dropped, cannot fill gap');
     }
 
@@ -101,7 +83,7 @@ export class QueryGapFetcher implements GapFetcher {
         gapSize,
       );
     } else {
-      // No last entity -- use original selection with gap_size limit
+      // No last entity — use original selection with gap_size limit
       gapSelection = new SelectionClass(
         selection.predicate,
         selection.orderBy,
@@ -113,22 +95,16 @@ export class QueryGapFetcher implements GapFetcher {
   }
 }
 
-// ── buildContinuationPredicate ──────────────────────────────────────
+// ── buildContinuationPredicate ────────────────────────────────────────
+// Rust: pub fn build_continuation_predicate<E: AbstractEntity>(...)
+// For ORDER BY a ASC, b DESC with last entity having a=5, b=10:
+// Returns: originalPredicate AND a >= 5 AND b <= 10 AND id != lastEntity.id
+// Divergence: No generic E — uses concrete Entity [E8].
+// Divergence: Throws instead of Result [E7].
 
-/** Value types that are skipped for ORDER BY continuation (not orderable in AnkQL). */
+/** Value types skipped for ORDER BY continuation (not orderable in AnkQL). */
 const SKIP_VALUE_TYPES = new Set<string>(['Object', 'Binary', 'Json']);
 
-/**
- * Build a supplemental predicate to fetch entities after the last entity
- * in sort order.
- *
- * For ORDER BY a ASC, b DESC with last entity having a=5, b=10:
- * Returns: originalPredicate AND a >= 5 AND b <= 10 AND id != lastEntity.id
- *
- * MIRRORS: Rust fn build_continuation_predicate()
- * Divergence: No generic E -- uses Entity [E8].
- * Divergence: Throws instead of Result [E7].
- */
 export function buildContinuationPredicate(
   originalPredicate: Predicate,
   orderBy: OrderByItem[],
@@ -149,7 +125,7 @@ export function buildContinuationPredicate(
       continue;
     }
 
-    // Skip non-orderable types (Object, Binary, Json) -- mirrors Rust continue arm
+    // Skip Object, Binary, Json — not commonly used in ORDER BY (mirrors Rust continue arm)
     if (SKIP_VALUE_TYPES.has(fieldValue.type)) {
       continue;
     }
@@ -195,14 +171,10 @@ export function buildContinuationPredicate(
   }));
 }
 
-// ── inferValueTypeForField ──────────────────────────────────────────
+// ── inferValueTypeForField ────────────────────────────────────────────
+// Rust: pub fn infer_value_type_for_field<E: AbstractEntity>(entities: &[E], field_name: &str) -> ValueType
+// Divergence: No generic E — uses concrete Entity [E8].
 
-/**
- * Infer ValueType from the first non-null value in a collection of entities.
- *
- * MIRRORS: Rust fn infer_value_type_for_field()
- * Divergence: No generic E -- uses Entity [E8].
- */
 export function inferValueTypeForField(
   entities: Entity[],
   fieldName: string,

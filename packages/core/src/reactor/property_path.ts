@@ -5,14 +5,13 @@ import type { Value } from '../value/index.ts';
 import { extractAtPath } from '../value/index.ts';
 import type { Entity } from '../entity.ts';
 
-/**
- * A path to a property value, supporting both simple fields and JSON sub-paths.
- * Used by the watcher system to index and extract values for comparison.
- */
+// Rust: pub struct PropertyPath { root: String, sub_path: Vec<String> }
+// Derives: Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash
+
 export class PropertyPath {
-  /** The root property name (e.g., "context" for "context.task_id") */
+  // Rust: root: String
   readonly root: string;
-  /** The sub-path within the property (e.g., ["task_id"] for "context.task_id"), empty for simple fields */
+  // Rust: sub_path: Vec<String>
   readonly subPath: string[];
 
   constructor(root: string, subPath: string[] = []) {
@@ -20,26 +19,29 @@ export class PropertyPath {
     this.subPath = subPath;
   }
 
-  /** Create a PropertyPath from a PathExpr */
+  // Rust: pub fn from_path(path: &ankql::ast::PathExpr) -> Self
   static fromPath(path: PathExpr): PropertyPath {
     const steps = path.steps;
     return new PropertyPath(steps[0], steps.slice(1));
   }
 
-  /** Create a PropertyPath from a dotted string (e.g., "context.task_id") */
+  // Rust: impl From<&str> for PropertyPath
   static fromString(val: string): PropertyPath {
     return new PropertyPath(val);
   }
 
-  /** Check if this is a simple field (no sub-path) */
+  // Rust: pub fn root(&self) -> &str
+  getRoot(): string {
+    return this.root;
+  }
+
+  // Rust: pub fn is_simple(&self) -> bool
   isSimple(): boolean {
     return this.subPath.length === 0;
   }
 
-  /**
-   * Extract the value at this path from an entity.
-   * For JSON paths, keeps the value wrapped to match index keys.
-   */
+  // Rust: pub fn extract_value<E: super::AbstractEntity>(&self, entity: &E) -> Option<Value>
+  // Divergence: Concrete Entity instead of generic E: AbstractEntity [E8].
   extractValue(entity: Entity): Value | null {
     const rootValue = entity.getPropertyValue(this.root);
     if (rootValue === null) {
@@ -48,7 +50,7 @@ export class PropertyPath {
     if (this.subPath.length === 0) {
       return rootValue;
     }
-    // Extract nested value from JSON/Binary, delegating to extractAtPath
+    // Extract nested value from JSON/Binary, keeping it wrapped as Value::Json to match index keys
     return extractAtPath(rootValue, this.subPath);
   }
 

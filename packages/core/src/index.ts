@@ -98,7 +98,7 @@ export { EntityResultSet, ResultSetWrite, ResultSetRead } from './resultset.ts';
 
 // ── Reactor ──
 export { ComparisonIndex } from './reactor/comparison-index.ts';
-export { PropertyPath } from './reactor/property-path.ts';
+export { PropertyPath } from './reactor/property_path.ts';
 export { CandidateChanges } from './reactor/candidate-changes.ts';
 export { ReactorSubscriptionId, WatcherSet } from './reactor/watcher_set.ts';
 export type { WatcherOp, EntityWatcherId, WatcherChange, WatcherIdPair } from './reactor/watcher_set.ts';

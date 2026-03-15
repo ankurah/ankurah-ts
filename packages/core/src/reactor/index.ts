@@ -3,6 +3,7 @@
 
 import type { CollectionId, EntityId, QueryId, Attested, Event } from '@ankurah/proto';
 import type { Selection } from '@ankurah/ankql';
+import { AsyncMutex } from '@ankurah/base';
 import { Broadcast } from '@ankurah/signals';
 
 import { Entity } from '../entity.ts';
@@ -14,7 +15,6 @@ import {
   Subscription,
   VecAccumulator,
   type ChangeNotification,
-  buildKeySpecFromSelection,
 } from './subscription_state.ts';
 import { ReactorSubscription } from './subscription.ts';
 import {
@@ -26,10 +26,9 @@ import { CandidateChanges } from './candidate-changes.ts';
 import type { GapFetcher } from './fetch_gap.ts';
 
 // ── Re-exports ────────────────────────────────────────────────────────
-// Re-export all sub-module types so consumers can import from reactor/index.
 
 export { ComparisonIndex } from './comparison-index.ts';
-export { PropertyPath } from './property-path.ts';
+export { PropertyPath } from './property_path.ts';
 export { CandidateChanges } from './candidate-changes.ts';
 export {
   ReactorSubscriptionId,
@@ -62,27 +61,16 @@ export type { MembershipChange, ReactorUpdateItem, ReactorUpdate } from './updat
 export { hasMembershipChange } from './update.ts';
 
 // ── PreNotifyHook ─────────────────────────────────────────────────────
-// Mirrors Rust trait PreNotifyHook. The no-op case (Rust `()`) maps to null.
+// Rust: pub trait PreNotifyHook { fn pre_notify(&self, version: u32); }
+// Rust: impl PreNotifyHook for () { fn pre_notify(&self, _version: u32) {} }
+// Divergence: Callback or null instead of trait; null = () no-op [E8].
 
-/**
- * Hook trait for performing actions before notification is sent.
- *
- * Rust: `pub trait PreNotifyHook { fn pre_notify(&self, version: u32); }`
- * Divergence: Callback or null instead of trait [E8].
- */
 export type PreNotifyHook = ((version: number) => void) | null;
 
-// ── NodeLike interface ────────────────────────────────────────────────
-// Minimal interface for Node dependency to break circular imports.
-// Mirrors Rust TNodeErased::fetch_entities_from_local.
+// ── ReactorNodeLike ───────────────────────────────────────────────────
+// Rust: trait TNodeErased<E> { async fn fetch_entities_from_local(...); ... }
+// Divergence: Minimal interface to break circular import [E8].
 
-/**
- * Minimal interface for the Node dependency used by Reactor.
- * Avoids circular import between Reactor and Node.
- *
- * Rust: `trait TNodeErased<E> { async fn fetch_entities_from_local(...); ... }`
- * Divergence: Only the method Reactor actually needs [E8].
- */
 export interface ReactorNodeLike {
   fetchEntitiesFromLocal(
     collectionId: CollectionId,
@@ -91,8 +79,7 @@ export interface ReactorNodeLike {
 }
 
 // ── EntityChangeNotification adapter ──────────────────────────────────
-// EntityChange has `entity` and `events` as properties, but ChangeNotification
-// requires them as methods. This adapter bridges the gap.
+// Bridges EntityChange (properties) to ChangeNotification (methods).
 
 class EntityChangeNotification implements ChangeNotification {
   private readonly _change: EntityChange;
@@ -110,54 +97,22 @@ class EntityChangeNotification implements ChangeNotification {
   }
 }
 
-import { AsyncMutex } from '@ankurah/base';
-
 // ── Reactor ───────────────────────────────────────────────────────────
-// Mirrors Rust struct Reactor<E, Ev>(Arc<ReactorInner<E, Ev>>).
+// Rust: pub struct Reactor<E, Ev>(Arc<ReactorInner<E, Ev>>)
 // Divergence: No generics (concrete Entity + Attested<Event>) [E8].
-// Divergence: No Arc — plain class instance (JS single-threaded) [E8].
-// Divergence: No Mutex on subscriptions — plain Map [E8].
+// Divergence: No Arc/Mutex — single-threaded JS [E8].
 
-/**
- * A Reactor is a collection of subscriptions, which are to be notified
- * of changes to a set of entities.
- *
- * Rust: `pub struct Reactor<E, Ev>(Arc<ReactorInner<E, Ev>>)`
- * Divergence: No generics, Arc, or Mutex — single-threaded JS [E8].
- */
 export class Reactor {
-  /**
-   * Active subscriptions keyed by ReactorSubscriptionId.toKey().
-   * Rust: `std::sync::Mutex<HashMap<ReactorSubscriptionId, Subscription<E, Ev>>>`
-   * Divergence: Plain Map (JS Maps preserve insertion order) [E8].
-   */
+  // Rust: subscriptions: std::sync::Mutex<HashMap<ReactorSubscriptionId, Subscription<E, Ev>>>
   private subscriptions: Map<string, Subscription> = new Map();
-
-  /**
-   * Shared watcher routing table. Same object is passed to all Subscriptions.
-   * Rust: `Arc<std::sync::Mutex<WatcherSet>>`
-   * Divergence: Plain shared reference [E8].
-   */
+  // Rust: watcher_set: Arc<std::sync::Mutex<WatcherSet>>
   private watcherSet: WatcherSet = new WatcherSet();
-
-  /**
-   * Serializes notifyChange invocations to ensure consistent watcher state.
-   * Rust: `tokio::sync::Mutex<()>`
-   * Rust: `tokio::sync::Mutex<()>` → AsyncMutex
-   */
+  // Rust: notify_lock: tokio::sync::Mutex<()>
   private notifyLock: AsyncMutex = new AsyncMutex();
 
-  constructor() {
-    // All fields initialized in declarations.
-  }
+  constructor() {}
 
-  // ── subscribe ─────────────────────────────────────────────────────
-
-  /**
-   * Create a new subscription container.
-   *
-   * Rust: `pub fn subscribe(&self) -> ReactorSubscription<E, Ev>`
-   */
+  // Rust: pub fn subscribe(&self) -> ReactorSubscription<E, Ev>
   subscribe(): ReactorSubscription {
     const broadcast = new Broadcast<import('./update.ts').ReactorUpdate>();
     const subscription = new Subscription(broadcast, this.watcherSet);
@@ -176,13 +131,7 @@ export class Reactor {
     );
   }
 
-  // ── unsubscribe ───────────────────────────────────────────────────
-
-  /**
-   * Remove a subscription and all its predicates.
-   *
-   * Rust: `pub(crate) fn unsubscribe(&self, sub_id: ReactorSubscriptionId) -> Result<(), SubscriptionError>`
-   */
+  // Rust: pub(crate) fn unsubscribe(&self, sub_id) -> Result<(), SubscriptionError>
   unsubscribe(subId: ReactorSubscriptionId): void {
     const subscription = this.subscriptions.get(subId.toKey());
     if (!subscription) {
@@ -211,13 +160,7 @@ export class Reactor {
     }
   }
 
-  // ── removeQuery ───────────────────────────────────────────────────
-
-  /**
-   * Remove a predicate from a subscription.
-   *
-   * Rust: `pub fn remove_query(&self, subscription_id, query_id) -> Result<(), SubscriptionError>`
-   */
+  // Rust: pub fn remove_query(&self, subscription_id, query_id) -> Result<(), SubscriptionError>
   removeQuery(
     subscriptionId: ReactorSubscriptionId,
     queryId: QueryId,
@@ -227,7 +170,6 @@ export class Reactor {
       throw SubscriptionError.subscriptionNotFound();
     }
 
-    // Remove the query from the subscription
     const queryState = subscription.removeQuery(queryId);
     if (!queryState) {
       throw SubscriptionError.predicateNotFound();
@@ -245,19 +187,13 @@ export class Reactor {
     }
   }
 
-  // ── addEntitySubscriptions ────────────────────────────────────────
-
-  /**
-   * Add entity subscriptions to a subscription.
-   *
-   * Rust: `pub fn add_entity_subscriptions(&self, subscription_id, entity_ids)`
-   */
+  // Rust: pub fn add_entity_subscriptions(&self, subscription_id, entity_ids)
   addEntitySubscriptions(
     subscriptionId: ReactorSubscriptionId,
     entityIds: Iterable<EntityId>,
   ): void {
     const subscription = this.subscriptions.get(subscriptionId.toKey());
-    if (!subscription) return; // Silently ignore if not found (matches Rust behavior)
+    if (!subscription) return; // Rust: if let Some(subscription)
 
     for (const entityId of entityIds) {
       subscription.addEntitySubscription(entityId);
@@ -265,24 +201,19 @@ export class Reactor {
     }
   }
 
-  // ── removeEntitySubscriptions ─────────────────────────────────────
-
-  /**
-   * Remove entity subscriptions from a subscription.
-   *
-   * Rust: `pub fn remove_entity_subscriptions(&self, subscription_id, entity_ids)`
-   */
+  // Rust: pub fn remove_entity_subscriptions(&self, subscription_id, entity_ids)
   removeEntitySubscriptions(
     subscriptionId: ReactorSubscriptionId,
     entityIds: Iterable<EntityId>,
   ): void {
     const subscription = this.subscriptions.get(subscriptionId.toKey());
-    if (!subscription) return; // Silently ignore if not found (matches Rust behavior)
+    if (!subscription) return; // Rust: if let Some(subscription)
 
     for (const entityId of entityIds) {
       subscription.removeEntitySubscription(entityId);
 
-      // Only remove from entity_watchers if no predicates still match
+      // TODO: Check if any predicates match this entity before removing from entity_watchers
+      // For now, only remove if no predicates match
       const shouldRemove = !subscription.anyQueryMatches(entityId);
       if (shouldRemove) {
         this.watcherSet.removeEntitySubscription(subscriptionId, entityId);
@@ -290,17 +221,8 @@ export class Reactor {
     }
   }
 
-  // ── addQueryAndNotify ─────────────────────────────────────────────
-
-  /**
-   * Add a new query to a subscription (initial subscription only).
-   * Fails if query_id already exists.
-   *
-   * Collects ReactorUpdateItems and sends them.
-   * pre_notify_hook is called before sending notification.
-   *
-   * Rust: `pub async fn add_query_and_notify<H: PreNotifyHook>(...)`
-   */
+  // Rust: pub async fn add_query_and_notify<H: PreNotifyHook>(...)
+  // Add a query and send initialization notification (for local subscriptions).
   async addQueryAndNotify(
     subscriptionId: ReactorSubscriptionId,
     queryId: QueryId,
@@ -311,7 +233,6 @@ export class Reactor {
     gapFetcher: GapFetcher,
     preNotifyHook: PreNotifyHook = null,
   ): Promise<void> {
-    // Get subscription reference
     const subscription = this.subscriptions.get(subscriptionId.toKey());
     if (!subscription) {
       throw new Error(`Subscription ${subscriptionId} not found`);
@@ -336,6 +257,9 @@ export class Reactor {
     );
 
     // Fill gaps if needed for this specific query
+    // FIXME: Open question — is there a window where entity edits land between the local fetch
+    // above and downstream notification handling (reactor.notify_change + evaluate_changes)
+    // such that we need this gap fill to catch the missed edit-driven gap?
     await subscription.fillGapsForQuery(queryId, accumulator);
 
     // Mark as loaded
@@ -350,15 +274,9 @@ export class Reactor {
     subscription.sendUpdate(accumulator.items);
   }
 
-  // ── updateQueryAndNotify ──────────────────────────────────────────
-
-  /**
-   * Update an existing query (v>0) and send notifications.
-   * Does diffing against the current resultset.
-   * Used by local LiveQuery updates.
-   *
-   * Rust: `pub async fn update_query_and_notify<H: PreNotifyHook>(...)`
-   */
+  // Rust: pub async fn update_query_and_notify<H: PreNotifyHook>(...)
+  // Update an existing predicate (v>0) and send notifications.
+  // Does diffing against the current resultset. Used by local LiveQuery updates.
   async updateQueryAndNotify(
     subscriptionId: ReactorSubscriptionId,
     queryId: QueryId,
@@ -376,7 +294,6 @@ export class Reactor {
     }
 
     const accumulator = new VecAccumulator();
-    // Update query - watcher management is handled internally
     subscription.updateQuery(
       queryId,
       collectionId,
@@ -387,6 +304,8 @@ export class Reactor {
     );
 
     // Fill gaps if needed for this specific query
+    // FIXME: Same open question as add_query_and_notify — do edits that slip in between the
+    // storage fetch and subsequent notify_change path require this gap fill to keep limits tight?
     await subscription.fillGapsForQuery(queryId, accumulator);
 
     // Call pre-notify hook (e.g., mark LiveQuery as initialized)
@@ -400,29 +319,18 @@ export class Reactor {
     }
   }
 
-  // ── notifyChange ──────────────────────────────────────────────────
-
-  /**
-   * Notify subscriptions about entity changes.
-   * Implements the three-phase notification pipeline:
-   *   Phase 1: Accumulate interested watchers from WatcherSet
-   *   Phase 2: Evaluate changes per subscription (CandidateChanges -> membership changes)
-   *   Phase 3: Apply watcher mutations back to WatcherSet
-   *
-   * Rust: `pub async fn notify_change<C: ChangeNotification>(&self, changes: Vec<C>)`
-   * Divergence: Takes EntityChange[] directly and wraps to ChangeNotification [E8].
-   */
+  // Rust: pub async fn notify_change<C: ChangeNotification>(&self, changes: Vec<C>)
+  // Divergence: Takes EntityChange[] directly and wraps to ChangeNotification [E8].
   async notifyChange(changes: EntityChange[]): Promise<void> {
     // Serialize notify_change invocations
     const release = await this.notifyLock.acquire();
     try {
-      // Wrap changes as ChangeNotification for use with the generic pipeline
+      // Wrap changes as ChangeNotification
       const notifications: ChangeNotification[] = changes.map(
         (c) => new EntityChangeNotification(c),
       );
 
-      // ── Phase 1: Accumulate interested watchers ──
-      // Build per-subscription candidate accumulators
+      // Phase 1: Build per-subscription candidate accumulators (first lock of watcher_set)
       const candidatesBySub = new Map<
         string,
         { subscriptionId: ReactorSubscriptionId; candidates: CandidateChanges<ChangeNotification> }
@@ -438,8 +346,7 @@ export class Reactor {
         );
       }
 
-      // ── Phase 2: Evaluate changes per subscription ──
-      // Parallelize evaluate_changes calls across subscriptions (mirrors Rust join_all)
+      // Phase 2: Parallelize evaluate_changes calls across subscriptions
       const evaluations: Promise<WatcherChange[]>[] = [];
 
       for (const [_subKey, { subscriptionId, candidates }] of candidatesBySub) {
@@ -449,11 +356,11 @@ export class Reactor {
         }
       }
 
-      // Await all evaluations
+      // Now await all evaluations (lock is dropped in Rust)
       const results = await Promise.all(evaluations);
       const allWatcherChanges: WatcherChange[] = results.flat();
 
-      // ── Phase 3: Apply watcher changes to WatcherSet ──
+      // Phase 3: Apply all watcher changes to watcher_set (second lock of watcher_set)
       for (const change of allWatcherChanges) {
         this.watcherSet.applyWatcherChange(change);
       }
@@ -462,14 +369,9 @@ export class Reactor {
     }
   }
 
-  // ── systemReset ───────────────────────────────────────────────────
-
-  /**
-   * Notify all subscriptions that their entities have been removed but do not
-   * remove the subscriptions.
-   *
-   * Rust: `pub fn system_reset(&self)`
-   */
+  // Rust: pub fn system_reset(&self)
+  // Notify all subscriptions that their entities have been removed but do not
+  // remove the subscriptions.
   systemReset(): void {
     // Clear entity watchers first - no entities are being watched after reset,
     // because any previously existing entities "stopped existing" as part of the system reset.
@@ -479,4 +381,7 @@ export class Reactor {
       subscription.systemReset();
     }
   }
+
+  // NOTE: Rust has upsert_query on impl Reactor<Entity, Attested<Event>> for remote subscriptions
+  // (server-side). Deferred to Layer 7.
 }

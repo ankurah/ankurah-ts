@@ -67,14 +67,15 @@ Every in-scope Rust source file and its target TS path.
 | 46 | core/src/property/value/pn_counter.rs | packages/core/src/property/value/pn_counter.ts | NO |
 | 47 | core/src/property/value/yrs.rs | packages/core/src/property/value/yrs_string.ts | DONE |
 | 48 | core/src/query_value.rs | packages/core/src/query_value.ts | DONE |
-| 49 | core/src/reactor.rs | packages/core/src/reactor/index.ts | YES |
+| 49 | core/src/reactor.rs | packages/core/src/reactor/index.ts | DONE |
 | 50 | core/src/reactor/candidate_changes.rs | packages/core/src/reactor/candidate_changes.ts | DONE |
 | 50.1 | core/src/reactor/candidate_changes.rs (tests) | packages/core/src/reactor/candidate_changes.test.ts | DONE |
-| 51 | core/src/reactor/comparison_index.rs | packages/core/src/reactor/comparison_index.ts | NO |
-| 52 | core/src/reactor/fetch_gap.rs | packages/core/src/reactor/fetch_gap.ts | YES |
-| 53 | core/src/reactor/property_path.rs | packages/core/src/reactor/property_path.ts | NO |
+| 51 | core/src/reactor/comparison_index.rs | packages/core/src/reactor/comparison_index.ts | DONE |
+| 51.1 | core/src/reactor/comparison_index.rs (tests) | packages/core/src/reactor/comparison_index.test.ts | DONE |
+| 52 | core/src/reactor/fetch_gap.rs | packages/core/src/reactor/fetch_gap.ts | DONE |
+| 53 | core/src/reactor/property_path.rs | packages/core/src/reactor/property_path.ts | DONE |
 | 54 | core/src/reactor/subscription.rs | packages/core/src/reactor/subscription.ts | DONE |
-| 55 | core/src/reactor/subscription_state.rs | packages/core/src/reactor/subscription_state.ts | YES |
+| 55 | core/src/reactor/subscription_state.rs | packages/core/src/reactor/subscription_state.ts | DONE |
 | 56 | core/src/reactor/update.rs | packages/core/src/reactor/update.ts | DONE |
 | 57 | core/src/reactor/watcherset.rs | packages/core/src/reactor/watcherset.ts | NO |
 | 58 | core/src/resultset.rs | packages/core/src/resultset.ts | DONE |
