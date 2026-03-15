@@ -16,7 +16,7 @@ import {
   AttestationSet,
 } from '@ankurah/proto';
 import { RetrievalError, LWWBackend } from '@ankurah/core';
-import { Selection, PathExpr } from '@ankurah/ankql';
+import { Selection, Predicate, ComparisonOperator, Expr, Literal, PathExpr, OrderByItem, OrderDirection } from '@ankurah/ankql';
 import type { Value } from '@ankurah/core';
 
 // ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ describe('MemoryStorageEngine', () => {
     await coll.setState(makeAttestedState(EntityId.new(), collId));
     await coll.setState(makeAttestedState(EntityId.new(), collId));
 
-    const selection = new Selection({ type: 'True' });
+    const selection = new Selection(Predicate.True());
     const results = await coll.fetchStates(selection);
     expect(results.length).toBe(3);
   });
@@ -221,12 +221,13 @@ describe('MemoryStorageEngine', () => {
     await coll.setState(bob);
     await coll.setState(alice2);
 
-    const selection = new Selection({
-      type: 'Comparison',
-      left: { type: 'Path', value: PathExpr.simple('name') },
-      operator: 'Equal',
-      right: { type: 'Literal', value: { type: 'String', value: 'Alice' } },
-    });
+    const selection = new Selection(
+      Predicate.Comparison(
+        Expr.Path(PathExpr.simple('name')),
+        ComparisonOperator.Equal(),
+        Expr.Literal(Literal.String('Alice')),
+      ),
+    );
 
     const results = await coll.fetchStates(selection);
     expect(results.length).toBe(2);
@@ -259,8 +260,8 @@ describe('MemoryStorageEngine', () => {
 
     // ASC order
     const selectionAsc = new Selection(
-      { type: 'True' },
-      [{ path: PathExpr.simple('age'), direction: 'Asc' }],
+      Predicate.True(),
+      [new OrderByItem(PathExpr.simple('age'), OrderDirection.Asc())],
     );
     const ascResults = await coll.fetchStates(selectionAsc);
     expect(ascResults.length).toBe(3);
@@ -270,8 +271,8 @@ describe('MemoryStorageEngine', () => {
 
     // DESC order
     const selectionDesc = new Selection(
-      { type: 'True' },
-      [{ path: PathExpr.simple('age'), direction: 'Desc' }],
+      Predicate.True(),
+      [new OrderByItem(PathExpr.simple('age'), OrderDirection.Desc())],
     );
     const descResults = await coll.fetchStates(selectionDesc);
     expect(descResults.length).toBe(3);
@@ -289,7 +290,7 @@ describe('MemoryStorageEngine', () => {
       await coll.setState(makeAttestedState(EntityId.new(), collId));
     }
 
-    const selection = new Selection({ type: 'True' }, null, 2);
+    const selection = new Selection(Predicate.True(), null, 2);
     const results = await coll.fetchStates(selection);
     expect(results.length).toBe(2);
   });
@@ -299,7 +300,7 @@ describe('MemoryStorageEngine', () => {
     const collId = new CollectionId('test');
     const coll = await engine.collection(collId);
 
-    const selection = new Selection({ type: 'True' });
+    const selection = new Selection(Predicate.True());
     const results = await coll.fetchStates(selection);
     expect(results.length).toBe(0);
   });

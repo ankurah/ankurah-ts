@@ -35,6 +35,13 @@ export class MemoryStorageEngine implements StorageEngine {
     }
     return coll;
   }
+
+  /** Delete all collections and their data. */
+  async deleteAllCollections(): Promise<boolean> {
+    const hadData = this.collections.size > 0;
+    this.collections.clear();
+    return hadData;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -65,18 +72,22 @@ export class MemoryStorageCollection implements StorageCollection {
     return state;
   }
 
-  async setState(state: Attested<EntityState>): Promise<void> {
+  async setState(state: Attested<EntityState>): Promise<boolean> {
     const key = state.payload.entityId.toBase64();
+    const existed = this.states.has(key);
     this.states.set(key, state);
+    return !existed;
   }
 
-  async addEvent(event: Attested<Event>): Promise<void> {
+  async addEvent(event: Attested<Event>): Promise<boolean> {
     const eventId = event.payload.id();
     const key = eventId.toBase64();
     // Idempotent: ON CONFLICT DO NOTHING semantics (matches Rust/SQLite behavior)
     if (!this.events.has(key)) {
       this.events.set(key, event);
+      return true;
     }
+    return false;
   }
 
   async getEvents(eventIds: EventId[]): Promise<Attested<Event>[]> {
@@ -84,6 +95,16 @@ export class MemoryStorageCollection implements StorageCollection {
     for (const id of eventIds) {
       const event = this.events.get(id.toBase64());
       if (event !== undefined) {
+        results.push(event);
+      }
+    }
+    return results;
+  }
+
+  async dumpEntityEvents(id: EntityId): Promise<Attested<Event>[]> {
+    const results: Attested<Event>[] = [];
+    for (const event of this.events.values()) {
+      if (event.payload.entityId.equals(id)) {
         results.push(event);
       }
     }
@@ -184,5 +205,5 @@ function compareForSort(a: Value | null, b: Value | null, direction: OrderDirect
   if (b === null) return 1;
   const cmp = valuePartialCmp(a, b);
   if (cmp === null) return 0;
-  return direction === 'Asc' ? cmp : -cmp;
+  return direction.is('Asc') ? cmp : -cmp;
 }

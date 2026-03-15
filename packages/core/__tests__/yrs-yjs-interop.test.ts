@@ -153,8 +153,8 @@ describe('Yrs<->Yjs V2 interop', () => {
 
     test('two Yjs docs merge concurrently and match fixture content', () => {
       // Reproduce the Rust test_concurrent_merge scenario in Yjs
-      const docA = new Y.Doc({ clientID: 10 });
-      const docB = new Y.Doc({ clientID: 20 });
+      const docA = new Y.Doc(); docA.clientID = 10;
+      const docB = new Y.Doc(); docB.clientID = 20;
 
       const textA = docA.getText('content');
       const textB = docB.getText('content');

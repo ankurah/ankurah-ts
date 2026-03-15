@@ -43,12 +43,16 @@ class MockStorageCollection implements StorageCollection {
     return state;
   }
 
-  async setState(state: Attested<EntityState>): Promise<void> {
-    this.states.set(state.payload.entityId.toString(), state);
+  async setState(state: Attested<EntityState>): Promise<boolean> {
+    const key = state.payload.entityId.toString();
+    const existed = this.states.has(key);
+    this.states.set(key, state);
+    return !existed;
   }
 
-  async addEvent(event: Attested<Event>): Promise<void> {
+  async addEvent(event: Attested<Event>): Promise<boolean> {
     this.events.push(event);
+    return true;
   }
 
   async getEvents(eventIds: EventId[]): Promise<Attested<Event>[]> {
@@ -59,6 +63,10 @@ class MockStorageCollection implements StorageCollection {
 
   async fetchStates(_selection: Selection): Promise<Attested<EntityState>[]> {
     return [...this.states.values()];
+  }
+
+  async dumpEntityEvents(id: EntityId): Promise<Attested<Event>[]> {
+    return this.events.filter((e) => e.payload.entityId.equals(id));
   }
 }
 
@@ -75,6 +83,12 @@ class MockStorageEngine implements StorageEngine {
       this.collections.set(key, col);
     }
     return col;
+  }
+
+  async deleteAllCollections(): Promise<boolean> {
+    const hadData = this.collections.size > 0;
+    this.collections.clear();
+    return hadData;
   }
 }
 
