@@ -33,8 +33,8 @@ type TestEnumV = {
 
 class TestEnum extends Enum<TestEnumV> {
   static Empty = () => new TestEnum('Empty', {});
-  static WithData = (inner: Inner) => new TestEnum('WithData', { inner });
-  static WithPrimitive = (count: number) => new TestEnum('WithPrimitive', { count });
+  static WithData = (v: TestEnumV['WithData']) => new TestEnum('WithData', v);
+  static WithPrimitive = (v: TestEnumV['WithPrimitive']) => new TestEnum('WithPrimitive', v);
 }
 
 // ── AkObject ──
@@ -201,7 +201,7 @@ describe('Enum', () => {
 
   test('match with data variant', () => {
     const inner = new Inner();
-    const e = TestEnum.WithData(inner);
+    const e = TestEnum.WithData({ inner });
     const result = e.match({
       Empty: () => null,
       WithData: (v) => v.inner,
@@ -211,14 +211,14 @@ describe('Enum', () => {
   });
 
   test('is() narrows type', () => {
-    const e = TestEnum.WithPrimitive(42);
+    const e = TestEnum.WithPrimitive({ count: 42 });
     expect(e.is('WithPrimitive')).toBe(true);
     expect(e.is('Empty')).toBe(false);
   });
 
   test('cascade drops variant value fields', () => {
     const inner = new Inner();
-    const e = TestEnum.WithData(inner);
+    const e = TestEnum.WithData({ inner });
     e[disposeSymbol]();
     expect(inner.dropCount).toBe(1);
   });
@@ -230,7 +230,7 @@ describe('Enum', () => {
   });
 
   test('primitive variant fields are skipped', () => {
-    const e = TestEnum.WithPrimitive(42);
+    const e = TestEnum.WithPrimitive({ count: 42 });
     e[disposeSymbol](); // number has no disposeSymbol — should not throw
     expect(e.isDropped).toBe(true);
   });

@@ -6,15 +6,14 @@ import { disposeSymbol } from './drop_registry.ts';
  * V = variant map: { VariantName: DataType, ... }
  * Unit variants use {} (empty object). Data variants use { field: Type, ... }.
  *
- * Example:
- *   type CausalRelationV = {
- *     Equal: {};
- *     DivergedSince: { meet: Clock; subject: Clock; other: Clock };
- *     BudgetExceeded: { subject: Clock; other: Clock };
+ * Usage:
+ *   type DeltaContentV = {
+ *     StateSnapshot: { state: StateFragment };
+ *     EventBridge: { events: EventFragment[] };
  *   };
- *   class CausalRelation extends Enum<CausalRelationV> {
- *     static Equal = () => new CausalRelation('Equal', {});
- *     static DivergedSince = (v: CausalRelationV['DivergedSince']) => new CausalRelation('DivergedSince', v);
+ *   class DeltaContent extends Enum<DeltaContentV> {
+ *     static StateSnapshot = (v: DeltaContentV['StateSnapshot']) => new DeltaContent('StateSnapshot', v);
+ *     static EventBridge = (v: DeltaContentV['EventBridge']) => new DeltaContent('EventBridge', v);
  *   }
  */
 export class Enum<V extends Record<string, object> = Record<string, object>> extends AkObject {
@@ -39,10 +38,7 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
 
   override [disposeSymbol](): void {
     if (this.isDropped) return;
-    // super handles: #dropped flag, FR, drop(), own-property cascade
     super[disposeSymbol]();
-    // Then cascade into variant value's fields (not reached by AkObject's cascade
-    // because they're on this.value, not on this)
     for (const key of Object.getOwnPropertyNames(this.value)) {
       const field = (this.value as any)[key];
       if (typeof field?.[disposeSymbol] === 'function') {

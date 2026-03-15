@@ -61,35 +61,93 @@ For files that have NO Rust counterpart (e.g., React Native hooks, polyfill boot
 
 | Rust | TypeScript | Notes |
 |------|-----------|-------|
-| `struct Foo { ... }` | `class Foo { ... }` | Fields become class properties |
-| `enum Foo { A, B(T) }` | `type Foo = { type: 'A' } \| { type: 'B'; value: T }` | Discriminated union for data enums |
+| `struct Foo { ... }` | `class Foo extends Struct { ... }` | All structs extend `Struct` from `@ankurah/base` |
+| `enum Foo { A, B(T) }` | `class Foo extends Enum<FooV> { ... }` | See Enum pattern below |
+| `impl Drop for T` | `class T extends Drop` | Override `drop()` for custom cleanup. Call `super.drop()`. |
 | `trait Foo { ... }` | `interface Foo { ... }` | Unless it has default impls (see E7) |
 | `trait Foo` with default impls | `abstract class Foo` or mixin | See Exception E7 |
 | `impl Trait for Struct` | `class Struct implements Interface` | See Exception E4 |
 | `impl Struct { ... }` | Methods inside `class Struct { ... }` | See Exception E4 |
 | Generics `<T: Trait>` | Generics `<T extends Interface>` | Direct mapping |
-| `Result<T, E>` | Throw with typed `Error` subclass | Per architectural-decisions.md |
+| `Result<T, E>` | Throw with typed `Error` subclass | Per decisions.md |
 | `Option<T>` | `T \| null` | |
-| `Arc<T>` / `Rc<T>` | Plain reference | GC handles lifetimes (see E8) |
-| `RwLock<T>` / `Mutex<T>` | Plain property | Single-threaded JS (see E8) |
+| `Arc<T>` | `Arc<T>` | From `@ankurah/base`. Refcounted shared ownership. |
+| `Rc<T>` | `Arc<T>` | Same as Arc (no threading distinction in JS) |
+| `Weak<T>` | `Weak<T>` | From `@ankurah/base`. `upgrade()` returns `Arc<T> \| null`. |
+| `&T` (in struct fields) | `Borrow<T>` | From `@ankurah/base`. Non-owning, no-op dispose. |
+| `&mut T` (in struct fields) | `BorrowMut<T>` | From `@ankurah/base`. Non-owning mutable, no-op dispose. |
+| `Mutex<T>` | `Mutex<T>` | From `@ankurah/base`. `using guard = mutex.lock()`. |
+| `RwLock<T>` | `Mutex<T>` | Same as Mutex (no reader/writer distinction in JS) |
+| `tokio::sync::Mutex` | `AsyncMutex` | From `@ankurah/base`. Async serialization. |
+| `RefCell<T>` | `RefCell<T>` | From `@ankurah/base`. `borrow()` / `borrow_mut()`. |
 | `Box<dyn Trait>` | Interface type directly | No boxing needed in TS |
+| `AtomicBool` | `boolean` | Single-threaded JS |
+| `AtomicU32` / `AtomicUsize` | `number` | Single-threaded JS |
 | `Vec<T>` | `T[]` or `Array<T>` | |
 | `HashMap<K,V>` / `BTreeMap<K,V>` | `Map<K,V>` | |
 | `HashSet<T>` / `BTreeSet<T>` | `Set<T>` | |
-| `String` | `string` | |
-| `&str` | `string` | |
+| `String` / `&str` | `string` | |
 | `Vec<u8>` / `&[u8]` | `Uint8Array` | |
 | `bool` | `boolean` | |
 | `i16` / `i32` | `number` | |
-| `i64` / `u64` | `bigint` or `number` | Context-dependent; see architectural-decisions.md |
+| `i64` / `u64` | `bigint` or `number` | Context-dependent; see decisions.md |
 | `f64` | `number` | |
 | `usize` | `number` | |
+
+### A6a. Enum Pattern
+
+Rust enums map to `class Foo extends Enum<V>` where `V` is a variant type map. Unit variants use `{}`. Static methods construct each variant.
+
+```rust
+// Rust
+enum DeltaContent {
+    StateSnapshot { state: StateFragment },
+    EventBridge { events: Vec<EventFragment> },
+}
+```
+
+```typescript
+// TS
+type DeltaContentV = {
+  StateSnapshot: { state: StateFragment };
+  EventBridge: { events: EventFragment[] };
+};
+class DeltaContent extends Enum<DeltaContentV> {
+  // impl methods go here
+}
+
+// Construction — mirrors Rust DeltaContent::StateSnapshot { state }
+new DeltaContent('StateSnapshot', { state })
+new DeltaContent('EventBridge', { events })
+```
+
+`match` statements become `.match({})`:
+```rust
+match content {
+    DeltaContent::StateSnapshot { state } => handle_state(state),
+    DeltaContent::EventBridge { events } => handle_events(events),
+}
+```
+```typescript
+content.match({
+  StateSnapshot: (v) => handleState(v.state),
+  EventBridge: (v) => handleEvents(v.events),
+});
+```
+
+`if let` becomes `.is()`:
+```rust
+if let DeltaContent::StateSnapshot { state } = content { ... }
+```
+```typescript
+if (content.is('StateSnapshot')) { const state = content.value.state; ... }
+```
 
 ### A7. Derive Macro Mapping
 
 | Rust Derive | TypeScript Equivalent | Notes |
 |------------|----------------------|-------|
-| `#[derive(Clone)]` | No equivalent needed | TS uses reference semantics (see E8) |
+| `#[derive(Clone)]` | Implement `clone()` method | For `Arc<T>`, use `arc.clone()`. For structs, implement field-by-field clone if needed. |
 | `#[derive(Debug)]` | `toString()` method | Add if useful for debugging |
 | `#[derive(PartialEq, Eq)]` | Custom `equals()` method | If equality comparison is needed |
 | `#[derive(Serialize, Deserialize)]` | Bincode codec functions | Per wire-format-interop.md |
@@ -264,11 +322,11 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 - **TS equivalent**: `abstract class Foo { bar(): void { defaultImpl() } }` or mixin pattern.
 - **Justification**: TypeScript interfaces cannot have method implementations. When a Rust trait provides default implementations, the TS equivalent must be an abstract class or use a mixin pattern.
 
-### E8: Concurrency Primitives Eliminated
+### E8: Concurrency Primitives Mapped to @ankurah/base
 
-- **Rust pattern**: `Arc<T>`, `Rc<T>`, `RwLock<T>`, `Mutex<T>`, `AtomicBool`, `Send + Sync` bounds.
-- **TS equivalent**: Plain references, plain properties, no thread-safety annotations.
-- **Justification**: JavaScript is single-threaded. Garbage collection handles reference counting. No locks or atomic operations are needed. This is a simplification, not a divergence in behavior.
+- **Rust pattern**: `Arc<T>`, `Rc<T>`, `Mutex<T>`, `RwLock<T>`, `RefCell<T>`, `Weak<T>`, `AtomicBool`, `Send + Sync` bounds.
+- **TS equivalent**: Provided types from `@ankurah/base` that mirror the Rust API shape. `Arc<T>` provides refcounted shared ownership. `Mutex<T>` provides guard-based access. `AtomicBool`/`AtomicU32` become plain `boolean`/`number`. `Send + Sync` bounds are removed.
+- **Justification**: JS is single-threaded, but the ownership semantics (refcounting, Drop cascade, borrow checking) must be preserved for correctness. The provided types absorb the JS complexity so translated code reads like the Rust source.
 
 ### E9: WASM-Only Modules Skipped
 
@@ -282,11 +340,11 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 - **TS equivalent**: No TS file created.
 - **Justification**: PostgreSQL support is out of scope for Phase 1. The feature-gated module provides Postgres-specific type conversions not needed in the TS port.
 
-### E11: Drop Semantics -> Dispose Pattern
+### E11: Drop Semantics -> @ankurah/base Drop + AkObject
 
-- **Rust pattern**: `impl Drop for Transaction { fn drop(&mut self) { self.alive = false; } }` for automatic cleanup.
-- **TS equivalent**: Explicit `dispose()` method, `Symbol.dispose` (ES2023), or `try/finally` pattern.
-- **Justification**: TypeScript/JavaScript has no deterministic destructors. Resource cleanup must be explicit. The `using` declaration with `Symbol.dispose` is the closest equivalent but requires runtime support.
+- **Rust pattern**: `impl Drop for T { fn drop(&mut self) { ... } }` for custom cleanup. Automatic drop cascade for all owned fields.
+- **TS equivalent**: `class T extends Drop` with `drop()` override for custom cleanup. All structs extend `Struct` (via `AkObject`) which provides automatic drop cascade via `[Symbol.dispose]()`. `using` declarations trigger cleanup at block exit.
+- **Justification**: JS has no deterministic destructors. `@ankurah/base` provides `AkObject` (auto-cascade), `Drop` (custom cleanup), `Arc` (refcounted ownership), `Borrow`/`BorrowMut` (non-owning, no cascade), matching Rust's ownership model as closely as possible.
 
 ### E12: File-With-Submodules -> Directory with index.ts
 
