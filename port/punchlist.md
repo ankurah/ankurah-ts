@@ -38,7 +38,8 @@ Every in-scope Rust source file and its target TS path.
 | 20 | core/src/context.rs | packages/core/src/context.ts | DONE |
 | 21 | core/src/entity.rs | packages/core/src/entity.ts | DONE |
 | 22 | core/src/error.rs | packages/core/src/error.ts | DONE |
-| 23 | core/src/indexing/encoding.rs | packages/core/src/indexing/encoding.ts | YES |
+| 23 | core/src/indexing/encoding.rs | packages/core/src/indexing/encoding.ts | DONE |
+| 23.1 | core/src/indexing/encoding.rs (tests) | packages/core/__tests__/encoding.test.ts | DONE |
 | 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | DONE |
 | 24.1 | core/src/indexing/key_spec.rs (tests) | packages/core/__tests__/key_spec.test.ts | DONE |
 | 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | DONE |
@@ -88,7 +89,7 @@ Every in-scope Rust source file and its target TS path.
 | 62 | core/src/selection/mod.rs | packages/core/src/selection/index.ts | DONE |
 | 63 | core/src/storage.rs | packages/core/src/storage.ts | DONE |
 | 64 | core/src/system.rs | packages/core/src/system.ts | DONE |
-| 65 | core/src/task.rs | packages/core/src/task.ts | NO |
+| 65 | core/src/task.rs | packages/core/src/task.ts | DONE |
 | 66 | core/src/traits.rs | packages/core/src/traits.ts | NO |
 | 67 | core/src/transaction.rs | packages/core/src/transaction.ts | DONE |
 | 68 | core/src/type_resolver.rs | packages/core/src/type_resolver.ts | NO |
@@ -235,9 +236,9 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust test file | TS target | Exists? |
 |---|---------------|-----------|--------|
-| T1 | signals/tests/basic.rs | packages/signals/__tests__/basic.test.ts | YES |
-| T2 | signals/tests/observer.rs | packages/signals/__tests__/observer.test.ts | NO |
-| T3 | signals/tests/observer_context.rs | packages/signals/__tests__/observer_context.test.ts | NO |
+| T1 | signals/tests/basic.rs | packages/signals/__tests__/basic.test.ts | DONE |
+| T2 | signals/tests/observer.rs | packages/signals/__tests__/observer.test.ts | DONE |
+| T3 | signals/tests/observer_context.rs | packages/signals/__tests__/observer_context.test.ts | DONE |
 | T4 | signals/tests/common.rs | (test helper, not a test file) | - |
 
 ### storage/sqlite/tests/
