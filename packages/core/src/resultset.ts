@@ -9,6 +9,7 @@ import {
   type Signal,
 } from '@ankurah/signals';
 
+import { Disposable } from '@ankurah/std';
 import { Entity } from './entity.ts';
 import type { Value } from './value/index.ts';
 import { extractAtPath } from './value/index.ts';
@@ -154,15 +155,16 @@ function binarySearchInsertPos(order: EntityEntry[], entry: EntityEntry): number
 // Rust: `pub struct ResultSetWrite<'a, E: AbstractEntity = Entity>`
 // Divergence: No lifetime parameter — JS has no lifetimes [E8].
 // Divergence: No MutexGuard — single-threaded JS [E8].
-// Divergence: done() replaces Rust Drop [E11].
+// Divergence: impl Drop -> extends Disposable [E11].
 
-export class ResultSetWrite {
+export class ResultSetWrite extends Disposable {
   private resultset: EntityResultSet;
   private changed: boolean;
   private state: ResultSetState;
 
   /** @internal */
   constructor(resultset: EntityResultSet, state: ResultSetState) {
+    super('ResultSetWrite', 'fatal');
     this.resultset = resultset;
     this.changed = false;
     this.state = state;
@@ -374,12 +376,20 @@ export class ResultSetWrite {
 
   /**
    * Finish the write operation — broadcasts if changed.
-   * Divergence: Replaces Rust Drop impl [E11].
+   * Mirrors Rust Drop impl for ResultSetWrite [E11].
    */
-  done(): void {
+  protected onDispose(): void {
     if (this.changed) {
       this.resultset._broadcast();
     }
+  }
+
+  /**
+   * Compatibility alias — prefer `using` or explicit `dispose()`.
+   * @deprecated Use `dispose()` or `using` instead.
+   */
+  done(): void {
+    this.dispose();
   }
 }
 

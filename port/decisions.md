@@ -148,10 +148,10 @@ Packages with no direct Rust crate equivalent:
 
 ## Async Serialization
 
-- **Reactor notification pipeline**: Uses `PromiseMutex` (mirrors Rust's `tokio::sync::Mutex<()> notify_lock`).
-- **WatcherSet gap-fill**: Fire-and-forget `fillGapsAndNotify()` mutates WatcherSet outside notify lock. Needs awaiting or its own PromiseMutex.
+- **Reactor notification pipeline**: Uses `AsyncMutex` (mirrors Rust's `tokio::sync::Mutex<()> notify_lock`).
+- **WatcherSet gap-fill**: Fire-and-forget `fillGapsAndNotify()` mutates WatcherSet outside notify lock. Needs awaiting or its own AsyncMutex.
 - **LiveQuery activation**: Concurrent activations can race (same bug in Rust, issue #146). Needs serialization.
-- **SystemManager lifecycle**: Low risk, initialization-time only. Consider PromiseMutex if connector porting surfaces races.
+- **SystemManager lifecycle**: Low risk, initialization-time only. Consider AsyncMutex if connector porting surfaces races.
 
 ## Known Gotchas
 

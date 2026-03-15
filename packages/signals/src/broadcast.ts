@@ -1,5 +1,7 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
 
+import { Disposable } from '@ankurah/std';
+
 /**
  * A unique identifier for a broadcast that cannot be forged or extracted.
  * Can only be created by a Broadcast and used for deduplication/comparison.
@@ -47,15 +49,16 @@ export interface TListenerGuard {
 
 /**
  * A subscription handle that can be used to unsubscribe from notifications.
- * In Rust, Drop automatically unsubscribes. In JS, call dispose() explicitly.
+ * Divergence: impl Drop -> extends Disposable [E11].
  */
-export class ListenerGuard<T = void> implements TListenerGuard {
+export class ListenerGuard<T = void> extends Disposable implements TListenerGuard {
   private inner: Inner<T> | null;
   private id: number;
   private _broadcastId: BroadcastId;
 
   /** @internal */
   constructor(inner: Inner<T>, id: number, broadcastId: BroadcastId) {
+    super('ListenerGuard', 'warning');
     this.inner = inner;
     this.id = id;
     this._broadcastId = broadcastId;
@@ -66,8 +69,8 @@ export class ListenerGuard<T = void> implements TListenerGuard {
     return this._broadcastId;
   }
 
-  /** Unsubscribe from the broadcast (equivalent to Rust's Drop) */
-  dispose(): void {
+  /** Unsubscribe from the broadcast (mirrors Rust's Drop) */
+  protected onDispose(): void {
     if (this.inner !== null) {
       this.inner.listeners.delete(this.id);
       this.inner = null;

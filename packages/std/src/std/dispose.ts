@@ -5,11 +5,11 @@
 // is non-deterministic and provides no destructor hook.
 //
 // This module provides:
-//   - Disposable: abstract base class for types with mandatory RAII
+//   - Disposable: abstract base class for types with mandatory RAII (maps to impl Drop)
 //   - DisposeGuard: composition-based alternative when inheritance isn't possible
-//   - RefCell<T>: runtime borrow checking for scoped-mutation patterns
+//   - disposeSymbol: polyfill for Symbol.dispose
 //
-// See specs/memory-model.md for the full design rationale.
+// See port/ownership.md for the full design rationale.
 
 // ── Symbol.dispose polyfill ──────────────────────────────────────────────
 // ES2023 introduced Symbol.dispose for the `using` declaration. Not all
@@ -26,27 +26,36 @@ export const disposeSymbol: typeof Symbol.dispose =
 // ── FinalizationRegistry (diagnostic only) ───────────────────────────────
 // Shared by all Disposable instances and DisposeGuard instances.
 // When an object is garbage collected WITHOUT dispose() having been called,
-// we log a loud error. This is purely diagnostic — it cannot perform cleanup
-// because by the time the callback fires, the original object is already gone.
+// the severity determines the response:
+//   - 'fatal': queueMicrotask(() => { throw ... }) — crashes hard
+//   - 'warning': console.error — diagnostic only
 
 interface leak_info {
   label: string;
   creationStack: string;
+  severity: 'fatal' | 'warning';
 }
 
-const leakRegistry = new FinalizationRegistry<leak_info>((info) => {
-  console.error(
+export const leakRegistry = new FinalizationRegistry<leak_info>((info) => {
+  const message =
     `BUG: ${info.label} was garbage collected without being disposed. ` +
     `This indicates a missing dispose() call or a missing 'using' declaration.\n` +
-    `Allocated at:\n${info.creationStack}`,
-  );
+    `Allocated at:\n${info.creationStack}`;
+
+  if (info.severity === 'fatal') {
+    queueMicrotask(() => {
+      throw new Error(message);
+    });
+  } else {
+    console.error(message);
+  }
 });
 
 // ── Disposable base class ────────────────────────────────────────────────
 //
 // Abstract base class. Standard path for any type with mandatory RAII behavior.
 // "Mandatory RAII" = types that have impl Drop in Rust, OR types that own
-// fields with impl Drop (vicarious RAII — see specs/memory-model.md Section 10).
+// fields with impl Drop (vicarious RAII — see port/ownership.md).
 //
 // Provides:
 //   - Auto-registration with FinalizationRegistry (diagnostic on GC-without-dispose)
@@ -64,10 +73,15 @@ export abstract class Disposable {
   #disposed = false;
   readonly #label: string;
 
-  constructor(label: string) {
+  /**
+   * @param label — human-readable name for diagnostics
+   * @param severity — 'fatal' crashes on leak (correctness-critical),
+   *                    'warning' logs on leak (resource hygiene). Default: 'warning'.
+   */
+  constructor(label: string, severity: 'fatal' | 'warning' = 'warning') {
     this.#label = label;
     const creationStack = new Error(`${label} allocated`).stack ?? '(no stack available)';
-    leakRegistry.register(this, { label, creationStack }, this);
+    leakRegistry.register(this, { label, creationStack, severity }, this);
   }
 
   /**
@@ -137,11 +151,12 @@ export class DisposeGuard {
   /**
    * @param host — the owning object (registered with FinalizationRegistry)
    * @param label — human-readable name for diagnostics
+   * @param severity — 'fatal' or 'warning' (default: 'warning')
    */
-  constructor(host: object, label: string) {
+  constructor(host: object, label: string, severity: 'fatal' | 'warning' = 'warning') {
     this.#label = label;
     const creationStack = new Error(`${label} allocated`).stack ?? '(no stack available)';
-    leakRegistry.register(host, { label, creationStack }, host);
+    leakRegistry.register(host, { label, creationStack, severity }, host);
   }
 
   /**
@@ -165,97 +180,5 @@ export class DisposeGuard {
 
   get isDisposed(): boolean {
     return this.#disposed;
-  }
-}
-
-// ── RefCell<T> ───────────────────────────────────────────────────────────
-//
-// Enforces single-writer / multiple-reader borrowing discipline at runtime.
-// Maps to Rust's RefCell<T> runtime borrow checking.
-//
-// In Rust, types like ResultSetWrite use RwLock/Mutex primarily for
-// Drop-on-release semantics (broadcast notification when the write guard
-// drops) rather than thread safety. In single-threaded JS we don't need
-// locking, but we DO need:
-//   1. Re-entrancy protection (no nested mutable borrows)
-//   2. Guaranteed cleanup via try/finally (the "scoped mutation" pattern)
-//   3. An optional onMutRelease callback (e.g., broadcast changes)
-//
-// Usage:
-//   const cell = new RefCell(resultSet);
-//   cell.withMut((rs) => { rs.add(entity); });
-//   // onMutRelease fires here, e.g., broadcasting change notification
-//
-//   // Throws if re-entrant:
-//   cell.withMut(() => { cell.withMut(() => {}); });
-//   // -> Error: RefCell<...> already mutably borrowed
-
-type BorrowState =
-  | { kind: 'not_borrowed' }
-  | { kind: 'shared'; count: number }
-  | { kind: 'mut_borrowed' };
-
-export class RefCell<T> {
-  readonly #value: T;
-  #state: BorrowState = { kind: 'not_borrowed' };
-  readonly #onMutRelease: (() => void) | undefined;
-  readonly #label: string;
-
-  /**
-   * @param value — the wrapped value
-   * @param options.onMutRelease — called after each withMut() completes (in the finally block)
-   * @param options.label — human-readable name for error messages (default: 'RefCell')
-   */
-  constructor(value: T, options?: { onMutRelease?: () => void; label?: string }) {
-    this.#value = value;
-    this.#onMutRelease = options?.onMutRelease;
-    this.#label = options?.label ?? 'RefCell';
-  }
-
-  /**
-   * Exclusive mutable access. Throws if any borrow (shared or mutable) is active.
-   * Runs `fn` in try/finally; the onMutRelease callback fires in the finally block
-   * after fn completes (whether it throws or not).
-   */
-  withMut<R>(fn: (value: T) => R): R {
-    if (this.#state.kind !== 'not_borrowed') {
-      if (this.#state.kind === 'mut_borrowed') {
-        throw new Error(`${this.#label} already mutably borrowed`);
-      }
-      throw new Error(`${this.#label} already shared-borrowed (count: ${this.#state.count})`);
-    }
-    this.#state = { kind: 'mut_borrowed' };
-    try {
-      return fn(this.#value);
-    } finally {
-      this.#state = { kind: 'not_borrowed' };
-      this.#onMutRelease?.();
-    }
-  }
-
-  /**
-   * Shared read-only access. Throws if a mutable borrow is active.
-   * Multiple shared borrows can be active simultaneously.
-   */
-  withRef<R>(fn: (value: T) => R): R {
-    if (this.#state.kind === 'mut_borrowed') {
-      throw new Error(`${this.#label} already mutably borrowed — cannot take shared borrow`);
-    }
-    if (this.#state.kind === 'shared') {
-      this.#state = { kind: 'shared', count: this.#state.count + 1 };
-    } else {
-      this.#state = { kind: 'shared', count: 1 };
-    }
-    try {
-      return fn(this.#value);
-    } finally {
-      if (this.#state.kind === 'shared') {
-        if (this.#state.count <= 1) {
-          this.#state = { kind: 'not_borrowed' };
-        } else {
-          this.#state = { kind: 'shared', count: this.#state.count - 1 };
-        }
-      }
-    }
   }
 }

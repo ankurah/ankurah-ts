@@ -325,47 +325,48 @@ export class Subscription {
     }
 
     // Create write guard for atomic updates
-    const rwResultset = queryState.resultset.write();
     const newlyAdded: Entity[] = [];
+    const removedEntities: EntityId[] = [];
+    {
+      using rwResultset = queryState.resultset.write();
 
-    // Mark all entities dirty for re-evaluation
-    rwResultset.markAllDirty();
+      // Mark all entities dirty for re-evaluation
+      rwResultset.markAllDirty();
 
-    // Process included entities (only truly new ones from remote)
-    for (const entity of includedEntities) {
-      if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
-        const entityId = entity.id();
+      // Process included entities (only truly new ones from remote)
+      for (const entity of includedEntities) {
+        if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
+          const entityId = entity.id();
 
-        // Check if this is truly new to the resultset
-        if (!rwResultset.contains(entityId)) {
-          rwResultset.add(entity);
-          this._entities.set(entityId.toBase64(), entity);
-          this._entitySubscriptions.add(entityId.toBase64());
-          reactorUpdates.pushInitial(entity, queryId);
-          newlyAdded.push(entity);
+          // Check if this is truly new to the resultset
+          if (!rwResultset.contains(entityId)) {
+            rwResultset.add(entity);
+            this._entities.set(entityId.toBase64(), entity);
+            this._entitySubscriptions.add(entityId.toBase64());
+            reactorUpdates.pushInitial(entity, queryId);
+            newlyAdded.push(entity);
+          }
         }
       }
-    }
 
-    // Remove entities that no longer match the new predicate
-    const removedEntities: EntityId[] = [];
-    rwResultset.retainDirty((entity: Entity) => {
-      if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
-        return true;
-      }
-      const entityId = entity.id();
-      removedEntities.push(entityId);
-      reactorUpdates.pushRemove(entity, queryId);
-      return false;
-    });
+      // Remove entities that no longer match the new predicate
+      rwResultset.retainDirty((entity: Entity) => {
+        if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
+          return true;
+        }
+        const entityId = entity.id();
+        removedEntities.push(entityId);
+        reactorUpdates.pushRemove(entity, queryId);
+        return false;
+      });
 
-    // Unpause now that update is complete
-    queryState.paused = false;
-    queryState.version = version;
+      // Unpause now that update is complete
+      queryState.paused = false;
+      queryState.version = version;
 
-    // Set loaded as part of the write transaction
-    rwResultset.setLoaded(true);
-    rwResultset.done();
+      // Set loaded as part of the write transaction
+      rwResultset.setLoaded(true);
+    } // rwResultset disposed here -> broadcasts if changed
 
     // Update predicate watchers (setup on first update, or update if predicate changed)
     let shouldUpdateWatchers = false;
@@ -461,17 +462,13 @@ export class Subscription {
 
         if (!didMatch && matches) {
           // Entity now matches -- add to matching set
-          const rw = queryState.resultset.write();
-          rw.add(entity);
-          rw.done();
+          { using rw = queryState.resultset.write(); rw.add(entity); }
           this._entities.set(entityKey, entity);
           watcherChanges.push(watcherChangeAdd(entityId, this._id, queryId));
           membershipChange = 'Add';
         } else if (didMatch && !matches) {
           // Entity no longer matches -- remove from matching set
-          const rw = queryState.resultset.write();
-          rw.remove(entityId);
-          rw.done();
+          { using rw = queryState.resultset.write(); rw.remove(entityId); }
           watcherChanges.push(watcherChangeRemove(entityId, this._id, queryId));
           membershipChange = 'Remove';
         } else {
@@ -666,16 +663,15 @@ export class Subscription {
       );
 
       if (gapEntities.length > 0) {
-        const rw = gap.resultset.write();
         const addedEntities: Entity[] = [];
-
-        for (const entity of gapEntities) {
-          if (rw.add(entity)) {
-            addedEntities.push(entity);
+        {
+          using rw = gap.resultset.write();
+          for (const entity of gapEntities) {
+            if (rw.add(entity)) {
+              addedEntities.push(entity);
+            }
           }
         }
-
-        rw.done();
         return addedEntities;
       }
 
@@ -742,20 +738,19 @@ export class Subscription {
       );
 
       if (gapEntities.length > 0) {
-        const rw = gap.resultset.write();
         const gapItems: ReactorUpdateItem[] = [];
-
-        for (const entity of gapEntities) {
-          if (rw.add(entity)) {
-            gapItems.push({
-              entity,
-              events: [],
-              predicateRelevance: [[gap.queryId, 'Add']],
-            });
+        {
+          using rw = gap.resultset.write();
+          for (const entity of gapEntities) {
+            if (rw.add(entity)) {
+              gapItems.push({
+                entity,
+                events: [],
+                predicateRelevance: [[gap.queryId, 'Add']],
+              });
+            }
           }
         }
-
-        rw.done();
         return { queryId: gap.queryId, gapItems };
       }
 

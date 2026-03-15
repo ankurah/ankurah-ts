@@ -135,7 +135,7 @@ export type { RemoteQuerySubscriber } from './livequery.ts';
 // ── NodeApplier ──
 export { NodeApplier } from './node_applier.ts';
 
-// ── Disposable / RAII ── (TS-ONLY: maps Rust Drop trait to JS disposal model, see E11)
-export { Disposable, DisposeGuard, RefCell, disposeSymbol } from './disposable.ts';
+// ── std (TS-ONLY: Rust std-equivalent provided types for ownership model, see E11)
+export { Disposable, DisposeGuard, disposeSymbol, RefCell, Ref, RefMut, Mutex, MutexGuard } from '@ankurah/std';
 
 // TODO: Port remaining types from ankurah/core/src/ (peer_subscription)

@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/core/src/transaction.rs
 
 import { TransactionId, type CollectionId, type EntityId } from '@ankurah/proto';
+import { disposeSymbol } from '@ankurah/std';
 import type { TContext } from './context.ts';
 import type { Entity } from './entity.ts';
 import { MutationError, type RetrievalError } from './error.ts';
@@ -113,6 +114,9 @@ export class Transaction {
     model: ModelDefinition<V, M>,
     values: Record<string, unknown> = {},
   ): Promise<MutableBorrow<M>> {
+    if (!this.alive.value) {
+      throw new MutationError('General', 'Transaction has been consumed');
+    }
     const entity = this.dyncontext.createEntity(model.collection(), this.alive);
     model.initializeNewEntity(entity, values);
     this.dyncontext.checkWrite(entity);
@@ -140,6 +144,9 @@ export class Transaction {
     model: ModelDefinition<V, M>,
     id: EntityId,
   ): Promise<MutableBorrow<M>> {
+    if (!this.alive.value) {
+      throw new MutationError('General', 'Transaction has been consumed');
+    }
     // Check transaction-local first
     const existing = this.getTrxEntity(id);
     if (existing) {
@@ -175,6 +182,9 @@ export class Transaction {
     model: ModelDefinition<V, M>,
     entity: Entity,
   ): MutableBorrow<M> {
+    if (!this.alive.value) {
+      throw new MutationError('General', 'Transaction has been consumed');
+    }
     // Check transaction-local first
     const existing = this.getTrxEntity(entity.id());
     if (existing) {
@@ -214,5 +224,18 @@ export class Transaction {
    */
   rollback(): void {
     this.alive.value = false;
+  }
+
+  /**
+   * Symbol.dispose support for `using` declarations [E11].
+   * Auto-rollback on scope exit if the transaction is still alive
+   * (i.e., was not committed or rolled back explicitly).
+   *
+   * Rust: `impl Drop for Transaction { fn drop(&mut self) { self.rollback(); } }`
+   */
+  [disposeSymbol](): void {
+    if (this.alive.value) {
+      this.rollback();
+    }
   }
 }

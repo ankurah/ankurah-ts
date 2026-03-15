@@ -110,16 +110,15 @@ class EntityChangeNotification implements ChangeNotification {
   }
 }
 
-// ── PromiseMutex ──────────────────────────────────────────────────────
-// Serializes async operations. Replaces Rust `tokio::sync::Mutex<()>`.
+// ── AsyncMutex ───────────────────────────────────────────────────────
+// Serializes async operations. 1:1 equivalent of Rust `tokio::sync::Mutex<()>`.
 
 /**
- * Simple promise-based mutex for serializing async operations.
+ * Async mutex for serializing async operations across await points.
  *
  * Rust: `tokio::sync::Mutex<()>` used for notify_lock
- * Divergence: Promise chain instead of async Mutex [E8].
  */
-class PromiseMutex {
+class AsyncMutex {
   private queue: Promise<void> = Promise.resolve();
 
   async acquire(): Promise<() => void> {
@@ -165,9 +164,9 @@ export class Reactor {
   /**
    * Serializes notifyChange invocations to ensure consistent watcher state.
    * Rust: `tokio::sync::Mutex<()>`
-   * Divergence: PromiseMutex for async serialization [E8].
+   * Rust: `tokio::sync::Mutex<()>` → AsyncMutex
    */
-  private notifyLock: PromiseMutex = new PromiseMutex();
+  private notifyLock: AsyncMutex = new AsyncMutex();
 
   constructor() {
     // All fields initialized in declarations.

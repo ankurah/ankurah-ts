@@ -30,7 +30,7 @@ A **fully faithful TypeScript port** of ankurah, targeting **React Native / Expo
 | **This file** | Orientation, workflows, current status, outstanding tasks |
 | [translation-rules.md](translation-rules.md) | How to translate any Rust construct to TS (file naming, types, imports, annotations, exceptions) |
 | [ownership.md](ownership.md) | How Rust ownership (Drop, Mutex, RefCell, Arc, Weak, lifetimes) maps to TS |
-| [ownership/provided-types.md](ownership/provided-types.md) | API reference for Disposable, Mutex, RefCell, PromiseMutex |
+| [ownership/provided-types.md](ownership/provided-types.md) | API reference for Disposable, Mutex, RefCell, AsyncMutex |
 | [decisions.md](decisions.md) | Confirmed architectural decisions (wire format, CRDT, tooling, scope, async serialization, gotchas) |
 
 ## Validation (run these to check your work)
@@ -147,6 +147,6 @@ The TS port must be byte-compatible with the Rust implementation. This is valida
 
 ### Known Issues
 - ResultSetWrite uses old `write()/done()` pattern — most critical ownership violation
-- WatcherSet gap-fill has async interleaving risk (fire-and-forget outside PromiseMutex)
+- WatcherSet gap-fill has async interleaving risk (fire-and-forget outside AsyncMutex)
 - LiveQuery activation race (same bug in Rust, issue #146)
 - `defineModel()` returns raw `{backend, fieldName, entity}` handles — alive checks can be bypassed

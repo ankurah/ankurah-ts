@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ankurah/std": "workspace:*"
+  },
   "files": [
     "src/"
   ]

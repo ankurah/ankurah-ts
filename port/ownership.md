@@ -2,7 +2,7 @@
 
 **Goal**: Translated TS code should read as close to the Rust source as possible while preserving equivalent semantics. Provided types absorb JS-specific complexity so translation stays 1:1.
 
-See also: [decisions.md](decisions.md) (architectural choices), [ownership/provided-types.md](ownership/provided-types.md) (API reference for Disposable, Mutex, RefCell, PromiseMutex).
+See also: [decisions.md](decisions.md) (architectural choices), [ownership/provided-types.md](ownership/provided-types.md) (API reference for Disposable, Mutex, RefCell, AsyncMutex).
 
 Ownership rules are enforced by `eslint-plugin-ankurah`. Run the linter to validate compliance.
 
@@ -21,7 +21,7 @@ Ownership rules are enforced by `eslint-plugin-ankurah`. Run the linter to valid
 | `MutexGuard<T>` | `MutexGuard<T>` (Disposable) | Drop side-effects fire in `onDispose()`. |
 | `RefCell<T>` | `RefCell<T>` | 1:1 provided type. `borrow()` / `borrow_mut()`. |
 | `Ref<T>` / `RefMut<T>` | `Ref<T>` / `RefMut<T>` (Disposable) | `using guard = cell.borrow_mut()`. |
-| `tokio::sync::Mutex` | `PromiseMutex` | Async serialization across `await` points. |
+| `tokio::sync::Mutex` | `AsyncMutex` | Async serialization across `await` points. |
 | `AtomicBool` / `AtomicU32` | `boolean` / `number` | Single-threaded JS. |
 | Lifetimes (`'a`, `'rec`) | Runtime `alive` flag | Check at mutation points; set `false` on consume. |
 | `fn method(self)` (move) | Runtime `alive` flag | JS has no move semantics. |
@@ -49,9 +49,9 @@ FR is a diagnostic backstop, not a cleanup mechanism. If `onDispose()` throws, t
 
 ## Async Serialization
 
-`std::sync::Mutex` semantics are absorbed by the provided `Mutex<T>` (trivial in single-threaded JS). `tokio::sync::Mutex` → `PromiseMutex` (async serialization still matters).
+`std::sync::Mutex` semantics are absorbed by the provided `Mutex<T>` (trivial in single-threaded JS). `tokio::sync::Mutex` → `AsyncMutex` (async serialization still matters).
 
-**Rule**: if no `await` between read and write, no protection needed. If fire-and-forget async tasks mutate shared state, `PromiseMutex` is required.
+**Rule**: if no `await` between read and write, no protection needed. If fire-and-forget async tasks mutate shared state, `AsyncMutex` is required.
 
 ---
 

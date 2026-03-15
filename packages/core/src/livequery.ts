@@ -15,6 +15,7 @@ import {
 } from '@ankurah/signals';
 
 import type { Entity } from './entity.ts';
+import { Disposable } from '@ankurah/std';
 import { RetrievalError } from './error.ts';
 import type { ViewInstance, ViewConstructor } from './model.ts';
 import { type MatchArgs, Node } from './node.ts';
@@ -29,19 +30,6 @@ import {
   ReactorSubscription,
 } from './reactor/index.ts';
 import type { NodeLike } from './reactor/fetch_gap.ts';
-
-// ---------------------------------------------------------------------------
-// FinalizationRegistry for cleanup safety
-// ---------------------------------------------------------------------------
-
-// Divergence: Rust impl Drop on Inner calls node.unsubscribe_remote_predicate.
-// TS uses FinalizationRegistry as a safety net + explicit dispose() [E11].
-const liveQueryRegistry = new FinalizationRegistry<{ queryId: QueryIdType }>(
-  ({ queryId }) => {
-    // TODO: node.unsubscribeRemotePredicate(queryId) when remote subscriptions are ported
-    void queryId; // suppress unused warning
-  },
-);
 
 // ---------------------------------------------------------------------------
 // NodeLikeAdapter -- bridges Node to NodeLike for QueryGapFetcher
@@ -92,9 +80,9 @@ export interface RemoteQuerySubscriber {
  *
  * Rust: `pub struct EntityLiveQuery(Arc<Inner>)`
  * Divergence: No Arc -- JS GC handles shared references [E8].
- * Divergence: No Drop on Inner -- dispose() pattern with FinalizationRegistry [E11].
+ * Divergence: impl Drop -> extends Disposable [E11].
  */
-export class EntityLiveQuery {
+export class EntityLiveQuery extends Disposable {
   // -- Fields (mirrors Inner) --
   readonly queryId: QueryIdType;
   private readonly node: Node;
@@ -129,6 +117,7 @@ export class EntityLiveQuery {
     gapFetcher: GapFetcher,
     nodeLikeAdapter: NodeLike,
   ) {
+    super('EntityLiveQuery', 'fatal');
     this.queryId = queryId;
     this.node = node;
     this.subscription = subscription;
@@ -145,9 +134,6 @@ export class EntityLiveQuery {
     this._initPromise = new Promise<void>((resolve) => {
       this._initResolve = resolve;
     });
-
-    // Register with FinalizationRegistry for safety cleanup [E11]
-    liveQueryRegistry.register(this, { queryId: this.queryId });
   }
 
   /**
@@ -456,24 +442,14 @@ export class EntityLiveQuery {
   // ── Cleanup (mirrors Rust Drop) ─────────────────────────────────────
 
   /**
-   * Explicitly dispose this live query, unsubscribing from the reactor.
-   *
    * Rust: `impl Drop for Inner { fn drop(&mut self) { self.node.unsubscribe_remote_predicate(self.query_id); } }`
-   * Divergence: JS has no Drop; callers must invoke dispose() explicitly [E11].
    */
-  dispose(): void {
+  protected onDispose(): void {
     // Unsubscribe from remote predicate
     // TODO: this.node.unsubscribeRemotePredicate(this.queryId) -- stub for Phase 1
 
     // Clean up reactor subscription
     this.subscription.dispose();
-  }
-
-  /**
-   * Symbol.dispose support for `using` declarations [E11].
-   */
-  [Symbol.dispose](): void {
-    this.dispose();
   }
 }
 
@@ -550,11 +526,12 @@ export class WeakEntityLiveQuery implements RemoteQuerySubscriber {
  * Divergence: Uses ViewConstructor<V> instead of PhantomData [E8].
  * Divergence: No Deref -- delegates explicitly [E8].
  */
-export class LiveQuery<V extends ViewInstance> implements Signal {
+export class LiveQuery<V extends ViewInstance> extends Disposable implements Signal {
   readonly inner: EntityLiveQuery;
   private readonly viewCtor: ViewConstructor<V>;
 
   constructor(inner: EntityLiveQuery, viewCtor: ViewConstructor<V>) {
+    super('LiveQuery', 'fatal');
     this.inner = inner;
     this.viewCtor = viewCtor;
   }
@@ -677,12 +654,8 @@ export class LiveQuery<V extends ViewInstance> implements Signal {
 
   // ── Cleanup delegation ──────────────────────────────────────────────
 
-  dispose(): void {
+  protected onDispose(): void {
     this.inner.dispose();
-  }
-
-  [Symbol.dispose](): void {
-    this.dispose();
   }
 }
 

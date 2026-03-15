@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal.rs
 // Exception E12: file-with-submodules pattern
 
+import { Disposable } from '@ankurah/std';
 import { BroadcastId, type TListenerGuard } from '../broadcast.ts';
 
 // Re-export submodules
@@ -20,12 +21,14 @@ export type Listener = () => void;
  * Type-erased ListenerGuard that wraps any broadcast::ListenerGuard<T>.
  * In Rust, this uses Box<dyn TListenerGuard + Send + Sync>.
  * In TS, we just hold a reference to the inner guard.
+ * Divergence: impl Drop -> extends Disposable [E11].
  */
-export class ListenerGuard {
+export class ListenerGuard extends Disposable {
   private inner: TListenerGuard;
 
   /** Wrap any broadcast ListenerGuard<T> */
   constructor(guard: TListenerGuard) {
+    super('ListenerGuard', 'warning');
     this.inner = guard;
   }
 
@@ -35,7 +38,7 @@ export class ListenerGuard {
   }
 
   /** Unsubscribe (delegate to inner guard's dispose) */
-  dispose(): void {
+  protected onDispose(): void {
     if ('dispose' in this.inner && typeof this.inner.dispose === 'function') {
       this.inner.dispose();
     }

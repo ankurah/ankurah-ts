@@ -171,14 +171,14 @@ class RefMut<T> extends Disposable {
 
 ---
 
-## PromiseMutex
+## AsyncMutex
 
 Async serialization primitive. Equivalent to Rust's `tokio::sync::Mutex<()>` — serializes async operations that must not interleave.
 
 ### API
 
 ```typescript
-class PromiseMutex {
+class AsyncMutex {
     async run<T>(fn: () => Promise<T>): Promise<T>;
 }
 ```
@@ -186,7 +186,7 @@ class PromiseMutex {
 ### Usage
 
 ```typescript
-const lock = new PromiseMutex();
+const lock = new AsyncMutex();
 
 // These calls are serialized — the second waits for the first to complete:
 await lock.run(async () => { /* critical section 1 */ });
@@ -196,7 +196,7 @@ await lock.run(async () => { /* critical section 2 */ });
 ### Implementation
 
 ```typescript
-class PromiseMutex {
+class AsyncMutex {
     #chain: Promise<void> = Promise.resolve();
 
     async run<T>(fn: () => Promise<T>): Promise<T> {
