@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/transaction.rs
 
 import { TransactionId, type CollectionId, type EntityId } from '@ankurah/proto';
-import { disposeSymbol } from '@ankurah/std';
+import { disposeSymbol } from '@ankurah/base';
 import type { TContext } from './context.ts';
 import type { Entity } from './entity.ts';
 import { MutationError, type RetrievalError } from './error.ts';

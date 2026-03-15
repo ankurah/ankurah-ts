@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
 
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 
 /**
  * A unique identifier for a broadcast that cannot be forged or extracted.
@@ -58,7 +58,7 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
 
   /** @internal */
   constructor(inner: Inner<T>, id: number, broadcastId: BroadcastId) {
-    super('ListenerGuard', 'warning');
+    super();
     this.inner = inner;
     this.id = id;
     this._broadcastId = broadcastId;
@@ -70,7 +70,7 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   }
 
   /** Unsubscribe from the broadcast (mirrors Rust's Drop) */
-  protected onDrop(): void {
+  drop(): void {
     if (this.inner !== null) {
       this.inner.listeners.delete(this.id);
       this.inner = null;

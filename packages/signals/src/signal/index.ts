@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal.rs
 // Exception E12: file-with-submodules pattern
 
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 import { BroadcastId, type TListenerGuard } from '../broadcast.ts';
 
 // Re-export submodules
@@ -28,7 +28,7 @@ export class ListenerGuard extends Drop {
 
   /** Wrap any broadcast ListenerGuard<T> */
   constructor(guard: TListenerGuard) {
-    super('ListenerGuard', 'warning');
+    super();
     this.inner = guard;
   }
 
@@ -38,7 +38,7 @@ export class ListenerGuard extends Drop {
   }
 
   /** Unsubscribe (delegate to inner guard's drop) */
-  protected onDrop(): void {
+  drop(): void {
     if ('drop' in this.inner && typeof this.inner.drop === 'function') {
       this.inner.drop();
     }

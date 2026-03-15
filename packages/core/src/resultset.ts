@@ -9,7 +9,7 @@ import {
   type Signal,
 } from '@ankurah/signals';
 
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 import { Entity } from './entity.ts';
 import type { Value } from './value/index.ts';
 import { extractAtPath } from './value/index.ts';
@@ -164,7 +164,7 @@ export class ResultSetWrite extends Drop {
 
   /** @internal */
   constructor(resultset: EntityResultSet, state: ResultSetState) {
-    super('ResultSetWrite', 'fatal');
+    super();
     this.resultset = resultset;
     this.changed = false;
     this.state = state;
@@ -379,7 +379,7 @@ export class ResultSetWrite extends Drop {
    * Mirrors Rust Drop impl for ResultSetWrite [E11].
    * Called once by drop().
    */
-  protected onDrop(): void {
+  drop(): void {
     if (this.changed) {
       this.resultset._broadcast();
     }

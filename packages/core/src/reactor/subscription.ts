@@ -11,7 +11,7 @@ import {
   type Subscribe,
   SubscriptionGuard,
 } from '@ankurah/signals';
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 import { SubscriptionError } from '../error.ts';
 import { ReactorSubscriptionId } from './watcher_set.ts';
 import type { ReactorUpdate } from './update.ts';
@@ -84,7 +84,7 @@ export class ReactorSubscription extends Drop implements Signal, Subscribe<React
     broadcast: Broadcast<ReactorUpdate>,
     unsubscribeFn: (id: ReactorSubscriptionId) => void,
   ) {
-    super('ReactorSubscription', 'fatal');
+    super();
     this.inner = new ReactorSubInner(subscriptionId, broadcast, unsubscribeFn);
   }
 
@@ -150,7 +150,7 @@ export class ReactorSubscription extends Drop implements Signal, Subscribe<React
   /**
    * Mirrors Rust's Drop impl on ReactorSubInner [E11].
    */
-  protected onDrop(): void {
+  drop(): void {
     this.inner.drop();
   }
 }

@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
 
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 import type { ListenerGuard } from '../signal/index.ts';
 
 /**
@@ -26,12 +26,12 @@ export class SubscriptionGuard extends Drop {
   private guard: ListenerGuard | null;
 
   constructor(guard: ListenerGuard) {
-    super('SubscriptionGuard', 'warning');
+    super();
     this.guard = guard;
   }
 
   /** Unsubscribe (mirrors Rust's Drop) */
-  protected onDrop(): void {
+  drop(): void {
     if (this.guard !== null) {
       this.guard.drop();
       this.guard = null;

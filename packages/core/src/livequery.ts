@@ -15,7 +15,7 @@ import {
 } from '@ankurah/signals';
 
 import type { Entity } from './entity.ts';
-import { Drop } from '@ankurah/std';
+import { Drop } from '@ankurah/base';
 import { RetrievalError } from './error.ts';
 import type { ViewInstance, ViewConstructor } from './model.ts';
 import { type MatchArgs, Node } from './node.ts';
@@ -117,7 +117,7 @@ export class EntityLiveQuery extends Drop {
     gapFetcher: GapFetcher,
     nodeLikeAdapter: NodeLike,
   ) {
-    super('EntityLiveQuery', 'fatal');
+    super();
     this.queryId = queryId;
     this.node = node;
     this.subscription = subscription;
@@ -444,7 +444,7 @@ export class EntityLiveQuery extends Drop {
   /**
    * Rust: `impl Drop for Inner { fn drop(&mut self) { self.node.unsubscribe_remote_predicate(self.query_id); } }`
    */
-  protected onDrop(): void {
+  drop(): void {
     // Unsubscribe from remote predicate
     // TODO: this.node.unsubscribeRemotePredicate(this.queryId) -- stub for Phase 1
 
@@ -531,7 +531,7 @@ export class LiveQuery<V extends ViewInstance> extends Drop implements Signal {
   private readonly viewCtor: ViewConstructor<V>;
 
   constructor(inner: EntityLiveQuery, viewCtor: ViewConstructor<V>) {
-    super('LiveQuery', 'fatal');
+    super();
     this.inner = inner;
     this.viewCtor = viewCtor;
   }
@@ -654,7 +654,7 @@ export class LiveQuery<V extends ViewInstance> extends Drop implements Signal {
 
   // ── Cleanup delegation ──────────────────────────────────────────────
 
-  protected onDrop(): void {
+  drop(): void {
     this.inner.drop();
   }
 }

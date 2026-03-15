@@ -101,7 +101,7 @@ export class Ref<T> extends Drop {
 
   /** @internal */
   constructor(value: T, release: () => void, label: string) {
-    super(`Ref<${label}>`, 'fatal');
+    super();
     this.#value = value;
     this.#release = release;
   }
@@ -111,7 +111,7 @@ export class Ref<T> extends Drop {
     return this.#value;
   }
 
-  protected onDrop(): void {
+  drop(): void {
     this.#release();
   }
 }
@@ -128,7 +128,7 @@ export class RefMut<T> extends Drop {
 
   /** @internal */
   constructor(value: T, release: () => void, label: string) {
-    super(`RefMut<${label}>`, 'fatal');
+    super();
     this.#value = value;
     this.#release = release;
   }
@@ -143,7 +143,7 @@ export class RefMut<T> extends Drop {
     this.#value = v;
   }
 
-  protected onDrop(): void {
+  drop(): void {
     this.#release();
   }
 }

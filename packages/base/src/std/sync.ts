@@ -53,7 +53,7 @@ export class MutexGuard<T> extends Drop {
 
   /** @internal */
   constructor(value: T, release: () => void, label: string) {
-    super(`MutexGuard<${label}>`, 'fatal');
+    super();
     this.#value = value;
     this.#release = release;
   }
@@ -68,7 +68,7 @@ export class MutexGuard<T> extends Drop {
     this.#value = v;
   }
 
-  protected onDrop(): void {
+  drop(): void {
     this.#release();
   }
 }
