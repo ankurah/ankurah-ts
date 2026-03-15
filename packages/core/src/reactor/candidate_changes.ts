@@ -3,47 +3,15 @@
 import type { QueryId } from '@ankurah/proto';
 
 // ---------------------------------------------------------------------------
-// QueryCandidate
-// ---------------------------------------------------------------------------
-
-/**
- * A query-specific view of candidates that borrows from CandidateChanges.
- *
- * Rust: `pub struct QueryCandidate<'a, C>`
- */
-export class QueryCandidate<C> {
-  readonly queryId: QueryId;
-  private readonly changes: readonly C[];
-  private readonly offsets: readonly number[];
-
-  constructor(queryId: QueryId, changes: readonly C[], offsets: readonly number[]) {
-    this.queryId = queryId;
-    this.changes = changes;
-    this.offsets = offsets;
-  }
-
-  /** Iterate over the candidate changes for this query. */
-  iter(): C[] {
-    return this.offsets.map((offset) => this.changes[offset]);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // CandidateChanges
 // ---------------------------------------------------------------------------
 
 /**
- * Wraps a shared list of changes with per-query and per-entity offsets to avoid
- * cloning events during the three-phase notification pipeline.
+ * Wraps a shared list of changes with per-query offsets to avoid cloning events.
  *
  * Rust: `pub struct CandidateChanges<C>`
- *
- * Divergences from Rust:
- * - `Arc<Vec<C>>` is just a readonly array (JS passes arrays by reference).
- * - `IVec<usize, 8>` (small-vec) is a plain `number[]`.
- * - `HashMap<QueryId, ...>` uses a string-keyed `Map` internally because JS
- *   Maps use reference equality for object keys, while Rust HashMaps use
- *   Hash+Eq. The ULID string of each QueryId serves as the stable key.
+ * Divergence: Arc<Vec<C>> → readonly C[] (JS reference semantics), IVec<usize,8> → number[],
+ *   HashMap<QueryId,...> → Map<string,...> keyed by ULID string for value equality [E8]
  */
 export class CandidateChanges<C> {
   private readonly changes: readonly C[];
@@ -60,7 +28,7 @@ export class CandidateChanges<C> {
     this.changes = changes;
   }
 
-  // ── Mutators ────────────────────────────────────────────────────────
+  // ── impl CandidateChanges ──
 
   /** Add an offset for an entity-level subscription (not tied to any query). */
   addEntity(offset: number): void {
@@ -78,14 +46,12 @@ export class CandidateChanges<C> {
     entry.offsets.push(offset);
   }
 
-  // ── Accessors ───────────────────────────────────────────────────────
-
-  /** Returns true if there are no candidates (neither query nor entity level). */
+  /** Returns true if there are no candidates. */
   isEmpty(): boolean {
     return this.queryOffsets.size === 0 && this.entityOffsets.length === 0;
   }
 
-  /** Returns the number of distinct queries with candidates. */
+  /** Returns the number of query candidates. */
   queryCount(): number {
     return this.queryOffsets.size;
   }
@@ -109,3 +75,34 @@ export class CandidateChanges<C> {
     return this.changes;
   }
 }
+
+// ---------------------------------------------------------------------------
+// QueryCandidate
+// ---------------------------------------------------------------------------
+
+/**
+ * A query-specific view of candidates that borrows from CandidateChanges.
+ *
+ * Rust: `pub struct QueryCandidate<'a, C>`
+ */
+export class QueryCandidate<C> {
+  readonly queryId: QueryId;
+  private readonly changes: readonly C[];
+  private readonly offsets: readonly number[];
+
+  constructor(queryId: QueryId, changes: readonly C[], offsets: readonly number[]) {
+    this.queryId = queryId;
+    this.changes = changes;
+    this.offsets = offsets;
+  }
+
+  // ── impl QueryCandidate ──
+
+  /** Iterate over the candidate changes for this query. */
+  iter(): C[] {
+    return this.offsets.map((offset) => this.changes[offset]);
+  }
+}
+
+// ── impl Clone for CandidateChanges ──
+// Divergence: JS objects are reference types; clone not needed [E8]

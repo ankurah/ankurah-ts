@@ -167,7 +167,12 @@ export class Reactor {
     return new ReactorSubscription(
       subscriptionId,
       broadcast,
-      (id: ReactorSubscriptionId) => this.unsubscribe(id),
+      {
+        unsubscribe: (id) => this.unsubscribe(id),
+        removeQuery: (subId, queryId) => this.removeQuery(subId, queryId),
+        addEntitySubscriptions: (subId, entityIds) => this.addEntitySubscriptions(subId, entityIds),
+        removeEntitySubscriptions: (subId, entityIds) => this.removeEntitySubscriptions(subId, entityIds),
+      },
     );
   }
 

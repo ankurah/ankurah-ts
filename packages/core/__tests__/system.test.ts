@@ -384,7 +384,7 @@ describe('SystemManager loadSystemCatalog with existing data', () => {
     expect(system.getItems()).toHaveLength(1);
   });
 
-  test('ephemeral node does NOT become ready when loading existing root', async () => {
+  test('ephemeral node becomes ready when loading existing cached root', async () => {
     // Same seed setup as above
     const storage = new MockStorageEngine();
     const entityId = EntityId.new();
@@ -407,9 +407,10 @@ describe('SystemManager loadSystemCatalog with existing data', () => {
 
     await system.waitLoaded();
 
-    // Ephemeral node must explicitly join via joinSystem()
-    expect(system.isSystemReady()).toBe(false);
-    expect(system.root()).not.toBeNull(); // root is loaded but not "ready"
+    // Ephemeral node with cached root becomes ready (enables offline-first)
+    // Ephemeral nodes will verify/update the root when they connect via joinSystem()
+    expect(system.isSystemReady()).toBe(true);
+    expect(system.root()).not.toBeNull();
     expect(system.getItems()).toHaveLength(1);
   });
 });

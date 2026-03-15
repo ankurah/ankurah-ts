@@ -8,38 +8,58 @@ import type { Entity } from '../entity.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * Whether an entity was added to, removed from, or initially present in a query result set.
+ * Describes how an entity's membership changed for a specific predicate.
  *
  * Rust: `pub enum MembershipChange { Initial, Add, Remove }`
+ * Divergence: Unit-only enum → string union (no data variants, no Drop needed) [E8]
  */
 export type MembershipChange = 'Initial' | 'Add' | 'Remove';
+
+// ---------------------------------------------------------------------------
+// ReactorUpdate
+// ---------------------------------------------------------------------------
+
+/**
+ * Update from the reactor that supports both single and multi-predicate subscriptions.
+ *
+ * Rust: `pub struct ReactorUpdate<E = Entity, Ev = Attested<Event>>`
+ * Divergence: Rust generics exist only for testing with mock types; TS uses concrete types directly.
+ */
+export interface ReactorUpdate {
+  /** All entities that changed, with their relevance information. */
+  items: ReactorUpdateItem[];
+}
 
 // ---------------------------------------------------------------------------
 // ReactorUpdateItem
 // ---------------------------------------------------------------------------
 
 /**
- * A single entity update within a reactor batch.
+ * A single entity update with all relevance information.
  *
  * Rust: `pub struct ReactorUpdateItem<E = Entity, Ev = Attested<Event>>`
  * Divergence: Rust generics exist only for testing with mock types; TS uses concrete types directly.
  */
 export interface ReactorUpdateItem {
-  /** The entity that was updated. */
+  /** The entity that changed. */
   entity: Entity;
 
-  /** Events that triggered this update. */
+  /** Events that caused this update. */
   events: Attested<Event>[];
 
   /**
-   * Which queries this entity is relevant to, and how its membership changed.
+   * Which predicates this update is relevant to (if any) and how.
    * Rust: `pub predicate_relevance: Vec<(QueryId, MembershipChange)>`
    */
   predicateRelevance: [QueryId, MembershipChange][];
 }
 
+// ---------------------------------------------------------------------------
+// impl ReactorUpdateItem
+// ---------------------------------------------------------------------------
+
 /**
- * Whether this item has any membership changes (add/remove/initial).
+ * Check if this item represents any membership change.
  *
  * Rust: `impl ReactorUpdateItem { pub fn has_membership_change(&self) -> bool }`
  */
@@ -47,17 +67,5 @@ export function hasMembershipChange(item: ReactorUpdateItem): boolean {
   return item.predicateRelevance.length > 0;
 }
 
-// ---------------------------------------------------------------------------
-// ReactorUpdate
-// ---------------------------------------------------------------------------
-
-/**
- * A batch of entity updates to be processed by the reactor.
- *
- * Rust: `pub struct ReactorUpdate<E = Entity, Ev = Attested<Event>>`
- * Divergence: Rust generics exist only for testing with mock types; TS uses concrete types directly.
- */
-export interface ReactorUpdate {
-  /** The items in this update batch. */
-  items: ReactorUpdateItem[];
-}
+// Note: ReactorUpdate to ChangeSet<Entity> conversion removed since Entity doesn't implement View
+// ReactorUpdate should be converted to ChangeSet<R> at the LiveQuery level instead

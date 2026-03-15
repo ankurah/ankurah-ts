@@ -43,11 +43,11 @@ Every in-scope Rust source file and its target TS path.
 | 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | YES |
 | 26 | core/src/lib.rs | packages/core/src/index.ts | YES |
 | 27 | core/src/lineage.rs | packages/core/src/lineage.ts | DONE |
-| 28 | core/src/livequery.rs | packages/core/src/livequery.ts | YES |
+| 28 | core/src/livequery.rs | packages/core/src/livequery.ts | DONE |
 | 29 | core/src/model.rs | packages/core/src/model/index.ts | NO |
 | - | core/src/model/tsify.rs | SKIP | tsify |
 | 30 | core/src/node.rs | packages/core/src/node.ts | DONE |
-| 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | YES |
+| 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | DONE |
 | 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | NO |
 | 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | NO |
@@ -68,22 +68,24 @@ Every in-scope Rust source file and its target TS path.
 | 47 | core/src/property/value/yrs.rs | packages/core/src/property/value/yrs_string.ts | DONE |
 | 48 | core/src/query_value.rs | packages/core/src/query_value.ts | DONE |
 | 49 | core/src/reactor.rs | packages/core/src/reactor/index.ts | YES |
-| 50 | core/src/reactor/candidate_changes.rs | packages/core/src/reactor/candidate_changes.ts | NO |
+| 50 | core/src/reactor/candidate_changes.rs | packages/core/src/reactor/candidate_changes.ts | DONE |
+| 50.1 | core/src/reactor/candidate_changes.rs (tests) | packages/core/src/reactor/candidate_changes.test.ts | DONE |
 | 51 | core/src/reactor/comparison_index.rs | packages/core/src/reactor/comparison_index.ts | NO |
 | 52 | core/src/reactor/fetch_gap.rs | packages/core/src/reactor/fetch_gap.ts | YES |
 | 53 | core/src/reactor/property_path.rs | packages/core/src/reactor/property_path.ts | NO |
-| 54 | core/src/reactor/subscription.rs | packages/core/src/reactor/subscription.ts | YES |
+| 54 | core/src/reactor/subscription.rs | packages/core/src/reactor/subscription.ts | DONE |
 | 55 | core/src/reactor/subscription_state.rs | packages/core/src/reactor/subscription_state.ts | YES |
-| 56 | core/src/reactor/update.rs | packages/core/src/reactor/update.ts | YES |
+| 56 | core/src/reactor/update.rs | packages/core/src/reactor/update.ts | DONE |
 | 57 | core/src/reactor/watcherset.rs | packages/core/src/reactor/watcherset.ts | NO |
-| 58 | core/src/resultset.rs | packages/core/src/resultset.ts | YES |
+| 58 | core/src/resultset.rs | packages/core/src/resultset.ts | DONE |
+| 58.1 | core/src/resultset.rs (tests) | packages/core/src/resultset.test.ts | DONE |
 | 59 | core/src/retrieval.rs | packages/core/src/retrieval.ts | DONE |
 | 60 | core/src/schema.rs | packages/core/src/schema.ts | DONE |
 | 61 | core/src/selection/filter.rs | packages/core/src/selection/filter.ts | DONE |
 | 61.1 | core/src/selection/filter.rs (tests) | packages/core/src/selection/filter.test.ts | DONE |
 | 62 | core/src/selection/mod.rs | packages/core/src/selection/index.ts | DONE |
 | 63 | core/src/storage.rs | packages/core/src/storage.ts | DONE |
-| 64 | core/src/system.rs | packages/core/src/system.ts | YES |
+| 64 | core/src/system.rs | packages/core/src/system.ts | DONE |
 | 65 | core/src/task.rs | packages/core/src/task.ts | NO |
 | 66 | core/src/traits.rs | packages/core/src/traits.ts | NO |
 | 67 | core/src/transaction.rs | packages/core/src/transaction.ts | DONE |

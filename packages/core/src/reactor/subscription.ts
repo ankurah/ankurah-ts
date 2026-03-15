@@ -12,9 +12,25 @@ import {
   SubscriptionGuard,
 } from '@ankurah/signals';
 import { Drop } from '@ankurah/base';
-import { SubscriptionError } from '../error.ts';
 import { ReactorSubscriptionId } from './watcher_set.ts';
 import type { ReactorUpdate } from './update.ts';
+
+// ---------------------------------------------------------------------------
+// ReactorActions — callback interface to avoid circular Reactor import
+// ---------------------------------------------------------------------------
+
+/**
+ * Callback interface for reactor operations needed by ReactorSubscription.
+ *
+ * Divergence: Rust stores a direct `Reactor` reference in ReactorSubInner;
+ * TS uses a callback interface to avoid circular module dependencies [E8].
+ */
+export interface ReactorActions {
+  unsubscribe(id: ReactorSubscriptionId): void;
+  removeQuery(subscriptionId: ReactorSubscriptionId, queryId: QueryId): void;
+  addEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: Iterable<EntityId>): void;
+  removeEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: Iterable<EntityId>): void;
+}
 
 // ---------------------------------------------------------------------------
 // ReactorSubInner
@@ -26,23 +42,23 @@ import type { ReactorUpdate } from './update.ts';
  * Rust: `pub(super) struct ReactorSubInner<E, Ev>`
  *
  * Divergence: Rust stores an `Arc<ReactorSubInner>` and uses Drop to
- * call reactor.unsubscribe(). TS stores an unsubscribe callback instead
- * of a direct Reactor reference to avoid circular dependencies [E8].
+ * call reactor.unsubscribe(). TS stores a ReactorActions callback interface
+ * instead of a direct Reactor reference to avoid circular dependencies [E8].
  */
 class ReactorSubInner {
   readonly subscriptionId: ReactorSubscriptionId;
   readonly broadcast: Broadcast<ReactorUpdate>;
-  private readonly unsubscribeFn: (id: ReactorSubscriptionId) => void;
+  readonly actions: ReactorActions;
   private disposed = false;
 
   constructor(
     subscriptionId: ReactorSubscriptionId,
     broadcast: Broadcast<ReactorUpdate>,
-    unsubscribeFn: (id: ReactorSubscriptionId) => void,
+    actions: ReactorActions,
   ) {
     this.subscriptionId = subscriptionId;
     this.broadcast = broadcast;
-    this.unsubscribeFn = unsubscribeFn;
+    this.actions = actions;
   }
 
   /**
@@ -52,7 +68,7 @@ class ReactorSubInner {
   drop(): void {
     if (!this.disposed) {
       this.disposed = true;
-      this.unsubscribeFn(this.subscriptionId);
+      this.actions.unsubscribe(this.subscriptionId);
     }
   }
 }
@@ -82,10 +98,10 @@ export class ReactorSubscription extends Drop implements Signal, Subscribe<React
   constructor(
     subscriptionId: ReactorSubscriptionId,
     broadcast: Broadcast<ReactorUpdate>,
-    unsubscribeFn: (id: ReactorSubscriptionId) => void,
+    actions: ReactorActions,
   ) {
     super();
-    this.inner = new ReactorSubInner(subscriptionId, broadcast, unsubscribeFn);
+    this.inner = new ReactorSubInner(subscriptionId, broadcast, actions);
   }
 
   // ── Accessors ──────────────────────────────────────────────────────
@@ -97,10 +113,32 @@ export class ReactorSubscription extends Drop implements Signal, Subscribe<React
 
   // ── Reactor delegation ─────────────────────────────────────────────
 
-  // NOTE: Methods like remove_predicate, add_entity_subscriptions, and
-  // remove_entity_subscriptions delegate to the Reactor in Rust. These
-  // will be added once reactor/index.ts (the main Reactor) is ported,
-  // as they require direct Reactor method calls.
+  /**
+   * Remove a predicate from this subscription.
+   *
+   * Rust: `pub fn remove_predicate(&self, query_id) -> Result<(), SubscriptionError>`
+   */
+  removePredicate(queryId: QueryId): void {
+    this.inner.actions.removeQuery(this.inner.subscriptionId, queryId);
+  }
+
+  /**
+   * Add entity subscriptions.
+   *
+   * Rust: `pub fn add_entity_subscriptions(&self, entity_ids: impl IntoIterator<Item = EntityId>)`
+   */
+  addEntitySubscriptions(entityIds: Iterable<EntityId>): void {
+    this.inner.actions.addEntitySubscriptions(this.inner.subscriptionId, entityIds);
+  }
+
+  /**
+   * Remove entity subscriptions.
+   *
+   * Rust: `pub fn remove_entity_subscriptions(&self, entity_ids: impl IntoIterator<Item = EntityId>)`
+   */
+  removeEntitySubscriptions(entityIds: Iterable<EntityId>): void {
+    this.inner.actions.removeEntitySubscriptions(this.inner.subscriptionId, entityIds);
+  }
 
   // ── Subscribe<ReactorUpdate> implementation ────────────────────────
 
