@@ -25,7 +25,7 @@ export interface Observer {
 const OBSERVER_STACK: Observer[] = [];
 
 function track(signal: Signal): void {
-  const observer = OBSERVER_STACK.at(-1);
+  const observer = OBSERVER_STACK[OBSERVER_STACK.length - 1];
   if (observer != null) {
     observer.observe(signal);
   }
@@ -41,7 +41,7 @@ function pop(): void {
 
 function remove(observer: Observer): void {
   const targetId = observer.observerId();
-  const last = OBSERVER_STACK.at(-1);
+  const last = OBSERVER_STACK[OBSERVER_STACK.length - 1];
   if (last != null && last.observerId() === targetId) {
     OBSERVER_STACK.pop();
     return;
@@ -55,7 +55,7 @@ function remove(observer: Observer): void {
 }
 
 function current(): Observer | null {
-  return OBSERVER_STACK.at(-1) ?? null;
+  return OBSERVER_STACK[OBSERVER_STACK.length - 1] ?? null;
 }
 
 /**

@@ -8,7 +8,7 @@ describe('BroadcastId', () => {
     const id1 = new BroadcastId();
     const id2 = new BroadcastId();
     expect(id1.equals(id2)).toBe(false);
-    expect(id1.value).not.toBe(id2.value);
+    expect(id1.toNumber()).not.toBe(id2.toNumber());
   });
 
   test('equals returns true for same instance', () => {
