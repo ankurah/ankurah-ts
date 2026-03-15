@@ -11,6 +11,7 @@ import {
   EntityState,
   State,
   StateBuffers,
+  Item,
 } from '@ankurah/proto';
 import type { Selection } from '@ankurah/ankql';
 
@@ -100,7 +101,7 @@ function createSystemManager(opts?: { durable?: boolean }): {
 
 describe('sysItemToValue / sysItemFromValue', () => {
   test('round-trip SysRoot', () => {
-    const item = { type: 'SysRoot' as const };
+    const item = new Item('SysRoot', {});
     const value = sysItemToValue(item);
     expect(value).not.toBeNull();
     expect(value!.type).toBe('String');
@@ -112,7 +113,7 @@ describe('sysItemToValue / sysItemFromValue', () => {
   });
 
   test('round-trip Collection', () => {
-    const item = { type: 'Collection' as const, name: 'my_collection' };
+    const item = new Item('Collection', { name: 'my_collection' });
     const value = sysItemToValue(item);
     expect(value).not.toBeNull();
     expect(value!.type).toBe('String');
@@ -123,11 +124,11 @@ describe('sysItemToValue / sysItemFromValue', () => {
 
     const parsed = sysItemFromValue(value);
     expect(parsed.type).toBe('Collection');
-    expect((parsed as { type: 'Collection'; name: string }).name).toBe('my_collection');
+    expect(parsed.is('Collection') && parsed.value.name).toBe('my_collection');
   });
 
   test('round-trip Other', () => {
-    const item = { type: 'Other' as const };
+    const item = new Item('Other', {});
     const value = sysItemToValue(item);
     expect(value).not.toBeNull();
     expect(value!.type).toBe('String');
@@ -362,7 +363,7 @@ describe('SystemManager loadSystemCatalog with existing data', () => {
     // Create LWW state buffer containing the "item" property with SysRoot value
     const tempEntity = Entity.create(entityId, collectionId);
     const lww = tempEntity.getBackend(LWWBackend);
-    lww.set('item', sysItemToValue({ type: 'SysRoot' }));
+    lww.set('item', sysItemToValue(new Item('SysRoot', {})));
     const entityState = tempEntity.toEntityState();
     const attestedState = new Attested(entityState);
 
@@ -392,7 +393,7 @@ describe('SystemManager loadSystemCatalog with existing data', () => {
 
     const tempEntity = Entity.create(entityId, collectionId);
     const lww = tempEntity.getBackend(LWWBackend);
-    lww.set('item', sysItemToValue({ type: 'SysRoot' }));
+    lww.set('item', sysItemToValue(new Item('SysRoot', {})));
     const entityState = tempEntity.toEntityState();
     const attestedState = new Attested(entityState);
 

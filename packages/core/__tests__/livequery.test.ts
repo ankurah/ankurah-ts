@@ -13,7 +13,7 @@ import { OpenPolicy } from '../src/policy.ts';
 import { defineModel, lww, yrsText } from '../src/define-model.ts';
 import { LiveQuery, EntityLiveQuery } from '../src/livequery.ts';
 import type { ChangeSet, ChangeKind, ItemChange } from '../src/changes.ts';
-import type { ViewInstance } from '../src/model.ts';
+import type { ViewInstance, ModelDefinition } from '../src/model.ts';
 import { YjsBackend } from '../src/property/backend/yjs.ts';
 import { LWWBackend } from '../src/property/backend/lww.ts';
 import { YrsString } from '../src/property/value/yrs_string.ts';
@@ -134,14 +134,13 @@ function createTestNode() {
 
 async function queryWait(
   node: Node,
-  model: { collection(): CollectionId; View: { fromEntity(entity: import('../src/entity.ts').Entity): ViewInstance } },
+  model: ModelDefinition<ViewInstance>,
   predicateStr: string,
 ): Promise<LiveQuery<ViewInstance>> {
   const ctx = node.context();
   const selection = parseSelection(predicateStr);
   const args = matchArgs(selection, true);
-  const entityLq = ctx.query(model.collection(), args);
-  const lq = entityLq.map(model.View);
+  const lq = ctx.query(model, args);
   await lq.waitInitialized();
   return lq;
 }

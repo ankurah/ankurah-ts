@@ -5,12 +5,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { EntityId, QueryId, CollectionId } from '@ankurah/proto';
-import { PathExpr, Selection } from '@ankurah/ankql';
-import type { Predicate, OrderByItem, Literal, ComparisonOperator } from '@ankurah/ankql';
+import { PathExpr, Selection, Predicate, Expr, Literal, ComparisonOperator, OrderByItem, OrderDirection } from '@ankurah/ankql';
 import type { Value } from '../src/value/index.ts';
 
-import { ComparisonIndex } from '../src/reactor/comparison-index.ts';
-import { CandidateChanges } from '../src/reactor/candidate-changes.ts';
+import { ComparisonIndex } from '../src/reactor/comparison_index.ts';
+import { CandidateChanges } from '../src/reactor/candidate_changes.ts';
 import { buildContinuationPredicate, inferValueTypeForField } from '../src/reactor/fetch_gap.ts';
 import { ValueType } from '../src/value/index.ts';
 import { Entity } from '../src/entity.ts';
@@ -65,7 +64,7 @@ describe('ComparisonIndex', () => {
 
     // Less than 8 ----------------------------------------------------------
     const sub0 = QueryId.test(0n);
-    index.add({ type: 'I64', value: 8n } as Literal, 'LessThan', sub0);
+    index.add(Literal.I64(8n), ComparisonOperator.LessThan(), sub0);
 
     // 8 should match nothing
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 8 } as Value))).toEqual([]);
@@ -76,7 +75,7 @@ describe('ComparisonIndex', () => {
     const sub1 = QueryId.test(1n);
 
     // Greater than 20 ------------------------------------------------------
-    index.add({ type: 'I64', value: 20n } as Literal, 'GreaterThan', sub1);
+    index.add(Literal.I64(20n), ComparisonOperator.GreaterThan(), sub1);
 
     // 20 should match nothing
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 20 } as Value))).toEqual([]);
@@ -85,13 +84,13 @@ describe('ComparisonIndex', () => {
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 21 } as Value))).toEqual([sub1]);
 
     // Add subscriptions for various numeric comparisons
-    index.add({ type: 'I64', value: 5n } as Literal, 'Equal', sub0);
+    index.add(Literal.I64(5n), ComparisonOperator.Equal(), sub0);
 
     // Test exact match (5)
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 5 } as Value))).toEqual([sub0]);
 
     // Less than 25 ---------------------------------------------------------
-    index.add({ type: 'I64', value: 25n } as Literal, 'LessThan', sub0);
+    index.add(Literal.I64(25n), ComparisonOperator.LessThan(), sub0);
 
     // 22 should match sub0 (< 25) and sub1 (> 20)
     // Divergence: Rust returns BTreeSet (sorted by Ord); TS returns insertion-order array.
@@ -109,7 +108,7 @@ describe('ComparisonIndex', () => {
     const index = new ComparisonIndex<QueryId>();
 
     const sub0 = QueryId.test(0n);
-    index.add({ type: 'I64', value: 8n } as Literal, 'NotEqual', sub0);
+    index.add(Literal.I64(8n), ComparisonOperator.NotEqual(), sub0);
 
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 8 } as Value))).toEqual([]);
     expect(sortQueryIds(index.findMatching({ type: 'I64', value: 9 } as Value))).toEqual([sub0]);
@@ -176,9 +175,9 @@ describe('FetchGap', () => {
       name: { type: 'String', value: 'John' },
     });
 
-    const originalPredicate: Predicate = { type: 'True' };
+    const originalPredicate = Predicate.True();
     const orderBy: OrderByItem[] = [
-      { path: PathExpr.simple('name'), direction: 'Asc' },
+      new OrderByItem(PathExpr.simple('name'), OrderDirection.Asc()),
     ];
 
     const gapPredicate = buildContinuationPredicate(
@@ -188,28 +187,21 @@ describe('FetchGap', () => {
     );
 
     // Expected: true AND name >= 'John' AND id != entity.id
-    const expected: Predicate = {
-      type: 'And',
-      left: {
-        type: 'And',
-        left: { type: 'True' },
-        right: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('name') },
-          operator: 'GreaterThanOrEqual',
-          right: { type: 'Literal', value: { type: 'String', value: 'John' } },
-        },
-      },
-      right: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('id') },
-        operator: 'NotEqual',
-        right: {
-          type: 'Literal',
-          value: { type: 'EntityId', value: entity.id().toBytes() },
-        },
-      },
-    };
+    const expected = Predicate.And(
+      Predicate.And(
+        Predicate.True(),
+        Predicate.Comparison(
+          Expr.Path(PathExpr.simple('name')),
+          ComparisonOperator.GreaterThanOrEqual(),
+          Expr.Literal(Literal.String('John')),
+        ),
+      ),
+      Predicate.Comparison(
+        Expr.Path(PathExpr.simple('id')),
+        ComparisonOperator.NotEqual(),
+        Expr.Literal(Literal.EntityId(entity.id().toBytes())),
+      ),
+    );
 
     expect(gapPredicate).toEqual(expected);
   });
@@ -220,10 +212,10 @@ describe('FetchGap', () => {
       age: { type: 'I32', value: 30 },
     });
 
-    const originalPredicate: Predicate = { type: 'True' };
+    const originalPredicate = Predicate.True();
     const orderBy: OrderByItem[] = [
-      { path: PathExpr.simple('name'), direction: 'Asc' },
-      { path: PathExpr.simple('age'), direction: 'Desc' },
+      new OrderByItem(PathExpr.simple('name'), OrderDirection.Asc()),
+      new OrderByItem(PathExpr.simple('age'), OrderDirection.Desc()),
     ];
 
     const gapPredicate = buildContinuationPredicate(
@@ -233,37 +225,28 @@ describe('FetchGap', () => {
     );
 
     // Expected: true AND name >= 'John' AND age <= 30 AND id != entity.id
-    const expected: Predicate = {
-      type: 'And',
-      left: {
-        type: 'And',
-        left: {
-          type: 'And',
-          left: { type: 'True' },
-          right: {
-            type: 'Comparison',
-            left: { type: 'Path', value: PathExpr.simple('name') },
-            operator: 'GreaterThanOrEqual',
-            right: { type: 'Literal', value: { type: 'String', value: 'John' } },
-          },
-        },
-        right: {
-          type: 'Comparison',
-          left: { type: 'Path', value: PathExpr.simple('age') },
-          operator: 'LessThanOrEqual',
-          right: { type: 'Literal', value: { type: 'I32', value: 30 } },
-        },
-      },
-      right: {
-        type: 'Comparison',
-        left: { type: 'Path', value: PathExpr.simple('id') },
-        operator: 'NotEqual',
-        right: {
-          type: 'Literal',
-          value: { type: 'EntityId', value: entity.id().toBytes() },
-        },
-      },
-    };
+    const expected = Predicate.And(
+      Predicate.And(
+        Predicate.And(
+          Predicate.True(),
+          Predicate.Comparison(
+            Expr.Path(PathExpr.simple('name')),
+            ComparisonOperator.GreaterThanOrEqual(),
+            Expr.Literal(Literal.String('John')),
+          ),
+        ),
+        Predicate.Comparison(
+          Expr.Path(PathExpr.simple('age')),
+          ComparisonOperator.LessThanOrEqual(),
+          Expr.Literal(Literal.I32(30)),
+        ),
+      ),
+      Predicate.Comparison(
+        Expr.Path(PathExpr.simple('id')),
+        ComparisonOperator.NotEqual(),
+        Expr.Literal(Literal.EntityId(entity.id().toBytes())),
+      ),
+    );
 
     expect(gapPredicate).toEqual(expected);
   });

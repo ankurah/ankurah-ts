@@ -108,6 +108,10 @@ export class Clock extends Struct {
     return new Clock([]);
   }
 
+  static empty(): Clock {
+    return Clock.default();
+  }
+
   // impl PartialEq
   equals(other: Clock): boolean {
     if (this.ids.length !== other.ids.length) return false;
