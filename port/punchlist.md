@@ -50,7 +50,7 @@ Every in-scope Rust source file and its target TS path.
 | - | core/src/model/tsify.rs | SKIP | tsify |
 | 30 | core/src/node.rs | packages/core/src/node.ts | DONE |
 | 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | DONE |
-| 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
+| 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | DONE |
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | DONE |
 | 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | DONE |
 | 35 | core/src/policy.rs | packages/core/src/policy.ts | DONE |
@@ -174,9 +174,9 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 118 | storage/postgres/src/lib.rs | packages/storage-postgres/src/index.ts | NO |
-| 119 | storage/postgres/src/sql_builder.rs | packages/storage-postgres/src/sql_builder.ts | NO |
-| 120 | storage/postgres/src/value.rs | packages/storage-postgres/src/value.ts | NO |
+| 118 | storage/postgres/src/lib.rs | packages/storage-postgres/src/index.ts | DONE |
+| 119 | storage/postgres/src/sql_builder.rs | packages/storage-postgres/src/sql_builder.ts | DONE |
+| 120 | storage/postgres/src/value.rs | packages/storage-postgres/src/value.ts | DONE |
 
 ## storage/indexeddb-wasm → @ankurah/storage-indexeddb (browser target (pure TS, no wasm))
 
