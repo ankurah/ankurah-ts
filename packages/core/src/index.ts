@@ -138,7 +138,33 @@ export { TypeResolver } from './type_resolver.ts';
 // ── NodeApplier ──
 export { NodeApplier } from './node_applier.ts';
 
+// ── Collation ──
+export type { RangeBound, Collatable } from './collation.ts';
+export {
+  collatableCompare, isInRange,
+  literalToBytes, literalSuccessorBytes, literalPredecessorBytes, literalIsMinimum, literalIsMaximum, literalCollatable,
+  strToBytes, strSuccessorBytes, strPredecessorBytes, strIsMinimum, strIsMaximum,
+  i64CollateToBytes, i64SuccessorBytes, i64PredecessorBytes, i64IsMinimum, i64IsMaximum,
+  f64CollateToBytes, f64SuccessorBytes, f64PredecessorBytes, f64IsMinimum, f64IsMaximum,
+  entityIdCollateToBytes, entityIdSuccessorBytes, entityIdPredecessorBytes, entityIdIsMinimum, entityIdIsMaximum,
+} from './collation.ts';
+
+// ── Task ──
+export { spawn } from './task.ts';
+
+// ── Util ──
+export { expandStates } from './util/expand_states.ts';
+export { IVec } from './util/ivec.ts';
+export { SafeMap } from './util/safemap.ts';
+export { SafeSet } from './util/safeset.ts';
+export { ReadyChunks } from './util/ready_chunks.ts';
+
+// ── Peer Subscription ──
+// Note: client_relay.ts (SubscriptionRelay) not yet ported (Layer 7)
+export { SubscriptionHandler } from './peer_subscription/server.ts';
+
+// ── Traits ──
+export type { Namespace } from './traits.ts';
+
 // ── base (TS-ONLY: Rust ownership primitives, see E11)
 export { AkObject, Struct, Enum, Drop, DropGuard, Arc, Weak, Mutex, MutexGuard, RefCell, Ref, RefMut, Borrow, BorrowMut } from '@ankurah/base';
-
-// TODO: Port remaining types from ankurah/core/src/ (peer_subscription)

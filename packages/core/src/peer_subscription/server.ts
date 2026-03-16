@@ -166,12 +166,15 @@ function convertItem(
   }
 
   const attestation = node.policyAgent.attestState(entityState);
-  // Rust: Attested::opt(entity_state, attestation) — attestation is null for OpenPolicy
-  // For now, create unattested state fragment
-  const stateFragment = StateFragment.fromEntityState(entityState);
+  // Rust: Attested::opt(entity_state, attestation)
+  const attestations = attestation !== null
+    ? new AttestationSet([attestation])
+    : AttestationSet.default();
+  const attestedState = new Attested(entityState, attestations);
+  const stateFragment = StateFragment.fromAttestedEntityState(attestedState);
 
-  // Events should already be attested
-  const eventFragments = item.events.map((e) => e.payload.toEventFragment());
+  // Events should already be attested — convert to EventFragment
+  const eventFragments = item.events.map((e) => EventFragment.fromAttestedEvent(e));
 
   // Determine content based on whether we have events
   const content = new UpdateContent('StateAndEvent', {
@@ -180,13 +183,10 @@ function convertItem(
   });
 
   // Convert predicate relevance from reactor types to proto types
+  // MembershipChange is a string union in TS reactor, ProtoMembershipChange is Enum<V> in proto
   const predicateRelevance = item.predicateRelevance.map(
     ([predId, membership]) => {
-      const protoMembership = membership.match({
-        Initial: () => new ProtoMembershipChange('Initial', {}),
-        Add: () => new ProtoMembershipChange('Add', {}),
-        Remove: () => new ProtoMembershipChange('Remove', {}),
-      });
+      const protoMembership = new ProtoMembershipChange(membership, {});
       return [predId, protoMembership] as [typeof predId, ProtoMembershipChange];
     },
   );

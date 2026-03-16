@@ -43,7 +43,7 @@ Every in-scope Rust source file and its target TS path.
 | 24 | core/src/indexing/key_spec.rs | packages/core/src/indexing/key_spec.ts | DONE |
 | 24.1 | core/src/indexing/key_spec.rs (tests) | packages/core/__tests__/key_spec.test.ts | DONE |
 | 25 | core/src/indexing/mod.rs | packages/core/src/indexing/index.ts | DONE |
-| 26 | core/src/lib.rs | packages/core/src/index.ts | YES |
+| 26 | core/src/lib.rs | packages/core/src/index.ts | DONE |
 | 27 | core/src/lineage.rs | packages/core/src/lineage.ts | DONE |
 | 28 | core/src/livequery.rs | packages/core/src/livequery.ts | DONE |
 | 29 | core/src/model.rs | packages/core/src/model.ts | DONE |
@@ -52,7 +52,7 @@ Every in-scope Rust source file and its target TS path.
 | 31 | core/src/node_applier.rs | packages/core/src/node_applier.ts | DONE |
 | 32 | core/src/peer_subscription/client_relay.rs | packages/core/src/peer_subscription/client_relay.ts | NO |
 | 33 | core/src/peer_subscription/mod.rs | packages/core/src/peer_subscription/index.ts | DONE |
-| 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | NO |
+| 34 | core/src/peer_subscription/server.rs | packages/core/src/peer_subscription/server.ts | DONE |
 | 35 | core/src/policy.rs | packages/core/src/policy.ts | DONE |
 | 36 | core/src/property/backend/lww.rs | packages/core/src/property/backend/lww.ts | DONE |
 | 37 | core/src/property/backend/mod.rs | packages/core/src/property/backend/index.ts | DONE |
@@ -163,12 +163,12 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust file | TS target | Exists? |
 |---|-----------|-----------|--------|
-| 112 | storage/sqlite/src/connection.rs | packages/storage-sqlite/src/connection.ts | NO |
-| 113 | storage/sqlite/src/engine.rs | packages/storage-sqlite/src/engine.ts | NO |
-| 114 | storage/sqlite/src/error.rs | packages/storage-sqlite/src/error.ts | NO |
-| 115 | storage/sqlite/src/lib.rs | packages/storage-sqlite/src/index.ts | NO |
-| 116 | storage/sqlite/src/sql_builder.rs | packages/storage-sqlite/src/sql_builder.ts | NO |
-| 117 | storage/sqlite/src/value.rs | packages/storage-sqlite/src/value.ts | NO |
+| 112 | storage/sqlite/src/connection.rs | packages/storage-sqlite/src/connection.ts | DONE |
+| 113 | storage/sqlite/src/engine.rs | packages/storage-sqlite/src/engine.ts | DONE |
+| 114 | storage/sqlite/src/error.rs | packages/storage-sqlite/src/error.ts | DONE |
+| 115 | storage/sqlite/src/lib.rs | packages/storage-sqlite/src/index.ts | DONE |
+| 116 | storage/sqlite/src/sql_builder.rs | packages/storage-sqlite/src/sql_builder.ts | DONE |
+| 117 | storage/sqlite/src/value.rs | packages/storage-sqlite/src/value.ts | DONE |
 
 ## storage/postgres → @ankurah/storage-postgres (node target)
 
