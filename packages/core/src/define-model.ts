@@ -6,6 +6,7 @@
 // typed accessors.
 
 import type { CollectionId, EntityId, State } from '@ankurah/proto';
+import { CurrentObserver } from '@ankurah/signals';
 import type { ViewInstance, MutableInstance, ViewConstructor, ModelDefinition } from './model.ts';
 import type { Entity } from './entity.ts';
 
@@ -347,11 +348,19 @@ export function defineModel<F extends Record<string, FieldDefinition>>(
   for (const fieldName of fieldNames) {
     Object.defineProperty(GeneratedViewClass.prototype, fieldName, {
       value: function (this: GeneratedViewClass) {
-        // TODO: Wire up actual backend property retrieval once Entity and PropertyBackend are ported.
-        // This will call FromEntity to get the active type, then FromActiveType to project.
+        // Mirrors Rust derive macro View getter:
+        //   CurrentObserver::track(self);
+        //   let active_result = YrsString::<String>::from_entity("title".into(), &self.entity);
+        //   String::from_active(active_result)
         const entity = this.entity();
         if (entity && typeof entity.getPropertyValue === 'function') {
-          return entity.getPropertyValue(fieldName);
+          // Track this entity's signal for reactive re-evaluation (CurrentObserver)
+          CurrentObserver.track(entity.signal());
+          const val = entity.getPropertyValue(fieldName);
+          if (val === null || val === undefined) return undefined;
+          // Unwrap the Value discriminated union to its inner value
+          // Mirrors Rust FromActiveType::from_active() which extracts the projected type
+          return val.value;
         }
         return undefined;
       },

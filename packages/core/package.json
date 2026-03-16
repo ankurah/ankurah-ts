@@ -17,6 +17,9 @@
     "@ankurah/ankql": "workspace:*",
     "yjs": "^13.6.0"
   },
+  "devDependencies": {
+    "@ankurah/storage-memory": "workspace:*"
+  },
   "files": [
     "src/"
   ]

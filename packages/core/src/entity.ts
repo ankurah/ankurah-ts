@@ -13,7 +13,15 @@ import {
   OperationSet,
   type Operation,
 } from '@ankurah/proto';
-import { Broadcast } from '@ankurah/signals';
+import {
+  Broadcast,
+  type BroadcastId,
+  type BroadcastListener,
+  ListenerGuard as SignalListenerGuard,
+  type Signal,
+  type Listener,
+  CurrentObserver,
+} from '@ankurah/signals';
 
 import type { PropertyBackend } from './property/backend/index.ts';
 import { backendFromString, LWWBackend, YjsBackend } from './property/backend/index.ts';
@@ -450,6 +458,40 @@ export class Entity {
       return null;
     }
     return viewClass.fromEntity(this);
+  }
+
+  // ── Signal adapter ───────────────────────────────────────────────
+
+  /** Cached Signal adapter for this entity's broadcast */
+  private _signal: Signal | null = null;
+
+  /**
+   * Get a Signal adapter for this entity's broadcast.
+   * Used by View getters to enable reactive tracking via CurrentObserver.
+   *
+   * Rust: View structs implement Subscribe which provides signal-based tracking.
+   * The derive-generated View getter calls CurrentObserver::track(self) to enable
+   * reactive re-evaluation when the entity changes.
+   * Divergence: Entity provides signal() instead of View implementing Subscribe [E8].
+   */
+  signal(): Signal {
+    if (!this._signal) {
+      const broadcast = this.broadcast;
+      this._signal = {
+        listen(listener: Listener): SignalListenerGuard {
+          const broadcastListener: BroadcastListener<void> = {
+            type: 'NotifyOnly',
+            callback: listener,
+          };
+          const guard = broadcast.reference().listen(broadcastListener);
+          return new SignalListenerGuard(guard);
+        },
+        broadcastId(): BroadcastId {
+          return broadcast.id();
+        },
+      };
+    }
+    return this._signal;
   }
 
   // ── Display ───────────────────────────────────────────────────────
