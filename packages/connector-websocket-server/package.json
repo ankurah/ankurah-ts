@@ -1,5 +1,5 @@
 {
-  "name": "@ankurah/connector-websocket",
+  "name": "@ankurah/connector-websocket-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,9 +11,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ankurah/core": "workspace:*",
+    "@ankurah/base": "workspace:*",
     "@ankurah/proto": "workspace:*",
-    "@ankurah/signals": "workspace:*"
+    "@ankurah/core": "workspace:*"
   },
   "files": [
     "src/"
