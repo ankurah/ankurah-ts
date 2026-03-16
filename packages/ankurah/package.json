@@ -1,0 +1,21 @@
+{
+  "name": "@ankurah/ankurah",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ankurah/core": "workspace:*",
+    "@ankurah/proto": "workspace:*",
+    "@ankurah/signals": "workspace:*",
+    "@ankurah/ankql": "workspace:*"
+  },
+  "files": [
+    "src/"
+  ]
+}

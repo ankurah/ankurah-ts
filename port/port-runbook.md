@@ -6,6 +6,21 @@ This is NOT a one-time port. The Rust implementation continues to evolve. This r
 
 ---
 
+## Definition of Done (per package)
+
+A package is NOT complete until ALL of these are true:
+1. All source files ported from Rust
+2. `npx tsc --noEmit` clean (zero errors)
+3. ALL tests ported — unit tests (`#[cfg(test)]`), integration tests (`tests/`), doc tests
+4. ALL tests passing (`bun test` zero failures)
+5. Parity audit passed (every Rust test has a matching TS test)
+6. Line 1 `// MIRRORS:` annotations on every file
+7. Divergences annotated with `// Divergence: <what> [E#]`
+
+Do NOT call a package "complete" until all 7 criteria are met.
+
+---
+
 ## What This Project Is
 
 A **fully faithful TypeScript port** of ankurah, targeting **React Native / Expo Go** as the primary runtime. Expo Go cannot use WASM or native modules, so this must be pure TypeScript. The TS code should read as close to the Rust source as possible.
