@@ -158,17 +158,22 @@ export class YjsBackend implements PropertyBackend {
    *
    * Rust: `fn to_operations(&self) -> Result<Option<Vec<Operation>>, MutationError>`
    * CRITICAL: Uses encodeStateAsUpdateV2 with previousState for incremental diff.
+   *
+   * Divergence: Cannot use state vector comparison as a fast path because Yjs state
+   * vectors only track insert clocks, not deletes. A delete-only change would have
+   * identical state vectors but a non-empty diff (in the delete set). Instead, we
+   * always compute the diff and compare against the known empty V2 update. [E5]
    */
   toOperations(): Operation[] | null {
+    const diff = Y.encodeStateAsUpdateV2(this.doc, this.previousState);
     const currentState = Y.encodeStateVector(this.doc);
+    this.previousState = currentState;
 
-    // Quick check: if state vector hasn't changed, there's definitely no diff
-    if (this.stateVectorsEqual(this.previousState, currentState)) {
+    // Check if the diff is the known empty V2 update (0 inserts, 0 deletes)
+    // Yjs V2 empty update is [0, 0] — 0 structs, 0 delete set entries
+    if (diff.length === 2 && diff[0] === 0 && diff[1] === 0) {
       return null;
     }
-
-    const diff = Y.encodeStateAsUpdateV2(this.doc, this.previousState);
-    this.previousState = currentState;
 
     return [new Operation(diff)];
   }
