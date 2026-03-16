@@ -71,8 +71,18 @@ export class Clock extends Struct {
     return this.ids.length;
   }
 
+  /// Rust: fn len(&self) -> usize
+  len(): number {
+    return this.ids.length;
+  }
+
   isEmpty(): boolean {
     return this.ids.length === 0;
+  }
+
+  /// Rust: fn iter(&self) -> impl Iterator<Item = &EventId>
+  iter(): EventId[] {
+    return [...this.ids];
   }
 
   [Symbol.iterator](): Iterator<EventId> {

@@ -287,27 +287,27 @@ Every in-scope Rust source file and its target TS path.
 
 | # | Rust test file | TS target | Exists? |
 |---|---------------|-----------|--------|
-| T32 | tests/tests/basic.rs | packages/core/__tests__/integration/basic.test.ts | NO |
-| T33 | tests/tests/concurrent_transactions.rs | packages/core/__tests__/integration/concurrent_transactions.test.ts | NO |
-| T34 | tests/tests/inter_node.rs | packages/core/__tests__/integration/inter_node.test.ts | NO |
+| T32 | tests/tests/basic.rs | packages/core/__tests__/integration/basic.test.ts | DONE |
+| T33 | tests/tests/concurrent_transactions.rs | packages/core/__tests__/integration/concurrent_transactions.test.ts | DONE |
+| T34 | tests/tests/inter_node.rs | packages/core/__tests__/integration/inter_node.test.ts | DONE |
 | T35 | tests/tests/local_subscription.rs | packages/core/__tests__/integration/local_subscription.test.ts | NO |
-| T36 | tests/tests/system.rs | packages/core/__tests__/integration/system.test.ts | NO |
-| T37 | tests/tests/check_request_error.rs | packages/core/__tests__/integration/check_request_error.test.ts | NO |
-| T38 | tests/tests/desc_inequality.rs | packages/core/__tests__/integration/desc_inequality.test.ts | NO |
-| T39 | tests/tests/json_livequery.rs | packages/core/__tests__/integration/json_livequery.test.ts | NO |
-| T40 | tests/tests/limit_gap_filling.rs | packages/core/__tests__/integration/limit_gap_filling.test.ts | NO |
-| T41 | tests/tests/nonexistent_entity.rs | packages/core/__tests__/integration/nonexistent_entity.test.ts | NO |
-| T42 | tests/tests/pagination_cursor.rs | packages/core/__tests__/integration/pagination_cursor.test.ts | NO |
-| T43 | tests/tests/policy_agent.rs | packages/core/__tests__/integration/policy_agent.test.ts | NO |
+| T36 | tests/tests/system.rs | packages/core/__tests__/integration/system.test.ts | DONE |
+| T37 | tests/tests/check_request_error.rs | packages/core/__tests__/integration/check_request_error.test.ts | DONE |
+| T38 | tests/tests/desc_inequality.rs | packages/core/__tests__/integration/desc_inequality.test.ts | DONE |
+| T39 | tests/tests/json_livequery.rs | packages/core/__tests__/integration/json_livequery.test.ts | DONE |
+| T40 | tests/tests/limit_gap_filling.rs | packages/core/__tests__/integration/limit_gap_filling.test.ts | DONE |
+| T41 | tests/tests/nonexistent_entity.rs | packages/core/__tests__/integration/nonexistent_entity.test.ts | DONE |
+| T42 | tests/tests/pagination_cursor.rs | packages/core/__tests__/integration/pagination_cursor.test.ts | DONE |
+| T43 | tests/tests/policy_agent.rs | packages/core/__tests__/integration/policy_agent.test.ts | DONE |
 | T44 | tests/tests/predicate_checks.rs | packages/core/__tests__/integration/predicate_checks.test.ts | NO |
-| T45 | tests/tests/property_backends.rs | packages/core/__tests__/integration/property_backends.test.ts | NO |
-| T46 | tests/tests/repeatable_read.rs | packages/core/__tests__/integration/repeatable_read.test.ts | NO |
-| T47 | tests/tests/rt106.rs | packages/core/__tests__/integration/rt106.test.ts | NO |
-| T48 | tests/tests/rt114.rs | packages/core/__tests__/integration/rt114.test.ts | NO |
-| T49 | tests/tests/selection_macro.rs | packages/core/__tests__/integration/selection_macro.test.ts | NO |
-| T50 | tests/tests/update_predicate.rs | packages/core/__tests__/integration/update_predicate.test.ts | NO |
-| T51 | tests/tests/websocket.rs | packages/core/__tests__/integration/websocket.test.ts | NO |
-| T52 | tests/tests/where_clause.rs | packages/core/__tests__/integration/where_clause.test.ts | NO |
+| T45 | tests/tests/property_backends.rs | packages/core/__tests__/integration/property_backends.test.ts | DONE |
+| T46 | tests/tests/repeatable_read.rs | packages/core/__tests__/integration/repeatable_read.test.ts | DONE |
+| T47 | tests/tests/rt106.rs | packages/core/__tests__/integration/rt106.test.ts | DONE |
+| T48 | tests/tests/rt114.rs | packages/core/__tests__/integration/rt114.test.ts | DONE |
+| T49 | tests/tests/selection_macro.rs | packages/core/__tests__/integration/selection_macro.test.ts | DONE |
+| T50 | tests/tests/update_predicate.rs | packages/core/__tests__/integration/update_predicate.test.ts | DONE |
+| T51 | tests/tests/websocket.rs | packages/core/__tests__/integration/websocket.test.ts | DONE |
+| T52 | tests/tests/where_clause.rs | packages/core/__tests__/integration/where_clause.test.ts | DONE |
 
 ## Summary
 

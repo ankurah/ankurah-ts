@@ -140,10 +140,7 @@ describe('basic integration', () => {
     // Divergence: View doesn't directly implement Subscribe; subscribe on entity broadcast [E8].
     const h1 = album.entity().broadcast.reference().listen({
       type: 'NotifyOnly',
-      callback: () => {
-        console.log('DEBUG: viewWatcher listener fired');
-        viewWatcher.notify(undefined as any);
-      },
+      callback: () => viewWatcher.notify(undefined as any),
     });
 
     // Rust: CallbackObserver + observer.trigger()
@@ -175,57 +172,7 @@ describe('basic integration', () => {
 
     // Commit the transaction
     // Rust: trx2.commit().await?;
-    // Monkey-patch Entity.applyEvent to log calls
-    const originalApplyEvent = album.entity().applyEvent.bind(album.entity());
-    let applyEventCallCount = 0;
-    album.entity().applyEvent = function(event: any) {
-      applyEventCallCount++;
-      console.log(`DEBUG: applyEvent called on album entity (#${applyEventCallCount}), isCreate=${event.isEntityCreate()}`);
-      const result = originalApplyEvent(event);
-      console.log(`DEBUG: applyEvent returned ${result}`);
-      return result;
-    };
-
-    // Monkey-patch broadcast.send to log calls
-    const originalSend = album.entity().broadcast.send.bind(album.entity().broadcast);
-    album.entity().broadcast.send = function() {
-      console.log('DEBUG: broadcast.send() called!');
-      return originalSend();
-    };
-
-    // Check if the fork entity has operations
-    const forkEntity = albumMut2.inner.entity();
-    const forkYjs = forkEntity.getBackend(YjsBackend);
-    console.log('DEBUG: yjs2 === forkYjs?', yjs2 === forkYjs);
-    console.log('DEBUG: yjs2 name value =', yjs2.getString('name'));
-    console.log('DEBUG: forkYjs name value =', forkYjs.getString('name'));
-    // Debug state vectors
-    const Y = require('yjs');
-    const currentSV = Y.encodeStateVector(forkYjs.doc);
-    console.log('DEBUG: previousState length =', (forkYjs as any).previousState.length, 'bytes');
-    console.log('DEBUG: currentSV length =', currentSV.length, 'bytes');
-    console.log('DEBUG: previousState =', [...(forkYjs as any).previousState].map((b: number) => b.toString(16).padStart(2, '0')).join(' '));
-    console.log('DEBUG: currentSV =', [...currentSV].map((b: number) => b.toString(16).padStart(2, '0')).join(' '));
-    const svEqual = (forkYjs as any).stateVectorsEqual((forkYjs as any).previousState, currentSV);
-    console.log('DEBUG: state vectors equal?', svEqual);
-    const ops = forkYjs.toOperations();
-    console.log('DEBUG: forkYjs.toOperations() =', ops ? `${ops.length} ops` : 'null');
-    const forkEvent = forkEntity.generateCommitEvent();
-    console.log('DEBUG: forkEvent =', forkEvent ? 'exists' : 'null');
-    if (forkEvent) {
-      console.log('DEBUG: forkEvent.isEntityCreate() =', forkEvent.isEntityCreate());
-      console.log('DEBUG: forkEvent.operations =', [...forkEvent.operations.entries()].map(([k, ops]) => `${k}:${ops.length}ops`));
-    }
-    // Also check trx entities
-    console.log('DEBUG: trx2.entities.length =', trx2.entities.length);
-    for (let i = 0; i < trx2.entities.length; i++) {
-      const e = trx2.entities[i];
-      console.log(`DEBUG: trx2.entities[${i}] id =`, e.id().toBase64Short(), 'kind =', e.kind.type);
-      console.log(`DEBUG: trx2.entities[${i}] === forkEntity?`, e === forkEntity);
-    }
-    console.log('DEBUG: about to commit trx2');
     await trx2.commit();
-    console.log('DEBUG: after commit, applyEventCallCount =', applyEventCallCount);
 
     // Now we should have one change since we performed a delete operation
     // Rust: assert_eq!(view_watcher.take_one().await, (album.clone(), "The rest of the owl".to_owned(), "2024".to_owned()));
