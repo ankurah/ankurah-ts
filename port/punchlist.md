@@ -290,7 +290,7 @@ Every in-scope Rust source file and its target TS path.
 | T32 | tests/tests/basic.rs | packages/core/__tests__/integration/basic.test.ts | DONE |
 | T33 | tests/tests/concurrent_transactions.rs | packages/core/__tests__/integration/concurrent_transactions.test.ts | DONE |
 | T34 | tests/tests/inter_node.rs | packages/core/__tests__/integration/inter_node.test.ts | DONE |
-| T35 | tests/tests/local_subscription.rs | packages/core/__tests__/integration/local_subscription.test.ts | NO |
+| T35 | tests/tests/local_subscription.rs | packages/core/__tests__/livequery.test.ts | DONE |
 | T36 | tests/tests/system.rs | packages/core/__tests__/integration/system.test.ts | DONE |
 | T37 | tests/tests/check_request_error.rs | packages/core/__tests__/integration/check_request_error.test.ts | DONE |
 | T38 | tests/tests/desc_inequality.rs | packages/core/__tests__/integration/desc_inequality.test.ts | DONE |
@@ -299,7 +299,7 @@ Every in-scope Rust source file and its target TS path.
 | T41 | tests/tests/nonexistent_entity.rs | packages/core/__tests__/integration/nonexistent_entity.test.ts | DONE |
 | T42 | tests/tests/pagination_cursor.rs | packages/core/__tests__/integration/pagination_cursor.test.ts | DONE |
 | T43 | tests/tests/policy_agent.rs | packages/core/__tests__/integration/policy_agent.test.ts | DONE |
-| T44 | tests/tests/predicate_checks.rs | packages/core/__tests__/integration/predicate_checks.test.ts | NO |
+| T44 | tests/tests/predicate_checks.rs | packages/core/__tests__/integration/predicate_checks.test.ts | DONE |
 | T45 | tests/tests/property_backends.rs | packages/core/__tests__/integration/property_backends.test.ts | DONE |
 | T46 | tests/tests/repeatable_read.rs | packages/core/__tests__/integration/repeatable_read.test.ts | DONE |
 | T47 | tests/tests/rt106.rs | packages/core/__tests__/integration/rt106.test.ts | DONE |

@@ -418,12 +418,23 @@ export class Entity {
       return true;
     }
 
-    // For non-creation events: simplified merge
-    // Full lineage comparison would determine Descends vs NotDescends, but for the
-    // local commit pipeline events always descend from the canonical entity's head.
-    // Rust Ordering::Descends: new_head = event.id().into()
+    // Simplified lineage comparison: check if event's parent matches current head.
+    // Rust: compare_unstored_event(getter, event, &head, budget) -> Ordering
+    // - Descends: event.parent == head => new_head = event.id()
+    // - NotDescends: event.parent != head => new_head = head.withEvent(event.id())
+    //   (concurrent commit — both events should appear in head)
+    let newHead: Clock;
+    if (event.parent.equals(this.state.head)) {
+      // Descends: this event follows directly from our head
+      newHead = Clock.fromEventId(event.id());
+    } else {
+      // NotDescends: concurrent commit, merge into head
+      // Rust: head.with_event(event.id())
+      newHead = this.state.head.withEvent(event.id());
+    }
+
     this.applyOperations(event.operations);
-    this.state.head = Clock.fromEventId(event.id());
+    this.state.head = newHead;
     this.broadcast.send();
     return true;
   }
