@@ -51,10 +51,9 @@ interface Expectation {
 
 // ── Load test cases ──
 // Mirrors: predicate_checks.rs `const PREDICATE_CASES_JSON: &str = include_str!("../predicate_cases.json");`
-// Divergence: Loaded from Rust sibling repo at runtime [E1].
+// Divergence: Fixture copied from Rust repo into TS test fixtures [E1].
 
-const ANKURAH_RS_PATH = process.env.ANKURAH_RS_PATH ?? join(__dirname, '../../../../ankurah');
-const predicateCasesJson = readFileSync(join(ANKURAH_RS_PATH, 'tests/predicate_cases.json'), 'utf-8');
+const predicateCasesJson = readFileSync(join(__dirname, '../fixtures/predicate_cases.json'), 'utf-8');
 const predicateCases: PredicateCases = JSON.parse(predicateCasesJson);
 
 function allTestCases(): TestCaseData[] {
@@ -158,11 +157,9 @@ describe('predicate_checks', () => {
       for (const exp of testCase.expectations) {
         const expected = [...exp.matches].sort();
         const results = await ctx.fetch(QueryTest, matchArgs(exp.query));
+        // Rust: results.iter().map(|r| r.label().unwrap()).collect()
         const actual = results
-          .map((r) => {
-            const label = r.field('label');
-            return typeof label === 'string' ? label : String(label);
-          })
+          .map((r: any) => r.label() as string)
           .sort();
         expect(actual).toEqual(expected);
       }

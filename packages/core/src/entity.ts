@@ -629,7 +629,11 @@ function primitiveToValue(value: unknown): Value | null {
   }
   if (typeof value === 'number') {
     if (Number.isInteger(value)) {
-      return { type: 'I32', value };
+      // Use I32 for values within signed 32-bit range, I64 for larger integers
+      if (value >= -2147483648 && value <= 2147483647) {
+        return { type: 'I32', value };
+      }
+      return { type: 'I64', value };
     }
     return { type: 'F64', value };
   }

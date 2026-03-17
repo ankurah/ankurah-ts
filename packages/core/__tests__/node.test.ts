@@ -15,7 +15,7 @@ import {
   State,
   StateBuffers,
 } from '@ankurah/proto';
-import type { Selection } from '@ankurah/ankql';
+import { Selection, Predicate } from '@ankurah/ankql';
 
 import { Entity, WeakEntitySet } from '../src/entity.ts';
 import { Node, NodeAndContext, matchArgs } from '../src/node.ts';
@@ -111,14 +111,14 @@ function createNode(opts?: { durable?: boolean }): { node: Node; storage: MockSt
 
 describe('matchArgs', () => {
   test('creates MatchArgs with default cached=true', () => {
-    const selection = { predicate: { type: 'True' } } as unknown as Selection;
+    const selection = Selection.fromPredicate(Predicate.True());
     const args = matchArgs(selection);
     expect(args.selection).toBe(selection);
     expect(args.cached).toBe(true);
   });
 
   test('creates MatchArgs with cached=false', () => {
-    const selection = { predicate: { type: 'True' } } as unknown as Selection;
+    const selection = Selection.fromPredicate(Predicate.True());
     const args = matchArgs(selection, false);
     expect(args.cached).toBe(false);
   });
@@ -192,7 +192,7 @@ describe('Node', () => {
 
   test('fetchEntitiesFromLocal returns empty for empty storage', async () => {
     const { node } = createNode();
-    const selection = { predicate: { type: 'True' } } as unknown as Selection;
+    const selection = Selection.fromPredicate(Predicate.True());
     const entities = await node.fetchEntitiesFromLocal(CollectionId.from('test_node'), selection);
     expect(entities).toHaveLength(0);
   });
@@ -210,7 +210,7 @@ describe('Node', () => {
     const col = await storage.collection(CollectionId.from('test_node')) as MockStorageCollection;
     col.states.set(entityId.toString(), attested);
 
-    const selection = { predicate: { type: 'True' } } as unknown as Selection;
+    const selection = Selection.fromPredicate(Predicate.True());
     const entities = await node.fetchEntitiesFromLocal(CollectionId.from('test_node'), selection);
     expect(entities).toHaveLength(1);
     expect(entities[0].id().equals(entityId)).toBe(true);
@@ -323,7 +323,7 @@ describe('NodeAndContext', () => {
     const col = await storage.collection(CollectionId.from('test_node')) as MockStorageCollection;
     col.states.set(entityId.toString(), new Attested(entityState));
 
-    const selection = { predicate: { type: 'True' } } as unknown as Selection;
+    const selection = Selection.fromPredicate(Predicate.True());
     const entities = await nac.fetchEntities('test_node' as any, matchArgs(selection));
     expect(entities).toHaveLength(1);
   });

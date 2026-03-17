@@ -20,6 +20,7 @@ import type { PolicyAgent } from './policy.ts';
 import { CollectionSet } from './collectionset.ts';
 import { Reactor } from './reactor/index.ts';
 import { EntityLiveQuery } from './livequery.ts';
+import { TypeResolver } from './type_resolver.ts';
 
 // ── PeerState ────────────────────────────────────────────────────────────────
 // Rust: pub struct PeerState { sender, _durable, subscription_handler, pending_requests, pending_updates }
@@ -79,7 +80,7 @@ export class Node {
   // Rust: pub(crate) subscription_relay: Option<SubscriptionRelay<...>>
   // Deferred: Layer 7 (peer networking)
   // Rust: pub(crate) type_resolver: TypeResolver
-  // Deferred: TypeResolver ported separately
+  readonly typeResolver: TypeResolver;
 
   /** Storage engine reference (for direct access where CollectionSet isn't used) */
   readonly storageEngine: StorageEngine;
@@ -104,6 +105,7 @@ export class Node {
     this.entities = new WeakEntitySet();
     this.policyAgent = options.policyAgent;
     this.reactor = options.reactor ?? new Reactor();
+    this.typeResolver = new TypeResolver();
     this.defaultContextData = options.contextData ?? null;
   }
 
@@ -230,8 +232,8 @@ export class NodeAndContext implements TContext {
   async fetchEntities(collection: CollectionId, args: MatchArgs): Promise<Entity[]> {
     this.node.policyAgent.canAccessCollection(this.cdata as unknown[], collection);
 
-    // Rust: modifies args.selection via policy_agent.filter_predicate and type_resolver
-    // Deferred: filter_predicate and type_resolver (Layer 7)
+    // Rust: args.selection = self.node.type_resolver.resolve_selection_types(args.selection);
+    args.selection = this.node.typeResolver.resolveSelectionTypes(args.selection);
 
     // Rust: if !self.node.durable { ... fetch_from_peer ... } else { ... from local ... }
     // Simplified: always fetch from local (peer networking deferred)
