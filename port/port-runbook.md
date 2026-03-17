@@ -120,71 +120,52 @@ The TS port must be byte-compatible with the Rust implementation. This is valida
 
 ## Package Structure
 
-| TS Package | Rust Crate | Status |
-|-----------|------------|--------|
-| `@ankurah/proto` | `ankurah-proto` | Done |
-| `@ankurah/core` | `ankurah-core` | Layers 0-6b done, Layer 7 partial |
-| `@ankurah/signals` | `ankurah-signals` | Done (core types) |
-| `@ankurah/ankql` | `ankql` | Done |
-| `@ankurah/storage-common` | `ankurah-storage-common` | Done |
-| `@ankurah/storage-memory` | TS-only | Done |
-| `@ankurah/connector-websocket` | `ankurah-websocket-client` | Not started |
-| `@ankurah/connector-local` | `ankurah-connector-local-process` | Not started |
-| `@ankurah/react` | TS-only (replaces Rust UniFFI bridge) | Not started |
-| `@ankurah/eslint-plugin` | TS-only | Done (8 rules, 64 tests) |
+| TS Package | Rust Crate | Source files | Tests | Parity audit |
+|-----------|------------|-------------|-------|-------------|
+| `@ankurah/base` | TS-only | Done | 68 | n/a |
+| `@ankurah/ankql` | `ankql` | 8/8 | 76 | PASS |
+| `@ankurah/proto` | `ankurah-proto` | 15/15 | 41 | PASS |
+| `@ankurah/signals` | `ankurah-signals` | 15/15 | 68 | PASS |
+| `@ankurah/storage-common` | `ankurah-storage-common` | 8/8 | 104 | pending |
+| `@ankurah/core` | `ankurah-core` | 63/65 | ~400 | pending |
+| `@ankurah/storage-memory` | TS-only | Done | 15 | n/a |
+| `@ankurah/storage-sqlite` | `ankurah-storage-sqlite` | 6/6 | 6 (sql_builder only) | engine stubs |
+| `@ankurah/storage-postgres` | `ankurah-storage-postgres` | 3/3 | 25 (sql_builder only) | engine stubs |
+| `@ankurah/storage-indexeddb` | `ankurah-storage-indexeddb-wasm` | 16/16 | 8 | engine stubs |
+| `@ankurah/connector-websocket` | `ankurah-websocket-client` | 3/3 | 0 | no Rust tests |
+| `@ankurah/connector-websocket-server` | `ankurah-websocket-server` | 6/6 | 0 | no Rust tests |
+| `@ankurah/connector-local` | `ankurah-connector-local-process` | 1/1 | 0 | no Rust tests |
+| `@ankurah/ankurah` | `ankurah` (facade) | 1/1 | 0 | n/a |
+| `@ankurah/eslint-plugin` | TS-only | Done | 64 | n/a |
+| `@ankurah/react` | TS-only | Not started | 0 | n/a |
 
 ## Current Status
 
-**707 tests passing, 0 failures**, tsc clean across all packages. Last commit: `edfd9a0`.
+**835 tests passing, 0 failures, 31 skip**, tsc clean. Last commit: `c8b7330`.
 
-### What's done
-- **@ankurah/base**: AkObject, Struct, Enum<V>, Drop, Arc, Weak, Borrow, BorrowMut, Mutex, RefCell, AsyncMutex — 68 tests
-- **@ankurah/ankql**: All 8 source files ported, all 76 tests passing. Parity audit PASS (59/59 Rust tests).
-- **@ankurah/proto**: All 15 source files ported, 29 fixture tests + 12 Yrs V2 interop tests passing. Parity audit PASS.
-- **@ankurah/signals**: All 15 source files ported, 68 tests passing. Parity audit PASS (34/34 Rust tests).
-- **@ankurah/storage-common**: All 8 source files ported, 104 tests passing. Parity audit pending (2 planner tests short of Rust's 71).
-- **@ankurah/core**: ~44/65 source files ported, 285 tests (6 skip). tsc clean.
-- **@ankurah/storage-memory**: 15 tests passing. TS-only package.
-- **@ankurah/eslint-plugin**: 8 ownership rules, 64 tests.
-- **Ownership model**: AkObject→Struct/Enum/Drop hierarchy, Arc/Weak refcounting, Borrow non-propagation. Fully tested.
-- **Rust fixtures**: Yrs V2 committed, 4 new bincode fixtures added (CausalAssertion, Principal, Attested<Event>, concurrent_merge).
+All 147 in-scope source files ported. All 21 core integration tests ported (T32-T52). Signal integration tests ported (T1-T3).
 
-### Outstanding Tasks
-
-#### Core — remaining source files (~21)
-- `peer_subscription/mod.rs`, `client_relay.rs`, `server.rs` — networking (Layer 7)
-- `property/value/pn_counter.rs` — deferred (dead code in Rust)
-- `property/backend/pn_counter.rs` — deferred (dead code)
-- `traits.rs`, `task.rs` — small utility files (task.ts created)
-- `type_resolver.rs` — 240 lines, 6 tests depend on it
-- `collation.rs` — created but needs integration
-- `util/mod.rs`, `util/cast.rs`, `util/expand_states.rs`, `util/iterable.rs`, `util/ivec.rs`, `util/safemap.rs`, `util/safeset.rs` — most map to JS primitives
-- `model.rs` as `model/index.ts` (E12) — done
-- `lib.rs` → `index.ts` — needs re-export updates
-
-#### Storage engines (0/25 files)
-- `@ankurah/storage-sqlite` — 6 files + 5 integration tests
-- `@ankurah/storage-postgres` — 3 files + 12 integration tests
-- `@ankurah/storage-indexeddb` — 16 files + 13 integration tests
-
-#### Connectors (0/10 files)
-- `@ankurah/connector-websocket` — 3 files
-- `@ankurah/connector-websocket-server` — 6 files
-- `@ankurah/connector-local` — 1 file
-
-#### Facade (0/1)
-- `@ankurah/ankurah` — re-exports
-
-#### Integration tests (0/52)
-- See punchlist.md T1-T52
+### Outstanding
 
 #### Parity audits needed
-- storage-common (2 planner tests short)
-- core (once remaining files ported)
+- storage-common (2 planner tests short of Rust's 71)
+- core (full audit)
 
-#### Known bugs
-- 2 LiveQuery gap-filling test failures (pre-existing logic bug, not Enum migration)
-- 6 skipped tests depend on TypeResolver (not yet ported)
+#### Storage engine integration tests (need real DBs)
+- T5-T8: SQLite (4 tests) — need SQLite driver wired up
+- T9-T19: Postgres (11 tests) — need Postgres + Docker
+- T20-T31: IndexedDB (12 tests) — need browser/jsdom environment
+
+#### 31 skipped tests
+- 25 inter-node tests (need LocalProcessConnection wired to Node)
+- 4 websocket tests (need WS client+server integration)
+- 2 policy_agent tests (Rust source commented out)
+
+#### Infrastructure
+- Enable eslint-plugin-ankurah in repo ESLint config
+- Run linter on all code (will surface ownership violations)
+- Add lint + audit to CI
+- Wire `using` declarations where needed (GC warnings in test output)
 
 #### Rust-side
 - Support branch needs rebase onto main for new proto types
