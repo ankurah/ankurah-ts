@@ -318,27 +318,32 @@ function extractTsItems(filePath: string): TsItem[] {
   const interfaceRegex = /^\s*(?:export\s+)?interface\s+(\w+)/;
   const typeRegex = /^\s*(?:export\s+)?type\s+(\w+)/;
   const funcRegex = /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)/;
-  const methodRegex = /^\s*(?:(?:public|private|protected|static|readonly|async|override|get|set)\s+)*(\w+)\s*(?:<[^>]*>)?\s*\(/;
   const constFuncRegex = /^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[^=])*=>/;
   const testRegex = /^\s*(?:test|it)\s*\(\s*['"`]([^'"`]+)['"`]/;
-  const describeRegex = /^\s*describe\s*\(\s*['"`]([^'"`]+)['"`]/;
+  const testSkipRegex = /^\s*(?:test|it)\.skip\s*\(\s*['"`]([^'"`]+)['"`]/;
+  const methodRegex = /^\s*(?:(?:public|private|protected|static|readonly|async|override|get|set)\s+)*(\w+)\s*(?:<[^>]*>)?\s*\(/;
 
-  let currentClass: string | null = null;
-  let classDepth = 0;
+  // Track class nesting with a stack
+  const classStack: { name: string; depth: number }[] = [];
   let depth = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Track brace depth to know when we exit a class
+    // Count braces BEFORE processing (so class opening brace is counted)
+    const prevDepth = depth;
     for (const ch of line) {
       if (ch === '{') depth++;
       if (ch === '}') depth--;
     }
-    if (currentClass && depth <= classDepth) {
-      currentClass = null;
+
+    // Pop class stack when we exit their scope
+    while (classStack.length > 0 && depth <= classStack[classStack.length - 1].depth) {
+      classStack.pop();
     }
+
+    const currentClass = classStack.length > 0 ? classStack[classStack.length - 1].name : null;
 
     // Check for // @<hash> on preceding line
     const prevLine = i > 0 ? lines[i - 1].trim() : '';
@@ -350,8 +355,7 @@ function extractTsItems(filePath: string): TsItem[] {
 
     // class
     if ((match = line.match(classRegex))) {
-      currentClass = match[1];
-      classDepth = depth - 1; // depth already incremented for opening brace
+      classStack.push({ name: match[1], depth: prevDepth });
       items.push({
         kind: 'class',
         name: match[1],
@@ -389,8 +393,8 @@ function extractTsItems(filePath: string): TsItem[] {
       continue;
     }
 
-    // standalone function
-    if ((match = line.match(funcRegex))) {
+    // standalone function (only outside classes)
+    if (!currentClass && (match = line.match(funcRegex))) {
       items.push({
         kind: 'function',
         name: match[1],
@@ -402,10 +406,23 @@ function extractTsItems(filePath: string): TsItem[] {
       continue;
     }
 
-    // const arrow function
-    if ((match = line.match(constFuncRegex))) {
+    // const arrow function (only outside classes)
+    if (!currentClass && (match = line.match(constFuncRegex))) {
       items.push({
         kind: 'const',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // test.skip() call — capture but mark
+    if ((match = line.match(testSkipRegex))) {
+      items.push({
+        kind: 'function',
         name: match[1],
         lineNumber: i + 1,
         lineCount: countBodyLines(lines, i),
@@ -428,27 +445,16 @@ function extractTsItems(filePath: string): TsItem[] {
       continue;
     }
 
-    // Method inside a class (skip if it matched something above)
+    // Method inside a class
     if (currentClass && (match = trimmed.match(methodRegex))) {
       const methodName = match[1];
-      // Skip keywords that look like methods
-      if (['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'delete', 'typeof', 'constructor'].includes(methodName)) {
-        if (methodName === 'constructor') {
-          items.push({
-            kind: 'method',
-            name: 'constructor',
-            lineNumber: i + 1,
-            lineCount: countBodyLines(lines, i),
-            hasAttestation,
-            attestHash,
-            parentClass: currentClass,
-          });
-        }
-        continue;
-      }
+      // Skip control flow keywords that match the regex
+      const keywords = ['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'delete', 'typeof', 'await', 'import', 'export', 'super'];
+      if (keywords.includes(methodName)) continue;
+
       items.push({
         kind: 'method',
-        name: methodName,
+        name: methodName === 'constructor' ? 'new' : methodName,
         lineNumber: i + 1,
         lineCount: countBodyLines(lines, i),
         hasAttestation,
@@ -473,20 +479,26 @@ function matchItems(rustItems: RustItem[], tsItems: TsItem[]): FileReport['match
     let found: TsItem | undefined;
 
     if (rust.kind === 'fn') {
-      // Look for function/method/const with matching TS name
+      // Build a set of candidate TS names to search for
+      const candidates = new Set<string>();
+      candidates.add(rust.tsName);              // camelCase version
+      candidates.add(rust.rustName);            // original snake_case
+      // For test functions: "test_foo_bar" → also try "foo bar", "test foo bar", "test_foo_bar"
+      if (rust.rustName.startsWith('test_')) {
+        const withoutPrefix = rust.rustName.slice(5);
+        candidates.add(withoutPrefix.replace(/_/g, ' '));              // "foo bar"
+        candidates.add('test ' + withoutPrefix.replace(/_/g, ' '));    // "test foo bar"
+        candidates.add(rust.rustName.replace(/_/g, ' '));              // "test foo bar" (full)
+      }
+      // Also try with underscores replaced by spaces (common test name pattern)
+      candidates.add(rust.rustName.replace(/_/g, ' '));
+
+      // Look for function/method/const with any matching name
       found = tsItems.find((ts, idx) =>
         !usedTs.has(idx) &&
         (ts.kind === 'function' || ts.kind === 'method' || ts.kind === 'const') &&
-        ts.name === rust.tsName
+        candidates.has(ts.name)
       );
-      // Also try the Rust name directly (test functions often keep snake_case in test description)
-      if (!found) {
-        found = tsItems.find((ts, idx) =>
-          !usedTs.has(idx) &&
-          (ts.kind === 'function' || ts.kind === 'method' || ts.kind === 'const') &&
-          ts.name === rust.rustName
-        );
-      }
     } else if (rust.kind === 'struct' || rust.kind === 'enum') {
       found = tsItems.find((ts, idx) =>
         !usedTs.has(idx) && ts.kind === 'class' && ts.name === rust.tsName
@@ -556,23 +568,32 @@ function findMirrorsFiles(packageDir: string): MirrorsInfo[] {
 }
 
 // ---------------------------------------------------------------------------
-// Check a file pair
+// Check a Rust file against ALL TS files that mirror it
 // ---------------------------------------------------------------------------
 
-function checkFile(tsFile: string, rustRelPath: string): FileReport | null {
+function checkRustFile(rustRelPath: string, tsFiles: string[]): FileReport | null {
   const rustAbsPath = join(RS_PATH, rustRelPath);
   if (!existsSync(rustAbsPath)) return null;
 
   const rustItems = extractRustItems(rustAbsPath);
-  const tsItems = extractTsItems(tsFile);
-
   if (rustItems.length === 0) return null;
 
-  const matched = matchItems(rustItems, tsItems);
-  const matchedRustNames = new Set(matched.map(m => m.rust.rustName + ':' + m.rust.kind + ':' + m.rust.lineNumber));
+  // Merge TS items from ALL files that mirror this Rust file
+  const allTsItems: TsItem[] = [];
+  for (const tsFile of tsFiles) {
+    const items = extractTsItems(tsFile);
+    // Tag each item with its source file for reporting
+    for (const item of items) {
+      (item as any)._sourceFile = tsFile;
+    }
+    allTsItems.push(...items);
+  }
+
+  const matched = matchItems(rustItems, allTsItems);
+  const matchedKeys = new Set(matched.map(m => m.rust.rustName + ':' + m.rust.kind + ':' + m.rust.lineNumber));
 
   const unmatched = rustItems.filter(r =>
-    !matchedRustNames.has(r.rustName + ':' + r.kind + ':' + r.lineNumber)
+    !matchedKeys.has(r.rustName + ':' + r.kind + ':' + r.lineNumber)
   );
 
   const currentHash = getLatestCommitHash(rustAbsPath);
@@ -595,7 +616,7 @@ function checkFile(tsFile: string, rustRelPath: string): FileReport | null {
     }));
 
   return {
-    tsFile,
+    tsFile: tsFiles.join(', '),
     rustPath: rustRelPath,
     rustItems,
     matched,
@@ -709,8 +730,16 @@ Options:
     const mirrors = findMirrorsFiles(pkgDir);
     if (mirrors.length === 0) continue;
 
+    // Group TS files by the Rust file they mirror
+    const rustToTs = new Map<string, string[]>();
     for (const { tsFile, rustRelPath } of mirrors) {
-      const report = checkFile(tsFile, rustRelPath);
+      const existing = rustToTs.get(rustRelPath) ?? [];
+      existing.push(tsFile);
+      rustToTs.set(rustRelPath, existing);
+    }
+
+    for (const [rustRelPath, tsFiles] of rustToTs) {
+      const report = checkRustFile(rustRelPath, tsFiles);
       if (!report) continue;
 
       totalFiles++;
