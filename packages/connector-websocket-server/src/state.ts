@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/connectors/websocket-server/src/state.rs
 
-import type { SendError } from '@ankurah/core';
+import { SendError } from '@ankurah/core';
 import { Message, BincodeWriter } from '@ankurah/proto';
 import { WebSocketClientSender, type WsSendFn } from './sender.ts';
 
@@ -30,7 +30,7 @@ export function connectionSend(conn: Connection, message: Message): void {
         const data = writer.finish();
         conn.send(data);
       } else {
-        throw new Error('Connection send function is null');
+        throw SendError.connectionClosed();
       }
       break;
     }

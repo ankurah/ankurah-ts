@@ -42,6 +42,7 @@ export const WORDLIST: readonly string[] = [
   'zulu',
 ] as const;
 
+// Rust: fn compress
 /**
  * Compress bytes into a shorter array by XOR-folding segments.
  */

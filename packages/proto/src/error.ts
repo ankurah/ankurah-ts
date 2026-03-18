@@ -1,5 +1,7 @@
 // MIRRORS: ankurah/proto/src/error.rs
 
+// Rust: fn fmt (Display for DecodeError) — merged into Error constructor
+// Rust: fn from (From<base64::DecodeError> for DecodeError) — SKIP: no base64 crate in TS [E9]
 /**
  * Error type for decoding failures.
  * Mirrors Rust `DecodeError` enum as a TS Error subclass.
@@ -80,6 +82,7 @@ export class IdParseError extends Error {
     return new IdParseError('InvalidFormat', `Invalid format: ${detail}`);
   }
 
+  // Rust: fn from (From<DecodeError> for IdParseError)
   static fromDecodeError(e: DecodeError): IdParseError {
     switch (e.kind) {
       case 'InvalidBase64': return IdParseError.invalidBase64();

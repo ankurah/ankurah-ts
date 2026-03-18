@@ -96,6 +96,7 @@ export type { PolicyAgent } from '@ankurah/core';
 
 // Rust: pub use ankurah_core::property::{self, Property, Ref};
 export type { Property } from '@ankurah/core';
+// Divergence: property::Ref (entity reference) not yet exported from @ankurah/core index [E4]
 
 // Rust: pub use ankurah_core::query_value::QueryValue;
 export type { QueryValue } from '@ankurah/core';

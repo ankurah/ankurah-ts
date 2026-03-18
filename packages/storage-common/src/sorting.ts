@@ -82,8 +82,8 @@ function partitionKeysEqual(a: (Value | null)[], b: (Value | null)[]): boolean {
  *
  * Divergence [E8]: Rust Stream → TypeScript AsyncIterable.
  */
-// Rust: fn SortedStream::new — SKIP: absorbed into sortedIterable
-// Rust: fn SortedStream::poll_next — absorbed into sortedIterable async generator
+// Rust: fn new — SKIP: SortedStream::new absorbed into sortedIterable
+// Rust: fn poll_next — SKIP: SortedStream::poll_next absorbed into sortedIterable async generator
 export async function* sortedIterable<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -138,8 +138,8 @@ export async function* sortedIterable<T extends Filterable>(
  *
  * Divergence [E8]: Rust Stream → TypeScript AsyncIterable.
  */
-// Rust: fn LimitedStream::new — SKIP: absorbed into limitedIterable
-// Rust: fn LimitedStream::poll_next — absorbed into limitedIterable async generator
+// Rust: fn new — SKIP: LimitedStream::new absorbed into limitedIterable
+// Rust: fn poll_next — SKIP: LimitedStream::poll_next absorbed into limitedIterable async generator
 export async function* limitedIterable<T>(
   inner: AsyncIterable<T>,
   limit: number | null,
@@ -166,8 +166,8 @@ export async function* limitedIterable<T>(
  *
  * Divergence [E8]: Rust Stream/BinaryHeap → TypeScript AsyncIterable with array-based heap.
  */
-// Rust: fn TopKStream::new — SKIP: absorbed into topKIterable
-// Rust: fn TopKStream::poll_next — absorbed into topKIterable async generator
+// Rust: fn new — SKIP: TopKStream::new absorbed into topKIterable
+// Rust: fn poll_next — SKIP: TopKStream::poll_next absorbed into topKIterable async generator
 export async function* topKIterable<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -237,8 +237,8 @@ export async function* topKIterable<T extends Filterable>(
 
 // ── Heap helpers (max-heap for TopK) ─────────────────────────────────
 
-// Rust: fn HeapItem::eq — SKIP: absorbed into heapCompare
-// Rust: fn HeapItem::partial_cmp — SKIP: absorbed into heapCompare
+// Rust: fn eq — SKIP: HeapItem::eq absorbed into heapCompare
+// Rust: fn partial_cmp — SKIP: HeapItem::partial_cmp absorbed into heapCompare
 /**
  * Compare two items for the TopK heap.
  * Returns positive if `a` is "worse" (should be at the top of the heap to be evicted).
@@ -316,3 +316,47 @@ function heapPushDown<T extends Filterable>(heap: T[], index: number, orderBy: O
     }
   }
 }
+
+// ── Test-only functions — attested in sorting.test.ts ─────────────────
+// Rust: fn collect_stream — SKIP: test helper, see sorting.test.ts
+// Rust: fn stream_from — SKIP: test helper, see sorting.test.ts
+// Rust: fn new — SKIP: TestItem::new, test helper, see sorting.test.ts
+// Rust: fn int — SKIP: TestItem::int, test helper, see sorting.test.ts
+// Rust: fn str — SKIP: TestItem::str, test helper, see sorting.test.ts
+// Rust: fn mixed — SKIP: TestItem::mixed, test helper, see sorting.test.ts
+// Rust: fn cat_val — SKIP: TestItem::cat_val, test helper, see sorting.test.ts
+// Rust: fn cat_subcat_val — SKIP: TestItem::cat_subcat_val, test helper, see sorting.test.ts
+// Rust: fn collection — SKIP: TestItem::collection, test helper, see sorting.test.ts
+// Rust: fn value — SKIP: TestItem::value, test helper, see sorting.test.ts
+// Rust: fn extract_i32 — SKIP: test helper, see sorting.test.ts
+// Rust: fn extract_string — SKIP: test helper, see sorting.test.ts
+// Rust: fn oby — SKIP: test helper, see sorting.test.ts
+// Rust: fn oby_asc — SKIP: test helper, see sorting.test.ts
+// Rust: fn oby_desc — SKIP: test helper, see sorting.test.ts
+// Rust: fn test_limited_stream_basic — SKIP: test, see sorting.test.ts
+// Rust: fn test_limited_stream_no_limit — SKIP: test, see sorting.test.ts
+// Rust: fn test_limited_stream_limit_exceeds_items — SKIP: test, see sorting.test.ts
+// Rust: fn test_limited_stream_zero_limit — SKIP: test, see sorting.test.ts
+// Rust: fn test_limited_stream_empty_input — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_global_sort_asc — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_global_sort_desc — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_global_sort_multi_column — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_empty_input — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_single_item — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_partition_aware_basic — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_partition_aware_mixed_directions — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_partition_aware_single_partition — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_partition_aware_single_item_partitions — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_partition_aware_empty_spill — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_global_basic — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_global_desc — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_global_k_exceeds_items — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_global_k_zero — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_global_empty_input — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_partition_aware_basic — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_partition_aware_limit_within_partition — SKIP: test, see sorting.test.ts
+// Rust: fn test_topk_stream_partition_aware_mixed_directions — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_null_sorts_first_asc — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_null_sorts_first_desc — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_all_nulls — SKIP: test, see sorting.test.ts
+// Rust: fn test_sorted_stream_multi_column_presort — SKIP: test, see sorting.test.ts
