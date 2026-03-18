@@ -21,6 +21,26 @@ The **transform layer** (Rust AST → OXC AST) is where all translation rules ar
 
 **Dependencies:** `syn` (Rust parsing), `oxc_ast` + `oxc_codegen` + `oxc_allocator` + `oxc_span` (TS AST + code generation), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `toml` (config).
 
+## Required Context
+
+The transpiler is NOT a generic Rust→TS tool. It targets the specific ankurah-ts architecture. The transform layer must be aware of and implement:
+
+| Document | What it governs |
+|----------|----------------|
+| `packages/base/src/` | The ownership type hierarchy: `AkObject`, `Struct`, `Enum<V>`, `Drop`, `Arc<T>`, `Weak<T>`, `Borrow<T>`, `BorrowMut<T>`, `Mutex<T>`, `RefCell<T>`, `AsyncMutex`. These are the types the transpiler emits — not generic TS classes. |
+| `port/decisions.md` | Architectural decisions: bincode-only wire format, Yjs (not Yrs), error handling as throw, `defineModel()` for derive macros, bun workspaces, etc. |
+| `port/ownership.md` | How Rust ownership (Drop, lifetimes, borrows, Arc, Mutex) maps to the TS types in `@ankurah/base`. |
+| `port/ownership/provided-types.md` | API reference for the provided ownership types. |
+| `port/translation-rules.md` | The full mechanical translation rule set: file naming, identifier naming, type mapping, enum patterns, error handling, async mapping, visibility, feature flags, exceptions (E1-E18). |
+
+**The transpiler must read and implement ALL of these.** For example:
+- `struct Foo` → `class Foo extends Struct` (not plain `class Foo`)
+- `impl Drop for T` → `class T extends Drop` with `drop()` override
+- `Arc<T>` stays as `Arc<T>` (from `@ankurah/base`), not converted to plain reference
+- `enum Foo { A, B(T) }` → `class Foo extends Enum<FooV>` with variant type map
+- `Result<T, E>` → `T` (throws on error), not `Result<T, E>`
+- `#[derive(Serialize, Deserialize)]` → `encode(writer: BincodeWriter)` / `static decode(reader: BincodeReader)`
+
 ---
 
 ## Architecture
