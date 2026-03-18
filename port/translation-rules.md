@@ -511,52 +511,29 @@ When an exception rule applies to a file or code block, cite it explicitly:
 // Exception E12: reactor.rs is a file-with-submodules in Rust; becomes reactor/index.ts in TS
 ```
 
-### G4. Function Attestation (Mandatory)
+### G4. Automated Parity Checking + Commit-Hash Attestation
 
-Every function or method in a MIRRORS file MUST have a `// Rust: fn <name>` attestation comment immediately before it. The `<name>` is always the **Rust function name** (snake_case), not the TS name. This makes matching deterministic — no name mapping tables needed.
+**Parity checking is fully automated.** The script `port/check-attestations.ts` extracts every item from Rust (fn, struct, enum, trait, impl) and maps names to TS automatically:
+- `snake_case` → `camelCase` for functions (e.g., `fetch_from_peer` → `fetchFromPeer`)
+- `PascalCase` stays for types (e.g., `struct Node` → `class Node`)
+- Static mapping for special cases: `fmt` → `toString`, `serialize` → `encode`, `deserialize` → `decode`, `eq` → `equals`, etc.
+
+No manual annotation is needed for mapping. The script finds TS counterparts automatically and flags anything missing.
+
+**Commit-hash attestation** is the human sign-off. After verifying a function/type matches Rust, add `// @<hash>` on the line immediately before it, where `<hash>` is the short commit hash of the latest commit that modified the Rust source file:
 
 ```typescript
-// Rust: fn fetch_from_peer
+// @abc1234
 async fetchFromPeer(peerId: EntityId, collection: CollectionId, args: MatchArgs): Promise<Entity[]> {
 
-// Rust: fn fmt
-toString(): string {
-
-// Rust: fn serialize
-encode(writer: BincodeWriter): void {
+// @abc1234
+class Node {
 ```
 
-For trait impls that map to interface methods:
-```typescript
-// Rust: fn listen
-listen(callback: () => void): ListenerGuard {
-```
-
-Skipped Rust functions must be noted:
-```typescript
-// Rust: fn conjure_evil_phantom — SKIP: test-only diagnostic, not ported
-```
-
-Test functions follow the same rule:
-```typescript
-// Rust: fn test_basic_signal
-test('test_basic_signal', async () => {
-```
-
-The audit script (`port/check-attestations.ts`) verifies every `fn` in the Rust source has a corresponding `// Rust: fn <name>` in the TS file. ALL functions are checked — source, tests, private, public. Only `#[cfg(feature = "wasm")]` functions are excluded.
-
-### G4a. Inline Line Citations
-
-Non-trivial TS code blocks should cite the Rust line number they mirror:
-
-```typescript
-// R:456
-const knownMatches = localEntities.map(e => new KnownEntity(e.id(), e.head()));
-// R:462
-const response = await this.request(peerId, cdata, new NodeRequestBody('Fetch', { ... }));
-```
-
-`// R:NNN` always refers to the Rust file declared in the MIRRORS annotation on line 1. No filename — it's always deterministic from MIRRORS. No explanatory text — the code speaks for itself.
+The script checks:
+1. Every Rust item has a TS counterpart (automated name matching)
+2. Every matched item has `// @<hash>` on the preceding line
+3. The hash matches the latest commit on the Rust file (flags stale attestations when Rust changes)
 
 ### G5. Test File Annotations
 

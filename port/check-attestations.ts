@@ -1,11 +1,16 @@
-// TS-ONLY: Function attestation checker — verifies that TS files attest every Rust fn they mirror
+// TS-ONLY: Automated Rust→TS parity checker with commit-hash attestations
+//
+// 1. Extracts every item (fn, struct, enum, trait, impl) from Rust source
+// 2. Maps names automatically: snake_case → camelCase + static mapping table
+// 3. Finds the TS counterpart in the mirrored file
+// 4. Checks for // @<hash> attestation on the preceding line
+// 5. Compares hash against latest commit that touched the Rust file
 //
 // Usage: bun run port/check-attestations.ts [package-name]
-//   No args = check all packages
-//   With arg = check only that package (e.g., bun run port/check-attestations.ts core)
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
-import { basename, dirname, join, relative, resolve } from 'path';
+import { execSync } from 'child_process';
+import { existsSync, readdirSync, readFileSync } from 'fs';
+import { join, relative, resolve } from 'path';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -15,39 +20,114 @@ const RS_PATH = resolve(process.env.ANKURAH_RS_PATH ?? join(__dirname, '..', '..
 const TS_ROOT = resolve(join(__dirname, '..'));
 
 // ---------------------------------------------------------------------------
+// Static name mapping for Rust→TS names that aren't simple snake→camel
+// ---------------------------------------------------------------------------
+
+const STATIC_NAME_MAP: Record<string, string> = {
+  // Display trait
+  fmt: 'toString',
+  // Serde
+  serialize: 'encode',
+  deserialize: 'decode',
+  // Equality
+  eq: 'equals',
+  partial_eq: 'equals',
+  // Hashing
+  hash: 'hash',
+  // Clone
+  clone: 'clone',
+  // Default
+  default: 'default',
+  // Drop
+  drop: 'drop',
+  // Conversion
+  from: 'from',
+  try_from: 'tryFrom',
+  into: 'into',
+  try_into: 'tryInto',
+  // Iterator
+  next: 'next',
+  into_iter: 'iter',
+  // Deref
+  deref: 'deref',
+  deref_mut: 'derefMut',
+  // Constructor
+  new: 'new',
+};
+
+// ---------------------------------------------------------------------------
+// Name conversion
+// ---------------------------------------------------------------------------
+
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+}
+
+/** Convert a Rust name to its expected TS name */
+function rustNameToTs(rustName: string): string {
+  if (STATIC_NAME_MAP[rustName] !== undefined) {
+    return STATIC_NAME_MAP[rustName];
+  }
+  return snakeToCamel(rustName);
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface RustFunction {
+type ItemKind = 'fn' | 'struct' | 'enum' | 'trait' | 'impl';
+
+interface RustItem {
+  kind: ItemKind;
+  rustName: string;      // Original Rust name
+  tsName: string;        // Expected TS name (auto-mapped)
+  lineNumber: number;
+  lineCount: number;
+  inWasmBlock: boolean;
+  // For impl blocks:
+  implTarget?: string;   // e.g. "Node" for "impl Node"
+  implTrait?: string;    // e.g. "Display" for "impl Display for Node"
+}
+
+interface TsItem {
+  kind: 'class' | 'interface' | 'type' | 'function' | 'method' | 'const';
   name: string;
   lineNumber: number;
   lineCount: number;
-  visibility: string; // "pub", "pub(crate)", "" (private)
-  isAsync: boolean;
-  inTestBlock: boolean;
-  inWasmBlock: boolean;
-}
-
-interface TsAttestation {
-  fnName: string;
-  lineNumber: number;
-  isSkipped: boolean;
-  skipReason?: string;
-  tsLineCount: number | null; // null if we can't find the following function
+  hasAttestation: boolean;  // Has // @<hash> on preceding line
+  attestHash: string | null;
+  parentClass?: string;     // For methods: which class they belong to
 }
 
 interface FileReport {
   tsFile: string;
-  rustPath: string; // The MIRRORS annotation value
-  rustFunctions: RustFunction[];
-  tsAttestations: TsAttestation[];
-  attested: string[];
-  missing: string[];
-  sizeWarnings: { fnName: string; rustLines: number; tsLines: number; pctShorter: number }[];
+  rustPath: string;
+  rustItems: RustItem[];
+  matched: { rust: RustItem; ts: TsItem }[];
+  unmatched: RustItem[];    // Rust items with no TS counterpart
+  unattested: { rust: RustItem; ts: TsItem }[]; // Matched but no // @hash
+  stale: { rust: RustItem; ts: TsItem; attestHash: string; currentHash: string }[];
+  sizeWarnings: { rust: RustItem; ts: TsItem; pctShorter: number }[];
 }
 
 // ---------------------------------------------------------------------------
-// Utility: collect all files recursively
+// Git helpers
+// ---------------------------------------------------------------------------
+
+function getLatestCommitHash(filePath: string): string | null {
+  try {
+    const hash = execSync(`git -C "${RS_PATH}" log -1 --format=%h -- "${relative(RS_PATH, filePath)}"`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    return hash || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Utility
 // ---------------------------------------------------------------------------
 
 function walkDir(dir: string, ext: string): string[] {
@@ -66,266 +146,396 @@ function walkDir(dir: string, ext: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Rust function extraction
+// Rust extraction
 // ---------------------------------------------------------------------------
 
-/**
- * Find cfg(test) and cfg(feature = "wasm") block ranges in the file.
- * Returns arrays of [startLine, endLine] (0-indexed).
- */
-function findCfgBlockRanges(lines: string[]): { testRanges: [number, number][]; wasmRanges: [number, number][] } {
-  const testRanges: [number, number][] = [];
-  const wasmRanges: [number, number][] = [];
-
+function findWasmBlockRanges(lines: string[]): [number, number][] {
+  const ranges: [number, number][] = [];
   for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed === '#[cfg(test)]' || trimmed === '#[cfg(test)]') {
-      // Find the opening brace of the following block
-      const blockRange = findBlockRange(lines, i + 1);
-      if (blockRange) {
-        testRanges.push(blockRange);
-      }
-    }
-    if (trimmed.match(/#\[cfg\(feature\s*=\s*"wasm"\)\]/)) {
-      const blockRange = findBlockRange(lines, i + 1);
-      if (blockRange) {
-        wasmRanges.push(blockRange);
-      }
+    if (lines[i].trim().match(/#\[cfg\(feature\s*=\s*"wasm"\)\]/)) {
+      const range = findBlockRange(lines, i + 1);
+      if (range) ranges.push(range);
     }
   }
-
-  return { testRanges, wasmRanges };
+  return ranges;
 }
 
-/**
- * Starting from line startIdx, find the brace-delimited block.
- * Returns [startLine, endLine] (0-indexed, inclusive).
- */
 function findBlockRange(lines: string[], startIdx: number): [number, number] | null {
-  // Skip to the line with the opening brace
   let braceStart = -1;
   for (let i = startIdx; i < lines.length; i++) {
-    if (lines[i].includes('{')) {
-      braceStart = i;
-      break;
-    }
-    // If we hit a line that looks like an attribute or blank, continue
+    if (lines[i].includes('{')) { braceStart = i; break; }
     const trimmed = lines[i].trim();
-    if (trimmed === '' || trimmed.startsWith('#[') || trimmed.startsWith('//')) {
-      continue;
-    }
-    // If there's text but no brace, this might be a single-item cfg
+    if (trimmed === '' || trimmed.startsWith('#[') || trimmed.startsWith('//')) continue;
     break;
   }
-
   if (braceStart === -1) return null;
-
-  // Count braces from braceStart
   let depth = 0;
   for (let i = braceStart; i < lines.length; i++) {
     for (const ch of lines[i]) {
       if (ch === '{') depth++;
       if (ch === '}') depth--;
     }
-    if (depth === 0) {
-      return [braceStart, i];
-    }
+    if (depth === 0) return [braceStart, i];
   }
-
   return null;
 }
 
-function isInRanges(lineIdx: number, ranges: [number, number][]): boolean {
-  for (const [start, end] of ranges) {
-    if (lineIdx >= start && lineIdx <= end) return true;
-  }
-  return false;
+function isInRanges(line: number, ranges: [number, number][]): boolean {
+  return ranges.some(([s, e]) => line >= s && line <= e);
 }
 
-/**
- * Extract all function declarations from a Rust file.
- */
-function extractRustFunctions(filePath: string): RustFunction[] {
-  const content = readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n');
-  const functions: RustFunction[] = [];
-
-  const { testRanges, wasmRanges } = findCfgBlockRanges(lines);
-
-  // Match function declarations
-  // Patterns: pub fn, pub async fn, pub(crate) fn, async fn, fn
-  const fnRegex = /^(\s*)(pub(?:\(crate\))?\s+)?(async\s+)?fn\s+(\w+)/;
-
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(fnRegex);
-    if (!match) continue;
-
-    const name = match[4];
-    const visibility = match[2]?.trim() ?? '';
-    const isAsync = !!match[3];
-    const inTestBlock = isInRanges(i, testRanges);
-    const inWasmBlock = isInRanges(i, wasmRanges);
-
-    // Count function body lines
-    const lineCount = countRustFunctionLines(lines, i);
-
-    functions.push({
-      name,
-      lineNumber: i + 1,
-      lineCount,
-      visibility,
-      isAsync,
-      inTestBlock,
-      inWasmBlock,
-    });
-  }
-
-  return functions;
-}
-
-/**
- * Count lines of a Rust function body starting from the fn declaration line.
- * Counts from the fn line to the closing brace at the same or lower indent level.
- */
-function countRustFunctionLines(lines: string[], startIdx: number): number {
-  let depth = 0;
-  let started = false;
-
+function countBodyLines(lines: string[], startIdx: number): number {
+  let depth = 0, started = false;
   for (let i = startIdx; i < lines.length; i++) {
     for (const ch of lines[i]) {
-      if (ch === '{') {
-        depth++;
-        started = true;
-      }
-      if (ch === '}') {
-        depth--;
-      }
+      if (ch === '{') { depth++; started = true; }
+      if (ch === '}') depth--;
     }
-    if (started && depth === 0) {
-      return i - startIdx + 1;
-    }
+    if (started && depth === 0) return i - startIdx + 1;
   }
-
-  // If we never found the closing brace, count to end of file
   return lines.length - startIdx;
 }
 
-// ---------------------------------------------------------------------------
-// TS attestation extraction
-// ---------------------------------------------------------------------------
-
-/**
- * Extract all `// Rust: fn <name>` attestation comments from a TS file,
- * and measure the line count of the TS function that follows.
- */
-function extractTsAttestations(filePath: string): TsAttestation[] {
+function extractRustItems(filePath: string): RustItem[] {
   const content = readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
-  const attestations: TsAttestation[] = [];
+  const items: RustItem[] = [];
+  const wasmRanges = findWasmBlockRanges(lines);
 
-  // Match: // Rust: fn <name> or // Rust: pub fn <name> or // Rust: pub async fn <name>
-  // Also match SKIP variant: // Rust: fn <name> — SKIP: <reason>
-  const attestRegex = /\/\/\s*Rust:\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)/;
-  const skipRegex = /\/\/\s*Rust:\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+\w+.*(?:—|--)\s*SKIP:\s*(.*)/;
+  // Patterns
+  const fnRegex = /^\s*(pub(?:\(crate\))?\s+)?(async\s+)?fn\s+(\w+)/;
+  const structRegex = /^\s*(pub(?:\(crate\))?\s+)?struct\s+(\w+)/;
+  const enumRegex = /^\s*(pub(?:\(crate\))?\s+)?enum\s+(\w+)/;
+  const traitRegex = /^\s*(pub(?:\(crate\))?\s+)?trait\s+(\w+)/;
+  const implTraitForRegex = /^\s*impl(?:<[^>]*>)?\s+(\w+)(?:<[^>]*>)?\s+for\s+(\w+)/;
+  const implRegex = /^\s*impl(?:<[^>]*>)?\s+(\w+)/;
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(attestRegex);
-    if (!match) continue;
+    const inWasm = isInRanges(i, wasmRanges);
+    const line = lines[i];
+    let match;
 
-    const fnName = match[1];
-    const skipMatch = lines[i].match(skipRegex);
-    const isSkipped = !!skipMatch;
-    const skipReason = skipMatch?.[1]?.trim();
-
-    // Find the TS function that follows this comment and measure its size
-    const tsLineCount = isSkipped ? null : findFollowingTsFunctionSize(lines, i + 1);
-
-    attestations.push({
-      fnName,
-      lineNumber: i + 1,
-      isSkipped,
-      skipReason,
-      tsLineCount,
-    });
-  }
-
-  return attestations;
-}
-
-/**
- * Starting after an attestation comment, find the next function/method declaration
- * and count its lines.
- */
-function findFollowingTsFunctionSize(lines: string[], startIdx: number): number | null {
-  // Look for the next function-like declaration within a reasonable range (20 lines)
-  // Patterns: function name(, async name(, name(, get name(, set name(
-  const fnStartRegex = /^\s*(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?:get|set)\s+\w+|\w+)\s*(?:<[^>]*>)?\s*\(/;
-  // Also match class method patterns and arrow functions
-  const methodRegex = /^\s*(?:(?:public|private|protected|static|readonly|async|override)\s+)*(?:get\s+|set\s+)?\w+\s*(?:<[^>]*>)?\s*\(/;
-  const arrowRegex = /^\s*(?:export\s+)?(?:const|let)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[^=])*=>/;
-
-  for (let i = startIdx; i < Math.min(startIdx + 20, lines.length); i++) {
-    const trimmed = lines[i].trim();
-    // Skip blank lines and comments
-    if (trimmed === '' || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+    // fn
+    if ((match = line.match(fnRegex))) {
+      items.push({
+        kind: 'fn',
+        rustName: match[3],
+        tsName: rustNameToTs(match[3]),
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
       continue;
     }
 
-    if (fnStartRegex.test(lines[i]) || methodRegex.test(lines[i]) || arrowRegex.test(lines[i])) {
-      return countTsFunctionLines(lines, i);
+    // struct
+    if ((match = line.match(structRegex))) {
+      const name = match[2];
+      items.push({
+        kind: 'struct',
+        rustName: name,
+        tsName: name, // PascalCase stays
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
+      continue;
     }
 
-    // If we hit something that's not a function declaration, stop looking
-    break;
+    // enum
+    if ((match = line.match(enumRegex))) {
+      const name = match[2];
+      items.push({
+        kind: 'enum',
+        rustName: name,
+        tsName: name,
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
+      continue;
+    }
+
+    // trait
+    if ((match = line.match(traitRegex))) {
+      const name = match[2];
+      items.push({
+        kind: 'trait',
+        rustName: name,
+        tsName: name,
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
+      continue;
+    }
+
+    // impl Trait for Type (must check before bare impl)
+    if ((match = line.match(implTraitForRegex))) {
+      items.push({
+        kind: 'impl',
+        rustName: `${match[1]} for ${match[2]}`,
+        tsName: `${match[1]} for ${match[2]}`,
+        implTrait: match[1],
+        implTarget: match[2],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
+      continue;
+    }
+
+    // impl Type (inherent)
+    if ((match = line.match(implRegex)) && !line.match(/^\s*impl\s*</) ) {
+      // Skip if this is just a generic impl without a clear type name
+      const name = match[1];
+      if (name === 'impl') continue; // malformed
+      items.push({
+        kind: 'impl',
+        rustName: name,
+        tsName: name,
+        implTarget: name,
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        inWasmBlock: inWasm,
+      });
+    }
   }
 
-  return null;
-}
-
-/**
- * Count lines of a TS function body starting from the function declaration line.
- */
-function countTsFunctionLines(lines: string[], startIdx: number): number {
-  let depth = 0;
-  let started = false;
-
-  for (let i = startIdx; i < lines.length; i++) {
-    // Skip string contents to avoid counting braces in strings
-    const line = lines[i];
-    for (let j = 0; j < line.length; j++) {
-      const ch = line[j];
-      if (ch === '{') {
-        depth++;
-        started = true;
-      }
-      if (ch === '}') {
-        depth--;
-      }
-    }
-    if (started && depth === 0) {
-      return i - startIdx + 1;
-    }
-  }
-
-  return lines.length - startIdx;
+  return items.filter(item => !item.inWasmBlock);
 }
 
 // ---------------------------------------------------------------------------
-// MIRRORS annotation parsing
+// TS extraction
+// ---------------------------------------------------------------------------
+
+function extractTsItems(filePath: string): TsItem[] {
+  const content = readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const items: TsItem[] = [];
+
+  const classRegex = /^\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/;
+  const interfaceRegex = /^\s*(?:export\s+)?interface\s+(\w+)/;
+  const typeRegex = /^\s*(?:export\s+)?type\s+(\w+)/;
+  const funcRegex = /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)/;
+  const methodRegex = /^\s*(?:(?:public|private|protected|static|readonly|async|override|get|set)\s+)*(\w+)\s*(?:<[^>]*>)?\s*\(/;
+  const constFuncRegex = /^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[^=])*=>/;
+  const testRegex = /^\s*(?:test|it)\s*\(\s*['"`]([^'"`]+)['"`]/;
+  const describeRegex = /^\s*describe\s*\(\s*['"`]([^'"`]+)['"`]/;
+
+  let currentClass: string | null = null;
+  let classDepth = 0;
+  let depth = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Track brace depth to know when we exit a class
+    for (const ch of line) {
+      if (ch === '{') depth++;
+      if (ch === '}') depth--;
+    }
+    if (currentClass && depth <= classDepth) {
+      currentClass = null;
+    }
+
+    // Check for // @<hash> on preceding line
+    const prevLine = i > 0 ? lines[i - 1].trim() : '';
+    const hashMatch = prevLine.match(/^\/\/\s*@([a-f0-9]{7,40})$/);
+    const hasAttestation = !!hashMatch;
+    const attestHash = hashMatch ? hashMatch[1] : null;
+
+    let match;
+
+    // class
+    if ((match = line.match(classRegex))) {
+      currentClass = match[1];
+      classDepth = depth - 1; // depth already incremented for opening brace
+      items.push({
+        kind: 'class',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // interface
+    if ((match = line.match(interfaceRegex))) {
+      items.push({
+        kind: 'interface',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // type alias
+    if ((match = line.match(typeRegex))) {
+      items.push({
+        kind: 'type',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: 1,
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // standalone function
+    if ((match = line.match(funcRegex))) {
+      items.push({
+        kind: 'function',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // const arrow function
+    if ((match = line.match(constFuncRegex))) {
+      items.push({
+        kind: 'const',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // test() call
+    if ((match = line.match(testRegex))) {
+      items.push({
+        kind: 'function',
+        name: match[1],
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+      });
+      continue;
+    }
+
+    // Method inside a class (skip if it matched something above)
+    if (currentClass && (match = trimmed.match(methodRegex))) {
+      const methodName = match[1];
+      // Skip keywords that look like methods
+      if (['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'delete', 'typeof', 'constructor'].includes(methodName)) {
+        if (methodName === 'constructor') {
+          items.push({
+            kind: 'method',
+            name: 'constructor',
+            lineNumber: i + 1,
+            lineCount: countBodyLines(lines, i),
+            hasAttestation,
+            attestHash,
+            parentClass: currentClass,
+          });
+        }
+        continue;
+      }
+      items.push({
+        kind: 'method',
+        name: methodName,
+        lineNumber: i + 1,
+        lineCount: countBodyLines(lines, i),
+        hasAttestation,
+        attestHash,
+        parentClass: currentClass,
+      });
+    }
+  }
+
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Matching logic
+// ---------------------------------------------------------------------------
+
+function matchItems(rustItems: RustItem[], tsItems: TsItem[]): FileReport['matched'] {
+  const matched: FileReport['matched'] = [];
+  const usedTs = new Set<number>();
+
+  for (const rust of rustItems) {
+    let found: TsItem | undefined;
+
+    if (rust.kind === 'fn') {
+      // Look for function/method/const with matching TS name
+      found = tsItems.find((ts, idx) =>
+        !usedTs.has(idx) &&
+        (ts.kind === 'function' || ts.kind === 'method' || ts.kind === 'const') &&
+        ts.name === rust.tsName
+      );
+      // Also try the Rust name directly (test functions often keep snake_case in test description)
+      if (!found) {
+        found = tsItems.find((ts, idx) =>
+          !usedTs.has(idx) &&
+          (ts.kind === 'function' || ts.kind === 'method' || ts.kind === 'const') &&
+          ts.name === rust.rustName
+        );
+      }
+    } else if (rust.kind === 'struct' || rust.kind === 'enum') {
+      found = tsItems.find((ts, idx) =>
+        !usedTs.has(idx) && ts.kind === 'class' && ts.name === rust.tsName
+      );
+      // Also check type aliases and interfaces
+      if (!found) {
+        found = tsItems.find((ts, idx) =>
+          !usedTs.has(idx) &&
+          (ts.kind === 'type' || ts.kind === 'interface') &&
+          ts.name === rust.tsName
+        );
+      }
+    } else if (rust.kind === 'trait') {
+      found = tsItems.find((ts, idx) =>
+        !usedTs.has(idx) &&
+        (ts.kind === 'interface' || ts.kind === 'class') &&
+        ts.name === rust.tsName
+      );
+    } else if (rust.kind === 'impl') {
+      // impl blocks don't have a direct TS counterpart — they're absorbed into classes
+      // We verify by checking that the target class exists
+      if (rust.implTarget) {
+        found = tsItems.find((ts, idx) =>
+          !usedTs.has(idx) && ts.kind === 'class' && ts.name === rust.implTarget
+        );
+      }
+    }
+
+    if (found) {
+      const idx = tsItems.indexOf(found);
+      usedTs.add(idx);
+      matched.push({ rust, ts: found });
+    }
+  }
+
+  return matched;
+}
+
+// ---------------------------------------------------------------------------
+// MIRRORS parsing
 // ---------------------------------------------------------------------------
 
 interface MirrorsInfo {
   tsFile: string;
-  rustRelPath: string; // e.g. "core/src/node.rs"
-  isTestMirror: boolean; // e.g. "core/src/node.rs #[cfg(test)]" or "(tests module)"
+  rustRelPath: string;
 }
 
-/**
- * Scan all TS files in a package for MIRRORS annotations.
- */
 function findMirrorsFiles(packageDir: string): MirrorsInfo[] {
   const results: MirrorsInfo[] = [];
-
   const srcDir = join(packageDir, 'src');
   const testsDir = join(packageDir, '__tests__');
 
@@ -334,18 +544,11 @@ function findMirrorsFiles(packageDir: string): MirrorsInfo[] {
   if (existsSync(testsDir)) tsFiles.push(...walkDir(testsDir, '.ts'));
 
   for (const tsFile of tsFiles) {
-    const content = readFileSync(tsFile, 'utf-8');
-    // Find all MIRRORS annotations (there can be multiple in a file)
-    const mirrorsRegex = /\/\/\s*MIRRORS:\s*ankurah\/(.+)/g;
-    let match;
-    while ((match = mirrorsRegex.exec(content)) !== null) {
-      const rawPath = match[1].trim();
-      // Check if this is a test mirror
-      const isTestMirror = rawPath.includes('#[cfg(test)]') || rawPath.includes('(tests module)') || rawPath.includes('(tests)');
-      // Extract just the file path
-      const rustRelPath = rawPath.replace(/\s+#\[cfg\(test\)\].*$/, '').replace(/\s+\(tests?\s*(?:module)?\).*$/, '').trim();
-
-      results.push({ tsFile, rustRelPath, isTestMirror });
+    const firstLine = readFileSync(tsFile, 'utf-8').split('\n')[0];
+    const match = firstLine.match(/\/\/\s*MIRRORS:\s*ankurah\/(.+)/);
+    if (match) {
+      const rustRelPath = match[1].replace(/\s+\(.*\)/, '').replace(/\s+#\[.*\]/, '').trim();
+      results.push({ tsFile, rustRelPath });
     }
   }
 
@@ -353,65 +556,52 @@ function findMirrorsFiles(packageDir: string): MirrorsInfo[] {
 }
 
 // ---------------------------------------------------------------------------
-// Check a single file pair
+// Check a file pair
 // ---------------------------------------------------------------------------
 
-function checkFile(tsFile: string, rustRelPath: string, isTestMirror: boolean): FileReport | null {
+function checkFile(tsFile: string, rustRelPath: string): FileReport | null {
   const rustAbsPath = join(RS_PATH, rustRelPath);
+  if (!existsSync(rustAbsPath)) return null;
 
-  if (!existsSync(rustAbsPath)) {
-    return null; // Rust file doesn't exist — handled by audit-port.ts
-  }
+  const rustItems = extractRustItems(rustAbsPath);
+  const tsItems = extractTsItems(tsFile);
 
-  const allRustFunctions = extractRustFunctions(rustAbsPath);
+  if (rustItems.length === 0) return null;
 
-  // Filter: only skip wasm-gated functions (they have no TS equivalent)
-  // Test functions and source functions are ALL checked
-  let rustFunctions: RustFunction[];
-  if (isTestMirror) {
-    // For test mirror files, we only care about functions IN test blocks
-    rustFunctions = allRustFunctions.filter((f) => f.inTestBlock && !f.inWasmBlock);
-  } else {
-    // For source mirror files, check ALL functions (source + inline tests), skip only wasm
-    rustFunctions = allRustFunctions.filter((f) => !f.inWasmBlock);
-  }
+  const matched = matchItems(rustItems, tsItems);
+  const matchedRustNames = new Set(matched.map(m => m.rust.rustName + ':' + m.rust.kind + ':' + m.rust.lineNumber));
 
-  const tsAttestations = extractTsAttestations(tsFile);
-  const attestedNames = new Set(tsAttestations.map((a) => a.fnName));
+  const unmatched = rustItems.filter(r =>
+    !matchedRustNames.has(r.rustName + ':' + r.kind + ':' + r.lineNumber)
+  );
 
-  const attested: string[] = [];
-  const missing: string[] = [];
-  const sizeWarnings: FileReport['sizeWarnings'] = [];
+  const currentHash = getLatestCommitHash(rustAbsPath);
 
-  for (const rustFn of rustFunctions) {
-    if (attestedNames.has(rustFn.name)) {
-      attested.push(rustFn.name);
+  const unattested = matched.filter(m => !m.ts.hasAttestation);
+  const stale = matched
+    .filter(m => m.ts.hasAttestation && m.ts.attestHash && currentHash && m.ts.attestHash !== currentHash)
+    .map(m => ({ ...m, attestHash: m.ts.attestHash!, currentHash: currentHash! }));
 
-      // Check size comparison
-      const tsAttest = tsAttestations.find((a) => a.fnName === rustFn.name);
-      if (tsAttest && !tsAttest.isSkipped && tsAttest.tsLineCount !== null && rustFn.lineCount > 2) {
-        const pctShorter = Math.round(((rustFn.lineCount - tsAttest.tsLineCount) / rustFn.lineCount) * 100);
-        if (pctShorter > 50) {
-          sizeWarnings.push({
-            fnName: rustFn.name,
-            rustLines: rustFn.lineCount,
-            tsLines: tsAttest.tsLineCount,
-            pctShorter,
-          });
-        }
-      }
-    } else {
-      missing.push(rustFn.name);
-    }
-  }
+  const sizeWarnings = matched
+    .filter(m => m.rust.kind === 'fn' && m.rust.lineCount > 3 && m.ts.lineCount > 0)
+    .filter(m => {
+      const pct = Math.round(((m.rust.lineCount - m.ts.lineCount) / m.rust.lineCount) * 100);
+      return pct > 50;
+    })
+    .map(m => ({
+      rust: m.rust,
+      ts: m.ts,
+      pctShorter: Math.round(((m.rust.lineCount - m.ts.lineCount) / m.rust.lineCount) * 100),
+    }));
 
   return {
     tsFile,
     rustPath: rustRelPath,
-    rustFunctions,
-    tsAttestations,
-    attested,
-    missing,
+    rustItems,
+    matched,
+    unmatched,
+    unattested,
+    stale,
     sizeWarnings,
   };
 }
@@ -424,40 +614,53 @@ const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
 const YELLOW = '\x1b[33m';
+const CYAN = '\x1b[36m';
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 
-const useColor = process.stdout.isTTY !== false;
 function c(code: string, text: string): string {
-  return useColor ? `${code}${text}${RESET}` : text;
+  return process.stdout.isTTY !== false ? `${code}${text}${RESET}` : text;
 }
 
-function printFileReport(report: FileReport): void {
+function itemLabel(item: RustItem): string {
+  if (item.kind === 'impl' && item.implTrait) {
+    return `impl ${item.implTrait} for ${item.implTarget}`;
+  }
+  if (item.kind === 'impl') {
+    return `impl ${item.implTarget}`;
+  }
+  return `${item.kind} ${item.rustName}`;
+}
+
+function printReport(report: FileReport): void {
   const tsRel = relative(TS_ROOT, report.tsFile);
   console.log(`\n${c(BOLD, `=== ${tsRel}`)} ${c(DIM, `(MIRRORS: ankurah/${report.rustPath})`)} ===`);
 
-  if (report.rustFunctions.length === 0) {
-    console.log(`  ${c(DIM, '(no functions found in Rust file)')}`);
-    return;
-  }
-
-  // Sort: attested first, then missing, then size warnings inline
-  for (const name of report.attested) {
-    const sizeWarn = report.sizeWarnings.find((w) => w.fnName === name);
-    const attest = report.tsAttestations.find((a) => a.fnName === name);
-    if (sizeWarn) {
-      console.log(
-        `  ${c(YELLOW, '\u26a0')} fn ${name} — attested but TS is ${sizeWarn.tsLines} lines vs Rust ${sizeWarn.rustLines} lines (${sizeWarn.pctShorter}% shorter)`,
-      );
-    } else if (attest?.isSkipped) {
-      console.log(`  ${c(GREEN, '\u2713')} fn ${name} — skipped: ${attest.skipReason ?? '(no reason given)'}`);
-    } else {
-      console.log(`  ${c(GREEN, '\u2713')} fn ${name} — attested`);
+  // Matched + attested
+  for (const m of report.matched) {
+    if (m.ts.hasAttestation && !report.stale.some(s => s.rust === m.rust)) {
+      console.log(`  ${c(GREEN, '\u2713')} ${itemLabel(m.rust)} → ${m.ts.name} ${c(DIM, `@${m.ts.attestHash}`)}`);
     }
   }
 
-  for (const name of report.missing) {
-    console.log(`  ${c(RED, '\u2717')} fn ${name} — ${c(RED, 'NOT ATTESTED')}`);
+  // Matched but unattested
+  for (const m of report.unattested) {
+    console.log(`  ${c(YELLOW, '\u26a0')} ${itemLabel(m.rust)} → ${m.ts.name} ${c(YELLOW, '(no @hash)')}`);
+  }
+
+  // Stale
+  for (const s of report.stale) {
+    console.log(`  ${c(CYAN, '\u21bb')} ${itemLabel(s.rust)} → ${s.ts.name} ${c(CYAN, `@${s.attestHash} → ${s.currentHash} STALE`)}`);
+  }
+
+  // Unmatched
+  for (const u of report.unmatched) {
+    console.log(`  ${c(RED, '\u2717')} ${itemLabel(u)} → ${c(RED, `expected TS: ${u.tsName} — NOT FOUND`)}`);
+  }
+
+  // Size warnings
+  for (const w of report.sizeWarnings) {
+    console.log(`  ${c(YELLOW, '\u26a0')} ${itemLabel(w.rust)}: TS ${w.ts.lineCount} lines vs Rust ${w.rust.lineCount} lines (${w.pctShorter}% shorter)`);
   }
 }
 
@@ -467,97 +670,81 @@ function printFileReport(report: FileReport): void {
 
 function main() {
   const args = process.argv.slice(2);
-  const filterPackage = args.find((a) => !a.startsWith('-'));
+  const filterPackage = args.find(a => !a.startsWith('-'));
 
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 Usage: bun run port/check-attestations.ts [package-name]
 
-Checks that every function in Rust source files has a corresponding
-  // Rust: fn <name>
-attestation comment in the mirroring TS file.
+Automated Rust→TS parity checker.
+- Maps Rust items to TS automatically (snake→camel + static table)
+- Checks for // @<commit-hash> attestation on preceding line
+- Flags: missing items, unattested items, stale hashes, size mismatches
 
 Options:
   (no args)         Check all packages
-  <package-name>    Check only the given package (e.g., "core")
-  --help, -h        Show this help message
+  <package-name>    Check only the given package
+  --help, -h        Show this help
 `);
     return;
   }
 
   if (!existsSync(RS_PATH)) {
-    console.error(
-      `ERROR: Rust repo not found at ${RS_PATH}\nSet ANKURAH_RS_PATH environment variable or ensure ../ankurah exists.`,
-    );
+    console.error(`ERROR: Rust repo not found at ${RS_PATH}`);
     process.exit(1);
   }
 
   const packagesDir = join(TS_ROOT, 'packages');
-  if (!existsSync(packagesDir)) {
-    console.error('ERROR: packages/ directory does not exist.');
-    process.exit(1);
-  }
-
-  // Discover packages
   const pkgDirs = readdirSync(packagesDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .filter((name) => !filterPackage || name === filterPackage);
+    .filter(d => d.isDirectory())
+    .map(d => d.name)
+    .filter(name => !filterPackage || name === filterPackage);
 
-  if (pkgDirs.length === 0) {
-    console.error(`ERROR: No package found matching "${filterPackage}".`);
-    process.exit(1);
-  }
-
-  let totalAttested = 0;
-  let totalMissing = 0;
-  let totalSizeWarnings = 0;
-  let totalFiles = 0;
-  let totalFunctions = 0;
+  let totalItems = 0, totalMatched = 0, totalUnmatched = 0;
+  let totalAttested = 0, totalUnattested = 0, totalStale = 0;
+  let totalSizeWarnings = 0, totalFiles = 0;
 
   for (const pkg of pkgDirs) {
     const pkgDir = join(packagesDir, pkg);
-    const mirrorsFiles = findMirrorsFiles(pkgDir);
+    const mirrors = findMirrorsFiles(pkgDir);
+    if (mirrors.length === 0) continue;
 
-    if (mirrorsFiles.length === 0) continue;
-
-    for (const mirror of mirrorsFiles) {
-      const report = checkFile(mirror.tsFile, mirror.rustRelPath, mirror.isTestMirror);
+    for (const { tsFile, rustRelPath } of mirrors) {
+      const report = checkFile(tsFile, rustRelPath);
       if (!report) continue;
-      if (report.rustFunctions.length === 0) continue;
 
       totalFiles++;
-      totalFunctions += report.rustFunctions.length;
-      totalAttested += report.attested.length;
-      totalMissing += report.missing.length;
+      totalItems += report.rustItems.length;
+      totalMatched += report.matched.length;
+      totalUnmatched += report.unmatched.length;
+      totalAttested += report.matched.length - report.unattested.length;
+      totalUnattested += report.unattested.length;
+      totalStale += report.stale.length;
       totalSizeWarnings += report.sizeWarnings.length;
 
-      printFileReport(report);
+      // Only print files with issues (or all if verbose)
+      if (report.unmatched.length > 0 || report.stale.length > 0 || args.includes('--verbose') || args.includes('-v')) {
+        printReport(report);
+      }
     }
   }
 
-  // Summary
   console.log('');
   console.log(c(BOLD, '========================================'));
-  console.log(c(BOLD, '  Function Attestation Summary'));
+  console.log(c(BOLD, '  Parity Check Summary'));
   console.log(c(BOLD, '========================================'));
   console.log(`  Files checked:    ${totalFiles}`);
-  console.log(`  Total functions:  ${totalFunctions}`);
-  console.log(`  ${c(GREEN, `Attested:         ${totalAttested}`)}`);
-  if (totalMissing > 0) {
-    console.log(`  ${c(RED, `Missing:          ${totalMissing}`)}`);
-  } else {
-    console.log(`  Missing:          0`);
-  }
-  if (totalSizeWarnings > 0) {
-    console.log(`  ${c(YELLOW, `Size warnings:    ${totalSizeWarnings}`)}`);
-  }
+  console.log(`  Rust items:       ${totalItems}`);
+  console.log(`  ${c(GREEN, `Matched:          ${totalMatched}`)}`);
+  if (totalUnmatched > 0) console.log(`  ${c(RED, `Not found in TS:  ${totalUnmatched}`)}`);
+  else console.log(`  Not found in TS:  0`);
+  console.log(`  ${c(GREEN, `Attested (@hash): ${totalAttested}`)}`);
+  if (totalUnattested > 0) console.log(`  ${c(YELLOW, `Unattested:       ${totalUnattested}`)}`);
+  if (totalStale > 0) console.log(`  ${c(CYAN, `Stale:            ${totalStale}`)}`);
+  if (totalSizeWarnings > 0) console.log(`  ${c(YELLOW, `Size warnings:    ${totalSizeWarnings}`)}`);
   console.log(c(BOLD, '========================================'));
-  console.log('');
 
-  if (totalMissing > 0) {
-    process.exit(1);
-  }
+  if (totalUnmatched > 0) process.exit(1);
 }
 
 main();
