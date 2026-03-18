@@ -4,7 +4,21 @@ import type { StorageEngine, StorageCollection } from '@ankurah/core';
 import { MutationError, RetrievalError, StateError } from '@ankurah/core';
 import { backendFromString, evaluatePredicate } from '@ankurah/core';
 import type { Filterable } from '@ankurah/core';
-import type { Attestation, Attested, EntityState, Event, EventId, CollectionId, EntityId } from '@ankurah/proto';
+import {
+  Attestation,
+  Attested,
+  AttestationSet,
+  EntityState,
+  EntityId,
+  Event,
+  State,
+  StateBuffers,
+  OperationSet,
+  Clock,
+  BincodeWriter,
+  BincodeReader,
+} from '@ankurah/proto';
+import type { EventId, CollectionId } from '@ankurah/proto';
 import { Selection, type Predicate } from '@ankurah/ankql';
 import { SqlBuilder, splitPredicateForPostgres } from './sql_builder.ts';
 import { type PGValue, pgValueFromValue, pgValuePostgresType } from './value.ts';
@@ -584,37 +598,94 @@ function entityStateAsFilterable(attested: Attested<EntityState>, collectionId: 
 }
 
 // ── Serialization helpers ────────────────────────────────────────────
-// Divergence: Rust uses bincode for serialization. TS uses placeholder functions
-// that will need to be connected to the actual bincode codec from @ankurah/proto [E8].
+// Mirrors Rust bincode::serialize / bincode::deserialize calls in the Rust postgres engine.
 
-function serializeStateBuffers(_stateBuffers: unknown): Uint8Array {
-  // TODO: Use proper bincode serialization from @ankurah/proto
-  throw new Error('serializeStateBuffers: not yet implemented — needs bincode codec integration');
+/// Ensure a value is a Uint8Array (pg driver may return Buffer).
+function toUint8Array(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  // node-postgres returns Buffer for bytea columns; Buffer extends Uint8Array in Node
+  if (Buffer.isBuffer(value)) return new Uint8Array(value);
+  throw new Error(`Expected Uint8Array or Buffer, got ${typeof value}`);
 }
 
-function serializeAttestation(_attestation: unknown): Uint8Array {
-  // TODO: Use proper bincode serialization from @ankurah/proto
-  throw new Error('serializeAttestation: not yet implemented — needs bincode codec integration');
+/// Serialize StateBuffers to a single bytea blob via bincode.
+/// Rust: `bincode::serialize(&state.payload.state.state_buffers)?`
+function serializeStateBuffers(stateBuffers: StateBuffers): Uint8Array {
+  const writer = new BincodeWriter();
+  stateBuffers.encode(writer);
+  return writer.finish();
 }
 
-function serializeAttestationSet(_attestations: unknown): Uint8Array {
-  // TODO: Use proper bincode serialization from @ankurah/proto
-  throw new Error('serializeAttestationSet: not yet implemented — needs bincode codec integration');
+/// Serialize a single Attestation to a bytea blob via bincode.
+/// Rust: `state.attestations.iter().map(bincode::serialize)`
+function serializeAttestation(attestation: Attestation): Uint8Array {
+  const writer = new BincodeWriter();
+  attestation.encode(writer);
+  return writer.finish();
 }
 
-function serializeOperations(_operations: unknown): Uint8Array {
-  // TODO: Use proper bincode serialization from @ankurah/proto
-  throw new Error('serializeOperations: not yet implemented — needs bincode codec integration');
+/// Serialize an AttestationSet to a single bytea blob via bincode.
+/// Rust: `bincode::serialize(&entity_event.attestations)?`
+function serializeAttestationSet(attestations: AttestationSet): Uint8Array {
+  const writer = new BincodeWriter();
+  attestations.encode(writer);
+  return writer.finish();
 }
 
-function deserializeEntityStateRow(_row: Record<string, unknown>, _collectionId: CollectionId): Attested<EntityState> {
-  // TODO: Use proper bincode deserialization from @ankurah/proto
-  throw new Error('deserializeEntityStateRow: not yet implemented — needs bincode codec integration');
+/// Serialize OperationSet to a single bytea blob via bincode.
+/// Rust: `bincode::serialize(&entity_event.payload.operations)?`
+function serializeOperations(operations: OperationSet): Uint8Array {
+  const writer = new BincodeWriter();
+  operations.encode(writer);
+  return writer.finish();
 }
 
-function deserializeEventRow(_row: Record<string, unknown>, _collectionId: CollectionId, _entityId?: EntityId): Attested<Event> {
-  // TODO: Use proper bincode deserialization from @ankurah/proto
-  throw new Error('deserializeEventRow: not yet implemented — needs bincode codec integration');
+/// Deserialize a state row from the state table into Attested<EntityState>.
+function deserializeEntityStateRow(row: Record<string, unknown>, collectionId: CollectionId): Attested<EntityState> {
+  const id = EntityId.fromBase64(row['id'] as string);
+
+  // Deserialize state_buffers from bytea
+  const stateBufferBytes = toUint8Array(row['state_buffer']);
+  const stateBuffers = StateBuffers.decode(new BincodeReader(stateBufferBytes));
+
+  // Deserialize head from character(43)[] — postgres returns as string[]
+  const headStrings = row['head'] as string[];
+  const head = Clock.fromStrings(headStrings);
+
+  // Deserialize attestations from BYTEA[] — each element is an individually serialized Attestation
+  const attestationBuffers = row['attestations'] as unknown[];
+  const attestations: Attestation[] = (attestationBuffers ?? []).map((buf) =>
+    Attestation.decode(new BincodeReader(toUint8Array(buf))),
+  );
+
+  return new Attested(
+    new EntityState(id, collectionId, new State(stateBuffers, head)),
+    new AttestationSet(attestations),
+  );
+}
+
+/// Deserialize an event row from the event table into Attested<Event>.
+function deserializeEventRow(row: Record<string, unknown>, collectionId: CollectionId, entityId?: EntityId): Attested<Event> {
+  // entity_id may come from the row or be passed in (dump_entity_events doesn't select it)
+  const resolvedEntityId = entityId ?? EntityId.fromBase64(row['entity_id'] as string);
+
+  // Deserialize operations from bytea
+  const opsBytes = toUint8Array(row['operations']);
+  const operations = OperationSet.decode(new BincodeReader(opsBytes));
+
+  // Deserialize parent from character(43)[] — postgres returns as string[]
+  const parentStrings = row['parent'] as string[];
+  const parent = Clock.fromStrings(parentStrings);
+
+  // Deserialize attestations from bytea (single blob for the whole AttestationSet)
+  const attestationsBytes = toUint8Array(row['attestations']);
+  const attestations = AttestationSet.decode(new BincodeReader(attestationsBytes));
+
+  return new Attested(
+    new Event(collectionId, resolvedEntityId, operations, parent),
+    attestations,
+  );
 }
 
 // ── PGValue param extraction ─────────────────────────────────────────
