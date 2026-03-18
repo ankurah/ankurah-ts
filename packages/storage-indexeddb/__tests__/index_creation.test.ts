@@ -1,18 +1,49 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/tests/index_creation.rs
 
-// These integration tests require:
-// 1. Real browser IndexedDB (not available in bun test)
-// 2. IndexedDBStorageEngine, Database classes
-// 3. KeySpec, IndexKeyPart from @ankurah/core
-//
-// They will be enabled once a browser-based test runner (e.g., playwright) is configured.
-
-import { describe, test } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
+import 'fake-indexeddb/auto';
+import { IndexedDBStorageEngine } from '../src/index.ts';
+import { Database } from '../src/database.ts';
+import { keySpecNew, indexKeyPartAsc, keySpecNameWith, ValueType } from '@ankurah/core';
 
 describe('index_creation', () => {
-  test.skip('test_index_creation_and_reconnection', () => {
-    // Rust: Opens database, records initial version, creates a composite index
-    // (__collection ASC, name ASC), verifies version incremented, creates transaction
-    // on new connection, confirms index exists by accessing it.
+  test('test_index_creation_and_reconnection', async () => {
+    const dbName = `test_index_${Date.now()}`;
+    const engine = await IndexedDBStorageEngine.open(dbName);
+
+    // Get the Database instance from the storage engine
+    const db = engine.db;
+
+    // Test that we can get a connection initially
+    const initialVersion = (await db.getConnection()).version;
+
+    // Create an index spec for testing
+    const indexSpec = keySpecNew([
+      indexKeyPartAsc('__collection', ValueType.String),
+      indexKeyPartAsc('name', ValueType.String),
+    ]);
+
+    // Test index creation (this should trigger reconnection)
+    await db.assureIndexExists(indexSpec);
+
+    // Verify we can still get a connection after index creation
+    const postIndexVersion = (await db.getConnection()).version;
+
+    // Version should have been incremented
+    expect(postIndexVersion).toBeGreaterThan(initialVersion);
+
+    // Verify we can create a transaction on the new connection and access the index
+    const conn = await db.getConnection();
+    const transaction = conn.transaction('entities', 'readonly');
+    const store = transaction.objectStore('entities');
+
+    // Verify the index exists by trying to access it
+    const indexName = keySpecNameWith(indexSpec, '', '__');
+    const index = store.index(indexName);
+    expect(index).toBeDefined();
+    expect(index.name).toBe(indexName);
+
+    // Cleanup
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 });

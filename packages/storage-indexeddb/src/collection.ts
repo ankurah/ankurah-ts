@@ -5,7 +5,7 @@
 
 import type { StorageCollection, Filterable, Value, KeySpec } from '@ankurah/core';
 import { evaluatePredicate, backendFromString, keySpecNameWith } from '@ankurah/core';
-import { EntityId, type Attested, type CollectionId, type EntityState, type Event, type EventId } from '@ankurah/proto';
+import { EntityId, EventId, Attested, State, StateBuffers, Clock, type CollectionId, type EntityState, type Event } from '@ankurah/proto';
 import { Selection, Predicate, ComparisonOperator, Expr, Literal, PathExpr } from '@ankurah/ankql';
 import { RetrievalError, MutationError } from '@ankurah/core';
 import {
@@ -365,17 +365,26 @@ function idbObjectToEntityState(
   const idStr = entityObj.get(ID_KEY) as string;
   const id = EntityId.fromBase64(idStr);
 
-  return {
-    payload: {
-      collection: collectionId,
-      entityId: id,
-      state: {
-        stateBuffers: entityObj.get(STATE_BUFFER_KEY),
-        head: entityObj.get(HEAD_KEY),
-      },
-    },
-    attestations: entityObj.get(ATTESTATIONS_KEY),
-  } as Attested<EntityState>;
+  // Reconstruct StateBuffers from structured-clone data.
+  // IndexedDB structured clone preserves Map and Uint8Array, but strips class prototypes.
+  const rawBuffers = entityObj.get(STATE_BUFFER_KEY) as { map: Map<string, Uint8Array> } | StateBuffers;
+  const stateBuffers = rawBuffers instanceof StateBuffers
+    ? rawBuffers
+    : new StateBuffers(rawBuffers.map);
+
+  // Reconstruct Clock from structured-clone data.
+  const rawHead = entityObj.get(HEAD_KEY) as { ids: Array<{ bytes: Uint8Array }> } | Clock;
+  const head = rawHead instanceof Clock
+    ? rawHead
+    : Clock.new(rawHead.ids.map(rawId => EventId.fromBytes(rawId.bytes)));
+
+  const state = new State(stateBuffers, head);
+
+  return new Attested({
+    collection: collectionId,
+    entityId: id,
+    state,
+  } as EntityState);
 }
 
 /** Convert IdbObject to Event */

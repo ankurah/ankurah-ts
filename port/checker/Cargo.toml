@@ -1,0 +1,17 @@
+[package]
+name = "ankurah-checker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+oxc_parser = "0.120"
+oxc_ast = "0.120"
+oxc_span = "0.120"
+oxc_allocator = "0.120"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+anyhow = "1"
+colored = "2"

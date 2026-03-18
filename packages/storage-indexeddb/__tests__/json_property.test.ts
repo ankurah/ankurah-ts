@@ -1,49 +1,148 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/tests/json_property.rs
 
-// These integration tests require:
-// 1. Full Node/Context/Transaction infrastructure (ankurah Model derive equivalent)
-// 2. Real browser IndexedDB (not available in bun test)
-// 3. Json property type support
-// 4. Track model with name:String(LWW), licensing:Json(LWW)
-//
-// They will be enabled once the TS Model derive infrastructure is complete
-// and a browser-based test runner (e.g., playwright) is configured.
-
-import { describe, test } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
+import {
+  createIndexedDBNode, createTracks, Track,
+  names, matchArgs, IndexedDBStorageEngine,
+} from './common.ts';
 
 describe('json_property', () => {
-  test.skip('test_json_property_storage_and_simple_query', () => {
-    // Rust: Creates track with JSON licensing data, verifies simple (non-JSON) query works.
+  test('test_json_property_storage_and_simple_query', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['Test Track', { territory: 'US', rights: 'exclusive' }],
+    ]);
+
+    // Simple query (non-JSON) - should work
+    const tracks = await ctx.fetch(Track, matchArgs("name = 'Test Track'"));
+    expect(tracks.length).toBe(1);
+    expect(tracks[0].name()).toBe('Test Track');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_query_string_equality', () => {
-    // Rust: Creates tracks with different licensing territories (US, UK).
-    // Tests query by JSON path: licensing.territory = 'US'.
+  test('test_json_path_query_string_equality', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['US Track', { territory: 'US', rights: 'exclusive' }],
+      ['UK Track', { territory: 'UK', rights: 'non-exclusive' }],
+    ]);
+
+    // Query by JSON path
+    const usTracks = await ctx.fetch(Track, matchArgs("licensing.territory = 'US'"));
+    expect(usTracks.length).toBe(1);
+    expect(usTracks[0].name()).toBe('US Track');
+
+    const ukTracks = await ctx.fetch(Track, matchArgs("licensing.territory = 'UK'"));
+    expect(ukTracks.length).toBe(1);
+    expect(ukTracks[0].name()).toBe('UK Track');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_query_numeric_comparison', () => {
-    // Rust: Creates tracks with numeric JSON fields (plays: 1000, 50).
-    // Tests: licensing.plays > 500, licensing.plays = 1000.
+  test('test_json_path_query_numeric_comparison', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['Popular Track', { territory: 'US', plays: 1000 }],
+      ['New Track', { territory: 'US', plays: 50 }],
+    ]);
+
+    // Query with numeric comparison
+    const popular = await ctx.fetch(Track, matchArgs('licensing.plays > 500'));
+    expect(popular.length).toBe(1);
+    expect(popular[0].name()).toBe('Popular Track');
+
+    // Equality
+    const exact = await ctx.fetch(Track, matchArgs('licensing.plays = 1000'));
+    expect(exact.length).toBe(1);
+    expect(exact[0].name()).toBe('Popular Track');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_nested_query', () => {
-    // Rust: Creates track with nested JSON (rights.holder = 'Label').
-    // Tests deeply nested path: licensing.rights.holder = 'Label'.
+  test('test_json_path_nested_query', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['Nested Track', { territory: 'US', rights: { holder: 'Label', type: 'exclusive' } }],
+    ]);
+
+    // Query nested path
+    const labelTracks = await ctx.fetch(Track, matchArgs("licensing.rights.holder = 'Label'"));
+    expect(labelTracks.length).toBe(1);
+    expect(labelTracks[0].name()).toBe('Nested Track');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_combined_with_regular_field', () => {
-    // Rust: Tests combining regular field (name = X) AND JSON path (licensing.territory = Y).
+  test('test_json_path_combined_with_regular_field', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['US Track A', { territory: 'US' }],
+      ['US Track B', { territory: 'US' }],
+      ['UK Track', { territory: 'UK' }],
+    ]);
+
+    // Query combining regular field and JSON path
+    const results = await ctx.fetch(Track, matchArgs("name = 'US Track A' AND licensing.territory = 'US'"));
+    expect(results.length).toBe(1);
+    expect(results[0].name()).toBe('US Track A');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_missing_field', () => {
-    // Rust: Creates tracks with different JSON structures (one missing territory).
-    // Verifies entities with missing JSON paths are correctly excluded.
+  test('test_json_path_missing_field', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    await createTracks(ctx, [
+      ['Has Territory', { territory: 'US' }],
+      ['No Territory', { other: 'value' }], // Missing territory field
+    ]);
+
+    // Query should only find the track that HAS the territory field
+    const results = await ctx.fetch(Track, matchArgs("licensing.territory = 'US'"));
+    expect(results.length).toBe(1);
+    expect(results[0].name()).toBe('Has Territory');
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 
-  test.skip('test_json_path_planner_generates_sub_path', () => {
-    // Rust: Sync test verifying planner generates correct sub_path for JSON path queries.
-    // Checks keypart.column == "licensing", keypart.sub_path == ["territory"],
-    // and remaining_predicate is True (full pushdown).
-    // Note: Could potentially run without browser once Planner is available in TS.
+  test('test_json_path_planner_generates_sub_path', () => {
+    // Sync test verifying planner behavior
+    const { Planner, plannerConfigIndexeddb, Plan } = require('@ankurah/storage-common');
+    const { parseSelection } = require('@ankurah/ankql');
+
+    const planner = new Planner(plannerConfigIndexeddb());
+    const selection = parseSelection("licensing.territory = 'US'");
+    const plans = planner.plan(selection, 'id');
+
+    // Find the index plan
+    const indexPlan = plans.find((p: any) => p.is('Index'));
+    expect(indexPlan).toBeDefined();
+
+    indexPlan.match({
+      Index: (data: any) => {
+        // Verify keypart has sub_path
+        expect(data.indexSpec.keyparts.length).toBeGreaterThanOrEqual(1);
+        const keypart = data.indexSpec.keyparts[0];
+        expect(keypart.column).toBe('licensing');
+        expect(keypart.subPath).toEqual(['territory']);
+
+        // Verify full pushdown (remaining predicate should be True)
+        expect(data.remainingPredicate.is('True')).toBe(true);
+      },
+      TableScan: () => { throw new Error('unexpected'); },
+      EmptyScan: () => { throw new Error('unexpected'); },
+    });
   });
 });

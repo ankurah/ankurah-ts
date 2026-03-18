@@ -1,23 +1,57 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/tests/predicate_checks.rs
 
-// These integration tests require:
-// 1. Full Node/Context/Transaction infrastructure (ankurah Model derive equivalent)
-// 2. Real browser IndexedDB (not available in bun test)
-// 3. Json property type support
-// 4. QueryTest model with label:String, data:Json
-// 5. predicate_cases.json test fixture file
-// 6. TypeResolver for resolving literal types in JSON path comparisons
-//
-// They will be enabled once the TS Model derive infrastructure is complete
-// and a browser-based test runner (e.g., playwright) is configured.
+import { describe, test, expect } from 'bun:test';
+import {
+  createIndexedDBNode, QueryTest,
+  matchArgs, IndexedDBStorageEngine,
+} from './common.ts';
 
-import { describe, test } from 'bun:test';
+// Load test cases from shared fixture
+import predicateCases from '../../core/__tests__/fixtures/predicate_cases.json';
+
+interface TestEntity {
+  label: string;
+  data: unknown;
+}
+
+interface Expectation {
+  query: string;
+  matches: string[];
+}
+
+interface TestCase {
+  name: string;
+  entities: TestEntity[];
+  expectations: Expectation[];
+}
+
+function allTestCases(): TestCase[] {
+  return (predicateCases as any).suites.flatMap((s: any) => s.cases);
+}
 
 describe('predicate_checks', () => {
-  test.skip('test_indexeddb_predicate_checks', () => {
-    // Rust: Loads test cases from predicate_cases.json, creates entities for each case,
-    // runs queries and verifies results match expectations.
-    // Also cross-checks against MockFilterable reference implementation.
-    // Covers: string equality, numeric comparison, nested JSON paths, missing fields.
+  test('test_indexeddb_predicate_checks', async () => {
+    const cases = allTestCases();
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    for (const testCase of cases) {
+      // Create entities for this test case
+      const trx = ctx.begin();
+      for (const entity of testCase.entities) {
+        await trx.create(QueryTest, { label: entity.label, data: entity.data });
+      }
+      await trx.commit();
+
+      // Verify each expectation
+      for (const exp of testCase.expectations) {
+        const results = await ctx.fetch(QueryTest, matchArgs(exp.query));
+        const actual = results.map((r: any) => r.label() as string).sort();
+        const expected = [...exp.matches].sort();
+        expect(actual).toEqual(expected);
+      }
+    }
+
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 });

@@ -1,18 +1,25 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/tests/basic.rs
 
-// These integration tests require:
-// 1. Full Node/Context/Transaction infrastructure (ankurah Model derive equivalent)
-// 2. Real browser IndexedDB (not available in bun test)
-// 3. Album model with name:String, year:String fields
-//
-// They will be enabled once the TS Model derive infrastructure is complete
-// and a browser-based test runner (e.g., playwright) is configured.
-
-import { describe, test } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
+import {
+  createIndexedDBNode, createAlbums, Album, names, years,
+  matchArgs, IndexedDBStorageEngine,
+} from './common.ts';
 
 describe('basic', () => {
-  test.skip('test_indexeddb_basic_workflow', () => {
-    // Rust: Creates album "Walking on a Dream" (2008), verifies fetch by name returns correct name and year.
-    // Requires: setup_context(), create_albums(), Album model, ctx.fetch()
+  test('test_indexeddb_basic_workflow', async () => {
+    const { node, dbName } = await createIndexedDBNode();
+    const ctx = node.context();
+
+    // Create a simple test - just verify IndexedDB storage works
+    await createAlbums(ctx, [['Walking on a Dream', '2008']]);
+
+    // Verify we can query the album
+    const byName = await ctx.fetch(Album, matchArgs("name = 'Walking on a Dream'"));
+    expect(names(byName)).toEqual(['Walking on a Dream']);
+    expect(years(byName)).toEqual(['2008']);
+
+    // Cleanup
+    await IndexedDBStorageEngine.cleanup(dbName);
   });
 });
