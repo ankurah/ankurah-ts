@@ -631,6 +631,32 @@ describe('inequality_tests', () => {
     });
   });
 
+  test('multiple_inequalities_same_field_plan_structure', () => {
+    const plans = planIndexeddb("__collection = 'album' AND age > 25 AND age < 50");
+    assertPlanCount(plans, 2);
+    assertIndex(plans[0], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('age', ValueType.I32),
+      ]),
+      scanDirection: 'Forward',
+      // from is excl because the inequality (age) is > 25
+      // to is excl because the inequality (age) is < 50
+      bounds: bounds(
+        eqBound('__collection', strVal('album')),
+        rangeBound('age', gt(i32Val(25)), lt(i32Val(50))),
+      ),
+      remainingPredicate: assertTrue,
+      orderBySpill: noOb,
+    });
+    assertTableScan(plans[1], {
+      bounds: new KeyBounds([]),
+      scanDirection: 'Forward',
+      remainingPredicate: assertPredicateMatchesParse("__collection = 'album' AND age > 25 AND age < 50"),
+      orderBySpill: noOb,
+    });
+  });
+
   test('multiple_inequalities_different_fields', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 25 AND score < 100");
     assertPlanCount(plans, 3);
@@ -660,6 +686,48 @@ describe('inequality_tests', () => {
         rangeBound('score', unboundedLow(ValueType.I32), lt(i32Val(100))),
       ),
       remainingPredicate: assertPredicateMatchesParse('age > 25'),
+      orderBySpill: noOb,
+    });
+  });
+
+  test('multiple_inequalities_different_fields_plan_structures', () => {
+    // This should generate TWO index plans (one for each inequality field) plus table scan
+    const plans = planIndexeddb("__collection = 'album' AND age > 25 AND score < 100");
+    assertPlanCount(plans, 3);
+    // Plan 1: Uses age index, score remains in predicate
+    assertIndex(plans[0], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('age', ValueType.I32),
+      ]),
+      scanDirection: 'Forward',
+      // from is excl because the inequality (age) is > 25
+      bounds: bounds(
+        eqBound('__collection', strVal('album')),
+        rangeBound('age', gt(i32Val(25)), unboundedHigh(ValueType.I32)),
+      ),
+      remainingPredicate: assertPredicateMatchesParse('score < 100'),
+      orderBySpill: noOb,
+    });
+    // Plan 2: Uses score index, age remains in predicate
+    assertIndex(plans[1], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('score', ValueType.I32),
+      ]),
+      scanDirection: 'Forward',
+      // to is excl because the inequality (score) is < 100
+      bounds: bounds(
+        eqBound('__collection', strVal('album')),
+        rangeBound('score', unboundedLow(ValueType.I32), lt(i32Val(100))),
+      ),
+      remainingPredicate: assertPredicateMatchesParse('age > 25'),
+      orderBySpill: noOb,
+    });
+    assertTableScan(plans[2], {
+      bounds: new KeyBounds([]),
+      scanDirection: 'Forward',
+      remainingPredicate: assertPredicateMatchesParse("__collection = 'album' AND age > 25 AND score < 100"),
       orderBySpill: noOb,
     });
   });
@@ -1158,6 +1226,33 @@ describe('edge_cases', () => {
       bounds: bounds(eqBound('__collection', strVal('album')), eqBound('name', strVal('')), eqBound('year', strVal('2000'))),
       remainingPredicate: assertTrue,
       orderBySpill: noOb,
+    });
+  });
+
+  test('order_by_with_no_matching_predicate', () => {
+    // ORDER BY fields that don't appear in WHERE clause
+    const plans = planIndexeddb("__collection = 'album' AND age = 30 ORDER BY name, score");
+    assertPlanCount(plans, 2);
+    assertIndex(plans[0], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('age', ValueType.I32),
+        indexKeyPartAscPath('name', ValueType.String),
+        indexKeyPartAscPath('score', ValueType.String),
+      ]),
+      scanDirection: 'Forward',
+      bounds: bounds(
+        eqBound('__collection', strVal('album')),
+        eqBound('age', i32Val(30)),
+      ),
+      remainingPredicate: assertTrue,
+      orderBySpill: { presort: [obyAsc('name'), obyAsc('score')], spill: [] },
+    });
+    assertTableScan(plans[1], {
+      bounds: new KeyBounds([]),
+      scanDirection: 'Forward',
+      remainingPredicate: assertPredicateMatchesParse("__collection = 'album' AND age = 30"),
+      orderBySpill: { presort: [], spill: [obyAsc('name'), obyAsc('score')] },
     });
   });
 });

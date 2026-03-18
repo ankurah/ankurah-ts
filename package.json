@@ -10,10 +10,15 @@
     "build": "bun run --filter '*' build",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
-    "audit": "bun run scripts/audit-port.ts"
+    "audit": "bun run scripts/audit-port.ts",
+    "lint": "eslint packages/"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "jiti": "^2.6.1",
     "typescript": "^5.5.0"
   },
   "engines": {

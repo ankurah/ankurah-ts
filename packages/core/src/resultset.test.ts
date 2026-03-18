@@ -4,6 +4,8 @@ import { EntityId, CollectionId } from '@ankurah/proto';
 import { Entity } from './entity.ts';
 import { EntityResultSet } from './resultset.ts';
 import type { Value } from './value/index.ts';
+import { ValueType } from './value/index.ts';
+import { IndexDirection, NullsOrder, type KeySpec } from './indexing/key_spec.ts';
 
 // ── Test helpers ──
 
@@ -124,6 +126,44 @@ describe('resultset', () => {
 
     // Operations should be visible after guard is dropped
     expect(resultset.len()).toBe(2);
+  });
+
+  // Rust: fn test_order_by_with_tie_breaking()
+  test('order by with tie breaking', () => {
+    const resultset = EntityResultSet.empty();
+
+    // Create entities with same name but different IDs
+    const entity1 = testEntity(1, { name: 'Alice' });
+    const entity2 = testEntity(2, { name: 'Alice' });
+    const entity3 = testEntity(3, { name: 'Bob' });
+
+    // Set up ordering by name
+    const keySpec: KeySpec = {
+      keyparts: [{
+        column: 'name',
+        subPath: null,
+        direction: IndexDirection.Asc,
+        nulls: NullsOrder.Last,
+        collation: null,
+        valueType: ValueType.String,
+      }],
+    };
+    resultset.orderBy(keySpec);
+
+    const write = resultset.write();
+    write.add(entity2);
+    write.add(entity3);
+    write.add(entity1);
+    write.drop();
+
+    // Should be sorted by name, then by entity ID for tie-breaking
+    const readGuard = resultset.read();
+    const entities = readGuard.iterEntities();
+    expect(entities.length).toBe(3);
+    // Both Alice entities should come first (sorted by ID), then Bob
+    expect(entities[0][0].toBase64()).toBe(entity1.id().toBase64()); // Alice (earlier ID)
+    expect(entities[1][0].toBase64()).toBe(entity2.id().toBase64()); // Alice (later ID)
+    expect(entities[2][0].toBase64()).toBe(entity3.id().toBase64()); // Bob
   });
 
   // Rust: fn test_ivec_small_keys(), test_ivec_large_keys(), test_ivec_boundary()

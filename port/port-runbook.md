@@ -36,7 +36,11 @@ A **fully faithful TypeScript port** of ankurah, targeting **React Native / Expo
 │   └── port/                # Port specs, audit scripts, hash manifest (this directory)
 ```
 
-**Sibling Rust checkout required**: `ANKURAH_RS_PATH` env var (default `../ankurah`). Tests hard-fail if missing.
+**Sibling Rust checkouts required**:
+- `../ankurah` — Rust implementation (main branch, source of truth for reference)
+- `../ankurah-ts-support` — Rust worktree on `ts-port-support` branch (fixtures, integration tests, the branch porters read from)
+
+`ANKURAH_RS_PATH` env var (default `../ankurah`). Tests hard-fail if missing.
 
 ## Port Docs (read in this order)
 
@@ -47,6 +51,7 @@ A **fully faithful TypeScript port** of ankurah, targeting **React Native / Expo
 | [ownership.md](ownership.md) | How Rust ownership (Drop, Mutex, RefCell, Arc, Weak, lifetimes) maps to TS |
 | [ownership/provided-types.md](ownership/provided-types.md) | API reference for Disposable, Mutex, RefCell, AsyncMutex |
 | [decisions.md](decisions.md) | Confirmed architectural decisions (wire format, CRDT, tooling, scope, async serialization, gotchas) |
+| [punchlist/index.md](punchlist/index.md) | Per-crate punchlists: every .rs file and every test function, with status tracking |
 
 ## Validation (run these to check your work)
 
@@ -63,9 +68,13 @@ Port scripts live in `port/` and are self-documenting (`--help` or read the sour
 - `audit-port.ts --backpopulate` — bootstraps hash manifest from MIRRORS annotations
 - `audit-port.ts --update-manifest` — updates hashes after porting Rust changes
 
+## Port Order
+
+Port in **reverse-dependency order** (leaves first). See [punchlist/index.md](punchlist/index.md) for the full dependency graph and per-crate punchlists. Nothing skips ahead — a crate is not started until all its dependencies are fully complete (all 7 DoD criteria).
+
 ## How to Port a Rust File
 
-1. **Read the Rust file** — understand every line
+1. **Read the Rust file** from `ankurah-ts-support/` — understand every line
 2. **Create/overwrite the TS file** — same path under `packages/<pkg>/src/`, same snake_case filename
 3. **Add line 1 annotation** — `// MIRRORS: ankurah/<crate>/src/<path>.rs`
 4. **Translate mechanically** — apply [translation-rules.md](translation-rules.md):
@@ -118,6 +127,17 @@ The TS port must be byte-compatible with the Rust implementation. This is valida
 
 **The rule**: We match the Rust wire protocol exactly. Bincode only. No reimagining. No JSON alternative. The fixture tests are the proof.
 
+## Excluded Crates
+
+| Crate | Reason |
+|-------|--------|
+| `storage/sled` | Rust-specific embedded DB — no Node/browser equivalent |
+| `derive` | Proc macro — replaced by `defineModel()` runtime (E12) |
+| `connectors/websocket-client-wasm` | WASM variant — TS uses pure websocket-client |
+| `tests-wasm` | WASM test bindings — not applicable to pure TS |
+| `examples/*` | Example apps — not part of library |
+| `docs/example/*` | Doc examples — not part of library |
+
 ## Package Structure
 
 | TS Package | Rust Crate | Source files | Tests | Parity audit |
@@ -141,40 +161,41 @@ The TS port must be byte-compatible with the Rust implementation. This is valida
 
 ## Current Status
 
-**835 tests passing, 0 failures, 31 skip**, tsc clean. Last commit: `c8b7330`.
+**854 tests passing, 0 failures, 31 skip**, tsc clean. ESLint ownership rules enabled (45 errors, 41 warnings).
 
-All 147 in-scope source files ported. All 21 core integration tests ported (T32-T52). Signal integration tests ported (T1-T3).
+Full re-audit in progress. Per-crate punchlists track every file and every test function: [punchlist/index.md](punchlist/index.md).
+
+### What's working
+- All source files have initial TS counterparts across all 13 crates
+- ankql, proto, signals, storage-common passed prior parity audits
+- Full re-audit underway (assume nothing is done — verify everything)
 
 ### Outstanding
 
-#### Parity audits needed
-- storage-common (2 planner tests short of Rust's 71)
-- core (full audit)
+See per-crate punchlists for detailed status. High-level gaps:
 
-#### Storage engine integration tests (need real DBs)
-- T5-T8: SQLite (4 tests) — need SQLite driver wired up
-- T9-T19: Postgres (11 tests) — need Postgres + Docker
-- T20-T31: IndexedDB (12 tests) — need browser/jsdom environment
+#### ESLint ownership violations
+- 45 errors (assert-not-disposed, dispose-owned-fields, require-using-for-guards)
+- 41 warnings (fire-and-forget, dispose-requires-registration)
+- Hotspots: livequery.ts, connectors, entity.ts
 
-#### 31 skipped tests
-- 25 inter-node tests (need LocalProcessConnection wired to Node)
-- 4 websocket tests (need WS client+server integration)
-- 2 policy_agent tests (Rust source commented out)
+#### Storage engine implementations
+- SQLite: sql_builder ported, engine needs real driver (24 integration tests)
+- Postgres: sql_builder ported, engine needs real driver + Docker (27 integration tests)
+- IndexedDB: unit tests pass, engine needs browser/jsdom (57 integration tests)
+
+#### Connector/networking integration
+- 25 inter-node tests skipped (need LocalProcessConnection wired to Node)
+- 4 websocket tests skipped (need WS client+server integration)
+- 3 local_subscription tests not ported yet
 
 #### Infrastructure
-- Enable eslint-plugin-ankurah in repo ESLint config
-- Run linter on all code (will surface ownership violations)
 - Add lint + audit to CI
 - Wire `using` declarations where needed (GC warnings in test output)
 
 #### Rust-side
 - Support branch needs rebase onto main for new proto types
 - Fixtures need regenerating after rebase
-
-#### Port infrastructure
-14. **Enable eslint-plugin-ankurah** — configure ESLint in the repo to actually run the ownership rules
-15. **Run linter on existing code** — will surface all the ownership violations that need fixing (items 4-8 above)
-16. **Add lint + audit to CI** — automated compliance checking
 
 ### Known Issues
 - ResultSetWrite uses old `write()/done()` pattern — most critical ownership violation
