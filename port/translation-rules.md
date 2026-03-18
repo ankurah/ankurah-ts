@@ -511,15 +511,51 @@ When an exception rule applies to a file or code block, cite it explicitly:
 // Exception E12: reactor.rs is a file-with-submodules in Rust; becomes reactor/index.ts in TS
 ```
 
-### G4. Rust Reference Comments
+### G4. Function Attestation (Mandatory)
 
-For complex logic that is faithfully ported, optionally reference the Rust source location to aid future comparison:
+Every function or method in a MIRRORS file MUST have a `// Rust: fn <name>` attestation comment immediately before it, citing the Rust function it mirrors:
 
 ```typescript
-// See Rust: ankurah/core/src/reactor.rs:330-370 (notify_change)
-async notifyChange<C extends ChangeNotification>(changes: C[]): Promise<void> {
-    // ...
-}
+// Rust: fn fetch_from_peer
+async fetchFromPeer(peerId: EntityId, collection: CollectionId, args: MatchArgs): Promise<Entity[]> {
+```
+
+For trait impls that map to interface methods:
+```typescript
+// Rust: impl Signal for Calculated — fn listen
+listen(callback: () => void): ListenerGuard {
+```
+
+For struct fields that map directly:
+```typescript
+// Rust: pub(crate) broadcast: Broadcast<()>
+readonly broadcast: Broadcast<void>;
+```
+
+Skipped Rust functions must be noted:
+```typescript
+// Rust: fn conjure_evil_phantom — SKIP: test-only diagnostic, not ported
+```
+
+The audit script verifies every `pub fn` / `pub async fn` in the Rust source has a corresponding `// Rust: fn <name>` in the TS file.
+
+### G4a. Inline Line Citations
+
+Non-trivial TS code blocks should cite the Rust line number they mirror:
+
+```typescript
+// R:456
+const knownMatches = localEntities.map(e => new KnownEntity(e.id(), e.head()));
+// R:462
+const response = await this.request(peerId, cdata, new NodeRequestBody('Fetch', { ... }));
+```
+
+The line number refers to the Rust file declared in the MIRRORS annotation on line 1. No filename needed (it's always the MIRRORS target). No explanatory text (the code should speak for itself).
+
+For test files (which may mirror a different file than their source), use `// R:<file>:<line>`:
+```typescript
+// R:tests/tests/inter_node.rs:75
+test('server_edits_subscription', async () => {
 ```
 
 ### G5. Test File Annotations
@@ -575,3 +611,6 @@ Use this checklist to verify port compliance:
 - [ ] Test files are adjacent to source (`.test.ts`) or in `__tests__/`
 - [ ] Re-export chains in `index.ts` match Rust `lib.rs` / `mod.rs` re-exports
 - [ ] Hash manifest (`scripts/rust-source-hashes.json`) is updated after porting Rust changes
+- [ ] Every Rust `pub fn` has a `// Rust: fn <name>` attestation in the TS file (G4)
+- [ ] No `as unknown as` without a `// Divergence:` justification on the same or preceding line
+- [ ] TS function body sizes are within reasonable range of Rust counterparts (audit script flags >50% shorter)

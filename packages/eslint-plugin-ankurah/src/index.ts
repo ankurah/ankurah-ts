@@ -11,6 +11,7 @@ import { rule as weakrefDerefNullCheck } from './rules/weakref-deref-null-check'
 import { rule as disposeRequiresRegistration } from './rules/dispose-requires-registration';
 import { rule as noAwaitInUsingGuard } from './rules/no-await-in-using-guard';
 import { rule as noGuardEscape } from './rules/no-guard-escape';
+import { rule as noTypeLaundering } from './rules/no-type-laundering';
 
 const rules = {
   'assert-not-disposed': assertNotDisposed,
@@ -21,6 +22,7 @@ const rules = {
   'dispose-requires-registration': disposeRequiresRegistration,
   'no-await-in-using-guard': noAwaitInUsingGuard,
   'no-guard-escape': noGuardEscape,
+  'no-type-laundering': noTypeLaundering,
 };
 
 const plugin = {
@@ -42,6 +44,7 @@ const plugin = {
         'ankurah/dispose-requires-registration': 'warn' as const,
         'ankurah/no-await-in-using-guard': 'warn' as const,
         'ankurah/no-guard-escape': 'error' as const,
+        'ankurah/no-type-laundering': 'error' as const,
       },
     },
   },
