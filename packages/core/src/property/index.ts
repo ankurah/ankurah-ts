@@ -7,6 +7,11 @@ export * from './traits.ts';
 export * from './value/lww.ts';
 export * from './value/yrs_string.ts';
 
+// Rust: pub use value::{Json, Ref, YrsString};
+export { Json } from './value/json.ts';
+export { Ref } from './value/entity_ref.ts';
+// YrsString already re-exported via ./value/yrs_string.ts above
+
 import type { Value } from '../value/index.ts';
 
 // ---------------------------------------------------------------------------

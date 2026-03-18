@@ -77,11 +77,12 @@ export function queryValueToExpr(qv: QueryValue): Expr {
     case 'Bool':
       return Expr.Literal(Literal.Bool(qv.value));
     case 'EntityId': {
-      const id = EntityIdClass.fromBase64(qv.value);
-      if (!id) {
-        throw new ParseError(`Invalid EntityId: ${qv.value}`);
+      try {
+        const id = EntityIdClass.fromBase64(qv.value);
+        return Expr.Literal(Literal.EntityId(id.toBytes()));
+      } catch (e) {
+        throw new ParseError(`Invalid EntityId: ${e instanceof Error ? e.message : String(e)}`);
       }
-      return Expr.Literal(Literal.EntityId(id.toBytes()));
     }
   }
 }

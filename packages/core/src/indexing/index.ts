@@ -22,5 +22,6 @@ export {
 
 export {
   IndexError,
+  encodeComponentTyped,
   encodeTupleValuesWithKeySpec,
 } from './encoding.ts';

@@ -2,7 +2,6 @@
 
 import type { CollectionId } from '@ankurah/proto';
 import type { StorageEngine, StorageCollection } from './storage.ts';
-import type { RetrievalError, MutationError } from './error.ts';
 
 // ---------------------------------------------------------------------------
 // CollectionSet — lazy-init cache for StorageCollection handles
@@ -58,20 +57,23 @@ export class CollectionSet {
    * Rust: `pub async fn list_collections(&self) -> Result<Vec<CollectionId>, RetrievalError>`
    * Divergence: Returns string keys rather than CollectionId values,
    *   because we store by string key. Callers should reconstruct CollectionId if needed [E7].
+   * Divergence: Synchronous — no RwLock in single-threaded JS [E8].
    */
   listCollections(): string[] {
     return Array.from(this.collections.keys());
   }
 
   /**
-   * Delete all collections from the cache.
+   * Delete all collections from the cache and storage.
    *
    * Rust: `pub async fn delete_all_collections(&self) -> Result<bool, MutationError>`
-   * Divergence: StorageEngine interface doesn't have deleteAllCollections yet,
-   *   so this only clears the in-memory cache [E7].
    */
-  deleteAllCollections(): void {
+  async deleteAllCollections(): Promise<boolean> {
+    // Clear in-memory collections first
     this.collections.clear();
+
+    // Then delete all collections from storage
+    return this.storageEngine.deleteAllCollections();
   }
 }
 

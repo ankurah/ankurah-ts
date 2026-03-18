@@ -86,7 +86,7 @@ export { OpenPolicy } from './policy.ts';
 // ── Indexing ──
 export { IndexDirection, NullsOrder, IndexSpecMatch } from './indexing/index.ts';
 export type { IndexKeyPart, KeySpec } from './indexing/index.ts';
-export { IndexError, encodeTupleValuesWithKeySpec } from './indexing/index.ts';
+export { IndexError, encodeComponentTyped, encodeTupleValuesWithKeySpec } from './indexing/index.ts';
 export {
   indexKeyPartAsc, indexKeyPartDesc, indexKeyPartFromPath, indexKeyPartFromFlatPath,
   indexKeyPartAscPath, indexKeyPartDescPath, indexKeyPartFullPath,

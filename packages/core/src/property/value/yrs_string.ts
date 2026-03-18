@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/core/src/property/value/yrs.rs
 // Exception E5: yrs.rs -> yrs_string.ts (Yrs library rename; filename preserves Rust type name)
 
-import type { BroadcastId, Listener, Signal } from '@ankurah/signals';
-import { ListenerGuard } from '@ankurah/signals';
+import type { BroadcastId, Listener, Signal, Subscribe } from '@ankurah/signals';
+import { ListenerGuard, SubscriptionGuard } from '@ankurah/signals';
 
 import { YjsBackend } from '../backend/yjs.ts';
 import type { PropertyName } from '../index.ts';
@@ -24,7 +24,7 @@ import type { Entity } from '../../entity.ts';
  *
  * Starting with basic string type operations.
  */
-export class YrsString<Projected = string> implements Signal {
+export class YrsString<Projected = string> implements Signal, Subscribe<string> {
   readonly propertyName: PropertyName;
   readonly backend: YjsBackend;
   readonly entity: Entity;
@@ -121,6 +121,25 @@ export class YrsString<Projected = string> implements Signal {
    */
   broadcastId(): BroadcastId {
     return this.backend.fieldBroadcastId(this.propertyName);
+  }
+
+  // ── Subscribe interface ────────────────────────────────────────────
+
+  /**
+   * Subscribe to changes with a listener that receives the new value.
+   *
+   * Rust: `impl<Projected> Subscribe<String> for YrsString<Projected>`
+   */
+  subscribe(listener: (value: string) => void): SubscriptionGuard {
+    const guard = this.listen(() => {
+      // Get current value when the broadcast fires
+      const currentValue = this.value();
+      if (currentValue !== null) {
+        listener(currentValue);
+      }
+      // Mirrors Rust: if let Some(current_value) = yrs_string.value() — silently ignore None
+    });
+    return new SubscriptionGuard(guard);
   }
 
   // ── Static factory methods (trait impls in Rust) ────────────────────

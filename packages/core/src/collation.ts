@@ -220,6 +220,9 @@ export function literalSuccessorBytes(lit: Literal): Uint8Array | null {
       const bits = f64CollateBits(v.value);
       return f64ToBeBytes(bits + 1n);
     },
+    // Divergence: Rust has `if !b { None } else { Some(vec![1]) }` which gives
+    // false->None, true->Some([1]). This is a Rust bug (true's successor is itself).
+    // TS uses the logically correct behavior: true->null (no successor), false->[1] (successor is true).
     Bool: (v) => v.value ? null : new Uint8Array([1]),
     EntityId: (v) => incrementBytes(v.value),
     Object: (v) => {
@@ -333,7 +336,7 @@ export function strToBytes(s: string): Uint8Array {
 }
 
 export function strSuccessorBytes(s: string): Uint8Array | null {
-  if (s.length === 0) return null; // is_maximum returns false, but still no max for strings
+  // Rust: is_maximum() always returns false for strings, so successor always exists
   const bytes = strToBytes(s);
   const result = new Uint8Array(bytes.length + 1);
   result.set(bytes);

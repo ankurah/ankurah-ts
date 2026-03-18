@@ -422,9 +422,9 @@ describe('SystemManager loadSystemCatalog with existing data', () => {
 
     await system.waitLoaded();
 
-    // Ephemeral node with cached root becomes ready (enables offline-first)
-    // Ephemeral nodes will verify/update the root when they connect via joinSystem()
-    expect(system.isSystemReady()).toBe(true);
+    // Rust: if has_root && self.0.durable — only durable nodes auto-ready on load
+    // Ephemeral nodes must explicitly join via joinSystem()
+    expect(system.isSystemReady()).toBe(false);
     expect(system.root()).not.toBeNull();
     expect(system.getItems()).toHaveLength(1);
   });

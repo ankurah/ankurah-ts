@@ -423,9 +423,9 @@ export class SystemManager {
     const hasRoot = rootState !== null;
     this._root = rootState;
 
-    // Mark ready if we found a cached root (enables offline-first for ephemeral nodes)
-    // Ephemeral nodes will verify/update the root when they connect via joinSystem()
-    if (hasRoot) {
+    // Only mark ready if we're a durable node and found a root
+    // Ephemeral nodes must explicitly join via joinSystem()
+    if (hasRoot && this.durable) {
       this.systemReady = true;
       this.systemReadyDeferred.resolve(undefined);
     }
