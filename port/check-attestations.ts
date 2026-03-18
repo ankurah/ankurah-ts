@@ -11,7 +11,7 @@ import { basename, dirname, join, relative, resolve } from 'path';
 // Configuration
 // ---------------------------------------------------------------------------
 
-const RS_PATH = resolve(process.env.ANKURAH_RS_PATH ?? join(__dirname, '..', '..', 'ankurah'));
+const RS_PATH = resolve(process.env.ANKURAH_RS_PATH ?? join(__dirname, '..', '..', 'ankurah-ts-support'));
 const TS_ROOT = resolve(join(__dirname, '..'));
 
 // ---------------------------------------------------------------------------
@@ -365,14 +365,15 @@ function checkFile(tsFile: string, rustRelPath: string, isTestMirror: boolean): 
 
   const allRustFunctions = extractRustFunctions(rustAbsPath);
 
-  // Filter: skip test functions and wasm functions
+  // Filter: only skip wasm-gated functions (they have no TS equivalent)
+  // Test functions and source functions are ALL checked
   let rustFunctions: RustFunction[];
   if (isTestMirror) {
     // For test mirror files, we only care about functions IN test blocks
     rustFunctions = allRustFunctions.filter((f) => f.inTestBlock && !f.inWasmBlock);
   } else {
-    // For source mirror files, we skip test functions and wasm functions
-    rustFunctions = allRustFunctions.filter((f) => !f.inTestBlock && !f.inWasmBlock);
+    // For source mirror files, check ALL functions (source + inline tests), skip only wasm
+    rustFunctions = allRustFunctions.filter((f) => !f.inWasmBlock);
   }
 
   const tsAttestations = extractTsAttestations(tsFile);

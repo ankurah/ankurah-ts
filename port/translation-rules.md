@@ -513,23 +513,23 @@ When an exception rule applies to a file or code block, cite it explicitly:
 
 ### G4. Function Attestation (Mandatory)
 
-Every function or method in a MIRRORS file MUST have a `// Rust: fn <name>` attestation comment immediately before it, citing the Rust function it mirrors:
+Every function or method in a MIRRORS file MUST have a `// Rust: fn <name>` attestation comment immediately before it. The `<name>` is always the **Rust function name** (snake_case), not the TS name. This makes matching deterministic — no name mapping tables needed.
 
 ```typescript
 // Rust: fn fetch_from_peer
 async fetchFromPeer(peerId: EntityId, collection: CollectionId, args: MatchArgs): Promise<Entity[]> {
+
+// Rust: fn fmt
+toString(): string {
+
+// Rust: fn serialize
+encode(writer: BincodeWriter): void {
 ```
 
 For trait impls that map to interface methods:
 ```typescript
-// Rust: impl Signal for Calculated — fn listen
+// Rust: fn listen
 listen(callback: () => void): ListenerGuard {
-```
-
-For struct fields that map directly:
-```typescript
-// Rust: pub(crate) broadcast: Broadcast<()>
-readonly broadcast: Broadcast<void>;
 ```
 
 Skipped Rust functions must be noted:
@@ -537,7 +537,13 @@ Skipped Rust functions must be noted:
 // Rust: fn conjure_evil_phantom — SKIP: test-only diagnostic, not ported
 ```
 
-The audit script verifies every `pub fn` / `pub async fn` in the Rust source has a corresponding `// Rust: fn <name>` in the TS file.
+Test functions follow the same rule:
+```typescript
+// Rust: fn test_basic_signal
+test('test_basic_signal', async () => {
+```
+
+The audit script (`port/check-attestations.ts`) verifies every `fn` in the Rust source has a corresponding `// Rust: fn <name>` in the TS file. ALL functions are checked — source, tests, private, public. Only `#[cfg(feature = "wasm")]` functions are excluded.
 
 ### G4a. Inline Line Citations
 
