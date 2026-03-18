@@ -3,7 +3,7 @@
 import { Predicate } from '@ankurah/ankql';
 import type { ComparisonOperator, OrderByItem, Selection } from '@ankurah/ankql';
 import type { IndexKeyPart, KeySpec, Value } from '@ankurah/core';
-import { indexKeyPartAscPath, keySpecNew, valueFromLiteral, valuePartialCmp, valueType, ValueType } from '@ankurah/core';
+import { indexKeyPartAscPath, indexKeyPartDescPath, keySpecNew, valueFromLiteral, valuePartialCmp, valueType, ValueType } from '@ankurah/core';
 import { ConjunctFinder } from './predicate.ts';
 import {
   Plan,
@@ -182,7 +182,9 @@ export class Planner {
         if (item.path.isSimple()) {
           const name = item.path.first();
           indexKeyparts.push(
-            indexKeyPartAscPath(name, ValueType.String), // direction tracked in keypart already for full support
+            item.direction.is('Asc')
+              ? indexKeyPartAscPath(name, ValueType.String)
+              : indexKeyPartDescPath(name, ValueType.String),
           );
         }
       }

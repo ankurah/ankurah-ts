@@ -538,7 +538,7 @@ describe('full_support_tests', () => {
     assertIndex(plans[0], {
       indexSpec: keySpecNew([
         indexKeyPartAscPath('__collection', ValueType.String),
-        indexKeyPartAscPath('name', ValueType.String),
+        indexKeyPartDescPath('name', ValueType.String),
       ]),
       scanDirection: 'Forward',
       bounds: bounds(eqBound('__collection', strVal('album'))),
@@ -553,7 +553,7 @@ describe('full_support_tests', () => {
       indexSpec: keySpecNew([
         indexKeyPartAscPath('__collection', ValueType.String),
         indexKeyPartAscPath('name', ValueType.String),
-        indexKeyPartAscPath('year', ValueType.String),
+        indexKeyPartDescPath('year', ValueType.String),
         indexKeyPartAscPath('score', ValueType.String),
       ]),
       scanDirection: 'Forward',
@@ -568,8 +568,8 @@ describe('full_support_tests', () => {
     assertIndex(plans[0], {
       indexSpec: keySpecNew([
         indexKeyPartAscPath('__collection', ValueType.String),
-        indexKeyPartAscPath('name', ValueType.String),
-        indexKeyPartAscPath('year', ValueType.String),
+        indexKeyPartDescPath('name', ValueType.String),
+        indexKeyPartDescPath('year', ValueType.String),
       ]),
       scanDirection: 'Forward',
       bounds: bounds(eqBound('__collection', strVal('album'))),
@@ -585,7 +585,7 @@ describe('full_support_tests', () => {
         indexKeyPartAscPath('__collection', ValueType.String),
         indexKeyPartAscPath('status', ValueType.String),
         indexKeyPartAscPath('name', ValueType.String),
-        indexKeyPartAscPath('year', ValueType.String),
+        indexKeyPartDescPath('year', ValueType.String),
       ]),
       scanDirection: 'Forward',
       bounds: bounds(eqBound('__collection', strVal('album')), eqBound('status', strVal('active'))),
@@ -870,7 +870,7 @@ describe('inequality_tests', () => {
 });
 
 describe('equality_tests', () => {
-  test('single_equality', () => {
+  test('single_equality_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice'");
     assertIndex(plans[0], {
       indexSpec: keySpecNew([
@@ -884,7 +884,7 @@ describe('equality_tests', () => {
     });
   });
 
-  test('multiple_equalities', () => {
+  test('multiple_equalities_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice' AND age = 30");
     assertIndex(plans[0], {
       indexSpec: keySpecNew([
@@ -963,7 +963,7 @@ describe('equality_tests', () => {
 });
 
 describe('mixed_tests', () => {
-  test('equality_with_inequality', () => {
+  test('equality_with_inequality_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice' AND age > 25");
     assertIndex(plans[0], {
       indexSpec: keySpecNew([
@@ -1253,6 +1253,49 @@ describe('edge_cases', () => {
       scanDirection: 'Forward',
       remainingPredicate: assertPredicateMatchesParse("__collection = 'album' AND age = 30"),
       orderBySpill: { presort: [], spill: [obyAsc('name'), obyAsc('score')] },
+    });
+  });
+
+  test('inequality_different_field_than_order_by', () => {
+    // Query: year >= '2001' ORDER BY name
+    // Two correct strategies:
+    // 1. Scan by NAME, filter by YEAR (ordering free, filtering costs)
+    // 2. Scan by YEAR, sort by NAME (filtering free, sorting costs)
+    const plans = planIndexeddb("__collection = 'album' AND year >= '2001' ORDER BY name");
+    assertPlanCount(plans, 3);
+
+    // Strategy 1: Scan by name, filter by year
+    assertIndex(plans[0], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('name', ValueType.String),
+      ]),
+      scanDirection: 'Forward',
+      bounds: bounds(eqBound('__collection', strVal('album'))),
+      remainingPredicate: assertPredicateMatchesParse("year >= '2001'"),
+      orderBySpill: { presort: [obyAsc('name')], spill: [] },
+    });
+
+    // Strategy 2: Scan by year, sort by name (global sort needed since 'year' not in ORDER BY)
+    assertIndex(plans[1], {
+      indexSpec: keySpecNew([
+        indexKeyPartAscPath('__collection', ValueType.String),
+        indexKeyPartAscPath('year', ValueType.String),
+      ]),
+      scanDirection: 'Forward',
+      bounds: bounds(
+        eqBound('__collection', strVal('album')),
+        rangeBound('year', ge(strVal('2001')), unboundedHigh(ValueType.String)),
+      ),
+      remainingPredicate: assertTrue,
+      orderBySpill: { presort: [], spill: [obyAsc('name')] },
+    });
+
+    assertTableScan(plans[2], {
+      bounds: new KeyBounds([]),
+      scanDirection: 'Forward',
+      remainingPredicate: assertPredicateMatchesParse("__collection = 'album' AND year >= '2001'"),
+      orderBySpill: { presort: [], spill: [obyAsc('name')] },
     });
   });
 });
