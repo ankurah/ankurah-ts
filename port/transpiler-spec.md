@@ -2,22 +2,68 @@
 
 ## Executive Summary
 
-A Rust binary that transpiles Rust source code into TypeScript. It parses Rust with `syn`, generates TypeScript output, and diffs that output against the existing hand-ported TS files. **The existing port is the test suite for the transpiler** — discrepancies are either a transpiler bug or a porting bug, both valuable findings.
+A Rust binary that transpiles Rust source code into TypeScript. The pipeline:
 
-There is **no TS parser dependency**. The transpiler only needs to read Rust (via `syn`) and generate TS text. Validation is done by diffing generated output against existing files. The tool does not parse TypeScript ASTs.
+```
+Rust source → syn parse → Rust AST → TRANSFORM → OXC TS AST → oxc_codegen → TS text → write to file
+```
+
+The **transform layer** (Rust AST → OXC AST) is where all translation rules are codified. This is the core of the tool and where most effort goes. `syn` handles Rust parsing, OXC handles TS AST representation and code generation.
+
+**The existing port is the test suite for the transpiler.** Every file we've already ported is expected output. Run the transpiler, write the output, `git diff` to see discrepancies. Discrepancies are either a transpiler bug or a porting bug — both valuable.
+
+**The transpiler does no diffing itself.** It writes files. `git diff` is the validation tool.
 
 **Phases:**
-1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. Diff against existing TS. No function bodies.
-2. **Body transpiler** — translate function bodies using mechanical pattern matching. Diff against existing.
-3. **Production transpiler** — managed file whitelist, auto-apply clean diffs, override annotations for manual exceptions.
+1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. No function bodies.
+2. **Body transpiler** — translate function bodies via AST-level pattern matching.
+3. **Production transpiler** — managed file whitelist, override annotations for manual exceptions.
 
-**Dependencies:** `syn` (Rust parsing), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `colored` (terminal output). That's it.
+**Dependencies:** `syn` (Rust parsing), `oxc_ast` + `oxc_codegen` + `oxc_allocator` + `oxc_span` (TS AST + code generation), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `toml` (config).
+
+---
+
+## Architecture
+
+### Pipeline
+
+```
+                    ┌─────────────┐
+  Rust .rs file ──▶ │  syn parse  │──▶ syn::File (Rust AST)
+                    └─────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │  TRANSFORM  │  ◀── This is where all the rules live
+                    └─────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │   OXC AST   │──▶ oxc_ast::ast::Program (TS AST)
+                    └─────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │ oxc_codegen │──▶ TypeScript text
+                    └─────────────┘
+                           │
+                           ▼
+                    Write to disk ──▶ git diff to validate
+```
+
+### Why OXC for output?
+
+- Proper AST means well-formed, correctly formatted TS output
+- No hand-written string concatenation
+- OXC's codegen handles indentation, semicolons, line breaks
+- The AST is the same one used by real TS tooling (linters, formatters, bundlers)
+- As the transpiler evolves, having a real AST enables optimization and analysis passes
 
 ---
 
 ## Phase 1: Skeleton Transpiler
 
-Parse Rust, generate TS declaration structure, diff against existing.
+Parse Rust, build OXC TS AST for declarations, generate TS text.
 
 ### 1.1 Rust Extraction (via `syn`)
 
@@ -25,7 +71,7 @@ Parse each `.rs` file with `syn::parse_file()`. Extract:
 
 | Rust item | `syn` type | Data to extract |
 |-----------|-----------|-----------------|
-| `fn` | `ItemFn` / `ImplItemFn` / `TraitItemFn` | name, visibility, is_async, params, return type, body span/line count |
+| `fn` | `ItemFn` / `ImplItemFn` / `TraitItemFn` | name, visibility, is_async, params, return type, body span |
 | `struct` | `ItemStruct` | name, visibility, fields (name + type each), generics |
 | `enum` | `ItemEnum` | name, visibility, variants (name + fields each) |
 | `trait` | `ItemTrait` | name, visibility, method signatures |
@@ -37,118 +83,90 @@ Parse each `.rs` file with `syn::parse_file()`. Extract:
 | `use` | `ItemUse` | path, visibility |
 
 **Attribute handling:**
-- `#[cfg(feature = "wasm")]` / `#[cfg(feature = "uniffi")]` — skip item entirely (not ported to TS)
-- `#[cfg(test)]` — mark as test-only (generates into `.test.ts` instead of `.ts`)
+- `#[cfg(feature = "wasm")]` / `#[cfg(feature = "uniffi")]` — skip item entirely
+- `#[cfg(test)]` — mark as test-only (generates into `.test.ts`)
 - `#[test]` / `#[tokio::test]` — mark function as test
-- `#[derive(...)]` — record derived traits (informs what methods to generate: Clone→clone, Debug→toString, PartialEq→equals, Serialize/Deserialize→encode/decode)
+- `#[derive(...)]` — record derived traits (Clone→clone, Debug→toString, PartialEq→equals, Serialize/Deserialize→encode/decode)
 
 **Context tracking:**
-- Which `impl` block a method belongs to → methods are generated inside the corresponding TS class
-- Which `mod tests` block a function belongs to → generates into the `.test.ts` file
+- Which `impl` block a method belongs to → merge into corresponding TS class
+- Which `mod tests` block a function belongs to → generate into `.test.ts`
 
-### 1.2 Name Mapping
+### 1.2 Transform: Rust AST → OXC AST
 
-All mapping is deterministic.
+This is the core of the transpiler. For each `syn` item, construct the equivalent `oxc_ast` node.
 
-**Functions:** `snake_case` → `camelCase` via mechanical conversion, plus static exceptions:
-
-```rust
-const STATIC_MAP: &[(&str, &str)] = &[
-    ("fmt", "toString"),
-    ("serialize", "encode"),
-    ("deserialize", "decode"),
-    ("eq", "equals"),
-    ("ne", "notEquals"),
-    ("partial_cmp", "compareTo"),
-    ("clone", "clone"),
-    ("default", "default"),
-    ("drop", "drop"),
-    ("from", "from"),
-    ("try_from", "tryFrom"),
-    ("into", "into"),
-    ("new", "new"),
-    ("next", "next"),
-    ("deref", "deref"),
-];
+**Structs → Classes:**
+```
+syn::ItemStruct { ident: "Node", fields: [id: EntityId, durable: bool] }
+    ↓
+oxc_ast::ast::Class { id: "Node", body: [PropertyDefinition("id"), PropertyDefinition("durable")] }
 ```
 
-**Types:** `PascalCase` stays unchanged.
+Plus: merge all `impl Node { ... }` methods into the class body as `MethodDefinition` nodes.
+
+**Enums → Classes extending Enum<V>:**
+```
+syn::ItemEnum { ident: "DeltaContent", variants: [StateSnapshot{state}, EventBridge{events}] }
+    ↓
+oxc_ast::ast::Class { id: "DeltaContent", superClass: "Enum<DeltaContentV>" }
+```
+
+Plus: generate the variant type map `type DeltaContentV = { ... }`.
+
+**Traits → Interfaces:**
+```
+syn::ItemTrait { ident: "StorageEngine", items: [fn collection(...)] }
+    ↓
+oxc_ast::ast::TSInterfaceDeclaration { id: "StorageEngine", body: [TSMethodSignature("collection")] }
+```
+
+**Functions → Function declarations or method definitions:**
+```
+syn::ItemFn { ident: "next_entity_id", sig: { asyncness: None, inputs: [&self], output: EntityId } }
+    ↓
+oxc_ast::ast::MethodDefinition { key: "nextEntityId", value: Function { async: false, params: [], returnType: "EntityId" } }
+```
+
+Phase 1 bodies are just `throw new Error('TODO')` stubs.
+
+**use → import:**
+```
+syn::ItemUse { path: "ankurah_proto::EntityId" }
+    ↓
+oxc_ast::ast::ImportDeclaration { source: "@ankurah/proto", specifiers: [ImportSpecifier("EntityId")] }
+```
+
+Using the crate→package mapping table.
+
+### 1.3 Name Mapping
+
+All deterministic.
+
+**Functions:** `snake_case` → `camelCase`, plus static exceptions:
+
+| Rust name | TS name |
+|-----------|---------|
+| `fmt` | `toString` |
+| `serialize` | `encode` |
+| `deserialize` | `decode` |
+| `eq` | `equals` |
+| `ne` | `notEquals` |
+| `partial_cmp` | `compareTo` |
+| `clone` | `clone` |
+| `default` | `default` |
+| `drop` | `drop` |
+| `from` | `from` |
+| `try_from` | `tryFrom` |
+| `new` | `new` |
+| `next` | `next` |
+| `deref` | `deref` |
+
+**Types:** PascalCase stays unchanged.
 
 **Test functions:** Preserved as-is. `fn test_foo_bar` → `test('test_foo_bar', ...)`.
 
 **Modules:** `mod foo` → `foo.ts` or `foo/index.ts`. `mod.rs` / `lib.rs` → `index.ts`.
-
-### 1.3 TS Code Generation
-
-For each Rust file, generate a complete TS file:
-
-**Header:**
-```typescript
-// MIRRORS: ankurah/<crate>/src/<path>.rs
-```
-
-**Imports:** Generated from `use` statements using the crate→package mapping table.
-
-**Structs → Classes:**
-```rust
-pub struct Node {
-    pub id: EntityId,
-    durable: bool,
-}
-```
-→
-```typescript
-export class Node extends Struct {
-  readonly id: EntityId;
-  private durable: boolean;
-}
-```
-
-**Enums → Enum classes:**
-```rust
-pub enum DeltaContent {
-    StateSnapshot { state: StateFragment },
-    EventBridge { events: Vec<EventFragment> },
-}
-```
-→
-```typescript
-type DeltaContentV = {
-  StateSnapshot: { state: StateFragment };
-  EventBridge: { events: EventFragment[] };
-};
-export class DeltaContent extends Enum<DeltaContentV> {
-}
-```
-
-**Traits → Interfaces:**
-```rust
-pub trait StorageEngine {
-    async fn collection(&self, id: &CollectionId) -> Result<StorageCollection>;
-}
-```
-→
-```typescript
-export interface StorageEngine {
-  collection(id: CollectionId): Promise<StorageCollection>;
-}
-```
-
-**Functions → Functions/Methods:**
-```rust
-pub fn next_entity_id(&self) -> EntityId { ... }
-```
-→
-```typescript
-nextEntityId(): EntityId {
-  // TODO: implement
-}
-```
-
-**impl blocks → merged into classes:**
-All methods from `impl Node { ... }` and `impl Display for Node { ... }` are generated inside `class Node { ... }`.
-
-**Visibility:** `pub` → `export` (top-level) or omit access modifier (class members default to public in TS). `pub(crate)` → no export, no access modifier. Private → `private`.
 
 ### 1.4 Type Mapping
 
@@ -175,31 +193,7 @@ All methods from `impl Node { ... }` and `impl Display for Node { ... }` are gen
 | `AtomicBool` | `boolean` |
 | `AtomicU32` / `AtomicUsize` | `number` |
 
-### 1.5 Validation (diff against existing)
-
-The transpiler generates a TS file, then diffs it against the existing hand-ported TS file:
-
-```
-cargo run -- transpile --diff core/src/node.rs
-```
-
-Output:
-```diff
---- generated (from Rust)
-+++ existing (hand-ported)
-@@ -15,6 +15,7 @@
- export class Node extends Struct {
-   readonly id: EntityId;
-+  readonly collections: CollectionSet;  // extra field in existing
-   private durable: boolean;
-```
-
-Discrepancies mean:
-- **Extra in generated** → Rust has something the TS port is missing
-- **Extra in existing** → TS has something not in Rust (should be annotated as TS-ONLY or Divergence)
-- **Different** → either the transpiler's mapping is wrong, or the port is wrong
-
-### 1.6 Commit Hash Attestation
+### 1.5 Commit Hash Attestation
 
 After a human verifies a function is correctly ported, they add `// @<hash>` on the preceding line:
 
@@ -208,51 +202,52 @@ After a human verifies a function is correctly ported, they add `// @<hash>` on 
 nextEntityId(): EntityId {
 ```
 
-The transpiler can check these:
+The transpiler can optionally check these:
 - `git log -1 --format=%h -- <rust-file>` gets the current Rust commit
-- If `@hash` differs from current → file has changed since verification → flag as stale
+- If `@hash` differs → flag as stale
 
-### 1.7 File Discovery
+### 1.6 File Discovery & Output
 
-- Walk `ankurah-ts-support/<crate>/src/` to find all Rust source files
-- Use the crate→package mapping to determine the target TS path
-- For files with `mod.rs` / `lib.rs`, map to `index.ts`
-- For `#[cfg(test)] mod tests { ... }`, generate into `<name>.test.ts`
+- Walk `ankurah-ts-support/<crate>/src/` to find Rust source files
+- Use crate→package mapping to determine target TS path
+- `mod.rs` / `lib.rs` → `index.ts`
+- `#[cfg(test)] mod tests { ... }` → `<name>.test.ts`
+- Write generated TS to the target path
+- Run `git diff` to see what changed vs existing
 
 ---
 
 ## Phase 2: Body Transpiler
 
-Translate function bodies using mechanical pattern matching.
+Translate function bodies via AST-level transformation.
 
-### 2.1 Mechanical translations
+### 2.1 Rust Expression → OXC Expression
 
-| Rust pattern | TS output |
-|-------------|-----------|
-| `let x = expr;` | `const x = expr;` |
-| `let mut x = expr;` | `let x = expr;` |
-| `x.clone()` | `x.clone()` |
-| `match expr { ... }` | `expr.match({ ... })` |
-| `if let Some(x) = expr { ... }` | `if (expr !== null) { const x = expr; ... }` |
-| `if let Enum::Variant(v) = expr { ... }` | `if (expr.is('Variant')) { const v = expr.value; ... }` |
-| `expr?` | `expr` (throws propagate naturally) |
-| `expr.unwrap()` | `expr!` or direct access |
-| `vec![a, b, c]` | `[a, b, c]` |
-| `HashMap::new()` | `new Map()` |
-| `format!("...", args)` | `` `...${args}` `` |
-| `println!("...")` | `console.log(...)` |
-| `async { ... }.await` | `await ...` |
-| `.iter().map(\|x\| ...)` | `.map(x => ...)` |
-| `.iter().filter(\|x\| ...)` | `.filter(x => ...)` |
-| `.collect::<Vec<_>>()` | (remove — arrays are the default) |
-| `Ok(x)` | `return x` |
-| `Err(e)` | `throw e` |
-| `Some(x)` | `x` |
-| `None` | `null` |
+Instead of string-based pattern matching, this maps `syn::Expr` variants to `oxc_ast::ast::Expression` variants:
+
+| `syn::Expr` | `oxc_ast::ast::Expression` |
+|-------------|---------------------------|
+| `Expr::Let { pat, init }` | `VariableDeclaration { kind: const/let, init }` |
+| `Expr::Match { expr, arms }` | `expr.match({ arm1: ..., arm2: ... })` call expression |
+| `Expr::MethodCall { receiver, method, args }` | `MemberExpression + CallExpression` |
+| `Expr::If { cond, then, else }` | `IfStatement` |
+| `Expr::Block { stmts }` | `BlockStatement` |
+| `Expr::Return { expr }` | `ReturnStatement` |
+| `Expr::Await { base }` | `AwaitExpression` |
+| `Expr::Try { expr }` | (unwrap — throws propagate) |
+| `Expr::Closure { params, body }` | `ArrowFunctionExpression` |
+| `Expr::ForLoop { pat, expr, body }` | `ForOfStatement` |
+
+Macro translations:
+| Rust macro | OXC node |
+|------------|----------|
+| `vec![a, b]` | `ArrayExpression([a, b])` |
+| `format!("...", args)` | `TemplateLiteral` |
+| `println!("...")` | `console.log(...)` CallExpression |
 
 ### 2.2 Validation
 
-Same as Phase 1 — diff generated against existing. But now function bodies are included, so the diff covers logic as well as structure.
+Same as Phase 1 — write output, `git diff`.
 
 ---
 
@@ -270,18 +265,16 @@ ankql = ["src/ast.rs", "src/error.rs"]
 
 1. Rust source changes (new commit on `ankurah-ts-support`)
 2. Run transpiler on managed files
-3. Diff generated TS against current TS
-4. Auto-apply clean diffs, flag complex changes for review
-5. Run test suite to validate
+3. `git diff` shows what changed
+4. Review and commit
 
 ### 3.3 Override mechanism
 
-For functions where the transpiler can't produce correct output:
 ```typescript
 // @transpiler-override: <reason>
 ```
 
-The transpiler preserves the existing code for items with this annotation.
+The transpiler preserves existing code for items with this annotation.
 
 ---
 
@@ -290,16 +283,15 @@ The transpiler preserves the existing code for items with this annotation.
 ```
 transpile/
 ├── Cargo.toml
-├── checker.toml          # Configuration (paths, crate mapping, name overrides)
+├── transpile.toml        # Configuration (paths, crate mapping, name overrides)
 ├── src/
 │   ├── main.rs           # CLI entry point (clap)
-│   ├── config.rs         # Read checker.toml
+│   ├── config.rs         # Read transpile.toml
 │   ├── rust_parser.rs    # syn-based Rust extraction
-│   ├── name_map.rs       # Deterministic name mapping (snake→camel + static table)
-│   ├── codegen.rs        # TS code generation from Rust items
+│   ├── name_map.rs       # Deterministic name mapping
+│   ├── transform.rs      # Rust AST → OXC AST (THE CORE)
 │   ├── types.rs          # Rust→TS type mapping
-│   ├── attestation.rs    # Commit hash checking
-│   └── diff.rs           # Diff generated vs existing, formatted output
+│   └── attestation.rs    # Commit hash checking (optional)
 ```
 
 ## Dependencies
@@ -308,42 +300,39 @@ transpile/
 [dependencies]
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+oxc_ast = "0.120"
+oxc_codegen = "0.120"
+oxc_allocator = "0.120"
+oxc_span = "0.120"
 clap = { version = "4", features = ["derive"] }
 walkdir = "2"
 anyhow = "1"
-colored = "2"
 toml = "0.8"
-similar = "2"       # For text diffing
 ```
-
-No TS parser dependency. The tool only reads Rust and generates TS text.
 
 ## CLI
 
 ```bash
-# Generate TS skeleton for one file (output to stdout)
+# Transpile one Rust file, write TS to expected path
 cargo run -- transpile core/src/node.rs
 
-# Generate and write to the expected TS path
-cargo run -- transpile core/src/node.rs --write
+# Transpile all files in a crate
+cargo run -- transpile --crate ankql
 
-# Diff generated vs existing TS
-cargo run -- diff core/src/node.rs
+# Transpile all crates
+cargo run -- transpile --all
 
-# Diff all files in a package
-cargo run -- diff --package ankql
-
-# Diff all files in all packages
-cargo run -- diff --all
+# Dry run (print to stdout, don't write)
+cargo run -- transpile core/src/node.rs --dry-run
 
 # Check attestation hashes
-cargo run -- attest --check [--package <name>]
+cargo run -- attest --check [--crate <name>]
 ```
 
 ## Configuration
 
 ```toml
-# transpile/checker.toml
+# transpile/transpile.toml
 
 [paths]
 rust_source = "../ankurah-ts-support"
@@ -375,4 +364,7 @@ default = "default"
 drop = "drop"
 new = "new"
 from = "from"
+
+[managed_files]
+# Phase 3: files the transpiler owns (start empty, grow gradually)
 ```
