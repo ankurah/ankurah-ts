@@ -5,7 +5,7 @@ import { MutationError, RetrievalError, StateError } from '@ankurah/core';
 import { backendFromString, evaluatePredicate } from '@ankurah/core';
 import type { Filterable } from '@ankurah/core';
 import type { Attestation, Attested, EntityState, Event, EventId, CollectionId, EntityId } from '@ankurah/proto';
-import type { Selection, Predicate } from '@ankurah/ankql';
+import { Selection, type Predicate } from '@ankurah/ankql';
 import { SqlBuilder, splitPredicateForPostgres } from './sql_builder.ts';
 import { type PGValue, pgValueFromValue, pgValuePostgresType } from './value.ts';
 
@@ -418,7 +418,7 @@ export class PostgresBucket implements StorageCollection {
     this._lastSpilledPredicate = needsPostFilter ? remainingPredicate : null;
 
     // Build SQL with only the pushdown-capable predicate
-    const sqlSelection = new (await import('@ankurah/ankql')).Selection(
+    const sqlSelection = new Selection(
       split.sqlPredicate,
       effectiveSelection.orderBy,
       needsPostFilter
@@ -505,6 +505,37 @@ export type ErrorKind =
   | { type: 'UndefinedColumn'; table: string | null; column: string }
   | { type: 'Unknown' }
   | { type: 'PostgresError'; message: string };
+
+/// Classify a PostgreSQL error into an ErrorKind.
+/// Divergence: Rust parses tokio_postgres::Error with SqlState codes.
+/// TS inspects error messages since PG client libraries vary [E8].
+export function errorKind(err: unknown): ErrorKind {
+  const message = err instanceof Error ? err.message : String(err);
+
+  // Check for RowCount errors (client-side)
+  if (message.includes('query returned an unexpected number of rows')) {
+    return { type: 'RowCount' };
+  }
+
+  // Check for undefined table (SQLSTATE 42P01)
+  const undefinedTableMatch = message.match(/relation "([^"]+)" does not exist/);
+  if (undefinedTableMatch) {
+    return { type: 'UndefinedTable', table: undefinedTableMatch[1] };
+  }
+
+  // Check for undefined column (SQLSTATE 42703)
+  const undefinedColMatch = message.match(/column "([^"]+)".*does not exist/);
+  if (undefinedColMatch) {
+    const column = undefinedColMatch[1];
+    const tableMatch = message.match(/of relation "([^"]+)"/);
+    return { type: 'UndefinedColumn', table: tableMatch ? tableMatch[1] : null, column };
+  }
+
+  return { type: 'Unknown' };
+}
+
+// ── MissingMaterialized ──────────────────────────────────────────────
+// Rust: `pub struct MissingMaterialized` (unused)
 
 // ── post_filter_states ───────────────────────────────────────────────
 

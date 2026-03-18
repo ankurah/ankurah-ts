@@ -43,9 +43,13 @@ function obyDesc(name: string): OrderByItem {
 }
 
 // Endpoint helpers (matching Rust ge/gt/le/lt)
+// Rust: fn ge
 function ge(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), true); }
+// Rust: fn gt
 function gt(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), false); }
+// Rust: fn le
 function le(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), true); }
+// Rust: fn lt
 function lt(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), false); }
 
 // Bound builder helpers
@@ -221,6 +225,7 @@ const noOb = { presort: [] as OrderByItem[], spill: [] as OrderByItem[] };
 // ── Tests ──
 
 describe('order_by_tests', () => {
+  // Rust: fn basic_order_by
   test('basic_order_by', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY foo, bar");
     assertPlanCount(plans, 2);
@@ -243,6 +248,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn order_by_with_covered_inequality
   test('order_by_with_covered_inequality', () => {
     const plans = planIndexeddb("__collection = 'album' AND foo > 10 ORDER BY foo, bar");
     assertPlanCount(plans, 2);
@@ -268,6 +274,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn no_collection_field
   test('no_collection_field', () => {
     const plans = planIndexeddb('age = 30 ORDER BY foo, bar');
     assertPlanCount(plans, 2);
@@ -290,6 +297,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_with_equality
   test('order_by_with_equality', () => {
     const plans = planIndexeddb("__collection = 'album' AND age = 30 ORDER BY foo, bar");
     assertPlanCount(plans, 2);
@@ -313,6 +321,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_desc_single_field
   test('order_by_desc_single_field', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY name DESC");
     assertPlanCount(plans, 2);
@@ -334,6 +343,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_all_desc
   test('order_by_all_desc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY name DESC, year DESC");
     assertPlanCount(plans, 2);
@@ -350,6 +360,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_mixed_directions_asc_first
   test('order_by_mixed_directions_asc_first', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY name ASC, year DESC");
     assertPlanCount(plans, 2);
@@ -365,6 +376,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_mixed_directions_desc_first
   test('order_by_mixed_directions_desc_first', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY name DESC, year ASC");
     assertPlanCount(plans, 2);
@@ -381,6 +393,7 @@ describe('order_by_tests', () => {
   });
 
   // 3-column direction patterns
+  // Rust: fn test_order_by_three_asc_asc_asc
   test('order_by_three_asc_asc_asc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b ASC, c ASC");
     assertIndex(plans[0], {
@@ -397,6 +410,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_asc_asc_desc
   test('order_by_three_asc_asc_desc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b ASC, c DESC");
     assertIndex(plans[0], {
@@ -412,6 +426,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_asc_desc_asc
   test('order_by_three_asc_desc_asc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b DESC, c ASC");
     assertIndex(plans[0], {
@@ -426,6 +441,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_asc_desc_desc
   test('order_by_three_asc_desc_desc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b DESC, c DESC");
     assertIndex(plans[0], {
@@ -440,6 +456,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_desc_asc_asc
   test('order_by_three_desc_asc_asc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a DESC, b ASC, c ASC");
     assertIndex(plans[0], {
@@ -454,6 +471,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_desc_asc_desc
   test('order_by_three_desc_asc_desc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a DESC, b ASC, c DESC");
     assertIndex(plans[0], {
@@ -468,6 +486,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_desc_desc_asc
   test('order_by_three_desc_desc_asc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a DESC, b DESC, c ASC");
     assertIndex(plans[0], {
@@ -483,6 +502,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_three_desc_desc_desc
   test('order_by_three_desc_desc_desc', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a DESC, b DESC, c DESC");
     assertIndex(plans[0], {
@@ -499,6 +519,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_with_equality_and_desc
   test('order_by_with_equality_and_desc', () => {
     const plans = planIndexeddb("__collection = 'album' AND status = 'active' ORDER BY name DESC");
     assertIndex(plans[0], {
@@ -514,6 +535,7 @@ describe('order_by_tests', () => {
     });
   });
 
+  // Rust: fn test_order_by_with_inequality_and_desc
   test('order_by_with_inequality_and_desc', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 25 ORDER BY age DESC");
     assertIndex(plans[0], {
@@ -533,6 +555,7 @@ describe('order_by_tests', () => {
 });
 
 describe('full_support_tests', () => {
+  // Rust: fn test_full_support_single_desc
   test('full_support_single_desc', () => {
     const plans = planFullSupport("__collection = 'album' ORDER BY name DESC");
     assertIndex(plans[0], {
@@ -547,6 +570,7 @@ describe('full_support_tests', () => {
     });
   });
 
+  // Rust: fn test_full_support_mixed_directions
   test('full_support_mixed_directions', () => {
     const plans = planFullSupport("__collection = 'album' ORDER BY name ASC, year DESC, score ASC");
     assertIndex(plans[0], {
@@ -563,6 +587,7 @@ describe('full_support_tests', () => {
     });
   });
 
+  // Rust: fn test_full_support_all_desc
   test('full_support_all_desc', () => {
     const plans = planFullSupport("__collection = 'album' ORDER BY name DESC, year DESC");
     assertIndex(plans[0], {
@@ -578,6 +603,7 @@ describe('full_support_tests', () => {
     });
   });
 
+  // Rust: fn test_full_support_with_equality_and_mixed_order
   test('full_support_with_equality_and_mixed_order', () => {
     const plans = planFullSupport("__collection = 'album' AND status = 'active' ORDER BY name ASC, year DESC");
     assertIndex(plans[0], {
@@ -596,6 +622,7 @@ describe('full_support_tests', () => {
 });
 
 describe('inequality_tests', () => {
+  // Rust: fn test_single_inequality_plan_structure
   test('single_inequality_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 25");
     assertPlanCount(plans, 2);
@@ -631,6 +658,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_multiple_inequalities_same_field_plan_structure
   test('multiple_inequalities_same_field_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 25 AND age < 50");
     assertPlanCount(plans, 2);
@@ -690,6 +718,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_multiple_inequalities_different_fields_plan_structures
   test('multiple_inequalities_different_fields_plan_structures', () => {
     // This should generate TWO index plans (one for each inequality field) plus table scan
     const plans = planIndexeddb("__collection = 'album' AND age > 25 AND score < 100");
@@ -732,6 +761,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_greater_or_equal_inclusive_lower_bound
   test('greater_or_equal_inclusive_lower_bound', () => {
     const plans = planIndexeddb("__collection = 'album' AND age >= 25");
     assertIndex(plans[0], {
@@ -749,6 +779,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_less_than_exclusive_upper_bound
   test('less_than_exclusive_upper_bound', () => {
     const plans = planIndexeddb("__collection = 'album' AND age < 50");
     assertIndex(plans[0], {
@@ -766,6 +797,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_less_or_equal_inclusive_upper_bound
   test('less_or_equal_inclusive_upper_bound', () => {
     const plans = planIndexeddb("__collection = 'album' AND age <= 50");
     assertIndex(plans[0], {
@@ -783,6 +815,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_range_inclusive_both
   test('range_inclusive_both', () => {
     const plans = planIndexeddb("__collection = 'album' AND age >= 25 AND age <= 50");
     assertIndex(plans[0], {
@@ -800,6 +833,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_range_mixed_gte_lt
   test('range_mixed_gte_lt', () => {
     const plans = planIndexeddb("__collection = 'album' AND age >= 25 AND age < 50");
     assertIndex(plans[0], {
@@ -817,6 +851,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_range_mixed_gt_lte
   test('range_mixed_gt_lte', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 25 AND age <= 50");
     assertIndex(plans[0], {
@@ -834,6 +869,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_gte_with_desc_order_by
   test('gte_with_desc_order_by', () => {
     const plans = planIndexeddb("__collection = 'album' AND age >= 25 ORDER BY age DESC");
     assertIndex(plans[0], {
@@ -851,6 +887,7 @@ describe('inequality_tests', () => {
     });
   });
 
+  // Rust: fn test_lte_with_desc_order_by
   test('lte_with_desc_order_by', () => {
     const plans = planIndexeddb("__collection = 'album' AND age <= 50 ORDER BY age DESC");
     assertIndex(plans[0], {
@@ -870,6 +907,7 @@ describe('inequality_tests', () => {
 });
 
 describe('equality_tests', () => {
+  // Rust: fn test_single_equality_plan_structure
   test('single_equality_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice'");
     assertIndex(plans[0], {
@@ -884,6 +922,7 @@ describe('equality_tests', () => {
     });
   });
 
+  // Rust: fn test_multiple_equalities_plan_structure
   test('multiple_equalities_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice' AND age = 30");
     assertIndex(plans[0], {
@@ -899,6 +938,7 @@ describe('equality_tests', () => {
     });
   });
 
+  // Rust: fn test_four_column_equality_prefix
   test('four_column_equality_prefix', () => {
     const plans = planIndexeddb("__collection = 'album' AND artist = 'Queen' AND year = 1975 AND genre = 'Rock'");
     assertIndex(plans[0], {
@@ -920,6 +960,7 @@ describe('equality_tests', () => {
     });
   });
 
+  // Rust: fn test_three_equality_with_order_by
   test('three_equality_with_order_by', () => {
     const plans = planIndexeddb("__collection = 'album' AND artist = 'Queen' AND year = 1975 ORDER BY title");
     assertIndex(plans[0], {
@@ -940,6 +981,7 @@ describe('equality_tests', () => {
     });
   });
 
+  // Rust: fn test_three_equality_with_inequality
   test('three_equality_with_inequality', () => {
     const plans = planIndexeddb("__collection = 'album' AND artist = 'Queen' AND year = 1975 AND rating > 4");
     assertIndex(plans[0], {
@@ -963,6 +1005,7 @@ describe('equality_tests', () => {
 });
 
 describe('mixed_tests', () => {
+  // Rust: fn test_equality_with_inequality_plan_structure
   test('equality_with_inequality_plan_structure', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = 'Alice' AND age > 25");
     assertIndex(plans[0], {
@@ -982,6 +1025,7 @@ describe('mixed_tests', () => {
     });
   });
 
+  // Rust: fn test_equality_with_order_by_and_matching_inequality
   test('equality_with_order_by_and_matching_inequality', () => {
     const plans = planIndexeddb("__collection = 'album' AND score > 50 AND age = 30 ORDER BY score");
     assertIndex(plans[0], {
@@ -1003,6 +1047,7 @@ describe('mixed_tests', () => {
 });
 
 describe('edge_cases', () => {
+  // Rust: fn test_collection_only_query
   test('collection_only_query', () => {
     const plans = planIndexeddb("__collection = 'album'");
     assertPlanCount(plans, 2);
@@ -1015,6 +1060,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_unsupported_operators
   test('unsupported_operators', () => {
     const plans = planIndexeddb("__collection = 'album' AND name != 'Alice'");
     assertPlanCount(plans, 2);
@@ -1027,12 +1073,14 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_impossible_range
   test('impossible_range', () => {
     const plans = planIndexeddb("__collection = 'album' AND age > 50 AND age < 30");
     assertPlanCount(plans, 1);
     assertEmptyScan(plans[0]);
   });
 
+  // Rust: fn test_or_only_predicate
   test('or_only_predicate', () => {
     const plans = planIndexeddb("__collection = 'album' AND (age > 25 OR name = 'Alice')");
     assertPlanCount(plans, 2);
@@ -1045,6 +1093,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_complex_nested_predicate
   test('complex_nested_predicate', () => {
     const plans = planIndexeddb("__collection = 'album' AND score = 100 AND (age > 25 OR name = 'Alice')");
     assertIndex(plans[0], {
@@ -1059,6 +1108,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_primary_key_only_equality
   test('primary_key_only_equality', () => {
     const plans = planIndexeddb("id = '12345678-1234-1234-1234-123456789abc'");
     assertPlanCount(plans, 1);
@@ -1070,6 +1120,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_primary_key_only_with_order_by
   test('primary_key_only_with_order_by', () => {
     const plans = planIndexeddb("id > '12345678-1234-1234-1234-123456789abc' ORDER BY id DESC");
     assertPlanCount(plans, 1);
@@ -1083,6 +1134,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_primary_key_with_non_primary_order_by
   test('primary_key_with_non_primary_order_by', () => {
     const plans = planIndexeddb("id = '12345678-1234-1234-1234-123456789abc' ORDER BY name ASC");
     assertPlanCount(plans, 1);
@@ -1094,6 +1146,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_primary_key_not_equal
   test('primary_key_not_equal', () => {
     const plans = planIndexeddb("id != '12345678-1234-1234-1234-123456789abc'");
     assertPlanCount(plans, 1);
@@ -1105,6 +1158,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_no_predicate_no_order_by
   test('no_predicate_no_order_by', () => {
     const plans = planIndexeddb('true');
     assertPlanCount(plans, 1);
@@ -1116,6 +1170,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_no_predicate_with_order_by
   test('no_predicate_with_order_by', () => {
     const plans = planIndexeddb('true ORDER BY id DESC');
     assertPlanCount(plans, 1);
@@ -1127,6 +1182,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_primary_key_range_intersection
   test('primary_key_range_intersection', () => {
     const plans = planIndexeddb("id >= '12345678-1234-1234-1234-123456789aaa' AND id <= '12345678-1234-1234-1234-123456789zzz'");
     assertPlanCount(plans, 1);
@@ -1143,6 +1199,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_mixed_primary_and_secondary_predicates
   test('mixed_primary_and_secondary_predicates', () => {
     const plans = planIndexeddb("__collection = 'album' AND id > '12345678-1234-1234-1234-123456789abc' AND name = 'Alice'");
     assertPlanCount(plans, 2);
@@ -1166,6 +1223,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_multiple_inequalities_same_field_complex
   test('multiple_inequalities_same_field_complex', () => {
     const plans = planIndexeddb("__collection = 'album' AND age >= 25 AND age <= 50 AND age > 20");
     assertIndex(plans[0], {
@@ -1183,6 +1241,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_large_numbers
   test('large_numbers', () => {
     const plans = planIndexeddb("__collection = 'album' AND timestamp > 9223372036854775807");
     assertIndex(plans[0], {
@@ -1200,6 +1259,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_empty_string_equality
   test('empty_string_equality', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = ''");
     assertIndex(plans[0], {
@@ -1214,6 +1274,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_empty_string_with_other_fields
   test('empty_string_with_other_fields', () => {
     const plans = planIndexeddb("__collection = 'album' AND name = '' AND year = '2000'");
     assertIndex(plans[0], {
@@ -1229,6 +1290,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_order_by_with_no_matching_predicate
   test('order_by_with_no_matching_predicate', () => {
     // ORDER BY fields that don't appear in WHERE clause
     const plans = planIndexeddb("__collection = 'album' AND age = 30 ORDER BY name, score");
@@ -1256,6 +1318,7 @@ describe('edge_cases', () => {
     });
   });
 
+  // Rust: fn test_inequality_different_field_than_order_by
   test('inequality_different_field_than_order_by', () => {
     // Query: year >= '2001' ORDER BY name
     // Two correct strategies:
@@ -1301,6 +1364,7 @@ describe('edge_cases', () => {
 });
 
 describe('json_path_tests', () => {
+  // Rust: fn test_json_path_equality
   test('json_path_equality', () => {
     const plans = planFullSupport("context.session_id = 'sess123'");
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1316,6 +1380,7 @@ describe('json_path_tests', () => {
     }
   });
 
+  // Rust: fn test_json_path_with_order_by
   test('json_path_with_order_by', () => {
     const plans = planFullSupport("context.user_id = 'user123' ORDER BY created DESC");
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1332,6 +1397,7 @@ describe('json_path_tests', () => {
     }
   });
 
+  // Rust: fn test_deep_json_path
   test('deep_json_path', () => {
     const plans = planFullSupport("data.nested.field = 'value'");
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1343,6 +1409,7 @@ describe('json_path_tests', () => {
     }
   });
 
+  // Rust: fn test_json_path_full_pushdown
   test('json_path_full_pushdown', () => {
     const plans = planFullSupport("context.session_id = 'sess123'");
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1352,6 +1419,7 @@ describe('json_path_tests', () => {
     }
   });
 
+  // Rust: fn test_json_path_inequality
   test('json_path_inequality', () => {
     const plans = planFullSupport('context.count > 100');
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1364,6 +1432,7 @@ describe('json_path_tests', () => {
     }
   });
 
+  // Rust: fn test_json_path_mixed_predicates
   test('json_path_mixed_predicates', () => {
     const plans = planFullSupport("status = 'active' AND context.user_id = 'user123'");
     const indexPlan = plans.find(p => p.is('Index'));
@@ -1382,6 +1451,7 @@ describe('json_path_tests', () => {
 });
 
 describe('order_by_spill_tests', () => {
+  // Rust: fn test_spill_preserves_column_order
   test('spill_preserves_column_order', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b DESC, c ASC");
     const indexPlan = plans[0];
@@ -1396,6 +1466,7 @@ describe('order_by_spill_tests', () => {
     }
   });
 
+  // Rust: fn test_spill_preserves_directions
   test('spill_preserves_directions', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a ASC, b DESC, c ASC");
     const indexPlan = plans[0];
@@ -1408,6 +1479,7 @@ describe('order_by_spill_tests', () => {
     }
   });
 
+  // Rust: fn test_spill_with_limit
   test('spill_with_limit', () => {
     const selection = sel("__collection = 'album' ORDER BY a ASC, b DESC LIMIT 10");
     const planner = new Planner(plannerConfigIndexeddb());
@@ -1424,6 +1496,7 @@ describe('order_by_spill_tests', () => {
     }
   });
 
+  // Rust: fn test_table_scan_spill_matches_full_order_by
   test('table_scan_spill_matches_full_order_by', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY x DESC, y ASC, z DESC");
     const tablePlan = plans.find(p => p.is('TableScan'));
@@ -1441,6 +1514,7 @@ describe('order_by_spill_tests', () => {
     }
   });
 
+  // Rust: fn test_no_spill_when_fully_satisfied
   test('no_spill_when_fully_satisfied', () => {
     const plans = planIndexeddb("__collection = 'album' ORDER BY a");
     const indexPlan = plans[0];
@@ -1453,6 +1527,7 @@ describe('order_by_spill_tests', () => {
     }
   });
 
+  // Rust: fn test_equality_prefix_affects_spill
   test('equality_prefix_affects_spill', () => {
     const plans = planIndexeddb("__collection = 'album' AND category = 'rock' ORDER BY rating");
     const indexPlan = plans[0];

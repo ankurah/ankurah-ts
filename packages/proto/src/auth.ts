@@ -5,6 +5,8 @@ import { BincodeReader, BincodeWriter } from './codec';
 
 /// Raw context data that can be transmitted between nodes - this may be a bearer token
 /// or some other arbitrary data at the discretion of the Policy Agent
+// Rust: fn serialize — SKIP: derived serde [E7]
+// Rust: fn deserialize — SKIP: derived serde [E7]
 export class AuthData extends Struct {
   readonly data: Uint8Array;
 
@@ -38,6 +40,7 @@ export class Attestation extends Struct {
     return new Attestation();
   }
 
+  // Rust: derive(PartialEq)
   equals(other: Attestation): boolean {
     if (this.data.length !== other.data.length) return false;
     for (let i = 0; i < this.data.length; i++) {
@@ -65,11 +68,13 @@ export class Attested<T> extends Struct {
     this.attestations = attestations;
   }
 
+  // Rust: fn opt
   static opt<T>(payload: T, attestation: Attestation | null): Attested<T> {
     const set = attestation ? new AttestationSet([attestation]) : AttestationSet.default();
     return new Attested(payload, set);
   }
 
+  // Rust: fn fmt (Display for Attested<T>)
   toString(): string {
     return `Attested(${this.payload})`;
   }
@@ -98,6 +103,7 @@ export class AttestationSet extends Struct {
     return new AttestationSet();
   }
 
+  // Rust: fn deref (Deref for AttestationSet)
   // impl Deref for AttestationSet — target: [Attestation]
   get length(): number {
     return this.attestations.length;
@@ -107,6 +113,7 @@ export class AttestationSet extends Struct {
     return this.attestations[Symbol.iterator]();
   }
 
+  // Rust: fn push
   // impl AttestationSet
   push(attestation: Attestation): void {
     this.attestations.push(attestation);

@@ -25,20 +25,19 @@ import type {
 
 // ── PlannerConfig ────────────────────────────────────────────────────
 
-/**
- * Rust: `pub struct PlannerConfig { supports_desc_indexes: bool }`
- */
 export interface PlannerConfig {
   /** Whether the storage backend supports descending indexes. false for IndexedDB, true for engines with real DESC indexes. */
   supportsDescIndexes: boolean;
 }
 
-/** IndexedDB configuration. Rust: `PlannerConfig::indexeddb()` */
+/** IndexedDB configuration. */
+// Rust: fn indexeddb
 export function plannerConfigIndexeddb(): PlannerConfig {
   return { supportsDescIndexes: false };
 }
 
-/** Generic storage with full index support. Rust: `PlannerConfig::full_support()` */
+/** Generic storage with full index support. */
+// Rust: fn full_support
 export function plannerConfigFullSupport(): PlannerConfig {
   return { supportsDescIndexes: true };
 }
@@ -47,12 +46,11 @@ export function plannerConfigFullSupport(): PlannerConfig {
 
 /**
  * Query planner that generates execution plans.
- *
- * Rust: `pub struct Planner { config: PlannerConfig }`
  */
 export class Planner {
   private config: PlannerConfig;
 
+  // Rust: fn new
   constructor(config: PlannerConfig) {
     this.config = config;
   }
@@ -62,9 +60,8 @@ export class Planner {
    *
    * Input: Selection with predicate, primary key field name
    * Output: Vector of all viable plans (index plans + table scan fallback)
-   *
-   * Rust: `pub fn plan(&self, selection: &Selection, primary_key: &str) -> Vec<Plan>`
    */
+  // Rust: fn plan
   plan(selection: Selection, primaryKey: string): Plan[] {
     const conjuncts = ConjunctFinder.find(selection.predicate);
 
@@ -160,9 +157,8 @@ export class Planner {
 
   /**
    * ORDER-FIRST: [EQ ...] + maximal OB prefix (capability-aware). Bounds: EQ only.
-   *
-   * Rust: `fn build_order_first_plan(...)`
    */
+  // Rust: fn build_order_first_plan
   private buildOrderFirstPlan(
     equalities: [string, Value][],
     inequalities: Map<string, [ComparisonOperator, Value][]>,
@@ -268,9 +264,8 @@ export class Planner {
 
   /**
    * INEQ-FIRST: [EQ ...] + primary INEQ (bounded). Do NOT append ORDER BY columns; always spill them.
-   *
-   * Rust: `fn build_ineq_first_plan(...)`
    */
+  // Rust: fn build_ineq_first_plan
   private buildIneqFirstPlan(
     equalities: [string, Value][],
     inequalities: Map<string, [ComparisonOperator, Value][]>,
@@ -350,10 +345,9 @@ export class Planner {
   /**
    * Categorize conjuncts into equalities and inequalities.
    *
-   * Rust: `fn categorize_conjuncts_excluding_primary_key(...)`
-   *
    * Divergence: Rust IndexMap → Map (preserves insertion order in ES2015+).
    */
+  // Rust: fn categorize_conjuncts_excluding_primary_key
   private categorizeConjunctsExcludingPrimaryKey(
     conjuncts: Predicate[],
     primaryKey: string,
@@ -391,9 +385,8 @@ export class Planner {
   /**
    * Extract field path, operator, and value from a comparison predicate.
    * Returns the full path as a dot-separated string (e.g., "context.session_id").
-   *
-   * Rust: `fn extract_comparison(&self, predicate: &Predicate) -> Option<(String, ComparisonOperator, Value)>`
    */
+  // Rust: fn extract_comparison
   private extractComparison(predicate: Predicate): [string, ComparisonOperator, Value] | null {
     if (!predicate.is('Comparison')) return null;
     const comp = predicate.value as { left: any; operator: ComparisonOperator; right: any };
@@ -411,9 +404,7 @@ export class Planner {
 
   // ── Inequality plan (no ORDER BY) ─────────────────────────────────
 
-  /**
-   * Rust: `fn generate_inequality_plan_with_order_by(...)`
-   */
+  // Rust: fn generate_inequality_plan_with_order_by
   private generateInequalityPlanWithOrderBy(
     equalities: [string, Value][],
     inequalityField: string,
@@ -473,9 +464,8 @@ export class Planner {
 
   /**
    * Generate plan for equality-only queries.
-   *
-   * Rust: `fn generate_equality_plan(...)`
    */
+  // Rust: fn generate_equality_plan
   private generateEqualityPlan(equalities: [string, Value][], conjuncts: Predicate[]): Plan | null {
     // Add all equality fields
     const indexKeyparts: IndexKeyPart[] = equalities.map(([field, value]) =>
@@ -497,9 +487,8 @@ export class Planner {
 
   /**
    * Build bounds based on equalities and optional inequality.
-   *
-   * Rust: `fn build_bounds(...)`
    */
+  // Rust: fn build_bounds
   private buildBounds(
     equalities: [string, Value][],
     inequality: [string, [ComparisonOperator, Value][]] | null,
@@ -569,9 +558,8 @@ export class Planner {
 
   /**
    * Check if candidate lower bound is more restrictive than current.
-   *
-   * Rust: `fn is_more_restrictive_lower(...)`
    */
+  // Rust: fn is_more_restrictive_lower
   private isMoreRestrictiveLower(candidate: Endpoint, current: Endpoint): boolean {
     if (candidate.is('Value') && current.is('UnboundedLow')) return true;
     if (candidate.is('UnboundedLow') && current.is('Value')) return false;
@@ -591,9 +579,8 @@ export class Planner {
 
   /**
    * Check if candidate upper bound is more restrictive than current.
-   *
-   * Rust: `fn is_more_restrictive_upper(...)`
    */
+  // Rust: fn is_more_restrictive_upper
   private isMoreRestrictiveUpper(candidate: Endpoint, current: Endpoint): boolean {
     if (candidate.is('Value') && current.is('UnboundedHigh')) return true;
     if (candidate.is('UnboundedHigh') && current.is('Value')) return false;
@@ -615,9 +602,8 @@ export class Planner {
 
   /**
    * Check if bounds represent an empty range (impossible to satisfy).
-   *
-   * Rust: `fn is_empty_bounds(...)`
    */
+  // Rust: fn is_empty_bounds
   private isEmptyBounds(bounds: KeyBounds): boolean {
     for (const bound of bounds.keyparts) {
       if (bound.low.is('Value') && bound.high.is('Value')) {
@@ -641,9 +627,8 @@ export class Planner {
 
   /**
    * Calculate remaining predicate by removing consumed conjuncts.
-   *
-   * Rust: `fn calculate_remaining_predicate(...)`
    */
+  // Rust: fn calculate_remaining_predicate
   private calculateRemainingPredicate(
     conjuncts: Predicate[],
     consumedEqualities: [string, Value][],
@@ -696,9 +681,8 @@ export class Planner {
 
   /**
    * Deduplicate plans based on index_spec and scan_direction.
-   *
-   * Rust: `fn deduplicate_plans(...)`
    */
+  // Rust: fn deduplicate_plans
   private deduplicatePlans(plans: Plan[]): Plan[] {
     const uniquePlans: Plan[] = [];
     const seen = new Set<string>();
@@ -737,9 +721,8 @@ export class Planner {
 
   /**
    * Build a table scan plan with optional entity ID range extraction.
-   *
-   * Rust: `fn build_table_scan_plan(...)`
    */
+  // Rust: fn build_table_scan_plan
   private buildTableScanPlan(
     conjuncts: Predicate[],
     primaryKey: string,
@@ -784,9 +767,8 @@ export class Planner {
 
   /**
    * Extract entity ID range from predicates on the primary key field.
-   *
-   * Rust: `fn extract_entity_id_range(...)`
    */
+  // Rust: fn extract_entity_id_range
   private extractEntityIdRange(conjuncts: Predicate[], primaryKey: string): KeyBounds {
     const primaryKeyBounds: KeyBoundComponent[] = [];
 
@@ -812,9 +794,8 @@ export class Planner {
 
   /**
    * Extract a single primary key bound from a predicate.
-   *
-   * Rust: `fn extract_primary_key_bound(...)`
    */
+  // Rust: fn extract_primary_key_bound
   private extractPrimaryKeyBound(predicate: Predicate, primaryKey: string): KeyBoundComponent | null {
     if (!predicate.is('Comparison')) return null;
     const comp = predicate.value as { left: any; operator: ComparisonOperator; right: any };
@@ -862,9 +843,8 @@ export class Planner {
 
   /**
    * Intersect multiple primary key bounds to get the most restrictive range.
-   *
-   * Rust: `fn intersect_primary_key_bounds(...)`
    */
+  // Rust: fn intersect_primary_key_bounds
   private intersectPrimaryKeyBounds(bounds: KeyBoundComponent[], primaryKey: string): KeyBoundComponent {
     let resultLow: Endpoint = Endpoint.UnboundedLow(ValueType.String);
     let resultHigh: Endpoint = Endpoint.UnboundedHigh(ValueType.String);
@@ -879,9 +859,8 @@ export class Planner {
 
   /**
    * Intersect two lower bounds to get the most restrictive (maximum).
-   *
-   * Rust: `fn intersect_lower_bounds(...)`
    */
+  // Rust: fn intersect_lower_bounds
   private intersectLowerBounds(left: Endpoint, right: Endpoint): Endpoint {
     if (left.is('UnboundedLow')) return right;
     if (right.is('UnboundedLow')) return left;
@@ -902,9 +881,8 @@ export class Planner {
 
   /**
    * Intersect two upper bounds to get the most restrictive (minimum).
-   *
-   * Rust: `fn intersect_upper_bounds(...)`
    */
+  // Rust: fn intersect_upper_bounds
   private intersectUpperBounds(left: Endpoint, right: Endpoint): Endpoint {
     if (left.is('UnboundedHigh')) return right;
     if (right.is('UnboundedHigh')) return left;
@@ -927,9 +905,8 @@ export class Planner {
 
   /**
    * Check if a predicate is on the primary key field.
-   *
-   * Rust: `fn is_primary_key_predicate(...)`
    */
+  // Rust: fn is_primary_key_predicate
   private isPrimaryKeyPredicate(predicate: Predicate, primaryKey: string): boolean {
     if (!predicate.is('Comparison')) return false;
     const comp = predicate.value as { left: any; operator: any; right: any };
@@ -944,9 +921,8 @@ export class Planner {
 
   /**
    * Check if ORDER BY is on the primary key (should skip index generation).
-   *
-   * Rust: `fn has_primary_key_order_by(...)`
    */
+  // Rust: fn has_primary_key_order_by
   private hasPrimaryKeyOrderBy(orderBy: OrderByItem[] | null, primaryKey: string): boolean {
     if (orderBy === null || orderBy.length === 0) return false;
     const firstItem = orderBy[0];
@@ -955,9 +931,8 @@ export class Planner {
 
   /**
    * Check if conjuncts contain primary key range predicates that should skip index generation.
-   *
-   * Rust: `fn has_primary_key_range_predicates(...)`
    */
+  // Rust: fn has_primary_key_range_predicates
   private hasPrimaryKeyRangePredicates(conjuncts: Predicate[], primaryKey: string): boolean {
     return conjuncts.some((predicate) => {
       if (!predicate.is('Comparison')) return false;

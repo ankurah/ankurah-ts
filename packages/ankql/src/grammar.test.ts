@@ -161,6 +161,7 @@ describe('grammar (parser output equivalence)', () => {
     assertOrderByItem(s2.orderBy![0], 'name', 'Asc');
   });
 
+  // Rust: fn test_raw_parsing
   test('raw parsing: various inputs parse without error', () => {
     const testCases = [
       'true',

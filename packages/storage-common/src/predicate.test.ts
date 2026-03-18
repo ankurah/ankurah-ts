@@ -15,6 +15,7 @@ function predStr(p: Predicate): string {
 }
 
 describe('ConjunctFinder', () => {
+  // Rust: fn test_single_comparison
   test('test_single_comparison', () => {
     const predicate = sel('age > 25');
     const conjuncts = ConjunctFinder.find(predicate);
@@ -22,6 +23,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[0])).toBe(predStr(predicate));
   });
 
+  // Rust: fn test_simple_and
   test('test_simple_and', () => {
     const predicate = sel("age > 25 AND name = 'Alice'");
     const conjuncts = ConjunctFinder.find(predicate);
@@ -32,6 +34,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[1])).toBe(predStr(sel("name = 'Alice'")));
   });
 
+  // Rust: fn test_nested_and
   test('test_nested_and', () => {
     const predicate = sel("(age > 25 AND name = 'Alice') AND score < 100");
     const conjuncts = ConjunctFinder.find(predicate);
@@ -43,6 +46,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[2])).toBe(predStr(sel('score < 100')));
   });
 
+  // Rust: fn test_or_blocks_conjunct_extraction
   test('test_or_blocks_conjunct_extraction', () => {
     const predicate = sel("age > 25 OR name = 'Alice'");
     const conjuncts = ConjunctFinder.find(predicate);
@@ -52,6 +56,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[0])).toBe(predStr(predicate));
   });
 
+  // Rust: fn test_and_with_or_mixed
   test('test_and_with_or_mixed', () => {
     const predicate = sel("score = 100 AND (age > 25 OR name = 'Alice')");
     const conjuncts = ConjunctFinder.find(predicate);
@@ -62,6 +67,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[1])).toBe(predStr(sel("age > 25 OR name = 'Alice'")));
   });
 
+  // Rust: fn test_complex_nested_example
   test('test_complex_nested_example', () => {
     // Example from documentation: (foo = 1 AND bar = 2) AND (baz = 3 OR zed = 4)
     const predicate = sel('(foo = 1 AND bar = 2) AND (baz = 3 OR zed = 4)');
@@ -75,6 +81,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[2])).toBe(predStr(sel('baz = 3 OR zed = 4')));
   });
 
+  // Rust: fn test_non_comparison_predicates
   test('test_non_comparison_predicates', () => {
     // Test with a simple AND of two comparisons since IS NULL isn't supported by selection! macro
     const predicate = sel('age > 25 AND score = 100');
@@ -85,6 +92,7 @@ describe('ConjunctFinder', () => {
     expect(predStr(conjuncts[1])).toBe(predStr(sel('score = 100')));
   });
 
+  // Rust: fn test_true_false_predicates
   test('test_true_false_predicates', () => {
     // Test with Predicate::True and Predicate::False
     let conjuncts = ConjunctFinder.find(Predicate.True());

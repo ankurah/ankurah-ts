@@ -5,9 +5,8 @@
 
 import type { StorageCollection, Filterable, Value, KeySpec } from '@ankurah/core';
 import { evaluatePredicate, backendFromString, keySpecNameWith } from '@ankurah/core';
-import type { Attested, CollectionId, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
-import type { Selection } from '@ankurah/ankql';
-import { Predicate, ComparisonOperator, Expr, Literal, PathExpr } from '@ankurah/ankql';
+import { EntityId, type Attested, type CollectionId, type EntityState, type Event, type EventId } from '@ankurah/proto';
+import { Selection, Predicate, ComparisonOperator, Expr, Literal, PathExpr } from '@ankurah/ankql';
 import { RetrievalError, MutationError } from '@ankurah/core';
 import {
   Planner, plannerConfigIndexeddb,
@@ -332,8 +331,7 @@ class IdbRecord implements Filterable, HasEntityId {
     // EntityId is stored as a string; need to parse it back
     const idStr = object.get(ID_KEY) as string;
     // Divergence: Rust uses TryFrom<JsValue> for EntityId; TS parses from string [E16]
-    const { EntityId: EId } = require('@ankurah/proto') as typeof import('@ankurah/proto');
-    const id = EId.fromBase64(idStr);
+    const id = EntityId.fromBase64(idStr);
     return new IdbRecord(id, object, collectionId);
   }
 
@@ -365,8 +363,7 @@ function idbObjectToEntityState(
   collectionId: CollectionId,
 ): Attested<EntityState> {
   const idStr = entityObj.get(ID_KEY) as string;
-  const { EntityId: EId } = require('@ankurah/proto') as typeof import('@ankurah/proto');
-  const id = EId.fromBase64(idStr);
+  const id = EntityId.fromBase64(idStr);
 
   return {
     payload: {
@@ -431,9 +428,7 @@ export function addCollection(selection: Selection, collectionId: CollectionId):
     Expr.Literal(Literal.String(collectionId.toString())),
   );
 
-  // Divergence: Rust creates Selection struct directly; TS uses constructor [E8]
-  const { Selection: Sel } = require('@ankurah/ankql') as typeof import('@ankurah/ankql');
-  return new Sel(
+  return new Selection(
     Predicate.And(collectionComparison, selection.predicate),
     selection.orderBy,
     selection.limit,

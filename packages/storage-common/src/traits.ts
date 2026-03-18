@@ -23,9 +23,8 @@ export type EntityIdIterable = AsyncIterable<EntityId>;
 
 /**
  * Limit the number of entity IDs returned.
- *
- * Rust: `fn limit(self, limit: Option<u64>) -> LimitedStream<Self>`
  */
+// Rust: fn limit
 export function entityIdLimit(
   inner: EntityIdIterable,
   limit: number | null,
@@ -47,11 +46,10 @@ export type EntityStateIterable = AsyncIterable<Attested<EntityState>>;
 /**
  * Collect states, failing fast on first error (async version).
  *
- * Rust: `fn collect_states(self) -> impl Future<Output = Result<Vec<Attested<EntityState>>, RetrievalError>>`
- *
  * Divergence [E8]: Rust Result-based stream with fail-fast → TS async function consuming AsyncIterable.
  * In TS, errors propagate as thrown exceptions rather than Result items.
  */
+// Rust: fn collect_states
 export async function collectStates(
   inner: EntityStateIterable,
 ): Promise<Attested<EntityState>[]> {
@@ -74,9 +72,8 @@ export async function collectStates(
 export interface ScanExt {
   /**
    * Extract entity IDs from keys (e.g., index key suffix or collection key).
-   *
-   * Rust: `fn extract_entity_ids(self) -> Self::EntityIdStream`
    */
+  // Rust: fn extract_entity_ids
   extractEntityIds(): EntityIdIterable;
 }
 
@@ -93,9 +90,8 @@ export interface ScanExt {
 
 /**
  * Filter: returns a filtered iterable over this stream.
- *
- * Rust: `fn filter_predicate(self, predicate: &Predicate) -> FilteredStream<Self>`
  */
+// Rust: fn filter_predicate
 export function propertyValueFilterPredicate<T>(
   _inner: AsyncIterable<T>,
   _predicate: Predicate,
@@ -106,9 +102,8 @@ export function propertyValueFilterPredicate<T>(
 
 /**
  * Sort: returns a sorted iterable over this stream (mutually exclusive with limit/top_k).
- *
- * Rust: `fn sort_by(self, order_by: &[OrderByItem]) -> SortedStream<Self>`
  */
+// Rust: fn sort_by
 export function propertyValueSortBy<T>(
   _inner: AsyncIterable<T>,
   _orderBy: OrderByItem[],
@@ -119,9 +114,8 @@ export function propertyValueSortBy<T>(
 
 /**
  * Top-K: returns a top-k iterable over this stream (mutually exclusive with sort/limit).
- *
- * Rust: `fn top_k(self, order_by: &[OrderByItem], k: usize) -> TopKStream<Self>`
  */
+// Rust: fn top_k
 export function propertyValueTopK<T>(
   _inner: AsyncIterable<T>,
   _orderBy: OrderByItem[],

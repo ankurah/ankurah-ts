@@ -15,11 +15,21 @@
 //         @ankurah/storage-better-sqlite3 — Node.js backend (better-sqlite3)
 //         @ankurah/storage-expo-sqlite — React Native backend (expo-sqlite)
 
-export { SqliteStorageEngine } from './engine.ts';
-export { SqliteError } from './error.ts';
-export { SqlBuilder, splitPredicateForSqlite } from './sql_builder.ts';
-export { SqliteValue } from './value.ts';
-
 // connection.rs: Rust uses bb8 pool + rusqlite.
 // Divergence: TS SQLite drivers handle connection management internally.
 // No direct port of SqliteConnectionManager needed [E16].
+
+export { SqliteStorageEngine, SqliteBucket, DEFAULT_POOL_SIZE } from './engine.ts';
+export type { SqliteDriver } from './engine.ts';
+export { SqliteError } from './error.ts';
+export { SqlBuilder, SqlGenerationError, SplitPredicate, splitPredicateForSqlite } from './sql_builder.ts';
+export type { SqlParam } from './sql_builder.ts';
+export {
+  sqliteValueType,
+  sqliteValueIsJsonb,
+  sqliteValueAsJsonString,
+  sqliteValueToParam,
+  sqliteValueFromValue,
+  sqliteValueFromOptionalValue,
+} from './value.ts';
+export type { SqliteValue } from './value.ts';

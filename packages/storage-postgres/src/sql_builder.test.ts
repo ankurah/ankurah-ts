@@ -312,4 +312,13 @@ describe('Predicate Split', () => {
 
     expect(split.needsPostFilter()).toBe(false);
   });
+
+  // Test for future: when we have unpushable predicates (e.g., Ref traversal)
+  // test('test_unpushable_predicate_goes_to_remaining', () => {
+  //   // When we add Ref traversal, this test would verify:
+  //   // const selection = parseSelection("artist.name = 'Radiohead'");
+  //   // const split = splitPredicateForPostgres(selection.predicate);
+  //   // expect(split.needsPostFilter()).toBe(true);
+  //   // expect(split.sqlPredicate.is('True')).toBe(true);
+  // });
 });

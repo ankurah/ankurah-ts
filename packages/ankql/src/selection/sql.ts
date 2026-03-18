@@ -7,6 +7,7 @@ import {
   UnsupportedOperatorError,
 } from '../error.ts';
 
+// Rust: fn generate_expr_sql
 function generateExprSql(
   expr: Expr,
   expectedCount: number | null,
@@ -107,6 +108,7 @@ function literalToSql(lit: Literal): string {
   });
 }
 
+// Rust: fn comparison_op_to_sql
 function comparisonOpToSql(op: ComparisonOperator): string {
   return op.match({
     Equal: () => '=',
@@ -120,6 +122,7 @@ function comparisonOpToSql(op: ComparisonOperator): string {
   });
 }
 
+// Rust: fn generate_selection_sql_inner
 function generatePredicateSql(
   predicate: Predicate,
   expectedCount: number | null,
@@ -169,6 +172,7 @@ function generatePredicateSql(
   });
 }
 
+// Rust: fn generate_selection_sql
 /**
  * Generate SQL from a Predicate AST.
  * @param predicate The predicate to convert to SQL

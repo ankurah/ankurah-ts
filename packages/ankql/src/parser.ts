@@ -1,5 +1,7 @@
 // MIRRORS: ankurah/ankql/src/parser.rs
 // Hand-written recursive descent parser (E6: no Pest equivalent in TS).
+// Rust: fn print_tree — SKIP: test-only debug helper
+// Rust: fn debug_print_pairs — SKIP: test-only debug helper
 
 import {
   type Token,
@@ -377,6 +379,7 @@ class Parser {
     return this.peek().type === 'EOF';
   }
 
+  // Rust: fn parse_selection
   /** Parse a full selection: predicate [ORDER BY ...] [LIMIT ...] */
   parseSelection(): Selection {
     if (this.isAtEnd()) {
@@ -393,6 +396,7 @@ class Parser {
       orderBy = this.parseOrderByItems();
     }
 
+    // Rust: fn parse_limit_clause
     if (this.peek().type === 'Limit') {
       this.advance();
       const tok = this.expect('Unsigned');
@@ -410,6 +414,7 @@ class Parser {
 
   // ── Precedence climbing ──
 
+  // Rust: fn parse_expr
   /** OR — lowest precedence */
   private parseOr(): Predicate {
     let left = this.parseAnd();
@@ -421,6 +426,7 @@ class Parser {
     return left;
   }
 
+  // Rust: fn create_logical_op
   /** AND */
   private parseAnd(): Predicate {
     let left = this.parseNotOrComparison();
@@ -446,6 +452,7 @@ class Parser {
     return this.parseComparison();
   }
 
+  // Rust: fn create_comparison
   /** Comparison: expr (op expr | IS [NOT] NULL)? */
   private parseComparison(): Predicate {
     const left = this.parseArithExpr();
@@ -492,6 +499,7 @@ class Parser {
     return left;
   }
 
+  // Rust: fn parse_atomic_expr
   /** Primary expressions (atoms) */
   private parsePrimaryExpr(): Expr {
     const tok = this.peek();
@@ -525,6 +533,7 @@ class Parser {
     }
   }
 
+  // Rust: fn parse_number
   private parseNumber(): Expr {
     const tok = this.advance();
     const numStr = tok.value;
@@ -547,17 +556,20 @@ class Parser {
     }
   }
 
+  // Rust: fn parse_number (float branch)
   private parseFloat(): Expr {
     const tok = this.advance();
     const num = parseFloat(tok.value);
     return Expr.Literal(Literal.F64(num));
   }
 
+  // Rust: fn parse_string_literal
   private parseStringLiteral(): Expr {
     const tok = this.advance();
     return Expr.Literal(Literal.String(tok.value));
   }
 
+  // Rust: fn parse_path_expr
   private parsePathExpr(): Expr {
     const steps: string[] = [];
     const first = this.expect('Identifier');
@@ -679,6 +691,7 @@ class Parser {
     return result;
   }
 
+  // Rust: fn parse_order_by_clause
   private parseOrderByItems(): OrderByItem[] {
     const items: OrderByItem[] = [];
     items.push(this.parseOrderByItem());
@@ -689,6 +702,7 @@ class Parser {
     return items;
   }
 
+  // Rust: fn parse_order_by_item
   private parseOrderByItem(): OrderByItem {
     const tok = this.expect('Identifier');
 
@@ -758,6 +772,7 @@ function tokenToInfixOp(type: TokenType): InfixOperator {
 
 // ── Public API ───────────────────────────────────────────────────────
 
+// Rust: fn parse_selection
 /**
  * Parse a selection expression into a Selection AST.
  * The selection includes a predicate and optional ORDER BY and LIMIT clauses.

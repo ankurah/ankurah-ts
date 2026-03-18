@@ -28,7 +28,7 @@ class LocalProcessSender implements PeerSender {
 
   // impl PeerSender
 
-  // Rust: fn send_message(&self, message: NodeMessage) -> Result<(), SendError>
+  // Rust: fn send_message
   // Divergence: Rust returns Result; TS throws SendError [E3]
   sendMessage(message: NodeMessage): void {
     if (this.closed) {
@@ -37,12 +37,12 @@ class LocalProcessSender implements PeerSender {
     this.onMessage(message);
   }
 
-  // Rust: fn recipient_node_id(&self) -> EntityId
+  // Rust: fn recipient_node_id
   recipientNodeId(): EntityId {
     return this.nodeId;
   }
 
-  // Rust: fn cloned(&self) -> Box<dyn PeerSender>
+  // Rust: fn cloned
   // Divergence: Rust clones Arc-backed sender; TS returns same instance [E8]
   cloned(): PeerSender {
     return this;
@@ -88,7 +88,7 @@ export class LocalProcessConnection {
   }
 
   /// Create a new LocalConnector and establish connection between the nodes
-  // Rust: pub async fn new(node1, node2) -> Result<Self>
+  // Rust: fn new
   static async new(node1: NodeComms, node2: NodeComms): Promise<LocalProcessConnection> {
     const node1Id = node1.nodeId();
     const node2Id = node2.nodeId();
@@ -127,8 +127,10 @@ export class LocalProcessConnection {
     return new LocalProcessConnection(node1, node2, node1Id, node2Id, sender1, sender2);
   }
 
+  // Rust: fn setup_receiver — SKIP: absorbed into new() callbacks [E18]
+
   /// Tear down the connection between the two nodes.
-  // Rust: impl Drop — aborts receiver tasks and deregisters peers.
+  // Rust: fn drop
   // Divergence: Rust uses Drop; TS requires explicit destroy() call [E8].
   destroy(): void {
     if (this.destroyed) return;

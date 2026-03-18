@@ -9,6 +9,11 @@ import { EntityId } from '@ankurah/proto';
 import type { OrderByComponents } from './types.ts';
 import { sortedIterable, limitedIterable, topKIterable } from './sorting.ts';
 
+// Rust: fn FilteredStream::new — SKIP: absorbed into filterPredicate free function
+// Rust: fn FilteredStream::poll_next — SKIP: absorbed into filterPredicate async generator
+// Rust: fn ExtractIdsStream::new — SKIP: absorbed into extractIds free function
+// Rust: fn ExtractIdsStream::poll_next — SKIP: absorbed into extractIds async generator
+
 // ── ValueSetIterable ─────────────────────────────────────────────────
 
 /**
@@ -23,9 +28,8 @@ import { sortedIterable, limitedIterable, topKIterable } from './sorting.ts';
 
 /**
  * Filter iterable items using a predicate.
- *
- * Rust: `fn filter_predicate(self, predicate: &Predicate) -> FilteredStream<Self>`
  */
+// Rust: fn filter_predicate
 export async function* filterPredicate<T extends Filterable>(
   inner: AsyncIterable<T>,
   predicate: Predicate,
@@ -39,9 +43,8 @@ export async function* filterPredicate<T extends Filterable>(
 
 /**
  * Sort all items by OrderByComponents (partition-aware when presort is non-empty).
- *
- * Rust: `fn sort_by(self, order_by: OrderByComponents) -> SortedStream<Self>`
  */
+// Rust: fn sort_by
 export function sortBy<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -51,9 +54,8 @@ export function sortBy<T extends Filterable>(
 
 /**
  * Limit iterable to N items.
- *
- * Rust: `fn limit(self, limit: Option<u64>) -> LimitedStream<Self>`
  */
+// Rust: fn limit
 export function limit<T>(
   inner: AsyncIterable<T>,
   limitN: number | null,
@@ -63,9 +65,8 @@ export function limit<T>(
 
 /**
  * Top-K with sort and limit (partition-aware when presort is non-empty).
- *
- * Rust: `fn top_k(self, order_by: OrderByComponents, k: usize) -> TopKStream<Self>`
  */
+// Rust: fn top_k
 export function topK<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -78,18 +79,16 @@ export function topK<T extends Filterable>(
 
 /**
  * Trait for types that can provide an EntityId.
- *
- * Rust: `pub trait HasEntityId { fn entity_id(&self) -> EntityId; }`
  */
 export interface HasEntityId {
+  // Rust: fn entity_id
   entityId(): EntityId;
 }
 
 /**
  * Extract entity IDs from materialized values.
- *
- * Rust: `fn extract_ids(self) -> ExtractIdsStream<Self>`
  */
+// Rust: fn extract_ids
 export async function* extractIds<T extends HasEntityId>(
   inner: AsyncIterable<T>,
 ): AsyncGenerator<EntityId> {

@@ -20,6 +20,7 @@ export class OrderByComponents extends Struct {
   /** ORDER BY columns requiring in-memory sort. */
   spill: OrderByItem[];
 
+  // Rust: fn new
   constructor(presort: OrderByItem[], spill: OrderByItem[]) {
     super();
     this.presort = presort;
@@ -27,16 +28,19 @@ export class OrderByComponents extends Struct {
   }
 
   /** Default (empty) OrderByComponents. */
+  // Rust: fn Default::default — derived
   static default(): OrderByComponents {
     return new OrderByComponents([], []);
   }
 
   /** Returns true if no sorting is needed (index satisfies entire ORDER BY). */
+  // Rust: fn is_satisfied
   isSatisfied(): boolean {
     return this.spill.length === 0;
   }
 
   /** Returns true if the entire ORDER BY must be spilled (global sort). */
+  // Rust: fn is_global_spill
   isGlobalSpill(): boolean {
     return this.presort.length === 0 && this.spill.length > 0;
   }
@@ -62,12 +66,15 @@ type PlanV = {
 };
 
 export class Plan extends Enum<PlanV> {
+  // Rust: fn Plan::Index — enum variant constructor
   static Index(indexSpec: KeySpec, scanDirection: ScanDirection, bounds: KeyBounds, remainingPredicate: Predicate, orderBySpill: OrderByComponents): Plan {
     return new Plan('Index', { indexSpec, scanDirection, bounds, remainingPredicate, orderBySpill });
   }
+  // Rust: fn Plan::TableScan — enum variant constructor
   static TableScan(bounds: KeyBounds, scanDirection: ScanDirection, remainingPredicate: Predicate, orderBySpill: OrderByComponents): Plan {
     return new Plan('TableScan', { bounds, scanDirection, remainingPredicate, orderBySpill });
   }
+  // Rust: fn Plan::EmptyScan — enum variant constructor
   static EmptyScan(): Plan {
     return new Plan('EmptyScan', {});
   }
@@ -81,7 +88,9 @@ type ScanDirectionV = {
 };
 
 export class ScanDirection extends Enum<ScanDirectionV> {
+  // Rust: fn ScanDirection::Forward — enum variant constructor
   static Forward(): ScanDirection { return new ScanDirection('Forward', {}); }
+  // Rust: fn ScanDirection::Reverse — enum variant constructor
   static Reverse(): ScanDirection { return new ScanDirection('Reverse', {}); }
 }
 
@@ -95,11 +104,15 @@ type KeyDatumV = {
 };
 
 export class KeyDatum extends Enum<KeyDatumV> {
+  // Rust: fn KeyDatum::Val — enum variant constructor
   static Val(value: Value): KeyDatum { return new KeyDatum('Val', { value }); }
+  // Rust: fn KeyDatum::NegInfinity — enum variant constructor
   static NegInfinity(vt: ValueType): KeyDatum { return new KeyDatum('NegInfinity', { valueType: vt }); }
+  // Rust: fn KeyDatum::PosInfinity — enum variant constructor
   static PosInfinity(vt: ValueType): KeyDatum { return new KeyDatum('PosInfinity', { valueType: vt }); }
 
   /** Get the ValueType of this KeyDatum. */
+  // Rust: fn ty
   ty(): ValueType {
     return this.match({
       Val: (v) => valueType(v.value),
@@ -109,6 +122,7 @@ export class KeyDatum extends Enum<KeyDatumV> {
   }
 
   /** From<Value> for KeyDatum */
+  // Rust: fn from
   static fromValue(v: Value): KeyDatum {
     return KeyDatum.Val(v);
   }
@@ -124,11 +138,16 @@ type EndpointV = {
 };
 
 export class Endpoint extends Enum<EndpointV> {
+  // Rust: fn Endpoint::UnboundedLow — enum variant constructor
   static UnboundedLow(vt: ValueType): Endpoint { return new Endpoint('UnboundedLow', { valueType: vt }); }
+  // Rust: fn Endpoint::UnboundedHigh — enum variant constructor
   static UnboundedHigh(vt: ValueType): Endpoint { return new Endpoint('UnboundedHigh', { valueType: vt }); }
+  // Rust: fn Endpoint::Value — enum variant constructor
   static Value(datum: KeyDatum, inclusive: boolean): Endpoint { return new Endpoint('Value', { datum, inclusive }); }
 
+  // Rust: fn incl
   static incl(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), true); }
+  // Rust: fn excl
   static excl(v: Value): Endpoint { return Endpoint.Value(KeyDatum.Val(v), false); }
 }
 
@@ -140,6 +159,7 @@ export class KeyBoundComponent extends Struct {
   low: Endpoint;
   high: Endpoint;
 
+  // Rust: fn KeyBoundComponent — struct constructor
   constructor(column: string, low: Endpoint, high: Endpoint) {
     super();
     this.column = column;
@@ -154,11 +174,13 @@ export class KeyBoundComponent extends Struct {
 export class KeyBounds extends Struct {
   keyparts: KeyBoundComponent[];
 
+  // Rust: fn new
   constructor(keyparts: KeyBoundComponent[]) {
     super();
     this.keyparts = keyparts;
   }
 
+  // Rust: fn empty
   static empty(): KeyBounds {
     return new KeyBounds([]);
   }
@@ -176,6 +198,7 @@ export class CanonicalRange extends Struct {
   /** null => unbounded high */
   upper: [Value[], boolean] | null;
 
+  // Rust: fn CanonicalRange — struct constructor
   constructor(lower: [Value[], boolean] | null, upper: [Value[], boolean] | null) {
     super();
     this.lower = lower;

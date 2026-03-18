@@ -5,9 +5,8 @@ import { CanonicalRange, KeyBounds } from './types.ts';
 
 /**
  * Normalize IndexBounds to a CanonicalRange shape shared across KV engines.
- *
- * Rust: `pub fn normalize(bounds: &KeyBounds) -> (CanonicalRange, usize, Vec<Value>)`
  */
+// Rust: fn normalize
 export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] {
   const lowerTuple: Value[] = [];
   const upperTuple: Value[] = [];

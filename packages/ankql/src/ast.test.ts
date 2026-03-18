@@ -18,6 +18,7 @@ import {
 
 // ── Helpers ──
 
+// Rust: fn nullify_columns
 /** Parse input, null-ify columns, generate SQL. */
 function nullifyColumns(input: string, nullColumns: string[]): string {
   const selection = parseSelection(input);

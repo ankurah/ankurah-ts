@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
 
 import type { Value } from '@ankurah/core';
-import { normalize, type CanonicalRange, type KeyBounds, ScanDirection } from '@ankurah/storage-common';
+import { CanonicalRange, type KeyBounds, ScanDirection } from '@ankurah/storage-common';
 import { valueToIdb } from './idb_value.ts';
 
 // ── next_upper_bound ────────────────────────────────────────────────────
@@ -37,6 +37,129 @@ function nextUpperBound(value: Value): [Value, boolean] | null {
     case 'Binary':
     case 'Json':
       return null;
+  }
+}
+
+// ── normalize ─────────────────────────────────────────────────────────
+
+/**
+ * Normalize KeyBounds to CanonicalRange following the playbook algorithm.
+ * Returns [CanonicalRange, eq_prefix_len, eq_prefix_values].
+ *
+ * This is the IndexedDB-specific normalize that includes next_upper_bound
+ * for equality-only cases, distinct from the shared normalize in storage-common.
+ *
+ * Mirrors Rust `normalize(bounds: &KeyBounds) -> (CanonicalRange, usize, Vec<Value>)`
+ * in planner_integration.rs (NOT bounds.rs).
+ */
+export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] {
+  const lowerTuple: Value[] = [];
+  const upperTuple: Value[] = [];
+  let lowerOpen = false;
+  let upperOpen = false;
+  let eqPrefixLen = 0;
+  const eqPrefixValues: Value[] = [];
+
+  // Step 1: Accumulate equality prefix
+  for (const bound of bounds.keyparts) {
+    // Check if this is an equality constraint (low == high and both inclusive)
+    if (
+      bound.low.is('Value') && bound.high.is('Value') &&
+      bound.low.value.datum.is('Val') && bound.high.value.datum.is('Val') &&
+      bound.low.value.inclusive && bound.high.value.inclusive &&
+      valuesEqual(bound.low.value.datum.value.value, bound.high.value.datum.value.value)
+    ) {
+      lowerTuple.push(bound.low.value.datum.value.value);
+      upperTuple.push(bound.high.value.datum.value.value);
+      eqPrefixLen += 1;
+      eqPrefixValues.push(bound.low.value.datum.value.value);
+      continue;
+    }
+
+    // Step 2: At first non-equality column, process lower and upper sides
+
+    // Process lower side
+    if (bound.low.is('UnboundedLow')) {
+      // Keep lower at equality prefix; do not break. We'll process upper next.
+    } else if (bound.low.is('Value') && bound.low.value.datum.is('Val')) {
+      lowerTuple.push(bound.low.value.datum.value.value);
+      lowerOpen = !bound.low.value.inclusive;
+    } else {
+      break; // Other cases like infinity values
+    }
+
+    // Process upper side
+    if (bound.high.is('UnboundedHigh')) {
+      // upper = None (open-ended)
+      return [
+        new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
+        eqPrefixLen,
+        eqPrefixValues,
+      ];
+    } else if (bound.high.is('Value') && bound.high.value.datum.is('Val')) {
+      upperTuple.push(bound.high.value.datum.value.value);
+      upperOpen = !bound.high.value.inclusive;
+    } else {
+      // Other cases - treat as open-ended
+      return [
+        new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
+        eqPrefixLen,
+        eqPrefixValues,
+      ];
+    }
+
+    // Stop after processing first inequality column
+    break;
+  }
+
+  // Equality-only bounds: if we have equality on all leading columns
+  // and no inequality processed, prefer a prefix-open scan to cover full suffix.
+  if (eqPrefixLen === bounds.keyparts.length && eqPrefixLen > 0) {
+    const lastValue = lowerTuple[lowerTuple.length - 1];
+    if (lastValue !== undefined) {
+      const bump = nextUpperBound(lastValue);
+      if (bump !== null) {
+        const [nextValue, bumpUpperOpen] = bump;
+        const upperWithBump = [...lowerTuple];
+        upperWithBump[upperWithBump.length - 1] = nextValue;
+        return [
+          new CanonicalRange([lowerTuple, lowerOpen], [upperWithBump, bumpUpperOpen]),
+          eqPrefixLen,
+          eqPrefixValues,
+        ];
+      }
+    }
+    return [
+      new CanonicalRange(lowerTuple.length > 0 ? [lowerTuple, lowerOpen] : null, null),
+      eqPrefixLen,
+      eqPrefixValues,
+    ];
+  }
+
+  // Build final CanonicalRange for inequality cases
+  const canonicalRange = new CanonicalRange(
+    lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen],
+    upperTuple.length === 0 ? null : [upperTuple, upperOpen],
+  );
+
+  return [canonicalRange, eqPrefixLen, eqPrefixValues];
+}
+
+/**
+ * Simple deep-equality check for two Value objects.
+ */
+function valuesEqual(a: Value, b: Value): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case 'I16':
+    case 'I32':
+    case 'I64':
+    case 'F64':
+    case 'Bool':
+    case 'String':
+      return a.value === (b as typeof a).value;
+    default:
+      return JSON.stringify(a.value) === JSON.stringify(b.value);
   }
 }
 

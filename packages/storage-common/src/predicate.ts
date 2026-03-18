@@ -22,9 +22,8 @@ export class ConjunctFinder {
   /**
    * Extract all top-level conjuncts from a predicate tree.
    * Returns predicates in order of appearance.
-   *
-   * Rust: `pub fn find(predicate: &Predicate) -> Vec<Predicate>`
    */
+  // Rust: fn find
   static find(predicate: Predicate): Predicate[] {
     const conjuncts: Predicate[] = [];
     ConjunctFinder.extractConjuncts(predicate, conjuncts);
@@ -33,9 +32,8 @@ export class ConjunctFinder {
 
   /**
    * Recursively extract conjuncts, stopping at OR boundaries.
-   *
-   * Rust: `fn extract_conjuncts(predicate: &Predicate, conjuncts: &mut Vec<Predicate>)`
    */
+  // Rust: fn extract_conjuncts
   private static extractConjuncts(predicate: Predicate, conjuncts: Predicate[]): void {
     predicate.match({
       And: (v) => {

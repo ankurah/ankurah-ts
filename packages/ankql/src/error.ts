@@ -1,4 +1,6 @@
 // MIRRORS: ankurah/ankql/src/error.rs
+// Rust: fn from (From<Infallible> for ParseError) — SKIP: Infallible conversion not needed in TS
+// Rust: fn from (From<ParseError> for JsValue) — SKIP: #[cfg(feature = "wasm")] [E9]
 
 /** Custom error type for parsing errors */
 export class ParseError extends Error {

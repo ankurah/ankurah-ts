@@ -14,9 +14,8 @@ import type { OrderByComponents } from './types.ts';
 /**
  * Sort items in-place by ORDER BY clauses.
  * None values sort before Some values (NULLS FIRST semantics).
- *
- * Rust: `fn sort_items_by_order<T: Filterable>(items: &mut [T], order_by: &[OrderByItem])`
  */
+// Rust: fn sort_items_by_order
 export function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem[]): void {
   items.sort((a, b) => {
     for (const orderItem of orderBy) {
@@ -51,9 +50,8 @@ function compareForSort(a: Value | null, b: Value | null, direction: OrderDirect
 
 /**
  * Extract partition key (presort column values) from an item.
- *
- * Rust: `fn extract_partition_key<T: Filterable>(item: &T, presort: &[OrderByItem]) -> Vec<Option<Value>>`
  */
+// Rust: fn extract_partition_key
 function extractPartitionKey<T extends Filterable>(item: T, presort: OrderByItem[]): (Value | null)[] {
   return presort.map((p) => item.value(p.path.property()));
 }
@@ -82,10 +80,10 @@ function partitionKeysEqual(a: (Value | null)[], b: (Value | null)[]): boolean {
  * - When presort is empty: global sort by spill columns.
  * - When presort is non-empty: partition-aware sort (sort within partitions defined by presort values).
  *
- * Rust: `pub struct SortedStream<S>`
- *
  * Divergence [E8]: Rust Stream → TypeScript AsyncIterable.
  */
+// Rust: fn SortedStream::new — SKIP: absorbed into sortedIterable
+// Rust: fn SortedStream::poll_next — absorbed into sortedIterable async generator
 export async function* sortedIterable<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -138,10 +136,10 @@ export async function* sortedIterable<T extends Filterable>(
 /**
  * Limited async iterable - terminates after N items.
  *
- * Rust: `pub struct LimitedStream<I>`
- *
  * Divergence [E8]: Rust Stream → TypeScript AsyncIterable.
  */
+// Rust: fn LimitedStream::new — SKIP: absorbed into limitedIterable
+// Rust: fn LimitedStream::poll_next — absorbed into limitedIterable async generator
 export async function* limitedIterable<T>(
   inner: AsyncIterable<T>,
   limit: number | null,
@@ -166,10 +164,10 @@ export async function* limitedIterable<T>(
  * Uses a bounded heap: for ASC sort, keeps a max-heap of K smallest items;
  * for DESC, keeps a min-heap of K largest items.
  *
- * Rust: `pub struct TopKStream<S>`
- *
  * Divergence [E8]: Rust Stream/BinaryHeap → TypeScript AsyncIterable with array-based heap.
  */
+// Rust: fn TopKStream::new — SKIP: absorbed into topKIterable
+// Rust: fn TopKStream::poll_next — absorbed into topKIterable async generator
 export async function* topKIterable<T extends Filterable>(
   inner: AsyncIterable<T>,
   orderBy: OrderByComponents,
@@ -239,6 +237,8 @@ export async function* topKIterable<T extends Filterable>(
 
 // ── Heap helpers (max-heap for TopK) ─────────────────────────────────
 
+// Rust: fn HeapItem::eq — SKIP: absorbed into heapCompare
+// Rust: fn HeapItem::partial_cmp — SKIP: absorbed into heapCompare
 /**
  * Compare two items for the TopK heap.
  * Returns positive if `a` is "worse" (should be at the top of the heap to be evicted).
@@ -246,6 +246,7 @@ export async function* topKIterable<T extends Filterable>(
  * For ASC order: larger values are "worse" → max-heap keeps smallest K.
  * For DESC order: smaller values are "worse" → effectively min-heap keeps largest K.
  */
+// Rust: fn cmp
 function heapCompare<T extends Filterable>(a: T, b: T, orderBy: OrderByItem[]): number {
   for (const orderItem of orderBy) {
     const propertyName = orderItem.path.property();

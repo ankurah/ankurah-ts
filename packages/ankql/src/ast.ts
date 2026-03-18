@@ -1,4 +1,7 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
+// Rust: mod json_as_bytes — SKIP: serde-specific custom serializer, not needed in TS
+// Rust: fn serialize (json_as_bytes) — SKIP: serde-specific
+// Rust: fn deserialize (json_as_bytes) — SKIP: serde-specific
 
 import { Struct, Enum } from '@ankurah/base';
 import { InvalidPredicateError } from './error.ts';
@@ -22,6 +25,7 @@ export class Expr extends Enum<ExprV> {
   static ExprList(exprs: Expr[]): Expr { return new Expr('ExprList', { exprs }); }
   static Placeholder(): Expr { return new Expr('Placeholder', {}); }
 
+  // Rust: fn populate_recursive
   populateRecursive(values: Iterator<Expr>): Expr {
     return this.match({
       Placeholder: () => {
@@ -82,26 +86,31 @@ export class PathExpr extends Struct {
     this.steps = steps;
   }
 
+  // Rust: fn simple
   /** Create a single-step path */
   static simple(name: string): PathExpr {
     return new PathExpr([name]);
   }
 
+  // Rust: fn is_simple
   /** Check if this is a single-step path */
   isSimple(): boolean {
     return this.steps.length === 1;
   }
 
+  // Rust: fn first
   /** Get the first step (always exists) */
   first(): string {
     return this.steps[0];
   }
 
+  // Rust: fn property
   /** Get the property name (last step) */
   property(): string {
     return this.steps[this.steps.length - 1];
   }
 
+  // Rust: fn fmt
   override toString(): string {
     return this.steps.join('.');
   }
@@ -125,11 +134,13 @@ export class Selection extends Struct {
     this.limit = limit;
   }
 
+  // Rust: fn from
   /** Backward compatibility: From<Predicate> for Selection */
   static fromPredicate(predicate: Predicate): Selection {
     return new Selection(predicate, null, null);
   }
 
+  // Rust: fn fmt
   override toString(): string {
     let result = predicateToString(this.predicate);
     if (this.orderBy) {
@@ -144,6 +155,7 @@ export class Selection extends Struct {
     return result;
   }
 
+  // Rust: fn assume_null
   /**
    * Transform the selection to assume the given columns are NULL.
    * This filters out ORDER BY items that reference missing columns.
@@ -165,6 +177,7 @@ export class Selection extends Struct {
     );
   }
 
+  // Rust: fn referenced_columns
   /**
    * Collect all column names referenced in this selection (WHERE + ORDER BY).
    * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
@@ -196,6 +209,7 @@ export class OrderByItem extends Struct {
     this.direction = direction;
   }
 
+  // Rust: fn fmt
   override toString(): string {
     const dir = this.direction.is('Asc') ? 'ASC' : 'DESC';
     return `${this.path.toString()} ${dir}`;
@@ -237,6 +251,7 @@ export class Predicate extends Enum<PredicateV> {
   static False(): Predicate { return new Predicate('False', {}); }
   static Placeholder(): Predicate { return new Predicate('Placeholder', {}); }
 
+  // Rust: fn walk
   /** Recursively walk a predicate tree and accumulate results using a closure */
   walk<T>(accumulator: T, visitor: (acc: T, pred: Predicate) => T): T {
     let result = visitor(accumulator, this);
@@ -258,6 +273,7 @@ export class Predicate extends Enum<PredicateV> {
     });
   }
 
+  // Rust: fn referenced_columns
   /**
    * Collect all column names referenced in this predicate.
    * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
@@ -290,11 +306,13 @@ export class Predicate extends Enum<PredicateV> {
     });
   }
 
+  // Rust: fn assume_null
   /** Clones the predicate tree and evaluates comparisons involving missing columns as if they were NULL */
   assumeNull(columns: string[]): Predicate {
     return assumeNull(this, columns);
   }
 
+  // Rust: fn populate
   /** Populate placeholders in the predicate with actual values */
   populate(values: Iterable<Expr>): Predicate {
     const iter = values[Symbol.iterator]();
@@ -307,6 +325,7 @@ export class Predicate extends Enum<PredicateV> {
     return result;
   }
 
+  // Rust: fn populate_recursive
   populateRecursive(values: Iterator<Expr>): Predicate {
     return this.match({
       Comparison: (v) => Predicate.Comparison(
@@ -373,6 +392,7 @@ export class InfixOperator extends Enum<InfixOperatorV> {
 
 // ── Free functions (mirror Rust impl methods for external callers) ───
 
+// Rust: fn walk — SKIP: free function wrapper, Rust fn is the impl method above
 /** Recursively walk a predicate tree and accumulate results using a visitor */
 export function walkPredicate<T>(
   pred: Predicate,
@@ -382,6 +402,7 @@ export function walkPredicate<T>(
   return pred.walk(acc, visitor);
 }
 
+// Rust: fn referenced_columns — SKIP: free function wrapper, Rust fn is the impl method above
 /**
  * Collect all column names referenced in this predicate.
  * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
@@ -391,6 +412,7 @@ export function referencedColumns(pred: Predicate): string[] {
   return pred.referencedColumns();
 }
 
+// Rust: fn assume_null
 /**
  * Clones the predicate tree and evaluates comparisons involving missing columns
  * as if they were NULL.
@@ -451,6 +473,7 @@ export function assumeNull(pred: Predicate, columns: string[]): Predicate {
   });
 }
 
+// Rust: fn populate — SKIP: free function wrapper, Rust fn is the impl method above
 /** Populate placeholders in the predicate with actual values */
 export function populatePredicate(pred: Predicate, values: Iterable<Expr>): Predicate {
   return pred.populate(values);
@@ -458,31 +481,37 @@ export function populatePredicate(pred: Predicate, values: Iterable<Expr>): Pred
 
 // ── Expr conversion helpers (mirrors Rust From impls) ────────────────
 
+// Rust: fn from (From<String> for Expr)
 export function exprFromString(s: string): Expr {
   return Expr.Literal(Literal.String(s));
 }
 
+// Rust: fn from (From<i64> for Expr)
 export function exprFromI64(i: bigint): Expr {
   return Expr.Literal(Literal.I64(i));
 }
 
+// Rust: fn from (From<f64> for Expr)
 export function exprFromF64(f: number): Expr {
   return Expr.Literal(Literal.F64(f));
 }
 
+// Rust: fn from (From<bool> for Expr)
 export function exprFromBool(b: boolean): Expr {
   return Expr.Literal(Literal.Bool(b));
 }
 
+// Rust: fn from (From<Literal> for Expr)
 export function exprFromLiteral(lit: Literal): Expr {
   return Expr.Literal(lit);
 }
 
-// Divergence: Rust From<Vec<T>>, From<[T;N]>, From<&[T]>, From<&[T;N]> for Expr create ExprLists.
-// In TS, use Expr.ExprList(items) directly; generic From trait pattern not applicable [E4].
+// Rust: fn from (From<Vec<T>> for Expr, From<[T;N]> for Expr, From<&[T]> for Expr, From<&[T;N]> for Expr) — SKIP: generic From trait pattern not applicable in TS [E4]
+// Divergence: In TS, use Expr.ExprList(items) directly.
 
 // ── Expr to Predicate conversion (mirrors Rust TryFrom<Expr> for Predicate) ──
 
+// Rust: fn try_from (TryFrom<Expr> for Predicate)
 export function exprToPredicate(expr: Expr): Predicate {
   return expr.match({
     Predicate: (v) => v.predicate,
@@ -504,6 +533,7 @@ export function exprToPredicate(expr: Expr): Predicate {
 // Divergence: Rust Display impl for Predicate calls generate_selection_sql; TS uses a local
 // predicateToString to avoid circular imports between ast.ts and selection/sql.ts [E4]
 
+// Rust: fn fmt (Display for Predicate)
 /** A minimal predicate-to-string that does NOT depend on selection/sql to avoid circular imports. */
 function predicateToString(pred: Predicate): string {
   return pred.match({

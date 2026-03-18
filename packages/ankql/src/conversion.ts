@@ -4,21 +4,19 @@ import { Expr, Predicate, Literal, Selection } from './ast.ts';
 import { InvalidPredicateError } from './error.ts';
 import { parseSelection } from './parser.ts';
 
-// impl TryFrom<&str> for Predicate
-// impl TryFrom<String> for Predicate
+// Rust: fn try_from (TryFrom<&str> for Predicate, TryFrom<String> for Predicate)
 /** Parse a predicate string into a Predicate AST node. */
 export function parsePredicate(input: string): Predicate {
   return parseSelection(input).predicate;
 }
 
-// impl TryFrom<&str> for Selection
-// impl TryFrom<String> for Selection
+// Rust: fn try_from (TryFrom<&str> for Selection, TryFrom<String> for Selection)
 /** Parse a selection string into a Selection AST node. */
 export function selectionFromString(input: string): Selection {
   return parseSelection(input);
 }
 
-// impl TryFrom<Expr> for Predicate
+// Rust: fn try_from (TryFrom<Expr> for Predicate)
 /** Convert an Expr to a Predicate. Throws InvalidPredicateError if not convertible. */
 export function predicateFromExpr(expr: Expr): Predicate {
   return expr.match({
@@ -37,4 +35,4 @@ export function predicateFromExpr(expr: Expr): Predicate {
   });
 }
 
-// #[cfg(feature = "wasm")] TryFrom<JsValue> for Expr — skipped (E9)
+// Rust: fn try_from (TryFrom<JsValue> for Expr) — SKIP: #[cfg(feature = "wasm")] [E9]

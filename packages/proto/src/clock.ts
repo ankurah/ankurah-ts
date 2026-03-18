@@ -16,26 +16,32 @@ export class Clock extends Struct {
 
   // impl Clock
 
+  // Rust: fn new
   static new(ids: EventId[]): Clock {
     return new Clock([...ids]);
   }
 
+  // Rust: fn as_slice
   asSlice(): readonly EventId[] {
     return this.ids;
   }
 
+  // Rust: fn to_strings
   toStrings(): string[] {
     return this.ids.map(id => id.toBase64());
   }
 
+  // Rust: fn to_base64_short
   toBase64Short(): string {
     return `[${this.ids.map(id => id.toBase64Short()).join(',')}]`;
   }
 
+  // Rust: fn to_base64
   toBase64(): string {
     return `[${this.ids.map(id => id.toBase64()).join(',')}]`;
   }
 
+  // Rust: fn from_strings
   static fromStrings(strings: string[]): Clock {
     const ids = strings.map(s => {
       try {
@@ -48,10 +54,12 @@ export class Clock extends Struct {
     return new Clock(ids);
   }
 
+  // Rust: fn contains
   contains(id: EventId): boolean {
     return this.binarySearch(id) >= 0;
   }
 
+  // Rust: fn insert
   insert(id: EventId): void {
     const idx = this.binarySearchInsert(id);
     if (idx < this.ids.length && this.ids[idx].equals(id)) {
@@ -60,6 +68,7 @@ export class Clock extends Struct {
     this.ids.splice(idx, 0, id);
   }
 
+  // Rust: fn with_event
   /// Creates a clone of the clock with the given event inserted
   withEvent(id: EventId): Clock {
     const clone = new Clock([...this.ids]);
@@ -76,6 +85,7 @@ export class Clock extends Struct {
     return this.ids.length;
   }
 
+  // Rust: fn is_empty
   isEmpty(): boolean {
     return this.ids.length === 0;
   }
@@ -89,15 +99,18 @@ export class Clock extends Struct {
     return this.ids[Symbol.iterator]();
   }
 
+  // Rust: fn to_vec
   toVec(): EventId[] {
     return [...this.ids];
   }
 
+  // Rust: fn from (From<Vec<EventId>> for Clock)
   // impl From<Vec<EventId>> for Clock
   static from(ids: EventId[]): Clock {
     return new Clock([...ids]);
   }
 
+  // Rust: fn try_into (TryInto<Clock> for Vec<Vec<u8>>)
   // impl TryInto<Clock> for Vec<Vec<u8>>
   static fromByteVecs(idBytes: Uint8Array[]): Clock {
     const ids: EventId[] = [];
@@ -108,6 +121,7 @@ export class Clock extends Struct {
     return new Clock(ids);
   }
 
+  // Rust: fn from (From<EventId> for Clock)
   // impl From<EventId> for Clock
   static fromEventId(id: EventId): Clock {
     return new Clock([id]);
@@ -122,6 +136,7 @@ export class Clock extends Struct {
     return Clock.default();
   }
 
+  // Rust: derive(PartialEq)
   // impl PartialEq
   equals(other: Clock): boolean {
     if (this.ids.length !== other.ids.length) return false;
@@ -131,10 +146,13 @@ export class Clock extends Struct {
     return true;
   }
 
+  // Rust: fn fmt (Display for Clock)
   // impl Display
   toString(): string {
     return this.toBase64();
   }
+
+  // Rust: fn from (From<&Clock> for Vec<EventId>) — SKIP: covered by toVec()
 
   // ── Binary search helpers ──
 
