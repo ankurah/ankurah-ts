@@ -5,19 +5,50 @@
 // When get_state is called for an entity that doesn't exist in postgres storage,
 // it should throw RetrievalError with kind 'EntityNotFound' (not a generic StorageError).
 
-import { describe, test } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { RetrievalError } from '@ankurah/core';
+import { CollectionId, EntityId } from '@ankurah/proto';
+import {
+  createPostgresContainer,
+  stopPostgresContainer,
+  createPostgresNode,
+  type PostgresTestContext,
+} from './common.ts';
 
-// Integration test — requires:
-// 1. Running Postgres (POSTGRES_URL env var)
-// 2. Node + StorageCollection direct access
-// 3. Bincode serialization stubs connected
+let pgCtx: PostgresTestContext;
 
-describe.skip('rt176', () => {
+beforeAll(async () => {
+  pgCtx = await createPostgresContainer();
+}, 60_000);
+
+afterAll(async () => {
+  await stopPostgresContainer(pgCtx);
+}, 30_000);
+
+describe('rt176', () => {
   // Rust: fn postgres_get_state_returns_entity_not_found
   test('postgres_get_state_returns_entity_not_found', async () => {
-    // Get a collection (creates tables)
-    // Generate a random EntityId
-    // Call getState — should throw RetrievalError with kind 'EntityNotFound'
-    // Verify the error contains the requested ID
+    const node = createPostgresNode(pgCtx.engine);
+    await node.system.create();
+    const ctx = node.context();
+
+    // Get a collection (this creates the tables)
+    const collection = await ctx.collection(CollectionId.from('album'));
+
+    // Generate a random entity ID that definitely doesn't exist
+    const nonExistentId = EntityId.new();
+
+    // Call getState directly on the storage collection
+    let caught: unknown;
+    try {
+      await collection.getState(nonExistentId);
+    } catch (e) {
+      caught = e;
+    }
+
+    // Should be EntityNotFound, NOT a generic StorageError
+    expect(caught).toBeInstanceOf(RetrievalError);
+    const err = caught as RetrievalError;
+    expect(err.kind).toBe('EntityNotFound');
   });
 });

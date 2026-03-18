@@ -7,20 +7,57 @@
 // operations + parent), so duplicate insertions are safe and should be
 // idempotent - returning false on subsequent attempts rather than erroring.
 
-import { describe, test } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { CollectionId } from '@ankurah/proto';
+import {
+  createPostgresContainer,
+  stopPostgresContainer,
+  createPostgresNode,
+  Album,
+  type PostgresTestContext,
+} from './common.ts';
 
-// Integration test — requires:
-// 1. Running Postgres (POSTGRES_URL env var)
-// 2. Node + defineModel() integration
-// 3. Bincode serialization stubs connected
+let pgCtx: PostgresTestContext;
 
-describe.skip('rt165', () => {
+beforeAll(async () => {
+  pgCtx = await createPostgresContainer();
+}, 60_000);
+
+afterAll(async () => {
+  await stopPostgresContainer(pgCtx);
+}, 30_000);
+
+describe('rt165', () => {
   // Rust: fn postgres_duplicate_event_idempotency
   test('postgres_duplicate_event_idempotency', async () => {
+    const node = createPostgresNode(pgCtx.engine);
+    await node.system.create();
+    const ctx = node.context();
+
     // Create an Album, commit
-    // Get collection, dump entity events — should have 1
-    // Add the same event again — should succeed, return false
-    // Add again — should succeed, return false
-    // Verify still only 1 event
+    const trx = ctx.begin();
+    const albumBorrow = await trx.create(Album, { name: 'Test Album', year: '2024' });
+    const albumId = albumBorrow.inner.id();
+    await trx.commit();
+
+    // Get collection to access storage directly
+    const collection = await ctx.collection(CollectionId.from('album'));
+
+    // Get the first event that was created
+    const events = await collection.dumpEntityEvents(albumId);
+    expect(events.length).toBe(1);
+    const event = events[0];
+
+    // Try to add the same event again — should be idempotent
+    const result1 = await collection.addEvent(event);
+    expect(result1).toBe(false);
+
+    // Try again — should still be idempotent
+    const result2 = await collection.addEvent(event);
+    expect(result2).toBe(false);
+
+    // Verify we still only have one event
+    const eventsAfter = await collection.dumpEntityEvents(albumId);
+    expect(eventsAfter.length).toBe(1);
   });
 });

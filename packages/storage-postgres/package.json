@@ -19,5 +19,11 @@
   },
   "files": [
     "src/"
-  ]
+  ],
+  "devDependencies": {
+    "@testcontainers/postgresql": "^11.13.0",
+    "@types/pg": "^8.18.0",
+    "pg": "^8.20.0",
+    "testcontainers": "^11.13.0"
+  }
 }
