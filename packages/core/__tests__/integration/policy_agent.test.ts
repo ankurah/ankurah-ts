@@ -14,6 +14,7 @@ import { describe, test } from 'bun:test';
 
 describe('policy_agent', () => {
   // Mirrors: policy_angent.rs local_access_control (commented out in Rust)
+  // Cannot enable: entire Rust test is commented out, PolicyAgent implementation incomplete.
   test.skip('local_access_control', async () => {
     // Entire test is commented out in Rust source.
     // Requires: custom PolicyAgent impl (TestAgent), User/Doc models,
@@ -21,9 +22,10 @@ describe('policy_agent', () => {
   });
 
   // Mirrors: policy_angent.rs keeping_peers_honest (commented out in Rust)
+  // Cannot enable: entire Rust test is commented out, PolicyAgent implementation incomplete.
   test.skip('keeping_peers_honest', async () => {
     // Entire test is commented out in Rust source.
-    // Requires: LocalProcessConnection (not yet ported), DishonestTestAgent,
+    // Requires: LocalProcessConnection, DishonestTestAgent,
     // cross-node attestation validation.
   });
 });

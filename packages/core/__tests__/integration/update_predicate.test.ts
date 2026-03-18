@@ -3,8 +3,9 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { EntityId } from '@ankurah/proto';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
+import { LocalProcessConnection } from '@ankurah/connector-local';
 
-import { Node, matchArgs } from '../../src/node.ts';
+import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
 import type { ChangeSet, ChangeKind, ItemChange } from '../../src/changes.ts';
@@ -229,17 +230,107 @@ describe('test_predicate_update', () => {
 });
 
 // Mirrors: test_predicate_update_inter_node
-// Requires LocalProcessConnection which is not yet ported.
 describe('test_predicate_update_inter_node', () => {
-  test.skip('inter-node predicate update requires LocalProcessConnection (not yet ported)', () => {
-    // Rust: let server = Node::new_durable(Arc::new(SledStorageEngine::new_test()?), PermissiveAgent::new());
-    // Rust: server.system.create().await?;
-    // Rust: let client = Node::new(Arc::new(SledStorageEngine::new_test()?), PermissiveAgent::new());
-    // Rust: let _conn = LocalProcessConnection::new(&server, &client).await?;
-    // Rust: client.system.wait_system_ready().await;
-    //
-    // This test creates albums on the server, queries from the client via LocalProcessConnection,
-    // then updates the predicate and verifies membership changes propagate across nodes.
-    // Requires @ankurah/connector-local which is not yet ported.
+  test('update_selection changes LiveQuery membership across nodes', async () => {
+    // Create server (durable) and client (ephemeral) nodes
+    const server = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: true,
+    });
+    await server.system.create();
+    const client = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: false,
+    });
+
+    const conn = await LocalProcessConnection.new(server, client);
+    await client.system.waitSystemReady();
+
+    const serverCtx = await server.contextAsync();
+    const clientCtx = await client.contextAsync();
+
+    // Create some test albums on the server
+    let aId: EntityId, bId: EntityId, cId: EntityId;
+    {
+      const trx = serverCtx.begin();
+
+      const alphaBorrow = await trx.create(Album, {});
+      const alphaEntity = alphaBorrow.inner.entity();
+      getYrsStringHandle(alphaEntity, 'name').insert(0, 'Alpha');
+      getYrsStringHandle(alphaEntity, 'year').insert(0, '2020');
+      aId = alphaBorrow.inner.id();
+
+      const bravoBorrow = await trx.create(Album, {});
+      const bravoEntity = bravoBorrow.inner.entity();
+      getYrsStringHandle(bravoEntity, 'name').insert(0, 'Bravo');
+      getYrsStringHandle(bravoEntity, 'year').insert(0, '2021');
+      bId = bravoBorrow.inner.id();
+
+      const charlieBorrow = await trx.create(Album, {});
+      const charlieEntity = charlieBorrow.inner.entity();
+      getYrsStringHandle(charlieEntity, 'name').insert(0, 'Charlie');
+      getYrsStringHandle(charlieEntity, 'year').insert(0, '2022');
+      cId = charlieBorrow.inner.id();
+
+      await trx.commit();
+    }
+
+    // Create LiveQuery on client with initial predicate
+    const albums = clientCtx.query(Album, nocache("year > '2020'"));
+    await albums.waitInitialized();
+    guards.push(albums);
+
+    const watcher = new TestWatcher();
+    const subGuard = albums.subscribe(watcher.listener());
+    guards.push(subGuard);
+
+    // Should have Bravo, Charlie (sort for deterministic order)
+    const initialIds = albums.idsSorted();
+    const expectedInitial = sortedIds(bId!, cId!);
+    expect(initialIds.length).toBe(expectedInitial.length);
+    for (let i = 0; i < initialIds.length; i++) {
+      expect(initialIds[i].equals(expectedInitial[i])).toBe(true);
+    }
+    expect(await watcher.quiesce()).toBe(0);
+
+    // Update the predicate to be more restrictive: year > 2021 - Should remove Bravo
+    await albums.inner.updateSelectionWait("year > '2021'");
+
+    const afterNarrow = albums.ids();
+    expect(afterNarrow.length).toBe(1);
+    expect(afterNarrow[0].equals(cId!)).toBe(true);
+
+    const removeNotification = await watcher.takeOne();
+    expect(removeNotification.length).toBe(1);
+    expect(removeNotification[0][0].equals(bId!)).toBe(true);
+    expect(removeNotification[0][1]).toBe('Remove');
+
+    // Update predicate to be less restrictive: year >= "2020"
+    await albums.inner.updateSelectionWait("year >= '2020'");
+
+    // Should now have all 3 albums
+    const afterWiden = albums.idsSorted();
+    const expectedWiden = sortedIds(aId!, bId!, cId!);
+    expect(afterWiden.length).toBe(expectedWiden.length);
+    for (let i = 0; i < afterWiden.length; i++) {
+      expect(afterWiden[i].equals(expectedWiden[i])).toBe(true);
+    }
+
+    const drainedBatches = watcher.drainSorted();
+    expect(drainedBatches.length).toBe(1);
+    const sortedBatch = drainedBatches[0];
+    const expectedBatch = sortedIds(aId!, bId!);
+    expect(sortedBatch.length).toBe(2);
+    expect(sortedBatch[0][0].equals(expectedBatch[0])).toBe(true);
+    expect(sortedBatch[0][1]).toBe('Initial');
+    expect(sortedBatch[1][0].equals(expectedBatch[1])).toBe(true);
+    expect(sortedBatch[1][1]).toBe('Initial');
+
+    // should have no more changes
+    expect(await watcher.quiesce()).toBe(0);
+
+    conn.destroy();
   });
 });

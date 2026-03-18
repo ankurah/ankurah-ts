@@ -6,8 +6,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
+import { LocalProcessConnection } from '@ankurah/connector-local';
 import type { EntityId } from '@ankurah/proto';
-import { Node, matchArgs } from '../../src/node.ts';
+import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, lww, yrsText } from '../../src/define-model.ts';
 
@@ -180,15 +181,61 @@ describe('pagination_cursor', () => {
   });
 
   // Mirrors: test_pagination_inter_node
-  // Requires LocalProcessConnection which is not yet ported.
-  test.skip('inter-node pagination (requires LocalProcessConnection)', () => {
-    // Rust: let server = Node::new_durable(Arc::new(SledStorageEngine::new_test()?), PermissiveAgent::new());
-    // Rust: let client = Node::new(Arc::new(SledStorageEngine::new_test()?), PermissiveAgent::new());
-    // Rust: let _conn = LocalProcessConnection::new(&server, &client).await?;
-    //
-    // Creates 100 messages on server, queries from client with nocache,
-    // then paginates via update_selection_wait and verifies 54 results.
-    // Requires @ankurah/connector-local which is not yet ported.
+  test('test_pagination_inter_node', async () => {
+    const server = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: true,
+    });
+    await server.system.create();
+    const client = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: false,
+    });
+
+    const conn = await LocalProcessConnection.new(server, client);
+    await client.system.waitSystemReady();
+
+    const serverCtx = await server.contextAsync();
+    const clientCtx = await client.contextAsync();
+
+    // Create room on server
+    const roomId = await createRoom(serverCtx, 'General');
+
+    // Create 100 messages on server
+    {
+      const trx = serverCtx.begin();
+      for (let i = 0; i < 100; i++) {
+        const ts = TIMESTAMP_BASE + i * TIMESTAMP_STEP;
+        await trx.create(TestMessage, {
+          room: roomId.toBase64(),
+          text: `Message #${String(i).padStart(3, '0')}`,
+          timestamp: ts,
+          deleted: false,
+        });
+      }
+      await trx.commit();
+    }
+
+    // Client queries with nocache to force server fetch
+    const q = `room = '${roomId.toBase64()}' AND deleted = false ORDER BY timestamp DESC LIMIT 33`;
+    const lq = await clientCtx.queryWait(TestMessage, nocache(q));
+
+    const items = lq.peek();
+    expect(items.length).toBe(33);
+
+    const newestTs = Math.max(...getTimestamps(items));
+
+    // Pagination through client
+    const paginationQ = `room = '${roomId.toBase64()}' AND deleted = false AND timestamp <= ${newestTs} ORDER BY timestamp DESC LIMIT 54`;
+    await lq.inner.updateSelectionWait(paginationQ);
+
+    const itemsAfter = lq.peek();
+    expect(itemsAfter.length).toBe(54);
+
+    lq.drop();
+    conn.destroy();
   });
 });
 

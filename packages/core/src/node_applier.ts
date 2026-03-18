@@ -236,6 +236,7 @@ export class NodeApplier {
 
     return delta.content.match({
       StateSnapshot: async (v) => {
+
         const attestedState = StateFragment.toAttestedEntityState(
           delta.entityId, delta.collection, v.state,
         );

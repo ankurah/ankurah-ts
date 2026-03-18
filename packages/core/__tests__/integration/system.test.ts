@@ -1,22 +1,28 @@
 // MIRRORS: ankurah/tests/tests/system.rs
 //
 // Integration tests for SystemManager behavior across node lifecycles.
-//
-// NOTE: Most tests in the Rust source require LocalProcessConnection (inter-node
-// communication) and SledStorageEngine persistence across Node reconstructions
-// (re-opening the same storage engine). MemoryStorageEngine is ephemeral — its
-// data is lost when the engine instance is dropped.
-//
-// Tests that are single-node and don't require persistence across Node reconstructions
-// are ported directly. Tests requiring inter-node connectivity or cross-construction
-// persistence are skipped pending connector and storage engine porting.
 
 import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
+import { LocalProcessConnection } from '@ankurah/connector-local';
+import { Node } from '../../src/node.ts';
+import { PermissiveAgent } from '../../src/policy.ts';
+import { defineModel, yrsText } from '../../src/define-model.ts';
 import { CollectionSet } from '../../src/collectionset.ts';
 import { WeakEntitySet } from '../../src/entity.ts';
 import { Reactor } from '../../src/reactor/index.ts';
-import { SystemManager, SYSTEM_COLLECTION_ID } from '../../src/system.ts';
+import { SystemManager } from '../../src/system.ts';
+
+// ── Models ──
+const Album = defineModel('album', {
+  name: yrsText(),
+  year: yrsText(),
+});
+
+const Pet = defineModel('pet', {
+  name: yrsText(),
+  age: yrsText(),
+});
 
 // ── Helper ──
 
@@ -90,30 +96,236 @@ describe('system integration', () => {
   });
 
   // Mirrors: system.rs test_system_persistence_across_reconstruction
-  // Divergence: Skipped — requires LocalProcessConnection and cross-construction
-  // storage persistence (SledStorageEngine) [E8].
-  test.skip('test_system_persistence_across_reconstruction', async () => {
-    // Requires LocalProcessConnection and persistent storage.
+  test('test_system_persistence_across_reconstruction', async () => {
+    // Create separate storage engines for durable and ephemeral nodes
+    const durableEngine = new MemoryStorageEngine();
+    const ephemeralEngine = new MemoryStorageEngine();
+
+    // First setup: Create both durable and ephemeral nodes
+    let rootStateHead: any;
+    {
+      // Create and initialize durable node
+      const durableNode = new Node({
+        storageEngine: durableEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: true,
+      });
+      await durableNode.system.create();
+      expect(durableNode.system.isSystemReady()).toBe(true);
+
+      // Get root state for later comparison
+      const rootState = durableNode.system.root();
+      expect(rootState).not.toBeNull();
+      expect(rootState!.payload.state.head.len()).toBe(1);
+      rootStateHead = rootState!.payload.state.head;
+
+      // Create ephemeral node
+      const ephemeralNode = new Node({
+        storageEngine: ephemeralEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: false,
+      });
+      await ephemeralNode.system.waitLoaded();
+      expect(ephemeralNode.system.isSystemReady()).toBe(false);
+
+      // Connect nodes using LocalProcessConnection
+      const conn = await LocalProcessConnection.new(durableNode, ephemeralNode);
+
+      // Wait for ephemeral node to be ready
+      await ephemeralNode.system.waitSystemReady();
+      expect(ephemeralNode.system.isSystemReady()).toBe(true);
+
+      // Verify both nodes match the root state
+      expect(durableNode.system.root()).not.toBeNull();
+      expect(ephemeralNode.system.root()).not.toBeNull();
+
+      conn.destroy();
+    } // Both nodes and connection are dropped here
+
+    // Second setup: Reconstruct both nodes with their respective storage engines
+    {
+      // Create new durable node - should automatically load existing system
+      const durableNode = new Node({
+        storageEngine: durableEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: true,
+      });
+      await durableNode.system.waitLoaded();
+      expect(durableNode.system.isSystemReady()).toBe(true);
+
+      // Verify root state persisted in durable storage
+      const durableRoot = durableNode.system.root();
+      expect(durableRoot).not.toBeNull();
+      expect(durableRoot!.payload.state.head.len()).toBe(rootStateHead.len());
+
+      // Create new ephemeral node
+      const ephemeralNode = new Node({
+        storageEngine: ephemeralEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: false,
+      });
+      await ephemeralNode.system.waitLoaded();
+      expect(ephemeralNode.system.isSystemReady()).toBe(false);
+
+      // Connect nodes using LocalProcessConnection
+      const conn = await LocalProcessConnection.new(durableNode, ephemeralNode);
+
+      // Wait for ephemeral node to be ready
+      await ephemeralNode.system.waitSystemReady();
+      expect(ephemeralNode.system.isSystemReady()).toBe(true);
+
+      // Verify all roots match
+      expect(durableNode.system.root()).not.toBeNull();
+      expect(ephemeralNode.system.root()).not.toBeNull();
+
+      conn.destroy();
+    }
   });
 
   // Mirrors: system.rs test_system_root_change_behavior
-  // Divergence: Skipped — requires LocalProcessConnection, list_collections(),
-  // and cross-construction storage persistence [E8].
-  test.skip('test_system_root_change_behavior', async () => {
-    // Requires LocalProcessConnection, persistent storage, list_collections(), hard_reset().
-  });
+  test('test_system_root_change_behavior', async () => {
+    // Create separate storage engines for durable and ephemeral nodes
+    const durableEngine = new MemoryStorageEngine();
+    const ephemeralEngine = new MemoryStorageEngine();
 
-  // Mirrors: system.rs test_ephemeral_cached_root_supports_offline_queries_after_restart
-  // Divergence: Skipped — requires LocalProcessConnection and cross-construction
-  // storage persistence [E8].
-  test.skip('test_ephemeral_cached_root_supports_offline_queries_after_restart', async () => {
-    // Requires LocalProcessConnection and persistent storage across Node reconstructions.
-  });
+    // Get initial root state
+    let initialRootHead: any;
+    {
+      // Create and initialize durable node
+      const durableNode = new Node({
+        storageEngine: durableEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: true,
+      });
+      await durableNode.system.create();
+      expect(durableNode.system.isSystemReady()).toBe(true);
 
-  // Mirrors: system.rs test_ephemeral_cached_fetch_supports_offline_after_restart
-  // Divergence: Skipped — requires LocalProcessConnection and cross-construction
-  // storage persistence [E8].
-  test.skip('test_ephemeral_cached_fetch_supports_offline_after_restart', async () => {
-    // Requires LocalProcessConnection, persistent storage, nocache() fetch semantics.
+      // Create ephemeral node
+      const ephemeralNode = new Node({
+        storageEngine: ephemeralEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: false,
+      });
+      await ephemeralNode.system.waitLoaded();
+      expect(ephemeralNode.system.isSystemReady()).toBe(false);
+
+      // Connect nodes
+      const conn = await LocalProcessConnection.new(durableNode, ephemeralNode);
+
+      // Wait for ephemeral node to be ready
+      await ephemeralNode.system.waitSystemReady();
+      expect(ephemeralNode.system.isSystemReady()).toBe(true);
+
+      // Store initial root state for comparison
+      const initialRoot = durableNode.system.root();
+      expect(initialRoot).not.toBeNull();
+      initialRootHead = initialRoot!.payload.state.head;
+
+      // Verify both nodes have same root
+      expect(durableNode.system.root()!.payload.state.head.len()).toBe(
+        ephemeralNode.system.root()!.payload.state.head.len(),
+      );
+
+      // Create a pet on ephemeral node
+      const ephemeralCtx = ephemeralNode.context();
+      const trx = ephemeralCtx.begin();
+      await trx.create(Pet, { name: 'Fido', age: '3' });
+      await trx.commit();
+
+      // Verify collections on ephemeral engine
+      const ephCollections = ephemeralEngine.listCollections();
+      expect(ephCollections.sort()).toEqual(['_ankurah_system', 'pet']);
+
+      // Verify collections on durable engine
+      const durCollections = durableEngine.listCollections();
+      expect(durCollections.sort()).toEqual(['_ankurah_system', 'pet']);
+
+      conn.destroy();
+    } // Both nodes and connection are dropped here
+
+    // Reset durable node's system (creating new root) but NOT ephemeral node
+    let secondRootHead: any;
+    {
+      const durableNode = new Node({
+        storageEngine: durableEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: true,
+      });
+      await durableNode.system.waitLoaded();
+      expect(durableNode.system.isSystemReady()).toBe(true);
+
+      const durCollections = durableEngine.listCollections();
+      expect(durCollections.sort()).toEqual(['_ankurah_system', 'pet']);
+
+      // Reset storage and reinitialize
+      await durableNode.system.hardReset();
+
+      const durCollectionsAfterReset = durableEngine.listCollections();
+      expect(durCollectionsAfterReset).toEqual([]);
+
+      expect(durableNode.system.isSystemReady()).toBe(false);
+
+      await durableNode.system.create();
+
+      const durCollectionsAfterCreate = durableEngine.listCollections();
+      expect(durCollectionsAfterCreate).toEqual(['_ankurah_system']);
+
+      // Verify root has changed
+      const secondRoot = durableNode.system.root();
+      expect(secondRoot).not.toBeNull();
+      secondRootHead = secondRoot!.payload.state.head;
+      expect(secondRootHead.len()).toBe(1);
+      // Root state should be different after reset
+      // (different because new create generates new event)
+
+      // Create an album on durable node
+      const durableCtx = durableNode.context();
+      const trx = durableCtx.begin();
+      await trx.create(Album, { name: 'Leonard Skynyrd', year: '1973' });
+      await trx.commit();
+
+      const durCollectionsFinal = durableEngine.listCollections();
+      expect(durCollectionsFinal.sort()).toEqual(['_ankurah_system', 'album']);
+    } // Drop durable node
+
+    // Ephemeral node joins the new system and resets everything
+    {
+      const durableNode = new Node({
+        storageEngine: durableEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: true,
+      });
+      await durableNode.system.waitLoaded();
+      expect(durableNode.system.isSystemReady()).toBe(true);
+
+      const ephemeralNode = new Node({
+        storageEngine: ephemeralEngine,
+        policyAgent: new PermissiveAgent(),
+        durable: false,
+      });
+      await ephemeralNode.system.waitLoaded();
+      expect(ephemeralNode.system.isSystemReady()).toBe(false);
+      // Ephemeral node should have old root prior to joining
+      expect(ephemeralNode.system.root()).not.toBeNull();
+
+      const ephCollections = ephemeralEngine.listCollections();
+      expect(ephCollections.sort()).toEqual(['_ankurah_system', 'pet']);
+
+      // Connect nodes
+      const conn = await LocalProcessConnection.new(durableNode, ephemeralNode);
+
+      // Wait for ephemeral node to be ready
+      await ephemeralNode.system.waitSystemReady();
+
+      // Ephemeral node should have new root after joining
+      expect(ephemeralNode.system.root()).not.toBeNull();
+
+      // After joining new system, ephemeral engine should have been reset
+      // (pet collection should be gone)
+      const ephCollectionsAfterJoin = ephemeralEngine.listCollections();
+      expect(ephCollectionsAfterJoin).toEqual(['_ankurah_system']);
+
+      conn.destroy();
+    }
   });
 });

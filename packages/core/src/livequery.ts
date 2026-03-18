@@ -18,7 +18,7 @@ import type { Entity } from './entity.ts';
 import { Drop } from '@ankurah/base';
 import { RetrievalError } from './error.ts';
 import type { ViewInstance, ViewConstructor } from './model.ts';
-import { type MatchArgs, Node } from './node.ts';
+import { type MatchArgs, Node, NodeAndContext } from './node.ts';
 import { ChangeSet, type ItemChange } from './changes.ts';
 import { EntityResultSet } from './resultset.ts';
 import {
@@ -51,7 +51,11 @@ class NodeLikeAdapter implements NodeLike {
   }
 
   async fetchEntities(collectionId: CollectionId, selection: Selection): Promise<Entity[]> {
-    return this.node.fetchEntitiesFromLocal(collectionId, selection);
+    // Rust: QueryGapFetcher creates NodeAndContext and calls fetch_entities(collection_id, MatchArgs { cached: false })
+    // This goes through the full peer-fetch path for non-durable nodes,
+    // ensuring cross-node queries work even without SubscriptionRelay.
+    const nodeContext = new NodeAndContext(this.node, this.cdata);
+    return nodeContext.fetchEntities(collectionId, { selection, cached: false });
   }
 }
 
@@ -92,6 +96,7 @@ export class EntityLiveQuery extends Drop {
   private readonly _selection: Mut<{ selection: Selection; version: number }>;
   readonly collectionId: CollectionId;
   private readonly gapFetcher: GapFetcher;
+  private readonly cdata: unknown;
   // Strong reference to the NodeLikeAdapter to prevent GC from collecting it
   // while the QueryGapFetcher holds only a WeakRef.
   // Divergence: Rust Arc prevents drop; TS needs explicit strong ref [E8].
@@ -116,6 +121,7 @@ export class EntityLiveQuery extends Drop {
     collectionId: CollectionId,
     gapFetcher: GapFetcher,
     nodeLikeAdapter: NodeLike,
+    cdata: unknown,
   ) {
     super();
     this.queryId = queryId;
@@ -127,6 +133,7 @@ export class EntityLiveQuery extends Drop {
     this.collectionId = collectionId;
     this.gapFetcher = gapFetcher;
     this._nodeLikeAdapter = nodeLikeAdapter;
+    this.cdata = cdata;
     this.initializedVersion = 0;
     this.currentVersion = 1;
 
@@ -196,6 +203,7 @@ export class EntityLiveQuery extends Drop {
       collectionId,
       gapFetcher,
       nodeLikeAdapter,
+      cdata,
     );
 
     // Step 9: Determine relay status
@@ -341,6 +349,16 @@ export class EntityLiveQuery extends Drop {
     }
 
     console.debug(`LiveQuery.activate() for predicate ${this.queryId} (version ${version})`);
+
+    // Divergence: Rust ephemeral nodes use SubscriptionRelay to fetch from server before activate().
+    // Since SubscriptionRelay is not yet implemented (hasRelay always false), non-durable nodes
+    // must prefetch from peers here so that addQueryAndNotify/updateQueryAndNotify
+    // (which call fetchEntitiesFromLocal) find the data.
+    if (!this.node.durable && this.node.getDurablePeers().length > 0) {
+      const nodeContext = new NodeAndContext(this.node, this.cdata);
+      // Trigger peer fetch which stores results in local storage
+      await nodeContext.fetchEntities(this.collectionId, { selection, cached: false });
+    }
 
     // Divergence: Rust uses self.0.node.reactor() trait method; TS accesses this.node.reactor directly [E8].
     const reactor = this.node.reactor;

@@ -7,8 +7,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
+import { LocalProcessConnection } from '@ankurah/connector-local';
 import type { EntityId } from '@ankurah/proto';
-import { Node, matchArgs } from '../../src/node.ts';
+import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
 import type { ChangeSet, ChangeKind, ItemChange } from '../../src/changes.ts';
@@ -176,17 +177,108 @@ describe('limit_gap_filling', () => {
     expect(await watcher.quiesce()).toBe(0);
   });
 
-  // Mirrors: limit_gap_filling.rs test_inter_node_gap_filling
-  // Divergence: Skipped — requires LocalProcessConnection (connectors not yet ported) [E8].
-  test.skip('test_inter_node_gap_filling', async () => {
-    // Requires LocalProcessConnection which is not yet ported.
-    // See port-runbook.md: @ankurah/connector-local — Not started
+  // TS-ONLY: No Rust equivalent — test_inter_node_gap_filling does not exist in limit_gap_filling.rs.
+  // Requires SubscriptionRelay to propagate server-side changes to client's LiveQuery.
+  // SubscriptionRelay is not yet ported (Phase 1: hasRelay always false).
+  test.skip('test_inter_node_gap_filling (requires SubscriptionRelay)', async () => {
+    const server = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: true,
+    });
+    await server.system.create();
+    const client = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: false,
+    });
+    const conn = await LocalProcessConnection.new(server, client);
+    await client.system.waitSystemReady();
+
+    const serverCtx = await server.contextAsync();
+    const clientCtx = await client.contextAsync();
+    const ids = await createAlbums(serverCtx, 2020, 2025);
+
+    const watcher = new ChangesetWatcher();
+    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year ASC LIMIT 3"));
+    const _handle = query.subscribe(watcher.listener());
+
+    // Initial state should have the first 3 albums (2020, 2021, 2022)
+    expect(await watcher.quiesce()).toBe(0);
+    expect(years(query)).toEqual(['2020', '2021', '2022']);
+
+    {
+      const trx = serverCtx.begin();
+      const albumBorrow = await trx.get(Album, ids[1]);
+      getYrsStringHandle(albumBorrow.inner.entity(), 'year').replace('1999');
+      await trx.commit();
+    }
+
+    const changes = await watcher.takeOne();
+    expect(changes.length).toBe(2);
+    expect(changes[0][0].equals(ids[1])).toBe(true);
+    expect(changes[0][1]).toBe('Remove');
+    expect(changes[1][0].equals(ids[3])).toBe(true);
+    expect(changes[1][1]).toBe('Add');
+
+    expect(years(query)).toEqual(['2020', '2022', '2023']);
+    expect(await watcher.quiesce()).toBe(0);
+
+    conn.destroy();
   });
 
-  // Mirrors: limit_gap_filling.rs test_inter_node_gap_filling_desc
-  // Divergence: Skipped — requires LocalProcessConnection (connectors not yet ported) [E8].
-  test.skip('test_inter_node_gap_filling_desc', async () => {
-    // Requires LocalProcessConnection which is not yet ported.
-    // See port-runbook.md: @ankurah/connector-local — Not started
+  // TS-ONLY: No Rust equivalent — test_inter_node_gap_filling_desc does not exist in limit_gap_filling.rs.
+  // Requires SubscriptionRelay to propagate server-side changes to client's LiveQuery.
+  // SubscriptionRelay is not yet ported (Phase 1: hasRelay always false).
+  test.skip('test_inter_node_gap_filling_desc (requires SubscriptionRelay)', async () => {
+    const server = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: true,
+    });
+    await server.system.create();
+    const client = new Node({
+      storageEngine: new MemoryStorageEngine(),
+      policyAgent: new PermissiveAgent(),
+      durable: false,
+    });
+    const conn = await LocalProcessConnection.new(server, client);
+    await client.system.waitSystemReady();
+
+    const serverCtx = await server.contextAsync();
+    const clientCtx = await client.contextAsync();
+    const ids = await createAlbums(serverCtx, 2020, 2027);
+
+    const watcher = new ChangesetWatcher();
+    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year DESC LIMIT 4"));
+    const _handle = query.subscribe(watcher.listener());
+
+    expect(await watcher.quiesce()).toBe(0);
+    expect(years(query)).toEqual(['2027', '2026', '2025', '2024']);
+
+    {
+      const trx = serverCtx.begin();
+      const album4Borrow = await trx.get(Album, ids[4]);
+      getYrsStringHandle(album4Borrow.inner.entity(), 'year').replace('1999');
+      const album6Borrow = await trx.get(Album, ids[6]);
+      getYrsStringHandle(album6Borrow.inner.entity(), 'year').replace('1999');
+      await trx.commit();
+    }
+
+    const changes = await watcher.takeOne();
+    expect(changes.length).toBe(4);
+    expect(changes[0][0].equals(ids[4])).toBe(true);
+    expect(changes[0][1]).toBe('Remove');
+    expect(changes[1][0].equals(ids[6])).toBe(true);
+    expect(changes[1][1]).toBe('Remove');
+    expect(changes[2][0].equals(ids[3])).toBe(true);
+    expect(changes[2][1]).toBe('Add');
+    expect(changes[3][0].equals(ids[2])).toBe(true);
+    expect(changes[3][1]).toBe('Add');
+
+    expect(years(query)).toEqual(['2027', '2025', '2023', '2022']);
+    expect(await watcher.quiesce()).toBe(0);
+
+    conn.destroy();
   });
 });

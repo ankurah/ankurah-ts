@@ -5,7 +5,8 @@
 // runtime defineModel() function that produces equivalent View/Mutable classes with
 // typed accessors.
 
-import type { CollectionId, EntityId, State } from '@ankurah/proto';
+import { CollectionId as CollectionIdClass, type EntityId, type State } from '@ankurah/proto';
+import type { CollectionId } from '@ankurah/proto';
 import { CurrentObserver } from '@ankurah/signals';
 import type { ViewInstance, MutableInstance, ViewConstructor, ModelDefinition } from './model.ts';
 import type { Entity } from './entity.ts';
@@ -325,7 +326,7 @@ export function defineModel<F extends Record<string, FieldDefinition>>(
     }
 
     collection(): CollectionId {
-      return collectionName as unknown as CollectionId;
+      return CollectionIdClass.from(collectionName);
     }
 
     entity(): Entity {
@@ -384,7 +385,7 @@ export function defineModel<F extends Record<string, FieldDefinition>>(
     }
 
     collection(): CollectionId {
-      return collectionName as unknown as CollectionId;
+      return CollectionIdClass.from(collectionName);
     }
 
     entity(): Entity {
@@ -434,7 +435,7 @@ export function defineModel<F extends Record<string, FieldDefinition>>(
     Mutable: GeneratedMutableClass as unknown as DefinedModel<F>['Mutable'],
 
     collection(): CollectionId {
-      return collectionName as unknown as CollectionId;
+      return CollectionIdClass.from(collectionName);
     },
 
     initializeNewEntity(entity: Entity, values: Record<string, unknown>): void {

@@ -227,40 +227,39 @@ describe('inter_node', () => {
   });
 
   // Mirrors: inter_node.rs server_edits_subscription
-  // Divergence: Requires LiveQuery subscription propagation across nodes which
-  // depends on SubscriptionRelay/SubscriptionHandler integration not yet complete [E8].
+  // Requires SubscriptionRelay to propagate LiveQuery subscription changes across nodes.
+  // SubscriptionRelay is not yet implemented (subscribeRemoteQuery is stubbed in livequery.ts).
   test.skip('server_edits_subscription', async () => {
-    // This test requires full LiveQuery + subscription relay integration
-    // to propagate subscription changes across nodes.
-  });
-
-  // Mirrors: inter_node.rs cached_livequery_survives_disconnect_and_catches_up_on_reconnect
-  // Divergence: Requires LiveQuery subscription + disconnect/reconnect lifecycle [E8].
-  test.skip('cached_livequery_survives_disconnect_and_catches_up_on_reconnect', async () => {
-    // Requires LiveQuery subscription relay + disconnect/reconnect.
+    // Needs SubscriptionRelay: server edits an entity, client's LiveQuery receives Update/Add notifications.
   });
 
   // Mirrors: inter_node.rs test_client_server_subscription_propagation
-  // Divergence: Requires LiveQuery subscription propagation across nodes [E8].
+  // Requires SubscriptionRelay for cross-node LiveQuery subscription notifications.
   test.skip('test_client_server_subscription_propagation', async () => {
-    // Requires LiveQuery subscription relay.
+    // Needs SubscriptionRelay: entity created on client_a, server_watcher and client_b_watcher get Add.
   });
 
   // Mirrors: inter_node.rs test_view_field_subscriptions_with_query_lifecycle
-  // Divergence: Requires LiveQuery subscription + View subscription lifecycle [E8].
+  // Requires SubscriptionRelay for cross-node LiveQuery + View subscription lifecycle.
   test.skip('test_view_field_subscriptions_with_query_lifecycle', async () => {
-    // Requires LiveQuery subscription relay + View subscriptions.
+    // Needs SubscriptionRelay: server edits entity, client's View/LiveQuery subscriptions receive updates.
+  });
+
+  // Mirrors: inter_node.rs cached_livequery_survives_disconnect_and_catches_up_on_reconnect
+  // Requires disconnect/reconnect lifecycle on LocalProcessConnection.
+  test.skip('cached_livequery_survives_disconnect_and_catches_up_on_reconnect', async () => {
+    // Needs disconnect/reconnect lifecycle + SubscriptionRelay.
   });
 
   // Mirrors: inter_node.rs resident_entity_from_get_resubscribes_after_reconnect
-  // Divergence: Requires entity-level subscriptions + disconnect/reconnect [E8].
+  // Requires entity-level subscriptions + disconnect/reconnect lifecycle.
   test.skip('resident_entity_from_get_resubscribes_after_reconnect', async () => {
-    // Requires entity-level subscriptions + disconnect/reconnect.
+    // Needs entity-level subscriptions + disconnect/reconnect.
   });
 
   // Mirrors: inter_node.rs cached_reads_fall_back_to_local_on_transient_peer_failures
-  // Divergence: Requires FailingPeerSender mock + get_cached() [E8].
+  // Requires FailingPeerSender mock + getCached().
   test.skip('cached_reads_fall_back_to_local_on_transient_peer_failures', async () => {
-    // Requires FailingPeerSender + get_cached().
+    // Needs FailingPeerSender + getCached().
   });
 });

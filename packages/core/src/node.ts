@@ -25,7 +25,7 @@ import {
   DeltaContent,
   StateFragment,
   EventFragment,
-  type KnownEntity,
+  KnownEntity,
   Presence,
 } from '@ankurah/proto';
 import { Selection, type Predicate, parseSelection } from '@ankurah/ankql';
@@ -522,6 +522,25 @@ export class Node implements NodeComms {
         }
       }
 
+      // Validate event vs entity state
+      // Rust: if event.is_entity_create() && entity.head().is_empty() { create path }
+      //       else { update path with lineage validation }
+      if (event.isEntityCreate()) {
+        if (!entity.head().isEmpty()) {
+          // Entity already exists — reject duplicate create
+          throw MutationError.general(new Error(
+            `Cannot create entity ${event.entityId}: entity already exists`,
+          ));
+        }
+      } else {
+        if (entity.head().isEmpty()) {
+          // Update for nonexistent entity — parent references events that don't exist
+          throw MutationError.general(new Error(
+            `Cannot update entity ${event.entityId}: entity does not exist (nonexistent parent lineage)`,
+          ));
+        }
+      }
+
       // Apply the event
       entity.applyEvent(event);
 
@@ -558,19 +577,11 @@ export class Node implements NodeComms {
         return null;
       }
 
-      // Try EventBridge: collect all events between known head and current head
-      try {
-        const eventIds = [...currentHead.asSlice()];
-        const events = await storageCollection.getEvents(eventIds);
-        if (events.length > 0) {
-          const fragments = events.map((e: Attested<Event>) =>
-            EventFragment.fromAttestedEvent(e),
-          );
-          return new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: fragments }));
-        }
-      } catch {
-        // Fall through to StateSnapshot
-      }
+      // Rust: uses collect_event_bridge() with full lineage comparison (Comparison + EventAccumulator)
+      // to walk the event DAG and collect all events between known_head and current_head.
+      // Since the lineage module is not yet ported, we fall through to StateSnapshot which is
+      // always correct (just not as bandwidth-efficient as EventBridge).
+      // TODO: Implement collect_event_bridge() once the lineage module is ported.
     }
 
     // Default: StateSnapshot
@@ -742,6 +753,12 @@ export class NodeAndContext implements TContext {
       if (durablePeers.length > 0) {
         const peerId = durablePeers[0];
         try {
+          // Rust: Pre-fetch known_matches from local storage
+          const knownMatchedEntities = await this.node.fetchEntitiesFromLocal(collection, args.selection);
+          const knownMatches = knownMatchedEntities.map(
+            (entity) => new KnownEntity(entity.id(), entity.head()),
+          );
+
           // Divergence: Selection stored as opaque bytes in wire format;
           // for local-process connector, we pass the Selection object directly [E18]
           const response = await this.node.request(
@@ -750,7 +767,7 @@ export class NodeAndContext implements TContext {
             new NodeRequestBody('Fetch', {
               collection,
               selection: args.selection as unknown as Uint8Array,
-              knownMatches: [],
+              knownMatches,
             }),
           );
           if (response.is('Fetch')) {

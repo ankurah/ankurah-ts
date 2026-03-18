@@ -42,6 +42,11 @@ export class MemoryStorageEngine implements StorageEngine {
     this.collections.clear();
     return hadData;
   }
+
+  /** List all collection names in the storage engine (Rust: SledStorageEngine::list_collections). */
+  listCollections(): string[] {
+    return Array.from(this.collections.keys()).sort();
+  }
 }
 
 // ---------------------------------------------------------------------------
