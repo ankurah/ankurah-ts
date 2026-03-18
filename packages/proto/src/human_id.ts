@@ -3,7 +3,7 @@
 // Human-readable identifier generation from byte arrays.
 // Uses a fixed 256-word dictionary (matching Rust WORDLIST).
 
-const WORDLIST: readonly string[] = [
+export const WORDLIST: readonly string[] = [
   'ack', 'alabama', 'alanine', 'alaska', 'alpha', 'angel', 'apart', 'april',
   'arizona', 'arkansas', 'artist', 'asparagus', 'aspen', 'august', 'autumn',
   'avocado', 'bacon', 'bakerloo', 'batman', 'beer', 'berlin', 'beryllium',

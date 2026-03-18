@@ -3,9 +3,9 @@
 
 import type { Signal } from '../signal/index.ts';
 
-// Re-export submodules
+// Rust: mod callback_observer;
 // Rust: pub use callback_observer::*;
-export { } from './callback_observer.ts';
+export { CallbackObserver } from './callback_observer.ts';
 
 // Divergence: Rust ObserverBounds trait (Send + Sync gating for multithread feature)
 // is skipped entirely — JS is single-threaded [E8].

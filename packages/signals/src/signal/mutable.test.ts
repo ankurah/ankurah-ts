@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/signals/src/signal/mutable.rs
+// TS-ONLY: Additional tests for Mut<T> (no inline tests in Rust mutable.rs)
 
 import { describe, test, expect } from 'bun:test';
 import { Mut } from './mutable.ts';

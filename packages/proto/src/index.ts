@@ -24,5 +24,8 @@ export * from './update';
 // ── TS-only modules ──
 
 export * from './codec';
+
+// Divergence: human_id and sys are `pub mod` in Rust (accessible as proto::human_id::humanize etc)
+// but NOT `pub use` re-exported from the crate root. TS re-exports for convenience. [E4]
 export * from './human_id';
 export * from './sys';

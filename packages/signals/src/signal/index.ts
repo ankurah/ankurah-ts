@@ -5,12 +5,13 @@ import { Drop } from '@ankurah/base';
 import { BroadcastId, type TListenerGuard } from '../broadcast.ts';
 
 // Re-export submodules
+// Rust: pub mod calculated; pub mod map; pub mod memo; pub mod mutable; pub mod read;
 // Rust: pub use calculated::*; pub use map::*; pub use memo::*; pub use mutable::*; pub use read::*;
-export { Mut } from './mutable.ts';
-export { Read } from './read.ts';
 export { Calculated } from './calculated.ts';
 export { Map } from './map.ts';
 export { Memo } from './memo.ts';
+export { Mut } from './mutable.ts';
+export { Read } from './read.ts';
 
 /**
  * Type alias for listener functions.
@@ -46,6 +47,9 @@ export class ListenerGuard extends Drop {
     }
   }
 }
+
+// Rust: impl<T: 'static> From<broadcast::ListenerGuard<T>> for ListenerGuard
+// Divergence: TS constructor serves the same purpose as From impl [E4]
 
 /**
  * Core trait for signals - provides observation capability without regard to a payload value.
@@ -95,3 +99,6 @@ export interface Peek<T> {
 export interface GetReadCell<T> {
   getReadCell(): import('../value.ts').ReadValueCell<T>;
 }
+
+// Rust: impl<T> Signal for &T where T: Signal
+// Divergence: Not needed in TS — JS references are implicit [E8]

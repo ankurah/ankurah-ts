@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/ankql/src/grammar.rs
+// MIRRORS: ankurah/ankql/src/grammar.rs (tests module)
 // Tests the hand-written parser output for cases that the pest grammar tests covered.
 // Divergence: Rust tests use parses_to! macro on pest token stream;
 // TS tests verify the parsed AST from the recursive descent parser [E6].

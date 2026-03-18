@@ -209,8 +209,8 @@ export class EntityId extends Struct {
 }
 
 // ─── EventId ────────────────────────────────────────────────────────────────
-// Note: EventId is defined in data.rs in Rust but co-located here in TS
-// to share base64/ULID utilities and avoid circular dependencies.
+// Divergence: EventId is defined in data.rs in Rust but co-located here in TS
+// to share base64/ULID utilities and avoid circular dependencies [E4]
 
 export class EventId extends Struct {
   readonly bytes: Uint8Array;
@@ -299,8 +299,10 @@ export class EventId extends Struct {
 }
 
 // ─── ULID wrapper IDs (derived serde) ───────────────────────────────────────
-// TransactionId, RequestId, QueryId, UpdateId all wrap a Ulid and use derived
-// serde, which serializes the Ulid as a 26-char Crockford Base32 string.
+// Divergence: TransactionId (transaction.rs), RequestId (request.rs), QueryId (subscription.rs),
+// UpdateId (update.rs) are each in separate Rust files but co-located here in id.ts
+// to share ULID utilities. Re-exported from their respective TS module files. [E4]
+// serde: Ulid serialized as 26-char Crockford Base32 string.
 // In bincode: u64 length (26) + 26 ASCII bytes = 34 bytes total.
 
 export class TransactionId extends Struct {

@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/signals/src/signal/calculated.rs
+// MIRRORS: ankurah/signals/src/signal/calculated.rs (tests module)
 import { describe, test, expect } from 'bun:test';
 import { Mut } from './mutable.ts';
 import { Calculated } from './calculated.ts';

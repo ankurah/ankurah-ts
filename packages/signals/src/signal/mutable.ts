@@ -1,5 +1,6 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
 
+// Rust: use std::sync::Arc;
 import { Broadcast, type BroadcastId, type BroadcastListener } from '../broadcast.ts';
 import { CurrentObserver } from '../context.ts';
 import { ValueCell, type ReadValueCell } from '../value.ts';
@@ -17,6 +18,8 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
   private valueCell: ValueCell<T>;
   private broadcast: Broadcast<void>;
 
+  // impl<T: 'static> Mut<T>
+
   constructor(value: T) {
     this.valueCell = new ValueCell(value);
     this.broadcast = new Broadcast<void>();
@@ -29,21 +32,34 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
     this.broadcast.send(undefined as void);
   }
 
-  /** Get the current value, tracked by the current context */
-  get(): T {
-    CurrentObserver.track(this);
-    return this.valueCell.getValue();
+  /** Returns a read-only version of this signal */
+  read(): Read<T> {
+    return new Read(this.valueCell, this.broadcast);
   }
+
+  // impl<T: Clone> Mut<T>
 
   /** Returns a clone of the current value - not tracked by the current context */
   value(): T {
     return this.valueCell.getValue();
   }
 
+  // impl Get<T> for Mut<T>
+
+  /** Get the current value, tracked by the current context */
+  get(): T {
+    CurrentObserver.track(this);
+    return this.valueCell.getValue();
+  }
+
+  // impl Peek<T> for Mut<T>
+
   /** Get the current value without tracking */
   peek(): T {
     return this.valueCell.getValue();
   }
+
+  // impl With<T> for Mut<T>
 
   /** Call a function with a reference to the current value (tracked by CurrentObserver) */
   with<R>(f: (value: T) => R): R {
@@ -51,15 +67,14 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
     return this.valueCell.with(f);
   }
 
+  // impl GetReadCell<T> for Mut<T>
+
   /** Get the read-only cell for this signal's value */
   getReadCell(): ReadValueCell<T> {
     return this.valueCell.readValue();
   }
 
-  /** Returns a read-only version of this signal */
-  read(): Read<T> {
-    return new Read(this.valueCell, this.broadcast);
-  }
+  // impl Signal for Mut<T>
 
   /** Listen to changes to this signal with a listener function */
   listen(listener: Listener): ListenerGuard {
@@ -75,6 +90,8 @@ export class Mut<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>,
   broadcastId(): BroadcastId {
     return this.broadcast.id();
   }
+
+  // impl Subscribe<T> for Mut<T>
 
   /**
    * Subscribe to changes with a listener that receives the new value.

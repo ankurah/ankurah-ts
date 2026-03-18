@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
 import { Struct, Drop, Arc, Weak } from '@ankurah/base';
 
-/** A unique identifier for a broadcast that cannot be forged or extracted.
- * Can only be created by a Broadcast and used for deduplication/comparison. */
+/// A unique identifier for a broadcast that cannot be forged or extracted.
+/// Can only be created by a Broadcast and used for deduplication/comparison.
 // Divergence: Rust uses pointer-based usize ID; TS uses auto-incrementing counter [E8]
 let nextBroadcastIdCounter = 0;
 
@@ -15,14 +15,17 @@ export class BroadcastId extends Struct {
     this.inner = id ?? nextBroadcastIdCounter++;
   }
 
+  // impl Into<usize> for BroadcastId
   toNumber(): number {
     return this.inner;
   }
 
+  // impl PartialEq
   equals(other: BroadcastId): boolean {
     return this.inner === other.inner;
   }
 
+  // impl Display for BroadcastId
   toString(): string {
     return `${this.inner}`;
   }
@@ -41,82 +44,8 @@ export type BroadcastListener<T = void> =
   | { type: 'NotifyOnly'; callback: () => void };
 
 // Trait for types that can be converted into broadcast listeners.
-// In TS, implemented as overloaded listen() methods on BroadcastRef instead.
-
-/** Trait for abstractly representing any ListenerGuard<T> */
-export interface TListenerGuard {
-  broadcastId(): BroadcastId;
-}
-
-// Internal shared state for a Broadcast.
-class Inner<T> extends Struct {
-  listeners: Map<number, BroadcastListener<T>> = new Map();
-  nextId: number = 0;
-}
-
-/** A subscription handle that can be used to unsubscribe from notifications.
- * impl Drop -> extends Drop [E11] */
-export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
-  private inner: Weak<Inner<T>>;
-  private id: number;
-  private _broadcastId: BroadcastId;
-
-  /** @internal */
-  constructor(inner: Weak<Inner<T>>, id: number, broadcastId: BroadcastId) {
-    super();
-    this.inner = inner;
-    this.id = id;
-    this._broadcastId = broadcastId;
-  }
-
-  /** Get the broadcast ID that this guard is subscribed to */
-  broadcastId(): BroadcastId {
-    // A ListenerGuard does not keep the broadcast alive
-    // but the address is reserved until all Arc/Weak references are dropped
-    // Given that we are using the address as the ID, this is safe.
-    // We don't actually care if the broadcast is alive. The point is to
-    // provide a unique id for removing the correct listener.
-    return this._broadcastId;
-  }
-
-  /** Automatically unsubscribes when the subscription handle is dropped. */
-  drop(): void {
-    const upgraded = this.inner.upgrade();
-    if (upgraded !== null) {
-      upgraded.value.listeners.delete(this.id);
-      upgraded.drop();
-    }
-    this.inner.drop();
-  }
-}
-
-/** A listen-only reference to a broadcast */
-// Divergence: Rust Ref<'a, T> uses a borrow of Broadcast; TS holds Arc clone [E8]
-export class BroadcastRef<T = void> extends Struct {
-  /** @internal */
-  private arc: Arc<Inner<T>>;
-  /** @internal */
-  private _broadcastId: BroadcastId;
-
-  /** @internal */
-  constructor(arc: Arc<Inner<T>>, broadcastId: BroadcastId) {
-    super();
-    this.arc = arc;
-    this._broadcastId = broadcastId;
-  }
-
-  /** Subscribe to notifications from the associated sender. */
-  listen(listener: BroadcastListener<T>): ListenerGuard<T> {
-    const id = this.arc.value.nextId++;
-    this.arc.value.listeners.set(id, listener);
-    return new ListenerGuard(this.arc.downgrade(), id, this._broadcastId);
-  }
-
-  /** Get a unique identifier for this broadcast (for deduplication purposes) */
-  broadcastId(): BroadcastId {
-    return this._broadcastId;
-  }
-}
+// Divergence: Rust IntoBroadcastListener<T> trait with impls for Fn(T), BroadcastListener<T>,
+// Arc<dyn Fn(T)>, Arc<dyn Fn()>, Sender<T>; TS uses the discriminated union directly [E8]
 
 /** A broadcast sender that notifies multiple subscribers.
  * Uses synchronous function callbacks for immediate notification. */
@@ -180,3 +109,83 @@ export class Broadcast<T = void> extends Struct {
     return new BroadcastRef(this.arc.clone(), this._id);
   }
 }
+
+// Internal shared state for a Broadcast.
+// Divergence: Rust uses RwLock<HashMap<...>> + AtomicUsize; TS uses plain Map + number [E8]
+class Inner<T> extends Struct {
+  listeners: Map<number, BroadcastListener<T>> = new Map();
+  nextId: number = 0;
+}
+
+/** A listen-only reference to a broadcast */
+// Divergence: Rust Ref<'a, T> uses a borrow of Broadcast; TS holds Arc clone [E8]
+export class BroadcastRef<T = void> extends Struct {
+  /** @internal */
+  private arc: Arc<Inner<T>>;
+  /** @internal */
+  private _broadcastId: BroadcastId;
+
+  /** @internal */
+  constructor(arc: Arc<Inner<T>>, broadcastId: BroadcastId) {
+    super();
+    this.arc = arc;
+    this._broadcastId = broadcastId;
+  }
+
+  /** Subscribe to notifications from the associated sender. */
+  listen(listener: BroadcastListener<T>): ListenerGuard<T> {
+    const id = this.arc.value.nextId++;
+    this.arc.value.listeners.set(id, listener);
+    return new ListenerGuard(this.arc.downgrade(), id, this._broadcastId);
+  }
+
+  /** Get a unique identifier for this broadcast (for deduplication purposes) */
+  broadcastId(): BroadcastId {
+    return this._broadcastId;
+  }
+}
+
+/** Trait for abstractly representing any ListenerGuard<T> */
+export interface TListenerGuard {
+  broadcastId(): BroadcastId;
+}
+
+/** A subscription handle that can be used to unsubscribe from notifications.
+ * impl Drop -> extends Drop [E11] */
+export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
+  private inner: Weak<Inner<T>>;
+  private id: number;
+  private _broadcastId: BroadcastId;
+
+  /** @internal */
+  constructor(inner: Weak<Inner<T>>, id: number, broadcastId: BroadcastId) {
+    super();
+    this.inner = inner;
+    this.id = id;
+    this._broadcastId = broadcastId;
+  }
+
+  /** Get the broadcast ID that this guard is subscribed to */
+  broadcastId(): BroadcastId {
+    // A ListenerGuard does not keep the broadcast alive
+    // but the address is reserved until all Arc/Weak references are dropped
+    // Given that we are using the address as the ID, this is safe.
+    // We don't actually care if the broadcast is alive. The point is to
+    // provide a unique id for removing the correct listener.
+    return this._broadcastId;
+  }
+
+  /** Automatically unsubscribes when the subscription handle is dropped. */
+  drop(): void {
+    const upgraded = this.inner.upgrade();
+    if (upgraded !== null) {
+      upgraded.value.listeners.delete(this.id);
+      upgraded.drop();
+    }
+    this.inner.drop();
+  }
+}
+
+// IntoBroadcastListener implementations for various types
+// Divergence: Rust has impls for Fn(T), BroadcastListener<T>, Arc<dyn Fn(T)>,
+// Arc<dyn Fn()>, tokio Sender, std Sender; TS uses discriminated union directly [E8]

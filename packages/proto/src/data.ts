@@ -7,8 +7,8 @@ import { Clock } from './clock';
 import { CollectionId } from './collection';
 import { EntityId, EventId } from './id';
 
-// Note: EventId is defined in data.rs in Rust but lives in id.ts in the TS port.
-// It is imported above.
+// Divergence: EventId is defined in data.rs in Rust but co-located in id.ts in TS
+// to share base64/ULID utilities and avoid circular dependencies [E4]
 
 export class Event extends Struct {
   readonly collection: CollectionId;
@@ -383,6 +383,16 @@ export class StateBuffers extends Struct {
 
 export function attestedEventCollection(attested: Attested<Event>): CollectionId {
   return attested.payload.collection;
+}
+
+// impl From<Event> for Attested<Event>
+export function attestedEventFromEvent(event: Event): Attested<Event> {
+  return new Attested(event, AttestationSet.default());
+}
+
+// impl From<EntityState> for Attested<EntityState>
+export function attestedEntityStateFromEntityState(entityState: EntityState): Attested<EntityState> {
+  return new Attested(entityState, AttestationSet.default());
 }
 
 export function attestedEventFromParts(entityId: EntityId, collection: CollectionId, frag: EventFragment): Attested<Event> {

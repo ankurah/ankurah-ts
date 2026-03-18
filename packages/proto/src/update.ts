@@ -7,6 +7,8 @@ import { CollectionId } from './collection';
 import { Attested } from './auth';
 import { EntityState, EventFragment, StateFragment, attestedEntityStateFromParts } from './data';
 
+// Divergence: UpdateId struct is defined in id.ts (co-located with other ULID IDs)
+// rather than here. Re-exported to maintain the Rust module mapping. [E4]
 export { UpdateId };
 
 // ─── NodeUpdateBody ──────────────────────────────────────────────────────────

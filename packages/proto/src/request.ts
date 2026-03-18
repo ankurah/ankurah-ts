@@ -12,7 +12,8 @@ import {
   EntityId, EventId, RequestId, TransactionId, QueryId,
 } from './id';
 
-// Note: RequestId is defined in request.rs in Rust but lives in id.ts in the TS port.
+// Divergence: RequestId struct is defined in id.ts (co-located with other ULID IDs)
+// rather than here. Imported from id.ts above. [E4]
 
 // ─── NodeRequest ────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ export class KnownEntity extends Struct {
 }
 
 // ─── EntityIdRange ──────────────────────────────────────────────────────────
+// Divergence: EntityIdRange not in Rust — TS-ahead type for compact entity unsubscribe batches [E4]
 
 /// Inclusive entity-id span used for compact unsubscribe batches.
 export class EntityIdRange extends Struct {
@@ -317,6 +319,8 @@ export class EntityDelta extends Struct {
 // Divergence: selection field stored as Uint8Array (raw bincode bytes) until @ankurah/ankql
 // provides Selection.encode/decode. See ast::Selection in ankql.
 
+// Divergence: SubscribeEntity (variant 2) not in Rust — TS-ahead variant for entity-level subscribe.
+// This shifts GetEvents/Fetch/SubscribeQuery variant numbers vs Rust wire format. [E4]
 type NodeRequestBodyV = {
   CommitTransaction: { id: TransactionId; events: Attested<Event>[] };
   Get: { collection: CollectionId; ids: EntityId[] };
@@ -474,6 +478,8 @@ export class NodeResponse extends Struct {
 
 // ─── NodeResponseBody ───────────────────────────────────────────────────────
 
+// Divergence: EntitiesSubscribed (variant 3) not in Rust — TS-ahead variant for entity-level subscribe response.
+// This shifts GetEvents/QuerySubscribed/Success/Error variant numbers vs Rust wire format. [E4]
 type NodeResponseBodyV = {
   CommitComplete: { id: TransactionId };
   Fetch: { deltas: EntityDelta[] };

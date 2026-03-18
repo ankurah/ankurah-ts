@@ -1,12 +1,9 @@
 // MIRRORS: ankurah/signals/src/context.rs
+// Rust: use crate::{Observer, Signal};
 import type { Signal } from './signal/index.ts';
 
-/**
- * Observer interface - mirrors Rust Observer trait from observer.rs.
- * Defined here locally to avoid circular dependency with observer/index.ts
- * which is still a stub. When observer is fully ported, this should be
- * imported from there instead.
- */
+// Divergence: Rust imports Observer from crate::Observer; TS defines a local
+// interface to avoid circular dependency with observer/index.ts [E8]
 export interface Observer {
   /** Observe a signal - implement to handle subscriptions */
   observe(signal: Signal): void;

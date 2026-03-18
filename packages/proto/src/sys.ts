@@ -34,7 +34,7 @@ export class Item extends Enum<ItemV> {
       },
       Other: () => {
         // Other is never explicitly encoded (it only appears during decoding of unknown variants)
-        // Divergence: #[serde(other)] is decode-only in Rust; encoding throws [E18]
+        // Divergence: #[serde(other)] is decode-only in Rust; encoding Other throws
         throw new Error('Cannot encode sys::Item::Other — it is a decode-only catch-all');
       },
     });

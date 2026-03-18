@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/ankql/src/selection/sql.rs
+// MIRRORS: ankurah/ankql/src/selection/sql.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
 import { generateSelectionSql } from './sql.ts';

@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/ankql/src/parser.rs
+// MIRRORS: ankurah/ankql/src/parser.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
 import { parseSelection } from './parser.ts';

@@ -474,6 +474,13 @@ export function exprFromBool(b: boolean): Expr {
   return Expr.Literal(Literal.Bool(b));
 }
 
+export function exprFromLiteral(lit: Literal): Expr {
+  return Expr.Literal(lit);
+}
+
+// Divergence: Rust From<Vec<T>>, From<[T;N]>, From<&[T]>, From<&[T;N]> for Expr create ExprLists.
+// In TS, use Expr.ExprList(items) directly; generic From trait pattern not applicable [E4].
+
 // ── Expr to Predicate conversion (mirrors Rust TryFrom<Expr> for Predicate) ──
 
 export function exprToPredicate(expr: Expr): Predicate {
@@ -493,6 +500,9 @@ export function exprToPredicate(expr: Expr): Predicate {
 }
 
 // ── Display helpers ──────────────────────────────────────────────────
+
+// Divergence: Rust Display impl for Predicate calls generate_selection_sql; TS uses a local
+// predicateToString to avoid circular imports between ast.ts and selection/sql.ts [E4]
 
 /** A minimal predicate-to-string that does NOT depend on selection/sql to avoid circular imports. */
 function predicateToString(pred: Predicate): string {

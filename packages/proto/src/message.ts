@@ -9,6 +9,7 @@ import { Presence } from './peering';
 import { NodeRequest, NodeResponse, EntityIdRange } from './request';
 import { NodeUpdate, NodeUpdateAck } from './update';
 
+// Divergence: EntityIdRange re-exported here for convenience — not present in Rust message.rs [E4]
 export { EntityIdRange };
 
 // ─── Message ────────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ type NodeMessageV = {
   Update: { update: NodeUpdate };
   UpdateAck: { updateAck: NodeUpdateAck };
   UnsubscribeQuery: { from: EntityId; queryId: QueryId };
+  // Divergence: UnsubscribeEntities not in Rust — TS-ahead variant for entity-level unsubscribe [E4]
   UnsubscribeEntities: { from: EntityId; collection: CollectionId; ranges: EntityIdRange[] };
 };
 

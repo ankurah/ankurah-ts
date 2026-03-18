@@ -8,14 +8,14 @@
 
 | # | Rust file | TS target | Status |
 |---|-----------|-----------|--------|
-| 1 | ankql/src/ast.rs | packages/ankql/src/ast.ts | TODO |
-| 2 | ankql/src/conversion.rs | packages/ankql/src/conversion.ts | TODO |
-| 3 | ankql/src/error.rs | packages/ankql/src/error.ts | TODO |
-| 4 | ankql/src/grammar.rs | packages/ankql/src/grammar.ts | TODO |
-| 5 | ankql/src/lib.rs | packages/ankql/src/index.ts | TODO |
-| 6 | ankql/src/parser.rs | packages/ankql/src/parser.ts | TODO |
-| 7 | ankql/src/selection.rs | packages/ankql/src/selection/index.ts | TODO |
-| 8 | ankql/src/selection/sql.rs | packages/ankql/src/selection/sql.ts | TODO |
+| 1 | ankql/src/ast.rs | packages/ankql/src/ast.ts | DONE |
+| 2 | ankql/src/conversion.rs | packages/ankql/src/conversion.ts | DONE |
+| 3 | ankql/src/error.rs | packages/ankql/src/error.ts | DONE |
+| 4 | ankql/src/grammar.rs | packages/ankql/src/grammar.ts | DONE |
+| 5 | ankql/src/lib.rs | packages/ankql/src/index.ts | DONE |
+| 6 | ankql/src/parser.rs | packages/ankql/src/parser.ts | DONE |
+| 7 | ankql/src/selection.rs | packages/ankql/src/selection/index.ts | DONE |
+| 8 | ankql/src/selection/sql.rs | packages/ankql/src/selection/sql.ts | DONE |
 
 ## Unit Tests
 
@@ -23,80 +23,80 @@
 
 | # | Rust test function | Status |
 |---|-------------------|--------|
-| 1 | test_single_comparison_null_handling | TODO |
-| 2 | nested_predicate_null_handling | TODO |
-| 3 | test_populate_single_placeholder | TODO |
-| 4 | test_populate_multiple_placeholders | TODO |
-| 5 | test_populate_in_clause | TODO |
-| 6 | test_populate_mixed_types | TODO |
-| 7 | test_populate_too_few_values | TODO |
-| 8 | test_populate_too_many_values | TODO |
-| 9 | test_populate_no_placeholders | TODO |
+| 1 | test_single_comparison_null_handling | DONE |
+| 2 | nested_predicate_null_handling | DONE |
+| 3 | test_populate_single_placeholder | DONE |
+| 4 | test_populate_multiple_placeholders | DONE |
+| 5 | test_populate_in_clause | DONE |
+| 6 | test_populate_mixed_types | DONE |
+| 7 | test_populate_too_few_values | DONE |
+| 8 | test_populate_too_many_values | DONE |
+| 9 | test_populate_no_placeholders | DONE |
 
 ### ankql/src/grammar.rs (10 tests)
 
 | # | Rust test function | Status |
 |---|-------------------|--------|
-| 1 | test_literal_comparison | TODO |
-| 2 | test_path_comparison | TODO |
-| 3 | test_boolean_expression | TODO |
-| 4 | test_boolean_expression_parenthetical | TODO |
-| 5 | test_order_by_clause_basic | TODO |
-| 6 | test_order_by_clause_with_direction | TODO |
-| 7 | test_limit_clause | TODO |
-| 8 | test_order_by_and_limit | TODO |
-| 9 | test_order_by_multiple_items | TODO |
-| 10 | test_pathological_cases | TODO |
+| 1 | test_literal_comparison | DONE |
+| 2 | test_path_comparison | DONE |
+| 3 | test_boolean_expression | DONE |
+| 4 | test_boolean_expression_parenthetical | DONE |
+| 5 | test_order_by_clause_basic | DONE |
+| 6 | test_order_by_clause_with_direction | DONE |
+| 7 | test_limit_clause | DONE |
+| 8 | test_order_by_and_limit | DONE |
+| 9 | test_order_by_multiple_items | DONE |
+| 10 | test_pathological_cases | DONE |
 
 ### ankql/src/parser.rs (26 tests)
 
 | # | Rust test function | Status |
 |---|-------------------|--------|
-| 1 | test_parse_selection_status_active | TODO |
-| 2 | test_parse_selection_user_and_status | TODO |
-| 3 | test_parse_selection_user_or_and_status | TODO |
-| 4 | test_parse_selection_status_is_null | TODO |
-| 5 | test_parse_selection_status_is_not_null | TODO |
-| 6 | unary_not_parenthesized | TODO |
-| 7 | unary_not_unparenthesized | TODO |
-| 8 | test_parse_empty_string | TODO |
-| 9 | test_parse_true_literal | TODO |
-| 10 | test_parse_selection_in_clause | TODO |
-| 11 | test_parse_selection_in_clause_numbers | TODO |
-| 12 | test_comparison_to_true | TODO |
-| 13 | test_comparison_to_false | TODO |
-| 14 | test_comparison_to_left_operand_boolean | TODO |
-| 15 | test_placeholders | TODO |
-| 16 | test_boolean_literals | TODO |
-| 17 | test_order_by_basic | TODO |
-| 18 | test_order_by_with_direction | TODO |
-| 19 | test_order_by_dotted_identifier_not_supported | TODO |
-| 20 | test_limit_basic | TODO |
-| 21 | test_order_by_and_limit | TODO |
-| 22 | test_limit_only | TODO |
-| 23 | test_order_by_only | TODO |
-| 24 | test_order_by_multiple_items | TODO |
-| 25 | test_pathological_keyword_cases | TODO |
-| 26 | test_raw_parsing | TODO |
+| 1 | test_parse_selection_status_active | DONE |
+| 2 | test_parse_selection_user_and_status | DONE |
+| 3 | test_parse_selection_user_or_and_status | DONE |
+| 4 | test_parse_selection_status_is_null | DONE |
+| 5 | test_parse_selection_status_is_not_null | DONE |
+| 6 | unary_not_parenthesized | DONE |
+| 7 | unary_not_unparenthesized | DONE |
+| 8 | test_parse_empty_string | DONE |
+| 9 | test_parse_true_literal | DONE |
+| 10 | test_parse_selection_in_clause | DONE |
+| 11 | test_parse_selection_in_clause_numbers | DONE |
+| 12 | test_comparison_to_true | DONE |
+| 13 | test_comparison_to_false | DONE |
+| 14 | test_comparison_to_left_operand_boolean | DONE |
+| 15 | test_placeholders | DONE |
+| 16 | test_boolean_literals | DONE |
+| 17 | test_order_by_basic | DONE |
+| 18 | test_order_by_with_direction | DONE |
+| 19 | test_order_by_dotted_identifier_not_supported | DONE |
+| 20 | test_limit_basic | DONE |
+| 21 | test_order_by_and_limit | DONE |
+| 22 | test_limit_only | DONE |
+| 23 | test_order_by_only | DONE |
+| 24 | test_order_by_multiple_items | DONE |
+| 25 | test_pathological_keyword_cases | DONE |
+| 26 | test_raw_parsing | DONE |
 
 ### ankql/src/selection/sql.rs (14 tests)
 
 | # | Rust test function | Status |
 |---|-------------------|--------|
-| 1 | test_simple_equality | TODO |
-| 2 | test_and_condition | TODO |
-| 3 | test_complex_condition | TODO |
-| 4 | test_including_collection_identifier | TODO |
-| 5 | test_in_operator | TODO |
-| 6 | test_placeholder_with_none_count | TODO |
-| 7 | test_placeholder_with_exact_count | TODO |
-| 8 | test_placeholder_count_mismatch_too_few | TODO |
-| 9 | test_placeholder_count_mismatch_too_many | TODO |
-| 10 | test_placeholder_in_lists | TODO |
-| 11 | test_placeholder_with_zero_count | TODO |
-| 12 | test_string_escaping | TODO |
-| 13 | test_null_byte_handling | TODO |
-| 14 | test_placeholder_with_zero_count_but_has_placeholder | TODO |
+| 1 | test_simple_equality | DONE |
+| 2 | test_and_condition | DONE |
+| 3 | test_complex_condition | DONE |
+| 4 | test_including_collection_identifier | DONE |
+| 5 | test_in_operator | DONE |
+| 6 | test_placeholder_with_none_count | DONE |
+| 7 | test_placeholder_with_exact_count | DONE |
+| 8 | test_placeholder_count_mismatch_too_few | DONE |
+| 9 | test_placeholder_count_mismatch_too_many | DONE |
+| 10 | test_placeholder_in_lists | DONE |
+| 11 | test_placeholder_with_zero_count | DONE |
+| 12 | test_string_escaping | DONE |
+| 13 | test_null_byte_handling | DONE |
+| 14 | test_placeholder_with_zero_count_but_has_placeholder | DONE |
 
 ## Summary
 

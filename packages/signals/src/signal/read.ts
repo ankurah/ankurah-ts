@@ -1,5 +1,6 @@
 // MIRRORS: ankurah/signals/src/signal/read.rs
 
+// Rust: use std::sync::Arc;
 import { Broadcast, type BroadcastId, type BroadcastListener } from '../broadcast.ts';
 import { CurrentObserver } from '../context.ts';
 import { ValueCell, type ReadValueCell } from '../value.ts';
@@ -8,12 +9,7 @@ import { SubscriptionGuard, type Subscribe } from '../porcelain/subscribe.ts';
 import { Map } from './map.ts';
 import { Memo } from './memo.ts';
 
-/**
- * A read-only signal.
- *
- * Equivalent to Rust's `Read<T>`.
- * Created from a Mut<T> via .read().
- */
+/** Read-only signal */
 export class Read<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>, Subscribe<T> {
   /** @internal - shares storage with the parent Mut<T> */
   private valueCell: ValueCell<T>;
@@ -26,10 +22,14 @@ export class Read<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>
     this.broadcast = broadcast;
   }
 
+  // impl<T: Clone> Read<T>
+
   /** Returns a clone of the current value - not tracked by the current context */
   value(): T {
     return this.valueCell.getValue();
   }
+
+  // impl<T> Read<T>
 
   /** Create a mapped signal that transforms this signal's values on-demand */
   map<Output>(transform: (input: T) => Output): Map<T, Output> {
@@ -41,16 +41,22 @@ export class Read<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>
     return new Memo<T, Output>(this, transform);
   }
 
+  // impl Get<T> for Read<T>
+
   /** Get the current value, tracked by the current context */
   get(): T {
     CurrentObserver.track(this);
     return this.valueCell.getValue();
   }
 
+  // impl Peek<T> for Read<T>
+
   /** Get the current value without tracking */
   peek(): T {
     return this.valueCell.getValue();
   }
+
+  // impl With<T> for Read<T>
 
   /** Call a function with a reference to the current value (tracked by CurrentObserver) */
   with<R>(f: (value: T) => R): R {
@@ -58,27 +64,14 @@ export class Read<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>
     return this.valueCell.with(f);
   }
 
+  // impl GetReadCell<T> for Read<T>
+
   /** Get the read-only cell for this signal's value */
   getReadCell(): ReadValueCell<T> {
     return this.valueCell.readValue();
   }
 
-  /**
-   * Equality comparison - tracks signals used in the comparison.
-   * Mirrors Rust: impl<T: PartialEq> PartialEq for Read<T>
-   */
-  equals(other: Read<T>): boolean {
-    // Short-circuit if comparing to self
-    if (this === other) {
-      return true;
-    }
-    return this.with((selfVal) => other.with((otherVal) => selfVal === otherVal));
-  }
-
-  /** Display the current value as a string (tracked by CurrentObserver) */
-  toString(): string {
-    return this.with((v) => String(v));
-  }
+  // impl Signal for Read<T>
 
   /** Listen to changes to this signal with a listener function */
   listen(listener: Listener): ListenerGuard {
@@ -94,6 +87,29 @@ export class Read<T> implements Signal, Get<T>, Peek<T>, With<T>, GetReadCell<T>
   broadcastId(): BroadcastId {
     return this.broadcast.id();
   }
+
+  // impl PartialEq for Read<T>
+
+  /**
+   * Equality comparison - tracks signals used in the comparison.
+   * Mirrors Rust: impl<T: PartialEq> PartialEq for Read<T>
+   */
+  equals(other: Read<T>): boolean {
+    // Short-circuit if comparing to self to avoid deadlock from nested with calls
+    if (this === other) {
+      return true;
+    }
+    return this.with((selfVal) => other.with((otherVal) => selfVal === otherVal));
+  }
+
+  // impl Display for Read<T>
+
+  /** Display the current value as a string (tracked by CurrentObserver) */
+  toString(): string {
+    return this.with((v) => String(v));
+  }
+
+  // impl Subscribe<T> for Read<T>
 
   /**
    * Subscribe to changes with a listener that receives the new value.

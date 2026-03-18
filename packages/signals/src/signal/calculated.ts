@@ -152,19 +152,6 @@ export class Calculated<T> extends Struct implements Signal, Get<T>, Peek<T>, Wi
     return new Calculated<T>(this.inner.clone());
   }
 
-  // Signal trait implementation
-
-  /** Listen to changes to this signal with a listener function */
-  listen(listener: Listener): ListenerGuard {
-    const broadcastListener: BroadcastListener<void> = { type: 'NotifyOnly', callback: listener };
-    return new ListenerGuard(this.inner.value.broadcast.reference().listen(broadcastListener));
-  }
-
-  /** Get the broadcast identifier for this signal */
-  broadcastId(): BroadcastId {
-    return this.inner.value.broadcast.id();
-  }
-
   // Get trait implementation
 
   /** Get the current value (tracked by CurrentObserver) */
@@ -203,6 +190,21 @@ export class Calculated<T> extends Struct implements Signal, Get<T>, Peek<T>, Wi
   getReadCell(): ReadValueCell<T | null> {
     return this.inner.value.value.readvalue();
   }
+
+  // Signal trait implementation
+
+  /** Listen to changes to this signal with a listener function */
+  listen(listener: Listener): ListenerGuard {
+    const broadcastListener: BroadcastListener<void> = { type: 'NotifyOnly', callback: listener };
+    return new ListenerGuard(this.inner.value.broadcast.reference().listen(broadcastListener));
+  }
+
+  /** Get the broadcast identifier for this signal */
+  broadcastId(): BroadcastId {
+    return this.inner.value.broadcast.id();
+  }
+
+  // Observer impl for Arc<Inner<T>> is in InnerObserver class above [E4]
 
   // Subscribe trait implementation
 

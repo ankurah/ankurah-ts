@@ -1,4 +1,4 @@
-// MIRRORS: ankurah/signals/src/signal/read.rs
+// TS-ONLY: Additional tests for Read<T> (no inline tests in Rust read.rs)
 
 import { describe, test, expect } from 'bun:test';
 import { Mut } from './mutable.ts';

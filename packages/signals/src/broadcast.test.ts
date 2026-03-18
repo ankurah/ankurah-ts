@@ -1,34 +1,17 @@
-// MIRRORS: ankurah/signals/src/broadcast.rs
+// MIRRORS: ankurah/signals/src/broadcast.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
 import { Broadcast, BroadcastId } from './broadcast.ts';
+import { Mut } from './signal/mutable.ts';
 
-describe('BroadcastId', () => {
-  test('auto-incrementing IDs are unique', () => {
-    const id1 = new BroadcastId();
-    const id2 = new BroadcastId();
-    expect(id1.equals(id2)).toBe(false);
-    expect(id1.toNumber()).not.toBe(id2.toNumber());
-  });
-
-  test('equals returns true for same instance', () => {
-    const id = new BroadcastId();
-    expect(id.equals(id)).toBe(true);
-  });
-
-  test('toString returns string representation', () => {
-    const id = new BroadcastId();
-    expect(typeof id.toString()).toBe('string');
-  });
-});
-
-describe('Broadcast', () => {
-  test('multiple subscribers', () => {
+describe('Broadcast (unit tests from broadcast.rs)', () => {
+  // Rust: fn test_multiple_subscribers()
+  test('test_multiple_subscribers', () => {
     const sender = new Broadcast<void>();
     let counter = 0;
 
     // Subscribe two callbacks
-    const sub1 = sender.reference().listen({
+    const _sub1 = sender.reference().listen({
       type: 'Payload',
       callback: () => { counter += 1; },
     });
@@ -48,8 +31,81 @@ describe('Broadcast', () => {
     // Send again - only first callback should be called
     sender.send(undefined as void);
     expect(counter).toBe(12); // 11 + 1 (only sub1)
+  });
 
-    sub1.drop();
+  // Rust: fn test_channel_sender_subscriber()
+  // SKIP: tokio feature-gated test using tokio::sync::mpsc::unbounded_channel.
+  // TS has no channel equivalent; the Broadcast listener pattern covers this.
+
+  // Rust: fn test_subscribe_trait()
+  test('test_subscribe_trait', () => {
+    const signal = new Mut(42);
+    let callCount = 0;
+
+    const _subscription = signal.subscribe(() => {
+      callCount++;
+    });
+
+    signal.set(100);
+
+    // Should have been called once
+    expect(callCount).toBe(1);
+  });
+
+  // Rust: fn test_reentrant_subscription_during_send()
+  test('test_reentrant_subscription_during_send', () => {
+    const sender = new Broadcast<void>();
+    let counter = 0;
+
+    // Create a listener that will try to create new subscriptions during the callback
+    // This tests that our approach handles re-entrancy without deadlocks
+    const senderClone = sender.clone();
+    const _sub = sender.reference().listen({
+      type: 'NotifyOnly',
+      callback: () => {
+        counter += 1;
+
+        // Try to add a new subscription during the callback - should work without deadlock
+        const _tempSub = senderClone.reference().listen({
+          type: 'NotifyOnly',
+          callback: () => {
+            // This callback doesn't matter for the test
+          },
+        });
+        // temp_sub will be dropped here, which should also work without deadlock
+        _tempSub.drop();
+      },
+    });
+
+    // Send notification - this should work without deadlocks
+    sender.send(undefined as void);
+
+    // Verify the callback was called
+    expect(counter).toBe(1);
+
+    // Send again to verify the system is still working
+    sender.send(undefined as void);
+    expect(counter).toBe(2);
+  });
+});
+
+// Additional TS-only tests for broadcast coverage
+describe('Broadcast (additional TS tests)', () => {
+  test('BroadcastId auto-incrementing IDs are unique', () => {
+    const id1 = new BroadcastId();
+    const id2 = new BroadcastId();
+    expect(id1.equals(id2)).toBe(false);
+    expect(id1.toNumber()).not.toBe(id2.toNumber());
+  });
+
+  test('BroadcastId equals returns true for same instance', () => {
+    const id = new BroadcastId();
+    expect(id.equals(id)).toBe(true);
+  });
+
+  test('BroadcastId toString returns string representation', () => {
+    const id = new BroadcastId();
+    expect(typeof id.toString()).toBe('string');
   });
 
   test('notify-only listeners', () => {
@@ -100,37 +156,6 @@ describe('Broadcast', () => {
     });
     expect(guard.broadcastId().equals(sender.id())).toBe(true);
     guard.drop();
-  });
-
-  test('reentrant subscription during send', () => {
-    const sender = new Broadcast<void>();
-    let counter = 0;
-
-    // Create a listener that will try to create new subscriptions during the callback
-    // This tests that our approach handles re-entrancy without issues
-    const _sub = sender.reference().listen({
-      type: 'NotifyOnly',
-      callback: () => {
-        counter += 1;
-        // Try to add a new subscription during the callback
-        const tempSub = sender.reference().listen({
-          type: 'NotifyOnly',
-          callback: () => {
-            // This callback doesn't matter for the test
-          },
-        });
-        // temp_sub will be dropped here
-        tempSub.drop();
-      },
-    });
-
-    // Send notification - should work without issues
-    sender.send(undefined as void);
-    expect(counter).toBe(1);
-
-    // Send again to verify the system is still working
-    sender.send(undefined as void);
-    expect(counter).toBe(2);
   });
 
   test('drop is idempotent', () => {
