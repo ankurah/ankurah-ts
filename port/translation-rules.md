@@ -556,13 +556,7 @@ const knownMatches = localEntities.map(e => new KnownEntity(e.id(), e.head()));
 const response = await this.request(peerId, cdata, new NodeRequestBody('Fetch', { ... }));
 ```
 
-The line number refers to the Rust file declared in the MIRRORS annotation on line 1. No filename needed (it's always the MIRRORS target). No explanatory text (the code should speak for itself).
-
-For test files (which may mirror a different file than their source), use `// R:<file>:<line>`:
-```typescript
-// R:tests/tests/inter_node.rs:75
-test('server_edits_subscription', async () => {
-```
+`// R:NNN` always refers to the Rust file declared in the MIRRORS annotation on line 1. No filename — it's always deterministic from MIRRORS. No explanatory text — the code speaks for itself.
 
 ### G5. Test File Annotations
 
