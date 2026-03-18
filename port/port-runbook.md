@@ -104,6 +104,7 @@ When porting agents are dispatched to do the work:
 6. **No splitting or merging** — one Rust file maps to one TS file, period
 7. **Audit every line** — the goal is for the TS to match the Rust as closely as possible, right down to declaration order and use statement order. This will be closely reviewed.
 8. **Do not modify spec files** (anything in `port/`) — ever
+9. **NEVER skip or stub silently.** If the Rust runs a test automatically (e.g., via testcontainers), the TS must too. `test.skip()` and `throw Error('TODO')` are only acceptable for genuine platform gaps (e.g., IndexedDB needing a browser). If you are stuck or uncertain how to implement something, **STOP and ask the team lead for help.** Do not substitute empty arrays, hardcoded booleans, or type casts to make it compile.
 
 ## How to Update When Rust Changes
 
