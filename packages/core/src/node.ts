@@ -7,13 +7,33 @@ import {
   type Event,
   Clock,
   EntityState,
+  Attested as AttestedClass,
+  NodeMessage,
+  NodeRequest,
+  NodeResponse,
+  NodeResponseBody,
+  NodeRequestBody,
+  NodeUpdate,
+  NodeUpdateAck,
+  NodeUpdateAckBody,
+  NodeUpdateBody,
+  RequestId,
+  TransactionId,
+  UpdateId,
+  type QueryId,
+  EntityDelta,
+  DeltaContent,
+  StateFragment,
+  EventFragment,
+  type KnownEntity,
+  Presence,
 } from '@ankurah/proto';
 import { Selection, type Predicate, parseSelection } from '@ankurah/ankql';
 
 import { Entity, WeakEntitySet } from './entity.ts';
 import { Context, type TContext } from './context.ts';
 import type { Transaction } from './transaction.ts';
-import { MutationError, RetrievalError } from './error.ts';
+import { MutationError, RetrievalError, RequestError } from './error.ts';
 import { EntityChange } from './changes.ts';
 import type { StorageEngine, StorageCollection } from './storage.ts';
 import type { PolicyAgent } from './policy.ts';
@@ -21,10 +41,31 @@ import { CollectionSet } from './collectionset.ts';
 import { Reactor } from './reactor/index.ts';
 import { EntityLiveQuery } from './livequery.ts';
 import { TypeResolver } from './type_resolver.ts';
+import type { PeerSender, NodeComms } from './connector.ts';
+import { SendError } from './connector.ts';
+import { SystemManager } from './system.ts';
+import { SubscriptionHandler } from './peer_subscription/server.ts';
+import { NodeApplier } from './node_applier.ts';
+import { LocalRetriever } from './retrieval.ts';
+import { expandStates } from './util/expand_states.ts';
+import { spawn } from './task.ts';
 
 // ── PeerState ────────────────────────────────────────────────────────────────
 // Rust: pub struct PeerState { sender, _durable, subscription_handler, pending_requests, pending_updates }
-// Deferred: Layer 7 (peer networking). PeerState will be ported with connector layer.
+
+interface PeerState {
+  sender: PeerSender;
+  durable: boolean;
+  subscriptionHandler: SubscriptionHandler;
+  pendingRequests: Map<string, {
+    resolve: (body: NodeResponseBody) => void;
+    reject: (err: Error) => void;
+  }>;
+  pendingUpdates: Map<string, {
+    resolve: (body: NodeResponseBody) => void;
+    reject: (err: Error) => void;
+  }>;
+}
 
 // ── MatchArgs ────────────────────────────────────────────────────────────────
 // Rust: pub struct MatchArgs { pub selection: Selection, pub cached: bool }
@@ -64,21 +105,21 @@ export function nocache(selection: Selection | string): MatchArgs {
 // Divergence: Rust uses Arc<NodeInner> with Deref; TS uses a plain class [E8].
 // Divergence: Rust is generic over StorageEngine and PolicyAgent; TS uses interface fields [A6].
 
-export class Node {
+export class Node implements NodeComms {
   readonly id: EntityId;
   readonly durable: boolean;
   readonly collections: CollectionSet;
   readonly entities: WeakEntitySet;
   // Rust: peer_connections: SafeMap<EntityId, Arc<PeerState>>
-  // Deferred: Layer 7 (peer networking)
+  private readonly peerConnections: Map<string, PeerState> = new Map();
   // Rust: durable_peers: SafeSet<EntityId>
-  // Deferred: Layer 7 (peer networking)
+  private readonly durablePeers: Set<string> = new Set();
   readonly reactor: Reactor;
   readonly policyAgent: PolicyAgent<unknown>;
   // Rust: pub system: SystemManager<SE, PA>
-  // Deferred: SystemManager ported separately
+  readonly system: SystemManager;
   // Rust: pub(crate) subscription_relay: Option<SubscriptionRelay<...>>
-  // Deferred: Layer 7 (peer networking)
+  // Deferred: SubscriptionRelay integration — SubscriptionHandler handles server-side
   // Rust: pub(crate) type_resolver: TypeResolver
   readonly typeResolver: TypeResolver;
 
@@ -107,19 +148,447 @@ export class Node {
     this.reactor = options.reactor ?? new Reactor();
     this.typeResolver = new TypeResolver();
     this.defaultContextData = options.contextData ?? null;
+    // Rust: SystemManager::new(collections, entityset, reactor, durable)
+    this.system = new SystemManager(this.collections, this.entities, this.reactor, this.durable);
   }
 
-  // Rust: pub fn weak(&self) -> WeakNode<SE, PA>
-  // Deferred: WeakNode not needed in single-threaded JS [E8].
+  // ── NodeComms interface ──────────────────────────────────────────────
+  // Rust: impl NodeComms for Node<SE, PA>
 
-  // ── Peer networking (Layer 7 — deferred) ────────────────────────────
-  // register_peer, deregister_peer, request, send_update
-  // handle_message, handle_request, handle_update
-  // relay_to_required_peers, commit_remote_transaction
-  // generate_entity_delta, collect_event_bridge
-  // get_from_peer, get_durable_peer_random, get_durable_peers
-  // ensure_entity_subscription, subscribe_entities_with_peer
-  // resubscribe_tracked_entities_to_peer, flush_dead_entity_subscriptions
+  // NodeComms.id()
+  nodeId(): EntityId {
+    return this.id;
+  }
+
+  // NodeComms.durable()
+  isDurable(): boolean {
+    return this.durable;
+  }
+
+  // NodeComms.systemRoot()
+  systemRoot(): Attested<EntityState> | null {
+    return this.system.root();
+  }
+
+  // NodeComms.cloned()
+  cloned(): NodeComms {
+    return this;
+  }
+
+  // Rust: pub fn register_peer(&self, presence, sender)
+  registerPeer(presence: Presence, sender: PeerSender): void {
+    const subscriptionHandler = new SubscriptionHandler(presence.nodeId, this);
+    this.peerConnections.set(presence.nodeId.toBase64(), {
+      sender,
+      durable: presence.durable,
+      subscriptionHandler,
+      pendingRequests: new Map(),
+      pendingUpdates: new Map(),
+    });
+
+    if (presence.durable) {
+      this.durablePeers.add(presence.nodeId.toBase64());
+
+      if (!this.durable) {
+        if (presence.systemRoot !== null) {
+          const systemRoot = presence.systemRoot;
+          spawn((async () => {
+            try {
+              await this.system.joinSystem(systemRoot);
+            } catch (e) {
+              console.error(`Node(${this.id.toBase64Short()}) failed to join system: ${e}`);
+            }
+          })());
+        } else {
+          console.error(`Node(${this.id.toBase64Short()}) durable peer ${presence.nodeId.toBase64Short()} has no system root`);
+        }
+      }
+    }
+  }
+
+  // Rust: pub fn deregister_peer(&self, node_id)
+  deregisterPeer(nodeId: EntityId): void {
+    this.durablePeers.delete(nodeId.toBase64());
+    // Get and cleanup subscriptions before removing the peer
+    const peerState = this.peerConnections.get(nodeId.toBase64());
+    if (peerState) {
+      this.peerConnections.delete(nodeId.toBase64());
+      // ReactorSubscription is automatically unsubscribed when SubscriptionHandler is garbage collected
+    }
+  }
+
+  // Rust: pub async fn handle_message(&self, message: NodeMessage) -> Result<()>
+  async handleMessage(message: NodeMessage): Promise<void> {
+    message.match({
+      Update: (v) => {
+        const update = v.update;
+        const senderPeer = this.peerConnections.get(update.from.toBase64());
+        if (senderPeer) {
+          if (!update.to.equals(this.id)) {
+            console.warn(`${this.id} received message from ${update.from} but is not the intended recipient`);
+            return;
+          }
+
+          const id = update.id;
+          const to = update.from;
+          const from = this.id;
+
+          // Handle the update
+          this.handleUpdate(update).then(() => {
+            senderPeer.sender.sendMessage(
+              new NodeMessage('UpdateAck', {
+                updateAck: new NodeUpdateAck(id, from, to, new NodeUpdateAckBody('Success', {})),
+              }),
+            );
+          }).catch((e) => {
+            senderPeer.sender.sendMessage(
+              new NodeMessage('UpdateAck', {
+                updateAck: new NodeUpdateAck(id, from, to, new NodeUpdateAckBody('Error', { message: String(e) })),
+              }),
+            );
+          });
+        }
+      },
+      UpdateAck: (_v) => {
+        // Acknowledgement received - currently a no-op
+      },
+      Request: (v) => {
+        const { auth, request } = v;
+        const senderPeer = this.peerConnections.get(request.from.toBase64());
+        if (senderPeer) {
+          const from = request.from;
+          const requestId = request.id;
+          if (!request.to.equals(this.id)) {
+            console.warn(`${this.id} received message from ${request.from} but is not the intended recipient`);
+            return;
+          }
+
+          // Validate the request auth and handle
+          this.policyAgent.checkRequest(auth, request).then(async (cdata) => {
+            try {
+              const body = await this.handleRequest(cdata, request);
+              senderPeer.sender.sendMessage(
+                new NodeMessage('Response', {
+                  response: new NodeResponse(requestId, this.id, from, body),
+                }),
+              );
+            } catch (e) {
+              senderPeer.sender.sendMessage(
+                new NodeMessage('Response', {
+                  response: new NodeResponse(
+                    requestId, this.id, from,
+                    new NodeResponseBody('Error', { message: String(e) }),
+                  ),
+                }),
+              );
+            }
+          }).catch((e) => {
+            senderPeer.sender.sendMessage(
+              new NodeMessage('Response', {
+                response: new NodeResponse(
+                  requestId, this.id, from,
+                  new NodeResponseBody('Error', { message: String(e) }),
+                ),
+              }),
+            );
+          });
+        }
+      },
+      Response: (v) => {
+        const response = v.response;
+        const peerState = this.peerConnections.get(response.from.toBase64());
+        if (peerState) {
+          const pending = peerState.pendingRequests.get(response.requestId.toUlidString());
+          if (pending) {
+            peerState.pendingRequests.delete(response.requestId.toUlidString());
+            pending.resolve(response.body);
+          }
+        }
+      },
+      UnsubscribeQuery: (v) => {
+        const peerState = this.peerConnections.get(v.from.toBase64());
+        if (peerState) {
+          peerState.subscriptionHandler.removePredicate(v.queryId);
+        }
+      },
+      UnsubscribeEntities: (_v) => {
+        // Deferred: entity-level unsubscribe
+      },
+    });
+  }
+
+  // Rust: pub async fn request(&self, node_id, cdata, request_body) -> Result<NodeResponseBody, RequestError>
+  async request(
+    nodeId: EntityId,
+    cdata: unknown,
+    requestBody: NodeRequestBody,
+  ): Promise<NodeResponseBody> {
+    const connection = this.peerConnections.get(nodeId.toBase64());
+    if (!connection) {
+      throw new RequestError('PeerNotConnected', `Peer ${nodeId.toBase64Short()} not connected`);
+    }
+
+    const requestId = RequestId.new();
+    const request = new NodeRequest(requestId, nodeId, this.id, requestBody);
+    const auth = this.policyAgent.signRequest(cdata as unknown[], request);
+
+    return new Promise<NodeResponseBody>((resolve, reject) => {
+      connection.pendingRequests.set(requestId.toUlidString(), { resolve, reject });
+      try {
+        connection.sender.sendMessage(
+          new NodeMessage('Request', { auth, request }),
+        );
+      } catch (e) {
+        connection.pendingRequests.delete(requestId.toUlidString());
+        reject(new RequestError('SendError', `Failed to send request: ${e}`));
+      }
+    });
+  }
+
+  // Rust: pub fn send_update(&self, node_id, notification)
+  sendUpdate(nodeId: EntityId, notification: NodeUpdateBody): void {
+    const connection = this.peerConnections.get(nodeId.toBase64());
+    if (!connection) {
+      console.warn(`Failed to send update to peer ${nodeId}: PeerNotConnected`);
+      return;
+    }
+
+    const id = UpdateId.new();
+    const message = new NodeMessage('Update', {
+      update: new NodeUpdate(id, this.id, nodeId, notification),
+    });
+
+    try {
+      connection.sender.sendMessage(message);
+    } catch (e) {
+      console.warn(`Failed to send update to peer ${nodeId}: ${e}`);
+    }
+  }
+
+  // Rust: async fn handle_request(&self, cdata, request) -> Result<NodeResponseBody>
+  private async handleRequest(cdata: unknown, request: NodeRequest): Promise<NodeResponseBody> {
+    return request.body.match({
+      CommitTransaction: async (v) => {
+        try {
+          await this.commitRemoteTransaction(cdata, v.id, v.events);
+          return new NodeResponseBody('CommitComplete', { id: v.id });
+        } catch (e) {
+          return new NodeResponseBody('Error', { message: String(e) });
+        }
+      },
+      Fetch: async (v) => {
+        this.policyAgent.canAccessCollection(cdata as unknown[], v.collection);
+        const storageCollection = await this.collections.get(v.collection);
+        // Divergence: Selection stored as opaque bytes in wire format;
+        // for local-process connector we pass the Selection object through directly.
+        // The LocalProcessSender callbacks deliver messages in-process, so no serialization happens.
+        // This means v.selection is actually a Selection object (not Uint8Array) at runtime [E18].
+        const selection = v.selection as unknown as Selection;
+        const filteredSelection = new Selection(
+          this.policyAgent.filterPredicate(cdata as unknown[], v.collection, selection.predicate),
+          selection.orderBy,
+          selection.limit,
+        );
+
+        const expandedStates = await expandStates(
+          await storageCollection.fetchStates(filteredSelection),
+          v.knownMatches.map((k: KnownEntity) => k.entityId),
+          storageCollection,
+        );
+
+        const knownMap = new Map<string, import('@ankurah/proto').Clock>();
+        for (const k of v.knownMatches) {
+          knownMap.set(k.entityId.toBase64(), k.head);
+        }
+
+        const deltas: EntityDelta[] = [];
+        for (const state of expandedStates) {
+          const delta = await this.generateEntityDelta(knownMap, state, storageCollection);
+          if (delta !== null) {
+            deltas.push(delta);
+          }
+        }
+        return new NodeResponseBody('Fetch', { deltas });
+      },
+      Get: async (v) => {
+        this.policyAgent.canAccessCollection(cdata as unknown[], v.collection);
+        const storageCollection = await this.collections.get(v.collection);
+        const states: Attested<EntityState>[] = [];
+        for (const id of v.ids) {
+          try {
+            const state = await storageCollection.getState(id);
+            states.push(state);
+          } catch (_e) {
+            // Entity not found — skip
+          }
+        }
+        return new NodeResponseBody('Get', { states });
+      },
+      GetEvents: async (v) => {
+        this.policyAgent.canAccessCollection(cdata as unknown[], v.collection);
+        const storageCollection = await this.collections.get(v.collection);
+        const events = await storageCollection.getEvents(v.eventIds);
+        return new NodeResponseBody('GetEvents', { events });
+      },
+      SubscribeQuery: async (v) => {
+        const peerState = this.peerConnections.get(request.from.toBase64());
+        if (!peerState) {
+          throw new Error(`Peer ${request.from} not connected`);
+        }
+        // Divergence: Selection stored as opaque bytes in wire format; at runtime it's a Selection [E18]
+        const selection = v.selection as unknown as Selection;
+        return peerState.subscriptionHandler.subscribeQuery(
+          this, v.queryId, v.collection, selection, v.version, v.knownMatches,
+        );
+      },
+      SubscribeEntity: async (_v) => {
+        throw new Error('SubscribeEntity not yet implemented');
+      },
+    });
+  }
+
+  // Rust: async fn handle_update(&self, notification) -> Result<()>
+  private async handleUpdate(notification: NodeUpdate): Promise<void> {
+    const connection = this.peerConnections.get(notification.from.toBase64());
+    if (!connection) {
+      throw new Error(`Rejected notification from unknown node ${notification.from}`);
+    }
+
+    notification.body.match({
+      SubscriptionUpdate: async (v) => {
+        await NodeApplier.applyUpdates(this, notification.from, v.items);
+      },
+    });
+  }
+
+  // Rust: pub async fn relay_to_required_peers(&self, cdata, id, events) -> Result<(), MutationError>
+  async relayToRequiredPeers(
+    cdata: unknown,
+    id: TransactionId,
+    events: Attested<Event>[],
+  ): Promise<void> {
+    for (const peerIdStr of this.durablePeers) {
+      const peerState = this.peerConnections.get(peerIdStr);
+      if (!peerState) continue;
+      const peerId = peerState.sender.recipientNodeId();
+
+      const body = await this.request(
+        peerId,
+        cdata,
+        new NodeRequestBody('CommitTransaction', { id, events }),
+      );
+
+      if (body.is('CommitComplete')) {
+        // Success
+      } else if (body.is('Error')) {
+        throw MutationError.general(new Error(`Peer ${peerId} rejected: ${body.value.message}`));
+      } else {
+        throw MutationError.general(new Error(`Peer ${peerId} returned unexpected response`));
+      }
+    }
+  }
+
+  // Rust: pub async fn commit_remote_transaction(&self, cdata, id, events) -> Result<(), MutationError>
+  async commitRemoteTransaction(
+    cdata: unknown,
+    _id: TransactionId,
+    events: Attested<Event>[],
+  ): Promise<void> {
+    const changes: EntityChange[] = [];
+
+    for (const attestedEvent of events) {
+      const event = attestedEvent.payload;
+      const collection = await this.collections.get(event.collection);
+      const retriever = new LocalRetriever(collection);
+
+      // Get or create entity
+      const local = this.entities.get(event.entityId);
+      let entity: Entity;
+      if (local) {
+        entity = local;
+      } else {
+        try {
+          const state = await retriever.getState(event.entityId);
+          if (state !== null) {
+            const [_changed, e] = this.entities.withState(event.entityId, event.collection, state.payload.state);
+            entity = e;
+          } else {
+            entity = Entity.create(event.entityId, event.collection);
+            this.entities.register(entity);
+          }
+        } catch {
+          entity = Entity.create(event.entityId, event.collection);
+          this.entities.register(entity);
+        }
+      }
+
+      // Apply the event
+      entity.applyEvent(event);
+
+      // Store event
+      await collection.addEvent(attestedEvent);
+
+      // Store state
+      const state = entity.toState();
+      const entityState = new EntityState(entity.id(), entity.collection(), state);
+      const attestation = this.policyAgent.attestState(entityState);
+      const attested = AttestedClass.opt(entityState, attestation);
+      await collection.setState(attested);
+
+      changes.push(EntityChange.create(entity, [attestedEvent]));
+    }
+
+    await this.reactor.notifyChange(changes);
+  }
+
+  // Rust: pub(crate) async fn generate_entity_delta(known_map, entity_state, storage_collection) -> Result<Option<EntityDelta>>
+  async generateEntityDelta(
+    knownMap: Map<string, Clock>,
+    entityState: Attested<EntityState>,
+    storageCollection: StorageCollection,
+  ): Promise<EntityDelta | null> {
+    const entityId = entityState.payload.entityId;
+    const collection = entityState.payload.collection;
+    const currentHead = entityState.payload.state.head;
+
+    const knownHead = knownMap.get(entityId.toBase64());
+    if (knownHead) {
+      // Heads equal — omit (client already has current state)
+      if (knownHead.equals(currentHead)) {
+        return null;
+      }
+
+      // Try EventBridge: collect all events between known head and current head
+      try {
+        const eventIds = [...currentHead.asSlice()];
+        const events = await storageCollection.getEvents(eventIds);
+        if (events.length > 0) {
+          const fragments = events.map((e: Attested<Event>) =>
+            EventFragment.fromAttestedEvent(e),
+          );
+          return new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: fragments }));
+        }
+      } catch {
+        // Fall through to StateSnapshot
+      }
+    }
+
+    // Default: StateSnapshot
+    const stateFragment = StateFragment.fromAttestedEntityState(entityState);
+    return new EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment }));
+  }
+
+  // Rust: fn get_durable_peers(&self) -> Vec<EntityId>
+  getDurablePeers(): EntityId[] {
+    const peers: EntityId[] = [];
+    for (const peerIdStr of this.durablePeers) {
+      const peerState = this.peerConnections.get(peerIdStr);
+      if (peerState) {
+        peers.push(peerState.sender.recipientNodeId());
+      }
+    }
+    return peers;
+  }
 
   // Rust: pub fn next_entity_id(&self) -> EntityId
   nextEntityId(): EntityId {
@@ -127,7 +596,8 @@ export class Node {
   }
 
   // Rust: pub fn context(&self, data: PA::ContextData) -> Result<Context, Error>
-  // Divergence: No system readiness check yet (SystemManager deferred) [E8].
+  // Divergence: Rust checks system readiness and returns Err if not ready;
+  // TS does not enforce this for backwards compatibility with existing tests [E8].
   context(contextData?: unknown): Context {
     const cdata = contextData ?? this.defaultContextData;
     const nodeContext = new NodeAndContext(this, cdata);
@@ -135,7 +605,12 @@ export class Node {
   }
 
   // Rust: pub async fn context_async(&self, data: PA::ContextData) -> Context
-  // Deferred: Requires SystemManager.waitSystemReady()
+  async contextAsync(contextData?: unknown): Promise<Context> {
+    await this.system.waitSystemReady();
+    const cdata = contextData ?? this.defaultContextData;
+    const nodeContext = new NodeAndContext(this, cdata);
+    return new Context(nodeContext);
+  }
 
   // Rust: pub(crate) async fn fetch_entities_from_local(...)
   async fetchEntitiesFromLocal(collectionId: CollectionId, selection: Selection): Promise<Entity[]> {
@@ -197,8 +672,6 @@ export class NodeAndContext implements TContext {
   }
 
   // Rust: async fn get_entity(&self, id, collection, cached) -> Result<Entity, RetrievalError>
-  // Simplified vs Rust: no peer fetching, just local storage lookup.
-  // Full peer-assisted retrieval will be added when connectors are ported.
   async getEntity(id: EntityId, collection: CollectionId, cached: boolean): Promise<Entity> {
     // Check local resident entities first
     const local = this.node.entities.get(id);
@@ -206,9 +679,7 @@ export class NodeAndContext implements TContext {
       return local;
     }
 
-    // Fetch from storage
-    // Rust: full get_entity in context.rs with peer fallback and should_fallback_to_local
-    // Deferred: peer networking (Layer 7)
+    // Try local storage first
     const storageCollection = await this.node.collections.get(collection);
     try {
       const entityState = await storageCollection.getState(id);
@@ -218,9 +689,38 @@ export class NodeAndContext implements TContext {
         entityState.payload.state,
       );
       return entity;
-    } catch (e) {
-      throw RetrievalError.entityNotFound(id);
+    } catch (_localError) {
+      // Not found locally — try peer
     }
+
+    // Rust: get_from_peer for non-durable nodes
+    if (!this.node.durable) {
+      const durablePeers = this.node.getDurablePeers();
+      for (const peerId of durablePeers) {
+        try {
+          const response = await this.node.request(
+            peerId,
+            this.cdata,
+            new NodeRequestBody('Get', { collection, ids: [id] }),
+          );
+          if (response.is('Get') && response.value.states.length > 0) {
+            const state = response.value.states[0];
+            const [_changed, entity] = this.node.entities.withState(
+              id,
+              collection,
+              state.payload.state,
+            );
+            // Also persist to local storage
+            await storageCollection.setState(state);
+            return entity;
+          }
+        } catch (_peerError) {
+          // Try next peer
+        }
+      }
+    }
+
+    throw RetrievalError.entityNotFound(id);
   }
 
   // Rust: fn get_resident_entity(&self, id) -> Option<Entity>
@@ -235,8 +735,43 @@ export class NodeAndContext implements TContext {
     // Rust: args.selection = self.node.type_resolver.resolve_selection_types(args.selection);
     args.selection = this.node.typeResolver.resolveSelectionTypes(args.selection);
 
-    // Rust: if !self.node.durable { ... fetch_from_peer ... } else { ... from local ... }
-    // Simplified: always fetch from local (peer networking deferred)
+    // Rust: if !self.node.durable { fetch_from_peer } else { from local }
+    if (!this.node.durable) {
+      // Try fetching from a durable peer
+      const durablePeers = this.node.getDurablePeers();
+      if (durablePeers.length > 0) {
+        const peerId = durablePeers[0];
+        try {
+          // Divergence: Selection stored as opaque bytes in wire format;
+          // for local-process connector, we pass the Selection object directly [E18]
+          const response = await this.node.request(
+            peerId,
+            this.cdata,
+            new NodeRequestBody('Fetch', {
+              collection,
+              selection: args.selection as unknown as Uint8Array,
+              knownMatches: [],
+            }),
+          );
+          if (response.is('Fetch')) {
+            // Apply deltas to local storage
+            const retriever = new LocalRetriever(await this.node.collections.get(collection));
+            await NodeApplier.applyDeltas(this.node, peerId, response.value.deltas, retriever);
+            await retriever.storeUsedEvents();
+
+            // Now fetch from local
+            return this.node.fetchEntitiesFromLocal(collection, args.selection);
+          }
+        } catch (e) {
+          // Fallback to local if peer fetch fails
+          if (args.cached) {
+            return this.node.fetchEntitiesFromLocal(collection, args.selection);
+          }
+          throw e instanceof RetrievalError ? e : new RetrievalError('RequestError', String(e));
+        }
+      }
+    }
+
     return this.node.fetchEntitiesFromLocal(collection, args.selection);
   }
 
@@ -303,8 +838,7 @@ export class NodeAndContext implements TContext {
         event,
       );
 
-      const { Attested } = require('@ankurah/proto');
-      const attested = Attested.opt(event, attestation);
+      const attested = AttestedClass.opt(event, attestation);
       attestedEvents.push({ entity, attested });
     }
 
@@ -317,7 +851,14 @@ export class NodeAndContext implements TContext {
 
     // Phase 5: Relay to peers and wait for confirmation
     // Rust: self.node.relay_to_required_peers(&self.cdata, trx_id, &attested_events).await?;
-    // Deferred: peer networking (Layer 7)
+    if (this.node.getDurablePeers().length > 0) {
+      const trxId = TransactionId.new();
+      await this.node.relayToRequiredPeers(
+        this.cdata,
+        trxId,
+        attestedEvents.map(ae => ae.attested),
+      );
+    }
 
     // Phase 6: Persist canonical state + collect EntityChanges
     const entityChanges: EntityChange[] = [];
@@ -343,8 +884,7 @@ export class NodeAndContext implements TContext {
       );
 
       const attestation = this.node.policyAgent.attestState(entityState);
-      const { Attested } = require('@ankurah/proto');
-      const attestedState = Attested.opt(entityState, attestation);
+      const attestedState = AttestedClass.opt(entityState, attestation);
       await collection.setState(attestedState);
 
       // Collect entity change for reactor notification

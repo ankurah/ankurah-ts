@@ -71,8 +71,8 @@ export class WebSocketConnectionHandler {
   /// Mirrors Rust: sending `Message::Presence(...)` right after connection.
   sendPresence(): void {
     const presence = new Presence(
-      this.node.id(),
-      this.node.durable(),
+      this.node.nodeId(),
+      this.node.isDurable(),
       this.node.systemRoot(),
     );
     const message = new Message('Presence', { presence });

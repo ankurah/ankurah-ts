@@ -18,7 +18,8 @@
     "yjs": "^13.6.0"
   },
   "devDependencies": {
-    "@ankurah/storage-memory": "workspace:*"
+    "@ankurah/storage-memory": "workspace:*",
+    "@ankurah/connector-local": "workspace:*"
   },
   "files": [
     "src/"

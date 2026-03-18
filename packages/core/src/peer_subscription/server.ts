@@ -5,6 +5,7 @@ import {
   Attested,
   AttestationSet,
   NodeResponseBody,
+  NodeUpdateBody,
   UpdateContent,
   MembershipChange as ProtoMembershipChange,
   SubscriptionUpdateItem,
@@ -54,10 +55,7 @@ export class SubscriptionHandler {
         .filter((x): x is SubscriptionUpdateItem => x !== null);
 
       if (items.length > 0) {
-        console.debug(
-          `SubscriptionHandler[${peerId}] would send ${items.length} items to peer (sendUpdate deferred)`,
-        );
-        // TODO: node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items }));
+        node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items }));
       }
     });
   }

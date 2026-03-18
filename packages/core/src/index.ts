@@ -52,7 +52,7 @@ export { EntityChange, itemChangeItem, itemChangeEvents, itemChangeKind } from '
 export type { ItemChange, ChangeKind, ChangeSet } from './changes.ts';
 
 // ── Node ──
-export { Node, NodeAndContext, matchArgs } from './node.ts';
+export { Node, NodeAndContext, matchArgs, nocache } from './node.ts';
 export type { MatchArgs } from './node.ts';
 
 // ── Schema ──
@@ -81,7 +81,7 @@ export { CollectionSet } from './collectionset.ts';
 
 // ── Policy ──
 export type { PolicyAgent } from './policy.ts';
-export { OpenPolicy } from './policy.ts';
+export { OpenPolicy, PermissiveAgent } from './policy.ts';
 
 // ── Indexing ──
 export { IndexDirection, NullsOrder, IndexSpecMatch } from './indexing/index.ts';

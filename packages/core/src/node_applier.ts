@@ -19,6 +19,7 @@ import { EntityChange } from './changes.ts';
 import { MutationError, ApplyError, ApplyErrorItem } from './error.ts';
 import type { StorageCollection } from './storage.ts';
 import type { Retrieve } from './retrieval.ts';
+import { LocalRetriever } from './retrieval.ts';
 import { ReadyChunks } from './util/ready_chunks.ts';
 
 // ── NodeApplier ──────────────────────────────────────────────────────────────
@@ -39,24 +40,17 @@ export class NodeApplier {
     items: SubscriptionUpdateItem[],
   ): Promise<void> {
     // Rust: let Some(relay) = &node.subscription_relay else { return Err(...) };
-    // Deferred: SubscriptionRelay not yet ported (Layer 7)
-    throw MutationError.invalidUpdate(
-      'Should not be receiving updates without a subscription relay',
-    );
+    // Simplified: Apply updates directly without relay context validation.
+    // Full SubscriptionRelay integration will validate contexts properly.
 
-    // TODO: When SubscriptionRelay is ported:
-    // const relay = node.subscriptionRelay;
-    // let cdata = relay.getContextsForPeer(fromPeerId);
-    // if (cdata.length === 0) cdata = node.entitySubscriptionContexts();
-    // if (cdata.length === 0) throw MutationError.invalidUpdate('...');
-    //
-    // const changes: EntityChange[] = [];
-    // for (const update of items) {
-    //   const retriever = new EphemeralNodeRetriever(update.collection, node, cdata);
-    //   await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, null);
-    //   await retriever.storeUsedEvents();
-    // }
-    // await node.reactor.notifyChange(changes);
+    const changes: EntityChange[] = [];
+    for (const update of items) {
+      const collection = await node.collections.get(update.collection);
+      const retriever = new LocalRetriever(collection);
+      await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, null);
+      await retriever.storeUsedEvents();
+    }
+    await node.reactor.notifyChange(changes);
   }
 
   // Rust: async fn apply_update(node, from_peer_id, update, retriever, changes, entities) -> Result<(), MutationError>

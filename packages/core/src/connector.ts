@@ -25,8 +25,8 @@ export { SendError } from './error.ts';
 // Divergence: No Send/Sync bounds — single-threaded JS [E8].
 
 export interface NodeComms {
-  id(): EntityId;
-  durable(): boolean;
+  nodeId(): EntityId; // Divergence: Rust fn id(); TS uses nodeId() to avoid collision with id property [E4]
+  isDurable(): boolean; // Divergence: Rust fn durable(); TS uses isDurable() to avoid collision with durable property [E4]
   systemRoot(): Attested<EntityState> | null; // Divergence: Option<T> → T | null [E3]
   registerPeer(presence: Presence, sender: PeerSender): void; // Divergence: Rust takes Box<dyn PeerSender>; TS uses interface [E7]
   deregisterPeer(nodeId: EntityId): void;

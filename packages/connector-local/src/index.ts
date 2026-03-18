@@ -5,7 +5,8 @@
 // Connects multiple Node instances within the same process for testing.
 // Rust crate: ankurah-connector-local-process
 
-import type { EntityId, NodeMessage, Presence } from '@ankurah/proto';
+import type { EntityId, NodeMessage } from '@ankurah/proto';
+import { Presence } from '@ankurah/proto';
 import type { PeerSender, NodeComms } from '@ankurah/core';
 import { SendError } from '@ankurah/core';
 
@@ -89,8 +90,8 @@ export class LocalProcessConnection {
   /// Create a new LocalConnector and establish connection between the nodes
   // Rust: pub async fn new(node1, node2) -> Result<Self>
   static async new(node1: NodeComms, node2: NodeComms): Promise<LocalProcessConnection> {
-    const node1Id = node1.id();
-    const node2Id = node2.id();
+    const node1Id = node1.nodeId();
+    const node2Id = node2.nodeId();
 
     // Create senders that deliver messages to the other node
     // Divergence: Rust uses mpsc channels with spawned receiver tasks;
@@ -115,11 +116,11 @@ export class LocalProcessConnection {
     // Register the senders with the nodes
     // Rust: node1.register_peer(Presence { node_id: node2.id, ... }, Box::new(sender))
     node1.registerPeer(
-      { nodeId: node2Id, durable: node2.durable(), systemRoot: node2.systemRoot() } as Presence,
+      new Presence(node2Id, node2.isDurable(), node2.systemRoot()),
       sender2,
     );
     node2.registerPeer(
-      { nodeId: node1Id, durable: node1.durable(), systemRoot: node1.systemRoot() } as Presence,
+      new Presence(node1Id, node1.isDurable(), node1.systemRoot()),
       sender1,
     );
 

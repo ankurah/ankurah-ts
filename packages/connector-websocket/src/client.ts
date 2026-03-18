@@ -242,8 +242,8 @@ export class WebsocketClient {
         // Rust: proto::Message::Presence(proto::Presence { node_id, durable, system_root })
         const presence = new Message('Presence', {
           presence: new Presence(
-            this.node.id(),
-            this.node.durable(),
+            this.node.nodeId(),
+            this.node.isDurable(),
             this.node.systemRoot(),
           ),
         });
