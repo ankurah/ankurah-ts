@@ -319,7 +319,7 @@ export class PostgresBucket implements StorageCollection {
     const id = state.payload.entityId;
     const stateBuffers = serializeStateBuffers(state.payload.state.stateBuffers);
     const headArray = state.payload.state.head.toVec().map((eid) => eid.toBase64());
-    const attestations = state.attestations.attestations.map((att: Attestation) => serializeAttestation(att));
+    const attestations = state.attestations._0.map((att: Attestation) => serializeAttestation(att));
 
     const columns: string[] = ['id', 'state_buffer', 'head', 'attestations'];
     const params: unknown[] = [id.toBase64(), stateBuffers, headArray, attestations];

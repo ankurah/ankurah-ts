@@ -8,11 +8,11 @@ import { BincodeReader, BincodeWriter } from './codec';
 // Rust: fn serialize — SKIP: derived serde [E7]
 // Rust: fn deserialize — SKIP: derived serde [E7]
 export class AuthData extends Struct {
-  readonly data: Uint8Array;
+  readonly _0: Uint8Array;
 
-  constructor(data: Uint8Array = new Uint8Array(0)) {
+  constructor(_0: Uint8Array = new Uint8Array(0)) {
     super();
-    this.data = data;
+    this._0 = _0;
   }
 
   static default(): AuthData {
@@ -20,7 +20,7 @@ export class AuthData extends Struct {
   }
 
   encode(writer: BincodeWriter): void {
-    writer.writeByteVec(this.data);
+    writer.writeByteVec(this._0);
   }
 
   static decode(reader: BincodeReader): AuthData {
@@ -29,11 +29,11 @@ export class AuthData extends Struct {
 }
 
 export class Attestation extends Struct {
-  readonly data: Uint8Array;
+  readonly _0: Uint8Array;
 
-  constructor(data: Uint8Array = new Uint8Array(0)) {
+  constructor(_0: Uint8Array = new Uint8Array(0)) {
     super();
-    this.data = data;
+    this._0 = _0;
   }
 
   static default(): Attestation {
@@ -42,15 +42,15 @@ export class Attestation extends Struct {
 
   // Rust: derive(PartialEq)
   equals(other: Attestation): boolean {
-    if (this.data.length !== other.data.length) return false;
-    for (let i = 0; i < this.data.length; i++) {
-      if (this.data[i] !== other.data[i]) return false;
+    if (this._0.length !== other._0.length) return false;
+    for (let i = 0; i < this._0.length; i++) {
+      if (this._0[i] !== other._0[i]) return false;
     }
     return true;
   }
 
   encode(writer: BincodeWriter): void {
-    writer.writeByteVec(this.data);
+    writer.writeByteVec(this._0);
   }
 
   static decode(reader: BincodeReader): Attestation {
@@ -92,11 +92,11 @@ export class Attested<T> extends Struct {
 }
 
 export class AttestationSet extends Struct {
-  readonly attestations: Attestation[];
+  readonly _0: Attestation[];
 
-  constructor(attestations: Attestation[] = []) {
+  constructor(_0: Attestation[] = []) {
     super();
-    this.attestations = attestations;
+    this._0 = _0;
   }
 
   static default(): AttestationSet {
@@ -106,29 +106,29 @@ export class AttestationSet extends Struct {
   // Rust: fn deref (Deref for AttestationSet)
   // impl Deref for AttestationSet — target: [Attestation]
   get length(): number {
-    return this.attestations.length;
+    return this._0.length;
   }
 
   [Symbol.iterator](): Iterator<Attestation> {
-    return this.attestations[Symbol.iterator]();
+    return this._0[Symbol.iterator]();
   }
 
   // Rust: fn push
   // impl AttestationSet
   push(attestation: Attestation): void {
-    this.attestations.push(attestation);
+    this._0.push(attestation);
   }
 
   equals(other: AttestationSet): boolean {
-    if (this.attestations.length !== other.attestations.length) return false;
-    for (let i = 0; i < this.attestations.length; i++) {
-      if (!this.attestations[i].equals(other.attestations[i])) return false;
+    if (this._0.length !== other._0.length) return false;
+    for (let i = 0; i < this._0.length; i++) {
+      if (!this._0[i].equals(other._0[i])) return false;
     }
     return true;
   }
 
   encode(writer: BincodeWriter): void {
-    writer.writeVec(this.attestations, (w, a) => a.encode(w));
+    writer.writeVec(this._0, (w, a) => a.encode(w));
   }
 
   static decode(reader: BincodeReader): AttestationSet {

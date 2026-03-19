@@ -7,11 +7,11 @@ import { DecodeError } from './error';
 
 /// Set of event ids which represents a head in a DAG of events
 export class Clock extends Struct {
-  private ids: EventId[];
+  private _0: EventId[];
 
   private constructor(ids: EventId[]) {
     super();
-    this.ids = ids;
+    this._0 = ids;
   }
 
   // impl Clock
@@ -23,22 +23,22 @@ export class Clock extends Struct {
 
   // Rust: fn as_slice
   asSlice(): readonly EventId[] {
-    return this.ids;
+    return this._0;
   }
 
   // Rust: fn to_strings
   toStrings(): string[] {
-    return this.ids.map(id => id.toBase64());
+    return this._0.map(id => id.toBase64());
   }
 
   // Rust: fn to_base64_short
   toBase64Short(): string {
-    return `[${this.ids.map(id => id.toBase64Short()).join(',')}]`;
+    return `[${this._0.map(id => id.toBase64Short()).join(',')}]`;
   }
 
   // Rust: fn to_base64
   toBase64(): string {
-    return `[${this.ids.map(id => id.toBase64()).join(',')}]`;
+    return `[${this._0.map(id => id.toBase64()).join(',')}]`;
   }
 
   // Rust: fn from_strings
@@ -62,46 +62,46 @@ export class Clock extends Struct {
   // Rust: fn insert
   insert(id: EventId): void {
     const idx = this.binarySearchInsert(id);
-    if (idx < this.ids.length && this.ids[idx].equals(id)) {
+    if (idx < this._0.length && this._0[idx].equals(id)) {
       return; // Already present
     }
-    this.ids.splice(idx, 0, id);
+    this._0.splice(idx, 0, id);
   }
 
   // Rust: fn with_event
   /// Creates a clone of the clock with the given event inserted
   withEvent(id: EventId): Clock {
-    const clone = new Clock([...this.ids]);
+    const clone = new Clock([...this._0]);
     clone.insert(id);
     return clone;
   }
 
   get length(): number {
-    return this.ids.length;
+    return this._0.length;
   }
 
   /// Rust: fn len(&self) -> usize
   len(): number {
-    return this.ids.length;
+    return this._0.length;
   }
 
   // Rust: fn is_empty
   isEmpty(): boolean {
-    return this.ids.length === 0;
+    return this._0.length === 0;
   }
 
   /// Rust: fn iter(&self) -> impl Iterator<Item = &EventId>
   iter(): EventId[] {
-    return [...this.ids];
+    return [...this._0];
   }
 
   [Symbol.iterator](): Iterator<EventId> {
-    return this.ids[Symbol.iterator]();
+    return this._0[Symbol.iterator]();
   }
 
   // Rust: fn to_vec
   toVec(): EventId[] {
-    return [...this.ids];
+    return [...this._0];
   }
 
   // Rust: fn from (From<Vec<EventId>> for Clock)
@@ -139,9 +139,9 @@ export class Clock extends Struct {
   // Rust: derive(PartialEq)
   // impl PartialEq
   equals(other: Clock): boolean {
-    if (this.ids.length !== other.ids.length) return false;
-    for (let i = 0; i < this.ids.length; i++) {
-      if (!this.ids[i].equals(other.ids[i])) return false;
+    if (this._0.length !== other._0.length) return false;
+    for (let i = 0; i < this._0.length; i++) {
+      if (!this._0[i].equals(other._0[i])) return false;
     }
     return true;
   }
@@ -158,10 +158,10 @@ export class Clock extends Struct {
 
   private binarySearch(id: EventId): number {
     let lo = 0;
-    let hi = this.ids.length - 1;
+    let hi = this._0.length - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      const cmp = this.ids[mid].compareTo(id);
+      const cmp = this._0[mid].compareTo(id);
       if (cmp === 0) return mid;
       if (cmp < 0) lo = mid + 1;
       else hi = mid - 1;
@@ -171,10 +171,10 @@ export class Clock extends Struct {
 
   private binarySearchInsert(id: EventId): number {
     let lo = 0;
-    let hi = this.ids.length;
+    let hi = this._0.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (this.ids[mid].compareTo(id) < 0) lo = mid + 1;
+      if (this._0[mid].compareTo(id) < 0) lo = mid + 1;
       else hi = mid;
     }
     return lo;
@@ -184,8 +184,8 @@ export class Clock extends Struct {
   // Each EventId is custom serde (raw 32 bytes), so this is u64 length + N*32 bytes.
 
   encode(writer: BincodeWriter): void {
-    writer.writeLength(this.ids.length);
-    for (const id of this.ids) {
+    writer.writeLength(this._0.length);
+    for (const id of this._0) {
       id.encode(writer);
     }
   }

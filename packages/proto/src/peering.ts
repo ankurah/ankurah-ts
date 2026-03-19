@@ -18,6 +18,15 @@ export class Presence extends Struct {
     this.systemRoot = systemRoot;
   }
 
+  // impl Display for Presence
+  toString(): string {
+    if (this.systemRoot !== null) {
+      return `Presence[${this.nodeId.toBase64Short()}: durable ${this.durable} system_root: ${this.systemRoot.payload}]`;
+    }
+    return `Presence[${this.nodeId.toBase64Short()}: durable ${this.durable}]`;
+  }
+
+  // derive(PartialEq)
   equals(other: Presence): boolean {
     if (!this.nodeId.equals(other.nodeId)) return false;
     if (this.durable !== other.durable) return false;
@@ -26,12 +35,10 @@ export class Presence extends Struct {
     return true;
   }
 
-  // impl Display for Presence
-  toString(): string {
-    if (this.systemRoot !== null) {
-      return `Presence[${this.nodeId.toBase64Short()}: durable ${this.durable} system_root: ${this.systemRoot.payload}]`;
-    }
-    return `Presence[${this.nodeId.toBase64Short()}: durable ${this.durable}]`;
+  // derive(Clone)
+  // Divergence: shallow clone — EntityId and Attested don't have clone() yet
+  clone(): Presence {
+    return new Presence(this.nodeId, this.durable, this.systemRoot);
   }
 
   encode(writer: BincodeWriter): void {

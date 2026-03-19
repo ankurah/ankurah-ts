@@ -464,15 +464,15 @@ describe('auth.bin fixture', () => {
 
     // AuthData with bytes
     const authDataBytes = AuthData.decode(reader);
-    expect(authDataBytes.data).toEqual(new Uint8Array([0x01, 0x02, 0x03]));
+    expect(authDataBytes._0).toEqual(new Uint8Array([0x01, 0x02, 0x03]));
 
     // AuthData empty
     const authDataEmpty = AuthData.decode(reader);
-    expect(authDataEmpty.data).toEqual(new Uint8Array([]));
+    expect(authDataEmpty._0).toEqual(new Uint8Array([]));
 
     // Attestation
     const attestation = Attestation.decode(reader);
-    expect(attestation.data).toEqual(new Uint8Array([0x42, 0x43]));
+    expect(attestation._0).toEqual(new Uint8Array([0x42, 0x43]));
 
     // AttestationSet empty
     const attestationSetEmpty = AttestationSet.decode(reader);
@@ -481,8 +481,8 @@ describe('auth.bin fixture', () => {
     // AttestationSet with two
     const attestationSetTwo = AttestationSet.decode(reader);
     expect(attestationSetTwo.length).toBe(2);
-    expect(attestationSetTwo.attestations[0].data).toEqual(new Uint8Array([0x42, 0x43]));
-    expect(attestationSetTwo.attestations[1].data).toEqual(new Uint8Array([0x44, 0x45, 0x46]));
+    expect(attestationSetTwo._0[0]._0).toEqual(new Uint8Array([0x42, 0x43]));
+    expect(attestationSetTwo._0[1]._0).toEqual(new Uint8Array([0x44, 0x45, 0x46]));
 
     // Attested<EntityState>
     const attested = Attested.decode(reader, r => EntityState.decode(r));
@@ -1218,7 +1218,7 @@ describe('message.bin fixture', () => {
       expect(peerRequest.value.nodeMessage.type).toBe('Request');
       if (peerRequest.value.nodeMessage.is('Request')) {
         expect(peerRequest.value.nodeMessage.value.auth.length).toBe(1);
-        expect(peerRequest.value.nodeMessage.value.auth[0].data).toEqual(new Uint8Array([0xAA, 0xBB]));
+        expect(peerRequest.value.nodeMessage.value.auth[0]._0).toEqual(new Uint8Array([0xAA, 0xBB]));
         expect(peerRequest.value.nodeMessage.value.request.body.type).toBe('Get');
       }
     }
