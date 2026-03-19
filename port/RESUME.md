@@ -9,55 +9,56 @@ Read these files first:
 
 ## Where we are
 
-Building the ankurah Rust→TS transpiler at `transpile/`. Generates real TS code with function bodies, ownership-based .drop() calls, and Result<T, E> type.
+Transpiler at `transpile/` is feature-complete. Next step: overwrite proto hand-port with transpiler output, audit the diff, then gradually expand to other crates.
 
-### Transpiler status
+### Transpiler (transpile/)
 
-Working Rust binary at `transpile/` (15 source files, ~3900 lines):
+15 Rust source files, ~4000 lines. Generates 177 TS files / ~16K lines across all 10 crates with zero unhandled expressions.
+
 ```bash
 cd /Users/daniel/ak/ankurah-ts/transpile
-cargo run -- skeleton <file.rs> --crate-path <crate/src/file.rs>  # single file
-cargo run -- batch <src_dir> <out_dir> --crate-name <name>        # whole crate
-cargo run -- drop-analysis <src_dir>                              # transitive Drop ownership
+cargo run -- batch <rust_src_dir> <ts_out_dir> --crate-name <name>
+cargo run -- skeleton <file.rs> --crate-path <crate/src/file.rs>
+cargo run -- drop-analysis <rust_src_dir>
 ```
 
-Generates 177 TS files / ~16K lines across all 10 crates. Zero unhandled expressions.
+Config: `transpile/transpile.toml` — provided_impls, hardcoded files, excluded files, crate mapping.
 
-### Key architecture decisions made
+**What it does:**
+- Full struct/enum/trait/fn extraction and body translation via syn
+- Bincode encode/decode from derive(Serialize, Deserialize)
+- Derive method bodies (clone with null safety, equals with null guards)
+- Match → .match({}), if-let → .is(), Option → null check
+- Result<T,E> as Enum — Ok(x)→Result.Ok(x), Err(e)→Result.Err(e), ?→explicit isErr check
+- Ownership-based .drop() at end of scope (inside if/else branches via pending_drops threading)
+- Import resolution (cross-crate + intra-crate), cfg(test) → .test.ts splitting
+- BodyTranslator struct (clean context, no thread_local)
+- 50+ method call translations, format!/vec!/assert_eq! macros
 
-1. **Result<T, E> as Enum** — not throw-based. `Result.Ok(x)` / `Result.Err(e)`. Function signatures preserve `Result<T, E>`. `?` operator → explicit `isErr()` check + early return. `throw` is reserved for panics only.
+**Architecture decisions:**
+- "Write Rust in TypeScript" — structural 1:1 correspondence, not idiomatic TS
+- Result<T,E> as Enum (not throw). throw reserved for panics only.
+- No `using`. Manual .drop() calls for block-scoped ownership.
+- All types extend AkObject. AkObject cascade for struct/enum fields.
+- Tuple struct fields named `_0` (not semantic names)
+- Code length restrictions don't apply to transpiled output
 
-2. **Ownership-based .drop()** — block-scoped variables that aren't returned get `.drop()` at end of scope. All locals drop (idempotent for moved values). No try/finally — drops go at end of block normally.
+### Immediate next step
 
-3. **BodyTranslator struct** — expression translation uses a struct with `self_type` field, not thread_local. Clean extensible design.
+1. **Overwrite proto with transpiler output** — run batch into `packages/proto/src/`, audit `git diff`, check for lost implementation details, commit if acceptable
+2. **Validate** — run `npx tsc --noEmit` and `bun test packages/proto` on the overwritten code
+3. **Expand** — make a list of packages for transpiler management, gradually validate each
 
-4. **"Write Rust in TypeScript"** — not idiomatic TS. Structural 1:1 correspondence with Rust source is the priority.
+### Known transpiler limitations
 
-### What needs fixing (drop system)
-
-**Drops inside if/else branches — FIXED.** Pending drops are threaded into each branch via `translate_expr_in_return_position_with`. Uses `_ret` pattern for leaf returns and string insertion for multi-statement branches. Validated on core/entity.rs generateCommitEvent.
-
-**Should fix later:**
-3. Nested block drops (for-loop bodies drop their own locals)
-4. Early return drops (`?`/`return` should drop locals declared before that point)
+- **Attested<T> generic callback** — types containing Attested<T> fields get `v.encode(w)` but need `v.encode(w, callback)`. Config-driven fix needed.
+- **TS-only methods** — hand-port has methods not in Rust (Symbol.iterator, get length, entries, empty). These get erased on overwrite. Need preservation strategy.
+- **Nested block drops** — for-loop bodies don't drop their own locals yet (function-level only)
+- **Early return drops** — ? or return mid-function doesn't drop preceding locals
 
 ### Hand-port alignment done
 
-Tuple struct fields renamed to `_0` in proto (Clock, AuthData, Attestation, AttestationSet, OperationSet, StateBuffers, TransactionId, RequestId, QueryId, UpdateId) and signals (BroadcastId, Broadcast, ValueCell, ReadValueCell). Method ordering aligned. Clone/equals derive bodies generated.
-
-### Transpiler bugs fixed
-
-- Bincode closure param capture (w/r inside callbacks, not outer writer/reader)
-- Null-safe equals (null guards for nullable fields)
-- Null-safe clone (?.clone() ?? null)
-- Generic type stripping in decode calls
-- Self resolution via BodyTranslator struct
-
-### Discussion items
-
-1. **Attested generic callback pattern** — Attested<T> encode/decode need callback params for generic payload. Types containing Attested<T> fields need special bincode handling.
-2. **TS-only additions** — Hand-port has methods not in Rust (get length, Symbol.iterator, entries, empty). Need preservation/annotation strategy.
-3. **When to start overwriting hand-port with transpiler output** — may differ per crate. Proto is closest. Requires careful diff auditing to preserve hand-port insights.
+Tuple struct fields renamed to `_0` in proto (Clock, AuthData, Attestation, AttestationSet, OperationSet, StateBuffers, TransactionId, RequestId, QueryId, UpdateId) and signals (BroadcastId, Broadcast, ValueCell, ReadValueCell).
 
 ### Port status
 
@@ -65,21 +66,4 @@ Tuple struct fields renamed to `_0` in proto (Clock, AuthData, Attestation, Atte
 
 ### Process rules
 
-Use named team agents, don't shut them down, check mailbox between steps, never skip or stub silently. Code length restrictions don't apply to transpiled output.
-
-### Source files (transpile/src/)
-
-- body.rs (558) — BodyTranslator struct, expression/statement translation
-- emit.rs (427) — TS emission (struct/enum/trait/fn)
-- extract.rs (416) — syn parsing
-- codegen.rs (321) — top-level generation orchestration
-- name_map.rs (292) — identifier/type mapping
-- drop_analysis.rs (264) — transitive Drop ownership
-- bincode_module.rs (248) — bincode encode/decode generation
-- match_expr.rs (243) — match expression translation
-- macros.rs (196) — macro translation
-- config.rs (181) — transpile.toml config parsing
-- control_flow.rs (165) — if/if-let/return position
-- ownership.rs (159) — ownership tracking, drop generation
-- types.rs (110) — data structures
-- imports.rs (94) — import resolution
+Use named team agents, don't shut them down, check mailbox between steps, never skip or stub silently.
