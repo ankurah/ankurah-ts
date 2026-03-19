@@ -216,18 +216,29 @@ fn emit_derive_methods(
             if field_names.is_empty() {
                 out.push_str(&format!("\n  equals(other: {}): boolean {{\n    return true;\n  }}\n", full_type));
             } else {
-                let checks: Vec<String> = fields.iter()
-                    .filter_map(|f| {
-                        let n = f.name.as_deref()?;
-                        if is_primitive_ts_type(&f.ty) {
-                            Some(format!("this.{} === other.{}", n, n))
+                // Generate field-by-field equality with null safety
+                out.push_str(&format!("\n  equals(other: {}): boolean {{\n", full_type));
+                for f in fields {
+                    let n = match f.name.as_deref() {
+                        Some(n) => n,
+                        None => continue,
+                    };
+                    if f.ty.ends_with(" | null") {
+                        // Nullable field — null-safe comparison
+                        out.push_str(&format!("    if (this.{} === null && other.{} === null) {{ /* both null, ok */ }}\n", n, n));
+                        out.push_str(&format!("    else if (this.{} === null || other.{} === null) return false;\n", n, n));
+                        if is_primitive_ts_type(&f.ty.replace(" | null", "")) {
+                            out.push_str(&format!("    else if (this.{} !== other.{}) return false;\n", n, n));
                         } else {
-                            Some(format!("this.{}.equals(other.{})", n, n))
+                            out.push_str(&format!("    else if (!this.{}.equals(other.{})) return false;\n", n, n));
                         }
-                    })
-                    .collect();
-                out.push_str(&format!("\n  equals(other: {}): boolean {{\n    return {};\n  }}\n",
-                    full_type, checks.join(" && ")));
+                    } else if is_primitive_ts_type(&f.ty) {
+                        out.push_str(&format!("    if (this.{} !== other.{}) return false;\n", n, n));
+                    } else {
+                        out.push_str(&format!("    if (!this.{}.equals(other.{})) return false;\n", n, n));
+                    }
+                }
+                out.push_str("    return true;\n  }\n");
             }
         }
     }
@@ -247,16 +258,17 @@ fn emit_derive_methods(
                         out.push_str(&format!("\n  clone(): {} {{\n    return new {}();\n  }}\n", full_type, type_name));
                     } else {
                         let clone_fields: Vec<String> = fields.iter()
-                            .filter_map(|f| f.name.as_deref())
-                            .map(|n| {
-                                // Primitives don't need .clone()
-                                let field_type = fields.iter().find(|f| f.name.as_deref() == Some(n))
-                                    .map(|f| f.ty.as_str()).unwrap_or("");
-                                if is_primitive_ts_type(field_type) {
+                            .filter_map(|f| {
+                                let n = f.name.as_deref()?;
+                                let ty = f.ty.as_str();
+                                Some(if is_primitive_ts_type(ty) {
                                     format!("this.{}", n)
+                                } else if ty.ends_with(" | null") {
+                                    // Nullable — null-safe clone
+                                    format!("this.{}?.clone() ?? null", n)
                                 } else {
                                     format!("this.{}.clone()", n)
-                                }
+                                })
                             })
                             .collect();
                         out.push_str(&format!("\n  clone(): {} {{\n    return new {}({});\n  }}\n",

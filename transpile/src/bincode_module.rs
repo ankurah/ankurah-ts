@@ -136,85 +136,92 @@ pub fn generate_enum_codec(info: &EnumInfo) -> String {
 }
 
 /// Generate the encode expression for a value of a given TS type
-fn encode_expr(value: &str, ts_type: &str) -> String {
-    // Determine encoding based on the TS type string
+/// `wr` is the writer variable name (e.g., "writer" at top level, "w" inside callbacks)
+fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
     match ts_type {
-        "string" => format!("writer.writeString({})", value),
-        "boolean" => format!("writer.writeBool({})", value),
-        "number" => format!("writer.writeU32({})", value), // Default to u32, may need refinement
-        "bigint | number" => format!("writer.writeU64({})", value),
-        "Uint8Array" => format!("writer.writeBytes({})", value),
+        "string" => format!("{}.writeString({})", wr, value),
+        "boolean" => format!("{}.writeBool({})", wr, value),
+        "number" => format!("{}.writeU32({})", wr, value),
+        "bigint | number" => format!("{}.writeU64({})", wr, value),
+        "Uint8Array" => format!("{}.writeBytes({})", wr, value),
         t if t.ends_with("[]") => {
             let inner = &t[..t.len()-2];
             if is_primitive_type(inner) {
-                format!("writer.writeVec({}, (w, item) => w.write{}(item))", value, capitalize(inner))
+                format!("{}.writeVec({}, (w, item) => w.write{}(item))", wr, value, capitalize(inner))
             } else {
-                format!("writer.writeVec({}, (w, item) => item.encode(w))", value)
-            }
-        }
-        t if t.starts_with("Map<") => {
-            // Map<K, V> — encode as length + key/value pairs
-            // Extract K and V from "Map<K, V>"
-            let inner = &t[4..t.len()-1]; // strip "Map<" and ">"
-            let parts: Vec<&str> = inner.splitn(2, ", ").collect();
-            if parts.len() == 2 {
-                let k_enc = encode_inline("k", parts[0]);
-                let v_enc = encode_inline("v", parts[1]);
-                format!("writer.writeMap({}, (w, k, v) => {{ {}; {}; }})", value, k_enc, v_enc)
-            } else {
-                format!("writer.writeMap({})", value)
-            }
-        }
-        t if t.ends_with(" | null") => {
-            let inner = &t[..t.len()-7];
-            format!("writer.writeOption({}, (w, v) => {})", value,
-                encode_expr("v", inner))
-        }
-        _ => {
-            // Assume the type has its own encode method
-            format!("{}.encode(writer)", value)
-        }
-    }
-}
-
-/// Generate the decode expression for a given TS type
-fn decode_expr(ts_type: &str) -> String {
-    match ts_type {
-        "string" => "reader.readString()".to_string(),
-        "boolean" => "reader.readBool()".to_string(),
-        "number" => "reader.readU32()".to_string(),
-        "bigint | number" => "reader.readU64()".to_string(),
-        "Uint8Array" => "reader.readBytes()".to_string(),
-        t if t.ends_with("[]") => {
-            let inner = &t[..t.len()-2];
-            if is_primitive_type(inner) {
-                format!("reader.readVec((r) => r.read{}())", capitalize(inner))
-            } else {
-                format!("reader.readVec((r) => {}.decode(r))", inner)
+                format!("{}.writeVec({}, (w, item) => item.encode(w))", wr, value)
             }
         }
         t if t.starts_with("Map<") => {
             let inner = &t[4..t.len()-1];
             let parts: Vec<&str> = inner.splitn(2, ", ").collect();
             if parts.len() == 2 {
-                let k_dec = decode_expr(parts[0]);
-                let v_dec = decode_expr(parts[1]);
-                format!("reader.readMap((r) => {}, (r) => {})", k_dec, v_dec)
+                let k_enc = encode_inline("k", parts[0]);
+                let v_enc = encode_inline("v", parts[1]);
+                format!("{}.writeMap({}, (w, k, v) => {{ {}; {}; }})", wr, value, k_enc, v_enc)
             } else {
-                format!("reader.readMap(reader)")
+                format!("{}.writeMap({})", wr, value)
             }
         }
         t if t.ends_with(" | null") => {
             let inner = &t[..t.len()-7];
-            format!("reader.readOption((r) => {})", decode_expr(inner))
+            format!("{}.writeOption({}, (w, v) => {})", wr, value,
+                encode_expr_with("v", inner, "w"))
         }
-        t => {
-            // Assume the type has a static decode method
-            // Strip generic params for method call: Attested<EntityState> → Attested
-            let base = t.split('<').next().unwrap_or(t);
-            format!("{}.decode(reader)", base)
+        _ => {
+            // Assume the type has its own encode method
+            format!("{}.encode({})", value, wr)
         }
     }
+}
+
+/// Top-level encode_expr using "writer" as the variable name
+fn encode_expr(value: &str, ts_type: &str) -> String {
+    encode_expr_with(value, ts_type, "writer")
+}
+
+/// Generate the decode expression for a given TS type
+/// `rd` is the reader variable name
+fn decode_expr_with(ts_type: &str, rd: &str) -> String {
+    match ts_type {
+        "string" => format!("{}.readString()", rd),
+        "boolean" => format!("{}.readBool()", rd),
+        "number" => format!("{}.readU32()", rd),
+        "bigint | number" => format!("{}.readU64()", rd),
+        "Uint8Array" => format!("{}.readBytes()", rd),
+        t if t.ends_with("[]") => {
+            let inner = &t[..t.len()-2];
+            if is_primitive_type(inner) {
+                format!("{}.readVec((r) => r.read{}())", rd, capitalize(inner))
+            } else {
+                format!("{}.readVec((r) => {}.decode(r))", rd, inner)
+            }
+        }
+        t if t.starts_with("Map<") => {
+            let inner = &t[4..t.len()-1];
+            let parts: Vec<&str> = inner.splitn(2, ", ").collect();
+            if parts.len() == 2 {
+                let k_dec = decode_expr_with(parts[0], "r");
+                let v_dec = decode_expr_with(parts[1], "r");
+                format!("{}.readMap((r) => {}, (r) => {})", rd, k_dec, v_dec)
+            } else {
+                format!("{}.readMap({})", rd, rd)
+            }
+        }
+        t if t.ends_with(" | null") => {
+            let inner = &t[..t.len()-7];
+            format!("{}.readOption((r) => {})", rd, decode_expr_with(inner, "r"))
+        }
+        t => {
+            let base = t.split('<').next().unwrap_or(t);
+            format!("{}.decode({})", base, rd)
+        }
+    }
+}
+
+/// Top-level decode_expr using "reader" as the variable name
+fn decode_expr(ts_type: &str) -> String {
+    decode_expr_with(ts_type, "reader")
 }
 
 /// Inline encode — uses "w" as the writer variable name
