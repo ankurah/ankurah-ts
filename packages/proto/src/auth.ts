@@ -1,22 +1,23 @@
 // MIRRORS: ankurah/proto/src/auth.rs
-
 import { Struct } from '@ankurah/base';
+import { Attested } from './auth.provided';
 import { BincodeReader, BincodeWriter } from './codec';
+export { Attested };
 
-/// Raw context data that can be transmitted between nodes - this may be a bearer token
-/// or some other arbitrary data at the discretion of the Policy Agent
-// Rust: fn serialize — SKIP: derived serde [E7]
-// Rust: fn deserialize — SKIP: derived serde [E7]
 export class AuthData extends Struct {
   readonly _0: Uint8Array;
 
-  constructor(_0: Uint8Array = new Uint8Array(0)) {
+  constructor(_0: Uint8Array) {
     super();
     this._0 = _0;
   }
 
+  clone(): AuthData {
+    return new AuthData(new Uint8Array(this._0));
+  }
+
   static default(): AuthData {
-    return new AuthData();
+    return new AuthData(new Uint8Array(0));
   }
 
   encode(writer: BincodeWriter): void {
@@ -24,29 +25,30 @@ export class AuthData extends Struct {
   }
 
   static decode(reader: BincodeReader): AuthData {
-    return new AuthData(reader.readByteVec());
+    const _0 = reader.readByteVec();
+    return new AuthData(_0);
   }
 }
 
 export class Attestation extends Struct {
   readonly _0: Uint8Array;
 
-  constructor(_0: Uint8Array = new Uint8Array(0)) {
+  constructor(_0: Uint8Array) {
     super();
     this._0 = _0;
   }
 
-  static default(): Attestation {
-    return new Attestation();
+  equals(other: Attestation): boolean {
+    { if (this._0.length !== other._0.length) return false; for (let i = 0; i < this._0.length; i++) { if (this._0[i] !== other._0[i]) return false; } }
+    return true;
   }
 
-  // Rust: derive(PartialEq)
-  equals(other: Attestation): boolean {
-    if (this._0.length !== other._0.length) return false;
-    for (let i = 0; i < this._0.length; i++) {
-      if (this._0[i] !== other._0[i]) return false;
-    }
-    return true;
+  clone(): Attestation {
+    return new Attestation(new Uint8Array(this._0));
+  }
+
+  static default(): Attestation {
+    return new Attestation(new Uint8Array(0));
   }
 
   encode(writer: BincodeWriter): void {
@@ -54,100 +56,57 @@ export class Attestation extends Struct {
   }
 
   static decode(reader: BincodeReader): Attestation {
-    return new Attestation(reader.readByteVec());
-  }
-}
-
-export class Attested<T> extends Struct {
-  payload: T;
-  attestations: AttestationSet;
-
-  constructor(payload: T, attestations: AttestationSet = AttestationSet.default()) {
-    super();
-    this.payload = payload;
-    this.attestations = attestations;
-  }
-
-  // Rust: fn opt
-  static opt<T>(payload: T, attestation: Attestation | null): Attested<T> {
-    const set = attestation ? new AttestationSet([attestation]) : AttestationSet.default();
-    return new Attested(payload, set);
-  }
-
-  // Rust: fn fmt (Display for Attested<T>)
-  toString(): string {
-    return `Attested(${this.payload})`;
-  }
-
-  encode(writer: BincodeWriter, encodePayload: (w: BincodeWriter, p: T) => void): void {
-    encodePayload(writer, this.payload);
-    this.attestations.encode(writer);
-  }
-
-  static decode<T>(reader: BincodeReader, decodePayload: (r: BincodeReader) => T): Attested<T> {
-    const payload = decodePayload(reader);
-    const attestations = AttestationSet.decode(reader);
-    return new Attested(payload, attestations);
+    const _0 = reader.readByteVec();
+    return new Attestation(_0);
   }
 }
 
 export class AttestationSet extends Struct {
   readonly _0: Attestation[];
 
-  constructor(_0: Attestation[] = []) {
+  constructor(_0: Attestation[]) {
     super();
     this._0 = _0;
   }
 
-  static default(): AttestationSet {
-    return new AttestationSet();
-  }
-
-  // Rust: fn deref (Deref for AttestationSet)
-  // impl Deref for AttestationSet — target: [Attestation]
-  get length(): number {
-    return this._0.length;
-  }
-
-  [Symbol.iterator](): Iterator<Attestation> {
-    return this._0[Symbol.iterator]();
-  }
-
-  // Rust: fn push
-  // impl AttestationSet
   push(attestation: Attestation): void {
     this._0.push(attestation);
   }
 
   equals(other: AttestationSet): boolean {
-    if (this._0.length !== other._0.length) return false;
-    for (let i = 0; i < this._0.length; i++) {
-      if (!this._0[i].equals(other._0[i])) return false;
-    }
+    { if (this._0.length !== other._0.length) return false; for (let i = 0; i < this._0.length; i++) { if (!this._0[i].equals(other._0[i])) return false; } }
     return true;
   }
 
+  static default(): AttestationSet {
+    return new AttestationSet([]);
+  }
+
+  clone(): AttestationSet {
+    return new AttestationSet(this._0.map(e => e.clone()));
+  }
+
   encode(writer: BincodeWriter): void {
-    writer.writeVec(this._0, (w, a) => a.encode(w));
+    writer.writeVec(this._0, (w, item) => item.encode(w));
   }
 
   static decode(reader: BincodeReader): AttestationSet {
-    return new AttestationSet(reader.readVec(r => Attestation.decode(r)));
+    const _0 = reader.readVec((r) => Attestation.decode(r));
+    return new AttestationSet(_0);
   }
 }
 
 export class Principal extends Struct {
-  constructor() {
-    super();
+
+  clone(): Principal {
+    return new Principal();
   }
 
-  // TODO — empty struct in Rust
-
   encode(writer: BincodeWriter): void {
-    // Empty struct — no fields to encode
   }
 
   static decode(reader: BincodeReader): Principal {
     return new Principal();
   }
 }
+

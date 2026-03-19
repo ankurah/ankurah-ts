@@ -170,14 +170,16 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
             }
         }
         t if t.starts_with("Map<") => {
+            // BTreeMap: sorted by key in Rust. Encode as length + sorted entries.
             let inner = &t[4..t.len()-1];
             let parts: Vec<&str> = inner.splitn(2, ", ").collect();
             if parts.len() == 2 {
-                let k_enc = encode_inline("k", parts[0]);
-                let v_enc = encode_inline("v", parts[1]);
-                format!("{}.writeMap({}, (w, k, v) => {{ {}; {}; }})", wr, value, k_enc, v_enc)
+                let k_enc = encode_expr_with("k", parts[0], wr);
+                let v_enc = encode_expr_with("v", parts[1], wr);
+                format!("{{ const _entries = [...{}.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); {}.writeLength(_entries.length); for (const [k, v] of _entries) {{ {}; {}; }} }}",
+                    value, wr, k_enc, v_enc)
             } else {
-                format!("{}.writeMap({})", wr, value)
+                format!("/* TODO: Map encode */ {}.writeLength({}.size)", wr, value)
             }
         }
         t if t.ends_with(" | null") => {
@@ -223,14 +225,16 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
             }
         }
         t if t.starts_with("Map<") => {
+            // BTreeMap: decode as length + entries into Map
             let inner = &t[4..t.len()-1];
             let parts: Vec<&str> = inner.splitn(2, ", ").collect();
             if parts.len() == 2 {
-                let k_dec = decode_expr_with(parts[0], "r");
-                let v_dec = decode_expr_with(parts[1], "r");
-                format!("{}.readMap((r) => {}, (r) => {})", rd, k_dec, v_dec)
+                let k_dec = decode_expr_with(parts[0], rd);
+                let v_dec = decode_expr_with(parts[1], rd);
+                format!("(() => {{ const _m = new Map(); const _len = {}.readLength(); for (let _i = 0; _i < _len; _i++) {{ _m.set({}, {}); }} return _m; }})()",
+                    rd, k_dec, v_dec)
             } else {
-                format!("{}.readMap({})", rd, rd)
+                format!("new Map() /* TODO: Map decode */")
             }
         }
         t if t.ends_with(" | null") => {

@@ -1,62 +1,55 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-
 import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
-  readonly value: string;
+  private _0: string;
 
-  constructor(value: string) {
+  constructor(_0: string) {
     super();
-    this.value = value;
+    this._0 = _0;
   }
 
-  // Rust: fn fixed_name
-  // impl CollectionId
   static fixedName(name: string): CollectionId {
-    return new CollectionId(name);
+    return new CollectionId(name.toString());
   }
 
-  // Rust: fn from (From<&str> / From<String> for CollectionId)
-  // impl From<&str> / From<String> for CollectionId
-  static from(value: string): CollectionId {
-    return new CollectionId(value);
-  }
-
-  // Rust: fn eq (PartialEq<str> for CollectionId)
-  // impl PartialEq<str> for CollectionId
-  equalsStr(other: string): boolean {
-    return this.value === other;
-  }
-
-  // Rust: fn as_ref (AsRef<str> for CollectionId)
-  // Rust: fn as_str
-  // impl AsRef<str> / as_str
   asStr(): string {
-    return this.value;
+    return this._0;
   }
 
-  // Rust: derive(PartialEq)
-  // impl PartialEq
-  equals(other: CollectionId): boolean {
-    return this.value === other.value;
+  static from(val: string): CollectionId {
+    return new CollectionId(val.toString());
   }
 
-  // Rust: fn fmt (Display for CollectionId)
-  // impl Display
+  equalsStr(other: string): boolean {
+    return this._0 === other;
+  }
+
   toString(): string {
-    return this.value;
+    return `${this._0}`;
   }
 
-  // Rust: fn from (From<CollectionId> for String) — SKIP: covered by toString()
+  equals(other: CollectionId): boolean {
+    if (this._0 !== other._0) return false;
+    return true;
+  }
 
-  // ── Bincode: derived serde — String (u64 length + UTF-8 bytes) ──
+  compareTo(other: CollectionId): number {
+    throw new Error('TODO');
+  }
+
+  clone(): CollectionId {
+    return new CollectionId(this._0);
+  }
 
   encode(writer: BincodeWriter): void {
-    writer.writeString(this.value);
+    writer.writeString(this._0);
   }
 
   static decode(reader: BincodeReader): CollectionId {
-    return new CollectionId(reader.readString());
+    const _0 = reader.readString();
+    return new CollectionId(_0);
   }
 }
+

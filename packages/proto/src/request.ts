@@ -1,23 +1,16 @@
 // MIRRORS: ankurah/proto/src/request.rs
-
 import { Struct, Enum } from '@ankurah/base';
+import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
-import { Attested, AttestationSet } from './auth';
+import { AttestationSet, Attested } from './auth';
 import { Clock } from './clock';
 import { CollectionId } from './collection';
-import {
-  Event, EventFragment, StateFragment, EntityState,
-} from './data';
-import {
-  EntityId, EventId, RequestId, TransactionId, QueryId,
-} from './id';
+import { EntityState, Event, EventFragment, EventId, StateFragment } from './data';
+import { EntityId } from './id';
+import { QueryId } from './subscription';
+import { TransactionId } from './transaction';
+export { RequestId };
 
-// Divergence: RequestId struct is defined in id.ts (co-located with other ULID IDs)
-// rather than here. Imported from id.ts above. [E4]
-
-// ─── NodeRequest ────────────────────────────────────────────────────────────
-
-/// A request from one node to another
 export class NodeRequest extends Struct {
   readonly id: RequestId;
   readonly to: EntityId;
@@ -32,7 +25,6 @@ export class NodeRequest extends Struct {
     this.body = body;
   }
 
-  // impl Display for NodeRequest
   toString(): string {
     return `Request ${this.id} from ${this.from}->${this.to}: ${this.body}`;
   }
@@ -53,9 +45,6 @@ export class NodeRequest extends Struct {
   }
 }
 
-// ─── KnownEntity ────────────────────────────────────────────────────────────
-
-/// Entity with known head for lineage attestation
 export class KnownEntity extends Struct {
   readonly entityId: EntityId;
   readonly head: Clock;
@@ -64,6 +53,10 @@ export class KnownEntity extends Struct {
     super();
     this.entityId = entityId;
     this.head = head;
+  }
+
+  clone(): KnownEntity {
+    return new KnownEntity(this.entityId.clone(), this.head.clone());
   }
 
   encode(writer: BincodeWriter): void {
@@ -78,100 +71,6 @@ export class KnownEntity extends Struct {
   }
 }
 
-// ─── EntityIdRange ──────────────────────────────────────────────────────────
-// Divergence: EntityIdRange not in Rust — TS-ahead type for compact entity unsubscribe batches [E4]
-
-/// Inclusive entity-id span used for compact unsubscribe batches.
-export class EntityIdRange extends Struct {
-  readonly start: EntityId;
-  readonly end: EntityId;
-
-  constructor(start: EntityId, end: EntityId) {
-    super();
-    this.start = start;
-    this.end = end;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.start.encode(writer);
-    this.end.encode(writer);
-  }
-
-  static decode(reader: BincodeReader): EntityIdRange {
-    const start = EntityId.decode(reader);
-    const end = EntityId.decode(reader);
-    return new EntityIdRange(start, end);
-  }
-}
-
-// ─── CausalRelation ─────────────────────────────────────────────────────────
-
-type CausalRelationV = {
-  Equal: {};
-  StrictDescends: {};
-  StrictAscends: {};
-  DivergedSince: { meet: Clock; subject: Clock; other: Clock };
-  Disjoint: { gca: Clock | null; subjectRoot: EventId; otherRoot: EventId };
-  BudgetExceeded: { subject: Clock; other: Clock };
-};
-
-export class CausalRelation extends Enum<CausalRelationV> {
-  encode(writer: BincodeWriter): void {
-    this.match({
-      Equal: () => { writer.writeVariant(0); },
-      StrictDescends: () => { writer.writeVariant(1); },
-      StrictAscends: () => { writer.writeVariant(2); },
-      DivergedSince: (v) => {
-        writer.writeVariant(3);
-        v.meet.encode(writer);
-        v.subject.encode(writer);
-        v.other.encode(writer);
-      },
-      Disjoint: (v) => {
-        writer.writeVariant(4);
-        writer.writeOption(v.gca, (w, c) => c.encode(w));
-        v.subjectRoot.encode(writer);
-        v.otherRoot.encode(writer);
-      },
-      BudgetExceeded: (v) => {
-        writer.writeVariant(5);
-        v.subject.encode(writer);
-        v.other.encode(writer);
-      },
-    });
-  }
-
-  static decode(reader: BincodeReader): CausalRelation {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: return new CausalRelation('Equal', {});
-      case 1: return new CausalRelation('StrictDescends', {});
-      case 2: return new CausalRelation('StrictAscends', {});
-      case 3: {
-        const meet = Clock.decode(reader);
-        const subject = Clock.decode(reader);
-        const other = Clock.decode(reader);
-        return new CausalRelation('DivergedSince', { meet, subject, other });
-      }
-      case 4: {
-        const gca = reader.readOption(r => Clock.decode(r));
-        const subjectRoot = EventId.decode(reader);
-        const otherRoot = EventId.decode(reader);
-        return new CausalRelation('Disjoint', { gca, subjectRoot, otherRoot });
-      }
-      case 5: {
-        const subject = Clock.decode(reader);
-        const other = Clock.decode(reader);
-        return new CausalRelation('BudgetExceeded', { subject, other });
-      }
-      default:
-        throw new Error(`Unknown CausalRelation variant: ${variant}`);
-    }
-  }
-}
-
-// ─── CausalAssertion ────────────────────────────────────────────────────────
-
 export class CausalAssertion extends Struct {
   readonly entityId: EntityId;
   readonly subject: Clock;
@@ -184,6 +83,10 @@ export class CausalAssertion extends Struct {
     this.subject = subject;
     this.other = other;
     this.relation = relation;
+  }
+
+  clone(): CausalAssertion {
+    return new CausalAssertion(this.entityId.clone(), this.subject.clone(), this.other.clone(), this.relation.clone());
   }
 
   encode(writer: BincodeWriter): void {
@@ -202,9 +105,6 @@ export class CausalAssertion extends Struct {
   }
 }
 
-// ─── CausalAssertionFragment ────────────────────────────────────────────────
-
-/// Wire-minimal lineage attestation
 export class CausalAssertionFragment extends Struct {
   readonly relation: CausalRelation;
   readonly attestations: AttestationSet;
@@ -213,6 +113,10 @@ export class CausalAssertionFragment extends Struct {
     super();
     this.relation = relation;
     this.attestations = attestations;
+  }
+
+  clone(): CausalAssertionFragment {
+    return new CausalAssertionFragment(this.relation.clone(), this.attestations.clone());
   }
 
   encode(writer: BincodeWriter): void {
@@ -227,58 +131,6 @@ export class CausalAssertionFragment extends Struct {
   }
 }
 
-// ─── DeltaContent ───────────────────────────────────────────────────────────
-
-type DeltaContentV = {
-  StateSnapshot: { state: StateFragment };
-  EventBridge: { events: EventFragment[] };
-  StateAndRelation: { state: StateFragment; relation: CausalAssertionFragment };
-};
-
-export class DeltaContent extends Enum<DeltaContentV> {
-  encode(writer: BincodeWriter): void {
-    this.match({
-      StateSnapshot: (v) => {
-        writer.writeVariant(0);
-        v.state.encode(writer);
-      },
-      EventBridge: (v) => {
-        writer.writeVariant(1);
-        writer.writeVec(v.events, (w, e) => e.encode(w));
-      },
-      StateAndRelation: (v) => {
-        writer.writeVariant(2);
-        v.state.encode(writer);
-        v.relation.encode(writer);
-      },
-    });
-  }
-
-  static decode(reader: BincodeReader): DeltaContent {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: {
-        const state = StateFragment.decode(reader);
-        return new DeltaContent('StateSnapshot', { state });
-      }
-      case 1: {
-        const events = reader.readVec(r => EventFragment.decode(r));
-        return new DeltaContent('EventBridge', { events });
-      }
-      case 2: {
-        const state = StateFragment.decode(reader);
-        const relation = CausalAssertionFragment.decode(reader);
-        return new DeltaContent('StateAndRelation', { state, relation });
-      }
-      default:
-        throw new Error(`Unknown DeltaContent variant: ${variant}`);
-    }
-  }
-}
-
-// ─── EntityDelta ────────────────────────────────────────────────────────────
-
-/// Entity initialization data returned in QuerySubscribed and Fetch
 export class EntityDelta extends Struct {
   readonly entityId: EntityId;
   readonly collection: CollectionId;
@@ -291,13 +143,26 @@ export class EntityDelta extends Struct {
     this.content = content;
   }
 
-  // impl Display for EntityDelta
   toString(): string {
     return this.content.match({
-      StateSnapshot: (v) => `EntityDelta ${this.entityId}: StateSnapshot(${v.state})`,
-      EventBridge: (v) => `EntityDelta ${this.entityId}: EventBridge(${v.events.length} events)`,
-      StateAndRelation: (v) => `EntityDelta ${this.entityId}: StateAndRelation(${v.state})`,
+      StateSnapshot: (state) => `EntityDelta ${this.entityId}: StateSnapshot(${state})`,
+      EventBridge: (events) => {
+      let eventStrs = [];
+      for (const event of events) {
+        const event = Attested.fromParts(this.entityId, this.collection.clone(), event.clone());
+        eventStrs.push(event.payload.toString());
+        event.drop();
+      }
+      const _ret = `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
+      eventStrs.drop();
+      return _ret;
+    },
+      StateAndRelation: (state, relation) => `EntityDelta ${this.entityId}: StateAndRelation(${state})`,
     });
+  }
+
+  clone(): EntityDelta {
+    return new EntityDelta(this.entityId.clone(), this.collection.clone(), this.content.clone());
   }
 
   encode(writer: BincodeWriter): void {
@@ -314,133 +179,6 @@ export class EntityDelta extends Struct {
   }
 }
 
-// ─── NodeRequestBody ────────────────────────────────────────────────────────
-
-// Divergence: selection field stored as Uint8Array (raw bincode bytes) until @ankurah/ankql
-// provides Selection.encode/decode. See ast::Selection in ankql.
-
-// Divergence: SubscribeEntity (variant 2) not in Rust — TS-ahead variant for entity-level subscribe.
-// This shifts GetEvents/Fetch/SubscribeQuery variant numbers vs Rust wire format. [E4]
-type NodeRequestBodyV = {
-  CommitTransaction: { id: TransactionId; events: Attested<Event>[] };
-  Get: { collection: CollectionId; ids: EntityId[] };
-  SubscribeEntity: { collection: CollectionId; ids: EntityId[]; knownEntities: KnownEntity[] };
-  GetEvents: { collection: CollectionId; eventIds: EventId[] };
-  Fetch: { collection: CollectionId; selection: Uint8Array; knownMatches: KnownEntity[] };
-  SubscribeQuery: { queryId: QueryId; collection: CollectionId; selection: Uint8Array; version: number; knownMatches: KnownEntity[] };
-};
-
-export class NodeRequestBody extends Enum<NodeRequestBodyV> {
-  // impl Display for NodeRequestBody
-  toString(): string {
-    return this.match({
-      CommitTransaction: (v) => `CommitTransaction ${v.id} [${v.events.length} events]`,
-      Get: (v) => `Get ${v.collection} ${v.ids.map(id => id.toBase64Short()).join(', ')}`,
-      SubscribeEntity: (v) => `SubscribeEntity ${v.collection} ids:${v.ids.length} known:${v.knownEntities.length}`,
-      GetEvents: (v) => `GetEvents ${v.collection} ${v.eventIds.map(id => id.toBase64Short()).join(', ')}`,
-      Fetch: (v) => `Fetch ${v.collection} known:${v.knownMatches.length}`,
-      SubscribeQuery: (v) => `Subscribe ${v.queryId} ${v.collection} v${v.version} known:${v.knownMatches.length}`,
-    });
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.match({
-      CommitTransaction: (v) => {
-        writer.writeVariant(0);
-        v.id.encode(writer);
-        writer.writeVec(v.events, (w, e) => {
-          e.encode(w, (w2, event) => event.encode(w2));
-        });
-      },
-      Get: (v) => {
-        writer.writeVariant(1);
-        v.collection.encode(writer);
-        writer.writeVec(v.ids, (w, id) => id.encode(w));
-      },
-      SubscribeEntity: (v) => {
-        writer.writeVariant(2);
-        v.collection.encode(writer);
-        writer.writeVec(v.ids, (w, id) => id.encode(w));
-        writer.writeVec(v.knownEntities, (w, ke) => ke.encode(w));
-      },
-      GetEvents: (v) => {
-        writer.writeVariant(3);
-        v.collection.encode(writer);
-        writer.writeVec(v.eventIds, (w, id) => id.encode(w));
-      },
-      Fetch: (v) => {
-        writer.writeVariant(4);
-        v.collection.encode(writer);
-        writer.writeRawBytes(v.selection);
-        writer.writeVec(v.knownMatches, (w, km) => km.encode(w));
-      },
-      SubscribeQuery: (v) => {
-        writer.writeVariant(5);
-        v.queryId.encode(writer);
-        v.collection.encode(writer);
-        writer.writeRawBytes(v.selection);
-        writer.writeU32(v.version);
-        writer.writeVec(v.knownMatches, (w, km) => km.encode(w));
-      },
-    });
-  }
-
-  static decode(reader: BincodeReader): NodeRequestBody {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: {
-        const id = TransactionId.decode(reader);
-        const events = reader.readVec(r => Attested.decode(r, r2 => Event.decode(r2)));
-        return new NodeRequestBody('CommitTransaction', { id, events });
-      }
-      case 1: {
-        const collection = CollectionId.decode(reader);
-        const ids = reader.readVec(r => EntityId.decode(r));
-        return new NodeRequestBody('Get', { collection, ids });
-      }
-      case 2: {
-        const collection = CollectionId.decode(reader);
-        const ids = reader.readVec(r => EntityId.decode(r));
-        const knownEntities = reader.readVec(r => KnownEntity.decode(r));
-        return new NodeRequestBody('SubscribeEntity', { collection, ids, knownEntities });
-      }
-      case 3: {
-        const collection = CollectionId.decode(reader);
-        const eventIds = reader.readVec(r => EventId.decode(r));
-        return new NodeRequestBody('GetEvents', { collection, eventIds });
-      }
-      case 4: {
-        const collection = CollectionId.decode(reader);
-        // Divergence: Selection stored as opaque bytes until @ankurah/ankql provides encode/decode
-        const selection = decodeOpaqueSelection(reader);
-        const knownMatches = reader.readVec(r => KnownEntity.decode(r));
-        return new NodeRequestBody('Fetch', { collection, selection, knownMatches });
-      }
-      case 5: {
-        const queryId = QueryId.decode(reader);
-        const collection = CollectionId.decode(reader);
-        const selection = decodeOpaqueSelection(reader);
-        const version = reader.readU32();
-        const knownMatches = reader.readVec(r => KnownEntity.decode(r));
-        return new NodeRequestBody('SubscribeQuery', { queryId, collection, selection, version, knownMatches });
-      }
-      default:
-        throw new Error(`Unknown NodeRequestBody variant: ${variant}`);
-    }
-  }
-}
-
-/**
- * Placeholder: Selection decode requires @ankurah/ankql Selection.decode().
- * TODO: Replace with proper Selection codec when available.
- */
-function decodeOpaqueSelection(_reader: BincodeReader): Uint8Array {
-  throw new Error('Selection decode not yet implemented — requires @ankurah/ankql Selection.encode/decode');
-}
-
-// ─── NodeResponse ───────────────────────────────────────────────────────────
-
-/// A response from one node to another
 export class NodeResponse extends Struct {
   readonly requestId: RequestId;
   readonly from: EntityId;
@@ -455,7 +193,6 @@ export class NodeResponse extends Struct {
     this.body = body;
   }
 
-  // impl Display for NodeResponse
   toString(): string {
     return `Response(${this.requestId}) ${this.from}->${this.to} ${this.body}`;
   }
@@ -476,33 +213,260 @@ export class NodeResponse extends Struct {
   }
 }
 
-// ─── NodeResponseBody ───────────────────────────────────────────────────────
+export type CausalRelationV = {
+  Equal: {};
+  StrictDescends: {};
+  StrictAscends: {};
+  DivergedSince: { meet: Clock; subject: Clock; other: Clock };
+  Disjoint: { gca: Clock | null; subjectRoot: EventId; otherRoot: EventId };
+  BudgetExceeded: { subject: Clock; other: Clock };
+};
 
-// Divergence: EntitiesSubscribed (variant 3) not in Rust — TS-ahead variant for entity-level subscribe response.
-// This shifts GetEvents/QuerySubscribed/Success/Error variant numbers vs Rust wire format. [E4]
-type NodeResponseBodyV = {
+export class CausalRelation extends Enum<CausalRelationV> {
+
+  clone(): CausalRelation {
+    return this.match({
+      Equal: () => new CausalRelation('Equal', {}),
+      StrictDescends: () => new CausalRelation('StrictDescends', {}),
+      StrictAscends: () => new CausalRelation('StrictAscends', {}),
+      DivergedSince: (v) => new CausalRelation('DivergedSince', { meet: v.meet.clone(), subject: v.subject.clone(), other: v.other.clone() }),
+      Disjoint: (v) => new CausalRelation('Disjoint', { gca: v.gca.clone(), subjectRoot: v.subjectRoot.clone(), otherRoot: v.otherRoot.clone() }),
+      BudgetExceeded: (v) => new CausalRelation('BudgetExceeded', { subject: v.subject.clone(), other: v.other.clone() }),
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Equal: (v) => {
+        writer.writeVariant(0);
+      },
+      StrictDescends: (v) => {
+        writer.writeVariant(1);
+      },
+      StrictAscends: (v) => {
+        writer.writeVariant(2);
+      },
+      DivergedSince: (v) => {
+        writer.writeVariant(3);
+        v.meet.encode(writer);
+        v.subject.encode(writer);
+        v.other.encode(writer);
+      },
+      Disjoint: (v) => {
+        writer.writeVariant(4);
+        writer.writeOption(v.gca, (w, v) => v.encode(w));
+        v.subjectRoot.encode(writer);
+        v.otherRoot.encode(writer);
+      },
+      BudgetExceeded: (v) => {
+        writer.writeVariant(5);
+        v.subject.encode(writer);
+        v.other.encode(writer);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): CausalRelation {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        return new CausalRelation('Equal', {});
+      }
+      case 1: {
+        return new CausalRelation('StrictDescends', {});
+      }
+      case 2: {
+        return new CausalRelation('StrictAscends', {});
+      }
+      case 3: {
+        const meet = Clock.decode(reader);
+        const subject = Clock.decode(reader);
+        const other = Clock.decode(reader);
+        return new CausalRelation('DivergedSince', { meet, subject, other });
+      }
+      case 4: {
+        const gca = reader.readOption((r) => Clock.decode(r));
+        const subjectRoot = EventId.decode(reader);
+        const otherRoot = EventId.decode(reader);
+        return new CausalRelation('Disjoint', { gca, subjectRoot, otherRoot });
+      }
+      case 5: {
+        const subject = Clock.decode(reader);
+        const other = Clock.decode(reader);
+        return new CausalRelation('BudgetExceeded', { subject, other });
+      }
+      default: throw new Error(`Unknown CausalRelation variant: ${variant}`);
+    }
+  }
+}
+
+export type DeltaContentV = {
+  StateSnapshot: { state: StateFragment };
+  EventBridge: { events: EventFragment[] };
+  StateAndRelation: { state: StateFragment; relation: CausalAssertionFragment };
+};
+
+export class DeltaContent extends Enum<DeltaContentV> {
+
+  clone(): DeltaContent {
+    return this.match({
+      StateSnapshot: (v) => new DeltaContent('StateSnapshot', { state: v.state.clone() }),
+      EventBridge: (v) => new DeltaContent('EventBridge', { events: v.events.map(e => e.clone()) }),
+      StateAndRelation: (v) => new DeltaContent('StateAndRelation', { state: v.state.clone(), relation: v.relation.clone() }),
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      StateSnapshot: (v) => {
+        writer.writeVariant(0);
+        v.state.encode(writer);
+      },
+      EventBridge: (v) => {
+        writer.writeVariant(1);
+        writer.writeVec(v.events, (w, item) => item.encode(w));
+      },
+      StateAndRelation: (v) => {
+        writer.writeVariant(2);
+        v.state.encode(writer);
+        v.relation.encode(writer);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): DeltaContent {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const state = StateFragment.decode(reader);
+        return new DeltaContent('StateSnapshot', { state });
+      }
+      case 1: {
+        const events = reader.readVec((r) => EventFragment.decode(r));
+        return new DeltaContent('EventBridge', { events });
+      }
+      case 2: {
+        const state = StateFragment.decode(reader);
+        const relation = CausalAssertionFragment.decode(reader);
+        return new DeltaContent('StateAndRelation', { state, relation });
+      }
+      default: throw new Error(`Unknown DeltaContent variant: ${variant}`);
+    }
+  }
+}
+
+export type NodeRequestBodyV = {
+  CommitTransaction: { id: TransactionId; events: Attested<Event>[] };
+  Get: { collection: CollectionId; ids: EntityId[] };
+  GetEvents: { collection: CollectionId; eventIds: EventId[] };
+  Fetch: { collection: CollectionId; selection: Selection; knownMatches: KnownEntity[] };
+  SubscribeQuery: { queryId: QueryId; collection: CollectionId; selection: Selection; version: number; knownMatches: KnownEntity[] };
+};
+
+export class NodeRequestBody extends Enum<NodeRequestBodyV> {
+
+  toString(): string {
+    return this.match({
+      CommitTransaction: (id, events) => `CommitTransaction ${id} [${Array.from(events).map((e) => `${e}`).join(', ')}]`,
+      Get: (collection, ids) => `Get ${collection} ${Array.from(ids).map((id) => id.toBase64Short()).join(', ')}`,
+      GetEvents: (collection, eventIds) => `GetEvents ${collection} ${event_ids . iter () . map (| id | id . to_base64_short ()) . collect ::< Vec < _ >> () . join (", ")}`,
+      Fetch: (collection, selection, knownMatches) => `Fetch ${collection} ${query} known:${knownMatches.length}`,
+      SubscribeQuery: (queryId, collection, selection, version, knownMatches) => `Subscribe ${queryId} ${collection} ${query} v${version} known:${knownMatches.length}`,
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      CommitTransaction: (v) => {
+        writer.writeVariant(0);
+        v.id.encode(writer);
+        writer.writeVec(v.events, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
+      },
+      Get: (v) => {
+        writer.writeVariant(1);
+        v.collection.encode(writer);
+        writer.writeVec(v.ids, (w, item) => item.encode(w));
+      },
+      GetEvents: (v) => {
+        writer.writeVariant(2);
+        v.collection.encode(writer);
+        writer.writeVec(v.eventIds, (w, item) => item.encode(w));
+      },
+      Fetch: (v) => {
+        writer.writeVariant(3);
+        v.collection.encode(writer);
+        v.selection.encode(writer);
+        writer.writeVec(v.knownMatches, (w, item) => item.encode(w));
+      },
+      SubscribeQuery: (v) => {
+        writer.writeVariant(4);
+        v.queryId.encode(writer);
+        v.collection.encode(writer);
+        v.selection.encode(writer);
+        writer.writeU32(v.version);
+        writer.writeVec(v.knownMatches, (w, item) => item.encode(w));
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): NodeRequestBody {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const id = TransactionId.decode(reader);
+        const events = reader.readVec((r) => Attested.decode(r, (r2) => Event.decode(r2)));
+        return new NodeRequestBody('CommitTransaction', { id, events });
+      }
+      case 1: {
+        const collection = CollectionId.decode(reader);
+        const ids = reader.readVec((r) => EntityId.decode(r));
+        return new NodeRequestBody('Get', { collection, ids });
+      }
+      case 2: {
+        const collection = CollectionId.decode(reader);
+        const eventIds = reader.readVec((r) => EventId.decode(r));
+        return new NodeRequestBody('GetEvents', { collection, eventIds });
+      }
+      case 3: {
+        const collection = CollectionId.decode(reader);
+        const selection = Selection.decode(reader);
+        const knownMatches = reader.readVec((r) => KnownEntity.decode(r));
+        return new NodeRequestBody('Fetch', { collection, selection, knownMatches });
+      }
+      case 4: {
+        const queryId = QueryId.decode(reader);
+        const collection = CollectionId.decode(reader);
+        const selection = Selection.decode(reader);
+        const version = reader.readU32();
+        const knownMatches = reader.readVec((r) => KnownEntity.decode(r));
+        return new NodeRequestBody('SubscribeQuery', { queryId, collection, selection, version, knownMatches });
+      }
+      default: throw new Error(`Unknown NodeRequestBody variant: ${variant}`);
+    }
+  }
+}
+
+export type NodeResponseBodyV = {
   CommitComplete: { id: TransactionId };
-  Fetch: { deltas: EntityDelta[] };
-  Get: { states: Attested<EntityState>[] };
-  EntitiesSubscribed: { deltas: EntityDelta[] };
-  GetEvents: { events: Attested<Event>[] };
+  Fetch: { _0: EntityDelta[] };
+  Get: { _0: Attested<EntityState>[] };
+  GetEvents: { _0: Attested<Event>[] };
   QuerySubscribed: { queryId: QueryId; deltas: EntityDelta[] };
   Success: {};
-  Error: { message: string };
+  Error: { _0: string };
 };
 
 export class NodeResponseBody extends Enum<NodeResponseBodyV> {
-  // impl Display for NodeResponseBody
+
   toString(): string {
     return this.match({
-      CommitComplete: (v) => `CommitComplete ${v.id}`,
-      Fetch: (v) => `Fetch [${v.deltas.length}]`,
-      Get: (v) => `Get [${v.states.length}]`,
-      EntitiesSubscribed: (v) => `EntitiesSubscribed [${v.deltas.length}]`,
-      GetEvents: (v) => `GetEvents [${v.events.length}]`,
-      QuerySubscribed: (v) => `Subscribed ${v.queryId} initial:${v.deltas.length}`,
+      CommitComplete: (id) => `CommitComplete ${id}`,
+      Fetch: (deltas) => `Fetch [${deltas.length}]`,
+      Get: (states) => `Get [${Array.from(states).map((s) => s.toString()).join(', ')}]`,
+      GetEvents: (events) => `GetEvents [${Array.from(events).map((e) => e.payload.toString()).join(', ')}]`,
+      QuerySubscribed: (queryId, deltas) => `Subscribed ${queryId} initial:${initial.length}`,
       Success: () => 'Success',
-      Error: (v) => `Error: ${v.message}`,
+      Error: (e) => `Error: ${e}`,
     });
   }
 
@@ -514,35 +478,27 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
       },
       Fetch: (v) => {
         writer.writeVariant(1);
-        writer.writeVec(v.deltas, (w, d) => d.encode(w));
+        writer.writeVec(v._0, (w, item) => item.encode(w));
       },
       Get: (v) => {
         writer.writeVariant(2);
-        writer.writeVec(v.states, (w, s) => {
-          s.encode(w, (w2, es) => es.encode(w2));
-        });
-      },
-      EntitiesSubscribed: (v) => {
-        writer.writeVariant(3);
-        writer.writeVec(v.deltas, (w, d) => d.encode(w));
+        writer.writeVec(v._0, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
       },
       GetEvents: (v) => {
-        writer.writeVariant(4);
-        writer.writeVec(v.events, (w, e) => {
-          e.encode(w, (w2, ev) => ev.encode(w2));
-        });
+        writer.writeVariant(3);
+        writer.writeVec(v._0, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
       },
       QuerySubscribed: (v) => {
-        writer.writeVariant(5);
+        writer.writeVariant(4);
         v.queryId.encode(writer);
-        writer.writeVec(v.deltas, (w, d) => d.encode(w));
+        writer.writeVec(v.deltas, (w, item) => item.encode(w));
       },
-      Success: () => {
-        writer.writeVariant(6);
+      Success: (v) => {
+        writer.writeVariant(5);
       },
       Error: (v) => {
-        writer.writeVariant(7);
-        writer.writeString(v.message);
+        writer.writeVariant(6);
+        writer.writeString(v._0);
       },
     });
   }
@@ -555,34 +511,31 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
         return new NodeResponseBody('CommitComplete', { id });
       }
       case 1: {
-        const deltas = reader.readVec(r => EntityDelta.decode(r));
-        return new NodeResponseBody('Fetch', { deltas });
+        const _0 = reader.readVec((r) => EntityDelta.decode(r));
+        return new NodeResponseBody('Fetch', { _0 });
       }
       case 2: {
-        const states = reader.readVec(r => Attested.decode(r, r2 => EntityState.decode(r2)));
-        return new NodeResponseBody('Get', { states });
+        const _0 = reader.readVec((r) => Attested.decode(r, (r2) => EntityState.decode(r2)));
+        return new NodeResponseBody('Get', { _0 });
       }
       case 3: {
-        const deltas = reader.readVec(r => EntityDelta.decode(r));
-        return new NodeResponseBody('EntitiesSubscribed', { deltas });
+        const _0 = reader.readVec((r) => Attested.decode(r, (r2) => Event.decode(r2)));
+        return new NodeResponseBody('GetEvents', { _0 });
       }
       case 4: {
-        const events = reader.readVec(r => Attested.decode(r, r2 => Event.decode(r2)));
-        return new NodeResponseBody('GetEvents', { events });
-      }
-      case 5: {
         const queryId = QueryId.decode(reader);
-        const deltas = reader.readVec(r => EntityDelta.decode(r));
+        const deltas = reader.readVec((r) => EntityDelta.decode(r));
         return new NodeResponseBody('QuerySubscribed', { queryId, deltas });
       }
-      case 6:
+      case 5: {
         return new NodeResponseBody('Success', {});
-      case 7: {
-        const message = reader.readString();
-        return new NodeResponseBody('Error', { message });
       }
-      default:
-        throw new Error(`Unknown NodeResponseBody variant: ${variant}`);
+      case 6: {
+        const _0 = reader.readString();
+        return new NodeResponseBody('Error', { _0 });
+      }
+      default: throw new Error(`Unknown NodeResponseBody variant: ${variant}`);
     }
   }
 }
+

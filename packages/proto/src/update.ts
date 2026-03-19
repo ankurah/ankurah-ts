@@ -1,157 +1,20 @@
 // MIRRORS: ankurah/proto/src/update.rs
-
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, Result } from '@ankurah/base';
+import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
-import { EntityId, UpdateId, QueryId } from './id';
 import { CollectionId } from './collection';
-import { Attested } from './auth';
-import { EntityState, EventFragment, StateFragment, attestedEntityStateFromParts } from './data';
-
-// Divergence: UpdateId struct is defined in id.ts (co-located with other ULID IDs)
-// rather than here. Re-exported to maintain the Rust module mapping. [E4]
+import { EventFragment, StateFragment } from './data';
+import { EntityId } from './id';
+import { QueryId } from './subscription';
 export { UpdateId };
-
-// ─── NodeUpdateBody ──────────────────────────────────────────────────────────
-
-type NodeUpdateBodyV = {
-  /// New events for a subscription
-  SubscriptionUpdate: { items: SubscriptionUpdateItem[] };
-};
-
-export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
-  // impl Display for NodeUpdateBody
-  toString(): string {
-    return this.match({
-      SubscriptionUpdate: (v) =>
-        `SubscriptionUpdate [${v.items.map((i) => `${i}`).join(', ')}]`,
-    });
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.match({
-      SubscriptionUpdate: (v) => {
-        writer.writeVariant(0);
-        writer.writeVec(v.items, (w, item) => item.encode(w));
-      },
-    });
-  }
-
-  static decode(reader: BincodeReader): NodeUpdateBody {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: {
-        const items = reader.readVec((r) => SubscriptionUpdateItem.decode(r));
-        return new NodeUpdateBody('SubscriptionUpdate', { items });
-      }
-      default:
-        throw new Error(`Unknown NodeUpdateBody variant: ${variant}`);
-    }
-  }
-}
-
-// ─── UpdateContent ───────────────────────────────────────────────────────────
-
-type UpdateContentV = {
-  /// Only events, no state (peer already has the state)
-  EventOnly: { events: EventFragment[] };
-  /// Both state and events (peer needs both)
-  StateAndEvent: { state: StateFragment; events: EventFragment[] };
-};
-
-export class UpdateContent extends Enum<UpdateContentV> {
-  /// Decompose into optional state and event fragments
-  intoParts(): { state: StateFragment | null; events: EventFragment[] | null } {
-    return this.match({
-      EventOnly: (v) => ({ state: null, events: v.events }),
-      StateAndEvent: (v) => ({ state: v.state as StateFragment | null, events: v.events }),
-    });
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.match({
-      EventOnly: (v) => {
-        writer.writeVariant(0);
-        writer.writeVec(v.events, (w, e) => e.encode(w));
-      },
-      StateAndEvent: (v) => {
-        writer.writeVariant(1);
-        v.state.encode(writer);
-        writer.writeVec(v.events, (w, e) => e.encode(w));
-      },
-    });
-  }
-
-  static decode(reader: BincodeReader): UpdateContent {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: {
-        const events = reader.readVec((r) => EventFragment.decode(r));
-        return new UpdateContent('EventOnly', { events });
-      }
-      case 1: {
-        const state = StateFragment.decode(reader);
-        const events = reader.readVec((r) => EventFragment.decode(r));
-        return new UpdateContent('StateAndEvent', { state, events });
-      }
-      default:
-        throw new Error(`Unknown UpdateContent variant: ${variant}`);
-    }
-  }
-}
-
-// ─── MembershipChange ────────────────────────────────────────────────────────
-
-type MembershipChangeV = {
-  /// First time seeing this entity for this predicate
-  Initial: {};
-  /// Entity now matches predicate (wasn't matching before)
-  Add: {};
-  /// Entity no longer matches predicate (was matching before)
-  Remove: {};
-};
-
-export class MembershipChange extends Enum<MembershipChangeV> {
-  // derive(PartialEq)
-  equals(other: MembershipChange): boolean {
-    return this.type === other.type;
-  }
-
-  encode(writer: BincodeWriter): void {
-    this.match({
-      Initial: () => { writer.writeVariant(0); },
-      Add: () => { writer.writeVariant(1); },
-      Remove: () => { writer.writeVariant(2); },
-    });
-  }
-
-  static decode(reader: BincodeReader): MembershipChange {
-    const variant = reader.readVariant();
-    switch (variant) {
-      case 0: return new MembershipChange('Initial', {});
-      case 1: return new MembershipChange('Add', {});
-      case 2: return new MembershipChange('Remove', {});
-      default:
-        throw new Error(`Unknown MembershipChange variant: ${variant}`);
-    }
-  }
-}
-
-// ─── SubscriptionUpdateItem ──────────────────────────────────────────────────
 
 export class SubscriptionUpdateItem extends Struct {
   readonly entityId: EntityId;
   readonly collection: CollectionId;
   readonly content: UpdateContent;
-  /// Which predicates this update is relevant to and how
-  /// Uses PredicateId for remote subscriptions
-  readonly predicateRelevance: Array<[QueryId, MembershipChange]>;
+  readonly predicateRelevance: [QueryId, MembershipChange][];
 
-  constructor(
-    entityId: EntityId,
-    collection: CollectionId,
-    content: UpdateContent,
-    predicateRelevance: Array<[QueryId, MembershipChange]>,
-  ) {
+  constructor(entityId: EntityId, collection: CollectionId, content: UpdateContent, predicateRelevance: [QueryId, MembershipChange][]) {
     super();
     this.entityId = entityId;
     this.collection = collection;
@@ -159,56 +22,39 @@ export class SubscriptionUpdateItem extends Struct {
     this.predicateRelevance = predicateRelevance;
   }
 
-  // impl TryFrom<SubscriptionUpdateItem> for Attested<EntityState>
-  tryIntoAttestedEntityState(): Attested<EntityState> {
-    return this.content.match({
-      StateAndEvent: (v) =>
-        attestedEntityStateFromParts(this.entityId, this.collection, v.state),
-      EventOnly: () => {
-        throw new Error('Cannot convert event-only update to entity state');
-      },
-    });
+  toString(): string {
+    const _r = `${this.collection}/${this.entityId}: `;
+    if (_r.isErr()) return _r as any;
+    this.content.match({
+      EventOnly: (events) => `Events(${events.length})`.unwrap(),
+      StateAndEvent: (state, events) => `State+Events(${state}, ${events.length})`.unwrap(),
+    })
+    if (!this.predicateRelevance.length === 0) {
+      const _r = ` predicates:${this.predicateRelevance.length}`;
+      if (_r.isErr()) return _r as any;
+    }
+    return Result.Ok([]);
   }
 
-  // impl Display for SubscriptionUpdateItem
-  toString(): string {
-    const contentStr = this.content.match({
-      EventOnly: (v) => `Events(${v.events.length})`,
-      StateAndEvent: (v) => `State+Events(${v.state}, ${v.events.length})`,
-    });
-
-    const predStr = this.predicateRelevance.length > 0
-      ? ` predicates:${this.predicateRelevance.length}`
-      : '';
-
-    return `${this.collection}/${this.entityId}: ${contentStr}${predStr}`;
+  clone(): SubscriptionUpdateItem {
+    return new SubscriptionUpdateItem(this.entityId.clone(), this.collection.clone(), this.content.clone(), this.predicateRelevance.map(e => e.clone()));
   }
 
   encode(writer: BincodeWriter): void {
     this.entityId.encode(writer);
     this.collection.encode(writer);
     this.content.encode(writer);
-    // Vec<(QueryId, MembershipChange)>
-    writer.writeVec(this.predicateRelevance, (w, [qid, mc]) => {
-      qid.encode(w);
-      mc.encode(w);
-    });
+    writer.writeVec(this.predicateRelevance, (w, item) => item.encode(w));
   }
 
   static decode(reader: BincodeReader): SubscriptionUpdateItem {
     const entityId = EntityId.decode(reader);
     const collection = CollectionId.decode(reader);
     const content = UpdateContent.decode(reader);
-    const predicateRelevance = reader.readVec((r) => {
-      const qid = QueryId.decode(r);
-      const mc = MembershipChange.decode(r);
-      return [qid, mc] as [QueryId, MembershipChange];
-    });
+    const predicateRelevance = reader.readVec((r) => [QueryId, MembershipChange].decode(r));
     return new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
   }
 }
-
-// ─── NodeUpdate ──────────────────────────────────────────────────────────────
 
 export class NodeUpdate extends Struct {
   readonly id: UpdateId;
@@ -224,7 +70,6 @@ export class NodeUpdate extends Struct {
     this.body = body;
   }
 
-  // impl Display for NodeUpdate
   toString(): string {
     return `Update ${this.id} from ${this.from}->${this.to}: ${this.body}`;
   }
@@ -245,8 +90,6 @@ export class NodeUpdate extends Struct {
   }
 }
 
-// ─── NodeUpdateAck ───────────────────────────────────────────────────────────
-
 export class NodeUpdateAck extends Struct {
   readonly id: UpdateId;
   readonly from: EntityId;
@@ -261,7 +104,6 @@ export class NodeUpdateAck extends Struct {
     this.body = body;
   }
 
-  // impl Display for NodeUpdateAck
   toString(): string {
     return `UpdateAck(${this.id})`;
   }
@@ -282,30 +124,160 @@ export class NodeUpdateAck extends Struct {
   }
 }
 
-// ─── NodeUpdateAckBody ───────────────────────────────────────────────────────
-
-type NodeUpdateAckBodyV = {
-  Success: {};
-  Error: { message: string };
+export type NodeUpdateBodyV = {
+  SubscriptionUpdate: { items: SubscriptionUpdateItem[] };
 };
 
-export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
-  // impl Display for NodeUpdateAckBody
+export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
+
   toString(): string {
     return this.match({
-      Success: () => 'Success',
-      Error: (v) => `Error: ${v.message}`,
+      SubscriptionUpdate: (items) => `SubscriptionUpdate [${Array.from(items).map((i) => `${i}`).join(', ')}]`,
     });
   }
 
   encode(writer: BincodeWriter): void {
     this.match({
-      Success: () => {
+      SubscriptionUpdate: (v) => {
+        writer.writeVariant(0);
+        writer.writeVec(v.items, (w, item) => item.encode(w));
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): NodeUpdateBody {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const items = reader.readVec((r) => SubscriptionUpdateItem.decode(r));
+        return new NodeUpdateBody('SubscriptionUpdate', { items });
+      }
+      default: throw new Error(`Unknown NodeUpdateBody variant: ${variant}`);
+    }
+  }
+}
+
+export type UpdateContentV = {
+  EventOnly: { _0: EventFragment[] };
+  StateAndEvent: { _0: StateFragment; _1: EventFragment[] };
+};
+
+export class UpdateContent extends Enum<UpdateContentV> {
+
+  intoParts(): [StateFragment | null, EventFragment[] | null] {
+    return this.match({
+      EventOnly: (events) => [null, events],
+      StateAndEvent: (state, events) => [state, events],
+    });
+  }
+
+  clone(): UpdateContent {
+    return this.match({
+      EventOnly: (v) => new UpdateContent('EventOnly', { _0: v._0.map(e => e.clone()) }),
+      StateAndEvent: (v) => new UpdateContent('StateAndEvent', { _0: v._0.clone(), _1: v._1.map(e => e.clone()) }),
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      EventOnly: (v) => {
+        writer.writeVariant(0);
+        writer.writeVec(v._0, (w, item) => item.encode(w));
+      },
+      StateAndEvent: (v) => {
+        writer.writeVariant(1);
+        v._0.encode(writer);
+        writer.writeVec(v._1, (w, item) => item.encode(w));
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): UpdateContent {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const _0 = reader.readVec((r) => EventFragment.decode(r));
+        return new UpdateContent('EventOnly', { _0 });
+      }
+      case 1: {
+        const _0 = StateFragment.decode(reader);
+        const _1 = reader.readVec((r) => EventFragment.decode(r));
+        return new UpdateContent('StateAndEvent', { _0, _1 });
+      }
+      default: throw new Error(`Unknown UpdateContent variant: ${variant}`);
+    }
+  }
+}
+
+export type MembershipChangeV = {
+  Initial: {};
+  Add: {};
+  Remove: {};
+};
+
+export class MembershipChange extends Enum<MembershipChangeV> {
+
+  clone(): MembershipChange {
+    return new MembershipChange(this.type, { ...this.value });
+  }
+
+  equals(other: MembershipChange): boolean {
+    return true;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Initial: (v) => {
+        writer.writeVariant(0);
+      },
+      Add: (v) => {
+        writer.writeVariant(1);
+      },
+      Remove: (v) => {
+        writer.writeVariant(2);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): MembershipChange {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        return new MembershipChange('Initial', {});
+      }
+      case 1: {
+        return new MembershipChange('Add', {});
+      }
+      case 2: {
+        return new MembershipChange('Remove', {});
+      }
+      default: throw new Error(`Unknown MembershipChange variant: ${variant}`);
+    }
+  }
+}
+
+export type NodeUpdateAckBodyV = {
+  Success: {};
+  Error: { _0: string };
+};
+
+export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
+
+  toString(): string {
+    return this.match({
+      Success: () => 'Success',
+      Error: (e) => `Error: ${e}`,
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Success: (v) => {
         writer.writeVariant(0);
       },
       Error: (v) => {
         writer.writeVariant(1);
-        writer.writeString(v.message);
+        writer.writeString(v._0);
       },
     });
   }
@@ -313,14 +285,15 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
   static decode(reader: BincodeReader): NodeUpdateAckBody {
     const variant = reader.readVariant();
     switch (variant) {
-      case 0:
+      case 0: {
         return new NodeUpdateAckBody('Success', {});
-      case 1: {
-        const message = reader.readString();
-        return new NodeUpdateAckBody('Error', { message });
       }
-      default:
-        throw new Error(`Unknown NodeUpdateAckBody variant: ${variant}`);
+      case 1: {
+        const _0 = reader.readString();
+        return new NodeUpdateAckBody('Error', { _0 });
+      }
+      default: throw new Error(`Unknown NodeUpdateAckBody variant: ${variant}`);
     }
   }
 }
+
