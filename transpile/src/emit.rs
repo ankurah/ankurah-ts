@@ -88,6 +88,51 @@ pub fn emit_enum(
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
     emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
+
+    // Enum-specific derive handling (clone needs variant-aware logic)
+    if e.derives.iter().any(|d| d == "Clone") && emitted.insert("clone".to_string()) {
+        // Clone via match — deep-clone each variant's fields
+        let has_complex_fields = e.variants.iter().any(|v| v.fields.iter().any(|f|
+            !is_primitive_ts_type(&f.ty) && f.ty != "Uint8Array"));
+        if has_complex_fields {
+            out.push_str(&format!("\n  clone(): {} {{\n    return this.match({{\n", self_type));
+            for v in &e.variants {
+                if v.fields.is_empty() {
+                    out.push_str(&format!("      {}: () => new {}('{}', {{}}),\n", v.name, e.name, v.name));
+                } else {
+                    let clone_fields: Vec<String> = v.fields.iter()
+                        .filter_map(|f| {
+                            let n = f.name.as_deref()?;
+                            let ty = f.ty.as_str();
+                            Some(if is_primitive_ts_type(ty) {
+                                format!("{}: v.{}", n, n)
+                            } else if ty == "Uint8Array" {
+                                format!("{}: new Uint8Array(v.{})", n, n)
+                            } else if ty.ends_with("[]") {
+                                let inner = &ty[..ty.len()-2];
+                                if is_primitive_ts_type(inner) {
+                                    format!("{}: [...v.{}]", n, n)
+                                } else {
+                                    format!("{}: v.{}.map(e => e.clone())", n, n)
+                                }
+                            } else {
+                                format!("{}: v.{}.clone()", n, n)
+                            })
+                        })
+                        .collect();
+                    out.push_str(&format!("      {}: (v) => new {}('{}', {{ {} }}),\n",
+                        v.name, e.name, v.name, clone_fields.join(", ")));
+                }
+            }
+            out.push_str("    });\n  }\n");
+        } else {
+            // Simple enum — shallow copy is sufficient
+            out.push_str(&format!("\n  clone(): {} {{\n    return new {}(this.type, {{ ...this.value }});\n  }}\n",
+                self_type, e.name));
+        }
+    }
+
+    // Handle remaining derives (PartialEq, Default, etc.) — pass empty fields for enums
     emit_derive_methods(out, &e.name, &e.generics, &e.derives, &mut emitted, &[]);
 
     if crate::bincode_module::has_serde_derive(&e.derives) {
@@ -223,19 +268,15 @@ fn emit_derive_methods(
                         Some(n) => n,
                         None => continue,
                     };
-                    if f.ty.ends_with(" | null") {
-                        // Nullable field — null-safe comparison
+                    let base_ty = f.ty.trim_end_matches(" | null");
+                    let is_nullable = f.ty.ends_with(" | null");
+
+                    if is_nullable {
                         out.push_str(&format!("    if (this.{} === null && other.{} === null) {{ /* both null, ok */ }}\n", n, n));
                         out.push_str(&format!("    else if (this.{} === null || other.{} === null) return false;\n", n, n));
-                        if is_primitive_ts_type(&f.ty.replace(" | null", "")) {
-                            out.push_str(&format!("    else if (this.{} !== other.{}) return false;\n", n, n));
-                        } else {
-                            out.push_str(&format!("    else if (!this.{}.equals(other.{})) return false;\n", n, n));
-                        }
-                    } else if is_primitive_ts_type(&f.ty) {
-                        out.push_str(&format!("    if (this.{} !== other.{}) return false;\n", n, n));
+                        out.push_str(&format!("    else {}\n", emit_field_eq(n, base_ty)));
                     } else {
-                        out.push_str(&format!("    if (!this.{}.equals(other.{})) return false;\n", n, n));
+                        out.push_str(&format!("    {}\n", emit_field_eq(n, base_ty)));
                     }
                 }
                 out.push_str("    return true;\n  }\n");
@@ -261,10 +302,29 @@ fn emit_derive_methods(
                             .filter_map(|f| {
                                 let n = f.name.as_deref()?;
                                 let ty = f.ty.as_str();
-                                Some(if is_primitive_ts_type(ty) {
+                                let base_ty = ty.trim_end_matches(" | null");
+                                Some(if is_primitive_ts_type(base_ty) {
                                     format!("this.{}", n)
+                                } else if base_ty == "Uint8Array" {
+                                    if ty.ends_with(" | null") {
+                                        format!("this.{} != null ? new Uint8Array(this.{}) : null", n, n)
+                                    } else {
+                                        format!("new Uint8Array(this.{})", n)
+                                    }
+                                } else if base_ty.ends_with("[]") {
+                                    // Array of objects — map clone
+                                    let inner = &base_ty[..base_ty.len()-2];
+                                    if is_primitive_ts_type(inner) {
+                                        format!("[...this.{}]", n)
+                                    } else if ty.ends_with(" | null") {
+                                        format!("this.{} != null ? this.{}.map(e => e.clone()) : null", n, n)
+                                    } else {
+                                        format!("this.{}.map(e => e.clone())", n)
+                                    }
+                                } else if base_ty.starts_with("Map<") {
+                                    // Map — clone entries
+                                    format!("new Map(Array.from(this.{}.entries()).map(([k, v]) => [k, v]))", n)
                                 } else if ty.ends_with(" | null") {
-                                    // Nullable — null-safe clone
                                     format!("this.{}?.clone() ?? null", n)
                                 } else {
                                     format!("this.{}.clone()", n)
@@ -278,6 +338,39 @@ fn emit_derive_methods(
             }
             // PartialEq/Eq and PartialOrd/Ord already emitted above in consistent order
             "PartialEq" | "Eq" | "PartialOrd" | "Ord" => {}
+            "Default" => {
+                if emitted.insert("default".to_string()) {
+                    if field_names.is_empty() {
+                        out.push_str(&format!("\n  static default(): {} {{\n    return new {}();\n  }}\n", full_type, type_name));
+                    } else {
+                        let default_fields: Vec<String> = fields.iter()
+                            .filter_map(|f| {
+                                let ty = f.ty.as_str();
+                                let base_ty = ty.trim_end_matches(" | null");
+                                Some(if ty.ends_with(" | null") {
+                                    "null".to_string()
+                                } else if base_ty == "string" {
+                                    "''".to_string()
+                                } else if base_ty == "boolean" {
+                                    "false".to_string()
+                                } else if base_ty == "number" || base_ty == "bigint | number" {
+                                    "0".to_string()
+                                } else if base_ty == "Uint8Array" {
+                                    "new Uint8Array(0)".to_string()
+                                } else if base_ty.ends_with("[]") {
+                                    "[]".to_string()
+                                } else if base_ty.starts_with("Map<") {
+                                    "new Map()".to_string()
+                                } else {
+                                    format!("{}.default()", base_ty)
+                                })
+                            })
+                            .collect();
+                        out.push_str(&format!("\n  static default(): {} {{\n    return new {}({});\n  }}\n",
+                            full_type, type_name, default_fields.join(", ")));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -285,6 +378,34 @@ fn emit_derive_methods(
 
 fn is_primitive_ts_type(ty: &str) -> bool {
     matches!(ty, "string" | "boolean" | "number" | "bigint | number")
+}
+
+/// Generate an equality check expression for a field
+fn emit_field_eq(name: &str, ty: &str) -> String {
+    if is_primitive_ts_type(ty) {
+        format!("if (this.{} !== other.{}) return false;", name, name)
+    } else if ty == "Uint8Array" {
+        // Byte-by-byte comparison
+        format!(
+            "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
+            n = name
+        )
+    } else if ty.ends_with("[]") {
+        let inner = &ty[..ty.len()-2];
+        if is_primitive_ts_type(inner) {
+            format!(
+                "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
+                n = name
+            )
+        } else {
+            format!(
+                "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (!this.{n}[i].equals(other.{n}[i])) return false; }} }}",
+                n = name
+            )
+        }
+    } else {
+        format!("if (!this.{}.equals(other.{})) return false;", name, name)
+    }
 }
 
 fn emit_struct_bincode(
@@ -382,7 +503,8 @@ fn is_skipped_trait(trait_name: &str) -> bool {
         "Display" | "Debug" | "FromStr" | "TryFrom" | "From" |
         "Serialize" | "Deserialize" | "Clone" | "PartialEq" | "Eq" |
         "PartialOrd" | "Ord" | "Hash" | "Default" | "Send" | "Sync" |
-        "Deref" | "DerefMut" | "Into" | "TryInto" | "IntoIterator"
+        "Deref" | "DerefMut" | "Into" | "TryInto" | "IntoIterator" |
+        "AsRef" | "AsMut" | "Borrow" | "BorrowMut" | "Error" | "Drop"
     )
 }
 

@@ -319,7 +319,8 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Struct(s) => {
-                let name = Self::path_static(&s.path);
+                let mut name = Self::path_static(&s.path);
+                if name == "Self" { name = self.self_type.to_string(); }
                 let fields: Vec<String> = s.fields.iter().map(|f| {
                     let member = match &f.member {
                         syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),

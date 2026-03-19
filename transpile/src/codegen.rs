@@ -114,16 +114,40 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     // Line 1: MIRRORS annotation
     out.push_str(&format!("// MIRRORS: ankurah/{}\n", rust_crate_path));
 
-    // Collect local type names
+    // Build FQN prefix from crate_path
+    let fqn_prefix = crate_path_to_fqn_prefix(rust_crate_path);
+
+    // Identify provided types and their import modules
+    let mut provided_by_module: HashMap<String, Vec<String>> = HashMap::new();
+    let mut provided_set: HashSet<String> = HashSet::new();
+
+    for s in &file.structs {
+        let fqn = format!("{}::{}", fqn_prefix, s.name);
+        if let Some(module) = config.and_then(|c| c.provided_import_module(&fqn)) {
+            provided_by_module.entry(module).or_default().push(s.name.clone());
+            provided_set.insert(s.name.clone());
+        }
+    }
+    for e in &file.enums {
+        let fqn = format!("{}::{}", fqn_prefix, e.name);
+        if let Some(module) = config.and_then(|c| c.provided_import_module(&fqn)) {
+            provided_by_module.entry(module).or_default().push(e.name.clone());
+            provided_set.insert(e.name.clone());
+        }
+    }
+
+    // Collect local type names (including provided — keeps import resolution correct)
     let mut local_types: HashSet<String> = HashSet::new();
     for s in &file.structs { local_types.insert(s.name.clone()); }
     for e in &file.enums { local_types.insert(e.name.clone()); }
     for t in &file.traits { local_types.insert(t.name.clone()); }
 
-    // Base imports (@ankurah/base)
+    // Base imports (@ankurah/base) — only for non-provided types
     let mut base_imports: Vec<&str> = Vec::new();
-    if !file.structs.is_empty() { base_imports.push("Struct"); }
-    if !file.enums.is_empty() { base_imports.push("Enum"); }
+    let has_non_provided_structs = file.structs.iter().any(|s| !provided_set.contains(&s.name));
+    let has_non_provided_enums = file.enums.iter().any(|e| !provided_set.contains(&e.name));
+    if has_non_provided_structs { base_imports.push("Struct"); }
+    if has_non_provided_enums { base_imports.push("Enum"); }
     for imp in &file.impls {
         if let Some(trait_name) = &imp.trait_name {
             if trait_name == "Drop" && !base_imports.contains(&"Drop") {
@@ -133,6 +157,15 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     }
     if !base_imports.is_empty() {
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n", base_imports.join(", ")));
+    }
+
+    // Provided type imports
+    let mut sorted_provided_modules: Vec<&String> = provided_by_module.keys().collect();
+    sorted_provided_modules.sort();
+    for module in &sorted_provided_modules {
+        let mut types = provided_by_module[*module].clone();
+        types.sort();
+        out.push_str(&format!("import {{ {} }} from '{}';\n", types.join(", "), module));
     }
 
     // Cross-crate imports
@@ -157,9 +190,11 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         }
     }
 
-    // Bincode imports
-    let needs_bincode = file.structs.iter().any(|s| crate::bincode_module::has_serde_derive(&s.derives))
-        || file.enums.iter().any(|e| crate::bincode_module::has_serde_derive(&e.derives));
+    // Bincode imports — only for non-provided types
+    let needs_bincode = file.structs.iter().any(|s|
+            !provided_set.contains(&s.name) && crate::bincode_module::has_serde_derive(&s.derives))
+        || file.enums.iter().any(|e|
+            !provided_set.contains(&e.name) && crate::bincode_module::has_serde_derive(&e.derives));
     if needs_bincode {
         out.push_str("import { BincodeReader, BincodeWriter } from './codec';\n");
     }
@@ -191,6 +226,13 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
             sorted.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ")));
     }
 
+    // Re-export provided types
+    if !provided_set.is_empty() {
+        let mut names: Vec<&String> = provided_set.iter().collect();
+        names.sort();
+        out.push_str(&format!("export {{ {} }};\n", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+
     out.push('\n');
 
     // Organize impl blocks
@@ -211,22 +253,15 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         }
     }
 
-    // Build FQN prefix from crate_path: "proto/src/error.rs" → "ankurah_proto::error"
-    let fqn_prefix = crate_path_to_fqn_prefix(rust_crate_path);
-
-    // Emit items (skip fully provided types)
+    // Emit items (skip provided types — already imported and re-exported above)
     for s in &file.structs {
-        let fqn = format!("{}::{}", fqn_prefix, s.name);
-        if config.map_or(false, |c| c.is_provided(&fqn)) {
-            out.push_str(&format!("// PROVIDED: {} — hand-written implementation preserved\n\n", s.name));
+        if provided_set.contains(&s.name) {
             continue;
         }
         emit::emit_struct(&mut out, s, &inherent_methods, &trait_impls, &trait_methods);
     }
     for e in &file.enums {
-        let fqn = format!("{}::{}", fqn_prefix, e.name);
-        if config.map_or(false, |c| c.is_provided(&fqn)) {
-            out.push_str(&format!("// PROVIDED: {} — hand-written implementation preserved\n\n", e.name));
+        if provided_set.contains(&e.name) {
             continue;
         }
         emit::emit_enum(&mut out, e, &inherent_methods, &trait_impls, &trait_methods);

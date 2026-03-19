@@ -119,6 +119,13 @@ impl Config {
         self.hardcode_files.iter().any(|f| path.contains(f))
     }
 
+    /// Get the import module path for a provided type (e.g., "./id.provided")
+    pub fn provided_import_module(&self, rust_fqn: &str) -> Option<String> {
+        self.provided_impls.get(rust_fqn).map(|p| {
+            format!("./{}", p.path)
+        })
+    }
+
     /// Map Rust crate name to TS package
     pub fn crate_to_package(&self, crate_name: &str) -> Option<String> {
         self.crates.get(crate_name).map(|pkg| format!("@ankurah/{}", pkg))
@@ -172,8 +179,13 @@ mod tests {
         assert_eq!(config.crates.get("ankurah-proto"), Some(&"proto".to_string()));
         assert!(config.is_provided("ankurah_proto::data::EventId"));
         assert!(!config.is_provided("ankurah_proto::clock::Clock"));
-        assert!(config.is_method_provided("ankurah_proto::auth::Attested", "encode"));
-        assert!(!config.is_method_provided("ankurah_proto::auth::Attested", "new"));
+        assert!(config.is_provided("ankurah_proto::auth::Attested"));
+        assert!(config.is_provided("ankurah_proto::transaction::TransactionId"));
+        assert!(!config.is_provided("ankurah_proto::collection::CollectionId"));
+        assert_eq!(config.provided_import_module("ankurah_proto::id::EntityId"),
+            Some("./id.provided".to_string()));
+        assert_eq!(config.provided_import_module("ankurah_proto::data::EventId"),
+            Some("./id.provided".to_string()));
         assert!(config.is_hardcoded("ankql/src/parser.rs"));
         assert!(!config.is_hardcoded("ankql/src/ast.rs"));
         assert!(config.is_excluded_file("proto/src/postgres.rs"));

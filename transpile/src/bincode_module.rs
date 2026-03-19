@@ -89,18 +89,28 @@ pub fn generate_tuple_struct_codec(info: &StructInfo) -> String {
 pub fn generate_enum_codec(info: &EnumInfo) -> String {
     let mut out = String::new();
 
+    // Find serde(other) variant if any
+    let serde_other_variant = info.variants.iter().find(|v| v.is_serde_other);
+
     // encode — match on variant, write discriminant + fields
     out.push_str("  encode(writer: BincodeWriter): void {\n");
     out.push_str("    this.match({\n");
     for (i, variant) in info.variants.iter().enumerate() {
-        out.push_str(&format!("      {}: (v) => {{\n", variant.name));
-        out.push_str(&format!("        writer.writeVariant({});\n", i));
-        for field in &variant.fields {
-            if let Some(name) = &field.name {
-                out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ty)));
+        if variant.is_serde_other {
+            // serde(other) variants are decode-only catch-alls — encoding throws
+            out.push_str(&format!("      {}: () => {{\n", variant.name));
+            out.push_str(&format!("        throw new Error('Cannot encode {}::{} — it is a decode-only catch-all');\n", info.name, variant.name));
+            out.push_str("      },\n");
+        } else {
+            out.push_str(&format!("      {}: (v) => {{\n", variant.name));
+            out.push_str(&format!("        writer.writeVariant({});\n", i));
+            for field in &variant.fields {
+                if let Some(name) = &field.name {
+                    out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ty)));
+                }
             }
+            out.push_str("      },\n");
         }
-        out.push_str("      },\n");
     }
     out.push_str("    });\n");
     out.push_str("  }\n\n");
@@ -111,6 +121,7 @@ pub fn generate_enum_codec(info: &EnumInfo) -> String {
     out.push_str("    const variant = reader.readVariant();\n");
     out.push_str("    switch (variant) {\n");
     for (i, variant) in info.variants.iter().enumerate() {
+        if variant.is_serde_other { continue; } // handled as default case
         out.push_str(&format!("      case {}: {{\n", i));
         for field in &variant.fields {
             if let Some(name) = &field.name {
@@ -128,7 +139,12 @@ pub fn generate_enum_codec(info: &EnumInfo) -> String {
         }
         out.push_str("      }\n");
     }
-    out.push_str(&format!("      default: throw new Error(`Unknown {} variant: ${{variant}}`);\n", info.name));
+    // Default case: serde(other) catch-all or throw
+    if let Some(other) = serde_other_variant {
+        out.push_str(&format!("      default: return new {}('{}', {{}});\n", info.name, other.name));
+    } else {
+        out.push_str(&format!("      default: throw new Error(`Unknown {} variant: ${{variant}}`);\n", info.name));
+    }
     out.push_str("    }\n");
     out.push_str("  }\n");
 
@@ -143,13 +159,14 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
         "boolean" => format!("{}.writeBool({})", wr, value),
         "number" => format!("{}.writeU32({})", wr, value),
         "bigint | number" => format!("{}.writeU64({})", wr, value),
-        "Uint8Array" => format!("{}.writeBytes({})", wr, value),
+        "Uint8Array" => format!("{}.writeByteVec({})", wr, value),
         t if t.ends_with("[]") => {
             let inner = &t[..t.len()-2];
             if is_primitive_type(inner) {
                 format!("{}.writeVec({}, (w, item) => w.write{}(item))", wr, value, capitalize(inner))
             } else {
-                format!("{}.writeVec({}, (w, item) => item.encode(w))", wr, value)
+                format!("{}.writeVec({}, (w, item) => {})", wr, value,
+                    encode_expr_with("item", inner, "w"))
             }
         }
         t if t.starts_with("Map<") => {
@@ -167,6 +184,14 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
             let inner = &t[..t.len()-7];
             format!("{}.writeOption({}, (w, v) => {})", wr, value,
                 encode_expr_with("v", inner, "w"))
+        }
+        t if t.starts_with("Attested<") => {
+            // Attested<T> requires callback: v.encode(w, (w2, p) => p.encode(w2))
+            let inner = &t[9..t.len()-1]; // extract T from Attested<T>
+            let wr2 = next_writer_var(wr);
+            format!("{}.encode({}, ({}, p) => {})",
+                value, wr, wr2,
+                encode_expr_with("p", inner, &wr2))
         }
         _ => {
             // Assume the type has its own encode method
@@ -188,13 +213,13 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
         "boolean" => format!("{}.readBool()", rd),
         "number" => format!("{}.readU32()", rd),
         "bigint | number" => format!("{}.readU64()", rd),
-        "Uint8Array" => format!("{}.readBytes()", rd),
+        "Uint8Array" => format!("{}.readByteVec()", rd),
         t if t.ends_with("[]") => {
             let inner = &t[..t.len()-2];
             if is_primitive_type(inner) {
                 format!("{}.readVec((r) => r.read{}())", rd, capitalize(inner))
             } else {
-                format!("{}.readVec((r) => {}.decode(r))", rd, inner)
+                format!("{}.readVec((r) => {})", rd, decode_expr_with(inner, "r"))
             }
         }
         t if t.starts_with("Map<") => {
@@ -211,6 +236,12 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
         t if t.ends_with(" | null") => {
             let inner = &t[..t.len()-7];
             format!("{}.readOption((r) => {})", rd, decode_expr_with(inner, "r"))
+        }
+        t if t.starts_with("Attested<") => {
+            // Attested<T> requires callback: Attested.decode(r, (r2) => T.decode(r2))
+            let inner = &t[9..t.len()-1]; // extract T from Attested<T>
+            let rd2 = next_reader_var(rd);
+            format!("Attested.decode({}, ({}) => {})", rd, rd2, decode_expr_with(inner, &rd2))
         }
         t => {
             let base = t.split('<').next().unwrap_or(t);
@@ -230,7 +261,7 @@ fn encode_inline(value: &str, ts_type: &str) -> String {
         "string" => format!("w.writeString({})", value),
         "boolean" => format!("w.writeBool({})", value),
         "number" => format!("w.writeU32({})", value),
-        "Uint8Array" => format!("w.writeBytes({})", value),
+        "Uint8Array" => format!("w.writeByteVec({})", value),
         _ => format!("{}.encode(w)", value),
     }
 }
@@ -244,5 +275,23 @@ fn capitalize(s: &str) -> String {
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().to_string() + c.as_str(),
+    }
+}
+
+/// Generate a unique writer variable name to avoid capture in nested callbacks
+fn next_writer_var(current: &str) -> String {
+    match current {
+        "writer" => "w".to_string(),
+        "w" => "w2".to_string(),
+        _ => format!("{}x", current),
+    }
+}
+
+/// Generate a unique reader variable name to avoid capture in nested callbacks
+fn next_reader_var(current: &str) -> String {
+    match current {
+        "reader" => "r".to_string(),
+        "r" => "r2".to_string(),
+        _ => format!("{}x", current),
     }
 }

@@ -155,9 +155,18 @@ fn extract_struct(s: &syn::ItemStruct) -> StructInfo {
 
 fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
     let variants = e.variants.iter().map(|v| {
+        let is_serde_other = v.attrs.iter().any(|a| {
+            if let syn::Meta::List(meta) = &a.meta {
+                if meta.path.is_ident("serde") {
+                    return meta.tokens.to_string().contains("other");
+                }
+            }
+            false
+        });
         VariantInfo {
             name: v.ident.to_string(),
             fields: extract_fields(&v.fields),
+            is_serde_other,
         }
     }).collect();
 

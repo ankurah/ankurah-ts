@@ -46,6 +46,8 @@ pub struct EnumInfo {
 pub struct VariantInfo {
     pub name: String,
     pub fields: Vec<FieldInfo>,
+    /// True if the variant has `#[serde(other)]` — catch-all for unknown discriminants
+    pub is_serde_other: bool,
 }
 
 #[derive(Debug)]

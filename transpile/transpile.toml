@@ -36,17 +36,19 @@ new = "new"
 from = "from"
 
 [provided_impls]
-# Types with custom impl Serialize (not derive) — hand-written encode/decode preserved
-"ankurah_proto::data::EventId" = { module = "provided", path = "packages/proto/src/id.ts" }
-"ankurah_proto::id::EntityId" = { module = "provided", path = "packages/proto/src/id.ts" }
-"ankurah_proto::collection::CollectionId" = { module = "provided", path = "packages/proto/src/collection.ts" }
+# Custom impl Serialize/Deserialize (raw bytes + base64) — not derive-based
+"ankurah_proto::id::EntityId" = { path = "id.provided" }
+"ankurah_proto::data::EventId" = { path = "id.provided" }
 
-# Error types ported as Error subclass, not Enum
-"ankurah_proto::error::DecodeError" = { module = "provided", path = "packages/proto/src/error.ts" }
-"ankurah_proto::error::IdParseError" = { module = "provided", path = "packages/proto/src/error.ts" }
+# Ulid wrappers — depend on ULID generation/encoding infrastructure in id.provided.ts
+# TODO: make transpilable by mapping Ulid→string + providing Ulid utility class
+"ankurah_proto::transaction::TransactionId" = { path = "id.provided" }
+"ankurah_proto::request::RequestId" = { path = "id.provided" }
+"ankurah_proto::subscription::QueryId" = { path = "id.provided" }
+"ankurah_proto::update::UpdateId" = { path = "id.provided" }
 
-# Generic codec requires custom encode/decode with payload callbacks
-"ankurah_proto::auth::Attested" = { module = "provided", path = "packages/proto/src/auth.ts", methods = ["encode", "decode"] }
+# Generic type requires callback-based encode/decode
+"ankurah_proto::auth::Attested" = { path = "auth.provided" }
 
 [provided_redirect.yrs]
 source_crate = "yrs"
