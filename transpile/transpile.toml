@@ -1,0 +1,64 @@
+[paths]
+rust_source = "../ankurah-ts-support"
+ts_target = ".."
+
+[crates]
+ankql = "ankql"
+"ankurah-proto" = "proto"
+"ankurah-signals" = "signals"
+"ankurah-core" = "core"
+"ankurah-storage-common" = "storage-common"
+"ankurah-storage-sqlite" = "storage-sqlite"
+"ankurah-storage-postgres" = "storage-postgres"
+"ankurah-storage-indexeddb-wasm" = "storage-indexeddb"
+"ankurah-websocket-client" = "connector-websocket"
+"ankurah-websocket-server" = "connector-websocket-server"
+"ankurah-connector-local-process" = "connector-local"
+"ankurah" = "ankurah"
+
+[excluded_features]
+skip = ["wasm", "uniffi"]
+
+[excluded_files]
+# Feature-gated or out-of-scope files
+files = [
+  "proto/src/postgres.rs",
+]
+
+[name_overrides]
+fmt = "toString"
+serialize = "encode"
+deserialize = "decode"
+eq = "equals"
+default = "default"
+drop = "drop"
+new = "new"
+from = "from"
+
+[provided_impls]
+# Types with custom impl Serialize (not derive) — hand-written encode/decode preserved
+"ankurah_proto::data::EventId" = { module = "provided", path = "packages/proto/src/id.ts" }
+"ankurah_proto::id::EntityId" = { module = "provided", path = "packages/proto/src/id.ts" }
+"ankurah_proto::collection::CollectionId" = { module = "provided", path = "packages/proto/src/collection.ts" }
+
+# Error types ported as Error subclass, not Enum
+"ankurah_proto::error::DecodeError" = { module = "provided", path = "packages/proto/src/error.ts" }
+"ankurah_proto::error::IdParseError" = { module = "provided", path = "packages/proto/src/error.ts" }
+
+# Generic codec requires custom encode/decode with payload callbacks
+"ankurah_proto::auth::Attested" = { module = "provided", path = "packages/proto/src/auth.ts", methods = ["encode", "decode"] }
+
+[provided_redirect.yrs]
+source_crate = "yrs"
+target_module = "@ankurah/base/yrs-compat"
+types = { "Doc" = "YrsDoc", "Text" = "YrsText", "Map" = "YrsMap" }
+
+[hardcode]
+# Files with no syntactic correspondence — transpiler preserves existing TS
+files = [
+  "ankql/src/parser.rs",
+  "ankql/src/grammar.rs",
+]
+
+[managed_files]
+# Phase 3: files the transpiler owns (start empty, grow gradually)
