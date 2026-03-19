@@ -36,21 +36,21 @@ export class SubscriptionUpdateItem extends Struct {
   }
 
   clone(): SubscriptionUpdateItem {
-    return new SubscriptionUpdateItem(this.entityId.clone(), this.collection.clone(), this.content.clone(), this.predicateRelevance.map(e => e.clone()));
+    return new SubscriptionUpdateItem(this.entityId.clone(), this.collection.clone(), this.content.clone(), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
   }
 
   encode(writer: BincodeWriter): void {
     this.entityId.encode(writer);
     this.collection.encode(writer);
     this.content.encode(writer);
-    writer.writeVec(this.predicateRelevance, (w, item) => item.encode(w));
+    writer.writeVec(this.predicateRelevance, (w, item) => { item[0].encode(w); item[1].encode(w) });
   }
 
   static decode(reader: BincodeReader): SubscriptionUpdateItem {
     const entityId = EntityId.decode(reader);
     const collection = CollectionId.decode(reader);
     const content = UpdateContent.decode(reader);
-    const predicateRelevance = reader.readVec((r) => [QueryId, MembershipChange].decode(r));
+    const predicateRelevance = reader.readVec((r) => [QueryId.decode(r), MembershipChange.decode(r)] as [QueryId, MembershipChange]);
     return new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
   }
 }

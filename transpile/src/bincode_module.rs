@@ -195,6 +195,15 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
                 value, wr, wr2,
                 encode_expr_with("p", inner, &wr2))
         }
+        t if is_tuple_type(t) => {
+            // Tuple type [A, B] — encode each element
+            let inner = &t[1..t.len()-1];
+            let parts: Vec<&str> = inner.split(", ").collect();
+            let encodes: Vec<String> = parts.iter().enumerate()
+                .map(|(i, ty)| encode_expr_with(&format!("{}[{}]", value, i), ty.trim(), wr))
+                .collect();
+            format!("{{ {} }}", encodes.join("; "))
+        }
         _ => {
             // Assume the type has its own encode method
             format!("{}.encode({})", value, wr)
@@ -247,6 +256,15 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
             let rd2 = next_reader_var(rd);
             format!("Attested.decode({}, ({}) => {})", rd, rd2, decode_expr_with(inner, &rd2))
         }
+        t if is_tuple_type(t) => {
+            // Tuple type [A, B] — decode each element in order
+            let inner = &t[1..t.len()-1];
+            let parts: Vec<&str> = inner.split(", ").collect();
+            let decodes: Vec<String> = parts.iter()
+                .map(|ty| decode_expr_with(ty.trim(), rd))
+                .collect();
+            format!("[{}] as {}", decodes.join(", "), ts_type)
+        }
         t => {
             let base = t.split('<').next().unwrap_or(t);
             format!("{}.decode({})", base, rd)
@@ -268,6 +286,11 @@ fn encode_inline(value: &str, ts_type: &str) -> String {
         "Uint8Array" => format!("w.writeByteVec({})", value),
         _ => format!("{}.encode(w)", value),
     }
+}
+
+/// Check if a type is a tuple like [A, B] (not an array like A[])
+fn is_tuple_type(t: &str) -> bool {
+    t.starts_with('[') && t.ends_with(']') && t.contains(',') && !t.ends_with("[]")
 }
 
 fn is_primitive_type(t: &str) -> bool {

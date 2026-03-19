@@ -230,11 +230,59 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         .filter(|t| !local_types.contains(*t) && !imports::is_primitive_or_base_type(t)
             && !imported_symbols.contains(*t))
         .collect();
+
+    // Resolve unresolved types against cross-crate module imports
+    // e.g., `use ankql::ast` + unresolved `Selection` → import { Selection } from '@ankurah/ankql'
     if !external_types.is_empty() {
-        let mut sorted: Vec<&&String> = external_types.iter().collect();
-        sorted.sort();
-        out.push_str(&format!("// TODO imports: {}\n",
-            sorted.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ")));
+        // Build a map of crate_name → TS package from use statements
+        let mut crate_packages: Vec<String> = Vec::new();
+        for u in &file.uses {
+            if let Some((package, _)) = imports::resolve_use_import(&u.path) {
+                if !crate_packages.contains(&package) {
+                    crate_packages.push(package);
+                }
+            }
+        }
+
+        let mut resolved = HashSet::new();
+        for ty in &external_types {
+            // If we have a cross-crate package and the type is PascalCase, assume it's from there
+            if ty.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                for package in &crate_packages {
+                    cross_crate_imports.entry(package.clone()).or_default().push(ty.to_string());
+                    resolved.insert(ty.to_string());
+                    break; // use first matching package
+                }
+            }
+        }
+
+        // Re-emit cross-crate imports with newly resolved types
+        if !resolved.is_empty() {
+            // The imports are already emitted above, but we need to add the new ones
+            // Use a separate import line for resolved types
+            for package in &crate_packages {
+                let new_types: Vec<&String> = resolved.iter()
+                    .filter(|t| cross_crate_imports.get(package)
+                        .map_or(false, |syms| syms.contains(t)))
+                    .collect();
+                if !new_types.is_empty() {
+                    let mut sorted = new_types;
+                    sorted.sort();
+                    out.push_str(&format!("import {{ {} }} from '{}';\n",
+                        sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), package));
+                }
+            }
+        }
+
+        let remaining: Vec<&&String> = external_types.iter()
+            .filter(|t| !resolved.contains(**t))
+            .collect();
+        if !remaining.is_empty() {
+            let mut sorted = remaining;
+            sorted.sort();
+            out.push_str(&format!("// TODO imports: {}\n",
+                sorted.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ")));
+        }
     }
 
     // Re-export provided types

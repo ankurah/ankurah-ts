@@ -329,15 +329,46 @@ fn emit_derive_methods(
                                         format!("new Uint8Array(this.{})", n)
                                     }
                                 } else if base_ty.ends_with("[]") {
-                                    // Array of objects — map clone
+                                    // Array — map clone
                                     let inner = &base_ty[..base_ty.len()-2];
-                                    if is_primitive_ts_type(inner) {
+                                    let clone_expr = if is_primitive_ts_type(inner) {
                                         format!("[...this.{}]", n)
-                                    } else if ty.ends_with(" | null") {
-                                        format!("this.{} != null ? this.{}.map(e => e.clone()) : null", n, n)
+                                    } else if inner.starts_with('[') && inner.contains(',') {
+                                        // Array of tuples — clone each tuple element
+                                        let tuple_inner = &inner[1..inner.len()-1];
+                                        let parts: Vec<&str> = tuple_inner.split(", ").collect();
+                                        let clones: Vec<String> = parts.iter().enumerate()
+                                            .map(|(i, ty)| {
+                                                if is_primitive_ts_type(ty.trim()) {
+                                                    format!("e[{}]", i)
+                                                } else {
+                                                    format!("e[{}].clone()", i)
+                                                }
+                                            })
+                                            .collect();
+                                        format!("this.{}.map(e => [{}] as {})", n, clones.join(", "), inner)
                                     } else {
                                         format!("this.{}.map(e => e.clone())", n)
+                                    };
+                                    if ty.ends_with(" | null") {
+                                        format!("this.{} != null ? {} : null", n, clone_expr)
+                                    } else {
+                                        clone_expr
                                     }
+                                } else if base_ty.starts_with('[') && base_ty.ends_with(']') && base_ty.contains(',') {
+                                    // Tuple — clone each element
+                                    let inner = &base_ty[1..base_ty.len()-1];
+                                    let parts: Vec<&str> = inner.split(", ").collect();
+                                    let clones: Vec<String> = parts.iter().enumerate()
+                                        .map(|(i, ty)| {
+                                            if is_primitive_ts_type(ty.trim()) {
+                                                format!("this.{}[{}]", n, i)
+                                            } else {
+                                                format!("this.{}[{}].clone()", n, i)
+                                            }
+                                        })
+                                        .collect();
+                                    format!("[{}] as {}", clones.join(", "), base_ty)
                                 } else if base_ty.starts_with("Map<") {
                                     // Map — clone entries
                                     format!("new Map(Array.from(this.{}.entries()).map(([k, v]) => [k, v]))", n)
