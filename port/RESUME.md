@@ -35,9 +35,7 @@ Generates 177 TS files / ~16K lines across all 10 crates. Zero unhandled express
 
 ### What needs fixing (drop system)
 
-**Must fix:**
-1. **Drops inside if/else branches** — when last expression is if/else, drops must go inside each branch before the return. Currently the `_ret = if(...)` pattern generates invalid TS (if is a statement not expression). Fix: thread drops list into branch translation.
-2. This is the ONLY blocking issue for drop correctness.
+**Drops inside if/else branches — FIXED.** Pending drops are threaded into each branch via `translate_expr_in_return_position_with`. Uses `_ret` pattern for leaf returns and string insertion for multi-statement branches. Validated on core/entity.rs generateCommitEvent.
 
 **Should fix later:**
 3. Nested block drops (for-loop bodies drop their own locals)
