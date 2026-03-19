@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(config.crates.get("ankql"), Some(&"ankql".to_string()));
         assert_eq!(config.crates.get("ankurah-proto"), Some(&"proto".to_string()));
         assert!(config.is_provided("ankurah_proto::data::EventId"));
-        assert!(!config.is_provided("ankurah_proto::clock::Clock"));
+        assert!(config.is_provided("ankurah_proto::clock::Clock"));
         assert!(config.is_provided("ankurah_proto::auth::Attested"));
         assert!(config.is_provided("ankurah_proto::transaction::TransactionId"));
         assert!(!config.is_provided("ankurah_proto::collection::CollectionId"));

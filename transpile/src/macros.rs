@@ -1,6 +1,7 @@
 //! Macro translation — Rust macros → TS expressions
 
 use crate::name_map;
+use crate::body;
 
 /// Translate a macro invocation to TS
 pub fn translate_macro(mac: &syn::Macro) -> String {
@@ -8,44 +9,53 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
         .map(|s| s.ident.to_string())
         .unwrap_or_default();
 
-    let tokens = mac.tokens.to_string();
-
     match name.as_str() {
         "vec" => {
-            // vec![a, b, c] → [a, b, c]
-            format!("[{}]", tokens)
+            // vec![a, b, c] → parse elements via syn
+            if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
+                let translated: Vec<String> = args.iter().map(|e| body::translate_expr(e)).collect();
+                format!("[{}]", translated.join(", "))
+            } else {
+                format!("[{}]", mac.tokens)
+            }
         }
-        "format" => translate_format_macro(&tokens),
-        "println" | "eprintln" => format!("console.log({})", translate_format_macro(&tokens)),
-        "dbg" => format!("console.log({})", tokens),
+        "format" => translate_format_from_tokens(&mac.tokens),
+        "println" | "eprintln" => format!("console.log({})", translate_format_from_tokens(&mac.tokens)),
+        "dbg" => format!("console.log({})", mac.tokens),
         "write" | "writeln" => {
-            // write!(f, "...", args) → skip the formatter, just format
-            let without_f = tokens.trim_start_matches("f ,").trim_start_matches("f,").trim();
-            translate_format_macro(without_f)
+            // write!(f, "...", args) → parse tokens, skip formatter, format the rest
+            translate_write_from_tokens(&mac.tokens)
         }
-        "panic" | "unreachable" => format!("throw new Error({})", translate_format_macro(&tokens)),
+        "panic" | "unreachable" => format!("throw new Error({})", translate_format_from_tokens(&mac.tokens)),
         "assert" => {
+            let tokens = mac.tokens.to_string();
             format!("if (!({})) throw new Error('assertion failed')", tokens)
         }
         "assert_eq" => {
-            let parts: Vec<&str> = tokens.splitn(2, ',').collect();
-            if parts.len() == 2 {
-                format!("expect({}).toEqual({})", parts[0].trim(), parts[1].trim())
+            if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
+                if args.len() >= 2 {
+                    format!("expect({}).toEqual({})", body::translate_expr(&args[0]), body::translate_expr(&args[1]))
+                } else {
+                    format!("/* assert_eq!({}) */", mac.tokens)
+                }
             } else {
-                format!("/* assert_eq!({}) */", tokens)
+                format!("/* assert_eq!({}) */", mac.tokens)
             }
         }
         "assert_ne" => {
-            let parts: Vec<&str> = tokens.splitn(2, ',').collect();
-            if parts.len() == 2 {
-                format!("expect({}).not.toEqual({})", parts[0].trim(), parts[1].trim())
+            if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
+                if args.len() >= 2 {
+                    format!("expect({}).not.toEqual({})", body::translate_expr(&args[0]), body::translate_expr(&args[1]))
+                } else {
+                    format!("/* assert_ne!({}) */", mac.tokens)
+                }
             } else {
-                format!("/* assert_ne!({}) */", tokens)
+                format!("/* assert_ne!({}) */", mac.tokens)
             }
         }
         "todo" => "throw new Error('TODO')".to_string(),
         "unimplemented" => "throw new Error('unimplemented')".to_string(),
-        _ => format!("/* {}!({}) */", name, tokens),
+        _ => format!("/* {}!({}) */", name, mac.tokens),
     }
 }
 
@@ -84,7 +94,7 @@ fn parse_format_args(tokens: &str) -> Result<String, ()> {
     if i >= bytes.len() { return Err(()); }
 
     let fmt_str = &tokens[1..i];
-    let rest = tokens[i + 1..].trim().trim_start_matches(',').trim();
+    let rest = tokens[i + 1..].trim().trim_start_matches(',').trim().trim_end_matches(',').trim();
 
     if rest.is_empty() && !fmt_str.contains('{') {
         return Ok(format!("'{}'", fmt_str));
@@ -193,4 +203,132 @@ fn split_respecting_nesting(input: &str) -> Vec<String> {
         parts.push(trimmed);
     }
     parts
+}
+
+// ── Token-based macro parsing (avoids string round-trip) ────────────
+
+use syn::parse::{Parse, ParseStream};
+use syn::{Expr, LitStr, Token};
+use proc_macro2::TokenStream;
+
+/// Parse comma-separated expressions from a TokenStream
+fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error> {
+    struct ExprList(Vec<Expr>);
+    impl Parse for ExprList {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let mut exprs = Vec::new();
+            while !input.is_empty() {
+                exprs.push(input.parse()?);
+                if input.peek(Token![,]) { input.parse::<Token![,]>()?; }
+            }
+            Ok(ExprList(exprs))
+        }
+    }
+    syn::parse2::<ExprList>(tokens.clone()).map(|el| el.0)
+}
+
+/// Parse format!("fmt", args...) directly from TokenStream
+fn translate_format_from_tokens(tokens: &TokenStream) -> String {
+    struct FormatArgs { fmt: LitStr, args: Vec<Expr> }
+    impl Parse for FormatArgs {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let fmt: LitStr = input.parse()?;
+            let mut args = Vec::new();
+            while input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+                if input.is_empty() { break; } // trailing comma
+                args.push(input.parse()?);
+            }
+            Ok(FormatArgs { fmt, args })
+        }
+    }
+    match syn::parse2::<FormatArgs>(tokens.clone()) {
+        Ok(parsed) => {
+            let translated_args: Vec<String> = parsed.args.iter()
+                .map(|e| body::translate_expr(e))
+                .collect();
+            build_template_literal(&parsed.fmt.value(), &translated_args)
+        }
+        Err(_) => {
+            // Fallback to string-based parsing
+            translate_format_macro(&tokens.to_string())
+        }
+    }
+}
+
+/// Parse write!(f, "fmt", args...) directly from TokenStream
+fn translate_write_from_tokens(tokens: &TokenStream) -> String {
+    struct WriteArgs { _formatter: Expr, fmt: LitStr, args: Vec<Expr> }
+    impl Parse for WriteArgs {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let formatter: Expr = input.parse()?;
+            input.parse::<Token![,]>()?;
+            let fmt: LitStr = input.parse()?;
+            let mut args = Vec::new();
+            while input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+                if input.is_empty() { break; }
+                args.push(input.parse()?);
+            }
+            Ok(WriteArgs { _formatter: formatter, fmt, args })
+        }
+    }
+    match syn::parse2::<WriteArgs>(tokens.clone()) {
+        Ok(parsed) => {
+            let translated_args: Vec<String> = parsed.args.iter()
+                .map(|e| body::translate_expr(e))
+                .collect();
+            build_template_literal(&parsed.fmt.value(), &translated_args)
+        }
+        Err(_) => {
+            // Fallback
+            let s = tokens.to_string();
+            let without_f = s.trim_start_matches("f ,").trim_start_matches("f,").trim();
+            translate_format_macro(without_f)
+        }
+    }
+}
+
+/// Build a TS template literal from a format string and translated args
+fn build_template_literal(fmt_str: &str, args: &[String]) -> String {
+    let mut result = String::from("`");
+    let mut arg_idx = 0;
+
+    let mut chars = fmt_str.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            if let Some(&'}') = chars.peek() {
+                chars.next();
+                if arg_idx < args.len() {
+                    result.push_str(&format!("${{{}}}", args[arg_idx]));
+                    arg_idx += 1;
+                }
+            } else {
+                let mut spec = String::new();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == '}' { break; }
+                    spec.push(next);
+                }
+                if spec.starts_with(':') || spec.starts_with('#') {
+                    if arg_idx < args.len() {
+                        result.push_str(&format!("${{{}}}", args[arg_idx]));
+                        arg_idx += 1;
+                    }
+                } else if !spec.is_empty() {
+                    result.push_str(&format!("${{{}}}", name_map::to_camel_case(&spec)));
+                }
+            }
+        } else if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                chars.next();
+                result.push(c);
+                result.push(next);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result.push('`');
+    result
 }

@@ -53,6 +53,23 @@ pub fn emit_struct(
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
     emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
     emit_derive_methods(out, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields);
+
+    // Deref delegation for wrapper types (tuple structs with a single field)
+    let has_deref = traits.map(|t| t.contains(&"Deref")).unwrap_or(false);
+    if has_deref && s.fields.len() == 1 {
+        if let Some(field_name) = s.fields[0].name.as_deref() {
+            let inner_ty = &s.fields[0].ty;
+            if inner_ty.ends_with("[]") {
+                out.push_str(&format!("\n  get length(): number {{\n    return this.{}.length;\n  }}\n", field_name));
+                out.push_str(&format!("\n  [Symbol.iterator](): Iterator<any> {{\n    return this.{}[Symbol.iterator]();\n  }}\n", field_name));
+            } else if inner_ty.starts_with("Map<") {
+                out.push_str(&format!("\n  get size(): number {{\n    return this.{}.size;\n  }}\n", field_name));
+                out.push_str(&format!("\n  [Symbol.iterator](): Iterator<any> {{\n    return this.{}[Symbol.iterator]();\n  }}\n", field_name));
+                out.push_str(&format!("\n  entries(): IterableIterator<any> {{\n    return this.{}.entries();\n  }}\n", field_name));
+                out.push_str(&format!("\n  get(key: any): any {{\n    return this.{}.get(key);\n  }}\n", field_name));
+            }
+        }
+    }
     emit_struct_bincode(out, s, trait_impls);
 
     out.push_str("}\n\n");
