@@ -11,8 +11,8 @@ import type { Value } from '../value/index.ts';
 function sortByBytes(ids: QueryId[]): QueryId[] {
   return ids.slice().sort((a, b) => {
     for (let i = 0; i < 16; i++) {
-      if (a.bytes[i] < b.bytes[i]) return -1;
-      if (a.bytes[i] > b.bytes[i]) return 1;
+      if (a._0[i] < b._0[i]) return -1;
+      if (a._0[i] > b._0[i]) return 1;
     }
     return 0;
   });

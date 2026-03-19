@@ -23,8 +23,8 @@ import { LWWBackend } from '../src/property/backend/lww.ts';
  */
 function sortQueryIds(ids: QueryId[]): QueryId[] {
   return [...ids].sort((a, b) => {
-    const ab = a.bytes;
-    const bb = b.bytes;
+    const ab = a._0;
+    const bb = b._0;
     for (let i = 0; i < 16; i++) {
       if (ab[i] < bb[i]) return -1;
       if (ab[i] > bb[i]) return 1;

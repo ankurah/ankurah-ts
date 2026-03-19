@@ -306,11 +306,11 @@ export class EventId extends Struct {
 // In bincode: u64 length (26) + 26 ASCII bytes = 34 bytes total.
 
 export class TransactionId extends Struct {
-  readonly bytes: Uint8Array; // 16-byte ULID
+  readonly _0: Uint8Array; // 16-byte ULID
 
-  private constructor(bytes: Uint8Array) {
+  private constructor(_0: Uint8Array) {
     super();
-    this.bytes = bytes;
+    this._0 = _0;
   }
 
   static new(): TransactionId {
@@ -323,25 +323,23 @@ export class TransactionId extends Struct {
   }
 
   toString(): string {
-    const idStr = ulidBytesToString(this.bytes);
+    const idStr = ulidBytesToString(this._0);
     return `T${idStr.slice(20)}`;
   }
 
   toUlidString(): string {
-    return ulidBytesToString(this.bytes);
+    return ulidBytesToString(this._0);
   }
 
   equals(other: TransactionId): boolean {
     for (let i = 0; i < 16; i++) {
-      if (this.bytes[i] !== other.bytes[i]) return false;
+      if (this._0[i] !== other._0[i]) return false;
     }
     return true;
   }
 
-  // ── Bincode: derived serde on Ulid — 26-char string ──
-
   encode(writer: BincodeWriter): void {
-    writer.writeString(ulidBytesToString(this.bytes));
+    writer.writeString(ulidBytesToString(this._0));
   }
 
   static decode(reader: BincodeReader): TransactionId {
@@ -351,11 +349,11 @@ export class TransactionId extends Struct {
 }
 
 export class RequestId extends Struct {
-  readonly bytes: Uint8Array; // 16-byte ULID
+  readonly _0: Uint8Array; // 16-byte ULID
 
-  private constructor(bytes: Uint8Array) {
+  private constructor(_0: Uint8Array) {
     super();
-    this.bytes = bytes;
+    this._0 = _0;
   }
 
   static new(): RequestId {
@@ -368,25 +366,23 @@ export class RequestId extends Struct {
   }
 
   toString(): string {
-    const idStr = ulidBytesToString(this.bytes);
+    const idStr = ulidBytesToString(this._0);
     return `R${idStr.slice(20)}`;
   }
 
   toUlidString(): string {
-    return ulidBytesToString(this.bytes);
+    return ulidBytesToString(this._0);
   }
 
   equals(other: RequestId): boolean {
     for (let i = 0; i < 16; i++) {
-      if (this.bytes[i] !== other.bytes[i]) return false;
+      if (this._0[i] !== other._0[i]) return false;
     }
     return true;
   }
 
-  // ── Bincode: derived serde on Ulid — 26-char string ──
-
   encode(writer: BincodeWriter): void {
-    writer.writeString(ulidBytesToString(this.bytes));
+    writer.writeString(ulidBytesToString(this._0));
   }
 
   static decode(reader: BincodeReader): RequestId {
@@ -396,11 +392,11 @@ export class RequestId extends Struct {
 }
 
 export class QueryId extends Struct {
-  readonly bytes: Uint8Array; // 16-byte ULID
+  readonly _0: Uint8Array; // 16-byte ULID
 
-  private constructor(bytes: Uint8Array) {
+  private constructor(_0: Uint8Array) {
     super();
-    this.bytes = bytes;
+    this._0 = _0;
   }
 
   static new(): QueryId {
@@ -425,24 +421,22 @@ export class QueryId extends Struct {
   }
 
   toString(): string {
-    return `P-${ulidBytesToString(this.bytes)}`;
+    return `P-${ulidBytesToString(this._0)}`;
   }
 
   toUlidString(): string {
-    return ulidBytesToString(this.bytes);
+    return ulidBytesToString(this._0);
   }
 
   equals(other: QueryId): boolean {
     for (let i = 0; i < 16; i++) {
-      if (this.bytes[i] !== other.bytes[i]) return false;
+      if (this._0[i] !== other._0[i]) return false;
     }
     return true;
   }
 
-  // ── Bincode: derived serde on Ulid — 26-char string ──
-
   encode(writer: BincodeWriter): void {
-    writer.writeString(ulidBytesToString(this.bytes));
+    writer.writeString(ulidBytesToString(this._0));
   }
 
   static decode(reader: BincodeReader): QueryId {
@@ -452,11 +446,11 @@ export class QueryId extends Struct {
 }
 
 export class UpdateId extends Struct {
-  readonly bytes: Uint8Array; // 16-byte ULID
+  readonly _0: Uint8Array; // 16-byte ULID
 
-  private constructor(bytes: Uint8Array) {
+  private constructor(_0: Uint8Array) {
     super();
-    this.bytes = bytes;
+    this._0 = _0;
   }
 
   static new(): UpdateId {
@@ -469,25 +463,23 @@ export class UpdateId extends Struct {
   }
 
   toString(): string {
-    const idStr = ulidBytesToString(this.bytes);
+    const idStr = ulidBytesToString(this._0);
     return `N${idStr.slice(20)}`;
   }
 
   toUlidString(): string {
-    return ulidBytesToString(this.bytes);
+    return ulidBytesToString(this._0);
   }
 
   equals(other: UpdateId): boolean {
     for (let i = 0; i < 16; i++) {
-      if (this.bytes[i] !== other.bytes[i]) return false;
+      if (this._0[i] !== other._0[i]) return false;
     }
     return true;
   }
 
-  // ── Bincode: derived serde on Ulid — 26-char string ──
-
   encode(writer: BincodeWriter): void {
-    writer.writeString(ulidBytesToString(this.bytes));
+    writer.writeString(ulidBytesToString(this._0));
   }
 
   static decode(reader: BincodeReader): UpdateId {
