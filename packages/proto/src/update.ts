@@ -23,17 +23,12 @@ export class SubscriptionUpdateItem extends Struct {
   }
 
   toString(): string {
-    const _r = `${this.collection}/${this.entityId}: `;
-    if (_r.isErr()) return _r as any;
-    this.content.match({
-      EventOnly: (events) => `Events(${events.length})`.unwrap(),
-      StateAndEvent: (state, events) => `State+Events(${state}, ${events.length})`.unwrap(),
-    })
-    if (!this.predicateRelevance.length === 0) {
-      const _r = ` predicates:${this.predicateRelevance.length}`;
-      if (_r.isErr()) return _r as any;
-    }
-    return Result.Ok([]);
+    const content = this.content.match({
+      EventOnly: (v) => `Events(${v.events.length})`,
+      StateAndEvent: (v) => `State+Events(${v.state}, ${v.events.length})`,
+    });
+    const predicates = this.predicateRelevance.length > 0 ? ` predicates:${this.predicateRelevance.length}` : '';
+    return `${this.collection}/${this.entityId}: ${content}${predicates}`;
   }
 
   clone(): SubscriptionUpdateItem {
@@ -51,7 +46,7 @@ export class SubscriptionUpdateItem extends Struct {
     const entityId = EntityId.decode(reader);
     const collection = CollectionId.decode(reader);
     const content = UpdateContent.decode(reader);
-    const predicateRelevance = reader.readVec((r) => [QueryId, MembershipChange].decode(r));
+    const predicateRelevance = reader.readVec((r) => { const a = QueryId.decode(r); const b = MembershipChange.decode(r); return [a, b] as [QueryId, MembershipChange]; });
     return new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
   }
 }
@@ -132,7 +127,7 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
 
   toString(): string {
     return this.match({
-      SubscriptionUpdate: (items) => `SubscriptionUpdate [${Array.from(items).map((i) => `${i}`).join(', ')}]`,
+      SubscriptionUpdate: (v) => `SubscriptionUpdate [${Array.from(v.items).map((i) => `${i}`).join(', ')}]`,
     });
   }
 

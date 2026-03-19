@@ -17,8 +17,8 @@ export class Message extends Enum<MessageV> {
 
   toString(): string {
     return this.match({
-      Presence: (presence) => `Presence: ${presence}`,
-      PeerMessage: (nodeMessage) => `PeerMessage: ${nodeMessage}`,
+      Presence: (v) => `Presence: ${v._0}`,
+      PeerMessage: (v) => `PeerMessage: ${v._0}`,
     });
   }
 
@@ -63,11 +63,11 @@ export class NodeMessage extends Enum<NodeMessageV> {
 
   toString(): string {
     return this.match({
-      Request: (request) => `Request: ${request}`,
-      Response: (response) => `Response: ${response}`,
-      Update: (update) => `Update: ${update}`,
-      UpdateAck: (updateAck) => `UpdateAck: ${updateAck}`,
-      UnsubscribeQuery: (from, queryId) => `Unsubscribe: ${from} ${queryId}`,
+      Request: (v) => `Request: ${v.request}`,
+      Response: (v) => `Response: ${v._0}`,
+      Update: (v) => `Update: ${v._0}`,
+      UpdateAck: (v) => `UpdateAck: ${v._0}`,
+      UnsubscribeQuery: (v) => `Unsubscribe: ${v.from} ${v.queryId}`,
     });
   }
 

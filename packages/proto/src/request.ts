@@ -145,19 +145,9 @@ export class EntityDelta extends Struct {
 
   toString(): string {
     return this.content.match({
-      StateSnapshot: (state) => `EntityDelta ${this.entityId}: StateSnapshot(${state})`,
-      EventBridge: (events) => {
-      let eventStrs = [];
-      for (const event of events) {
-        const event = Attested.fromParts(this.entityId, this.collection.clone(), event.clone());
-        eventStrs.push(event.payload.toString());
-        event.drop();
-      }
-      const _ret = `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
-      eventStrs.drop();
-      return _ret;
-    },
-      StateAndRelation: (state, relation) => `EntityDelta ${this.entityId}: StateAndRelation(${state})`,
+      StateSnapshot: (v) => `EntityDelta ${this.entityId}: StateSnapshot(${v.state})`,
+      EventBridge: (v) => `EntityDelta ${this.entityId}: EventBridge(${v.events.length} events)`,
+      StateAndRelation: (v) => `EntityDelta ${this.entityId}: StateAndRelation(${v.state})`,
     });
   }
 
@@ -367,11 +357,11 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
 
   toString(): string {
     return this.match({
-      CommitTransaction: (id, events) => `CommitTransaction ${id} [${Array.from(events).map((e) => `${e}`).join(', ')}]`,
-      Get: (collection, ids) => `Get ${collection} ${Array.from(ids).map((id) => id.toBase64Short()).join(', ')}`,
-      GetEvents: (collection, eventIds) => `GetEvents ${collection} ${event_ids . iter () . map (| id | id . to_base64_short ()) . collect ::< Vec < _ >> () . join (", ")}`,
-      Fetch: (collection, selection, knownMatches) => `Fetch ${collection} ${query} known:${knownMatches.length}`,
-      SubscribeQuery: (queryId, collection, selection, version, knownMatches) => `Subscribe ${queryId} ${collection} ${query} v${version} known:${knownMatches.length}`,
+      CommitTransaction: (v) => `CommitTransaction ${v.id} [${Array.from(v.events).map((e) => `${e}`).join(', ')}]`,
+      Get: (v) => `Get ${v.collection} ${Array.from(v.ids).map((id) => id.toBase64Short()).join(', ')}`,
+      GetEvents: (v) => `GetEvents ${v.collection} ${Array.from(v.eventIds).map((id) => id.toBase64Short()).join(', ')}`,
+      Fetch: (v) => `Fetch ${v.collection} ${v.selection} known:${v.knownMatches.length}`,
+      SubscribeQuery: (v) => `Subscribe ${v.queryId} ${v.collection} ${v.selection} v${v.version} known:${v.knownMatches.length}`,
     });
   }
 
@@ -460,13 +450,13 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
 
   toString(): string {
     return this.match({
-      CommitComplete: (id) => `CommitComplete ${id}`,
-      Fetch: (deltas) => `Fetch [${deltas.length}]`,
-      Get: (states) => `Get [${Array.from(states).map((s) => s.toString()).join(', ')}]`,
-      GetEvents: (events) => `GetEvents [${Array.from(events).map((e) => e.payload.toString()).join(', ')}]`,
-      QuerySubscribed: (queryId, deltas) => `Subscribed ${queryId} initial:${initial.length}`,
+      CommitComplete: (v) => `CommitComplete ${v.id}`,
+      Fetch: (v) => `Fetch [${v._0.length}]`,
+      Get: (v) => `Get [${Array.from(v._0).map((s) => s.toString()).join(', ')}]`,
+      GetEvents: (v) => `GetEvents [${Array.from(v._0).map((e) => e.payload.toString()).join(', ')}]`,
+      QuerySubscribed: (v) => `Subscribed ${v.queryId} initial:${v.deltas.length}`,
       Success: () => 'Success',
-      Error: (e) => `Error: ${e}`,
+      Error: (v) => `Error: ${v._0}`,
     });
   }
 
