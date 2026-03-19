@@ -152,17 +152,17 @@ export class StateFragment extends Struct {
 }
 
 export class OperationSet extends Struct {
-  readonly map: Map<string, Operation[]>;
+  readonly _0: Map<string, Operation[]>;
 
-  constructor(map: Map<string, Operation[]> = new Map()) {
+  constructor(_0: Map<string, Operation[]> = new Map()) {
     super();
-    this.map = map;
+    this._0 = _0;
   }
 
   // impl Display for OperationSet
   toString(): string {
     const parts: string[] = [];
-    for (const [backend, ops] of this.map) {
+    for (const [backend, ops] of this._0) {
       const totalBytes = ops.reduce((sum, op) => sum + op.diff.length, 0);
       parts.push(`${backend} => ${totalBytes}b`);
     }
@@ -171,21 +171,21 @@ export class OperationSet extends Struct {
 
   // impl Deref for OperationSet — target: BTreeMap<String, Vec<Operation>>
   get(key: string): Operation[] | undefined {
-    return this.map.get(key);
+    return this._0.get(key);
   }
 
   [Symbol.iterator](): Iterator<[string, Operation[]]> {
-    return this.map[Symbol.iterator]();
+    return this._0[Symbol.iterator]();
   }
 
   entries(): IterableIterator<[string, Operation[]]> {
-    return this.map.entries();
+    return this._0.entries();
   }
 
   equals(other: OperationSet): boolean {
-    if (this.map.size !== other.map.size) return false;
-    for (const [key, ops] of this.map) {
-      const otherOps = other.map.get(key);
+    if (this._0.size !== other._0.size) return false;
+    for (const [key, ops] of this._0) {
+      const otherOps = other._0.get(key);
       if (!otherOps || ops.length !== otherOps.length) return false;
       for (let i = 0; i < ops.length; i++) {
         if (!ops[i].equals(otherOps[i])) return false;
@@ -196,7 +196,7 @@ export class OperationSet extends Struct {
 
   encode(writer: BincodeWriter): void {
     // BTreeMap<String, Vec<Operation>> — sorted by key in UTF-8 byte order
-    const entries = [...this.map.entries()].sort((a, b) => compareUtf8Bytes(a[0], b[0]));
+    const entries = [...this._0.entries()].sort((a, b) => compareUtf8Bytes(a[0], b[0]));
     writer.writeLength(entries.length);
     for (const [key, ops] of entries) {
       writer.writeString(key);
@@ -206,13 +206,13 @@ export class OperationSet extends Struct {
 
   static decode(reader: BincodeReader): OperationSet {
     const len = reader.readLength();
-    const map = new Map<string, Operation[]>();
+    const _0 = new Map<string, Operation[]>();
     for (let i = 0; i < len; i++) {
       const key = reader.readString();
       const ops = reader.readVec(r => Operation.decode(r));
-      map.set(key, ops);
+      _0.set(key, ops);
     }
-    return new OperationSet(map);
+    return new OperationSet(_0);
   }
 }
 
@@ -320,11 +320,11 @@ export class State extends Struct {
 }
 
 export class StateBuffers extends Struct {
-  readonly map: Map<string, Uint8Array>;
+  readonly _0: Map<string, Uint8Array>;
 
-  constructor(map: Map<string, Uint8Array> = new Map()) {
+  constructor(_0: Map<string, Uint8Array> = new Map()) {
     super();
-    this.map = map;
+    this._0 = _0;
   }
 
   static default(): StateBuffers {
@@ -333,21 +333,21 @@ export class StateBuffers extends Struct {
 
   // impl Deref for StateBuffers — target: BTreeMap<String, Vec<u8>>
   get(key: string): Uint8Array | undefined {
-    return this.map.get(key);
+    return this._0.get(key);
   }
 
   [Symbol.iterator](): Iterator<[string, Uint8Array]> {
-    return this.map[Symbol.iterator]();
+    return this._0[Symbol.iterator]();
   }
 
   entries(): IterableIterator<[string, Uint8Array]> {
-    return this.map.entries();
+    return this._0.entries();
   }
 
   equals(other: StateBuffers): boolean {
-    if (this.map.size !== other.map.size) return false;
-    for (const [key, buf] of this.map) {
-      const otherBuf = other.map.get(key);
+    if (this._0.size !== other._0.size) return false;
+    for (const [key, buf] of this._0) {
+      const otherBuf = other._0.get(key);
       if (!otherBuf || buf.length !== otherBuf.length) return false;
       for (let i = 0; i < buf.length; i++) {
         if (buf[i] !== otherBuf[i]) return false;
@@ -357,7 +357,7 @@ export class StateBuffers extends Struct {
   }
 
   encode(writer: BincodeWriter): void {
-    const entries = [...this.map.entries()].sort((a, b) => compareUtf8Bytes(a[0], b[0]));
+    const entries = [...this._0.entries()].sort((a, b) => compareUtf8Bytes(a[0], b[0]));
     writer.writeLength(entries.length);
     for (const [key, buf] of entries) {
       writer.writeString(key);
@@ -367,13 +367,13 @@ export class StateBuffers extends Struct {
 
   static decode(reader: BincodeReader): StateBuffers {
     const len = reader.readLength();
-    const map = new Map<string, Uint8Array>();
+    const _0 = new Map<string, Uint8Array>();
     for (let i = 0; i < len; i++) {
       const key = reader.readString();
       const buf = reader.readByteVec();
-      map.set(key, buf);
+      _0.set(key, buf);
     }
-    return new StateBuffers(map);
+    return new StateBuffers(_0);
   }
 }
 

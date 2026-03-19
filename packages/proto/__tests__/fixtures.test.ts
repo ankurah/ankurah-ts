@@ -525,7 +525,7 @@ describe('data.bin fixture', () => {
 
     // OperationSet
     const operationSet = OperationSet.decode(reader);
-    expect(operationSet.map.size).toBe(2);
+    expect(operationSet._0.size).toBe(2);
     const backendA = operationSet.get('backend_a')!;
     expect(backendA.length).toBe(2);
     expect(backendA[0].diff).toEqual(new Uint8Array([0xAA, 0xBB]));
@@ -536,30 +536,30 @@ describe('data.bin fixture', () => {
 
     // StateBuffers
     const stateBuffers = StateBuffers.decode(reader);
-    expect(stateBuffers.map.size).toBe(2);
+    expect(stateBuffers._0.size).toBe(2);
     expect(stateBuffers.get('buf_alpha')).toEqual(new Uint8Array([0x01, 0x02, 0x03]));
     expect(stateBuffers.get('buf_beta')).toEqual(new Uint8Array([0x04, 0x05]));
 
     // State
     const state = State.decode(reader);
-    expect(state.stateBuffers.map.size).toBe(2);
+    expect(state.stateBuffers._0.size).toBe(2);
     expect(state.head.length).toBe(1);
 
     // StateFragment
     const stateFragment = StateFragment.decode(reader);
-    expect(stateFragment.state.stateBuffers.map.size).toBe(2);
+    expect(stateFragment.state.stateBuffers._0.size).toBe(2);
     expect(stateFragment.attestations.length).toBe(2);
 
     // Event
     const event = Event.decode(reader);
     expect(event.collection.value).toBe('test_collection');
     expect(event.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
-    expect(event.operations.map.size).toBe(2);
+    expect(event.operations._0.size).toBe(2);
     expect(event.parent.length).toBe(1);
 
     // EventFragment
     const eventFragment = EventFragment.decode(reader);
-    expect(eventFragment.operations.map.size).toBe(2);
+    expect(eventFragment.operations._0.size).toBe(2);
     expect(eventFragment.parent.length).toBe(1);
     expect(eventFragment.attestations.length).toBe(0);
 
