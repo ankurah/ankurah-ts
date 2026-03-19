@@ -155,6 +155,17 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
             }
         }
     }
+    // Check if any function/method returns Result<T,E> or has Result in body
+    let uses_result = file.functions.iter().any(|f| f.return_type.contains("Result<"))
+        || file.impls.iter().any(|imp| {
+            !provided_set.contains(&imp.target_type)
+                && imp.methods.iter().any(|m|
+                    m.return_type.contains("Result<")
+                    || m.body_ts.as_ref().map_or(false, |b| b.contains("Result.")))
+        });
+    if uses_result && !base_imports.contains(&"Result") {
+        base_imports.push("Result");
+    }
     if !base_imports.is_empty() {
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n", base_imports.join(", ")));
     }
