@@ -82,16 +82,8 @@ impl<'a> BodyTranslator<'a> {
             if is_last {
                 if let syn::Stmt::Expr(expr, None) = stmt {
                     // Implicit return — drops go before return
-                    if !drops.is_empty() {
-                        // Compute return value, drop locals, return
-                        let ret = self.expr(expr);
-                        out.push_str(&format!("const _ret = {};\n", ret));
-                        out.push_str(&drops);
-                        out.push_str("return _ret;\n");
-                    } else {
-                        out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self));
-                        out.push('\n');
-                    }
+                        out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self, &drops));
+                    out.push('\n');
                 } else {
                     out.push_str(&self.stmt(stmt));
                     // Drops after last statement
