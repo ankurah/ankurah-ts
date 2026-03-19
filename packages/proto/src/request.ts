@@ -2,7 +2,14 @@
 import { Struct, Enum } from '@ankurah/base';
 import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
-import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, Event, EventFragment, EventId, QueryId, Selection, StateFragment, TransactionId, Ulid } from '@ankurah/ankql';
+import { AttestationSet, Attested } from './auth';
+import { Clock } from './clock';
+import { CollectionId } from './collection';
+import { EntityState, Event, EventFragment, EventId, StateFragment } from './data';
+import { EntityId } from './id';
+import { QueryId } from './subscription';
+import { TransactionId } from './transaction';
+import { Selection } from '@ankurah/ankql';
 export { RequestId };
 
 export class NodeRequest extends Struct {
@@ -374,7 +381,7 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
       CommitTransaction: (v) => {
         writer.writeVariant(0);
         v.id.encode(writer);
-        writer.writeVec(v.events, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
+        writer.writeVec(v.events, (w, item) => item.encode(w, (w2: BincodeWriter, p: Event) => p.encode(w2)));
       },
       Get: (v) => {
         writer.writeVariant(1);
@@ -408,7 +415,7 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
     switch (variant) {
       case 0: {
         const id = TransactionId.decode(reader);
-        const events = reader.readVec((r) => Attested.decode(r, (r2) => Event.decode(r2)));
+        const events = reader.readVec((r) => Attested.decode(r, (r2: BincodeReader) => Event.decode(r2)));
         return new NodeRequestBody('CommitTransaction', { id, events });
       }
       case 1: {
@@ -476,11 +483,11 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
       },
       Get: (v) => {
         writer.writeVariant(2);
-        writer.writeVec(v._0, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
+        writer.writeVec(v._0, (w, item) => item.encode(w, (w2: BincodeWriter, p: EntityState) => p.encode(w2)));
       },
       GetEvents: (v) => {
         writer.writeVariant(3);
-        writer.writeVec(v._0, (w, item) => item.encode(w, (w2, p) => p.encode(w2)));
+        writer.writeVec(v._0, (w, item) => item.encode(w, (w2: BincodeWriter, p: Event) => p.encode(w2)));
       },
       QuerySubscribed: (v) => {
         writer.writeVariant(4);
@@ -509,11 +516,11 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
         return new NodeResponseBody('Fetch', { _0 });
       }
       case 2: {
-        const _0 = reader.readVec((r) => Attested.decode(r, (r2) => EntityState.decode(r2)));
+        const _0 = reader.readVec((r) => Attested.decode(r, (r2: BincodeReader) => EntityState.decode(r2)));
         return new NodeResponseBody('Get', { _0 });
       }
       case 3: {
-        const _0 = reader.readVec((r) => Attested.decode(r, (r2) => Event.decode(r2)));
+        const _0 = reader.readVec((r) => Attested.decode(r, (r2: BincodeReader) => Event.decode(r2)));
         return new NodeResponseBody('GetEvents', { _0 });
       }
       case 4: {

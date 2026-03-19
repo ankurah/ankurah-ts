@@ -29,7 +29,7 @@ export class SubscriptionUpdateItem extends Struct {
       EventOnly: (v) => `Events(${v._0.length})`,
       StateAndEvent: (v) => `State+Events(${v._0}, ${v._1.length})`,
     })
-    if (!this.predicateRelevance.length === 0) {
+    if (!(this.predicateRelevance.length === 0)) {
       _result += ` predicates:${this.predicateRelevance.length}`;
     }
     return _result;

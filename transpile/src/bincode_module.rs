@@ -188,11 +188,11 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
                 encode_expr_with("v", inner, "w"))
         }
         t if t.starts_with("Attested<") => {
-            // Attested<T> requires callback: v.encode(w, (w2, p) => p.encode(w2))
-            let inner = &t[9..t.len()-1]; // extract T from Attested<T>
+            // Attested<T> requires callback: v.encode(w, (w2: BincodeWriter, p: T) => p.encode(w2))
+            let inner = &t[9..t.len()-1];
             let wr2 = next_writer_var(wr);
-            format!("{}.encode({}, ({}, p) => {})",
-                value, wr, wr2,
+            format!("{}.encode({}, ({}: BincodeWriter, p: {}) => {})",
+                value, wr, wr2, inner,
                 encode_expr_with("p", inner, &wr2))
         }
         t if is_tuple_type(t) => {
@@ -251,10 +251,10 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
             format!("{}.readOption((r) => {})", rd, decode_expr_with(inner, "r"))
         }
         t if t.starts_with("Attested<") => {
-            // Attested<T> requires callback: Attested.decode(r, (r2) => T.decode(r2))
-            let inner = &t[9..t.len()-1]; // extract T from Attested<T>
+            // Attested<T> requires callback: Attested.decode(r, (r2: BincodeReader) => T.decode(r2))
+            let inner = &t[9..t.len()-1];
             let rd2 = next_reader_var(rd);
-            format!("Attested.decode({}, ({}) => {})", rd, rd2, decode_expr_with(inner, &rd2))
+            format!("Attested.decode({}, ({}: BincodeReader) => {})", rd, rd2, decode_expr_with(inner, &rd2))
         }
         t if is_tuple_type(t) => {
             // Tuple type [A, B] — decode each element in order

@@ -42,13 +42,13 @@ export class Presence extends Struct {
   encode(writer: BincodeWriter): void {
     this.nodeId.encode(writer);
     writer.writeBool(this.durable);
-    writer.writeOption(this.systemRoot, (w, v) => v.encode(w, (w2, p) => p.encode(w2)));
+    writer.writeOption(this.systemRoot, (w, v) => v.encode(w, (w2: BincodeWriter, p: EntityState) => p.encode(w2)));
   }
 
   static decode(reader: BincodeReader): Presence {
     const nodeId = EntityId.decode(reader);
     const durable = reader.readBool();
-    const systemRoot = reader.readOption((r) => Attested.decode(r, (r2) => EntityState.decode(r2)));
+    const systemRoot = reader.readOption((r) => Attested.decode(r, (r2: BincodeReader) => EntityState.decode(r2)));
     return new Presence(nodeId, durable, systemRoot);
   }
 }

@@ -289,7 +289,13 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Unary(unary) => {
                 let e = self.expr(&unary.expr);
                 match &unary.op {
-                    syn::UnOp::Not(_) => format!("!{}", e),
+                    syn::UnOp::Not(_) => {
+                        if e.contains("===") || e.contains("!==") || e.contains(">=") || e.contains("<=") {
+                            format!("!({})", e)
+                        } else {
+                            format!("!{}", e)
+                        }
+                    }
                     syn::UnOp::Neg(_) => format!("-{}", e),
                     syn::UnOp::Deref(_) => e,
                     _ => format!("/* unknown unary op */ {}", e),

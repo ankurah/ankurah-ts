@@ -81,5 +81,10 @@ files = [
   "proto/src/human_id.rs",
 ]
 
+[cross_crate_types]
+# Types from other crates accessed via module-level imports (use ankql::ast)
+# TODO: auto-detect from use statements + type path analysis
+Selection = "@ankurah/ankql"
+
 [managed_files]
 # Phase 3: files the transpiler owns (start empty, grow gradually)

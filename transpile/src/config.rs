@@ -13,6 +13,8 @@ pub struct Config {
     pub name_overrides: HashMap<String, String>,
     pub provided_impls: HashMap<String, ProvidedImpl>,
     pub hardcode_files: Vec<String>,
+    /// Types from other crates that need explicit import mapping
+    pub cross_crate_types: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -80,6 +82,8 @@ impl Config {
             Vec::new()
         };
 
+        let cross_crate_types = parse_string_map(table.get("cross_crate_types"));
+
         Ok(Config {
             paths,
             crates,
@@ -88,6 +92,7 @@ impl Config {
             name_overrides,
             provided_impls,
             hardcode_files,
+            cross_crate_types,
         })
     }
 

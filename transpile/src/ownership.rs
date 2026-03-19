@@ -150,12 +150,27 @@ pub fn generate_drops(
     returned_vars: &HashSet<String>,
 ) -> String {
     let mut out = String::new();
-    for (name, _) in locals.iter().rev() {
+    for (name, ty) in locals.iter().rev() {
         // Don't drop the return value — it's being moved to the caller
         if returned_vars.contains(name) {
+            continue;
+        }
+        // Don't drop primitives, arrays, or other non-AkObject types
+        if is_non_droppable(ty) {
             continue;
         }
         out.push_str(&format!("{}.drop();\n", name));
     }
     out
+}
+
+/// Types that should never get .drop() calls
+fn is_non_droppable(ty: &str) -> bool {
+    let base = ty.trim_end_matches(" | null");
+    matches!(base, "string" | "boolean" | "number" | "bigint | number" | "void" | "never" | "unknown")
+        || base.ends_with("[]")
+        || base.starts_with('[')  // tuples
+        || base == "Uint8Array"
+        || base.starts_with("Map<")
+        || base.starts_with("Set<")
 }

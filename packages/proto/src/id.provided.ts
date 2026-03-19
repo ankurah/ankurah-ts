@@ -346,6 +346,10 @@ export class TransactionId extends Struct {
     return true;
   }
 
+  clone(): TransactionId {
+    return TransactionId.fromBytes(new Uint8Array(this._0));
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeString(ulidBytesToString(this._0));
   }
@@ -387,6 +391,10 @@ export class RequestId extends Struct {
       if (this._0[i] !== other._0[i]) return false;
     }
     return true;
+  }
+
+  clone(): RequestId {
+    return RequestId.fromBytes(new Uint8Array(this._0));
   }
 
   encode(writer: BincodeWriter): void {
@@ -443,6 +451,10 @@ export class QueryId extends Struct {
     return true;
   }
 
+  clone(): QueryId {
+    return QueryId.fromBytes(new Uint8Array(this._0));
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeString(ulidBytesToString(this._0));
   }
@@ -484,6 +496,10 @@ export class UpdateId extends Struct {
       if (this._0[i] !== other._0[i]) return false;
     }
     return true;
+  }
+
+  clone(): UpdateId {
+    return UpdateId.fromBytes(new Uint8Array(this._0));
   }
 
   encode(writer: BincodeWriter): void {

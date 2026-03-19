@@ -143,6 +143,13 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         parsed_files.push((rel_str, rust_file));
     }
 
+    // Add cross-crate type mappings from config
+    if let Some(cfg) = config {
+        for (type_name, package) in &cfg.cross_crate_types {
+            type_to_file.insert(type_name.clone(), package.clone());
+        }
+    }
+
     // Phase 2: Generate TS with resolved imports
     let mut file_count = 0;
 
