@@ -16,35 +16,35 @@ interface ValueInner<T> {
  * In TS we share a mutable inner object so clones see the same state [E8].
  */
 export class ValueCell<T> extends Struct {
-  private inner: ValueInner<T>;
+  private _0: ValueInner<T>;
 
   constructor(value: T) {
     super();
-    this.inner = { value };
+    this._0 = { value };
   }
 
   clone(): ValueCell<T> {
     const cloned = new ValueCell<T>(undefined as any);
-    cloned.inner = this.inner;
+    cloned._0 = this._0;
     return cloned;
   }
 
   set(value: T): void {
-    this.inner.value = value;
+    this._0.value = value;
   }
 
   with<R>(f: (value: T) => R): R {
-    return f(this.inner.value);
+    return f(this._0.value);
   }
 
   setWith<R>(value: T, f: (value: T) => R): R {
-    this.inner.value = value;
-    return f(this.inner.value);
+    this._0.value = value;
+    return f(this._0.value);
   }
 
   /** Create a read-only view of this value */
   readvalue(): ReadValueCell<T> {
-    return new ReadValueCell<T>(this.inner);
+    return new ReadValueCell<T>(this._0);
   }
 
   // Alias: existing callers use readValue (camelCase)
@@ -54,7 +54,7 @@ export class ValueCell<T> extends Struct {
 
   // impl<T: Clone> ValueCell<T>
   value(): T {
-    return this.inner.value;
+    return this._0.value;
   }
 
   // Alias: existing callers use getValue
@@ -70,25 +70,25 @@ export class ValueCell<T> extends Struct {
  */
 export class ReadValueCell<T> extends Struct {
   /** @internal */
-  private inner: ValueInner<T>;
+  private _0: ValueInner<T>;
 
   /** @internal */
-  constructor(inner: ValueInner<T>) {
+  constructor(_0: ValueInner<T>) {
     super();
-    this.inner = inner;
+    this._0 = _0;
   }
 
   clone(): ReadValueCell<T> {
-    return new ReadValueCell<T>(this.inner);
+    return new ReadValueCell<T>(this._0);
   }
 
   with<R>(f: (value: T) => R): R {
-    return f(this.inner.value);
+    return f(this._0.value);
   }
 
   // impl<T: Clone> ReadValueCell<T>
   value(): T {
-    return this.inner.value;
+    return this._0.value;
   }
 
   // Alias: existing callers use getValue

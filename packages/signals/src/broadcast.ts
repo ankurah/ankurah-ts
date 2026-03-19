@@ -7,31 +7,31 @@ import { Struct, Drop, Arc, Weak } from '@ankurah/base';
 let nextBroadcastIdCounter = 0;
 
 export class BroadcastId extends Struct {
-  private readonly inner: number;
+  private readonly _0: number;
 
   /** @internal - only Broadcast should create BroadcastIds */
   constructor(id?: number) {
     super();
-    this.inner = id ?? nextBroadcastIdCounter++;
+    this._0 = id ?? nextBroadcastIdCounter++;
   }
 
   // impl Into<usize> for BroadcastId
   toNumber(): number {
-    return this.inner;
+    return this._0;
   }
 
   // impl PartialEq
   equals(other: BroadcastId): boolean {
-    return this.inner === other.inner;
+    return this._0 === other._0;
   }
 
   // impl Display for BroadcastId
   toString(): string {
-    return `${this.inner}`;
+    return `${this._0}`;
   }
 
   clone(): BroadcastId {
-    return new BroadcastId(this.inner);
+    return new BroadcastId(this._0);
   }
 }
 
@@ -50,17 +50,17 @@ export type BroadcastListener<T = void> =
 /** A broadcast sender that notifies multiple subscribers.
  * Uses synchronous function callbacks for immediate notification. */
 export class Broadcast<T = void> extends Struct {
-  private arc: Arc<Inner<T>>;
+  private _0: Arc<Inner<T>>;
   private _id: BroadcastId;
 
   constructor(arc?: Arc<Inner<T>>, id?: BroadcastId) {
     super();
-    this.arc = arc ?? Arc.new(new Inner());
+    this._0 = arc ?? Arc.new(new Inner());
     this._id = id ?? new BroadcastId();
   }
 
   clone(): Broadcast<T> {
-    return new Broadcast<T>(this.arc.clone(), this._id.clone());
+    return new Broadcast<T>(this._0.clone(), this._id.clone());
   }
 
   /** Get the unique identifier for this broadcast */
@@ -72,7 +72,7 @@ export class Broadcast<T = void> extends Struct {
   send(value: T): void {
     // Clone the listeners to avoid holding the lock during callback execution
     // maybe someday we can avoid the alloc here using a thread-local buffer?
-    const subscribers = Array.from(this.arc.value.listeners.values());
+    const subscribers = Array.from(this._0.value.listeners.values());
 
     // Call all listeners without holding any locks
     // clone the value for each subscriber except the last one
@@ -106,7 +106,7 @@ export class Broadcast<T = void> extends Struct {
    * This avoids cloning the sender while still forbidding the user from sending notifications.
    */
   reference(): BroadcastRef<T> {
-    return new BroadcastRef(this.arc.clone(), this._id);
+    return new BroadcastRef(this._0.clone(), this._id);
   }
 }
 
@@ -121,22 +121,22 @@ class Inner<T> extends Struct {
 // Divergence: Rust Ref<'a, T> uses a borrow of Broadcast; TS holds Arc clone [E8]
 export class BroadcastRef<T = void> extends Struct {
   /** @internal */
-  private arc: Arc<Inner<T>>;
+  private _0: Arc<Inner<T>>;
   /** @internal */
   private _broadcastId: BroadcastId;
 
   /** @internal */
   constructor(arc: Arc<Inner<T>>, broadcastId: BroadcastId) {
     super();
-    this.arc = arc;
+    this._0 = arc;
     this._broadcastId = broadcastId;
   }
 
   /** Subscribe to notifications from the associated sender. */
   listen(listener: BroadcastListener<T>): ListenerGuard<T> {
-    const id = this.arc.value.nextId++;
-    this.arc.value.listeners.set(id, listener);
-    return new ListenerGuard(this.arc.downgrade(), id, this._broadcastId);
+    const id = this._0.value.nextId++;
+    this._0.value.listeners.set(id, listener);
+    return new ListenerGuard(this._0.downgrade(), id, this._broadcastId);
   }
 
   /** Get a unique identifier for this broadcast (for deduplication purposes) */
@@ -167,11 +167,6 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
 
   /** Get the broadcast ID that this guard is subscribed to */
   broadcastId(): BroadcastId {
-    // A ListenerGuard does not keep the broadcast alive
-    // but the address is reserved until all Arc/Weak references are dropped
-    // Given that we are using the address as the ID, this is safe.
-    // We don't actually care if the broadcast is alive. The point is to
-    // provide a unique id for removing the correct listener.
     return this._broadcastId;
   }
 
