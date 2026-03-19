@@ -37,17 +37,34 @@ from = "from"
 
 [provided_impls]
 # Custom impl Serialize/Deserialize (raw bytes + base64) — not derive-based
+# TODO: transpilable if we add (1) base64.provided.ts module, (2) provided_redirect
+# for base64 crate, (3) transpiler support for custom impl Serialize (not just derive)
 "ankurah_proto::id::EntityId" = { path = "id.provided" }
 "ankurah_proto::data::EventId" = { path = "id.provided" }
 
-# Ulid wrappers — depend on ULID generation/encoding infrastructure in id.provided.ts
-# TODO: make transpilable by mapping Ulid→string + providing Ulid utility class
+# Ulid wrappers — depend on ULID generation/encoding infrastructure
+# TODO: transpilable by mapping Ulid→string in name_map + providing Ulid utility
+# class with new()/fromParts(). Serde would work since Ulid serializes as string.
 "ankurah_proto::transaction::TransactionId" = { path = "id.provided" }
 "ankurah_proto::request::RequestId" = { path = "id.provided" }
 "ankurah_proto::subscription::QueryId" = { path = "id.provided" }
 "ankurah_proto::update::UpdateId" = { path = "id.provided" }
 
+# Complex method bodies (binary_search, try_into, iterator combinators)
+# TODO: transpilable if we add binary_search utility + translate try_into patterns.
+# The struct/serde itself is trivial (Vec<EventId>), only the methods are complex.
+"ankurah_proto::clock::Clock" = { path = "clock.provided" }
+
+# Error types — callers in provided impls use factory methods (DecodeError.invalidLength())
+# TODO: transpilable once we either (1) generate Enum static factories per variant,
+# or (2) update all callers to use new DecodeError('InvalidLength', {}) constructor.
+# Also needs fix for base64::DecodeError→DecodeError name collision in InvalidBase64 variant.
+"ankurah_proto::error::DecodeError" = { path = "error.provided" }
+"ankurah_proto::error::IdParseError" = { path = "error.provided" }
+
 # Generic type requires callback-based encode/decode
+# TODO: transpilable if transpiler detects generic type params in Serialize/Deserialize
+# derives and generates callback-based encode/decode automatically.
 "ankurah_proto::auth::Attested" = { path = "auth.provided" }
 
 [provided_redirect.yrs]
@@ -60,6 +77,8 @@ types = { "Doc" = "YrsDoc", "Text" = "YrsText", "Map" = "YrsMap" }
 files = [
   "ankql/src/parser.rs",
   "ankql/src/grammar.rs",
+  # TODO: transpilable if we add .chunks()/.fold() iterator translations
+  "proto/src/human_id.rs",
 ]
 
 [managed_files]

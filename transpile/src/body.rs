@@ -321,15 +321,10 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Struct(s) => {
                 let mut name = Self::path_static(&s.path);
                 if name == "Self" { name = self.self_type.to_string(); }
-                let fields: Vec<String> = s.fields.iter().map(|f| {
-                    let member = match &f.member {
-                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    };
-                    let value = self.expr(&f.expr);
-                    if member == value { member } else { format!("{}: {}", member, value) }
+                let values: Vec<String> = s.fields.iter().map(|f| {
+                    self.expr(&f.expr)
                 }).collect();
-                format!("new {}({{ {} }})", name, fields.join(", "))
+                format!("new {}({})", name, values.join(", "))
             }
 
             syn::Expr::Try(try_expr) => {
@@ -443,6 +438,9 @@ impl<'a> BodyTranslator<'a> {
             "cmp" | "partialCmp" if args.len() == 1 => format!("{}.compareTo({})", receiver, args[0]),
             "eq" if args.len() == 1 => format!("{}.equals({})", receiver, args[0]),
             "binarySearch" if args.len() == 1 => format!("{}.binarySearch({})", receiver, args[0]),
+
+            // Formatter — TS has no alternate formatting, always false
+            "alternate" if args.is_empty() => "false".to_string(),
 
             _ => format!("{}.{}({})", receiver, method, args.join(", ")),
         }

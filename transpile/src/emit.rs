@@ -390,6 +390,12 @@ fn emit_field_eq(name: &str, ty: &str) -> String {
             "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
             n = name
         )
+    } else if ty.starts_with("Map<") {
+        // Map comparison — check size and key-value equality
+        format!(
+            "{{ if (this.{n}.size !== other.{n}.size) return false; for (const [k, v] of this.{n}) {{ if (!other.{n}.has(k)) return false; }} }}",
+            n = name
+        )
     } else if ty.ends_with("[]") {
         let inner = &ty[..ty.len()-2];
         if is_primitive_ts_type(inner) {
@@ -509,7 +515,23 @@ fn is_skipped_trait(trait_name: &str) -> bool {
 }
 
 fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[String], _self_type: &str) -> String {
-    if !matches!(trait_name, "From" | "TryFrom" | "TryInto" | "Into") || type_args.is_empty() {
+    if type_args.is_empty() {
+        return base_name.to_string();
+    }
+
+    // PartialEq<T> where T != Self — disambiguate as equalsT
+    if trait_name == "PartialEq" {
+        let target = &type_args[0];
+        // Only disambiguate when comparing against a different type (str, string, etc.)
+        if matches!(target.as_str(), "string" | "str") {
+            return format!("{}Str", base_name);
+        } else if target.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            return format!("{}{}", base_name, target);
+        }
+        return base_name.to_string();
+    }
+
+    if !matches!(trait_name, "From" | "TryFrom" | "TryInto" | "Into") {
         return base_name.to_string();
     }
     let source = &type_args[0];
