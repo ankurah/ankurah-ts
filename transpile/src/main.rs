@@ -15,6 +15,7 @@ mod imports;
 mod macros;
 mod match_expr;
 mod name_map;
+mod ownership;
 mod types;
 
 #[derive(Parser)]

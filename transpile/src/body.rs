@@ -9,6 +9,7 @@ use crate::name_map;
 use crate::macros;
 use crate::match_expr;
 use crate::control_flow;
+use crate::ownership;
 
 /// Translate a block of statements to TS
 pub fn translate_block(block: &syn::Block) -> String {
@@ -25,7 +26,7 @@ pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String 
     let mut locals: Vec<(String, String)> = Vec::new(); // (var_name, type_hint)
     for stmt in stmts {
         if let syn::Stmt::Local(local) = stmt {
-            collect_local_bindings(&local.pat, &mut locals);
+            ownership::collect_local_bindings(&local.pat, &mut locals);
         }
     }
 
@@ -36,10 +37,10 @@ pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String 
         if is_last {
             // Last expression without semicolon = implicit return, its vars are consumed
             if let syn::Stmt::Expr(expr, None) = stmt {
-                collect_direct_vars(expr, &mut consumed_vars);
+                ownership::collect_direct_vars(expr, &mut consumed_vars);
             }
         }
-        collect_consumed_vars_in_stmt(stmt, &mut consumed_vars);
+        ownership::collect_consumed_vars_in_stmt(stmt, &mut consumed_vars);
     }
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -47,7 +48,7 @@ pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String 
         if is_last {
             if let syn::Stmt::Expr(expr, None) = stmt {
                 // Before the return, drop all locals that aren't being returned
-                let drops = generate_drops(&locals, &consumed_vars);
+                let drops = ownership::generate_drops(&locals, &consumed_vars);
                 if !drops.is_empty() {
                     out.push_str(&drops);
                 }
@@ -56,7 +57,7 @@ pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String 
             } else {
                 // Last statement with semicolon — drop everything after it
                 out.push_str(&translate_stmt(stmt));
-                let drops = generate_drops(&locals, &consumed_vars);
+                let drops = ownership::generate_drops(&locals, &consumed_vars);
                 if !drops.is_empty() {
                     out.push_str(&drops);
                 }
@@ -64,169 +65,6 @@ pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String 
         } else {
             out.push_str(&translate_stmt(stmt));
         }
-    }
-    out
-}
-
-/// Collect variable names from a let binding pattern
-fn collect_local_bindings(pat: &syn::Pat, locals: &mut Vec<(String, String)>) {
-    match pat {
-        syn::Pat::Ident(ident) => {
-            let name = name_map::to_camel_case(&ident.ident.to_string());
-            // We don't have reliable type info, so store empty type hint
-            // The drop will be emitted for all non-primitive-looking bindings
-            locals.push((name, String::new()));
-        }
-        syn::Pat::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_local_bindings(elem, locals);
-            }
-        }
-        syn::Pat::Type(t) => {
-            collect_local_bindings(&t.pat, locals);
-        }
-        _ => {}
-    }
-}
-
-/// Collect variables consumed in a statement (passed, stored, returned)
-fn collect_consumed_vars_in_stmt(stmt: &syn::Stmt, vars: &mut std::collections::HashSet<String>) {
-    match stmt {
-        syn::Stmt::Expr(expr, _) => collect_consumed_in_expr(expr, vars),
-        syn::Stmt::Local(local) => {
-            // RHS of let binding — vars used in init are consumed
-            if let Some(init) = &local.init {
-                // BUT: only collect vars passed to functions/constructors, not simple reads
-                collect_consumed_in_expr(&init.expr, vars);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Collect variables consumed by an expression
-/// "Consumed" means: passed as an owned argument, stored as a field, or returned
-fn collect_consumed_in_expr(expr: &syn::Expr, vars: &mut std::collections::HashSet<String>) {
-    match expr {
-        // Function calls — arguments are consumed (moved to callee)
-        syn::Expr::Call(call) => {
-            for arg in &call.args {
-                collect_direct_vars(arg, vars);
-            }
-            // Also recurse into the function expression itself
-            collect_consumed_in_expr(&call.func, vars);
-        }
-        // Method calls — some args are consumed, receiver is borrowed (not consumed)
-        syn::Expr::MethodCall(call) => {
-            let method = call.method.to_string();
-            // Methods that consume their arguments (store/move them)
-            if matches!(method.as_str(), "insert" | "push" | "set" | "splice" | "extend") {
-                for arg in &call.args {
-                    collect_direct_vars(arg, vars);
-                }
-            }
-            // Recurse into args for nested consumption patterns
-            for arg in &call.args {
-                collect_consumed_in_expr(arg, vars);
-            }
-            // Receiver is generally borrowed, but recurse to find nested consumption
-            // (e.g., ids.into_iter().collect() — into_iter consumes ids)
-            collect_consumed_in_expr(&call.receiver, vars);
-            // Direct consumption: .into() / .into_iter() consume the receiver
-            if matches!(method.as_str(), "into" | "into_iter" | "into_inner") {
-                collect_direct_vars(&call.receiver, vars);
-            }
-        }
-        // Assignment — RHS is consumed
-        syn::Expr::Assign(assign) => {
-            collect_direct_vars(&assign.right, vars);
-        }
-        // Struct construction — field values are consumed
-        syn::Expr::Struct(s) => {
-            for field in &s.fields {
-                collect_direct_vars(&field.expr, vars);
-            }
-        }
-        // Return — value is consumed
-        syn::Expr::Return(ret) => {
-            if let Some(expr) = &ret.expr {
-                collect_direct_vars(expr, vars);
-            }
-        }
-        // If/else — recurse into branches
-        syn::Expr::If(if_expr) => {
-            collect_consumed_in_expr(&if_expr.cond, vars);
-            for stmt in &if_expr.then_branch.stmts {
-                collect_consumed_vars_in_stmt(stmt, vars);
-            }
-            if let Some((_, else_expr)) = &if_expr.else_branch {
-                collect_consumed_in_expr(else_expr, vars);
-            }
-        }
-        // Match — recurse into arms
-        syn::Expr::Match(match_expr) => {
-            for arm in &match_expr.arms {
-                collect_consumed_in_expr(&arm.body, vars);
-            }
-        }
-        // Block — recurse into statements
-        syn::Expr::Block(block) => {
-            for stmt in &block.block.stmts {
-                collect_consumed_vars_in_stmt(stmt, vars);
-            }
-        }
-        // For loop — recurse
-        syn::Expr::ForLoop(for_loop) => {
-            for stmt in &for_loop.body.stmts {
-                collect_consumed_vars_in_stmt(stmt, vars);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Collect direct variable references (not nested in sub-expressions)
-/// Only collects top-level Path expressions (variable names)
-fn collect_direct_vars(expr: &syn::Expr, vars: &mut std::collections::HashSet<String>) {
-    match expr {
-        syn::Expr::Path(path) => {
-            if let Some(seg) = path.path.segments.last() {
-                let name = seg.ident.to_string();
-                // Skip self, Self, true, false, None
-                if !matches!(name.as_str(), "self" | "Self" | "true" | "false" | "None") {
-                    vars.insert(name_map::to_camel_case(&name));
-                }
-            }
-        }
-        syn::Expr::Reference(r) => {
-            // &x — x is borrowed, not consumed. BUT in our model we're conservative.
-            // Actually, &x means borrow — the caller keeps ownership. Don't mark as consumed.
-        }
-        syn::Expr::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_direct_vars(elem, vars);
-            }
-        }
-        _ => {
-            // Complex expression — recurse to find consumed vars
-            collect_consumed_in_expr(expr, vars);
-        }
-    }
-}
-
-/// Generate .drop() calls for locals not consumed (not stored/passed/returned)
-fn generate_drops(
-    locals: &[(String, String)],
-    consumed_vars: &std::collections::HashSet<String>,
-) -> String {
-    let mut out = String::new();
-
-    // Drop in reverse order (mirrors Rust's drop order)
-    for (name, _type_hint) in locals.iter().rev() {
-        if consumed_vars.contains(name) {
-            continue; // Moved to another owner — don't drop
-        }
-        out.push_str(&format!("{}.drop();\n", name));
     }
     out
 }
