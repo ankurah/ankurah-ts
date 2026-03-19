@@ -14,7 +14,7 @@ export class DropGuard {
   constructor(host: object) {
     const label = host.constructor.name;
     const creationStack = new Error().stack ?? '';
-    leakRegistry.register(host, { label, creationStack, severity: 'warning' }, host);
+    leakRegistry.register(host, { label, creationStack, severity: 'fatal' }, host);
   }
 
   markDropped(host: object): void {

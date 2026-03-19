@@ -104,7 +104,11 @@ When porting agents are dispatched to do the work:
 6. **No splitting or merging** — one Rust file maps to one TS file, period
 7. **Audit every line** — the goal is for the TS to match the Rust as closely as possible, right down to declaration order and use statement order. This will be closely reviewed.
 8. **Do not modify spec files** (anything in `port/`) — ever
-9. **NEVER skip or stub silently.** If the Rust runs a test automatically (e.g., via testcontainers), the TS must too. `test.skip()` and `throw Error('TODO')` are only acceptable for genuine platform gaps (e.g., IndexedDB needing a browser). If you are stuck or uncertain how to implement something, **STOP and ask the team lead for help.** Do not substitute empty arrays, hardcoded booleans, or type casts to make it compile.
+9. **NEVER skip or stub silently.** If the Rust runs a test automatically (e.g., via testcontainers), the TS must too. `test.skip()` and `throw Error('TODO')` are only acceptable for genuine platform gaps (e.g., IndexedDB needing a browser). Every skip must be justified against the Rust source. If you are stuck or uncertain how to implement something, **STOP and ask the team lead for help.** Do not substitute empty arrays, hardcoded booleans, or type casts to make it compile.
+10. **Use named team agents** — always pass the `name` parameter when spawning agents so the user can see individual agent status in the UI.
+11. **Don't shut down agents on interrupt** — when the user interrupts, they are talking to the agent, not killing it. Preserve agents for reuse; their accumulated context is valuable for follow-up work.
+12. **Check mailbox between major steps** — agents must check for messages from the supervisor between major units of work (e.g., between files, after completing a function). This prevents wasted effort on stale or redirected tasks.
+13. **`as unknown as` requires justification** — every `as unknown as` cast must have a `// Divergence: <reason> [E#]` comment on the same or preceding line.
 
 ## How to Update When Rust Changes
 

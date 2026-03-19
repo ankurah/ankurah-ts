@@ -22,6 +22,7 @@ import {
   type Listener,
   CurrentObserver,
 } from '@ankurah/signals';
+import { Struct } from '@ankurah/base';
 
 import type { PropertyBackend } from './property/backend/index.ts';
 import { backendFromString, LWWBackend, YjsBackend } from './property/backend/index.ts';
@@ -71,7 +72,7 @@ interface EntityInnerState {
  * Divergence: No Arc — plain class instance (JS single-threaded, GC handles memory) [E8].
  * Divergence: No Deref<Target = EntityInner> — methods defined directly on Entity [E7].
  */
-export class Entity {
+export class Entity extends Struct {
   /** Entity identity (immutable). Rust: `pub id: EntityId` */
   readonly entityId: EntityId;
 
@@ -96,6 +97,7 @@ export class Entity {
     kind: EntityKind,
     state: EntityInnerState,
   ) {
+    super();
     this.entityId = entityId;
     this.collectionId = collectionId;
     this.kind = kind;

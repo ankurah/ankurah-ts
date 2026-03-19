@@ -8,7 +8,7 @@ export class AkObject {
   constructor() {
     const label = this.constructor.name;
     const creationStack = new Error().stack ?? '';
-    leakRegistry.register(this, { label, creationStack, severity: 'warning' }, this);
+    leakRegistry.register(this, { label, creationStack, severity: 'fatal' }, this);
   }
 
   /** Custom cleanup hook. Override in Drop subclass. */
@@ -22,8 +22,15 @@ export class AkObject {
     this.drop();
     for (const key of Object.getOwnPropertyNames(this)) {
       const val = (this as any)[key];
-      if (val != null && typeof val[disposeSymbol] === 'function') {
+      if (val == null) continue;
+      if (typeof val[disposeSymbol] === 'function') {
         val[disposeSymbol]();
+      } else if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item != null && typeof item[disposeSymbol] === 'function') {
+            item[disposeSymbol]();
+          }
+        }
       }
     }
   }

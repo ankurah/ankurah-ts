@@ -20,7 +20,7 @@ export class Arc<T> {
     this.#inner = inner;
     const label = `Arc<${(inner.value as any)?.constructor?.name ?? '?'}>`;
     const creationStack = new Error().stack ?? '';
-    leakRegistry.register(this, { label, creationStack, severity: 'warning' }, this);
+    leakRegistry.register(this, { label, creationStack, severity: 'fatal' }, this);
   }
 
   static new<T>(value: T): Arc<T> {

@@ -5,21 +5,21 @@
 A Rust binary that transpiles Rust source code into TypeScript. The pipeline:
 
 ```
-Rust source → syn parse → Rust AST → TRANSFORM → OXC TS AST → oxc_codegen → TS text → write to file
+Rust source → syn parse → classify items → route to transform modules → TS text → write to file
 ```
 
-The **transform layer** (Rust AST → OXC AST) is where all translation rules are codified. This is the core of the tool and where most effort goes. `syn` handles Rust parsing, OXC handles TS AST representation and code generation.
+The **transform layer** is where all translation rules are codified. `syn` handles Rust parsing. TS output is currently string-based (validated via spike); OXC AST generation is a future upgrade path.
 
 **The existing port is the test suite for the transpiler.** Every file we've already ported is expected output. Run the transpiler, write the output, `git diff` to see discrepancies. Discrepancies are either a transpiler bug or a porting bug — both valuable.
 
 **The transpiler does no diffing itself.** It writes files. `git diff` is the validation tool.
 
 **Phases:**
-1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. No function bodies.
+1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. No function bodies. *(In progress — spike validated.)*
 2. **Body transpiler** — translate function bodies via AST-level pattern matching.
-3. **Production transpiler** — managed file whitelist, override annotations for manual exceptions.
+3. **Production transpiler** — managed file whitelist, whole-crate batch processing.
 
-**Dependencies:** `syn` (Rust parsing), `oxc_ast` + `oxc_codegen` + `oxc_allocator` + `oxc_span` (TS AST + code generation), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `toml` (config).
+**Dependencies:** `syn` (Rust parsing), `quote` (token stream), `proc-macro2` (span locations), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `toml` (config).
 
 ## Required Context
 
@@ -32,14 +32,6 @@ The transpiler is NOT a generic Rust→TS tool. It targets the specific ankurah-
 | `port/ownership.md` | How Rust ownership (Drop, lifetimes, borrows, Arc, Mutex) maps to the TS types in `@ankurah/base`. |
 | `port/ownership/provided-types.md` | API reference for the provided ownership types. |
 | `port/translation-rules.md` | The full mechanical translation rule set: file naming, identifier naming, type mapping, enum patterns, error handling, async mapping, visibility, feature flags, exceptions (E1-E18). |
-
-**The transpiler must read and implement ALL of these.** For example:
-- `struct Foo` → `class Foo extends Struct` (not plain `class Foo`)
-- `impl Drop for T` → `class T extends Drop` with `drop()` override
-- `Arc<T>` stays as `Arc<T>` (from `@ankurah/base`), not converted to plain reference
-- `enum Foo { A, B(T) }` → `class Foo extends Enum<FooV>` with variant type map
-- `Result<T, E>` → `T` (throws on error), not `Result<T, E>`
-- `#[derive(Serialize, Deserialize)]` → `encode(writer: BincodeWriter)` / `static decode(reader: BincodeReader)`
 
 ---
 
@@ -54,36 +46,69 @@ The transpiler is NOT a generic Rust→TS tool. It targets the specific ankurah-
                            │
                            ▼
                     ┌─────────────┐
-                    │  TRANSFORM  │  ◀── This is where all the rules live
+                    │  CLASSIFY   │  ◀── Detect derives, custom impls, crate imports
                     └─────────────┘
                            │
                            ▼
                     ┌─────────────┐
-                    │   OXC AST   │──▶ oxc_ast::ast::Program (TS AST)
+                    │   ROUTE     │  ◀── Module dispatch based on classification + config
                     └─────────────┘
+                     │    │    │
+            ┌────────┘    │    └────────┐
+            ▼             ▼             ▼
+       ┌─────────┐  ┌──────────┐  ┌──────────┐
+       │ default  │  │ bincode  │  │ provided │
+       │transform │  │ rewrite  │  │   impl   │
+       └─────────┘  └──────────┘  └──────────┘
+            │             │             │
+            └─────────────┴─────────────┘
                            │
                            ▼
                     ┌─────────────┐
-                    │ oxc_codegen │──▶ TypeScript text
+                    │  TS output  │──▶ Write to disk ──▶ git diff to validate
                     └─────────────┘
-                           │
-                           ▼
-                    Write to disk ──▶ git diff to validate
 ```
 
-### Why OXC for output?
+### Transform Module System
 
-- Proper AST means well-formed, correctly formatted TS output
-- No hand-written string concatenation
-- OXC's codegen handles indentation, semicolons, line breaks
-- The AST is the same one used by real TS tooling (linters, formatters, bundlers)
-- As the transpiler evolves, having a real AST enables optimization and analysis passes
+The transpiler routes each item through one or more transform modules based on signals detected in the syn AST and configuration in `transpile.toml`. Modules compose — a single type can be processed by the default transform (class skeleton) AND a rewrite module (bincode encode/decode).
+
+**Three module patterns:**
+
+| Pattern | Reads syn AST? | Generates bodies? | When to use |
+|---------|---------------|-------------------|-------------|
+| **Default transform** | Yes | No (stubs) | Most types — 1:1 syntactic translation |
+| **Rewrite module** | Yes (fields, types, variants) | Yes (full method bodies) | Code generated from derive macros (bincode, defineModel) |
+| **Provided impl + redirect** | Minimally (just imports) | No (hand-written TS preserved) | Different library with compatible semantics (yrs → yjs compat), custom serde impls |
+
+**Module routing signals (from syn AST):**
+
+| Signal | How detected | Module routed to |
+|--------|-------------|-----------------|
+| `#[derive(Serialize, Deserialize)]` | Attribute on struct/enum | `bincode_rewrite` — generates encode/decode from field layout |
+| `impl Serialize for T` (custom) | impl block with trait `Serialize` | Lookup `provided_impls` config — preserve hand-written TS |
+| `#[derive(Model)]` | Attribute on struct | `model_rewrite` — generates defineModel() call *(future)* |
+| `use yrs::*` | Use statement with configured crate | `provided_redirect` — rewrite imports to compat wrapper |
+| `impl Drop for T` | impl block with trait `Drop` | Default transform with `extends Drop` base class |
+| `#[cfg(feature = "wasm")]` | Attribute | Skip entirely |
+| Everything else | — | Default transform |
+
+### Drop Analysis
+
+The transpiler includes a **transitive Drop ownership analyzer** (`drop-analysis` command). It walks all `.rs` files, finds types with `impl Drop`, then computes the transitive closure — which types contain Drop types through their fields.
+
+**Validated results (full ankurah codebase):**
+- 14 types with direct `impl Drop`
+- 105 types that transitively contain Drop types
+- 332 pure value types (no transitive Drop)
+
+**Current approach:** All types extend AkObject (every Rust type gets disposal cascade and leak detection). The drop analysis is available as a **future optimization** — the transpiler could skip `using` declarations for the 332 value types that provably have no cleanup.
 
 ---
 
-## Phase 1: Skeleton Transpiler
+## Phase 1: Skeleton Transpiler *(In Progress)*
 
-Parse Rust, build OXC TS AST for declarations, generate TS text.
+Parse Rust, generate TS declarations with stubbed function bodies.
 
 ### 1.1 Rust Extraction (via `syn`)
 
@@ -91,10 +116,10 @@ Parse each `.rs` file with `syn::parse_file()`. Extract:
 
 | Rust item | `syn` type | Data to extract |
 |-----------|-----------|-----------------|
-| `fn` | `ItemFn` / `ImplItemFn` / `TraitItemFn` | name, visibility, is_async, params, return type, body span |
-| `struct` | `ItemStruct` | name, visibility, fields (name + type each), generics |
-| `enum` | `ItemEnum` | name, visibility, variants (name + fields each) |
-| `trait` | `ItemTrait` | name, visibility, method signatures |
+| `fn` | `ItemFn` / `ImplItemFn` / `TraitItemFn` | name, visibility, is_async, params, return type |
+| `struct` | `ItemStruct` | name, visibility, fields (name + type each), generics, derives |
+| `enum` | `ItemEnum` | name, visibility, variants (name + fields each), generics, derives |
+| `trait` | `ItemTrait` | name, visibility, method signatures, has_default_impls |
 | `impl` (inherent) | `ItemImpl` | target type, methods |
 | `impl Trait for Type` | `ItemImpl` with `trait_` | trait name, target type, methods |
 | `type` alias | `ItemType` | name, underlying type |
@@ -106,62 +131,58 @@ Parse each `.rs` file with `syn::parse_file()`. Extract:
 - `#[cfg(feature = "wasm")]` / `#[cfg(feature = "uniffi")]` — skip item entirely
 - `#[cfg(test)]` — mark as test-only (generates into `.test.ts`)
 - `#[test]` / `#[tokio::test]` — mark function as test
-- `#[derive(...)]` — record derived traits (Clone→clone, Debug→toString, PartialEq→equals, Serialize/Deserialize→encode/decode)
+- `#[derive(...)]` — record derived traits; route to appropriate module
 
 **Context tracking:**
 - Which `impl` block a method belongs to → merge into corresponding TS class
+- `impl Trait for Type` → detect Serialize/Deserialize/Drop for module routing
 - Which `mod tests` block a function belongs to → generate into `.test.ts`
 
-### 1.2 Transform: Rust AST → OXC AST
-
-This is the core of the transpiler. For each `syn` item, construct the equivalent `oxc_ast` node.
+### 1.2 Transform: syn Items → TS Output
 
 **Structs → Classes:**
 ```
-syn::ItemStruct { ident: "Node", fields: [id: EntityId, durable: bool] }
-    ↓
-oxc_ast::ast::Class { id: "Node", body: [PropertyDefinition("id"), PropertyDefinition("durable")] }
+syn::ItemStruct { ident: "Event", fields: [collection: CollectionId, entity_id: EntityId, ...] }
+    ↓ default transform
+class Event extends Struct {
+  readonly collection: CollectionId;
+  readonly entityId: EntityId;
+  ...
+  constructor(...) { super(); throw new Error('TODO'); }
+}
+    ↓ bincode_rewrite (if derive(Serialize, Deserialize))
+  encode(writer: BincodeWriter): void {
+    this.collection.encode(writer);
+    this.entityId.encode(writer);
+    ...
+  }
+  static decode(reader: BincodeReader): Event { ... }
 ```
 
-Plus: merge all `impl Node { ... }` methods into the class body as `MethodDefinition` nodes.
-
-**Enums → Classes extending Enum<V>:**
+**Enums → Classes extending Enum\<V\>:**
 ```
 syn::ItemEnum { ident: "DeltaContent", variants: [StateSnapshot{state}, EventBridge{events}] }
     ↓
-oxc_ast::ast::Class { id: "DeltaContent", superClass: "Enum<DeltaContentV>" }
+type DeltaContentV = { StateSnapshot: { state: StateFragment }; EventBridge: { events: EventFragment[] }; };
+class DeltaContent extends Enum<DeltaContentV> { ... }
+    ↓ bincode_rewrite (if derive(Serialize, Deserialize))
+  encode(writer: BincodeWriter): void {
+    this.match({
+      StateSnapshot: (v) => { writer.writeVariant(0); v.state.encode(writer); },
+      EventBridge: (v) => { writer.writeVariant(1); writer.writeVec(v.events, (w, item) => item.encode(w)); },
+    });
+  }
 ```
 
-Plus: generate the variant type map `type DeltaContentV = { ... }`.
+**Traits → Interfaces (or abstract classes if default impls exist).**
 
-**Traits → Interfaces:**
-```
-syn::ItemTrait { ident: "StorageEngine", items: [fn collection(...)] }
-    ↓
-oxc_ast::ast::TSInterfaceDeclaration { id: "StorageEngine", body: [TSMethodSignature("collection")] }
-```
+**Functions → Function declarations or method definitions.** Phase 1 bodies are `throw new Error('TODO')` stubs.
 
-**Functions → Function declarations or method definitions:**
-```
-syn::ItemFn { ident: "next_entity_id", sig: { asyncness: None, inputs: [&self], output: EntityId } }
-    ↓
-oxc_ast::ast::MethodDefinition { key: "nextEntityId", value: Function { async: false, params: [], returnType: "EntityId" } }
-```
-
-Phase 1 bodies are just `throw new Error('TODO')` stubs.
-
-**use → import:**
-```
-syn::ItemUse { path: "ankurah_proto::EntityId" }
-    ↓
-oxc_ast::ast::ImportDeclaration { source: "@ankurah/proto", specifiers: [ImportSpecifier("EntityId")] }
-```
-
-Using the crate→package mapping table.
+**`impl Drop for T` → `class T extends Drop`** with `drop()` override stub.
 
 ### 1.3 Name Mapping
 
-All deterministic.
+All deterministic. Implemented in `name_map.rs`.
 
 **Functions:** `snake_case` → `camelCase`, plus static exceptions:
 
@@ -190,6 +211,8 @@ All deterministic.
 
 ### 1.4 Type Mapping
 
+Implemented in `name_map::map_type()`.
+
 | Rust type | TS type |
 |-----------|---------|
 | `String` / `&str` | `string` |
@@ -198,11 +221,11 @@ All deterministic.
 | `i64` / `u64` | `bigint \| number` |
 | `f64` | `number` |
 | `Vec<T>` | `T[]` |
+| `Vec<u8>` / `&[u8]` | `Uint8Array` |
 | `Option<T>` | `T \| null` |
 | `Result<T, E>` | `T` (throws on error) |
 | `HashMap<K,V>` / `BTreeMap<K,V>` | `Map<K,V>` |
 | `HashSet<T>` / `BTreeSet<T>` | `Set<T>` |
-| `Vec<u8>` / `&[u8]` | `Uint8Array` |
 | `Arc<T>` | `Arc<T>` |
 | `Weak<T>` | `Weak<T>` |
 | `Mutex<T>` / `RwLock<T>` | `Mutex<T>` |
@@ -213,18 +236,11 @@ All deterministic.
 | `AtomicBool` | `boolean` |
 | `AtomicU32` / `AtomicUsize` | `number` |
 
-### 1.5 Commit Hash Attestation
+### 1.5 Annotation Generation
 
-After a human verifies a function is correctly ported, they add `// @<hash>` on the preceding line:
-
-```typescript
-// @abc1234
-nextEntityId(): EntityId {
-```
-
-The transpiler can optionally check these:
-- `git log -1 --format=%h -- <rust-file>` gets the current Rust commit
-- If `@hash` differs → flag as stale
+Every generated file gets:
+- Line 1: `// MIRRORS: ankurah/<crate>/src/<path>.rs`
+- `#[cfg(test)] mod tests { ... }` generates a separate `.test.ts` file with its own MIRRORS annotation
 
 ### 1.6 File Discovery & Output
 
@@ -237,35 +253,118 @@ The transpiler can optionally check these:
 
 ---
 
+## Bincode Rewrite Module
+
+For structs/enums with `#[derive(Serialize, Deserialize)]`, generates `encode(writer: BincodeWriter)` and `static decode(reader: BincodeReader)` methods.
+
+**Validated:** The generated output for `proto::data::Event` matches the hand-ported encode/decode exactly.
+
+### Struct Encoding
+
+Field-by-field in declaration order. For each field, dispatch based on TS type:
+
+| TS type | Encode | Decode |
+|---------|--------|--------|
+| `string` | `writer.writeString(x)` | `reader.readString()` |
+| `boolean` | `writer.writeBool(x)` | `reader.readBool()` |
+| `number` | `writer.writeU32(x)` | `reader.readU32()` |
+| `Uint8Array` | `writer.writeBytes(x)` | `reader.readBytes()` |
+| `T[]` | `writer.writeVec(x, (w, item) => item.encode(w))` | `reader.readVec((r) => T.decode(r))` |
+| `T \| null` | `writer.writeOption(x, (w, v) => v.encode(w))` | `reader.readOption((r) => T.decode(r))` |
+| Custom type | `x.encode(writer)` | `T.decode(reader)` |
+
+### Enum Encoding
+
+Write variant discriminant (u32 index in declaration order), then variant fields.
+
+### Custom Serde Detection
+
+If a type has `impl Serialize for T` (explicit impl, not derive), the bincode module **does not generate** encode/decode. Instead, it looks up `[provided_impls]` in the config to find the hand-written implementation.
+
+---
+
+## Provided Impl Pattern
+
+For types or libraries where the TS implementation is fundamentally different from a syntactic translation, the transpiler preserves hand-written TS code and/or redirects imports to compatibility wrappers.
+
+### Provided Impl (Custom Serde)
+
+Types with custom `impl Serialize` / `impl Deserialize` that can't be auto-generated:
+
+```toml
+[provided_impls]
+"ankurah_proto::id::EventId" = { module = "provided", path = "packages/proto/src/id.ts" }
+"ankurah_proto::id::CollectionId" = { module = "provided", path = "packages/proto/src/collection.ts" }
+```
+
+The transpiler sees `impl Serialize for EventId` (not derive), looks up the config, and preserves the hand-written encode/decode at the specified path.
+
+### Provided Redirect (Library Substitution)
+
+When the Rust code uses a library (e.g., `yrs`) that's replaced by a different JS library (e.g., `yjs`), the transpiler redirects imports to a hand-written compatibility wrapper:
+
+```toml
+[provided_redirect.yrs]
+source_crate = "yrs"
+target_module = "@ankurah/base/yrs-compat"
+types = { "Doc" = "YrsDoc", "Text" = "YrsText", "Map" = "YrsMap" }
+```
+
+The transpiler sees `use yrs::Text`, emits `import { YrsText } from '@ankurah/base/yrs-compat'`. The compat wrapper has the same API surface as the Rust library, backed by the JS library internally. No function body rewriting needed.
+
+### Hardcode (No Syntactic Correspondence)
+
+Some files have no syntactic relationship to their Rust counterpart. The transpiler does not generate these — it preserves existing TS code:
+
+```toml
+[hardcode]
+files = [
+  "ankql/src/parser.rs",    # E6: hand-written recursive descent parser
+  "ankql/src/grammar.rs",   # E6: hand-written grammar definitions
+]
+reason = "E6: no syntactic correspondence between Pest grammar and recursive descent parser"
+```
+
+Hardcoded files still participate in drift detection — the transpiler knows about them and flags when the Rust source changes. But it does not attempt to regenerate the TS.
+
+---
+
 ## Phase 2: Body Transpiler
 
 Translate function bodies via AST-level transformation.
 
-### 2.1 Rust Expression → OXC Expression
+### 2.1 Rust Expression → TS Expression
 
-Instead of string-based pattern matching, this maps `syn::Expr` variants to `oxc_ast::ast::Expression` variants:
+Maps `syn::Expr` variants to TS expression strings (or OXC AST nodes in future):
 
-| `syn::Expr` | `oxc_ast::ast::Expression` |
-|-------------|---------------------------|
-| `Expr::Let { pat, init }` | `VariableDeclaration { kind: const/let, init }` |
-| `Expr::Match { expr, arms }` | `expr.match({ arm1: ..., arm2: ... })` call expression |
-| `Expr::MethodCall { receiver, method, args }` | `MemberExpression + CallExpression` |
-| `Expr::If { cond, then, else }` | `IfStatement` |
-| `Expr::Block { stmts }` | `BlockStatement` |
-| `Expr::Return { expr }` | `ReturnStatement` |
-| `Expr::Await { base }` | `AwaitExpression` |
-| `Expr::Try { expr }` | (unwrap — throws propagate) |
-| `Expr::Closure { params, body }` | `ArrowFunctionExpression` |
-| `Expr::ForLoop { pat, expr, body }` | `ForOfStatement` |
+| `syn::Expr` | TS output |
+|-------------|-----------|
+| `Expr::Let { pat, init }` | `const/let x = init;` |
+| `Expr::Match { expr, arms }` | `expr.match({ arm1: ..., arm2: ... })` |
+| `Expr::MethodCall { receiver, method, args }` | `receiver.method(args)` |
+| `Expr::If { cond, then, else }` | `if (cond) { then } else { else }` |
+| `Expr::Block { stmts }` | `{ stmts }` |
+| `Expr::Return { expr }` | `return expr;` |
+| `Expr::Await { base }` | `await base` |
+| `Expr::Try { expr }` | `expr` (unwrap — throws propagate) |
+| `Expr::Closure { params, body }` | `(params) => body` |
+| `Expr::ForLoop { pat, expr, body }` | `for (const pat of expr) { body }` |
 
 Macro translations:
-| Rust macro | OXC node |
-|------------|----------|
-| `vec![a, b]` | `ArrayExpression([a, b])` |
-| `format!("...", args)` | `TemplateLiteral` |
-| `println!("...")` | `console.log(...)` CallExpression |
 
-### 2.2 Validation
+| Rust macro | TS output |
+|------------|-----------|
+| `vec![a, b]` | `[a, b]` |
+| `format!("...", args)` | `` `...${args}` `` |
+| `println!("...")` | `console.log(...)` |
+| `assert_eq!(a, b)` | `expect(a).toEqual(b)` (test context) |
+| `panic!("...")` | `throw new Error("...")` |
+
+### 2.2 Ownership in Generated Code
+
+The transpiler generates `using` for block-scoped AkObjects by default. The drop analysis can be used as an optimization to skip `using` for value types that provably have no cleanup (332 types identified). This optimization is deferred — correctness first.
+
+### 2.3 Validation
 
 Same as Phase 1 — write output, `git diff`.
 
@@ -288,13 +387,9 @@ ankql = ["src/ast.rs", "src/error.rs"]
 3. `git diff` shows what changed
 4. Review and commit
 
-### 3.3 Override mechanism
+### 3.3 Provided impl preservation
 
-```typescript
-// @transpiler-override: <reason>
-```
-
-The transpiler preserves existing code for items with this annotation.
+Files/methods listed in `[provided_impls]` or `[hardcode]` are preserved — the transpiler does not overwrite them. Drift detection still flags when the corresponding Rust source changes, but regeneration is manual.
 
 ---
 
@@ -303,49 +398,48 @@ The transpiler preserves existing code for items with this annotation.
 ```
 transpile/
 ├── Cargo.toml
-├── transpile.toml        # Configuration (paths, crate mapping, name overrides)
+├── transpile.toml        # Configuration (paths, crate mapping, modules, provided impls)
 ├── src/
 │   ├── main.rs           # CLI entry point (clap)
-│   ├── config.rs         # Read transpile.toml
-│   ├── rust_parser.rs    # syn-based Rust extraction
-│   ├── name_map.rs       # Deterministic name mapping
-│   ├── transform.rs      # Rust AST → OXC AST (THE CORE)
-│   ├── types.rs          # Rust→TS type mapping
-│   └── attestation.rs    # Commit hash checking (optional)
+│   ├── skeleton.rs       # Phase 1: syn extraction + TS skeleton generation
+│   ├── name_map.rs       # Deterministic name mapping (snake→camel, type mapping)
+│   ├── drop_analysis.rs  # Transitive Drop ownership analysis
+│   ├── bincode_module.rs # Rewrite module: generate encode/decode from field layout
+│   ├── config.rs         # Read transpile.toml (TODO)
+│   └── attestation.rs    # Commit hash checking (TODO)
 ```
 
 ## Dependencies
 
 ```toml
 [dependencies]
-syn = { version = "2", features = ["full", "parsing"] }
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+quote = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
-oxc_ast = "0.120"
-oxc_codegen = "0.120"
-oxc_allocator = "0.120"
-oxc_span = "0.120"
 clap = { version = "4", features = ["derive"] }
 walkdir = "2"
 anyhow = "1"
 toml = "0.8"
 ```
 
+Note: OXC dependencies (`oxc_ast`, `oxc_codegen`, etc.) are deferred. The spike validated that string-based TS generation works and produces correct output. OXC can be added later for better formatting and AST-level manipulation.
+
 ## CLI
 
 ```bash
-# Transpile one Rust file, write TS to expected path
-cargo run -- transpile core/src/node.rs
+# Analyze transitive Drop ownership for a crate
+cargo run -- drop-analysis ../ankurah-ts-support/proto/src
 
-# Transpile all files in a crate
+# Generate TS skeleton for a single file (stdout)
+cargo run -- skeleton ../ankurah-ts-support/proto/src/data.rs --crate-path proto/src/data.rs
+
+# Transpile a whole crate (TODO)
 cargo run -- transpile --crate ankql
 
-# Transpile all crates
+# Transpile all crates (TODO)
 cargo run -- transpile --all
 
-# Dry run (print to stdout, don't write)
-cargo run -- transpile core/src/node.rs --dry-run
-
-# Check attestation hashes
+# Check attestation hashes (TODO)
 cargo run -- attest --check [--crate <name>]
 ```
 
@@ -384,6 +478,24 @@ default = "default"
 drop = "drop"
 new = "new"
 from = "from"
+
+[provided_impls]
+# Types with custom impl Serialize (not derive) — hand-written encode/decode preserved
+"ankurah_proto::id::EventId" = { module = "provided", path = "packages/proto/src/id.ts" }
+"ankurah_proto::id::CollectionId" = { module = "provided", path = "packages/proto/src/collection.ts" }
+
+[provided_redirect.yrs]
+# Rust yrs library → JS yjs library via compatibility wrapper
+source_crate = "yrs"
+target_module = "@ankurah/base/yrs-compat"
+types = { "Doc" = "YrsDoc", "Text" = "YrsText", "Map" = "YrsMap" }
+
+[hardcode]
+# Files with no syntactic correspondence — transpiler preserves existing TS
+files = [
+  "ankql/src/parser.rs",
+  "ankql/src/grammar.rs",
+]
 
 [managed_files]
 # Phase 3: files the transpiler owns (start empty, grow gradually)

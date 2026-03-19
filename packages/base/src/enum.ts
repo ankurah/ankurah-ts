@@ -41,8 +41,15 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
     super[disposeSymbol]();
     for (const key of Object.getOwnPropertyNames(this.value)) {
       const field = (this.value as any)[key];
-      if (typeof field?.[disposeSymbol] === 'function') {
+      if (field == null) continue;
+      if (typeof field[disposeSymbol] === 'function') {
         field[disposeSymbol]();
+      } else if (Array.isArray(field)) {
+        for (const item of field) {
+          if (item != null && typeof item[disposeSymbol] === 'function') {
+            item[disposeSymbol]();
+          }
+        }
       }
     }
   }
