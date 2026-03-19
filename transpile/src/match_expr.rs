@@ -205,39 +205,86 @@ fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
     let mut out = format!("{}.match({{\n", scrutinee);
 
     for arm in arms {
-        let (variant_name, var_pattern) = match &arm.pat {
+        // Collect field mappings: local_name → v.fieldName
+        let (variant_name, field_mappings) = match &arm.pat {
             syn::Pat::TupleStruct(ts) => {
                 let variant = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let vars: Vec<String> = ts.elems.iter().map(translate_pat).collect();
-                (variant, vars.join(", "))
+                let mappings: Vec<(String, String)> = ts.elems.iter().enumerate().map(|(i, pat)| {
+                    let local = translate_pat(pat);
+                    let accessor = format!("v._{}", i);
+                    (local, accessor)
+                }).collect();
+                (variant, mappings)
             }
             syn::Pat::Struct(s) => {
                 let variant = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let fields: Vec<String> = s.fields.iter().map(|f| {
-                    match &f.member {
+                let mappings: Vec<(String, String)> = s.fields.iter().map(|f| {
+                    let field_name = match &f.member {
                         syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
                         syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    }
+                    };
+                    // The local variable name may differ if renamed: `selection: query`
+                    let local = translate_pat(&f.pat);
+                    let accessor = format!("v.{}", field_name);
+                    (local, accessor)
                 }).collect();
-                (variant, fields.join(", "))
+                (variant, mappings)
             }
             syn::Pat::Path(p) => {
                 let variant = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                (variant, String::new())
+                (variant, Vec::new())
             }
-            syn::Pat::Wild(_) => continue, // Skip wildcard in .match()
-            _ => (translate_pat(&arm.pat), String::new()),
+            syn::Pat::Wild(_) => continue,
+            _ => (translate_pat(&arm.pat), Vec::new()),
         };
 
-        let body = translate_expr(&arm.body);
+        let mut body = translate_expr(&arm.body);
 
-        if var_pattern.is_empty() {
+        // Replace field references: local_name → v.fieldName
+        // Process longer names first to avoid partial replacements
+        let mut sorted_mappings = field_mappings.clone();
+        sorted_mappings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (local, accessor) in &sorted_mappings {
+            body = replace_identifier(&body, local, accessor);
+        }
+
+        if field_mappings.is_empty() {
             out.push_str(&format!("  {}: () => {},\n", variant_name, body));
         } else {
-            out.push_str(&format!("  {}: ({}) => {},\n", variant_name, var_pattern, body));
+            out.push_str(&format!("  {}: (v) => {},\n", variant_name, body));
         }
     }
 
     out.push_str("})");
     out
+}
+
+/// Replace standalone identifier occurrences (not part of longer identifiers or property access)
+fn replace_identifier(text: &str, from: &str, to: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+    let bytes = text.as_bytes();
+
+    while i < bytes.len() {
+        if i + from.len() <= bytes.len() && &text[i..i + from.len()] == from {
+            // Check that it's a standalone identifier (not part of a longer word)
+            let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
+            let after_ok = i + from.len() >= bytes.len() || !is_ident_char(bytes[i + from.len()]);
+            // Also skip if preceded by '.' (it's already a property access)
+            let not_property = i == 0 || bytes[i - 1] != b'.';
+
+            if before_ok && after_ok && not_property {
+                result.push_str(to);
+                i += from.len();
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
