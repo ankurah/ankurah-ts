@@ -11,6 +11,16 @@ use crate::match_expr;
 use crate::control_flow;
 use crate::ownership;
 
+/// Extract a single expression from a block (for ternary conversion)
+fn single_block_expr(block: &syn::Block) -> Option<&syn::Expr> {
+    if block.stmts.len() == 1 {
+        if let syn::Stmt::Expr(expr, _) = &block.stmts[0] {
+            return Some(expr);
+        }
+    }
+    None
+}
+
 // ── Public entry points ─────────────────────────────────────────────────
 
 /// Translate a block of statements to TS (default Self type)
@@ -242,7 +252,14 @@ impl<'a> BodyTranslator<'a> {
                 }
             }
 
-            syn::Expr::If(if_expr) => control_flow::translate_if(if_expr),
+            syn::Expr::If(if_expr) => {
+                // Try ternary for simple if/else value expressions
+                if let Some(ternary) = self.try_ternary(if_expr) {
+                    ternary
+                } else {
+                    control_flow::translate_if(if_expr)
+                }
+            }
 
             syn::Expr::Block(block) => {
                 if block.block.stmts.len() == 1 {
@@ -371,6 +388,26 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// Try to translate an if/else as a ternary expression.
+    /// Returns Some(ternary) if both branches are single expressions.
+    fn try_ternary(&self, if_expr: &syn::ExprIf) -> Option<String> {
+        // Must not be if-let
+        if matches!(&*if_expr.cond, syn::Expr::Let(_)) { return None; }
+        // Must have an else branch
+        let (_, else_expr) = if_expr.else_branch.as_ref()?;
+        // Then branch must be a single expression
+        let then_val = single_block_expr(&if_expr.then_branch)?;
+        // Else branch must be a single expression (not another if)
+        let else_val = match else_expr.as_ref() {
+            syn::Expr::Block(block) => single_block_expr(&block.block)?,
+            _ => return None,
+        };
+        let cond = self.expr(&if_expr.cond);
+        let then_ts = self.expr(then_val);
+        let else_ts = self.expr(else_val);
+        Some(format!("{} ? {} : {}", cond, then_ts, else_ts))
+    }
+
     // ── Method call translation ─────────────────────────────────────
 
     fn translate_method_call(&self, receiver: &str, method: &str, args: &[String]) -> String {
@@ -406,8 +443,14 @@ impl<'a> BodyTranslator<'a> {
             "find" if args.len() == 1 => format!("{}.find({})", receiver, args[0]),
             "position" if args.len() == 1 => format!("{}.findIndex({})", receiver, args[0]),
             "enumerate" => format!("{}.entries()", receiver),
-            "collect" | "iter" | "intoIter" => receiver.to_string(),
+            "collect" => receiver.to_string(),
+            // Array.from works for both arrays (copy) and Maps (entries)
+            "iter" | "intoIter" | "values" => format!("Array.from({})", receiver),
             "cloned" => format!("[...{}]", receiver),
+            "sum" => format!("{}.reduce((a, b) => a + b, 0)", receiver),
+            "count" if args.is_empty() => format!("{}.length", receiver),
+            "flatten" => format!("{}.flat()", receiver),
+            "chain" if args.len() == 1 => format!("[...{}, ...{}]", receiver, args[0]),
 
             // Conversion
             "clone" => format!("{}.clone()", receiver),
