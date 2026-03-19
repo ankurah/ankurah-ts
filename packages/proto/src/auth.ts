@@ -86,6 +86,14 @@ export class AttestationSet extends Struct {
     return new AttestationSet(this._0.map(e => e.clone()));
   }
 
+  get length(): number {
+    return this._0.length;
+  }
+
+  [Symbol.iterator](): Iterator<any> {
+    return this._0[Symbol.iterator]();
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeVec(this._0, (w, item) => item.encode(w));
   }

@@ -464,7 +464,24 @@ fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
     };
 
     let body = if let Some(body_ts) = &method.body_ts {
-        indent_body(body_ts)
+        let ts = body_ts.clone();
+        // Display::fmt bodies: wrap with _result accumulator if body uses _result +=
+        let ts = if method.ts_name == "toString" && ts.contains("_result +=") {
+            let mut fixed = String::from("let _result = '';\n");
+            for line in ts.lines() {
+                let trimmed = line.trim();
+                if trimmed == "return Result.Ok([]);" || trimmed == "return Result.Ok(undefined);" {
+                    fixed.push_str("return _result;\n");
+                } else {
+                    fixed.push_str(line);
+                    fixed.push('\n');
+                }
+            }
+            fixed
+        } else {
+            ts
+        };
+        indent_body(&ts)
     } else {
         "    throw new Error('TODO');\n".to_string()
     };

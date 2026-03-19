@@ -11,6 +11,38 @@ use crate::match_expr;
 use crate::control_flow;
 use crate::ownership;
 
+/// Check if an expression is a write!/writeln! macro call
+fn is_write_macro(expr: &syn::Expr) -> bool {
+    if let syn::Expr::Macro(mac) = expr {
+        let name = mac.mac.path.segments.last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        matches!(name.as_str(), "write" | "writeln")
+    } else {
+        false
+    }
+}
+
+/// Extract the Macro from an expression (for write! detection)
+fn extract_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
+    if let syn::Expr::Macro(mac) = expr {
+        Some(&mac.mac)
+    } else {
+        None
+    }
+}
+
+/// Check if a match expression has arms that are write! macro calls (Display pattern)
+fn is_match_with_write_arms(expr: &syn::Expr) -> bool {
+    if let syn::Expr::Match(m) = expr {
+        m.arms.iter().any(|arm| {
+            matches!(&*arm.body, syn::Expr::Try(t) if is_write_macro(&t.expr))
+        })
+    } else {
+        false
+    }
+}
+
 /// Extract a single expression from a block (for ternary conversion)
 fn single_block_expr(block: &syn::Block) -> Option<&syn::Expr> {
     if block.stmts.len() == 1 {
@@ -117,11 +149,23 @@ impl<'a> BodyTranslator<'a> {
                 // Detect standalone `expr?;` — emit Result check
                 if semi.is_some() {
                     if let syn::Expr::Try(try_expr) = expr {
+                        // Special case: write!(f, ...)?; in Display impls — emit string append
+                        if is_write_macro(&try_expr.expr) {
+                            let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap());
+                            return format!("_result += {};\n", fmt_str);
+                        }
                         let inner = self.expr(&try_expr.expr);
                         return format!("const _r = {};\nif (_r.isErr()) return _r as any;\n", inner);
                     }
                 }
                 let ts = self.expr(expr);
+                // If a match expression contains write! arms (Display pattern),
+                // append the result to _result
+                let ts = if is_match_with_write_arms(expr) {
+                    format!("_result += {}", ts)
+                } else {
+                    ts
+                };
                 if semi.is_some() {
                     format!("{};\n", ts)
                 } else {
@@ -345,6 +389,11 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Try(try_expr) => {
+                // Special case: write!(f, ...)? in expression position — just the format string
+                if is_write_macro(&try_expr.expr) {
+                    let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap());
+                    return fmt_str;
+                }
                 // expr? in expression position — use .unwrap() (caller handles Result propagation)
                 // For statement-level ?, see translate_local which emits the full check pattern.
                 let inner = self.expr(&try_expr.expr);

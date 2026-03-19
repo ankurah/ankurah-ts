@@ -161,6 +161,22 @@ export class OperationSet extends Struct {
     return new OperationSet(new Map(Array.from(this._0.entries()).map(([k, v]) => [k, v])));
   }
 
+  get size(): number {
+    return this._0.size;
+  }
+
+  [Symbol.iterator](): Iterator<any> {
+    return this._0[Symbol.iterator]();
+  }
+
+  entries(): IterableIterator<any> {
+    return this._0.entries();
+  }
+
+  get(key: any): any {
+    return this._0.get(key);
+  }
+
   encode(writer: BincodeWriter): void {
     { const _entries = [...this._0.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); writer.writeLength(_entries.length); for (const [k, v] of _entries) { writer.writeString(k); writer.writeVec(v, (w, item) => item.encode(w)); } };
   }
@@ -298,6 +314,22 @@ export class StateBuffers extends Struct {
 
   static default(): StateBuffers {
     return new StateBuffers(new Map());
+  }
+
+  get size(): number {
+    return this._0.size;
+  }
+
+  [Symbol.iterator](): Iterator<any> {
+    return this._0[Symbol.iterator]();
+  }
+
+  entries(): IterableIterator<any> {
+    return this._0.entries();
+  }
+
+  get(key: any): any {
+    return this._0.get(key);
   }
 
   encode(writer: BincodeWriter): void {

@@ -146,7 +146,17 @@ export class EntityDelta extends Struct {
   toString(): string {
     return this.content.match({
       StateSnapshot: (v) => `EntityDelta ${this.entityId}: StateSnapshot(${v.state})`,
-      EventBridge: (v) => `EntityDelta ${this.entityId}: EventBridge(${v.events.length} events)`,
+      EventBridge: (v) => {
+      let eventStrs = [];
+      for (const event of v.events) {
+        const event = Attested.fromParts(this.entityId, this.collection.clone(), event.clone());
+        eventStrs.push(event.payload.toString());
+        event.drop();
+      }
+      const _ret = `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
+      eventStrs.drop();
+      return _ret;
+    },
       StateAndRelation: (v) => `EntityDelta ${this.entityId}: StateAndRelation(${v.state})`,
     });
   }
@@ -454,8 +464,8 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
       Fetch: (v) => `Fetch [${v._0.length}]`,
       Get: (v) => `Get [${Array.from(v._0).map((s) => s.toString()).join(', ')}]`,
       GetEvents: (v) => `GetEvents [${Array.from(v._0).map((e) => e.payload.toString()).join(', ')}]`,
-      QuerySubscribed: (v) => `Subscribed ${v.queryId} initial:${v.deltas.length}`,
-      Success: () => 'Success',
+      QuerySubscribed: (v) => `Subscribed ${v.queryId} v.deltas:${v.deltas.length}`,
+      Success: () => `Success`,
       Error: (v) => `Error: ${v._0}`,
     });
   }

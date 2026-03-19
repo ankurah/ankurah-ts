@@ -26,6 +26,15 @@ export class Attested<T> extends Struct {
     return `Attested(${this.payload})`;
   }
 
+  equals(other: Attested<T>): boolean {
+    return (this.payload as any).equals?.(other.payload) ?? this.payload === other.payload;
+  }
+
+  clone(): Attested<T> {
+    const clonedPayload = (this.payload as any).clone?.() ?? this.payload;
+    return new Attested(clonedPayload, this.attestations.clone());
+  }
+
   encode(writer: BincodeWriter, encodePayload: (w: BincodeWriter, p: T) => void): void {
     encodePayload(writer, this.payload);
     this.attestations.encode(writer);

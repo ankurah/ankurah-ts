@@ -23,12 +23,16 @@ export class SubscriptionUpdateItem extends Struct {
   }
 
   toString(): string {
-    const content = this.content.match({
-      EventOnly: (v) => `Events(${v.events.length})`,
-      StateAndEvent: (v) => `State+Events(${v.state}, ${v.events.length})`,
-    });
-    const predicates = this.predicateRelevance.length > 0 ? ` predicates:${this.predicateRelevance.length}` : '';
-    return `${this.collection}/${this.entityId}: ${content}${predicates}`;
+    let _result = '';
+    _result += `${this.collection}/${this.entityId}: `;
+    _result += this.content.match({
+      EventOnly: (v) => `Events(${v._0.length})`,
+      StateAndEvent: (v) => `State+Events(${v._0}, ${v._1.length})`,
+    })
+    if (!this.predicateRelevance.length === 0) {
+      _result += ` predicates:${this.predicateRelevance.length}`;
+    }
+    return _result;
   }
 
   clone(): SubscriptionUpdateItem {
@@ -46,7 +50,7 @@ export class SubscriptionUpdateItem extends Struct {
     const entityId = EntityId.decode(reader);
     const collection = CollectionId.decode(reader);
     const content = UpdateContent.decode(reader);
-    const predicateRelevance = reader.readVec((r) => { const a = QueryId.decode(r); const b = MembershipChange.decode(r); return [a, b] as [QueryId, MembershipChange]; });
+    const predicateRelevance = reader.readVec((r) => [QueryId, MembershipChange].decode(r));
     return new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
   }
 }
@@ -161,8 +165,8 @@ export class UpdateContent extends Enum<UpdateContentV> {
 
   intoParts(): [StateFragment | null, EventFragment[] | null] {
     return this.match({
-      EventOnly: (events) => [null, events],
-      StateAndEvent: (state, events) => [state, events],
+      EventOnly: (v) => [null, v._0],
+      StateAndEvent: (v) => [v._0, v._1],
     });
   }
 
@@ -260,8 +264,8 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
 
   toString(): string {
     return this.match({
-      Success: () => 'Success',
-      Error: (e) => `Error: ${e}`,
+      Success: () => `Success`,
+      Error: (v) => `Error: ${v._0}`,
     });
   }
 

@@ -191,6 +191,10 @@ export class EntityId extends Struct {
     return true;
   }
 
+  clone(): EntityId {
+    return EntityId.fromBytes(new Uint8Array(this.bytes));
+  }
+
   // impl Default for EntityId
   static default(): EntityId {
     return EntityId.new();
@@ -284,6 +288,10 @@ export class EventId extends Struct {
       if (this.bytes[i] !== other.bytes[i]) return false;
     }
     return true;
+  }
+
+  clone(): EventId {
+    return EventId.fromBytes(new Uint8Array(this.bytes));
   }
 
   // ── Bincode: custom serde — raw 32 bytes ──
