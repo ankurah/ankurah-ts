@@ -67,31 +67,34 @@ impl<'a> BodyTranslator<'a> {
             }
         }
 
-        // Determine which locals are consumed (returned, passed as args, stored)
-        let mut consumed_vars = std::collections::HashSet::new();
-        for (i, stmt) in stmts.iter().enumerate() {
-            let is_last = i == stmts.len() - 1;
-            if is_last {
-                if let syn::Stmt::Expr(expr, None) = stmt {
-                    ownership::collect_direct_vars(expr, &mut consumed_vars);
-                }
-            }
-            ownership::collect_consumed_vars_in_stmt(stmt, &mut consumed_vars);
+        // Only track variables that are the implicit return value —
+        // those should NOT be dropped (they're moved to the caller).
+        // Everything else drops at end of scope (idempotent for moved values).
+        let mut returned_vars = std::collections::HashSet::new();
+        if let Some(syn::Stmt::Expr(expr, None)) = stmts.last() {
+            ownership::collect_direct_vars(expr, &mut returned_vars);
         }
+
+        let drops = ownership::generate_drops(&locals, &returned_vars);
 
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i == stmts.len() - 1;
             if is_last {
                 if let syn::Stmt::Expr(expr, None) = stmt {
-                    let drops = ownership::generate_drops(&locals, &consumed_vars);
+                    // Implicit return — drops go before return
                     if !drops.is_empty() {
+                        // Compute return value, drop locals, return
+                        let ret = self.expr(expr);
+                        out.push_str(&format!("const _ret = {};\n", ret));
                         out.push_str(&drops);
+                        out.push_str("return _ret;\n");
+                    } else {
+                        out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self));
+                        out.push('\n');
                     }
-                    out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self));
-                    out.push('\n');
                 } else {
                     out.push_str(&self.stmt(stmt));
-                    let drops = ownership::generate_drops(&locals, &consumed_vars);
+                    // Drops after last statement
                     if !drops.is_empty() {
                         out.push_str(&drops);
                     }
@@ -109,6 +112,13 @@ impl<'a> BodyTranslator<'a> {
         match stmt {
             syn::Stmt::Local(local) => self.local(local),
             syn::Stmt::Expr(expr, semi) => {
+                // Detect standalone `expr?;` — emit Result check
+                if semi.is_some() {
+                    if let syn::Expr::Try(try_expr) = expr {
+                        let inner = self.expr(&try_expr.expr);
+                        return format!("const _r = {};\nif (_r.isErr()) return _r as any;\n", inner);
+                    }
+                }
                 let ts = self.expr(expr);
                 if semi.is_some() {
                     format!("{};\n", ts)
@@ -132,6 +142,16 @@ impl<'a> BodyTranslator<'a> {
         let pat = Self::pat_static(&local.pat);
 
         if let Some(init) = &local.init {
+            // Detect `let x = expr?` pattern — emit Result check + early return
+            if let syn::Expr::Try(try_expr) = &*init.expr {
+                let inner = self.expr(&try_expr.expr);
+                let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
+                return format!(
+                    "const _r_{} = {};\nif (_r_{}.isErr()) return _r_{} as any;\n{} {} = _r_{}.unwrap();\n",
+                    pat, inner, pat, pat, keyword, pat, pat
+                );
+            }
+
             let expr = self.expr(&init.expr);
 
             if let Some((_tok, _diverge)) = &init.diverge {
@@ -319,7 +339,12 @@ impl<'a> BodyTranslator<'a> {
                 format!("new {}({{ {} }})", name, fields.join(", "))
             }
 
-            syn::Expr::Try(try_expr) => self.expr(&try_expr.expr),
+            syn::Expr::Try(try_expr) => {
+                // expr? in expression position — use .unwrap() (caller handles Result propagation)
+                // For statement-level ?, see translate_local which emits the full check pattern.
+                let inner = self.expr(&try_expr.expr);
+                format!("{}.unwrap()", inner)
+            }
             syn::Expr::Await(await_expr) => format!("await {}", self.expr(&await_expr.base)),
 
             syn::Expr::Range(range) => {
@@ -435,10 +460,23 @@ impl<'a> BodyTranslator<'a> {
     fn translate_call(&self, func: &str, args: &[String]) -> String {
         match func {
             "Self" => format!("new {}({})", self.self_type, args.join(", ")),
-            "Ok" | "Some" => {
+            "Ok" => {
+                if args.len() == 1 {
+                    format!("Result.Ok({})", args[0])
+                } else {
+                    format!("Result.Ok({})", args.join(", "))
+                }
+            }
+            "Err" => {
+                if args.len() == 1 {
+                    format!("Result.Err({})", args[0])
+                } else {
+                    format!("Result.Err({})", args.join(", "))
+                }
+            }
+            "Some" => {
                 if args.len() == 1 { args[0].clone() } else { args.join(", ") }
             }
-            "Err" => format!("throw new Error({})", args.join(", ")),
             "None" => "null".to_string(),
             "Vec.new" | "Vec::new" => "[]".to_string(),
             "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),

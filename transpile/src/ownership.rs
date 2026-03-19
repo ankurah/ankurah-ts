@@ -142,15 +142,17 @@ pub fn collect_direct_vars(expr: &syn::Expr, vars: &mut HashSet<String>) {
     }
 }
 
-/// Generate .drop() calls for locals not consumed
+/// Generate .drop() calls for all locals at end of block, in reverse order.
+/// Mirrors Rust: all locals get drop glue. Moved values are idempotent no-ops.
+/// Variables in `skip_vars` are NOT dropped (they are the implicit return value).
 pub fn generate_drops(
     locals: &[(String, String)],
-    consumed_vars: &HashSet<String>,
+    returned_vars: &HashSet<String>,
 ) -> String {
     let mut out = String::new();
-    // Drop in reverse order (mirrors Rust's drop order)
     for (name, _) in locals.iter().rev() {
-        if consumed_vars.contains(name) {
+        // Don't drop the return value — it's being moved to the caller
+        if returned_vars.contains(name) {
             continue;
         }
         out.push_str(&format!("{}.drop();\n", name));

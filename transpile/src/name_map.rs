@@ -91,9 +91,12 @@ pub fn map_type(ty: &syn::Type) -> String {
                         "Option" if inner_types.len() == 1 => {
                             format!("{} | null", inner_types[0])
                         }
-                        "Result" if !inner_types.is_empty() => {
-                            // Result<T, E> → T (throws on error)
-                            inner_types[0].clone()
+                        "Result" if inner_types.len() == 2 => {
+                            // Result<T, E> stays as Result<T, E>
+                            format!("Result<{}, {}>", inner_types[0], inner_types[1])
+                        }
+                        "Result" if inner_types.len() == 1 => {
+                            format!("Result<{}, Error>", inner_types[0])
                         }
                         "HashMap" | "BTreeMap" if inner_types.len() == 2 => {
                             format!("Map<{}, {}>", inner_types[0], inner_types[1])

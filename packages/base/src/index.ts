@@ -3,6 +3,7 @@
 export { AkObject } from './object.ts';
 export { Struct } from './struct.ts';
 export { Enum } from './enum.ts';
+export { Result } from './result.ts';
 export { Drop, DropGuard } from './std/drop.ts';
 export { disposeSymbol } from './drop_registry.ts';
 export { Arc, Weak } from './std/arc.ts';
