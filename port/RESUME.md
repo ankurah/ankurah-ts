@@ -9,72 +9,53 @@ Read these files first:
 
 ## Where we are
 
-Building the ankurah Rust→TS transpiler at `transpile/`. Phase 1 (skeleton generation) is near-complete. Phase 2 (body translation) is next.
+Building the ankurah Rust→TS transpiler at `transpile/`. Phases 1+2 complete. Generating real TS code with function bodies and ownership-based .drop() calls.
 
 ### Transpiler status
 
-Working Rust binary at `transpile/` with these commands:
+Working Rust binary at `transpile/` (15 source files, ~3900 lines):
 ```bash
 cd /Users/daniel/ak/ankurah-ts/transpile
-cargo run -- drop-analysis ../../ankurah-ts-support/proto/src     # transitive Drop ownership
-cargo run -- skeleton <file.rs> --crate-path proto/src/file.rs    # single file skeleton
-cargo run -- batch <src_dir> <out_dir> --crate-name proto         # whole crate batch
+cargo run -- drop-analysis <src_dir>                              # transitive Drop ownership
+cargo run -- skeleton <file.rs> --crate-path <crate/src/file.rs>  # single file
+cargo run -- batch <src_dir> <out_dir> --crate-name <name>        # whole crate
 ```
 
-Source: 13 files, 3596 lines total. Generates 177 TS files / 16K lines from the full Rust codebase with zero unhandled expressions. Config reads from `transpile/transpile.toml`. Phases 1+2 complete. Derive method bodies (clone, equals) auto-generated. Constructor bodies auto-generated. Implicit return detection working.
+Generates 177 TS files / ~16K lines across all 10 crates. Zero unhandled expressions.
 
-**What Phase 1 handles:**
-- Structs → classes extending Struct/Drop with fields, constructors, methods
-- Enums → Enum<V> with variant type maps, bincode encode/decode
-- Traits → interfaces / abstract classes
-- impl blocks merged into classes, trait impls mapped (Display→toString, PartialEq→equals, From→from, etc.)
-- From/TryFrom/TryInto disambiguation for multiple impls
-- Generic Self resolution (Attested<T> not Attested)
-- Derive-generated methods (Default, Clone, PartialEq, PartialOrd)
-- Bincode encode/decode from derive(Serialize, Deserialize) field layout
-- Import resolution: @ankurah/base, cross-crate (use statements), intra-crate (type→file map)
-- cfg(test) splitting → .test.ts files with describe/test/expect
-- Feature-gated file exclusion (wasm, uniffi, postgres)
+**What the transpiler does:**
+- Structs/enums/traits/fns with full body translation
+- Bincode encode/decode from derive(Serialize, Deserialize)
+- Derive method bodies (clone with null safety, equals with null guards)
+- Match → .match({}), if-let → .is(), Option → null check, Result → unwrap
+- 50+ method call translations, format!/vec!/assert_eq! macros
+- Import resolution (cross-crate + intra-crate)
+- cfg(test) → .test.ts splitting
+- Config-driven provided_impls, hardcoded files, exclusions
+- **Ownership-based .drop() insertion** — block-scoped variables not stored/passed/returned get .drop() at scope exit
 
-**Validated via git diff against hand-ported code.** Output goes to /tmp/, never overwrites packages/.
+**Current refactoring in progress:**
+- Replace thread_local SELF_TYPE hack with proper TranslateCtx struct
+- This will also hold ownership tracking state cleanly
 
-### Systematic audit results (10 diff categories)
+### Hand-port alignment
 
-Audited every structural diff between transpiler output and hand-ported proto crate:
-1. Tuple field naming (`_0` vs semantic) — cosmetic, skip
-2. Extra clone() from derive — transpiler correct
-3. Error types as Error subclass — porting divergence, needs provided_impl
-4. Default param values — Phase 2
-5. Generic encode/decode (Attested<T>) — needs provided_impl
-6. TS-only convenience methods — not in Rust
-7. Method ordering — cosmetic
-8. EventId location divergence — porting choice
-9. From naming (fromAttestedEvent) — config
-10. Test file structure — fixed
+Tuple struct fields renamed to `_0` in:
+- proto: Clock, AuthData, Attestation, AttestationSet, OperationSet, StateBuffers, TransactionId, RequestId, QueryId, UpdateId
+- signals: BroadcastId, Broadcast, ValueCell, ReadValueCell
 
-### Ownership model
+### Discussion items (from yesterday)
 
-All types extend AkObject (Struct/Enum). Fatal leak detection enabled. The `using` vs `const` question for temporaries and function arguments is deferred to the transpiler — it can read Rust function signatures (move vs borrow) from syn AST.
+1. **Attested generic callback pattern** — Attested<T> encode/decode need callback params. Transpiler doesn't handle generic codec delegation when OTHER types contain Attested<T> fields.
 
-Drop analysis (transpiler command) identified: 14 direct Drop, 105 transitive, 332 value types across the full Rust codebase.
+2. **TS-only additions** — Hand-port has methods not in Rust source (get length, Symbol.iterator, entries, empty). Need preservation strategy.
 
-### Transform module architecture
-
-Three patterns for handling different kinds of code:
-1. **Default transform** — syntactic 1:1 translation with stubs
-2. **Rewrite module** — generates code from derives (bincode encode/decode)
-3. **Provided impl** — hand-written TS preserved (custom serde, yrs→yjs compat, error types)
-
-Config in transpile.toml (not yet parsed — hardcoded for now).
+3. **GC disposal in transpiled code** — IMPLEMENTED. Transpiler emits .drop() for block-scoped variables using ownership analysis.
 
 ### Port status
 
-994 tests pass, 0 fail, 22 skip (21 test.skip + 1 describe.skip), tsc clean. Fatal leak severity set but tests not yet fixed for it (gc-fixer work paused pending transpiler approach). Entity now extends Struct.
+994 tests pass, 0 fail, 22 skip, tsc clean. Fatal leak severity set. Entity extends Struct.
 
-### What to do next
+### Process rules
 
-1. **Phase 2 body translation** — translate function bodies (syn::Expr → TS expressions)
-2. **OR** implement provided_impl config parsing + error type handling
-3. **OR** continue fixing GC ownership warnings with the transpiler informing using/const decisions
-
-Process rules: use named team agents, don't shut them down, check mailbox between steps, never skip or stub silently.
+Use named team agents, don't shut them down, check mailbox between steps, never skip or stub silently.

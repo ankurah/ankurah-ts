@@ -16,6 +16,7 @@ mod macros;
 mod match_expr;
 mod name_map;
 mod ownership;
+// translate_ctx removed — BodyTranslator struct in body.rs replaces it
 mod types;
 
 #[derive(Parser)]
