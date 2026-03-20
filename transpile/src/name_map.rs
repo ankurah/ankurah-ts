@@ -58,6 +58,8 @@ pub fn map_type_name(rust_name: &str) -> &str {
         "i64" | "u64" => "bigint | number",
         "AtomicBool" => "boolean",
         "AtomicU32" | "AtomicUsize" => "number",
+        "Infallible" => "never",
+        "Rule" => "string",  // pest grammar::Rule → string in TS (no pest equivalent)
         _ => rust_name,
     }
 }

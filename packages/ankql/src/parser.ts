@@ -24,8 +24,7 @@ import {
   exprToPredicate,
 } from './ast.ts';
 import {
-  SyntaxError,
-  InvalidPredicateError,
+  ParseError,
 } from './error.ts';
 
 // ── Tokenizer / Lexer ────────────────────────────────────────────────
@@ -234,7 +233,7 @@ class Lexer {
         break;
       }
 
-      throw new SyntaxError(`Unexpected character '${ch}' at position ${this.pos}`);
+      throw new ParseError('SyntaxError', { _0: `Unexpected character '${ch}' at position ${this.pos}` });
     }
 
     this.tokens.push({ type: 'EOF', value: '', pos: this.pos });
@@ -259,7 +258,7 @@ class Lexer {
         this.advance();
       }
     }
-    throw new SyntaxError('Unterminated string literal');
+    throw new ParseError('SyntaxError', { _0: 'Unterminated string literal' });
   }
 
   private readDoubleQuotedIdentifier(): string {
@@ -274,7 +273,7 @@ class Lexer {
       result += ch;
       this.advance();
     }
-    throw new SyntaxError('Unterminated double-quoted identifier');
+    throw new ParseError('SyntaxError', { _0: 'Unterminated double-quoted identifier' });
   }
 
   private readWord(): string {
@@ -368,9 +367,9 @@ class Parser {
   private expect(type: TokenType): Token {
     const token = this.peek();
     if (token.type !== type) {
-      throw new SyntaxError(
-        `Expected ${type}, got ${token.type} ('${token.value}') at position ${token.pos}`,
-      );
+      throw new ParseError('SyntaxError', {
+        _0: `Expected ${type}, got ${token.type} ('${token.value}') at position ${token.pos}`,
+      });
     }
     return this.advance();
   }
@@ -404,9 +403,9 @@ class Parser {
     }
 
     if (!this.isAtEnd()) {
-      throw new SyntaxError(
-        `Unexpected token '${this.peek().value}' (${this.peek().type}) at position ${this.peek().pos}`,
-      );
+      throw new ParseError('SyntaxError', {
+        _0: `Unexpected token '${this.peek().value}' (${this.peek().type}) at position ${this.peek().pos}`,
+      });
     }
 
     return new Selection(predicate, orderBy, limit);
@@ -444,7 +443,7 @@ class Parser {
       this.advance();
       if (this.peek().type !== 'LParen') {
         // NOT without parens is not supported (matches Rust behavior)
-        throw new SyntaxError(`Expected '(' after NOT at position ${this.peek().pos}`);
+        throw new ParseError('SyntaxError', { _0: `Expected '(' after NOT at position ${this.peek().pos}` });
       }
       const inner = this.parseNotOrComparison();
       return Predicate.Not(inner);
@@ -527,9 +526,9 @@ class Parser {
       case 'LParen':
         return this.parseParenExpr();
       default:
-        throw new SyntaxError(
-          `Unexpected token '${tok.value}' (${tok.type}) at position ${tok.pos}`,
-        );
+        throw new ParseError('SyntaxError', {
+          _0: `Unexpected token '${tok.value}' (${tok.type}) at position ${tok.pos}`,
+        });
     }
   }
 
@@ -542,7 +541,7 @@ class Parser {
     try {
       const num = Number(numStr);
       if (!isFinite(num)) {
-        throw new InvalidPredicateError(`Failed to parse number: ${numStr}`);
+        throw new ParseError('InvalidPredicate', { _0: `Failed to parse number: ${numStr}` });
       }
       // Check i32 range: -2147483648 to 2147483647
       if (num > -(2 ** 31) && num < 2 ** 31 - 1) {
@@ -587,9 +586,9 @@ class Parser {
         if (isKeywordTokenType(next.type)) {
           steps.push(this.advance().value);
         } else {
-          throw new SyntaxError(
-            `Expected identifier after '.' at position ${next.pos}, got ${next.type}`,
-          );
+          throw new ParseError('SyntaxError', {
+            _0: `Expected identifier after '.' at position ${next.pos}, got ${next.type}`,
+          });
         }
       }
     }
@@ -707,7 +706,7 @@ class Parser {
     const tok = this.expect('Identifier');
 
     if (this.peek().type === 'Dot') {
-      throw new InvalidPredicateError('Dotted identifiers are not supported in ORDER BY clauses');
+      throw new ParseError('InvalidPredicate', { _0: 'Dotted identifiers are not supported in ORDER BY clauses' });
     }
 
     const path = PathExpr.simple(tok.value);
@@ -755,7 +754,7 @@ function tokenToComparisonOp(type: TokenType): ComparisonOperator {
     case 'LtEq': return ComparisonOperator.LessThanOrEqual();
     case 'In': return ComparisonOperator.In();
     default:
-      throw new SyntaxError(`'${type}' is not a comparison operator`);
+      throw new ParseError('SyntaxError', { _0: `'${type}' is not a comparison operator` });
   }
 }
 
@@ -766,7 +765,7 @@ function tokenToInfixOp(type: TokenType): InfixOperator {
     case 'Multiply': return InfixOperator.Multiply();
     case 'Divide': return InfixOperator.Divide();
     default:
-      throw new SyntaxError(`'${type}' is not an infix operator`);
+      throw new ParseError('SyntaxError', { _0: `'${type}' is not an infix operator` });
   }
 }
 

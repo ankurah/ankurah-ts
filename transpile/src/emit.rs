@@ -240,6 +240,10 @@ fn emit_trait_methods(
     let plain_name = self_type.split('<').next().unwrap_or(self_type);
     if let Some(trait_fns) = trait_methods.get(plain_name) {
         for (trait_name, type_args, method) in trait_fns {
+            // Skip From<Infallible> — unreachable code
+            if *trait_name == "From" && type_args.iter().any(|a| a == "never" || a == "Infallible") {
+                continue;
+            }
             if let Some((base_ts_name, ret_override)) = trait_method_mapping(trait_name, &method.name) {
                 let ts_name = disambiguate_trait_method(base_ts_name, trait_name, type_args, plain_name);
                 if emitted.insert(ts_name.clone()) {

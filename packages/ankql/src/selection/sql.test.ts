@@ -4,7 +4,7 @@ import { describe, test, expect } from 'bun:test';
 import { generateSelectionSql } from './sql.ts';
 import { parseSelection } from '../parser.ts';
 import { PathExpr, Predicate, Expr, Literal, ComparisonOperator } from '../ast.ts';
-import { PlaceholderCountMismatchError } from '../error.ts';
+import { SqlGenerationError } from '../error.ts';
 
 describe('sql generation', () => {
   // Rust: fn test_simple_equality
@@ -67,10 +67,12 @@ describe('sql generation', () => {
       generateSelectionSql(selection.predicate, 1);
       expect(true).toBe(false); // should not reach here
     } catch (e) {
-      expect(e).toBeInstanceOf(PlaceholderCountMismatchError);
-      if (e instanceof PlaceholderCountMismatchError) {
-        expect(e.expected).toBe(1);
-        expect(e.found).toBe(2);
+      expect(e).toBeInstanceOf(SqlGenerationError);
+      if (e instanceof SqlGenerationError) {
+        expect(e.type).toBe('PlaceholderCountMismatch');
+        const v = e.value as { expected: number; found: number };
+        expect(v.expected).toBe(1);
+        expect(v.found).toBe(2);
       }
     }
   });
@@ -82,10 +84,12 @@ describe('sql generation', () => {
       generateSelectionSql(selection.predicate, 2);
       expect(true).toBe(false);
     } catch (e) {
-      expect(e).toBeInstanceOf(PlaceholderCountMismatchError);
-      if (e instanceof PlaceholderCountMismatchError) {
-        expect(e.expected).toBe(2);
-        expect(e.found).toBe(1);
+      expect(e).toBeInstanceOf(SqlGenerationError);
+      if (e instanceof SqlGenerationError) {
+        expect(e.type).toBe('PlaceholderCountMismatch');
+        const v = e.value as { expected: number; found: number };
+        expect(v.expected).toBe(2);
+        expect(v.found).toBe(1);
       }
     }
   });
@@ -133,10 +137,12 @@ describe('sql generation', () => {
       generateSelectionSql(selection.predicate, 0);
       expect(true).toBe(false);
     } catch (e) {
-      expect(e).toBeInstanceOf(PlaceholderCountMismatchError);
-      if (e instanceof PlaceholderCountMismatchError) {
-        expect(e.expected).toBe(0);
-        expect(e.found).toBe(1);
+      expect(e).toBeInstanceOf(SqlGenerationError);
+      if (e instanceof SqlGenerationError) {
+        expect(e.type).toBe('PlaceholderCountMismatch');
+        const v = e.value as { expected: number; found: number };
+        expect(v.expected).toBe(0);
+        expect(v.found).toBe(1);
       }
     }
   });

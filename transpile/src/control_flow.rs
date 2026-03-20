@@ -115,7 +115,10 @@ pub fn translate_expr_in_return_position_with(expr: &syn::Expr, t: &BodyTranslat
         _ => {
             // Leaf case: compute value, emit drops, return
             let ts = t.expr(expr);
-            if pending_drops.is_empty() {
+            // throw/panic is already a terminator — don't prefix with return
+            if ts.starts_with("throw ") {
+                format!("{};", ts)
+            } else if pending_drops.is_empty() {
                 format!("return {};", ts)
             } else {
                 format!("const _ret = {};\n{}return _ret;", ts, pending_drops)

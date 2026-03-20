@@ -234,6 +234,50 @@ fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
                 let variant = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
                 (variant, Vec::new())
             }
+            syn::Pat::Or(or_pat) => {
+                // OR pattern: And(l,r) | Or(l,r) => body
+                // Emit separate arms for each alternative with the same body
+                for case in &or_pat.cases {
+                    let (vname, fmaps) = match case {
+                        syn::Pat::TupleStruct(ts) => {
+                            let v = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                            let m: Vec<(String, String)> = ts.elems.iter().enumerate().map(|(i, pat)| {
+                                (translate_pat(pat), format!("v._{}", i))
+                            }).collect();
+                            (v, m)
+                        }
+                        syn::Pat::Struct(s) => {
+                            let v = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                            let m: Vec<(String, String)> = s.fields.iter().map(|f| {
+                                let field_name = match &f.member {
+                                    syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                                    syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                                };
+                                (translate_pat(&f.pat), format!("v.{}", field_name))
+                            }).collect();
+                            (v, m)
+                        }
+                        syn::Pat::Path(p) => {
+                            let v = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                            (v, Vec::new())
+                        }
+                        _ => continue,
+                    };
+                    let mut b = translate_expr(&arm.body);
+                    let mut sorted = fmaps.clone();
+                    sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+                    for (local, accessor) in &sorted {
+                        b = replace_identifier(&b, local, accessor);
+                    }
+                    let b = if b.starts_with('[') { format!("{} as any", b) } else { b };
+                    if fmaps.is_empty() {
+                        out.push_str(&format!("  {}: () => {},\n", vname, b));
+                    } else {
+                        out.push_str(&format!("  {}: (v) => {},\n", vname, b));
+                    }
+                }
+                continue;
+            }
             syn::Pat::Wild(_) => continue,
             _ => (translate_pat(&arm.pat), Vec::new()),
         };

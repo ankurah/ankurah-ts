@@ -4,7 +4,7 @@
 // Rust: fn deserialize (json_as_bytes) — SKIP: serde-specific
 
 import { Struct, Enum } from '@ankurah/base';
-import { InvalidPredicateError } from './error.ts';
+import { ParseError } from './error.ts';
 
 // ── Expr ──────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ export class Expr extends Enum<ExprV> {
       Placeholder: () => {
         const next = values.next();
         if (next.done) {
-          throw new InvalidPredicateError('Not enough values provided for placeholders');
+          throw new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' });
         }
         return next.value;
       },
@@ -329,7 +329,7 @@ export class Predicate extends Enum<PredicateV> {
     // Check if there are any unused values
     const next = iter.next();
     if (!next.done) {
-      throw new InvalidPredicateError('Too many values provided for placeholders');
+      throw new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' });
     }
     return result;
   }
@@ -354,7 +354,7 @@ export class Predicate extends Enum<PredicateV> {
       IsNull: (v) => Predicate.IsNull(v.expr.populateRecursive(values)),
       True: () => Predicate.True(),
       False: () => Predicate.False(),
-      Placeholder: () => { throw new InvalidPredicateError('Placeholder must be transformed before population'); },
+      Placeholder: () => { throw new ParseError('InvalidPredicate', { _0: 'Placeholder must be transformed before population' }); },
     });
   }
 }
@@ -529,11 +529,11 @@ export function exprToPredicate(expr: Expr): Predicate {
       if (v.literal.is('Bool')) {
         return (v.literal.value as LiteralV['Bool']).value ? Predicate.True() : Predicate.False();
       }
-      throw new InvalidPredicateError('Expression is not a predicate');
+      throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' });
     },
-    Path: () => { throw new InvalidPredicateError('Expression is not a predicate'); },
-    InfixExpr: () => { throw new InvalidPredicateError('Expression is not a predicate'); },
-    ExprList: () => { throw new InvalidPredicateError('Expression is not a predicate'); },
+    Path: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
+    InfixExpr: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
+    ExprList: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
   });
 }
 

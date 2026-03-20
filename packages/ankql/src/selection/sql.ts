@@ -2,9 +2,7 @@
 
 import { Expr, Literal, Predicate, ComparisonOperator } from '../ast.ts';
 import {
-  PlaceholderCountMismatchError,
-  InvalidExpressionError,
-  UnsupportedOperatorError,
+  SqlGenerationError,
 } from '../error.ts';
 
 // Rust: fn generate_expr_sql
@@ -18,7 +16,7 @@ function generateExprSql(
     Placeholder: () => {
       foundPlaceholders.count++;
       if (expectedCount !== null && foundPlaceholders.count > expectedCount) {
-        throw new PlaceholderCountMismatchError(expectedCount, foundPlaceholders.count);
+        throw new SqlGenerationError('PlaceholderCountMismatch', { expected: expectedCount, found: foundPlaceholders.count });
       }
       buffer.push('?');
     },
@@ -36,28 +34,28 @@ function generateExprSql(
         if (item.is('Placeholder')) {
           foundPlaceholders.count++;
           if (expectedCount !== null && foundPlaceholders.count > expectedCount) {
-            throw new PlaceholderCountMismatchError(expectedCount, foundPlaceholders.count);
+            throw new SqlGenerationError('PlaceholderCountMismatch', { expected: expectedCount, found: foundPlaceholders.count });
           }
           buffer.push('?');
         } else if (item.is('Literal')) {
           buffer.push(literalToSql((item.value as { literal: Literal }).literal));
         } else {
-          throw new InvalidExpressionError(
-            'Only literal expressions and placeholders are supported in IN lists',
-          );
+          throw new SqlGenerationError('InvalidExpression', {
+            _0: 'Only literal expressions and placeholders are supported in IN lists',
+          });
         }
       }
       buffer.push(')');
     },
     Predicate: () => {
-      throw new InvalidExpressionError(
-        'Only literal, identifier, and list expressions are supported',
-      );
+      throw new SqlGenerationError('InvalidExpression', {
+        _0: 'Only literal, identifier, and list expressions are supported',
+      });
     },
     InfixExpr: () => {
-      throw new InvalidExpressionError(
-        'Only literal, identifier, and list expressions are supported',
-      );
+      throw new SqlGenerationError('InvalidExpression', {
+        _0: 'Only literal, identifier, and list expressions are supported',
+      });
     },
   });
 }
@@ -118,7 +116,7 @@ function comparisonOpToSql(op: ComparisonOperator): string {
     LessThan: () => '<',
     LessThanOrEqual: () => '<=',
     In: () => 'IN',
-    Between: () => { throw new UnsupportedOperatorError('BETWEEN operator is not yet supported'); },
+    Between: () => { throw new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' }); },
   });
 }
 
@@ -165,9 +163,9 @@ function generatePredicateSql(
       buffer.push('FALSE');
     },
     Placeholder: () => {
-      throw new InvalidExpressionError(
-        'Placeholder must be transformed before SQL generation',
-      );
+      throw new SqlGenerationError('InvalidExpression', {
+        _0: 'Placeholder must be transformed before SQL generation',
+      });
     },
   });
 }
@@ -190,7 +188,7 @@ export function generateSelectionSql(
 
   // Verify placeholder count matches expected
   if (expectedCount !== null && foundPlaceholders.count !== expectedCount) {
-    throw new PlaceholderCountMismatchError(expectedCount, foundPlaceholders.count);
+    throw new SqlGenerationError('PlaceholderCountMismatch', { expected: expectedCount, found: foundPlaceholders.count });
   }
 
   return buffer.join('');

@@ -79,6 +79,11 @@ files = [
   "ankql/src/grammar.rs",
   # TODO: transpilable if we add .chunks()/.fold() iterator translations
   "proto/src/human_id.rs",
+  # Complex recursive tree-walking methods, pattern matching on multiple variants
+  # TODO: transpilable with better body translation for recursive enums
+  "ankql/src/ast.rs",
+  "ankql/src/selection/sql.rs",
+  "ankql/src/lib.rs",
 ]
 
 [cross_crate_types]

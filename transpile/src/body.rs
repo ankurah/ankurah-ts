@@ -578,6 +578,8 @@ impl<'a> BodyTranslator<'a> {
                 format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
             "bincode.deserialize" | "bincode::deserialize" if args.len() == 1 =>
                 format!("(() => {{ const _r = new BincodeReader({}); return /* TODO: need type */ _r; }})()", args[0]),
+            // Box is transparent in TS — Box::new(x) → x
+            "Box.new" | "Box::new" if args.len() == 1 => args[0].clone(),
             "Vec.new" | "Vec::new" => "[]".to_string(),
             "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),
             "HashSet.new" | "HashSet::new" | "BTreeSet.new" | "BTreeSet::new" => "new Set()".to_string(),
@@ -592,6 +594,27 @@ impl<'a> BodyTranslator<'a> {
                 format!("{}.{}({})", self.self_type, method, args.join(", "))
             }
             _ => {
+                // Enum variant constructor: Type.Variant(args) → new Type('Variant', { _0: arg, ... })
+                if let Some(dot) = func.rfind('.') {
+                    let type_name = &func[..dot];
+                    let variant = &func[dot+1..];
+                    if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
+                    {
+                        if args.is_empty() {
+                            return format!("new {}('{}', {{}})", type_name, variant);
+                        } else if args.len() == 1 {
+                            return format!("new {}('{}', {{ _0: {} }})", type_name, variant, args[0]);
+                        } else {
+                            let fields: Vec<String> = args.iter().enumerate()
+                                .map(|(i, a)| format!("_{}: {}", i, a))
+                                .collect();
+                            return format!("new {}('{}', {{ {} }})", type_name, variant, fields.join(", "));
+                        }
+                    }
+                }
+
                 if func.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                     && !func.contains('.')
                     && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")

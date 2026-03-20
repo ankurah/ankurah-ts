@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(config.provided_import_module("ankurah_proto::data::EventId"),
             Some("./id.provided".to_string()));
         assert!(config.is_hardcoded("ankql/src/parser.rs"));
-        assert!(!config.is_hardcoded("ankql/src/ast.rs"));
+        assert!(config.is_hardcoded("ankql/src/ast.rs"));
         assert!(config.is_excluded_file("proto/src/postgres.rs"));
     }
 }

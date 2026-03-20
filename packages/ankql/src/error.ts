@@ -1,79 +1,47 @@
 // MIRRORS: ankurah/ankql/src/error.rs
-// Rust: fn from (From<Infallible> for ParseError) — SKIP: Infallible conversion not needed in TS
-// Rust: fn from (From<ParseError> for JsValue) — SKIP: #[cfg(feature = "wasm")] [E9]
+import { Enum } from '@ankurah/base';
 
-/** Custom error type for parsing errors */
-export class ParseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ParseError';
+export type ParseErrorV = {
+  SyntaxError: { _0: string };
+  EmptyExpression: {};
+  UnexpectedRule: { expected: string; got: string };
+  InvalidPredicate: { _0: string };
+  MissingOperand: { _0: string };
+};
+
+export class ParseError extends Enum<ParseErrorV> {
+  get message(): string {
+    return this.match({
+      SyntaxError: (v) => v._0,
+      EmptyExpression: () => 'Empty expression',
+      UnexpectedRule: (v) => `Expected ${v.expected}, got ${v.got}`,
+      InvalidPredicate: (v) => v._0,
+      MissingOperand: (v) => v._0,
+    });
+  }
+
+  override toString(): string {
+    return `${super.toString()}: ${this.message}`;
   }
 }
 
-export class SyntaxError extends ParseError {
-  constructor(message: string) {
-    super(`Syntax error: ${message}`);
-    this.name = 'SyntaxError';
+export type SqlGenerationErrorV = {
+  PlaceholderCountMismatch: { expected: number; found: number };
+  InvalidExpression: { _0: string };
+  UnsupportedOperator: { _0: string };
+};
+
+export class SqlGenerationError extends Enum<SqlGenerationErrorV> {
+  get message(): string {
+    return this.match({
+      PlaceholderCountMismatch: (v) => `Expected ${v.expected} placeholders, found ${v.found}`,
+      InvalidExpression: (v) => v._0,
+      UnsupportedOperator: (v) => v._0,
+    });
+  }
+
+  override toString(): string {
+    return `${super.toString()}: ${this.message}`;
   }
 }
 
-export class EmptyExpressionError extends ParseError {
-  constructor() {
-    super('Empty expression');
-    this.name = 'EmptyExpressionError';
-  }
-}
-
-export class UnexpectedTokenError extends ParseError {
-  constructor(expected: string, got: string) {
-    super(`Expected ${expected}, got ${got}`);
-    this.name = 'UnexpectedTokenError';
-  }
-}
-
-export class InvalidPredicateError extends ParseError {
-  constructor(message: string) {
-    super(`Invalid predicate: ${message}`);
-    this.name = 'InvalidPredicateError';
-  }
-}
-
-export class MissingOperandError extends ParseError {
-  constructor(operand: string) {
-    super(`Missing ${operand} operand`);
-    this.name = 'MissingOperandError';
-  }
-}
-
-/** Custom error type for SQL generation errors */
-export class SqlGenerationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SqlGenerationError';
-  }
-}
-
-export class PlaceholderCountMismatchError extends SqlGenerationError {
-  expected: number;
-  found: number;
-  constructor(expected: number, found: number) {
-    super(`Placeholder count mismatch: expected ${expected}, found ${found}`);
-    this.name = 'PlaceholderCountMismatchError';
-    this.expected = expected;
-    this.found = found;
-  }
-}
-
-export class InvalidExpressionError extends SqlGenerationError {
-  constructor(message: string) {
-    super(`Invalid expression: ${message}`);
-    this.name = 'InvalidExpressionError';
-  }
-}
-
-export class UnsupportedOperatorError extends SqlGenerationError {
-  constructor(message: string) {
-    super(`Unsupported operator: ${message}`);
-    this.name = 'UnsupportedOperatorError';
-  }
-}
