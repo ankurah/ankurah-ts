@@ -11,28 +11,33 @@ export class AkObject {
     leakRegistry.register(this, { label, creationStack, severity: 'fatal' }, this);
   }
 
-  /** Custom cleanup hook. Override in Drop subclass. */
-  drop(): void {}
+  get isDropped(): boolean { return this.#dropped; }
 
-  /** Drop glue — idempotent. Calls drop(), then cascades to all owned fields. */
-  [disposeSymbol](): void {
+  /** Dispose this object. Override in Drop subclasses for custom cleanup, call super.drop().
+   *  The transpiler generates .drop() calls for scope cleanup. */
+  drop(): void {
     if (this.#dropped) return;
     this.#dropped = true;
     leakRegistry.unregister(this);
-    this.drop();
+    // Cascade disposal to all owned fields
     for (const key of Object.getOwnPropertyNames(this)) {
       const val = (this as any)[key];
       if (val == null) continue;
-      if (typeof val[disposeSymbol] === 'function') {
-        val[disposeSymbol]();
+      if (typeof val.drop === 'function') {
+        val.drop();
       } else if (Array.isArray(val)) {
         for (const item of val) {
-          if (item != null && typeof item[disposeSymbol] === 'function') {
-            item[disposeSymbol]();
+          if (item != null && typeof item.drop === 'function') {
+            item.drop();
           }
         }
       }
     }
+  }
+
+  /** Symbol.dispose — delegates to drop() for using/with compatibility */
+  [disposeSymbol](): void {
+    this.drop();
   }
 
   protected assertNotDropped(): void {
