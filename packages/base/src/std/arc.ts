@@ -62,6 +62,23 @@ export class Arc<T> {
     return this.#inner.strongCount;
   }
 
+  /** Identity-based pointer address (uses inner object identity) */
+  asPtr(): number {
+    // Use a WeakMap-based ID generator for stable identity
+    return Arc.#ptrId(this.#inner);
+  }
+
+  static #ptrCounter = 0;
+  static #ptrMap = new WeakMap<object, number>();
+  static #ptrId(inner: object): number {
+    let id = Arc.#ptrMap.get(inner);
+    if (id === undefined) {
+      id = ++Arc.#ptrCounter;
+      Arc.#ptrMap.set(inner, id);
+    }
+    return id;
+  }
+
   [disposeSymbol](): void {
     this.drop();
   }

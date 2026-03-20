@@ -155,16 +155,35 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
             }
         }
     }
-    // Check if any function/method returns Result<T,E> or has Result in body
-    let uses_result = file.functions.iter().any(|f| f.return_type.contains("Result<"))
-        || file.impls.iter().any(|imp| {
-            !provided_set.contains(&imp.target_type)
-                && imp.methods.iter().any(|m|
-                    m.return_type.contains("Result<")
-                    || m.body_ts.as_ref().map_or(false, |b| b.contains("Result.")))
-        });
-    if uses_result && !base_imports.contains(&"Result") {
-        base_imports.push("Result");
+    // Auto-detect base types used in fields, return types, and method bodies
+    let mut all_type_refs = String::new();
+    for s in &file.structs {
+        if provided_set.contains(&s.name) { continue; }
+        for f in &s.fields { all_type_refs.push_str(&f.ty); all_type_refs.push(' '); }
+    }
+    for e in &file.enums {
+        if provided_set.contains(&e.name) { continue; }
+        for v in &e.variants { for f in &v.fields { all_type_refs.push_str(&f.ty); all_type_refs.push(' '); } }
+    }
+    for imp in &file.impls {
+        if provided_set.contains(&imp.target_type) { continue; }
+        for m in &imp.methods {
+            all_type_refs.push_str(&m.return_type); all_type_refs.push(' ');
+            for p in &m.params { all_type_refs.push_str(&p.ty); all_type_refs.push(' '); }
+            if let Some(b) = &m.body_ts { all_type_refs.push_str(b); all_type_refs.push(' '); }
+        }
+    }
+    for f in &file.functions {
+        all_type_refs.push_str(&f.return_type); all_type_refs.push(' ');
+        if let Some(b) = &f.body_ts { all_type_refs.push_str(b); all_type_refs.push(' '); }
+    }
+    let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
+        "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
+        "RefCell", "Ref", "RefMut"];
+    for ty in &base_runtime_types {
+        if all_type_refs.contains(ty) && !base_imports.contains(ty) {
+            base_imports.push(ty);
+        }
     }
     if !base_imports.is_empty() {
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n", base_imports.join(", ")));

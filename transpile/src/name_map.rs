@@ -110,7 +110,7 @@ pub fn map_type(ty: &syn::Type) -> String {
                             // Box<dyn Trait> → Trait, Box<T> → T
                             inner_types[0].clone()
                         }
-                        "Arc" | "Weak" | "Mutex" | "RefCell" | "Borrow" | "BorrowMut" => {
+                        "Arc" | "Weak" | "Mutex" | "RwLock" | "RefCell" | "Borrow" | "BorrowMut" => {
                             // These stay as-is (from @ankurah/base)
                             format!("{}<{}>", mapped, inner_types.join(", "))
                         }

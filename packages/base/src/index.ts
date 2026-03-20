@@ -8,6 +8,7 @@ export { Drop, DropGuard } from './std/drop.ts';
 export { disposeSymbol } from './drop_registry.ts';
 export { Arc, Weak } from './std/arc.ts';
 export { Mutex, MutexGuard } from './std/sync.ts';
+export { RwLock, RwLockReadGuard, RwLockWriteGuard } from './std/rwlock.ts';
 export { AsyncMutex } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';

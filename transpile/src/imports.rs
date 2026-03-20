@@ -87,7 +87,9 @@ pub fn collect_type_refs(ty: &str, refs: &mut HashSet<String>) {
 
 pub fn is_primitive_or_base_type(ty: &str) -> bool {
     matches!(ty, "string" | "boolean" | "number" | "void" | "never" | "unknown" | "bigint"
-        | "Struct" | "Enum" | "Drop" | "Arc" | "Weak" | "Mutex" | "RefCell"
+        | "Struct" | "Enum" | "Drop" | "Arc" | "Weak" | "Mutex" | "MutexGuard"
+        | "RwLock" | "RwLockReadGuard" | "RwLockWriteGuard"
+        | "RefCell" | "Ref" | "RefMut"
         | "Borrow" | "BorrowMut" | "BincodeReader" | "BincodeWriter"
         | "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Result"
     )
