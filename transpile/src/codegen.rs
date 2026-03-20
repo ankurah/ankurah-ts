@@ -306,7 +306,7 @@ pub fn generate_test_ts(file: &RustFile, rust_crate_path: &str) -> Option<String
 
     let mut out = String::new();
     out.push_str(&format!("// MIRRORS: ankurah/{} (tests module)\n\n", rust_crate_path));
-    out.push_str("import { describe, test, expect } from 'bun:test';\n\n");
+    out.push_str("import { describe, test, expect } from 'bun:test';\n");
 
     // Extract module name from crate path for describe block
     let module_name = rust_crate_path
@@ -315,13 +315,45 @@ pub fn generate_test_ts(file: &RustFile, rust_crate_path: &str) -> Option<String
         .unwrap_or(rust_crate_path)
         .replace(".rs", "");
 
+    // Import types from the parent module that are used in test bodies
+    let mut available_types: HashSet<String> = HashSet::new();
+    for s in &file.structs { available_types.insert(s.name.clone()); }
+    for e in &file.enums { available_types.insert(e.name.clone()); }
+    for t in &file.traits { available_types.insert(t.name.clone()); }
+
+    let mut test_refs: HashSet<String> = HashSet::new();
+    for f in &file.test_functions {
+        if let Some(body) = &f.body_ts {
+            imports::collect_type_refs(body, &mut test_refs);
+        }
+    }
+    let test_imports: Vec<&String> = test_refs.iter()
+        .filter(|t| available_types.contains(*t))
+        .collect();
+    if !test_imports.is_empty() {
+        let mut sorted = test_imports;
+        sorted.sort();
+        out.push_str(&format!("import {{ {} }} from './{}';\n",
+            sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), module_name));
+    }
+    out.push_str("import { BincodeWriter, BincodeReader } from './codec';\n");
+    out.push('\n');
+
     out.push_str(&format!("describe('{} unit tests', () => {{\n", module_name));
 
     for f in &file.test_functions {
         let test_name = &f.name;
         let async_kw = if f.is_async { "async " } else { "" };
-        out.push_str(&format!("  test('{}', {}() => {{\n    throw new Error('TODO');\n  }});\n\n",
-            test_name, async_kw));
+        let body = if let Some(body_ts) = &f.body_ts {
+            body_ts.lines()
+                .map(|line| if line.is_empty() { String::new() } else { format!("    {}", line) })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            "    throw new Error('TODO');".to_string()
+        };
+        out.push_str(&format!("  test('{}', {}() => {{\n{}\n  }});\n\n",
+            test_name, async_kw, body));
     }
 
     out.push_str("});\n");

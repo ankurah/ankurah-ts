@@ -57,8 +57,20 @@ fn infer_init_type(expr: &syn::Expr) -> String {
                 "Vec::new" | "vec::new" => "[]".to_string(),
                 "String::new" | "string::new" => "string".to_string(),
                 "HashMap::new" | "BTreeMap::new" => "Map".to_string(),
+                _ if func.contains("to_string") || func.contains("format") => "string".to_string(),
+                _ if func.contains("serialize") => "Uint8Array".to_string(),
                 _ => String::new(),
             }
+        }
+        syn::Expr::Try(try_expr) => infer_init_type(&try_expr.expr),
+        syn::Expr::MethodCall(mc) => {
+            let method = mc.method.to_string();
+            if method == "to_string" || method == "to_str" { "string".to_string() }
+            else if method == "unwrap" || method == "unwrap_or" || method == "unwrap_or_default" {
+                // Unwrap preserves the inner type
+                infer_init_type(&mc.receiver)
+            }
+            else { String::new() }
         }
         _ => String::new(),
     }
@@ -204,6 +216,9 @@ pub fn generate_drops(
 
 /// Types that should never get .drop() calls
 fn is_non_droppable(ty: &str) -> bool {
+    if ty.is_empty() {
+        return false; // Unknown type — drop to be safe
+    }
     let base = ty.trim_end_matches(" | null");
     matches!(base, "string" | "boolean" | "number" | "bigint | number" | "void" | "never" | "unknown")
         || base.ends_with("[]")

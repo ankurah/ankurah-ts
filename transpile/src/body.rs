@@ -569,6 +569,15 @@ impl<'a> BodyTranslator<'a> {
                 if args.len() == 1 { args[0].clone() } else { args.join(", ") }
             }
             "None" => "null".to_string(),
+            // Serde crate calls
+            "serdeJson.toString" | "serde_json::to_string" if args.len() == 1 =>
+                format!("JSON.stringify({})", args[0]),
+            "serdeJson.fromStr" | "serde_json::from_str" if args.len() == 1 =>
+                format!("JSON.parse({})", args[0]),
+            "bincode.serialize" | "bincode::serialize" if args.len() == 1 =>
+                format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
+            "bincode.deserialize" | "bincode::deserialize" if args.len() == 1 =>
+                format!("(() => {{ const _r = new BincodeReader({}); return /* TODO: need type */ _r; }})()", args[0]),
             "Vec.new" | "Vec::new" => "[]".to_string(),
             "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),
             "HashSet.new" | "HashSet::new" | "BTreeSet.new" | "BTreeSet::new" => "new Set()".to_string(),

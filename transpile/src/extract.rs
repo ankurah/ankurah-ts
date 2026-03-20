@@ -80,7 +80,7 @@ pub fn extract(path: &Path) -> Result<RustFile> {
                         for item in items {
                             if let syn::Item::Fn(f) = item {
                                 if is_test_fn(&f.attrs) {
-                                    file.test_functions.push(extract_fn(&f.sig, true, &f.attrs));
+                                    file.test_functions.push(extract_fn_with_body(&f.sig, true, &f.attrs, Some(&f.block)));
                                 }
                             }
                         }
