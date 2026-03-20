@@ -121,17 +121,25 @@ pub fn emit_enum(
                         .filter_map(|f| {
                             let n = f.name.as_deref()?;
                             let ty = f.ty.as_str();
-                            Some(if is_primitive_ts_type(ty) {
+                            let base_ty = ty.trim_end_matches(" | null");
+                            let nullable = ty.ends_with(" | null");
+                            Some(if is_primitive_ts_type(base_ty) {
                                 format!("{}: v.{}", n, n)
-                            } else if ty == "Uint8Array" {
-                                format!("{}: new Uint8Array(v.{})", n, n)
-                            } else if ty.ends_with("[]") {
-                                let inner = &ty[..ty.len()-2];
+                            } else if base_ty == "Uint8Array" {
+                                if nullable {
+                                    format!("{}: v.{} != null ? new Uint8Array(v.{}) : null", n, n, n)
+                                } else {
+                                    format!("{}: new Uint8Array(v.{})", n, n)
+                                }
+                            } else if base_ty.ends_with("[]") {
+                                let inner = &base_ty[..base_ty.len()-2];
                                 if is_primitive_ts_type(inner) {
                                     format!("{}: [...v.{}]", n, n)
                                 } else {
                                     format!("{}: v.{}.map(e => e.clone())", n, n)
                                 }
+                            } else if nullable {
+                                format!("{}: v.{}?.clone() ?? null", n, n)
                             } else {
                                 format!("{}: v.{}.clone()", n, n)
                             })
@@ -509,6 +517,9 @@ fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
                 }
             }
             fixed
+        } else if method.ts_name == "toString" && ts.contains("fromParts(") {
+            // Monomorphized generic calls (Attested::<Event>::from_parts) can't be translated
+            format!("return `[{}]`;\n", self_type)
         } else {
             ts
         };

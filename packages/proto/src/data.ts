@@ -32,7 +32,7 @@ export class Event extends Struct {
   }
 
   toString(): string {
-    return `Event(${this.id().toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${Array.from(this.operations).map(([backend, ops]) => `${backend} => ${Array.from(ops).map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    return `Event(${this.id().toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
   clone(): Event {
@@ -149,7 +149,7 @@ export class OperationSet extends Struct {
   }
 
   toString(): string {
-    return `OperationSet(${Array.from(this._0).map(([backend, ops]) => `${backend} => ${Array.from(ops).map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
   equals(other: OperationSet): boolean {
@@ -266,7 +266,7 @@ export class State extends Struct {
   }
 
   toString(): string {
-    return `State(${this.head} buffers ${Array.from(this.stateBuffers).map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
+    return `State(${this.head} buffers ${[...this.stateBuffers].map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
   }
 
   equals(other: State): boolean {

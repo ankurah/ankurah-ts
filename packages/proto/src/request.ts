@@ -145,19 +145,7 @@ export class EntityDelta extends Struct {
   }
 
   toString(): string {
-    return this.content.match({
-      StateSnapshot: (v) => `EntityDelta ${this.entityId}: StateSnapshot(${v.state})`,
-      EventBridge: (v) => {
-      let eventStrs = [];
-      for (const event of v.events) {
-        const event = Attested.fromParts(this.entityId, this.collection.clone(), event.clone());
-        eventStrs.push(event.payload.toString());
-        event.drop();
-      }
-      return `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
-    },
-      StateAndRelation: (v) => `EntityDelta ${this.entityId}: StateAndRelation(${v.state})`,
-    });
+    return `[EntityDelta]`;
   }
 
   clone(): EntityDelta {
@@ -229,7 +217,7 @@ export class CausalRelation extends Enum<CausalRelationV> {
       StrictDescends: () => new CausalRelation('StrictDescends', {}),
       StrictAscends: () => new CausalRelation('StrictAscends', {}),
       DivergedSince: (v) => new CausalRelation('DivergedSince', { meet: v.meet.clone(), subject: v.subject.clone(), other: v.other.clone() }),
-      Disjoint: (v) => new CausalRelation('Disjoint', { gca: v.gca.clone(), subjectRoot: v.subjectRoot.clone(), otherRoot: v.otherRoot.clone() }),
+      Disjoint: (v) => new CausalRelation('Disjoint', { gca: v.gca?.clone() ?? null, subjectRoot: v.subjectRoot.clone(), otherRoot: v.otherRoot.clone() }),
       BudgetExceeded: (v) => new CausalRelation('BudgetExceeded', { subject: v.subject.clone(), other: v.other.clone() }),
     });
   }
@@ -366,9 +354,9 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
 
   toString(): string {
     return this.match({
-      CommitTransaction: (v) => `CommitTransaction ${v.id} [${Array.from(v.events).map((e) => `${e}`).join(', ')}]`,
-      Get: (v) => `Get ${v.collection} ${Array.from(v.ids).map((id) => id.toBase64Short()).join(', ')}`,
-      GetEvents: (v) => `GetEvents ${v.collection} ${Array.from(v.eventIds).map((id) => id.toBase64Short()).join(', ')}`,
+      CommitTransaction: (v) => `CommitTransaction ${v.id} [${[...v.events].map((e) => `${e}`).join(', ')}]`,
+      Get: (v) => `Get ${v.collection} ${[...v.ids].map((id) => id.toBase64Short()).join(', ')}`,
+      GetEvents: (v) => `GetEvents ${v.collection} ${[...v.eventIds].map((id) => id.toBase64Short()).join(', ')}`,
       Fetch: (v) => `Fetch ${v.collection} ${v.selection} known:${v.knownMatches.length}`,
       SubscribeQuery: (v) => `Subscribe ${v.queryId} ${v.collection} ${v.selection} v${v.version} known:${v.knownMatches.length}`,
     });
@@ -461,8 +449,8 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
     return this.match({
       CommitComplete: (v) => `CommitComplete ${v.id}`,
       Fetch: (v) => `Fetch [${v._0.length}]`,
-      Get: (v) => `Get [${Array.from(v._0).map((s) => s.toString()).join(', ')}]`,
-      GetEvents: (v) => `GetEvents [${Array.from(v._0).map((e) => e.payload.toString()).join(', ')}]`,
+      Get: (v) => `Get [${[...v._0].map((s) => s.toString()).join(', ')}]`,
+      GetEvents: (v) => `GetEvents [${[...v._0].map((e) => e.payload.toString()).join(', ')}]`,
       QuerySubscribed: (v) => `Subscribed ${v.queryId} v.deltas:${v.deltas.length}`,
       Success: () => `Success`,
       Error: (v) => `Error: ${v._0}`,

@@ -248,6 +248,9 @@ fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
             body = replace_identifier(&body, local, accessor);
         }
 
+        // Add type cast for array/tuple returns to avoid TS inference issues
+        let body = if body.starts_with('[') { format!("{} as any", body) } else { body };
+
         if field_mappings.is_empty() {
             out.push_str(&format!("  {}: () => {},\n", variant_name, body));
         } else {
@@ -270,8 +273,9 @@ fn replace_identifier(text: &str, from: &str, to: &str) -> String {
             // Check that it's a standalone identifier (not part of a longer word)
             let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
             let after_ok = i + from.len() >= bytes.len() || !is_ident_char(bytes[i + from.len()]);
-            // Also skip if preceded by '.' (it's already a property access)
-            let not_property = i == 0 || bytes[i - 1] != b'.';
+            // Skip if preceded by '.' (property access) but NOT '...' (spread)
+            let not_property = i == 0 || bytes[i - 1] != b'.'
+                || (i >= 3 && bytes[i-3] == b'.' && bytes[i-2] == b'.' && bytes[i-1] == b'.');
 
             if before_ok && after_ok && not_property {
                 result.push_str(to);

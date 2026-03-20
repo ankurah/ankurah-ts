@@ -500,8 +500,9 @@ impl<'a> BodyTranslator<'a> {
             "position" if args.len() == 1 => format!("{}.findIndex({})", receiver, args[0]),
             "enumerate" => format!("{}.entries()", receiver),
             "collect" => receiver.to_string(),
-            // Array.from works for both arrays (copy) and Maps (entries)
-            "iter" | "intoIter" | "values" => format!("Array.from({})", receiver),
+            // Spread to array — works for both arrays (copy) and Maps/Sets (entries)
+            // Preserves type inference better than Array.from()
+            "iter" | "intoIter" | "values" => format!("[...{}]", receiver),
             "cloned" => format!("[...{}]", receiver),
             "sum" => format!("{}.reduce((a, b) => a + b, 0)", receiver),
             "count" if args.is_empty() => format!("{}.length", receiver),

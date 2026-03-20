@@ -131,7 +131,7 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
 
   toString(): string {
     return this.match({
-      SubscriptionUpdate: (v) => `SubscriptionUpdate [${Array.from(v.items).map((i) => `${i}`).join(', ')}]`,
+      SubscriptionUpdate: (v) => `SubscriptionUpdate [${[...v.items].map((i) => `${i}`).join(', ')}]`,
     });
   }
 
@@ -165,8 +165,8 @@ export class UpdateContent extends Enum<UpdateContentV> {
 
   intoParts(): [StateFragment | null, EventFragment[] | null] {
     return this.match({
-      EventOnly: (v) => [null, v._0],
-      StateAndEvent: (v) => [v._0, v._1],
+      EventOnly: (v) => [null, v._0] as any,
+      StateAndEvent: (v) => [v._0, v._1] as any,
     });
   }
 
