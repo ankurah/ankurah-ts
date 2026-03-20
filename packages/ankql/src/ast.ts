@@ -38,12 +38,28 @@ export class Expr extends Enum<ExprV> {
       Literal: () => this,
       Path: () => this,
       Predicate: (v) => Expr.Predicate(v.predicate.populateRecursive(values)),
-      InfixExpr: (v) => Expr.InfixExpr(
-        v.left.populateRecursive(values),
-        v.operator,
-        v.right.populateRecursive(values),
-      ),
-      ExprList: (v) => Expr.ExprList(v.exprs.map((e) => e.populateRecursive(values))),
+      InfixExpr: (v) => {
+        const left = v.left.populateRecursive(values);
+        try {
+          const right = v.right.populateRecursive(values);
+          return Expr.InfixExpr(left, v.operator, right);
+        } catch (e) {
+          left.drop();
+          throw e;
+        }
+      },
+      ExprList: (v) => {
+        const results: Expr[] = [];
+        try {
+          for (const e of v.exprs) {
+            results.push(e.populateRecursive(values));
+          }
+          return Expr.ExprList(results);
+        } catch (e) {
+          for (const r of results) r.drop();
+          throw e;
+        }
+      },
     });
   }
 }
@@ -329,6 +345,7 @@ export class Predicate extends Enum<PredicateV> {
     // Check if there are any unused values
     const next = iter.next();
     if (!next.done) {
+      result.drop(); // Clean up the populated result before throwing
       throw new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' });
     }
     return result;
@@ -337,19 +354,36 @@ export class Predicate extends Enum<PredicateV> {
   // Rust: fn populate_recursive
   populateRecursive(values: Iterator<Expr>): Predicate {
     return this.match({
-      Comparison: (v) => Predicate.Comparison(
-        v.left.populateRecursive(values),
-        v.operator,
-        v.right.populateRecursive(values),
-      ),
-      And: (v) => Predicate.And(
-        v.left.populateRecursive(values),
-        v.right.populateRecursive(values),
-      ),
-      Or: (v) => Predicate.Or(
-        v.left.populateRecursive(values),
-        v.right.populateRecursive(values),
-      ),
+      Comparison: (v) => {
+        const left = v.left.populateRecursive(values);
+        try {
+          const right = v.right.populateRecursive(values);
+          return Predicate.Comparison(left, v.operator, right);
+        } catch (e) {
+          left.drop();
+          throw e;
+        }
+      },
+      And: (v) => {
+        const left = v.left.populateRecursive(values);
+        try {
+          const right = v.right.populateRecursive(values);
+          return Predicate.And(left, right);
+        } catch (e) {
+          left.drop();
+          throw e;
+        }
+      },
+      Or: (v) => {
+        const left = v.left.populateRecursive(values);
+        try {
+          const right = v.right.populateRecursive(values);
+          return Predicate.Or(left, right);
+        } catch (e) {
+          left.drop();
+          throw e;
+        }
+      },
       Not: (v) => Predicate.Not(v.predicate.populateRecursive(values)),
       IsNull: (v) => Predicate.IsNull(v.expr.populateRecursive(values)),
       True: () => Predicate.True(),
@@ -454,26 +488,26 @@ export function assumeNull(pred: Predicate, columns: string[]): Predicate {
       const left = assumeNull(v.left, columns);
       const right = assumeNull(v.right, columns);
 
-      if (left.is('False') || right.is('False')) return Predicate.False();
-      if (left.is('True') && right.is('True')) return Predicate.True();
-      if (left.is('True')) return right;
-      if (right.is('True')) return left;
+      if (left.is('False') || right.is('False')) { left.drop(); right.drop(); return Predicate.False(); }
+      if (left.is('True') && right.is('True')) { left.drop(); right.drop(); return Predicate.True(); }
+      if (left.is('True')) { left.drop(); return right; }
+      if (right.is('True')) { right.drop(); return left; }
       return Predicate.And(left, right);
     },
     Or: (v) => {
       const left = assumeNull(v.left, columns);
       const right = assumeNull(v.right, columns);
 
-      if (left.is('True') || right.is('True')) return Predicate.True();
-      if (left.is('False') && right.is('False')) return Predicate.False();
-      if (left.is('False')) return right;
-      if (right.is('False')) return left;
+      if (left.is('True') || right.is('True')) { left.drop(); right.drop(); return Predicate.True(); }
+      if (left.is('False') && right.is('False')) { left.drop(); right.drop(); return Predicate.False(); }
+      if (left.is('False')) { left.drop(); return right; }
+      if (right.is('False')) { right.drop(); return left; }
       return Predicate.Or(left, right);
     },
     Not: (v) => {
       const inner = assumeNull(v.predicate, columns);
-      if (inner.is('True')) return Predicate.False();
-      if (inner.is('False')) return Predicate.True();
+      if (inner.is('True')) { inner.drop(); return Predicate.False(); }
+      if (inner.is('False')) { inner.drop(); return Predicate.True(); }
       return Predicate.Not(inner);
     },
     True: () => Predicate.True(),
@@ -522,8 +556,13 @@ export function exprFromLiteral(lit: Literal): Expr {
 
 // Rust: fn try_from (TryFrom<Expr> for Predicate)
 export function exprToPredicate(expr: Expr): Predicate {
-  return expr.match({
-    Predicate: (v) => v.predicate,
+  const result = expr.match({
+    Predicate: (v) => {
+      // Move inner predicate out before dropping the Expr wrapper
+      const pred = v.predicate;
+      (v as any).predicate = null; // detach so drop() won't cascade into it
+      return pred;
+    },
     Placeholder: () => Predicate.Placeholder(),
     Literal: (v) => {
       if (v.literal.is('Bool')) {
@@ -535,6 +574,8 @@ export function exprToPredicate(expr: Expr): Predicate {
     InfixExpr: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
     ExprList: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
   });
+  expr.drop(); // Drop the consumed Expr wrapper (Rust: implicit drop on move)
+  return result;
 }
 
 // ── Display helpers ──────────────────────────────────────────────────

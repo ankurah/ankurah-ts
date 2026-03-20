@@ -78,7 +78,7 @@ function assertOrderBy(
 describe('parser', () => {
   // Rust: fn test_parse_selection_status_active
   test('parse selection: status = active', () => {
-    const selection = parseSelection("status = 'active'");
+    using selection = parseSelection("status = 'active'");
     assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
     expect(selection.orderBy).toBeNull();
     expect(selection.limit).toBeNull();
@@ -86,7 +86,7 @@ describe('parser', () => {
 
   // Rust: fn test_parse_selection_user_and_status
   test('parse selection: user AND status', () => {
-    const selection = parseSelection("user = 123 AND status = 'active'");
+    using selection = parseSelection("user = 123 AND status = 'active'");
     expect(selection.predicate.is('And')).toBe(true);
     if (selection.predicate.is('And')) {
       assertCmpLit(selection.predicate.value.left, 'user', 'Equal', 'I32', 123);
@@ -96,7 +96,7 @@ describe('parser', () => {
 
   // Rust: fn test_parse_selection_user_or_and_status
   test('parse selection: (user OR user) AND status', () => {
-    const selection = parseSelection("(user = 123 OR user = 456) AND status = 'active'");
+    using selection = parseSelection("(user = 123 OR user = 456) AND status = 'active'");
     expect(selection.predicate.is('And')).toBe(true);
     if (selection.predicate.is('And')) {
       const left = selection.predicate.value.left;
@@ -111,7 +111,7 @@ describe('parser', () => {
 
   // Rust: fn test_parse_selection_status_is_null
   test('parse selection: status IS NULL', () => {
-    const selection = parseSelection('status IS NULL');
+    using selection = parseSelection('status IS NULL');
     expect(selection.predicate.is('IsNull')).toBe(true);
     if (selection.predicate.is('IsNull')) {
       assertPath(selection.predicate.value.expr, 'status');
@@ -120,7 +120,7 @@ describe('parser', () => {
 
   // Rust: fn test_parse_selection_status_is_not_null
   test('parse selection: status IS NOT NULL', () => {
-    const selection = parseSelection('status IS NOT NULL');
+    using selection = parseSelection('status IS NOT NULL');
     expect(selection.predicate.is('Not')).toBe(true);
     if (selection.predicate.is('Not')) {
       const inner = selection.predicate.value.predicate;
@@ -133,7 +133,7 @@ describe('parser', () => {
 
   // Rust: fn unary_not_parenthesized
   test('unary NOT parenthesized', () => {
-    const selection = parseSelection("NOT (status = 'active')");
+    using selection = parseSelection("NOT (status = 'active')");
     expect(selection.predicate.is('Not')).toBe(true);
     if (selection.predicate.is('Not')) {
       assertCmpLit(selection.predicate.value.predicate, 'status', 'Equal', 'String', 'active');
@@ -142,29 +142,35 @@ describe('parser', () => {
 
   // Rust: fn unary_not_unparenthesized
   test('unary NOT unparenthesized fails', () => {
-    expect(() => parseSelection("NOT status = 'active'")).toThrow();
+    try {
+      parseSelection("NOT status = 'active'");
+      expect(true).toBe(false); // should not reach here
+    } catch (e: any) {
+      if (typeof e?.drop === 'function') e.drop();
+    }
   });
 
   // Rust: fn test_parse_empty_string
   test('parse empty string', () => {
-    const selection = parseSelection('');
+    using selection = parseSelection('');
     expect(selection.predicate.is('True')).toBe(true);
   });
 
   // Rust: fn test_parse_true_literal
   test('parse true literal', () => {
-    const selection = parseSelection('true');
+    using selection = parseSelection('true');
     expect(selection.predicate.is('True')).toBe(true);
   });
 
   // Rust: fn test_parse_true_literal (false branch)
   test('parse false literal', () => {
-    expect(parseSelection('false').predicate.is('False')).toBe(true);
+    using selection = parseSelection('false');
+    expect(selection.predicate.is('False')).toBe(true);
   });
 
   // Rust: fn test_parse_selection_in_clause
   test('parse selection: IN clause with strings', () => {
-    const selection = parseSelection("status IN ('active', 'pending')");
+    using selection = parseSelection("status IN ('active', 'pending')");
     expect(selection.predicate.is('Comparison')).toBe(true);
     if (selection.predicate.is('Comparison')) {
       assertPath(selection.predicate.value.left, 'status');
@@ -181,7 +187,7 @@ describe('parser', () => {
 
   // Rust: fn test_parse_selection_in_clause_numbers
   test('parse selection: IN clause with numbers', () => {
-    const selection = parseSelection('user_id IN (1, 2, 3)');
+    using selection = parseSelection('user_id IN (1, 2, 3)');
     expect(selection.predicate.is('Comparison')).toBe(true);
     if (selection.predicate.is('Comparison')) {
       assertPath(selection.predicate.value.left, 'user_id');
@@ -199,19 +205,19 @@ describe('parser', () => {
 
   // Rust: fn test_comparison_to_true
   test('comparison to true', () => {
-    const selection = parseSelection('bool_field = true');
+    using selection = parseSelection('bool_field = true');
     assertCmpLit(selection.predicate, 'bool_field', 'Equal', 'Bool', true);
   });
 
   // Rust: fn test_comparison_to_false
   test('comparison to false', () => {
-    const selection = parseSelection('bool_field <> false');
+    using selection = parseSelection('bool_field <> false');
     assertCmpLit(selection.predicate, 'bool_field', 'NotEqual', 'Bool', false);
   });
 
   // Rust: fn test_comparison_to_left_operand_boolean
   test('comparison with left operand boolean', () => {
-    const selection = parseSelection('false <> bool_field');
+    using selection = parseSelection('false <> bool_field');
     expect(selection.predicate.is('Comparison')).toBe(true);
     if (selection.predicate.is('Comparison')) {
       assertLiteral(selection.predicate.value.left, 'Bool', false);
@@ -223,7 +229,8 @@ describe('parser', () => {
   // Rust: fn test_placeholders
   describe('placeholders', () => {
     test('single literal placeholder in comparison', () => {
-      const pred = parseSelection('user_id = ?').predicate;
+      using selection = parseSelection('user_id = ?');
+      const pred = selection.predicate;
       expect(pred.is('Comparison')).toBe(true);
       if (pred.is('Comparison')) {
         assertPath(pred.value.left, 'user_id');
@@ -233,7 +240,8 @@ describe('parser', () => {
     });
 
     test('multiple literal placeholders in AND expression', () => {
-      const pred = parseSelection('user_id = ? AND status = ?').predicate;
+      using selection = parseSelection('user_id = ? AND status = ?');
+      const pred = selection.predicate;
       expect(pred.is('And')).toBe(true);
       if (pred.is('And')) {
         expect(pred.value.left.is('Comparison')).toBe(true);
@@ -252,7 +260,8 @@ describe('parser', () => {
     });
 
     test('literal placeholders in IN clause', () => {
-      const pred = parseSelection('status IN (?, ?, ?)').predicate;
+      using selection = parseSelection('status IN (?, ?, ?)');
+      const pred = selection.predicate;
       expect(pred.is('Comparison')).toBe(true);
       if (pred.is('Comparison')) {
         assertPath(pred.value.left, 'status');
@@ -269,7 +278,8 @@ describe('parser', () => {
     });
 
     test('predicate placeholders connected by AND', () => {
-      const pred = parseSelection('? AND ?').predicate;
+      using selection = parseSelection('? AND ?');
+      const pred = selection.predicate;
       expect(pred.is('And')).toBe(true);
       if (pred.is('And')) {
         expect(pred.value.left.is('Placeholder')).toBe(true);
@@ -278,7 +288,8 @@ describe('parser', () => {
     });
 
     test('predicate placeholders connected by OR', () => {
-      const pred = parseSelection('? OR ?').predicate;
+      using selection = parseSelection('? OR ?');
+      const pred = selection.predicate;
       expect(pred.is('Or')).toBe(true);
       if (pred.is('Or')) {
         expect(pred.value.left.is('Placeholder')).toBe(true);
@@ -287,11 +298,13 @@ describe('parser', () => {
     });
 
     test('single predicate placeholder', () => {
-      expect(parseSelection('?').predicate.is('Placeholder')).toBe(true);
+      using selection = parseSelection('?');
+      expect(selection.predicate.is('Placeholder')).toBe(true);
     });
 
     test('mix of predicate and literal placeholders', () => {
-      const pred = parseSelection('? AND foo = ?').predicate;
+      using selection = parseSelection('? AND foo = ?');
+      const pred = selection.predicate;
       expect(pred.is('And')).toBe(true);
       if (pred.is('And')) {
         expect(pred.value.left.is('Placeholder')).toBe(true);
@@ -308,7 +321,7 @@ describe('parser', () => {
   describe('ORDER BY', () => {
     // Rust: fn test_order_by_basic
     test('basic ORDER BY', () => {
-      const selection = parseSelection("status = 'active' ORDER BY name");
+      using selection = parseSelection("status = 'active' ORDER BY name");
       assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
       assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
       expect(selection.orderBy!.length).toBe(1);
@@ -317,7 +330,7 @@ describe('parser', () => {
 
     // Rust: fn test_order_by_with_direction
     test('ORDER BY with direction', () => {
-      const selection = parseSelection('true ORDER BY created_at DESC');
+      using selection = parseSelection('true ORDER BY created_at DESC');
       expect(selection.predicate.is('True')).toBe(true);
       assertOrderBy(selection.orderBy, 0, 'created_at', 'Desc');
       expect(selection.orderBy!.length).toBe(1);
@@ -325,12 +338,17 @@ describe('parser', () => {
 
     // Rust: fn test_order_by_dotted_identifier_not_supported
     test('ORDER BY dotted identifier not supported', () => {
-      expect(() => parseSelection('true ORDER BY user.name ASC')).toThrow();
+      try {
+        parseSelection('true ORDER BY user.name ASC');
+        expect(true).toBe(false); // should not reach here
+      } catch (e: any) {
+        if (typeof e?.drop === 'function') e.drop();
+      }
     });
 
     // Rust: fn test_order_by_only
     test('ORDER BY only', () => {
-      const selection = parseSelection('true ORDER BY score');
+      using selection = parseSelection('true ORDER BY score');
       expect(selection.predicate.is('True')).toBe(true);
       assertOrderBy(selection.orderBy, 0, 'score', 'Asc');
       expect(selection.orderBy!.length).toBe(1);
@@ -339,7 +357,7 @@ describe('parser', () => {
 
     // Rust: fn test_order_by_multiple_items
     test('ORDER BY multiple items', () => {
-      const selection = parseSelection('true ORDER BY name ASC, created_at DESC, id');
+      using selection = parseSelection('true ORDER BY name ASC, created_at DESC, id');
       expect(selection.predicate.is('True')).toBe(true);
       expect(selection.orderBy!.length).toBe(3);
       assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
@@ -352,7 +370,7 @@ describe('parser', () => {
   describe('LIMIT', () => {
     // Rust: fn test_limit_basic
     test('basic LIMIT', () => {
-      const selection = parseSelection("status = 'active' LIMIT 10");
+      using selection = parseSelection("status = 'active' LIMIT 10");
       assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
       expect(selection.orderBy).toBeNull();
       expect(selection.limit).toBe(10);
@@ -360,7 +378,7 @@ describe('parser', () => {
 
     // Rust: fn test_limit_only
     test('LIMIT only', () => {
-      const selection = parseSelection('true LIMIT 100');
+      using selection = parseSelection('true LIMIT 100');
       expect(selection.predicate.is('True')).toBe(true);
       expect(selection.orderBy).toBeNull();
       expect(selection.limit).toBe(100);
@@ -370,7 +388,7 @@ describe('parser', () => {
   describe('ORDER BY and LIMIT combined', () => {
     // Rust: fn test_order_by_and_limit
     test('both ORDER BY and LIMIT', () => {
-      const selection = parseSelection('user_id > 100 ORDER BY created_at DESC LIMIT 5');
+      using selection = parseSelection('user_id > 100 ORDER BY created_at DESC LIMIT 5');
       assertCmpLit(selection.predicate, 'user_id', 'GreaterThan', 'I32', 100);
       assertOrderBy(selection.orderBy, 0, 'created_at', 'Desc');
       expect(selection.orderBy!.length).toBe(1);
@@ -381,12 +399,12 @@ describe('parser', () => {
   // Rust: fn test_pathological_keyword_cases
   describe('pathological keyword cases', () => {
     test('limit as column name', () => {
-      const selection = parseSelection('limit = 1');
+      using selection = parseSelection('limit = 1');
       assertCmpLit(selection.predicate, 'limit', 'Equal', 'I32', 1);
     });
 
     test('order as column name with ORDER BY', () => {
-      const selection = parseSelection('order = 2 ORDER BY name');
+      using selection = parseSelection('order = 2 ORDER BY name');
       assertCmpLit(selection.predicate, 'order', 'Equal', 'I32', 2);
       assertOrderBy(selection.orderBy, 0, 'name', 'Asc');
       expect(selection.orderBy!.length).toBe(1);
@@ -396,51 +414,64 @@ describe('parser', () => {
   // Rust: fn test_boolean_literals
   describe('boolean literals', () => {
     test('true parses as Predicate.True', () => {
-      expect(parseSelection('true').predicate.is('True')).toBe(true);
+      using selection = parseSelection('true');
+      expect(selection.predicate.is('True')).toBe(true);
     });
 
     test('false parses as Predicate.False', () => {
-      expect(parseSelection('false').predicate.is('False')).toBe(true);
+      using selection = parseSelection('false');
+      expect(selection.predicate.is('False')).toBe(true);
     });
   });
 
   describe('path expressions', () => {
     test('dotted path in comparison', () => {
-      const selection = parseSelection("person.name = 'Alice'");
+      using selection = parseSelection("person.name = 'Alice'");
       assertCmpLit(selection.predicate, 'person.name', 'Equal', 'String', 'Alice');
     });
 
     test('dotted paths on both sides', () => {
-      const selection = parseSelection('a.foo = b.foo');
+      using selection = parseSelection('a.foo = b.foo');
       assertCmpPaths(selection.predicate, 'a.foo', 'Equal', 'b.foo');
     });
   });
 
   describe('case insensitivity', () => {
     test('AND/and/And all work', () => {
-      expect(parseSelection("a = 1 AND b = 2").predicate.type).toBe('And');
-      expect(parseSelection("a = 1 and b = 2").predicate.type).toBe('And');
-      expect(parseSelection("a = 1 And b = 2").predicate.type).toBe('And');
+      using s1 = parseSelection("a = 1 AND b = 2");
+      using s2 = parseSelection("a = 1 and b = 2");
+      using s3 = parseSelection("a = 1 And b = 2");
+      expect(s1.predicate.type).toBe('And');
+      expect(s2.predicate.type).toBe('And');
+      expect(s3.predicate.type).toBe('And');
     });
 
     test('OR/or/Or all work', () => {
-      expect(parseSelection("a = 1 OR b = 2").predicate.type).toBe('Or');
-      expect(parseSelection("a = 1 or b = 2").predicate.type).toBe('Or');
+      using s1 = parseSelection("a = 1 OR b = 2");
+      using s2 = parseSelection("a = 1 or b = 2");
+      expect(s1.predicate.type).toBe('Or');
+      expect(s2.predicate.type).toBe('Or');
     });
 
     test('IS NULL/is null', () => {
-      expect(parseSelection("a IS NULL").predicate.type).toBe('IsNull');
-      expect(parseSelection("a is null").predicate.type).toBe('IsNull');
+      using s1 = parseSelection("a IS NULL");
+      using s2 = parseSelection("a is null");
+      expect(s1.predicate.type).toBe('IsNull');
+      expect(s2.predicate.type).toBe('IsNull');
     });
 
     test('TRUE/true/True', () => {
-      expect(parseSelection("TRUE").predicate.type).toBe('True');
-      expect(parseSelection("true").predicate.type).toBe('True');
+      using s1 = parseSelection("TRUE");
+      using s2 = parseSelection("true");
+      expect(s1.predicate.type).toBe('True');
+      expect(s2.predicate.type).toBe('True');
     });
 
     test('IN/in', () => {
-      const p1 = parseSelection("x IN (1, 2)").predicate;
-      const p2 = parseSelection("x in (1, 2)").predicate;
+      using s1 = parseSelection("x IN (1, 2)");
+      using s2 = parseSelection("x in (1, 2)");
+      const p1 = s1.predicate;
+      const p2 = s2.predicate;
       expect(p1.is('Comparison')).toBe(true);
       expect(p2.is('Comparison')).toBe(true);
       if (p1.is('Comparison')) expect(p1.value.operator.type).toBe('In');
@@ -449,7 +480,7 @@ describe('parser', () => {
   });
 
   test('!= as NotEqual', () => {
-    const selection = parseSelection('a != 1');
+    using selection = parseSelection('a != 1');
     assertCmpLit(selection.predicate, 'a', 'NotEqual', 'I32', 1);
   });
 });

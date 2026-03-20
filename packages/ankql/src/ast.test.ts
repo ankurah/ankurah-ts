@@ -21,8 +21,8 @@ import {
 // Rust: fn nullify_columns
 /** Parse input, null-ify columns, generate SQL. */
 function nullifyColumns(input: string, nullColumns: string[]): string {
-  const selection = parseSelection(input);
-  const result = assumeNull(selection.predicate, nullColumns);
+  using selection = parseSelection(input);
+  using result = assumeNull(selection.predicate, nullColumns);
   return generateSelectionSql(result);
 }
 
@@ -84,10 +84,9 @@ describe('assume_null', () => {
 describe('populate', () => {
   // Rust: fn test_populate_single_placeholder()
   test('single placeholder', () => {
-    const selection = parseSelection('name = ?');
-    const populated = populatePredicate(selection.predicate, [
-      exprFromString('Alice'),
-    ]);
+    using selection = parseSelection('name = ?');
+    const arg0 = exprFromString('Alice');
+    using populated = populatePredicate(selection.predicate, [arg0]);
 
     assertComparison(populated, 'name', 'Equal', {
       type: 'String',
@@ -97,11 +96,10 @@ describe('populate', () => {
 
   // Rust: fn test_populate_multiple_placeholders()
   test('multiple placeholders', () => {
-    const selection = parseSelection('age > ? AND name = ?');
-    const populated = populatePredicate(selection.predicate, [
-      exprFromI64(25n),
-      exprFromString('Bob'),
-    ]);
+    using selection = parseSelection('age > ? AND name = ?');
+    const arg0 = exprFromI64(25n);
+    const arg1 = exprFromString('Bob');
+    using populated = populatePredicate(selection.predicate, [arg0, arg1]);
 
     expect(populated.is('And')).toBe(true);
     if (populated.is('And')) {
@@ -118,12 +116,11 @@ describe('populate', () => {
 
   // Rust: fn test_populate_in_clause()
   test('IN clause placeholders', () => {
-    const selection = parseSelection('status IN (?, ?, ?)');
-    const populated = populatePredicate(selection.predicate, [
-      exprFromString('active'),
-      exprFromString('pending'),
-      exprFromString('review'),
-    ]);
+    using selection = parseSelection('status IN (?, ?, ?)');
+    const arg0 = exprFromString('active');
+    const arg1 = exprFromString('pending');
+    const arg2 = exprFromString('review');
+    using populated = populatePredicate(selection.predicate, [arg0, arg1, arg2]);
 
     expect(populated.is('Comparison')).toBe(true);
     if (populated.is('Comparison')) {
@@ -151,12 +148,11 @@ describe('populate', () => {
 
   // Rust: fn test_populate_mixed_types()
   test('mixed types', () => {
-    const selection = parseSelection('active = ? AND score > ? AND name = ?');
-    const populated = populatePredicate(selection.predicate, [
-      exprFromBool(true),
-      exprFromF64(95.5),
-      exprFromString('Charlie'),
-    ]);
+    using selection = parseSelection('active = ? AND score > ? AND name = ?');
+    const arg0 = exprFromBool(true);
+    const arg1 = exprFromF64(95.5);
+    const arg2 = exprFromString('Charlie');
+    using populated = populatePredicate(selection.predicate, [arg0, arg1, arg2]);
 
     // Structure: And(And(active=true, score>95.5), name='Charlie')
     expect(populated.is('And')).toBe(true);
@@ -187,27 +183,35 @@ describe('populate', () => {
 
   // Rust: fn test_populate_too_few_values()
   test('too few values', () => {
-    const selection = parseSelection('name = ? AND age = ?');
-    expect(() =>
-      populatePredicate(selection.predicate, [exprFromString('Alice')]),
-    ).toThrow(/Not enough values/);
+    using selection = parseSelection('name = ? AND age = ?');
+    using arg0 = exprFromString('Alice');
+    try {
+      populatePredicate(selection.predicate, [arg0]);
+      expect(true).toBe(false); // should not reach here
+    } catch (e: any) {
+      expect(e.message).toMatch(/Not enough values/);
+      if (typeof e?.drop === 'function') e.drop();
+    }
   });
 
   // Rust: fn test_populate_too_many_values()
   test('too many values', () => {
-    const selection = parseSelection('name = ?');
-    expect(() =>
-      populatePredicate(selection.predicate, [
-        exprFromString('Alice'),
-        exprFromString('Bob'),
-      ]),
-    ).toThrow(/Too many values/);
+    using selection = parseSelection('name = ?');
+    using arg0 = exprFromString('Alice');
+    using arg1 = exprFromString('Bob');
+    try {
+      populatePredicate(selection.predicate, [arg0, arg1]);
+      expect(true).toBe(false); // should not reach here
+    } catch (e: any) {
+      expect(e.message).toMatch(/Too many values/);
+      if (typeof e?.drop === 'function') e.drop();
+    }
   });
 
   // Rust: fn test_populate_no_placeholders()
   test('no placeholders', () => {
-    const selection = parseSelection("name = 'Alice'");
-    const populated = populatePredicate(selection.predicate, []);
+    using selection = parseSelection("name = 'Alice'");
+    using populated = populatePredicate(selection.predicate, []);
 
     // Should have same structure as original
     expect(populated.type).toBe(selection.predicate.type);

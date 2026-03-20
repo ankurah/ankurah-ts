@@ -390,22 +390,31 @@ class Parser {
     let orderBy: OrderByItem[] | null = null;
     let limit: number | null = null;
 
-    if (this.peek().type === 'OrderBy') {
-      this.advance();
-      orderBy = this.parseOrderByItems();
-    }
+    try {
+      if (this.peek().type === 'OrderBy') {
+        this.advance();
+        orderBy = this.parseOrderByItems();
+      }
 
-    // Rust: fn parse_limit_clause
-    if (this.peek().type === 'Limit') {
-      this.advance();
-      const tok = this.expect('Unsigned');
-      limit = parseInt(tok.value, 10);
-    }
+      // Rust: fn parse_limit_clause
+      if (this.peek().type === 'Limit') {
+        this.advance();
+        const tok = this.expect('Unsigned');
+        limit = parseInt(tok.value, 10);
+      }
 
-    if (!this.isAtEnd()) {
-      throw new ParseError('SyntaxError', {
-        _0: `Unexpected token '${this.peek().value}' (${this.peek().type}) at position ${this.peek().pos}`,
-      });
+      if (!this.isAtEnd()) {
+        throw new ParseError('SyntaxError', {
+          _0: `Unexpected token '${this.peek().value}' (${this.peek().type}) at position ${this.peek().pos}`,
+        });
+      }
+    } catch (e) {
+      // Clean up already-parsed predicate and orderBy on error
+      predicate.drop();
+      if (orderBy) {
+        for (const item of orderBy) item.drop();
+      }
+      throw e;
     }
 
     return new Selection(predicate, orderBy, limit);
@@ -711,13 +720,15 @@ class Parser {
 
     const path = PathExpr.simple(tok.value);
 
-    let direction = OrderDirection.Asc();
+    let direction: OrderDirection;
     if (this.peek().type === 'Asc') {
       this.advance();
       direction = OrderDirection.Asc();
     } else if (this.peek().type === 'Desc') {
       this.advance();
       direction = OrderDirection.Desc();
+    } else {
+      direction = OrderDirection.Asc();
     }
 
     return new OrderByItem(path, direction);
