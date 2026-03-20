@@ -65,7 +65,7 @@ import {
 
 import { Item } from '../src/sys';
 
-import { ulidStringToBytes } from '../src/id';
+import { ulidStringToBytes } from '../src/id.provided';
 
 // ── Fixture path resolution ─────────────────────────────────────────────────
 
@@ -360,35 +360,35 @@ describe('ids.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // EntityId: bytes [0,1,2,...,15]
-    const entityId = EntityId.decode(reader);
+    using entityId = EntityId.decode(reader);
     expect(entityId.bytes).toEqual(new Uint8Array([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]));
 
     // EventId: bytes [0,1,2,...,31]
-    const eventId = EventId.decode(reader);
+    using eventId = EventId.decode(reader);
     expect(eventId.bytes).toEqual(new Uint8Array([
       0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
       16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
     ]));
 
     // TransactionId: ULID string "00000000000000000000000016" (seed=0x10=16)
-    const transactionId = TransactionId.decode(reader);
+    using transactionId = TransactionId.decode(reader);
     expect(transactionId.toUlidString()).toBe('00000000000000000000000016');
 
     // RequestId: ULID string "00000000000000000000000032" (seed=0x20=32)
-    const requestId = RequestId.decode(reader);
+    using requestId = RequestId.decode(reader);
     expect(requestId.toUlidString()).toBe('00000000000000000000000032');
 
     // QueryId: test(42) = Ulid::from_parts(42, 0)
-    const queryId = QueryId.decode(reader);
-    expect(queryId.toUlidString()).toBe(QueryId.test(42n).toUlidString());
+    using queryId = QueryId.decode(reader);
+    { using expected = QueryId.test(42n); expect(queryId.toUlidString()).toBe(expected.toUlidString()); }
 
     // UpdateId: ULID string "00000000000000000000000048" (seed=0x30=48)
-    const updateId = UpdateId.decode(reader);
+    using updateId = UpdateId.decode(reader);
     expect(updateId.toUlidString()).toBe('00000000000000000000000048');
 
     // CollectionId: "test_collection"
-    const collectionId = CollectionId.decode(reader);
-    expect(collectionId.value).toBe('test_collection');
+    using collectionId = CollectionId.decode(reader);
+    expect(collectionId.asStr()).toBe('test_collection');
 
     expect(reader.remaining).toBe(0);
   });
@@ -398,19 +398,26 @@ describe('ids.bin fixture', () => {
     const writer = new BincodeWriter();
 
     // EntityId: bytes [0..15]
-    EntityId.fromBytes(new Uint8Array([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])).encode(writer);
+    using entityId = EntityId.fromBytes(new Uint8Array([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]));
+    entityId.encode(writer);
 
     // EventId: bytes [0..31]
-    EventId.fromBytes(new Uint8Array([
+    using eventId = EventId.fromBytes(new Uint8Array([
       0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
       16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
-    ])).encode(writer);
+    ]));
+    eventId.encode(writer);
 
-    makeTransactionId(0x10).encode(writer);
-    makeRequestId(0x20).encode(writer);
-    makeQueryId(42).encode(writer);
-    makeUpdateId(0x30).encode(writer);
-    makeCollectionId('test_collection').encode(writer);
+    using transactionId = makeTransactionId(0x10);
+    transactionId.encode(writer);
+    using requestId = makeRequestId(0x20);
+    requestId.encode(writer);
+    using queryId = makeQueryId(42);
+    queryId.encode(writer);
+    using updateId = makeUpdateId(0x30);
+    updateId.encode(writer);
+    using collectionId = makeCollectionId('test_collection');
+    collectionId.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'ids.bin');
   });
@@ -425,18 +432,26 @@ describe('clock.bin fixture', () => {
     const data = loadFixture('clock.bin');
     const reader = new BincodeReader(data);
 
-    const empty = Clock.decode(reader);
+    using empty = Clock.decode(reader);
     expect(empty.length).toBe(0);
 
-    const single = Clock.decode(reader);
+    using single = Clock.decode(reader);
     expect(single.length).toBe(1);
-    expect(single.asSlice()[0].bytes).toEqual(makeEventId(0x10).bytes);
+    {
+      using expected = makeEventId(0x10);
+      expect(single.asSlice()[0].bytes).toEqual(expected.bytes);
+    }
 
-    const multi = Clock.decode(reader);
+    using multi = Clock.decode(reader);
     expect(multi.length).toBe(3);
-    expect(multi.asSlice()[0].bytes).toEqual(makeEventId(0x10).bytes);
-    expect(multi.asSlice()[1].bytes).toEqual(makeEventId(0x30).bytes);
-    expect(multi.asSlice()[2].bytes).toEqual(makeEventId(0x50).bytes);
+    {
+      using e0 = makeEventId(0x10);
+      using e1 = makeEventId(0x30);
+      using e2 = makeEventId(0x50);
+      expect(multi.asSlice()[0].bytes).toEqual(e0.bytes);
+      expect(multi.asSlice()[1].bytes).toEqual(e1.bytes);
+      expect(multi.asSlice()[2].bytes).toEqual(e2.bytes);
+    }
 
     expect(reader.remaining).toBe(0);
   });
@@ -445,9 +460,12 @@ describe('clock.bin fixture', () => {
     const fixture = loadFixture('clock.bin');
     const writer = new BincodeWriter();
 
-    makeClockEmpty().encode(writer);
-    makeClockSingle().encode(writer);
-    makeClockMulti().encode(writer);
+    using clockEmpty = makeClockEmpty();
+    clockEmpty.encode(writer);
+    using clockSingle = makeClockSingle();
+    clockSingle.encode(writer);
+    using clockMulti = makeClockMulti();
+    clockMulti.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'clock.bin');
   });
@@ -463,31 +481,31 @@ describe('auth.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // AuthData with bytes
-    const authDataBytes = AuthData.decode(reader);
+    using authDataBytes = AuthData.decode(reader);
     expect(authDataBytes._0).toEqual(new Uint8Array([0x01, 0x02, 0x03]));
 
     // AuthData empty
-    const authDataEmpty = AuthData.decode(reader);
+    using authDataEmpty = AuthData.decode(reader);
     expect(authDataEmpty._0).toEqual(new Uint8Array([]));
 
     // Attestation
-    const attestation = Attestation.decode(reader);
+    using attestation = Attestation.decode(reader);
     expect(attestation._0).toEqual(new Uint8Array([0x42, 0x43]));
 
     // AttestationSet empty
-    const attestationSetEmpty = AttestationSet.decode(reader);
+    using attestationSetEmpty = AttestationSet.decode(reader);
     expect(attestationSetEmpty.length).toBe(0);
 
     // AttestationSet with two
-    const attestationSetTwo = AttestationSet.decode(reader);
+    using attestationSetTwo = AttestationSet.decode(reader);
     expect(attestationSetTwo.length).toBe(2);
     expect(attestationSetTwo._0[0]._0).toEqual(new Uint8Array([0x42, 0x43]));
     expect(attestationSetTwo._0[1]._0).toEqual(new Uint8Array([0x44, 0x45, 0x46]));
 
     // Attested<EntityState>
-    const attested = Attested.decode(reader, r => EntityState.decode(r));
-    expect(attested.payload.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
-    expect(attested.payload.collection.value).toBe('test_collection');
+    using attested = Attested.decode(reader, r => EntityState.decode(r));
+    { using expected = makeEntityId(0x00); expect(attested.payload.entityId.bytes).toEqual(expected.bytes); }
+    expect(attested.payload.collection.asStr()).toBe('test_collection');
     expect(attested.attestations.length).toBe(2);
 
     expect(reader.remaining).toBe(0);
@@ -497,13 +515,18 @@ describe('auth.bin fixture', () => {
     const fixture = loadFixture('auth.bin');
     const writer = new BincodeWriter();
 
-    new AuthData(new Uint8Array([0x01, 0x02, 0x03])).encode(writer);
-    new AuthData(new Uint8Array([])).encode(writer);
-    makeAttestation([0x42, 0x43]).encode(writer);
-    makeAttestationSetEmpty().encode(writer);
-    makeAttestationSetTwo().encode(writer);
+    using authData1 = new AuthData(new Uint8Array([0x01, 0x02, 0x03]));
+    authData1.encode(writer);
+    using authData2 = new AuthData(new Uint8Array([]));
+    authData2.encode(writer);
+    using attestation = makeAttestation([0x42, 0x43]);
+    attestation.encode(writer);
+    using attestationSetEmpty = makeAttestationSetEmpty();
+    attestationSetEmpty.encode(writer);
+    using attestationSetTwo = makeAttestationSetTwo();
+    attestationSetTwo.encode(writer);
 
-    const attested = new Attested(makeEntityState(), makeAttestationSetTwo());
+    using attested = new Attested(makeEntityState(), makeAttestationSetTwo());
     attested.encode(writer, (w, es) => es.encode(w));
 
     expectBytesEqual(writer.finish(), fixture, 'auth.bin');
@@ -520,11 +543,11 @@ describe('data.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // Operation
-    const operation = Operation.decode(reader);
+    using operation = Operation.decode(reader);
     expect(operation.diff).toEqual(new Uint8Array([0xAA, 0xBB, 0xCC]));
 
     // OperationSet
-    const operationSet = OperationSet.decode(reader);
+    using operationSet = OperationSet.decode(reader);
     expect(operationSet._0.size).toBe(2);
     const backendA = operationSet.get('backend_a')!;
     expect(backendA.length).toBe(2);
@@ -535,38 +558,38 @@ describe('data.bin fixture', () => {
     expect(backendB[0].diff).toEqual(new Uint8Array([0xDD, 0xEE, 0xFF]));
 
     // StateBuffers
-    const stateBuffers = StateBuffers.decode(reader);
+    using stateBuffers = StateBuffers.decode(reader);
     expect(stateBuffers._0.size).toBe(2);
     expect(stateBuffers.get('buf_alpha')).toEqual(new Uint8Array([0x01, 0x02, 0x03]));
     expect(stateBuffers.get('buf_beta')).toEqual(new Uint8Array([0x04, 0x05]));
 
     // State
-    const state = State.decode(reader);
+    using state = State.decode(reader);
     expect(state.stateBuffers._0.size).toBe(2);
     expect(state.head.length).toBe(1);
 
     // StateFragment
-    const stateFragment = StateFragment.decode(reader);
+    using stateFragment = StateFragment.decode(reader);
     expect(stateFragment.state.stateBuffers._0.size).toBe(2);
     expect(stateFragment.attestations.length).toBe(2);
 
     // Event
-    const event = Event.decode(reader);
-    expect(event.collection.value).toBe('test_collection');
-    expect(event.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
+    using event = Event.decode(reader);
+    expect(event.collection.asStr()).toBe('test_collection');
+    { using expected = makeEntityId(0x00); expect(event.entityId.bytes).toEqual(expected.bytes); }
     expect(event.operations._0.size).toBe(2);
     expect(event.parent.length).toBe(1);
 
     // EventFragment
-    const eventFragment = EventFragment.decode(reader);
+    using eventFragment = EventFragment.decode(reader);
     expect(eventFragment.operations._0.size).toBe(2);
     expect(eventFragment.parent.length).toBe(1);
     expect(eventFragment.attestations.length).toBe(0);
 
     // EntityState
-    const entityState = EntityState.decode(reader);
-    expect(entityState.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
-    expect(entityState.collection.value).toBe('test_collection');
+    using entityState = EntityState.decode(reader);
+    { using expected = makeEntityId(0x00); expect(entityState.entityId.bytes).toEqual(expected.bytes); }
+    expect(entityState.collection.asStr()).toBe('test_collection');
     expect(entityState.state.head.length).toBe(1);
 
     expect(reader.remaining).toBe(0);
@@ -576,14 +599,22 @@ describe('data.bin fixture', () => {
     const fixture = loadFixture('data.bin');
     const writer = new BincodeWriter();
 
-    makeOperation([0xAA, 0xBB, 0xCC]).encode(writer);
-    makeOperationSet().encode(writer);
-    makeStateBuffers().encode(writer);
-    makeState().encode(writer);
-    makeStateFragment().encode(writer);
-    makeEvent().encode(writer);
-    makeEventFragment().encode(writer);
-    makeEntityState().encode(writer);
+    using operation = makeOperation([0xAA, 0xBB, 0xCC]);
+    operation.encode(writer);
+    using operationSet = makeOperationSet();
+    operationSet.encode(writer);
+    using stateBuffers = makeStateBuffers();
+    stateBuffers.encode(writer);
+    using state = makeState();
+    state.encode(writer);
+    using stateFragment = makeStateFragment();
+    stateFragment.encode(writer);
+    using event = makeEvent();
+    event.encode(writer);
+    using eventFragment = makeEventFragment();
+    eventFragment.encode(writer);
+    using entityState = makeEntityState();
+    entityState.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'data.bin');
   });
@@ -605,68 +636,73 @@ describe('request.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // NodeRequest (Get variant) — variant 1 = Get in both fixture and TS
-    const nodeRequest = NodeRequest.decode(reader);
-    expect(nodeRequest.id.toUlidString()).toBe(makeRequestId(0x01).toUlidString());
-    expect(nodeRequest.to.bytes).toEqual(makeEntityId(0x10).bytes);
-    expect(nodeRequest.from.bytes).toEqual(makeEntityId(0x20).bytes);
+    using nodeRequest = NodeRequest.decode(reader);
+    { using expected = makeRequestId(0x01); expect(nodeRequest.id.toUlidString()).toBe(expected.toUlidString()); }
+    { using expected = makeEntityId(0x10); expect(nodeRequest.to.bytes).toEqual(expected.bytes); }
+    { using expected = makeEntityId(0x20); expect(nodeRequest.from.bytes).toEqual(expected.bytes); }
     expect(nodeRequest.body.type).toBe('Get');
     if (nodeRequest.body.is('Get')) {
-      expect(nodeRequest.body.value.collection.value).toBe('users');
+      expect(nodeRequest.body.value.collection.asStr()).toBe('users');
       expect(nodeRequest.body.value.ids.length).toBe(1);
-      expect(nodeRequest.body.value.ids[0].bytes).toEqual(makeEntityId(0x30).bytes);
+      { using expected = makeEntityId(0x30); expect(nodeRequest.body.value.ids[0].bytes).toEqual(expected.bytes); }
     }
 
     // CommitTransaction body (standalone) — fixture variant 0
     const commitVariant = reader.readVariant();
     expect(commitVariant).toBe(0); // CommitTransaction
-    const commitTxId = TransactionId.decode(reader);
-    expect(commitTxId.toUlidString()).toBe(makeTransactionId(0x01).toUlidString());
+    using commitTxId = TransactionId.decode(reader);
+    { using expected = makeTransactionId(0x01); expect(commitTxId.toUlidString()).toBe(expected.toUlidString()); }
     const commitEvents = reader.readVec(r => Attested.decode(r, r2 => Event.decode(r2)));
     expect(commitEvents.length).toBe(1);
     expect(commitEvents[0].attestations.length).toBe(0);
+    for (const e of commitEvents) e.drop();
 
     // Get body (standalone) — fixture variant 1
     const getVariant = reader.readVariant();
     expect(getVariant).toBe(1); // Get
-    const getCollection = CollectionId.decode(reader);
-    expect(getCollection.value).toBe('users');
+    using getCollection = CollectionId.decode(reader);
+    expect(getCollection.asStr()).toBe('users');
     const getIds = reader.readVec(r => EntityId.decode(r));
     expect(getIds.length).toBe(2);
-    expect(getIds[0].bytes).toEqual(makeEntityId(0x40).bytes);
-    expect(getIds[1].bytes).toEqual(makeEntityId(0x50).bytes);
+    { using expected = makeEntityId(0x40); expect(getIds[0].bytes).toEqual(expected.bytes); }
+    { using expected = makeEntityId(0x50); expect(getIds[1].bytes).toEqual(expected.bytes); }
+    for (const id of getIds) id.drop();
 
     // GetEvents body (standalone) — fixture variant 2 (TS class: 3)
     const getEventsVariant = reader.readVariant();
     expect(getEventsVariant).toBe(2); // GetEvents in fixture
-    const getEventsCollection = CollectionId.decode(reader);
-    expect(getEventsCollection.value).toBe('users');
+    using getEventsCollection = CollectionId.decode(reader);
+    expect(getEventsCollection.asStr()).toBe('users');
     const getEventsIds = reader.readVec(r => EventId.decode(r));
     expect(getEventsIds.length).toBe(1);
-    expect(getEventsIds[0].bytes).toEqual(makeEventId(0x60).bytes);
+    { using expected = makeEventId(0x60); expect(getEventsIds[0].bytes).toEqual(expected.bytes); }
+    for (const id of getEventsIds) id.drop();
 
     // Fetch body (standalone) — fixture variant 3 (TS class: 4)
     const fetchVariant = reader.readVariant();
     expect(fetchVariant).toBe(3); // Fetch in fixture
-    const fetchCollection = CollectionId.decode(reader);
-    expect(fetchCollection.value).toBe('users');
+    using fetchCollection = CollectionId.decode(reader);
+    expect(fetchCollection.asStr()).toBe('users');
     // Skip selection (verified inline)
     skipSelection(reader);
     const fetchKnown = reader.readVec(r => KnownEntity.decode(r));
     expect(fetchKnown.length).toBe(1);
-    expect(fetchKnown[0].entityId.bytes).toEqual(makeEntityId(0x20).bytes);
+    { using expected = makeEntityId(0x20); expect(fetchKnown[0].entityId.bytes).toEqual(expected.bytes); }
+    for (const ke of fetchKnown) ke.drop();
 
     // SubscribeQuery body (standalone) — fixture variant 4 (TS class: 5)
     const subVariant = reader.readVariant();
     expect(subVariant).toBe(4); // SubscribeQuery in fixture
-    const subQueryId = QueryId.decode(reader);
-    expect(subQueryId.toUlidString()).toBe(makeQueryId(99).toUlidString());
-    const subCollection = CollectionId.decode(reader);
-    expect(subCollection.value).toBe('users');
+    using subQueryId = QueryId.decode(reader);
+    { using expected = makeQueryId(99); expect(subQueryId.toUlidString()).toBe(expected.toUlidString()); }
+    using subCollection = CollectionId.decode(reader);
+    expect(subCollection.asStr()).toBe('users');
     skipSelection(reader);
     const subVersion = reader.readU32();
     expect(subVersion).toBe(1);
     const subKnown = reader.readVec(r => KnownEntity.decode(r));
     expect(subKnown.length).toBe(0);
+    for (const ke of subKnown) ke.drop();
 
     expect(reader.remaining).toBe(0);
   });
@@ -676,7 +712,7 @@ describe('request.bin fixture', () => {
     const writer = new BincodeWriter();
 
     // NodeRequest (full struct with Get body) — variant 1 = Get in both
-    const nodeRequest = new NodeRequest(
+    using nodeRequest = new NodeRequest(
       makeRequestId(0x01),
       makeEntityId(0x10),
       makeEntityId(0x20),
@@ -686,32 +722,51 @@ describe('request.bin fixture', () => {
 
     // CommitTransaction body (standalone) — fixture variant 0
     writer.writeVariant(0); // CommitTransaction
-    makeTransactionId(0x01).encode(writer);
-    writer.writeVec(
-      [new Attested(makeEvent(), makeAttestationSetEmpty())],
-      (w, e) => e.encode(w, (w2, ev) => ev.encode(w2)),
-    );
+    using commitTxId = makeTransactionId(0x01);
+    commitTxId.encode(writer);
+    {
+      using commitAttested = new Attested(makeEvent(), makeAttestationSetEmpty());
+      writer.writeVec(
+        [commitAttested],
+        (w, e) => e.encode(w, (w2, ev) => ev.encode(w2)),
+      );
+    }
 
     // Get body (standalone) — fixture variant 1
     writer.writeVariant(1);
-    makeCollectionId('users').encode(writer);
-    writer.writeVec([makeEntityId(0x40), makeEntityId(0x50)], (w, id) => id.encode(w));
+    using getCollection = makeCollectionId('users');
+    getCollection.encode(writer);
+    {
+      using getId0 = makeEntityId(0x40);
+      using getId1 = makeEntityId(0x50);
+      writer.writeVec([getId0, getId1], (w, id) => id.encode(w));
+    }
 
     // GetEvents body (standalone) — fixture variant 2
     writer.writeVariant(2);
-    makeCollectionId('users').encode(writer);
-    writer.writeVec([makeEventId(0x60)], (w, id) => id.encode(w));
+    using getEventsCollection = makeCollectionId('users');
+    getEventsCollection.encode(writer);
+    {
+      using getEventsId0 = makeEventId(0x60);
+      writer.writeVec([getEventsId0], (w, id) => id.encode(w));
+    }
 
     // Fetch body (standalone) — fixture variant 3
     writer.writeVariant(3);
-    makeCollectionId('users').encode(writer);
+    using fetchCollection = makeCollectionId('users');
+    fetchCollection.encode(writer);
     encodeSelection(writer);
-    writer.writeVec([makeKnownEntity()], (w, ke) => ke.encode(w));
+    {
+      using fetchKnown = makeKnownEntity();
+      writer.writeVec([fetchKnown], (w, ke) => ke.encode(w));
+    }
 
     // SubscribeQuery body (standalone) — fixture variant 4
     writer.writeVariant(4);
-    makeQueryId(99).encode(writer);
-    makeCollectionId('users').encode(writer);
+    using subQueryId = makeQueryId(99);
+    subQueryId.encode(writer);
+    using subCollection = makeCollectionId('users');
+    subCollection.encode(writer);
     encodeSelection(writer);
     writer.writeU32(1); // version
     writer.writeVec([] as KnownEntity[], (w, ke) => ke.encode(w));
@@ -736,56 +791,60 @@ describe('response.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // NodeResponse (Success) — manually decode due to variant mismatch
-    const respRequestId = RequestId.decode(reader);
-    expect(respRequestId.toUlidString()).toBe(makeRequestId(0x01).toUlidString());
-    const respFrom = EntityId.decode(reader);
-    expect(respFrom.bytes).toEqual(makeEntityId(0x10).bytes);
-    const respTo = EntityId.decode(reader);
-    expect(respTo.bytes).toEqual(makeEntityId(0x20).bytes);
+    using respRequestId = RequestId.decode(reader);
+    { using expected = makeRequestId(0x01); expect(respRequestId.toUlidString()).toBe(expected.toUlidString()); }
+    using respFrom = EntityId.decode(reader);
+    { using expected = makeEntityId(0x10); expect(respFrom.bytes).toEqual(expected.bytes); }
+    using respTo = EntityId.decode(reader);
+    { using expected = makeEntityId(0x20); expect(respTo.bytes).toEqual(expected.bytes); }
     const respBodyVariant = reader.readVariant();
     expect(respBodyVariant).toBe(5); // Success in fixture
 
     // CommitComplete body (standalone) — fixture variant 0
     const commitVariant = reader.readVariant();
     expect(commitVariant).toBe(0);
-    const commitId = TransactionId.decode(reader);
-    expect(commitId.toUlidString()).toBe(makeTransactionId(0x02).toUlidString());
+    using commitId = TransactionId.decode(reader);
+    { using expected = makeTransactionId(0x02); expect(commitId.toUlidString()).toBe(expected.toUlidString()); }
 
     // Fetch body (standalone) — fixture variant 1
     const fetchVariant = reader.readVariant();
     expect(fetchVariant).toBe(1);
     const fetchDeltas = reader.readVec(r => EntityDelta.decode(r));
     expect(fetchDeltas.length).toBe(1);
-    expect(fetchDeltas[0].entityId.bytes).toEqual(makeEntityId(0x30).bytes);
-    expect(fetchDeltas[0].collection.value).toBe('users');
+    { using expected = makeEntityId(0x30); expect(fetchDeltas[0].entityId.bytes).toEqual(expected.bytes); }
+    expect(fetchDeltas[0].collection.asStr()).toBe('users');
     expect(fetchDeltas[0].content.type).toBe('StateSnapshot');
+    for (const d of fetchDeltas) d.drop();
 
     // Get body (standalone) — fixture variant 2
     const getVariant = reader.readVariant();
     expect(getVariant).toBe(2);
     const getStates = reader.readVec(r => Attested.decode(r, r2 => EntityState.decode(r2)));
     expect(getStates.length).toBe(1);
-    expect(getStates[0].payload.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
+    { using expected = makeEntityId(0x00); expect(getStates[0].payload.entityId.bytes).toEqual(expected.bytes); }
     expect(getStates[0].attestations.length).toBe(0);
+    for (const s of getStates) s.drop();
 
     // GetEvents body (standalone) — fixture variant 3 (TS class: 4)
     const getEventsVariant = reader.readVariant();
     expect(getEventsVariant).toBe(3);
     const getEvents = reader.readVec(r => Attested.decode(r, r2 => Event.decode(r2)));
     expect(getEvents.length).toBe(1);
-    expect(getEvents[0].payload.collection.value).toBe('test_collection');
+    expect(getEvents[0].payload.collection.asStr()).toBe('test_collection');
     expect(getEvents[0].attestations.length).toBe(0);
+    for (const e of getEvents) e.drop();
 
     // QuerySubscribed body (standalone) — fixture variant 4 (TS class: 5)
     const qsVariant = reader.readVariant();
     expect(qsVariant).toBe(4);
-    const qsQueryId = QueryId.decode(reader);
-    expect(qsQueryId.toUlidString()).toBe(makeQueryId(42).toUlidString());
+    using qsQueryId = QueryId.decode(reader);
+    { using expected = makeQueryId(42); expect(qsQueryId.toUlidString()).toBe(expected.toUlidString()); }
     const qsDeltas = reader.readVec(r => EntityDelta.decode(r));
     expect(qsDeltas.length).toBe(1);
-    expect(qsDeltas[0].entityId.bytes).toEqual(makeEntityId(0x40).bytes);
-    expect(qsDeltas[0].collection.value).toBe('posts');
+    { using expected = makeEntityId(0x40); expect(qsDeltas[0].entityId.bytes).toEqual(expected.bytes); }
+    expect(qsDeltas[0].collection.asStr()).toBe('posts');
     expect(qsDeltas[0].content.type).toBe('EventBridge');
+    for (const d of qsDeltas) d.drop();
 
     // Success body (standalone) — fixture variant 5 (TS class: 6)
     const successVariant = reader.readVariant();
@@ -805,51 +864,68 @@ describe('response.bin fixture', () => {
     const writer = new BincodeWriter();
 
     // NodeResponse (Success) — manually encode due to variant mismatch
-    makeRequestId(0x01).encode(writer);
-    makeEntityId(0x10).encode(writer);
-    makeEntityId(0x20).encode(writer);
+    using respReqId = makeRequestId(0x01);
+    respReqId.encode(writer);
+    using respFrom = makeEntityId(0x10);
+    respFrom.encode(writer);
+    using respTo = makeEntityId(0x20);
+    respTo.encode(writer);
     writer.writeVariant(5); // Success in fixture
 
     // CommitComplete body (standalone) — fixture variant 0
     writer.writeVariant(0);
-    makeTransactionId(0x02).encode(writer);
+    using commitTxId = makeTransactionId(0x02);
+    commitTxId.encode(writer);
 
     // Fetch body (standalone) — fixture variant 1
     writer.writeVariant(1);
-    writer.writeVec(
-      [new EntityDelta(
+    {
+      using fetchDelta = new EntityDelta(
         makeEntityId(0x30),
         makeCollectionId('users'),
         new DeltaContent('StateSnapshot', { state: makeStateFragment() }),
-      )],
-      (w, d) => d.encode(w),
-    );
+      );
+      writer.writeVec(
+        [fetchDelta],
+        (w, d) => d.encode(w),
+      );
+    }
 
     // Get body (standalone) — fixture variant 2
     writer.writeVariant(2);
-    writer.writeVec(
-      [new Attested(makeEntityState(), makeAttestationSetEmpty())],
-      (w, s) => s.encode(w, (w2, es) => es.encode(w2)),
-    );
+    {
+      using getAttested = new Attested(makeEntityState(), makeAttestationSetEmpty());
+      writer.writeVec(
+        [getAttested],
+        (w, s) => s.encode(w, (w2, es) => es.encode(w2)),
+      );
+    }
 
     // GetEvents body (standalone) — fixture variant 3
     writer.writeVariant(3);
-    writer.writeVec(
-      [new Attested(makeEvent(), makeAttestationSetEmpty())],
-      (w, e) => e.encode(w, (w2, ev) => ev.encode(w2)),
-    );
+    {
+      using getEventsAttested = new Attested(makeEvent(), makeAttestationSetEmpty());
+      writer.writeVec(
+        [getEventsAttested],
+        (w, e) => e.encode(w, (w2, ev) => ev.encode(w2)),
+      );
+    }
 
     // QuerySubscribed body (standalone) — fixture variant 4
     writer.writeVariant(4);
-    makeQueryId(42).encode(writer);
-    writer.writeVec(
-      [new EntityDelta(
+    using qsQueryId = makeQueryId(42);
+    qsQueryId.encode(writer);
+    {
+      using qsDelta = new EntityDelta(
         makeEntityId(0x40),
         makeCollectionId('posts'),
         new DeltaContent('EventBridge', { events: [makeEventFragment()] }),
-      )],
-      (w, d) => d.encode(w),
-    );
+      );
+      writer.writeVec(
+        [qsDelta],
+        (w, d) => d.encode(w),
+      );
+    }
 
     // Success body (standalone) — fixture variant 5
     writer.writeVariant(5);
@@ -871,50 +947,50 @@ describe('causal.bin fixture', () => {
     const data = loadFixture('causal.bin');
     const reader = new BincodeReader(data);
 
-    const equal = CausalRelation.decode(reader);
+    using equal = CausalRelation.decode(reader);
     expect(equal.type).toBe('Equal');
 
-    const strictDescends = CausalRelation.decode(reader);
+    using strictDescends = CausalRelation.decode(reader);
     expect(strictDescends.type).toBe('StrictDescends');
 
-    const strictAscends = CausalRelation.decode(reader);
+    using strictAscends = CausalRelation.decode(reader);
     expect(strictAscends.type).toBe('StrictAscends');
 
-    const divergedSince = CausalRelation.decode(reader);
+    using divergedSince = CausalRelation.decode(reader);
     expect(divergedSince.type).toBe('DivergedSince');
     if (divergedSince.is('DivergedSince')) {
       expect(divergedSince.value.meet.length).toBe(1);
       expect(divergedSince.value.subject.length).toBe(1);
       expect(divergedSince.value.other.length).toBe(1);
-      expect(divergedSince.value.subject.asSlice()[0].bytes).toEqual(makeEventId(0xA0).bytes);
-      expect(divergedSince.value.other.asSlice()[0].bytes).toEqual(makeEventId(0xB0).bytes);
+      { using expected = makeEventId(0xA0); expect(divergedSince.value.subject.asSlice()[0].bytes).toEqual(expected.bytes); }
+      { using expected = makeEventId(0xB0); expect(divergedSince.value.other.asSlice()[0].bytes).toEqual(expected.bytes); }
     }
 
-    const disjointSome = CausalRelation.decode(reader);
+    using disjointSome = CausalRelation.decode(reader);
     expect(disjointSome.type).toBe('Disjoint');
     if (disjointSome.is('Disjoint')) {
       expect(disjointSome.value.gca).not.toBeNull();
       expect(disjointSome.value.gca!.length).toBe(1);
-      expect(disjointSome.value.subjectRoot.bytes).toEqual(makeEventId(0xC0).bytes);
-      expect(disjointSome.value.otherRoot.bytes).toEqual(makeEventId(0xD0).bytes);
+      { using expected = makeEventId(0xC0); expect(disjointSome.value.subjectRoot.bytes).toEqual(expected.bytes); }
+      { using expected = makeEventId(0xD0); expect(disjointSome.value.otherRoot.bytes).toEqual(expected.bytes); }
     }
 
-    const disjointNone = CausalRelation.decode(reader);
+    using disjointNone = CausalRelation.decode(reader);
     expect(disjointNone.type).toBe('Disjoint');
     if (disjointNone.is('Disjoint')) {
       expect(disjointNone.value.gca).toBeNull();
-      expect(disjointNone.value.subjectRoot.bytes).toEqual(makeEventId(0xE0).bytes);
-      expect(disjointNone.value.otherRoot.bytes).toEqual(makeEventId(0xF0).bytes);
+      { using expected = makeEventId(0xE0); expect(disjointNone.value.subjectRoot.bytes).toEqual(expected.bytes); }
+      { using expected = makeEventId(0xF0); expect(disjointNone.value.otherRoot.bytes).toEqual(expected.bytes); }
     }
 
-    const budgetExceeded = CausalRelation.decode(reader);
+    using budgetExceeded = CausalRelation.decode(reader);
     expect(budgetExceeded.type).toBe('BudgetExceeded');
     if (budgetExceeded.is('BudgetExceeded')) {
-      expect(budgetExceeded.value.subject.asSlice()[0].bytes).toEqual(makeEventId(0x01).bytes);
-      expect(budgetExceeded.value.other.asSlice()[0].bytes).toEqual(makeEventId(0x02).bytes);
+      { using expected = makeEventId(0x01); expect(budgetExceeded.value.subject.asSlice()[0].bytes).toEqual(expected.bytes); }
+      { using expected = makeEventId(0x02); expect(budgetExceeded.value.other.asSlice()[0].bytes).toEqual(expected.bytes); }
     }
 
-    const causalFragment = CausalAssertionFragment.decode(reader);
+    using causalFragment = CausalAssertionFragment.decode(reader);
     expect(causalFragment.relation.type).toBe('StrictDescends');
     expect(causalFragment.attestations.length).toBe(2);
 
@@ -925,33 +1001,41 @@ describe('causal.bin fixture', () => {
     const fixture = loadFixture('causal.bin');
     const writer = new BincodeWriter();
 
-    new CausalRelation('Equal', {}).encode(writer);
-    new CausalRelation('StrictDescends', {}).encode(writer);
-    new CausalRelation('StrictAscends', {}).encode(writer);
-    new CausalRelation('DivergedSince', {
+    using crEqual = new CausalRelation('Equal', {});
+    crEqual.encode(writer);
+    using crStrictDescends = new CausalRelation('StrictDescends', {});
+    crStrictDescends.encode(writer);
+    using crStrictAscends = new CausalRelation('StrictAscends', {});
+    crStrictAscends.encode(writer);
+    using crDiverged = new CausalRelation('DivergedSince', {
       meet: makeClockSingle(),
       subject: Clock.new([makeEventId(0xA0)]),
       other: Clock.new([makeEventId(0xB0)]),
-    }).encode(writer);
-    new CausalRelation('Disjoint', {
+    });
+    crDiverged.encode(writer);
+    using crDisjointSome = new CausalRelation('Disjoint', {
       gca: makeClockSingle(),
       subjectRoot: makeEventId(0xC0),
       otherRoot: makeEventId(0xD0),
-    }).encode(writer);
-    new CausalRelation('Disjoint', {
+    });
+    crDisjointSome.encode(writer);
+    using crDisjointNone = new CausalRelation('Disjoint', {
       gca: null,
       subjectRoot: makeEventId(0xE0),
       otherRoot: makeEventId(0xF0),
-    }).encode(writer);
-    new CausalRelation('BudgetExceeded', {
+    });
+    crDisjointNone.encode(writer);
+    using crBudgetExceeded = new CausalRelation('BudgetExceeded', {
       subject: Clock.new([makeEventId(0x01)]),
       other: Clock.new([makeEventId(0x02)]),
-    }).encode(writer);
+    });
+    crBudgetExceeded.encode(writer);
 
-    new CausalAssertionFragment(
+    using causalFragment = new CausalAssertionFragment(
       new CausalRelation('StrictDescends', {}),
       makeAttestationSetTwo(),
-    ).encode(writer);
+    );
+    causalFragment.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'causal.bin');
   });
@@ -967,45 +1051,45 @@ describe('delta.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // StateSnapshot
-    const stateSnapshot = DeltaContent.decode(reader);
+    using stateSnapshot = DeltaContent.decode(reader);
     expect(stateSnapshot.type).toBe('StateSnapshot');
     if (stateSnapshot.is('StateSnapshot')) {
       expect(stateSnapshot.value.state.attestations.length).toBe(2);
     }
 
     // EventBridge
-    const eventBridge = DeltaContent.decode(reader);
+    using eventBridge = DeltaContent.decode(reader);
     expect(eventBridge.type).toBe('EventBridge');
     if (eventBridge.is('EventBridge')) {
       expect(eventBridge.value.events.length).toBe(1);
     }
 
     // StateAndRelation
-    const stateAndRelation = DeltaContent.decode(reader);
+    using stateAndRelation = DeltaContent.decode(reader);
     expect(stateAndRelation.type).toBe('StateAndRelation');
     if (stateAndRelation.is('StateAndRelation')) {
       expect(stateAndRelation.value.relation.relation.type).toBe('Equal');
     }
 
     // EntityDelta (snapshot)
-    const entityDeltaSnapshot = EntityDelta.decode(reader);
-    expect(entityDeltaSnapshot.entityId.bytes).toEqual(makeEntityId(0x10).bytes);
-    expect(entityDeltaSnapshot.collection.value).toBe('test_collection');
+    using entityDeltaSnapshot = EntityDelta.decode(reader);
+    { using expected = makeEntityId(0x10); expect(entityDeltaSnapshot.entityId.bytes).toEqual(expected.bytes); }
+    expect(entityDeltaSnapshot.collection.asStr()).toBe('test_collection');
     expect(entityDeltaSnapshot.content.type).toBe('StateSnapshot');
 
     // EntityDelta (bridge)
-    const entityDeltaBridge = EntityDelta.decode(reader);
-    expect(entityDeltaBridge.entityId.bytes).toEqual(makeEntityId(0x20).bytes);
+    using entityDeltaBridge = EntityDelta.decode(reader);
+    { using expected = makeEntityId(0x20); expect(entityDeltaBridge.entityId.bytes).toEqual(expected.bytes); }
     expect(entityDeltaBridge.content.type).toBe('EventBridge');
 
     // EntityDelta (state+relation)
-    const entityDeltaStateRel = EntityDelta.decode(reader);
-    expect(entityDeltaStateRel.entityId.bytes).toEqual(makeEntityId(0x30).bytes);
+    using entityDeltaStateRel = EntityDelta.decode(reader);
+    { using expected = makeEntityId(0x30); expect(entityDeltaStateRel.entityId.bytes).toEqual(expected.bytes); }
     expect(entityDeltaStateRel.content.type).toBe('StateAndRelation');
 
     // KnownEntity
-    const knownEntity = KnownEntity.decode(reader);
-    expect(knownEntity.entityId.bytes).toEqual(makeEntityId(0x20).bytes);
+    using knownEntity = KnownEntity.decode(reader);
+    { using expected = makeEntityId(0x20); expect(knownEntity.entityId.bytes).toEqual(expected.bytes); }
     expect(knownEntity.head.length).toBe(1);
 
     expect(reader.remaining).toBe(0);
@@ -1015,35 +1099,42 @@ describe('delta.bin fixture', () => {
     const fixture = loadFixture('delta.bin');
     const writer = new BincodeWriter();
 
-    new DeltaContent('StateSnapshot', { state: makeStateFragment() }).encode(writer);
-    new DeltaContent('EventBridge', { events: [makeEventFragment()] }).encode(writer);
-    new DeltaContent('StateAndRelation', {
+    using dcSnapshot = new DeltaContent('StateSnapshot', { state: makeStateFragment() });
+    dcSnapshot.encode(writer);
+    using dcBridge = new DeltaContent('EventBridge', { events: [makeEventFragment()] });
+    dcBridge.encode(writer);
+    using dcStateRel = new DeltaContent('StateAndRelation', {
       state: makeStateFragment(),
       relation: makeCausalAssertionFragment(),
-    }).encode(writer);
+    });
+    dcStateRel.encode(writer);
 
-    new EntityDelta(
+    using edSnapshot = new EntityDelta(
       makeEntityId(0x10),
       makeCollectionId('test_collection'),
       new DeltaContent('StateSnapshot', { state: makeStateFragment() }),
-    ).encode(writer);
+    );
+    edSnapshot.encode(writer);
 
-    new EntityDelta(
+    using edBridge = new EntityDelta(
       makeEntityId(0x20),
       makeCollectionId('test_collection'),
       new DeltaContent('EventBridge', { events: [makeEventFragment()] }),
-    ).encode(writer);
+    );
+    edBridge.encode(writer);
 
-    new EntityDelta(
+    using edStateRel = new EntityDelta(
       makeEntityId(0x30),
       makeCollectionId('test_collection'),
       new DeltaContent('StateAndRelation', {
         state: makeStateFragment(),
         relation: makeCausalAssertionFragment(),
       }),
-    ).encode(writer);
+    );
+    edStateRel.encode(writer);
 
-    makeKnownEntity().encode(writer);
+    using knownEntity = makeKnownEntity();
+    knownEntity.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'delta.bin');
   });
@@ -1059,68 +1150,68 @@ describe('update.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // NodeUpdate
-    const nodeUpdate = NodeUpdate.decode(reader);
-    expect(nodeUpdate.id.toUlidString()).toBe(makeUpdateId(0x01).toUlidString());
-    expect(nodeUpdate.from.bytes).toEqual(makeEntityId(0x10).bytes);
-    expect(nodeUpdate.to.bytes).toEqual(makeEntityId(0x20).bytes);
+    using nodeUpdate = NodeUpdate.decode(reader);
+    { using expected = makeUpdateId(0x01); expect(nodeUpdate.id.toUlidString()).toBe(expected.toUlidString()); }
+    { using expected = makeEntityId(0x10); expect(nodeUpdate.from.bytes).toEqual(expected.bytes); }
+    { using expected = makeEntityId(0x20); expect(nodeUpdate.to.bytes).toEqual(expected.bytes); }
     expect(nodeUpdate.body.type).toBe('SubscriptionUpdate');
     if (nodeUpdate.body.is('SubscriptionUpdate')) {
       expect(nodeUpdate.body.value.items.length).toBe(1);
       const item = nodeUpdate.body.value.items[0];
-      expect(item.entityId.bytes).toEqual(makeEntityId(0x30).bytes);
-      expect(item.collection.value).toBe('users');
+      { using expected = makeEntityId(0x30); expect(item.entityId.bytes).toEqual(expected.bytes); }
+      expect(item.collection.asStr()).toBe('users');
       expect(item.content.type).toBe('EventOnly');
       expect(item.predicateRelevance.length).toBe(1);
       expect(item.predicateRelevance[0][1].type).toBe('Initial');
     }
 
     // SubscriptionUpdateItem (standalone)
-    const subItem = SubscriptionUpdateItem.decode(reader);
-    expect(subItem.entityId.bytes).toEqual(makeEntityId(0x40).bytes);
-    expect(subItem.collection.value).toBe('posts');
+    using subItem = SubscriptionUpdateItem.decode(reader);
+    { using expected = makeEntityId(0x40); expect(subItem.entityId.bytes).toEqual(expected.bytes); }
+    expect(subItem.collection.asStr()).toBe('posts');
     expect(subItem.content.type).toBe('StateAndEvent');
     expect(subItem.predicateRelevance.length).toBe(2);
     expect(subItem.predicateRelevance[0][1].type).toBe('Add');
     expect(subItem.predicateRelevance[1][1].type).toBe('Remove');
 
     // EventOnly (standalone)
-    const eventOnly = UpdateContent.decode(reader);
+    using eventOnly = UpdateContent.decode(reader);
     expect(eventOnly.type).toBe('EventOnly');
     if (eventOnly.is('EventOnly')) {
-      expect(eventOnly.value.events.length).toBe(1);
+      expect(eventOnly.value._0.length).toBe(1);
     }
 
     // StateAndEvent (standalone)
-    const stateAndEvent = UpdateContent.decode(reader);
+    using stateAndEvent = UpdateContent.decode(reader);
     expect(stateAndEvent.type).toBe('StateAndEvent');
     if (stateAndEvent.is('StateAndEvent')) {
-      expect(stateAndEvent.value.events.length).toBe(1);
+      expect(stateAndEvent.value._1.length).toBe(1);
     }
 
     // MembershipChange variants
-    const initial = MembershipChange.decode(reader);
+    using initial = MembershipChange.decode(reader);
     expect(initial.type).toBe('Initial');
-    const add = MembershipChange.decode(reader);
+    using add = MembershipChange.decode(reader);
     expect(add.type).toBe('Add');
-    const remove = MembershipChange.decode(reader);
+    using remove = MembershipChange.decode(reader);
     expect(remove.type).toBe('Remove');
 
     // NodeUpdateAck
-    const nodeUpdateAck = NodeUpdateAck.decode(reader);
-    expect(nodeUpdateAck.id.toUlidString()).toBe(makeUpdateId(0x02).toUlidString());
-    expect(nodeUpdateAck.from.bytes).toEqual(makeEntityId(0x50).bytes);
-    expect(nodeUpdateAck.to.bytes).toEqual(makeEntityId(0x60).bytes);
+    using nodeUpdateAck = NodeUpdateAck.decode(reader);
+    { using expected = makeUpdateId(0x02); expect(nodeUpdateAck.id.toUlidString()).toBe(expected.toUlidString()); }
+    { using expected = makeEntityId(0x50); expect(nodeUpdateAck.from.bytes).toEqual(expected.bytes); }
+    { using expected = makeEntityId(0x60); expect(nodeUpdateAck.to.bytes).toEqual(expected.bytes); }
     expect(nodeUpdateAck.body.type).toBe('Success');
 
     // NodeUpdateAckBody::Success (standalone)
-    const ackSuccess = NodeUpdateAckBody.decode(reader);
+    using ackSuccess = NodeUpdateAckBody.decode(reader);
     expect(ackSuccess.type).toBe('Success');
 
     // NodeUpdateAckBody::Error (standalone)
-    const ackError = NodeUpdateAckBody.decode(reader);
+    using ackError = NodeUpdateAckBody.decode(reader);
     expect(ackError.type).toBe('Error');
     if (ackError.is('Error')) {
-      expect(ackError.value.message).toBe('update failed');
+      expect(ackError.value._0).toBe('update failed');
     }
 
     expect(reader.remaining).toBe(0);
@@ -1131,7 +1222,7 @@ describe('update.bin fixture', () => {
     const writer = new BincodeWriter();
 
     // NodeUpdate
-    new NodeUpdate(
+    using nodeUpdate = new NodeUpdate(
       makeUpdateId(0x01),
       makeEntityId(0x10),
       makeEntityId(0x20),
@@ -1140,51 +1231,61 @@ describe('update.bin fixture', () => {
           new SubscriptionUpdateItem(
             makeEntityId(0x30),
             makeCollectionId('users'),
-            new UpdateContent('EventOnly', { events: [makeEventFragment()] }),
+            new UpdateContent('EventOnly', { _0: [makeEventFragment()] }),
             [[makeQueryId(1), new MembershipChange('Initial', {})]],
           ),
         ],
       }),
-    ).encode(writer);
+    );
+    nodeUpdate.encode(writer);
 
     // SubscriptionUpdateItem (standalone)
-    new SubscriptionUpdateItem(
+    using subItem = new SubscriptionUpdateItem(
       makeEntityId(0x40),
       makeCollectionId('posts'),
-      new UpdateContent('StateAndEvent', { state: makeStateFragment(), events: [makeEventFragment()] }),
+      new UpdateContent('StateAndEvent', { _0: makeStateFragment(), _1: [makeEventFragment()] }),
       [
         [makeQueryId(2), new MembershipChange('Add', {})],
         [makeQueryId(3), new MembershipChange('Remove', {})],
       ],
-    ).encode(writer);
+    );
+    subItem.encode(writer);
 
     // EventOnly (standalone)
-    new UpdateContent('EventOnly', { events: [makeEventFragment()] }).encode(writer);
+    using eventOnly = new UpdateContent('EventOnly', { _0: [makeEventFragment()] });
+    eventOnly.encode(writer);
 
     // StateAndEvent (standalone)
-    new UpdateContent('StateAndEvent', {
-      state: makeStateFragment(),
-      events: [makeEventFragment()],
-    }).encode(writer);
+    using stateAndEvent = new UpdateContent('StateAndEvent', {
+      _0: makeStateFragment(),
+      _1: [makeEventFragment()],
+    });
+    stateAndEvent.encode(writer);
 
     // MembershipChange variants
-    new MembershipChange('Initial', {}).encode(writer);
-    new MembershipChange('Add', {}).encode(writer);
-    new MembershipChange('Remove', {}).encode(writer);
+    using mcInitial = new MembershipChange('Initial', {});
+    mcInitial.encode(writer);
+    using mcAdd = new MembershipChange('Add', {});
+    mcAdd.encode(writer);
+    using mcRemove = new MembershipChange('Remove', {});
+    mcRemove.encode(writer);
 
     // NodeUpdateAck
-    new NodeUpdateAck(
+    using nodeUpdateAck = new NodeUpdateAck(
       makeUpdateId(0x02),
       makeEntityId(0x50),
       makeEntityId(0x60),
       new NodeUpdateAckBody('Success', {}),
-    ).encode(writer);
+    );
+    nodeUpdateAck.encode(writer);
 
     // NodeUpdateAckBody::Success (standalone)
-    new NodeUpdateAckBody('Success', {}).encode(writer);
+    using ackSuccess = new NodeUpdateAckBody('Success', {});
+    ackSuccess.encode(writer);
 
     // NodeUpdateAckBody::Error (standalone)
-    new NodeUpdateAckBody('Error', { message: 'update failed' }).encode(writer);
+    using ackError = new NodeUpdateAckBody('Error', { _0: 'update failed' });
+    ackError.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'update.bin');
   });
@@ -1203,34 +1304,34 @@ describe('message.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // Message::Presence
-    const presenceMsg = Message.decode(reader);
+    using presenceMsg = Message.decode(reader);
     expect(presenceMsg.type).toBe('Presence');
     if (presenceMsg.is('Presence')) {
-      expect(presenceMsg.value.presence.nodeId.bytes).toEqual(makeEntityId(0x01).bytes);
-      expect(presenceMsg.value.presence.durable).toBe(true);
-      expect(presenceMsg.value.presence.systemRoot).toBeNull();
+      { using expected = makeEntityId(0x01); expect(presenceMsg.value._0.nodeId.bytes).toEqual(expected.bytes); }
+      expect(presenceMsg.value._0.durable).toBe(true);
+      expect(presenceMsg.value._0.systemRoot).toBeNull();
     }
 
     // Message::PeerMessage(NodeMessage::Request) — Request body is Get (variant 1, same in both)
-    const peerRequest = Message.decode(reader);
+    using peerRequest = Message.decode(reader);
     expect(peerRequest.type).toBe('PeerMessage');
     if (peerRequest.is('PeerMessage')) {
-      expect(peerRequest.value.nodeMessage.type).toBe('Request');
-      if (peerRequest.value.nodeMessage.is('Request')) {
-        expect(peerRequest.value.nodeMessage.value.auth.length).toBe(1);
-        expect(peerRequest.value.nodeMessage.value.auth[0]._0).toEqual(new Uint8Array([0xAA, 0xBB]));
-        expect(peerRequest.value.nodeMessage.value.request.body.type).toBe('Get');
+      expect(peerRequest.value._0.type).toBe('Request');
+      if (peerRequest.value._0.is('Request')) {
+        expect(peerRequest.value._0.value.auth.length).toBe(1);
+        expect(peerRequest.value._0.value.auth[0]._0).toEqual(new Uint8Array([0xAA, 0xBB]));
+        expect(peerRequest.value._0.value.request.body.type).toBe('Get');
       }
     }
 
     // NodeMessage::Request (standalone) — body is Get (variant 1, same in both)
-    const nodeMsgRequest = NodeMessage.decode(reader);
+    using nodeMsgRequest = NodeMessage.decode(reader);
     expect(nodeMsgRequest.type).toBe('Request');
     if (nodeMsgRequest.is('Request')) {
       expect(nodeMsgRequest.value.auth.length).toBe(0);
-      expect(nodeMsgRequest.value.request.id.toUlidString()).toBe(makeRequestId(0x50).toUlidString());
+        { using expected = makeRequestId(0x50); expect(nodeMsgRequest.value.request.id.toUlidString()).toBe(expected.toUlidString()); }
       if (nodeMsgRequest.value.request.body.is('Get')) {
-        expect(nodeMsgRequest.value.request.body.value.collection.value).toBe('items');
+        expect(nodeMsgRequest.value.request.body.value.collection.asStr()).toBe('items');
         expect(nodeMsgRequest.value.request.body.value.ids.length).toBe(0);
       }
     }
@@ -1239,38 +1340,38 @@ describe('message.bin fixture', () => {
     // Manually decode due to variant mismatch
     const nmResponseVariant = reader.readVariant();
     expect(nmResponseVariant).toBe(1); // NodeMessage::Response
-    const nmRespRequestId = RequestId.decode(reader);
-    expect(nmRespRequestId.toUlidString()).toBe(makeRequestId(0x80).toUlidString());
-    const nmRespFrom = EntityId.decode(reader);
-    const nmRespTo = EntityId.decode(reader);
+    using nmRespRequestId = RequestId.decode(reader);
+    { using expected = makeRequestId(0x80); expect(nmRespRequestId.toUlidString()).toBe(expected.toUlidString()); }
+    using nmRespFrom = EntityId.decode(reader);
+    using nmRespTo = EntityId.decode(reader);
     const nmRespBodyVariant = reader.readVariant();
     expect(nmRespBodyVariant).toBe(5); // Success in fixture
 
     // NodeMessage::Update (standalone) — SubscriptionUpdate variant 0, same in both
-    const nodeMsgUpdate = NodeMessage.decode(reader);
+    using nodeMsgUpdate = NodeMessage.decode(reader);
     expect(nodeMsgUpdate.type).toBe('Update');
     if (nodeMsgUpdate.is('Update')) {
-      expect(nodeMsgUpdate.value.update.id.toUlidString()).toBe(makeUpdateId(0x01).toUlidString());
-      expect(nodeMsgUpdate.value.update.body.type).toBe('SubscriptionUpdate');
-      if (nodeMsgUpdate.value.update.body.is('SubscriptionUpdate')) {
-        expect(nodeMsgUpdate.value.update.body.value.items.length).toBe(0);
+      { using expected = makeUpdateId(0x01); expect(nodeMsgUpdate.value._0.id.toUlidString()).toBe(expected.toUlidString()); }
+      expect(nodeMsgUpdate.value._0.body.type).toBe('SubscriptionUpdate');
+      if (nodeMsgUpdate.value._0.body.is('SubscriptionUpdate')) {
+        expect(nodeMsgUpdate.value._0.body.value.items.length).toBe(0);
       }
     }
 
     // NodeMessage::UpdateAck (standalone) — Success variant 0, same in both
-    const nodeMsgUpdateAck = NodeMessage.decode(reader);
+    using nodeMsgUpdateAck = NodeMessage.decode(reader);
     expect(nodeMsgUpdateAck.type).toBe('UpdateAck');
     if (nodeMsgUpdateAck.is('UpdateAck')) {
-      expect(nodeMsgUpdateAck.value.updateAck.id.toUlidString()).toBe(makeUpdateId(0x02).toUlidString());
-      expect(nodeMsgUpdateAck.value.updateAck.body.type).toBe('Success');
+      { using expected = makeUpdateId(0x02); expect(nodeMsgUpdateAck.value._0.id.toUlidString()).toBe(expected.toUlidString()); }
+      expect(nodeMsgUpdateAck.value._0.body.type).toBe('Success');
     }
 
     // NodeMessage::UnsubscribeQuery (standalone)
-    const nodeMsgUnsub = NodeMessage.decode(reader);
+    using nodeMsgUnsub = NodeMessage.decode(reader);
     expect(nodeMsgUnsub.type).toBe('UnsubscribeQuery');
     if (nodeMsgUnsub.is('UnsubscribeQuery')) {
-      expect(nodeMsgUnsub.value.from.bytes).toEqual(makeEntityId(0xF0).bytes);
-      expect(nodeMsgUnsub.value.queryId.toUlidString()).toBe(makeQueryId(77).toUlidString());
+      { using expected = makeEntityId(0xF0); expect(nodeMsgUnsub.value.from.bytes).toEqual(expected.bytes); }
+      { using expected = makeQueryId(77); expect(nodeMsgUnsub.value.queryId.toUlidString()).toBe(expected.toUlidString()); }
     }
 
     expect(reader.remaining).toBe(0);
@@ -1281,13 +1382,14 @@ describe('message.bin fixture', () => {
     const writer = new BincodeWriter();
 
     // Message::Presence
-    new Message('Presence', {
-      presence: new Presence(makeEntityId(0x01), true, null),
-    }).encode(writer);
+    using presenceMsg = new Message('Presence', {
+      _0: new Presence(makeEntityId(0x01), true, null),
+    });
+    presenceMsg.encode(writer);
 
     // Message::PeerMessage(NodeMessage::Request with auth) — Get variant 1
-    new Message('PeerMessage', {
-      nodeMessage: new NodeMessage('Request', {
+    using peerRequestMsg = new Message('PeerMessage', {
+      _0: new NodeMessage('Request', {
         auth: [new AuthData(new Uint8Array([0xAA, 0xBB]))],
         request: new NodeRequest(
           makeRequestId(0x10),
@@ -1296,10 +1398,11 @@ describe('message.bin fixture', () => {
           new NodeRequestBody('Get', { collection: makeCollectionId('users'), ids: [makeEntityId(0x40)] }),
         ),
       }),
-    }).encode(writer);
+    });
+    peerRequestMsg.encode(writer);
 
     // NodeMessage::Request (standalone, empty auth) — Get variant 1
-    new NodeMessage('Request', {
+    using nodeMsgRequest = new NodeMessage('Request', {
       auth: [],
       request: new NodeRequest(
         makeRequestId(0x50),
@@ -1307,40 +1410,47 @@ describe('message.bin fixture', () => {
         makeEntityId(0x70),
         new NodeRequestBody('Get', { collection: makeCollectionId('items'), ids: [] }),
       ),
-    }).encode(writer);
+    });
+    nodeMsgRequest.encode(writer);
 
     // NodeMessage::Response (standalone) — manually encode due to variant mismatch
     writer.writeVariant(1); // NodeMessage::Response
-    makeRequestId(0x80).encode(writer);
-    makeEntityId(0x90).encode(writer);
-    makeEntityId(0xA0).encode(writer);
+    using nmRespReqId = makeRequestId(0x80);
+    nmRespReqId.encode(writer);
+    using nmRespFrom = makeEntityId(0x90);
+    nmRespFrom.encode(writer);
+    using nmRespTo = makeEntityId(0xA0);
+    nmRespTo.encode(writer);
     writer.writeVariant(5); // Success in fixture
 
     // NodeMessage::Update (standalone)
-    new NodeMessage('Update', {
-      update: new NodeUpdate(
+    using nodeMsgUpdate = new NodeMessage('Update', {
+      _0: new NodeUpdate(
         makeUpdateId(0x01),
         makeEntityId(0xB0),
         makeEntityId(0xC0),
         new NodeUpdateBody('SubscriptionUpdate', { items: [] }),
       ),
-    }).encode(writer);
+    });
+    nodeMsgUpdate.encode(writer);
 
     // NodeMessage::UpdateAck (standalone)
-    new NodeMessage('UpdateAck', {
-      updateAck: new NodeUpdateAck(
+    using nodeMsgUpdateAck = new NodeMessage('UpdateAck', {
+      _0: new NodeUpdateAck(
         makeUpdateId(0x02),
         makeEntityId(0xD0),
         makeEntityId(0xE0),
         new NodeUpdateAckBody('Success', {}),
       ),
-    }).encode(writer);
+    });
+    nodeMsgUpdateAck.encode(writer);
 
     // NodeMessage::UnsubscribeQuery (standalone)
-    new NodeMessage('UnsubscribeQuery', {
+    using nodeMsgUnsub = new NodeMessage('UnsubscribeQuery', {
       from: makeEntityId(0xF0),
       queryId: makeQueryId(77),
-    }).encode(writer);
+    });
+    nodeMsgUnsub.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'message.bin');
   });
@@ -1356,18 +1466,18 @@ describe('presence.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // Presence: durable, no system_root
-    const presenceDurable = Presence.decode(reader);
-    expect(presenceDurable.nodeId.bytes).toEqual(makeEntityId(0x01).bytes);
+    using presenceDurable = Presence.decode(reader);
+    { using expected = makeEntityId(0x01); expect(presenceDurable.nodeId.bytes).toEqual(expected.bytes); }
     expect(presenceDurable.durable).toBe(true);
     expect(presenceDurable.systemRoot).toBeNull();
 
     // Presence: ephemeral, with system_root
-    const presenceEphemeral = Presence.decode(reader);
-    expect(presenceEphemeral.nodeId.bytes).toEqual(makeEntityId(0x02).bytes);
+    using presenceEphemeral = Presence.decode(reader);
+    { using expected = makeEntityId(0x02); expect(presenceEphemeral.nodeId.bytes).toEqual(expected.bytes); }
     expect(presenceEphemeral.durable).toBe(false);
     expect(presenceEphemeral.systemRoot).not.toBeNull();
-    expect(presenceEphemeral.systemRoot!.payload.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
-    expect(presenceEphemeral.systemRoot!.payload.collection.value).toBe('test_collection');
+    { using expected = makeEntityId(0x00); expect(presenceEphemeral.systemRoot!.payload.entityId.bytes).toEqual(expected.bytes); }
+    expect(presenceEphemeral.systemRoot!.payload.collection.asStr()).toBe('test_collection');
     expect(presenceEphemeral.systemRoot!.attestations.length).toBe(2);
 
     expect(reader.remaining).toBe(0);
@@ -1377,13 +1487,15 @@ describe('presence.bin fixture', () => {
     const fixture = loadFixture('presence.bin');
     const writer = new BincodeWriter();
 
-    new Presence(makeEntityId(0x01), true, null).encode(writer);
+    using presenceDurable = new Presence(makeEntityId(0x01), true, null);
+    presenceDurable.encode(writer);
 
-    new Presence(
+    using presenceEphemeral = new Presence(
       makeEntityId(0x02),
       false,
       new Attested(makeEntityState(), makeAttestationSetTwo()),
-    ).encode(writer);
+    );
+    presenceEphemeral.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'presence.bin');
   });
@@ -1398,10 +1510,10 @@ describe('system.bin fixture', () => {
     const data = loadFixture('system.bin');
     const reader = new BincodeReader(data);
 
-    const sysRoot = Item.decode(reader);
+    using sysRoot = Item.decode(reader);
     expect(sysRoot.type).toBe('SysRoot');
 
-    const collectionItem = Item.decode(reader);
+    using collectionItem = Item.decode(reader);
     expect(collectionItem.type).toBe('Collection');
     if (collectionItem.is('Collection')) {
       expect(collectionItem.value.name).toBe('users');
@@ -1414,8 +1526,10 @@ describe('system.bin fixture', () => {
     const fixture = loadFixture('system.bin');
     const writer = new BincodeWriter();
 
-    new Item('SysRoot', {}).encode(writer);
-    new Item('Collection', { name: 'users' }).encode(writer);
+    using sysRoot = new Item('SysRoot', {});
+    sysRoot.encode(writer);
+    using collectionItem = new Item('Collection', { name: 'users' });
+    collectionItem.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'system.bin');
   });
@@ -1430,14 +1544,14 @@ describe('causal_assertion.bin fixture', () => {
     const data = loadFixture('causal_assertion.bin');
     const reader = new BincodeReader(data);
 
-    const causalAssertion = CausalAssertion.decode(reader);
-    expect(causalAssertion.entityId.bytes).toEqual(makeEntityId(0x10).bytes);
+    using causalAssertion = CausalAssertion.decode(reader);
+    { using expected = makeEntityId(0x10); expect(causalAssertion.entityId.bytes).toEqual(expected.bytes); }
     expect(causalAssertion.subject.length).toBe(1);
     expect(causalAssertion.other.length).toBe(3);
     expect(causalAssertion.relation.type).toBe('StrictDescends');
 
-    const causalAssertionEqual = CausalAssertion.decode(reader);
-    expect(causalAssertionEqual.entityId.bytes).toEqual(makeEntityId(0x20).bytes);
+    using causalAssertionEqual = CausalAssertion.decode(reader);
+    { using expected = makeEntityId(0x20); expect(causalAssertionEqual.entityId.bytes).toEqual(expected.bytes); }
     expect(causalAssertionEqual.subject.length).toBe(0);
     expect(causalAssertionEqual.other.length).toBe(0);
     expect(causalAssertionEqual.relation.type).toBe('Equal');
@@ -1449,19 +1563,21 @@ describe('causal_assertion.bin fixture', () => {
     const fixture = loadFixture('causal_assertion.bin');
     const writer = new BincodeWriter();
 
-    new CausalAssertion(
+    using ca1 = new CausalAssertion(
       makeEntityId(0x10),
       makeClockSingle(),
       makeClockMulti(),
       new CausalRelation('StrictDescends', {}),
-    ).encode(writer);
+    );
+    ca1.encode(writer);
 
-    new CausalAssertion(
+    using ca2 = new CausalAssertion(
       makeEntityId(0x20),
       makeClockEmpty(),
       makeClockEmpty(),
       new CausalRelation('Equal', {}),
-    ).encode(writer);
+    );
+    ca2.encode(writer);
 
     expectBytesEqual(writer.finish(), fixture, 'causal_assertion.bin');
   });
@@ -1494,14 +1610,14 @@ describe('attested_event.bin fixture', () => {
     const reader = new BincodeReader(data);
 
     // Attested<Event> with two attestations
-    const attestedEvent = Attested.decode(reader, r => Event.decode(r));
-    expect(attestedEvent.payload.collection.value).toBe('test_collection');
-    expect(attestedEvent.payload.entityId.bytes).toEqual(makeEntityId(0x00).bytes);
+    using attestedEvent = Attested.decode(reader, r => Event.decode(r));
+    expect(attestedEvent.payload.collection.asStr()).toBe('test_collection');
+    { using expected = makeEntityId(0x00); expect(attestedEvent.payload.entityId.bytes).toEqual(expected.bytes); }
     expect(attestedEvent.attestations.length).toBe(2);
 
     // Attested<Event> with empty attestations
-    const attestedEventEmpty = Attested.decode(reader, r => Event.decode(r));
-    expect(attestedEventEmpty.payload.collection.value).toBe('test_collection');
+    using attestedEventEmpty = Attested.decode(reader, r => Event.decode(r));
+    expect(attestedEventEmpty.payload.collection.asStr()).toBe('test_collection');
     expect(attestedEventEmpty.attestations.length).toBe(0);
 
     expect(reader.remaining).toBe(0);
@@ -1511,8 +1627,10 @@ describe('attested_event.bin fixture', () => {
     const fixture = loadFixture('attested_event.bin');
     const writer = new BincodeWriter();
 
-    new Attested(makeEvent(), makeAttestationSetTwo()).encode(writer, (w, ev) => ev.encode(w));
-    new Attested(makeEvent(), makeAttestationSetEmpty()).encode(writer, (w, ev) => ev.encode(w));
+    using attestedWithTwo = new Attested(makeEvent(), makeAttestationSetTwo());
+    attestedWithTwo.encode(writer, (w, ev) => ev.encode(w));
+    using attestedWithEmpty = new Attested(makeEvent(), makeAttestationSetEmpty());
+    attestedWithEmpty.encode(writer, (w, ev) => ev.encode(w));
 
     expectBytesEqual(writer.finish(), fixture, 'attested_event.bin');
   });

@@ -36,18 +36,38 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
     return this.type === variant;
   }
 
-  override [disposeSymbol](): void {
+  override drop(): void {
     if (this.isDropped) return;
-    super[disposeSymbol]();
+    super.drop();
+    // Cascade disposal into the variant's value object
     for (const key of Object.getOwnPropertyNames(this.value)) {
       const field = (this.value as any)[key];
       if (field == null) continue;
-      if (typeof field[disposeSymbol] === 'function') {
-        field[disposeSymbol]();
+      if (typeof field.drop === 'function') {
+        field.drop();
       } else if (Array.isArray(field)) {
         for (const item of field) {
-          if (item != null && typeof item[disposeSymbol] === 'function') {
-            item[disposeSymbol]();
+          if (item != null && typeof item.drop === 'function') {
+            item.drop();
+          } else if (Array.isArray(item)) {
+            for (const inner of item) {
+              if (inner != null && typeof inner.drop === 'function') {
+                inner.drop();
+              }
+            }
+          }
+        }
+      } else if (field instanceof Map) {
+        for (const mapVal of field.values()) {
+          if (mapVal == null) continue;
+          if (typeof mapVal.drop === 'function') {
+            mapVal.drop();
+          } else if (Array.isArray(mapVal)) {
+            for (const item of mapVal) {
+              if (item != null && typeof item.drop === 'function') {
+                item.drop();
+              }
+            }
           }
         }
       }

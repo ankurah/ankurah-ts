@@ -29,6 +29,26 @@ export class AkObject {
         for (const item of val) {
           if (item != null && typeof item.drop === 'function') {
             item.drop();
+          } else if (Array.isArray(item)) {
+            // Handle nested arrays (e.g. tuple arrays like [QueryId, MembershipChange])
+            for (const inner of item) {
+              if (inner != null && typeof inner.drop === 'function') {
+                inner.drop();
+              }
+            }
+          }
+        }
+      } else if (val instanceof Map) {
+        for (const mapVal of val.values()) {
+          if (mapVal == null) continue;
+          if (typeof mapVal.drop === 'function') {
+            mapVal.drop();
+          } else if (Array.isArray(mapVal)) {
+            for (const item of mapVal) {
+              if (item != null && typeof item.drop === 'function') {
+                item.drop();
+              }
+            }
           }
         }
       }
