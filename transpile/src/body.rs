@@ -101,11 +101,12 @@ impl<'a> BodyTranslator<'a> {
         let mut out = String::new();
         let stmts = &block.stmts;
 
-        // Collect local bindings for drop insertion
+        // Collect local bindings for drop insertion (with type inference from init)
         let mut locals: Vec<(String, String)> = Vec::new();
         for stmt in stmts {
             if let syn::Stmt::Local(local) = stmt {
-                ownership::collect_local_bindings(&local.pat, &mut locals);
+                let init_expr = local.init.as_ref().map(|i| &*i.expr);
+                ownership::collect_local_bindings(&local.pat, init_expr, &mut locals);
             }
         }
 

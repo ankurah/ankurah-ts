@@ -195,6 +195,15 @@ export class Selection extends Struct {
     }
     return columns;
   }
+
+  // TODO: proper bincode serde when ankql is transpiled
+  encode(writer: any): void {
+    throw new Error('Selection.encode not yet implemented');
+  }
+
+  static decode(reader: any): Selection {
+    throw new Error('Selection.decode not yet implemented');
+  }
 }
 
 // ── OrderByItem ───────────────────────────────────────────────────────

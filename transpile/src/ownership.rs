@@ -7,22 +7,60 @@
 use std::collections::HashSet;
 use crate::name_map;
 
-/// Collect variable names from a let binding pattern
-pub fn collect_local_bindings(pat: &syn::Pat, locals: &mut Vec<(String, String)>) {
+/// Collect variable names from a let binding pattern, with optional type info from init
+pub fn collect_local_bindings(pat: &syn::Pat, init: Option<&syn::Expr>, locals: &mut Vec<(String, String)>) {
     match pat {
         syn::Pat::Ident(ident) => {
             let name = name_map::to_camel_case(&ident.ident.to_string());
-            locals.push((name, String::new()));
+            let ty = init.map(|e| infer_init_type(e)).unwrap_or_default();
+            locals.push((name, ty));
         }
         syn::Pat::Tuple(tuple) => {
             for elem in &tuple.elems {
-                collect_local_bindings(elem, locals);
+                collect_local_bindings(elem, None, locals);
             }
         }
         syn::Pat::Type(t) => {
-            collect_local_bindings(&t.pat, locals);
+            // Extract type annotation
+            let ty = name_map::map_type(&t.ty);
+            let name = match &*t.pat {
+                syn::Pat::Ident(ident) => name_map::to_camel_case(&ident.ident.to_string()),
+                _ => { collect_local_bindings(&t.pat, init, locals); return; }
+            };
+            locals.push((name, ty));
         }
         _ => {}
+    }
+}
+
+/// Infer a basic type category from an initializer expression
+fn infer_init_type(expr: &syn::Expr) -> String {
+    match expr {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Str(_) => "string".to_string(),
+            syn::Lit::Int(_) => "number".to_string(),
+            syn::Lit::Float(_) => "number".to_string(),
+            syn::Lit::Bool(_) => "boolean".to_string(),
+            _ => String::new(),
+        },
+        syn::Expr::Array(_) => "[]".to_string(),
+        syn::Expr::Macro(mac) => {
+            let name = mac.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+            if name == "vec" { "[]".to_string() } else { String::new() }
+        }
+        syn::Expr::Call(call) => {
+            let func = match &*call.func {
+                syn::Expr::Path(p) => p.path.segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>().join("::"),
+                _ => String::new(),
+            };
+            match func.as_str() {
+                "Vec::new" | "vec::new" => "[]".to_string(),
+                "String::new" | "string::new" => "string".to_string(),
+                "HashMap::new" | "BTreeMap::new" => "Map".to_string(),
+                _ => String::new(),
+            }
+        }
+        _ => String::new(),
     }
 }
 

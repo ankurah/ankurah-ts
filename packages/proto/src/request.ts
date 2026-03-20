@@ -154,9 +154,7 @@ export class EntityDelta extends Struct {
         eventStrs.push(event.payload.toString());
         event.drop();
       }
-      const _ret = `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
-      eventStrs.drop();
-      return _ret;
+      return `EntityDelta ${this.entityId}: EventBridge(${eventStrs.join(', ')})`;
     },
       StateAndRelation: (v) => `EntityDelta ${this.entityId}: StateAndRelation(${v.state})`,
     });
