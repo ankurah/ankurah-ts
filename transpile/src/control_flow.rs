@@ -112,6 +112,11 @@ pub fn translate_expr_in_return_position_with(expr: &syn::Expr, t: &BodyTranslat
             let body = t.translate_block(&block.block);
             format!("{{\n{}}}", indent(&body))
         }
+        // Loops return () — just emit them as statements
+        syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => {
+            let ts = t.expr(expr);
+            format!("{}\n{}", ts, pending_drops)
+        }
         _ => {
             // Leaf case: compute value, emit drops, return
             let ts = t.expr(expr);

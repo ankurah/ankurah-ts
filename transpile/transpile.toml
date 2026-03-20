@@ -23,6 +23,9 @@ skip = ["wasm", "uniffi"]
 # Feature-gated or out-of-scope files
 files = [
   "proto/src/postgres.rs",
+  "signals/src/react.rs",
+  "signals/src/react_native.rs",
+  "signals/src/jsvalue.rs",
 ]
 
 [name_overrides]

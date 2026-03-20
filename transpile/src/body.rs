@@ -318,8 +318,9 @@ impl<'a> BodyTranslator<'a> {
                         return self.expr(expr);
                     }
                 }
+                // Multi-statement block as expression → IIFE
                 let body = self.translate_block(&block.block);
-                format!("{{\n{}}}", indent(&body))
+                format!("(() => {{\n{}}})()", indent(&body))
             }
 
             syn::Expr::Return(ret) => {
@@ -538,6 +539,15 @@ impl<'a> BodyTranslator<'a> {
             "cmp" | "partialCmp" if args.len() == 1 => format!("{}.compareTo({})", receiver, args[0]),
             "eq" if args.len() == 1 => format!("{}.equals({})", receiver, args[0]),
             "binarySearch" if args.len() == 1 => format!("{}.binarySearch({})", receiver, args[0]),
+
+            // Slices
+            "splitLast" if args.is_empty() => format!("{}.length > 0 ? [{}.at(-1), {}.slice(0, -1)] : null", receiver, receiver, receiver),
+            "splitFirst" if args.is_empty() => format!("{}.length > 0 ? [{}[0], {}.slice(1)] : null", receiver, receiver, receiver),
+
+            // Atomics
+            "fetchAdd" if args.len() >= 1 => format!("(() => {{ const _v = {}; {} += {}; return _v; }})()", receiver, receiver, args[0]),
+            "load" if args.is_empty() => receiver.to_string(),
+            "store" if args.len() >= 1 => format!("{} = {}", receiver, args[0]),
 
             // Formatter — TS has no alternate formatting, always false
             "alternate" if args.is_empty() => "false".to_string(),
