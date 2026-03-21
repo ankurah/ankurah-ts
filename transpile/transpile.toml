@@ -87,6 +87,7 @@ files = [
   "ankql/src/ast.rs",
   "ankql/src/selection/sql.rs",
   "ankql/src/lib.rs",
+  "signals/src/lib.rs",
 ]
 
 [cross_crate_types]

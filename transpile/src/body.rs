@@ -590,6 +590,13 @@ impl<'a> BodyTranslator<'a> {
                 format!("(() => {{ const _r = new BincodeReader({}); return /* TODO: need type */ _r; }})()", args[0]),
             // Box is transparent in TS — Box::new(x) → x
             "Box.new" | "Box::new" if args.len() == 1 => args[0].clone(),
+            // AtomicUsize/AtomicU32 are just numbers — new() → value
+            "AtomicUsize.new" | "AtomicUsize::new" if args.len() == 1 => args[0].clone(),
+            "AtomicU32.new" | "AtomicU32::new" if args.len() == 1 => args[0].clone(),
+            // Arc::as_ptr(x) → x.asPtr() (static → instance method)
+            "Arc.asPtr" | "Arc::asPtr" if args.len() == 1 => format!("{}.asPtr()", args[0]),
+            // Arc::downgrade(x) → x.downgrade()
+            "Arc.downgrade" | "Arc::downgrade" if args.len() == 1 => format!("{}.downgrade()", args[0]),
             "Vec.new" | "Vec::new" => "[]".to_string(),
             "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),
             "HashSet.new" | "HashSet::new" | "BTreeSet.new" | "BTreeSet::new" => "new Set()".to_string(),
@@ -659,11 +666,12 @@ impl<'a> BodyTranslator<'a> {
             }
         }).collect();
 
+        // Strip std/core/alloc module prefixes, keep type+method
+        let segments: Vec<String> = segments.into_iter()
+            .filter(|s| !matches!(s.as_str(), "std" | "core" | "alloc" | "sync" | "collections" | "convert" | "fmt" | "ops" | "iter" | "atomic"))
+            .collect();
         let joined = segments.join(".");
         match joined.as_str() {
-            s if s.contains("std.") || s.contains("core.") => {
-                segments.last().cloned().unwrap_or(joined)
-            }
             s if s.starts_with("crate.") => {
                 segments.last().cloned().unwrap_or(joined)
             }

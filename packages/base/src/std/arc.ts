@@ -99,6 +99,11 @@ export class Weak<T> {
     return new (Arc as any)(this.#inner);
   }
 
+  /** Identity-based pointer address (same inner → same address) */
+  asPtr(): number {
+    return Arc.#ptrId(this.#inner);
+  }
+
   drop(): void {
     if (this.#released) return;
     this.#released = true;
