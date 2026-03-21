@@ -181,7 +181,8 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
         "RefCell", "Ref", "RefMut"];
     for ty in &base_runtime_types {
-        if all_type_refs.contains(ty) && !base_imports.contains(ty) {
+        // Don't import if the file defines its own type with the same name
+        if all_type_refs.contains(ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
             base_imports.push(ty);
         }
     }
