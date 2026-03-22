@@ -3,9 +3,6 @@
 export interface ObserverBounds {
 }
 
-export interface ObserverBounds {
-}
-
 export interface Observer {
   observe(signal: Signal): void;
   observerId(): number;

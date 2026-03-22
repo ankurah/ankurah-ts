@@ -16,8 +16,10 @@ ankql = "ankql"
 "ankurah-connector-local-process" = "connector-local"
 "ankurah" = "ankurah"
 
-[excluded_features]
-skip = ["wasm", "uniffi"]
+[features]
+# Features enabled for transpilation. cfg() expressions are evaluated against this.
+# JS/TS is single-threaded, so we use the singlethread codepath.
+enabled = ["singlethread"]
 
 [excluded_files]
 # Feature-gated or out-of-scope files

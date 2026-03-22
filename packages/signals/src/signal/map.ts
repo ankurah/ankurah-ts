@@ -6,21 +6,19 @@ import { SubscriptionGuard } from '../porcelain/subscribe';
 export class Map<Upstream, Input, Output, Transform> extends Struct implements Signal, With, Get, Peek, Subscribe {
   source: Upstream;
   transform: Transform;
-  Phantom: PhantomData<[Input, Output]>;
 
-  constructor(source: Upstream, transform: Transform, Phantom: PhantomData<[Input, Output]>) {
+  constructor(source: Upstream, transform: Transform) {
     super();
     this.source = source;
     this.transform = transform;
-    this.Phantom = Phantom;
   }
 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Map<Upstream, Input, Output, Transform> {
-    return new Map(source, transform, marker.PhantomData);
+    return new Map(source, transform, undefined /* PhantomData */);
   }
 
   clone(): Map<Upstream, Input, Output, Transform> {
-    return new Map(this.source.clone(), this.transform.clone(), marker.PhantomData);
+    return new Map(this.source.clone(), this.transform.clone(), undefined /* PhantomData */);
   }
 }
 

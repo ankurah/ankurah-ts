@@ -27,6 +27,7 @@ pub fn emit_struct(
     // we don't emit TS `private` — all fields are accessible (default public in TS classes).
     // Public Rust fields are marked `readonly` for external consumers.
     for f in &s.fields {
+        if is_phantom_field(f) { continue; }
         if let Some(name) = &f.name {
             if f.is_pub {
                 out.push_str(&format!("  readonly {}: {};\n", name, f.ty));
@@ -36,14 +37,15 @@ pub fn emit_struct(
         }
     }
 
-    // Constructor with field assignments
-    if !s.fields.is_empty() {
+    // Constructor with field assignments (skip PhantomData fields)
+    let real_fields: Vec<&FieldInfo> = s.fields.iter().filter(|f| !is_phantom_field(f)).collect();
+    if !real_fields.is_empty() {
         out.push('\n');
-        let params: Vec<String> = s.fields.iter()
+        let params: Vec<String> = real_fields.iter()
             .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ty)))
             .collect();
         out.push_str(&format!("  constructor({}) {{\n    super();\n", params.join(", ")));
-        for f in &s.fields {
+        for f in &real_fields {
             if let Some(name) = &f.name {
                 out.push_str(&format!("    this.{} = {};\n", name, name));
             }
@@ -590,7 +592,13 @@ fn format_implements(traits: Option<&Vec<&str>>) -> String {
 
 fn is_rust_only_type(ty: &str) -> bool {
     ty.contains("Formatter") || ty.contains("Serializer") || ty.contains("Deserializer")
+        || ty.contains("PhantomData")
         || ty == "S" || ty == "D"
+}
+
+/// Check if a field should be skipped in TS emission (zero-sized Rust types)
+fn is_phantom_field(f: &FieldInfo) -> bool {
+    f.ty.contains("PhantomData")
 }
 
 fn is_skipped_trait(trait_name: &str) -> bool {

@@ -17,6 +17,7 @@ mod match_expr;
 mod name_map;
 mod ownership;
 mod resolve;
+mod cfg;
 mod types;
 
 #[derive(Parser)]
@@ -120,7 +121,8 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
             }
         }
 
-        let rust_file = match extract::extract(rs_path) {
+        let features = config.map(|c| &c.features);
+        let rust_file = match extract::extract_with_features(rs_path, features) {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("SKIP {}: {}", rel_str, e);

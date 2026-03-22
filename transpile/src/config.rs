@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub paths: PathsConfig,
     pub crates: HashMap<String, String>,
-    pub excluded_features: Vec<String>,
     pub excluded_files: Vec<String>,
     pub name_overrides: HashMap<String, String>,
     pub provided_impls: HashMap<String, ProvidedImpl>,
@@ -19,6 +18,8 @@ pub struct Config {
     /// are declared here so the transpiler can resolve through them.
     /// Distinct from provided_impls (subject-code types hand-ported in *.provided.ts).
     pub system_types: Vec<crate::resolve::TypeDef>,
+    /// Feature flags for conditional compilation (#[cfg(feature = "...")]).
+    pub features: crate::cfg::CfgFeatures,
 }
 
 #[derive(Debug)]
@@ -60,12 +61,13 @@ impl Config {
         let crates = parse_string_map(table.get("crates"));
         let name_overrides = parse_string_map(table.get("name_overrides"));
 
-        let excluded_features = if let Some(ef) = table.get("excluded_features").and_then(|v| v.as_table()) {
-            ef.get("skip").and_then(|v| v.as_array())
+        let features = if let Some(ft) = table.get("features").and_then(|v| v.as_table()) {
+            let enabled = ft.get("enabled").and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            crate::cfg::CfgFeatures::new(enabled)
         } else {
-            Vec::new()
+            crate::cfg::CfgFeatures::new(vec![])
         };
 
         let excluded_files = if let Some(ef) = table.get("excluded_files").and_then(|v| v.as_table()) {
@@ -93,13 +95,13 @@ impl Config {
         Ok(Config {
             paths,
             crates,
-            excluded_features,
             excluded_files,
             name_overrides,
             provided_impls,
             hardcode_files,
             cross_crate_types,
             system_types,
+            features,
         })
     }
 

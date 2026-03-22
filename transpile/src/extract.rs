@@ -11,8 +11,14 @@ use syn::{self, Visibility, FnArg, ReturnType, Fields};
 use crate::name_map;
 use crate::types::*;
 
-/// Extract all items from a Rust source file
+/// Extract all items from a Rust source file.
+/// If features is provided, #[cfg(...)] expressions are evaluated against it.
+/// Otherwise, only wasm/uniffi are skipped (legacy behavior).
 pub fn extract(path: &Path) -> Result<RustFile> {
+    extract_with_features(path, None)
+}
+
+pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatures>) -> Result<RustFile> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
 
@@ -35,30 +41,30 @@ pub fn extract(path: &Path) -> Result<RustFile> {
     for item in &syntax.items {
         match item {
             syn::Item::Struct(s) => {
-                if is_skipped_cfg(&s.attrs) { continue; }
+                if is_skipped_cfg_with(&s.attrs, features) { continue; }
                 file.structs.push(extract_struct(s));
             }
             syn::Item::Enum(e) => {
-                if is_skipped_cfg(&e.attrs) { continue; }
+                if is_skipped_cfg_with(&e.attrs, features) { continue; }
                 file.enums.push(extract_enum(e));
             }
             syn::Item::Trait(t) => {
-                if is_skipped_cfg(&t.attrs) { continue; }
+                if is_skipped_cfg_with(&t.attrs, features) { continue; }
                 file.traits.push(extract_trait(t));
             }
             syn::Item::Fn(f) => {
-                if is_skipped_cfg(&f.attrs) { continue; }
+                if is_skipped_cfg_with(&f.attrs, features) { continue; }
                 file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
             }
             syn::Item::Impl(i) => {
-                if is_skipped_cfg(&i.attrs) { continue; }
+                if is_skipped_cfg_with(&i.attrs, features) { continue; }
                 file.impls.push(extract_impl(i));
             }
             syn::Item::Use(u) => {
                 file.uses.push(extract_use(u));
             }
             syn::Item::Type(t) => {
-                if is_skipped_cfg(&t.attrs) { continue; }
+                if is_skipped_cfg_with(&t.attrs, features) { continue; }
                 file.type_aliases.push(TypeAliasInfo {
                     name: t.ident.to_string(),
                     ty: name_map::map_type(&t.ty),
@@ -66,7 +72,7 @@ pub fn extract(path: &Path) -> Result<RustFile> {
                 });
             }
             syn::Item::Const(c) => {
-                if is_skipped_cfg(&c.attrs) { continue; }
+                if is_skipped_cfg_with(&c.attrs, features) { continue; }
                 file.consts.push(ConstInfo {
                     name: c.ident.to_string(),
                     ty: name_map::map_type(&c.ty),
@@ -86,6 +92,35 @@ pub fn extract(path: &Path) -> Result<RustFile> {
                         }
                     }
                 }
+                // Extract items from non-test cfg-gated mod blocks
+                // (e.g., mod stack { ... } with #[cfg(feature = "singlethread")])
+                else if !is_skipped_cfg_with(&m.attrs, features) {
+                    if let Some((_, items)) = &m.content {
+                        for item in items {
+                            match item {
+                                syn::Item::Fn(f) => {
+                                    if !is_skipped_cfg_with(&f.attrs, features) {
+                                        file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
+                                    }
+                                }
+                                syn::Item::Struct(s) => {
+                                    if !is_skipped_cfg_with(&s.attrs, features) {
+                                        file.structs.push(extract_struct(s));
+                                    }
+                                }
+                                syn::Item::Enum(e) => {
+                                    if !is_skipped_cfg_with(&e.attrs, features) {
+                                        file.enums.push(extract_enum(e));
+                                    }
+                                }
+                                syn::Item::Use(u) => {
+                                    file.uses.push(extract_use(u));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -99,6 +134,14 @@ fn is_public(vis: &Visibility) -> bool {
 }
 
 fn is_skipped_cfg(attrs: &[syn::Attribute]) -> bool {
+    is_skipped_cfg_with(attrs, None)
+}
+
+fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::CfgFeatures>) -> bool {
+    if let Some(features) = features {
+        return crate::cfg::should_skip(attrs, features);
+    }
+    // Legacy fallback: string matching for wasm/uniffi
     for attr in attrs {
         if attr.path().is_ident("cfg") {
             let tokens = attr.meta.to_token_stream().to_string();

@@ -8,15 +8,13 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
   transform: Transform;
   cached: Arc<RwLock<Output | null>>;
   Subscription: ListenerGuard;
-  Phantom: PhantomData<Input>;
 
-  constructor(source: Upstream, transform: Transform, cached: Arc<RwLock<Output | null>>, Subscription: ListenerGuard, Phantom: PhantomData<Input>) {
+  constructor(source: Upstream, transform: Transform, cached: Arc<RwLock<Output | null>>, Subscription: ListenerGuard) {
     super();
     this.source = source;
     this.transform = transform;
     this.cached = cached;
     this.Subscription = Subscription;
-    this.Phantom = Phantom;
   }
 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
@@ -25,7 +23,7 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
     const subscription = source.listen(Arc.new((_) => (() => {
       cachedRef.write() = null;
     })()));
-    const _ret = new Memo(source, transform, cached, subscription, marker.PhantomData);
+    const _ret = new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
     cachedRef.drop();
     return _ret;
   }

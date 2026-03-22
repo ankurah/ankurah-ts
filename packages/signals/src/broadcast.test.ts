@@ -54,7 +54,7 @@ describe('broadcast unit tests', () => {
       (() => { const _v = counterClone; counterClone += 1; return _v; })();
     })());
     signal.set(100);
-    expect(counter.load(Ordering.SeqCst)).toEqual(1);
+    expect(counter).toEqual(1);
     Subscription.drop();
     counterClone.drop();
     counter.drop();

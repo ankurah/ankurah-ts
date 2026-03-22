@@ -87,7 +87,7 @@ describe('calculated unit tests', () => {
       (() => { const _v = callCountRef; callCountRef += 1; return _v; })();
     })());
     source.set(10);
-    expect(callCount.load(Ordering.SeqCst)).toEqual(1);
+    expect(callCount).toEqual(1);
     Sub.drop();
     callCountRef.drop();
     callCount.drop();
@@ -127,17 +127,17 @@ describe('calculated unit tests', () => {
       return _ret;
     })());
     expect(doubled.get()).toEqual(2);
-    expect(computeCount.load(Ordering.SeqCst)).toEqual(1);
+    expect(computeCount).toEqual(1);
     const unrelatedRead = unrelated.read();
     const Sub = doubled.subscribe((Value) => (() => {
       const _ = unrelatedRead.get();
     })());
     source.set(2);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount.load(Ordering.SeqCst)).toEqual(2);
+    expect(computeCount).toEqual(2);
     unrelated.set(200);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount.load(Ordering.SeqCst)).toEqual(2);
+    expect(computeCount).toEqual(2);
     Sub.drop();
     unrelatedRead.drop();
     doubled.drop();

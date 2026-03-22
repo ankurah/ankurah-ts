@@ -638,7 +638,8 @@ impl<'a> BodyTranslator<'a> {
 
             // Atomics
             "fetchAdd" if args.len() >= 1 => format!("(() => {{ const _v = {}; {} += {}; return _v; }})()", receiver, receiver, args[0]),
-            "load" if args.is_empty() => receiver.to_string(),
+            // Atomics — Ordering args are stripped (no JS equivalent)
+            "load" => receiver.to_string(),
             "store" if args.len() >= 1 => format!("{} = {}", receiver, args[0]),
 
             // Formatter — TS has no alternate formatting, always false
@@ -758,7 +759,10 @@ impl<'a> BodyTranslator<'a> {
                 "None" => "null".to_string(),
                 "true" | "false" => name,
                 "Ok" | "Some" | "Err" => name,
-                "std" | "core" | "alloc" | "crate" | "super" => name,
+                "std" | "core" | "alloc" | "crate" | "super" | "marker" => name,
+                "PhantomData" => return "undefined /* PhantomData */".to_string(),
+                // Ordering::SeqCst etc. — no JS equivalent, stripped by method call handlers
+                "Ordering" => return "undefined /* Ordering */".to_string(),
                 _ => {
                     if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
                         name
@@ -771,7 +775,7 @@ impl<'a> BodyTranslator<'a> {
 
         // Strip std/core/alloc module prefixes, keep type+method
         let segments: Vec<String> = segments.into_iter()
-            .filter(|s| !matches!(s.as_str(), "std" | "core" | "alloc" | "sync" | "collections" | "convert" | "fmt" | "ops" | "iter" | "atomic"))
+            .filter(|s| !matches!(s.as_str(), "std" | "core" | "alloc" | "sync" | "collections" | "convert" | "fmt" | "ops" | "iter" | "atomic" | "marker"))
             .collect();
         let joined = segments.join(".");
         match joined.as_str() {
