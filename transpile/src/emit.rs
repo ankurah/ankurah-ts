@@ -22,13 +22,16 @@ pub fn emit_struct(
 
     out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, s.generics, base, implements));
 
-    // Fields — public fields are readonly, private fields are mutable
+    // Fields — Rust's "private" means module-private (same file), not class-private.
+    // Since types within the same Rust module routinely access each other's fields,
+    // we don't emit TS `private` — all fields are accessible (default public in TS classes).
+    // Public Rust fields are marked `readonly` for external consumers.
     for f in &s.fields {
         if let Some(name) = &f.name {
             if f.is_pub {
                 out.push_str(&format!("  readonly {}: {};\n", name, f.ty));
             } else {
-                out.push_str(&format!("  private {}: {};\n", name, f.ty));
+                out.push_str(&format!("  {}: {};\n", name, f.ty));
             }
         }
     }
@@ -401,8 +404,9 @@ fn emit_derive_methods(
             "PartialEq" | "Eq" | "PartialOrd" | "Ord" => {}
             "Default" => {
                 if emitted.insert("default".to_string()) {
+                    let static_generics = merge_class_type_params_for_static("", &full_type);
                     if field_names.is_empty() {
-                        out.push_str(&format!("\n  static default(): {} {{\n    return new {}();\n  }}\n", full_type, type_name));
+                        out.push_str(&format!("\n  static default{}(): {} {{\n    return new {}();\n  }}\n", static_generics, full_type, type_name));
                     } else {
                         let default_fields: Vec<String> = fields.iter()
                             .filter_map(|f| {
@@ -427,8 +431,8 @@ fn emit_derive_methods(
                                 })
                             })
                             .collect();
-                        out.push_str(&format!("\n  static default(): {} {{\n    return new {}({});\n  }}\n",
-                            full_type, type_name, default_fields.join(", ")));
+                        out.push_str(&format!("\n  static default{}(): {} {{\n    return new {}({});\n  }}\n",
+                            static_generics, full_type, type_name, default_fields.join(", ")));
                     }
                 }
             }
@@ -498,8 +502,12 @@ fn emit_struct_bincode(
 fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
     let static_kw = if method.is_static { "static " } else { "" };
     let async_kw = if method.is_async { "async " } else { "" };
-    let generics = &method.generics;
-    let params = format_params_filtered(&method.params);
+    let generics = if method.is_static {
+        merge_class_type_params_for_static(&method.generics, self_type)
+    } else {
+        method.generics.clone()
+    };
+    let params = format_params_filtered(&method.params, self_type);
     let ret = resolve_self_type(&method.return_type, self_type);
     let ret = if method.is_async && ret != "void" {
         format!("Promise<{}>", ret)
@@ -560,10 +568,10 @@ fn format_params(params: &[ParamInfo]) -> String {
         .join(", ")
 }
 
-fn format_params_filtered(params: &[ParamInfo]) -> String {
+fn format_params_filtered(params: &[ParamInfo], self_type: &str) -> String {
     params.iter()
         .filter(|p| !p.is_self && !is_rust_only_type(&p.ty))
-        .map(|p| format!("{}: {}", p.name, p.ty))
+        .map(|p| format!("{}: {}", p.name, resolve_self_type(&p.ty, self_type)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -631,6 +639,70 @@ fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[Str
     }
 
     base_name.to_string()
+}
+
+/// For static methods, merge class-level type params into the method's own generics.
+/// TypeScript static methods cannot reference enclosing class type parameters, so
+/// `impl<T> Foo<T> { fn new() -> Self }` must emit `static new<T>(): Foo<T>`.
+fn merge_class_type_params_for_static(method_generics: &str, self_type: &str) -> String {
+    // Extract class type params from self_type, e.g. "Foo<T, U>" → ["T", "U"]
+    let class_params = if let Some(start) = self_type.find('<') {
+        let inner = &self_type[start + 1..self_type.len() - 1];
+        // Split on commas, but respect nested angle brackets
+        let mut params = Vec::new();
+        let mut depth = 0;
+        let mut current = String::new();
+        for ch in inner.chars() {
+            match ch {
+                '<' => { depth += 1; current.push(ch); }
+                '>' => { depth -= 1; current.push(ch); }
+                ',' if depth == 0 => {
+                    let p = current.trim().to_string();
+                    if !p.is_empty() { params.push(p); }
+                    current.clear();
+                }
+                _ => { current.push(ch); }
+            }
+        }
+        let p = current.trim().to_string();
+        if !p.is_empty() { params.push(p); }
+        params
+    } else {
+        return method_generics.to_string();
+    };
+
+    if class_params.is_empty() {
+        return method_generics.to_string();
+    }
+
+    // Extract existing method type param names (just the bare names, before any "extends")
+    let method_param_names: HashSet<String> = if method_generics.is_empty() {
+        HashSet::new()
+    } else {
+        let inner = &method_generics[1..method_generics.len() - 1];
+        inner.split(',')
+            .map(|p| p.trim().split_whitespace().next().unwrap_or("").to_string())
+            .collect()
+    };
+
+    // Add class params that aren't already declared on the method
+    let mut new_params: Vec<String> = class_params.into_iter()
+        .filter(|p| {
+            let name = p.split_whitespace().next().unwrap_or(p);
+            !method_param_names.contains(name)
+        })
+        .collect();
+
+    if new_params.is_empty() {
+        return method_generics.to_string();
+    }
+
+    // Merge: class params first, then method params
+    if !method_generics.is_empty() {
+        let inner = &method_generics[1..method_generics.len() - 1];
+        new_params.push(inner.to_string());
+    }
+    format!("<{}>", new_params.join(", "))
 }
 
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {

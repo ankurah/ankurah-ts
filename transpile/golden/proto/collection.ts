@@ -3,7 +3,7 @@ import { Struct, Result } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
-  private _0: string;
+  _0: string;
 
   constructor(_0: string) {
     super();

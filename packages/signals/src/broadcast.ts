@@ -1,33 +1,25 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Drop, Arc, Weak } from '@ankurah/base';
-
-/// A unique identifier for a broadcast that cannot be forged or extracted.
-/// Can only be created by a Broadcast and used for deduplication/comparison.
-// Divergence: Rust uses pointer-based usize ID; TS uses auto-incrementing counter [E8]
-let nextBroadcastIdCounter = 0;
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
-  private readonly _0: number;
+  _0: number;
 
-  /** @internal - only Broadcast should create BroadcastIds */
-  constructor(id?: number) {
+  constructor(_0: number) {
     super();
-    this._0 = id ?? nextBroadcastIdCounter++;
+    this._0 = _0;
   }
 
-  // impl Into<usize> for BroadcastId
-  toNumber(): number {
-    return this._0;
-  }
-
-  // impl PartialEq
-  equals(other: BroadcastId): boolean {
-    return this._0 === other._0;
-  }
-
-  // impl Display for BroadcastId
   toString(): string {
     return `${this._0}`;
+  }
+
+  equals(other: BroadcastId): boolean {
+    if (this._0 !== other._0) return false;
+    return true;
+  }
+
+  compareTo(other: BroadcastId): number {
+    throw new Error('TODO');
   }
 
   clone(): BroadcastId {
@@ -35,152 +27,122 @@ export class BroadcastId extends Struct {
   }
 }
 
-/** A listener that can be called when broadcast notifications are sent.
- * Supports both full listeners (receive value) and unit listeners (notification only). */
-// Divergence: Rust enum with Arc<dyn Fn> variants; TS uses discriminated union type
-// since callers construct these inline and Enum<V> would break them [E8]
-export type BroadcastListener<T = void> =
-  | { type: 'Payload'; callback: (value: T) => void }
-  | { type: 'NotifyOnly'; callback: () => void };
+export class Broadcast<T> extends Struct {
+  _0: Arc<Inner<T>>;
 
-// Trait for types that can be converted into broadcast listeners.
-// Divergence: Rust IntoBroadcastListener<T> trait with impls for Fn(T), BroadcastListener<T>,
-// Arc<dyn Fn(T)>, Arc<dyn Fn()>, Sender<T>; TS uses the discriminated union directly [E8]
-
-/** A broadcast sender that notifies multiple subscribers.
- * Uses synchronous function callbacks for immediate notification. */
-export class Broadcast<T = void> extends Struct {
-  private _0: Arc<Inner<T>>;
-  private _id: BroadcastId;
-
-  constructor(arc?: Arc<Inner<T>>, id?: BroadcastId) {
+  constructor(_0: Arc<Inner<T>>) {
     super();
-    this._0 = arc ?? Arc.new(new Inner());
-    this._id = id ?? new BroadcastId();
+    this._0 = _0;
   }
 
-  clone(): Broadcast<T> {
-    return new Broadcast<T>(this._0.clone(), this._id.clone());
+  static new<T>(): Broadcast<T> {
+    return new Broadcast(Arc.new(new Inner(new RwLock(new Map()), 0)));
   }
 
-  /** Get the unique identifier for this broadcast */
   id(): BroadcastId {
-    return this._id;
+    return new BroadcastId(this._0.asPtr() as number);
   }
 
-  /** Sends a notification to all active listeners */
   send(value: T): void {
-    // Clone the listeners to avoid holding the lock during callback execution
-    // maybe someday we can avoid the alloc here using a thread-local buffer?
-    const subscribers = Array.from(this._0.value.listeners.values());
-
-    // Call all listeners without holding any locks
-    // clone the value for each subscriber except the last one
-    if (subscribers.length > 0) {
-      const last = subscribers[subscribers.length - 1];
-      const rest = subscribers.slice(0, -1);
-
+    const subscribers = (() => {
+      const listeners = this._0.value.listeners.read().value;
+      const _ret = [...[...listeners]];
+      listeners.drop();
+      return _ret;
+    })();
+    if (subscribers.length > 0 ? [subscribers.at(-1), subscribers.slice(0, -1)] : null != null) {
+      const [last, rest] = subscribers.length > 0 ? [subscribers.at(-1), subscribers.slice(0, -1)] : null;
       for (const callback of rest) {
-        switch (callback.type) {
-          case 'Payload':
-            callback.callback(value);
-            break;
-          case 'NotifyOnly':
-            callback.callback();
-            break;
-        }
+        return callback.match({
+          Payload: (v) => v._0(value.clone()),
+          NotifyOnly: (v) => v._0(),
+        });
       }
-      switch (last.type) {
-        case 'Payload':
-          last.callback(value);
-          break;
-        case 'NotifyOnly':
-          last.callback();
-          break;
-      }
+      return last.match({
+        Payload: (v) => v._0(value),
+        NotifyOnly: (v) => v._0(),
+      });
     }
   }
 
-  /**
-   * Get a read-only reference to this sender that can only subscribe to notifications.
-   * This avoids cloning the sender while still forbidding the user from sending notifications.
-   */
-  reference(): BroadcastRef<T> {
-    return new BroadcastRef(this._0.clone(), this._id);
+  reference(): Ref<T> {
+    return new Ref(this);
+  }
+
+  static default<T>(): Broadcast<T> {
+    return new Broadcast();
+  }
+
+  clone(): Broadcast<T> {
+    return new Broadcast(this._0.clone());
   }
 }
 
-// Internal shared state for a Broadcast.
-// Divergence: Rust uses RwLock<HashMap<...>> + AtomicUsize; TS uses plain Map + number [E8]
 class Inner<T> extends Struct {
-  listeners: Map<number, BroadcastListener<T>> = new Map();
-  nextId: number = 0;
-}
+  listeners: RwLock<Map<number, BroadcastListener<T>>>;
+  nextId: number;
 
-/** A listen-only reference to a broadcast */
-// Divergence: Rust Ref<'a, T> uses a borrow of Broadcast; TS holds Arc clone [E8]
-export class BroadcastRef<T = void> extends Struct {
-  /** @internal */
-  private _0: Arc<Inner<T>>;
-  /** @internal */
-  private _broadcastId: BroadcastId;
-
-  /** @internal */
-  constructor(arc: Arc<Inner<T>>, broadcastId: BroadcastId) {
+  constructor(listeners: RwLock<Map<number, BroadcastListener<T>>>, nextId: number) {
     super();
-    this._0 = arc;
-    this._broadcastId = broadcastId;
-  }
-
-  /** Subscribe to notifications from the associated sender. */
-  listen(listener: BroadcastListener<T>): ListenerGuard<T> {
-    const id = this._0.value.nextId++;
-    this._0.value.listeners.set(id, listener);
-    return new ListenerGuard(this._0.downgrade(), id, this._broadcastId);
-  }
-
-  /** Get a unique identifier for this broadcast (for deduplication purposes) */
-  broadcastId(): BroadcastId {
-    return this._broadcastId;
+    this.listeners = listeners;
+    this.nextId = nextId;
   }
 }
 
-/** Trait for abstractly representing any ListenerGuard<T> */
+export class Ref<T> extends Struct {
+  _0: Broadcast<T>;
+
+  constructor(_0: Broadcast<T>) {
+    super();
+    this._0 = _0;
+  }
+
+  listen<L>(listener: L): ListenerGuard<T> {
+    const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
+    this._0._0.value.listeners.write().value.splice(id, 0, listener.intoBroadcastListener());
+    return new ListenerGuard(this._0._0.downgrade(), id);
+  }
+
+  broadcastId(): BroadcastId {
+    return new BroadcastId(this._0._0.asPtr() as number);
+  }
+}
+
+export class ListenerGuard<T> extends Drop implements TListenerGuard {
+  inner: Weak<Inner<T>>;
+  id: number;
+
+  constructor(inner: Weak<Inner<T>>, id: number) {
+    super();
+    this.inner = inner;
+    this.id = id;
+  }
+
+  broadcastId(): BroadcastId {
+    return new BroadcastId(this.inner.asPtr() as number);
+  }
+}
+
+export type BroadcastListenerV = {
+  Payload: { _0: Arc<(arg0: T) => void> };
+  NotifyOnly: { _0: Arc<() => void> };
+};
+
+export class BroadcastListener<T> extends Enum<BroadcastListenerV> {
+
+  clone(): BroadcastListener<T> {
+    return this.match({
+      Payload: (v) => new BroadcastListener('Payload', { _0: v._0.clone() }),
+      NotifyOnly: (v) => new BroadcastListener('NotifyOnly', { _0: v._0.clone() }),
+    });
+  }
+}
+
+export interface IntoBroadcastListener<T> {
+  intoBroadcastListener(): BroadcastListener<T>;
+}
+
 export interface TListenerGuard {
   broadcastId(): BroadcastId;
 }
 
-/** A subscription handle that can be used to unsubscribe from notifications.
- * impl Drop -> extends Drop [E11] */
-export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
-  private inner: Weak<Inner<T>>;
-  private id: number;
-  private _broadcastId: BroadcastId;
-
-  /** @internal */
-  constructor(inner: Weak<Inner<T>>, id: number, broadcastId: BroadcastId) {
-    super();
-    this.inner = inner;
-    this.id = id;
-    this._broadcastId = broadcastId;
-  }
-
-  /** Get the broadcast ID that this guard is subscribed to */
-  broadcastId(): BroadcastId {
-    return this._broadcastId;
-  }
-
-  /** Automatically unsubscribes when the subscription handle is dropped. */
-  drop(): void {
-    const upgraded = this.inner.upgrade();
-    if (upgraded !== null) {
-      upgraded.value.listeners.delete(this.id);
-      upgraded.drop();
-    }
-    this.inner.drop();
-  }
-}
-
-// IntoBroadcastListener implementations for various types
-// Divergence: Rust has impls for Fn(T), BroadcastListener<T>, Arc<dyn Fn(T)>,
-// Arc<dyn Fn()>, tokio Sender, std Sender; TS uses discriminated union directly [E8]

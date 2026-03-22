@@ -693,8 +693,11 @@ impl<'a> BodyTranslator<'a> {
             "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),
             "HashSet.new" | "HashSet::new" | "BTreeSet.new" | "BTreeSet::new" => "new Set()".to_string(),
             "String.new" | "String::new" => "''".to_string(),
+            // System types with factory .new() methods (private constructors in TS)
+            "Arc.new" | "Arc::new" => format!("Arc.new({})", args.join(", ")),
             _ if func.ends_with(".new") || func.ends_with("::new") => {
                 let type_name = func.trim_end_matches(".new").trim_end_matches("::new");
+                let type_name = if type_name == "Self" { self.self_type } else { type_name };
                 format!("new {}({})", type_name, args.join(", "))
             }
             _ if func.starts_with("Self.") || func.starts_with("Self::") => {
