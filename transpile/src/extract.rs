@@ -201,21 +201,22 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
     }
 }
 
+/// Extract function with body — stores the raw syn::Block for deferred translation.
+/// Body translation happens in Phase 3 (with full type context), not during extraction.
 fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>) -> FnInfo {
     let mut info = extract_fn(sig, is_pub, attrs);
     if let Some(block) = body {
-        info.body_ts = Some(crate::body::translate_block(block));
+        info.body_ast = Some(block.clone());
     }
     info
 }
 
-/// Extract function with body, using a known self type for Self resolution
-fn extract_fn_with_body_and_self(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>, self_type: &str) -> FnInfo {
-    let mut info = extract_fn(sig, is_pub, attrs);
-    if let Some(block) = body {
-        info.body_ts = Some(crate::body::translate_block_with_self(block, self_type));
-    }
-    info
+/// Extract function with body, recording the self type for later translation.
+/// The self_type is stored on the ImplInfo, not the FnInfo — the translation phase
+/// uses ImplInfo.target_type to create the ImplScope.
+fn extract_fn_with_body_and_self(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>, _self_type: &str) -> FnInfo {
+    // self_type is no longer used during extraction — it's resolved from ImplInfo during Phase 3
+    extract_fn_with_body(sig, is_pub, attrs, body)
 }
 
 fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> FnInfo {
@@ -261,6 +262,7 @@ fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> F
         return_type,
         generics: extract_generics(&sig.generics),
         is_test: is_test_fn(attrs),
+        body_ast: None,
         body_ts: None,
     }
 }

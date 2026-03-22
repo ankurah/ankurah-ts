@@ -95,5 +95,80 @@ files = [
 # TODO: auto-detect from use statements + type path analysis
 Selection = "@ankurah/ankql"
 
+# ── System types ──────────────────────────────────────────────────────
+# Foundational runtime types from @ankurah/base/std/.
+# These are loaded into the TypeRegistry so the transpiler can resolve
+# field access, method chains, and deref insertion through them.
+# Distinct from [provided_impls] (subject-code types in *.provided.ts).
+
+[system_types.Arc]
+deref_field = "value"
+type_params = ["T"]
+methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
+
+[system_types.Weak]
+type_params = ["T"]
+methods = { upgrade = "Arc<T> | null", clone = "Weak<T>" }
+
+[system_types.Mutex]
+type_params = ["T"]
+methods = { lock = "MutexGuard<T>" }
+
+[system_types.MutexGuard]
+deref_field = "value"
+type_params = ["T"]
+
+[system_types.RwLock]
+type_params = ["T"]
+methods = { read = "RwLockReadGuard<T>", write = "RwLockWriteGuard<T>" }
+
+[system_types.RwLockReadGuard]
+deref_field = "value"
+type_params = ["T"]
+
+[system_types.RwLockWriteGuard]
+deref_field = "value"
+type_params = ["T"]
+
+[system_types.RefCell]
+type_params = ["T"]
+methods = { borrow = "Ref<T>", borrow_mut = "RefMut<T>" }
+
+[system_types.Ref]
+deref_field = "value"
+type_params = ["T"]
+
+[system_types.RefMut]
+deref_field = "value"
+type_params = ["T"]
+
+[system_types.Box]
+deref_field = ""  # transparent — unwrap to inner type, emit nothing
+type_params = ["T"]
+
+[system_types.Result]
+type_params = ["T", "E"]
+methods = { unwrap = "T", expect = "T", is_ok = "boolean", is_err = "boolean" }
+
+[system_types.Vec]
+type_params = ["T"]
+methods = { len = "number", push = "void", pop = "T | null", iter = "T[]", clone = "T[]" }
+
+[system_types.HashMap]
+type_params = ["K", "V"]
+methods = { get = "V | null", insert = "void", len = "number", iter = "Tuple<K, V>[]", contains_key = "boolean" }
+
+[system_types.BTreeMap]
+type_params = ["K", "V"]
+methods = { get = "V | null", insert = "void", len = "number", iter = "Tuple<K, V>[]", contains_key = "boolean" }
+
+[system_types.HashSet]
+type_params = ["T"]
+methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
+
+[system_types.BTreeSet]
+type_params = ["T"]
+methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
+
 [managed_files]
 # Phase 3: files the transpiler owns (start empty, grow gradually)

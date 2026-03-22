@@ -59,7 +59,6 @@ pub struct TraitInfo {
     pub generics: String,
 }
 
-#[derive(Debug)]
 pub struct FnInfo {
     pub name: String,
     pub ts_name: String,
@@ -70,8 +69,26 @@ pub struct FnInfo {
     pub return_type: String,
     pub generics: String,
     pub is_test: bool,
-    /// Translated function body (None = stub, Some = translated)
+    /// Raw syn AST for the function body — populated in Phase 1, consumed in Phase 3.
+    /// Cloned from the parsed syn::File so it outlives the parse.
+    pub body_ast: Option<syn::Block>,
+    /// Translated function body (None = stub, Some = translated).
+    /// Populated in Phase 3 (translate) from body_ast, or eagerly for legacy codepaths.
     pub body_ts: Option<String>,
+}
+
+impl std::fmt::Debug for FnInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnInfo")
+            .field("name", &self.name)
+            .field("ts_name", &self.ts_name)
+            .field("is_pub", &self.is_pub)
+            .field("is_static", &self.is_static)
+            .field("return_type", &self.return_type)
+            .field("body_ast", &self.body_ast.as_ref().map(|_| "<syn::Block>"))
+            .field("body_ts", &self.body_ts)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]

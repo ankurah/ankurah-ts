@@ -16,7 +16,7 @@ mod macros;
 mod match_expr;
 mod name_map;
 mod ownership;
-// translate_ctx removed — BodyTranslator struct in body.rs replaces it
+mod resolve;
 mod types;
 
 #[derive(Parser)]
@@ -150,7 +150,14 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         }
     }
 
-    // Phase 2: Generate TS with resolved imports
+    // Phase 2: Build type registry from all extracted signatures + system types
+    let system_types = config.map(|c| c.system_types.as_slice()).unwrap_or(&[]);
+    let registry = resolve::build_registry(&parsed_files, system_types);
+
+    // Phase 3: Translate all deferred bodies with type context
+    translate_all_bodies(&mut parsed_files, &registry);
+
+    // Phase 4: Generate TS with resolved imports
     let mut file_count = 0;
 
     for (rel_str, rust_file) in &parsed_files {
@@ -185,6 +192,62 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
 
     println!("\nGenerated {} files in {}", file_count, out_dir.display());
     Ok(())
+}
+
+/// Phase 3: Translate all deferred function bodies with type registry context.
+/// This runs after all files are parsed and the registry is built, so every
+/// function body has access to the full crate's type information.
+fn translate_all_bodies(
+    files: &mut [(String, types::RustFile)],
+    _registry: &resolve::TypeRegistry,
+) {
+    for (_path, file) in files.iter_mut() {
+        // Translate free functions
+        for func in &mut file.functions {
+            translate_fn_body(func, "Self", _registry);
+        }
+
+        // Translate impl methods
+        for imp in &mut file.impls {
+            let self_type = imp.target_type.clone();
+            for method in &mut imp.methods {
+                translate_fn_body(method, &self_type, _registry);
+            }
+        }
+
+        // Translate test functions
+        for func in &mut file.test_functions {
+            translate_fn_body(func, "Self", _registry);
+        }
+
+        // Translate trait default methods
+        for tr in &mut file.traits {
+            for method in &mut tr.methods {
+                translate_fn_body(method, "Self", _registry);
+            }
+        }
+    }
+}
+
+/// Translate a single function's body_ast → body_ts.
+/// Currently uses the legacy BodyTranslator (self_type only).
+/// TODO: Wire registry + scope for type-aware translation.
+fn translate_fn_body(
+    func: &mut types::FnInfo,
+    self_type: &str,
+    _registry: &resolve::TypeRegistry,
+) {
+    if let Some(ref block) = func.body_ast {
+        // For now, use the legacy translator to maintain identical output.
+        // Phase 4 of the spec will wire the registry + scope here.
+        func.body_ts = Some(body::translate_block_with_self(block, self_type));
+        // Drop the AST now that we've translated
+        // (can't set body_ast = None while borrowing block, done after)
+    }
+    // Free the AST memory after translation
+    if func.body_ts.is_some() {
+        func.body_ast = None;
+    }
 }
 
 /// Convert Rust file path to TS module name (for import resolution)

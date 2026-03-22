@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-syn = { version = "2", features = ["full", "parsing", "visit"] }
+syn = { version = "2", features = ["full", "parsing", "visit", "clone-impls"] }
 quote = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 clap = { version = "4", features = ["derive"] }

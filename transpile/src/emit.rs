@@ -258,6 +258,7 @@ fn emit_trait_methods(
                             .unwrap_or_else(|| method.return_type.clone()),
                         generics: method.generics.clone(),
                         is_test: false,
+                        body_ast: None,
                         body_ts: method.body_ts.clone(),
                     };
                     out.push('\n');

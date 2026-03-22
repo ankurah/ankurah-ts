@@ -290,7 +290,14 @@ pub struct BodyTranslator<'a> {
 
 `self_type: &str` is removed. It becomes a binding in the ImplScope (`this → ResolvedType`). The old free functions (`translate_expr`, `translate_block`, `translate_pat`) are kept as compatibility shims that create a BodyTranslator with an empty registry and scopestack, ensuring no regression for code paths that haven't been updated yet (match_expr, control_flow, macros). These shims are removed once all callers are updated to thread `&BodyTranslator`.
 
-## Provided Types in Config
+## System Types in Config
+
+System types are foundational runtime types (Arc, RwLock, Vec, etc.) whose shapes are
+declared in config so the transpiler can resolve through them. All have TS implementations
+in `@ankurah/base/std/`. These are distinct from `[provided_impls]`, which are subject-code
+types whose implementations are hand-ported in `*.provided.ts` files.
+
+---
 
 System types (Arc, RwLock, Mutex, Result, Option, Box, etc.) are declared in `transpile.toml` and loaded into the TypeRegistry alongside parsed Rust types. They are not special-cased in body translation code.
 
@@ -309,75 +316,75 @@ parse_type_string grammar:
 ```
 
 ```toml
-[provided_types]
+[system_types]
 
-[provided_types.Arc]
+[system_types.Arc]
 deref_field = "value"
 type_params = ["T"]
 methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
 
-[provided_types.Weak]
+[system_types.Weak]
 type_params = ["T"]
 methods = { upgrade = "Arc<T> | null", clone = "Weak<T>" }
 
-[provided_types.Mutex]
+[system_types.Mutex]
 type_params = ["T"]
 methods = { lock = "MutexGuard<T>" }
 
-[provided_types.MutexGuard]
+[system_types.MutexGuard]
 deref_field = "value"
 type_params = ["T"]
 
-[provided_types.RwLock]
+[system_types.RwLock]
 type_params = ["T"]
 methods = { read = "RwLockReadGuard<T>", write = "RwLockWriteGuard<T>" }
 
-[provided_types.RwLockReadGuard]
+[system_types.RwLockReadGuard]
 deref_field = "value"
 type_params = ["T"]
 
-[provided_types.RwLockWriteGuard]
+[system_types.RwLockWriteGuard]
 deref_field = "value"
 type_params = ["T"]
 
-[provided_types.RefCell]
+[system_types.RefCell]
 type_params = ["T"]
 methods = { borrow = "Ref<T>", borrow_mut = "RefMut<T>" }
 
-[provided_types.Ref]
+[system_types.Ref]
 deref_field = "value"
 type_params = ["T"]
 
-[provided_types.RefMut]
+[system_types.RefMut]
 deref_field = "value"
 type_params = ["T"]
 
-[provided_types.Box]
+[system_types.Box]
 deref_field = ""  # transparent — unwrap to inner type, emit nothing
 type_params = ["T"]
 
-[provided_types.Option]
+[system_types.Option]
 type_params = ["T"]
 # Option methods handled as special cases on Nullable, not through TypeDef
 # (Option<T> resolves to Nullable(T), which has no TypeDef entry)
 
-[provided_types.Result]
+[system_types.Result]
 type_params = ["T", "E"]
 methods = { unwrap = "T", expect = "T", is_ok = "boolean", is_err = "boolean", map = "Result<U, E>", map_err = "Result<T, F>" }
 
-[provided_types.Vec]
+[system_types.Vec]
 type_params = ["T"]
 methods = { len = "number", push = "void", pop = "T | null", iter = "T[]", clone = "T[]" }
 
-[provided_types.HashMap]
+[system_types.HashMap]
 type_params = ["K", "V"]
 methods = { get = "V | null", insert = "void", len = "number", iter = "Array<[K, V]>", contains_key = "boolean" }
 
-[provided_types.BTreeMap]
+[system_types.BTreeMap]
 type_params = ["K", "V"]
 methods = { get = "V | null", insert = "void", len = "number", iter = "Array<[K, V]>", contains_key = "boolean" }
 
-[provided_types.HashSet]
+[system_types.HashSet]
 type_params = ["T"]
 methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
 ```
@@ -539,7 +546,7 @@ New module containing: `ResolvedType`, `TypeDef`, `TypeKind`, `VariantDef`, `Met
 ### main.rs `batch_generate`
 
 - Phase 1: parse + extract signatures (no body translation). Clone `syn::Block` into FnInfo.body_ast.
-- Phase 2 (new): build TypeRegistry from all StructInfo/EnumInfo/ImplInfo + config provided_types.
+- Phase 2 (new): build TypeRegistry from all StructInfo/EnumInfo/ImplInfo + config system_types.
 - Phase 3 (new): translate all bodies with registry + scope. Populate FnInfo.body_ts.
 - Phase 4 (existing codegen): generate TS with resolved imports from FnInfo.body_ts.
 
@@ -560,7 +567,7 @@ Long-term: `match_expr.rs`'s string-level identifier replacement (`replace_ident
 
 ### config.rs
 
-- Parse `[provided_types]` section from transpile.toml.
+- Parse `[system_types]` section from transpile.toml.
 - Use `parse_type_string` to convert method return type strings to `ResolvedType`.
 - Produce `Vec<TypeDef>` from config for seeding the TypeRegistry.
 

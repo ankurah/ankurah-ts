@@ -15,6 +15,10 @@ pub struct Config {
     pub hardcode_files: Vec<String>,
     /// Types from other crates that need explicit import mapping
     pub cross_crate_types: HashMap<String, String>,
+    /// System types (Arc, RwLock, etc.) — foundational runtime types whose shapes
+    /// are declared here so the transpiler can resolve through them.
+    /// Distinct from provided_impls (subject-code types hand-ported in *.provided.ts).
+    pub system_types: Vec<crate::resolve::TypeDef>,
 }
 
 #[derive(Debug)]
@@ -84,6 +88,8 @@ impl Config {
 
         let cross_crate_types = parse_string_map(table.get("cross_crate_types"));
 
+        let system_types = parse_system_types(table.get("system_types"));
+
         Ok(Config {
             paths,
             crates,
@@ -93,6 +99,7 @@ impl Config {
             provided_impls,
             hardcode_files,
             cross_crate_types,
+            system_types,
         })
     }
 
@@ -173,6 +180,62 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
     map
 }
 
+/// Parse [system_types] section from transpile.toml into TypeDefs.
+/// Each entry declares a system type's shape for the type registry:
+///   [system_types.Arc]
+///   deref_field = "value"
+///   type_params = ["T"]
+///   methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
+fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::resolve::TypeDef> {
+    use crate::resolve::{TypeDef, TypeKind, MethodSig, parse_type_string};
+
+    let mut types = Vec::new();
+    let table = match value.and_then(|v| v.as_table()) {
+        Some(t) => t,
+        None => return types,
+    };
+
+    for (name, entry) in table {
+        let entry = match entry.as_table() {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let deref_field = entry.get("deref_field")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let type_params: Vec<String> = entry.get("type_params")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        let mut methods = HashMap::new();
+        if let Some(methods_table) = entry.get("methods").and_then(|v| v.as_table()) {
+            for (method_name, ret_type_val) in methods_table {
+                if let Some(ret_str) = ret_type_val.as_str() {
+                    methods.insert(method_name.clone(), MethodSig {
+                        params: vec![],
+                        ret: parse_type_string(ret_str),
+                        is_static: false,
+                    });
+                }
+            }
+        }
+
+        types.push(TypeDef {
+            name: name.clone(),
+            kind: TypeKind::Struct, // system types are struct-like for resolution purposes
+            fields: vec![],
+            methods,
+            deref_field,
+            type_params,
+        });
+    }
+
+    types
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +257,23 @@ mod tests {
         assert!(config.is_hardcoded("ankql/src/parser.rs"));
         assert!(config.is_hardcoded("ankql/src/ast.rs"));
         assert!(config.is_excluded_file("proto/src/postgres.rs"));
+
+        // System types
+        assert!(!config.system_types.is_empty(), "system_types should be loaded from config");
+        let arc = config.system_types.iter().find(|t| t.name == "Arc");
+        assert!(arc.is_some(), "Arc should be in system_types");
+        let arc = arc.unwrap();
+        assert_eq!(arc.deref_field, Some("value".to_string()));
+        assert_eq!(arc.type_params, vec!["T".to_string()]);
+        assert!(arc.methods.contains_key("clone"));
+        assert!(arc.methods.contains_key("downgrade"));
+
+        let rwlock = config.system_types.iter().find(|t| t.name == "RwLock");
+        assert!(rwlock.is_some(), "RwLock should be in system_types");
+        let rwlock = rwlock.unwrap();
+        assert!(rwlock.methods.contains_key("write"));
+        // Verify method return type was parsed correctly
+        let write_ret = &rwlock.methods.get("write").unwrap().ret;
+        assert!(matches!(write_ret, crate::resolve::ResolvedType::Named { name, .. } if name == "RwLockWriteGuard"));
     }
 }
