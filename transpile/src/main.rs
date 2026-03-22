@@ -18,6 +18,7 @@ mod name_map;
 mod ownership;
 mod resolve;
 mod cfg;
+mod native_types;
 mod types;
 
 #[derive(Parser)]

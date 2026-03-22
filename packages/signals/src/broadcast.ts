@@ -45,13 +45,13 @@ export class Broadcast<T> extends Struct {
 
   send(value: T): void {
     const subscribers = (() => {
-      const listeners = this._0.value.listeners.read().value;
+      const listeners = this._0.value.listeners.read().value.unwrap();
       const _ret = [...[...listeners]];
       listeners.drop();
       return _ret;
     })();
-    if (subscribers.length > 0 ? [subscribers.at(-1), subscribers.slice(0, -1)] : null != null) {
-      const [last, rest] = subscribers.length > 0 ? [subscribers.at(-1), subscribers.slice(0, -1)] : null;
+    if (subscribers.splitLast() != null) {
+      const [last, rest] = subscribers.splitLast();
       for (const callback of rest) {
         return callback.match({
           Payload: (v) => v._0(value.clone()),
@@ -99,7 +99,7 @@ export class Ref<T> extends Struct {
 
   listen<L>(listener: L): ListenerGuard<T> {
     const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
-    this._0._0.value.listeners.write().value.splice(id, 0, listener.intoBroadcastListener());
+    this._0._0.value.listeners.write().value.unwrap().insert(id, listener.intoBroadcastListener());
     return new ListenerGuard(this._0._0.downgrade(), id);
   }
 

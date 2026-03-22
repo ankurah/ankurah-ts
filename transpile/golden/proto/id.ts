@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/id.rs
 import { EntityId } from './id.provided';
-import { DecodeError, IdParseError } from './error';
+import { DecodeError } from './error';
 export { EntityId };
 

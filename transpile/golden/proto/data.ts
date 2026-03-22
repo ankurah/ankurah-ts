@@ -24,7 +24,7 @@ export class Event extends Struct {
   }
 
   isEntityCreate(): boolean {
-    return this.parent.length === 0;
+    return this.parent.isEmpty();
   }
 
   id(): EventId {

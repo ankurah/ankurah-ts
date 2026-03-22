@@ -57,7 +57,7 @@ describe('calculated unit tests', () => {
       const count = Arc.new(0);
       const _ret = () => (() => {
         const _ = trigger.get();
-        return (() => { const _v = count; count += 1; return _v; })() + 1;
+        return count.fetchAdd(1, undefined /* Ordering */.SeqCst) + 1;
       })();
       count.drop();
       trigger.drop();
@@ -84,10 +84,10 @@ describe('calculated unit tests', () => {
     const callCountRef = callCount.clone();
     const Sub = doubled.subscribe((value) => (() => {
       expect(value).toEqual(20);
-      (() => { const _v = callCountRef; callCountRef += 1; return _v; })();
+      callCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
     })());
     source.set(10);
-    expect(callCount).toEqual(1);
+    expect(callCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     Sub.drop();
     callCountRef.drop();
     callCount.drop();
@@ -120,24 +120,24 @@ describe('calculated unit tests', () => {
     const doubled = new Calculated((() => {
       const source = source.read();
       const _ret = () => (() => {
-        (() => { const _v = computeCountRef; computeCountRef += 1; return _v; })();
+        computeCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
         return source.get() * 2;
       })();
       source.drop();
       return _ret;
     })());
     expect(doubled.get()).toEqual(2);
-    expect(computeCount).toEqual(1);
+    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     const unrelatedRead = unrelated.read();
     const Sub = doubled.subscribe((Value) => (() => {
       const _ = unrelatedRead.get();
     })());
     source.set(2);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount).toEqual(2);
+    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(2);
     unrelated.set(200);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount).toEqual(2);
+    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(2);
     Sub.drop();
     unrelatedRead.drop();
     doubled.drop();

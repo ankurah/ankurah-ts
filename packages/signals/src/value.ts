@@ -14,20 +14,20 @@ export class ValueCell<T> extends Struct {
   }
 
   set(value: T): void {
-    let current = this._0.value.write().value;
+    let current = this._0.value.write().value.unwrap();
     current = value;
     current.drop();
   }
 
   with<R>(f: (arg0: T) => R): R {
-    const guard = this._0.value.read().value;
+    const guard = this._0.value.read().value.unwrap();
     const _ret = f(guard);
     guard.drop();
     return _ret;
   }
 
   setWith<R>(value: T, f: (arg0: T) => R): R {
-    let current = this._0.value.write().value;
+    let current = this._0.value.write().value.unwrap();
     current = value;
     const _ret = f(current);
     current.drop();
@@ -39,7 +39,7 @@ export class ValueCell<T> extends Struct {
   }
 
   value(): T {
-    return this._0.value.read().value.clone();
+    return this._0.value.read().value.unwrap().clone();
   }
 
   clone(): ValueCell<T> {
@@ -56,14 +56,14 @@ export class ReadValueCell<T> extends Struct {
   }
 
   with<R>(f: (arg0: T) => R): R {
-    const guard = this._0.value.read().value;
+    const guard = this._0.value.read().value.unwrap();
     const _ret = f(guard);
     guard.drop();
     return _ret;
   }
 
   value(): T {
-    return this._0.value.read().value.clone();
+    return this._0.value.read().value.unwrap().clone();
   }
 
   clone(): ReadValueCell<T> {

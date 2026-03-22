@@ -30,19 +30,19 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
 
   withCached<R>(f: (arg0: Output) => R): R {
     (() => {
-      const guard = this.cached.value.read().value;
+      const guard = this.cached.value.read().value.unwrap();
       if (guard != null) {
         const value = guard;
         return f(value);
       }
     })()
-    let guard = this.cached.value.write().value;
+    let guard = this.cached.value.write().value.unwrap();
     if (guard == null) {
       const output = this.source.with((input) => (this.transform)(input));
       guard = output;
       output.drop();
     }
-    const _ret = f(guard);
+    const _ret = f(guard.asRef());
     guard.drop();
     return _ret;
   }

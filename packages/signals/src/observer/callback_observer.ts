@@ -28,11 +28,11 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   clear(): void {
-    this._0.value.entries.write().value.length = 0;
+    this._0.value.entries.write().value.expect('entries lock is poisoned').clear();
   }
 
   markAllForRemoval(): void {
-    let entries = this._0.value.entries.write().value;
+    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
     for (const entry of entries.valuesMut()) {
       entry.markedForRemoval = true;
     }
@@ -41,7 +41,7 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   sweepMarkedListeners(): void {
-    let entries = this._0.value.entries.write().value;
+    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
     entries.retain((_, entry) => !entry.markedForRemoval);
     entries.drop();
   }
@@ -82,7 +82,7 @@ class WeakCallbackObserver extends Struct {
   }
 
   upgrade(): CallbackObserver | null {
-    return this._0.upgrade().map(CallbackObserver);
+    return this._0.upgrade() != null ? (CallbackObserver)(this._0.upgrade()!) : null;
   }
 }
 

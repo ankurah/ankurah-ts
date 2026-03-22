@@ -10,6 +10,7 @@ use crate::macros;
 use crate::match_expr;
 use crate::control_flow;
 use crate::ownership;
+use crate::native_types;
 
 /// Check if an expression is a write!/writeln! macro call
 fn is_write_macro(expr: &syn::Expr) -> bool {
@@ -346,7 +347,7 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::MethodCall(call) => {
                 let receiver = self.expr(&call.receiver);
                 let rust_method = call.method.to_string();
-                let method = name_map::map_fn_name(&rust_method);
+                let ts_method = name_map::map_fn_name(&rust_method);
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
 
                 // Type-aware method dispatch: if we know the receiver type,
@@ -359,14 +360,14 @@ impl<'a> BodyTranslator<'a> {
                                 if !accessor.is_empty() {
                                     // Insert .value (or other accessor) before the method call
                                     let deref_receiver = format!("{}.{}", receiver, accessor);
-                                    return self.translate_method_call(&deref_receiver, &method, &args);
+                                    return self.translate_method_call(&deref_receiver, &rust_method, &ts_method, &args, Some(&call.receiver));
                                 }
                             }
                         }
                     }
                 }
 
-                self.translate_method_call(&receiver, &method, &args)
+                self.translate_method_call(&receiver, &rust_method, &ts_method, &args, Some(&call.receiver))
             }
 
             syn::Expr::Call(call) => {
@@ -558,94 +559,32 @@ impl<'a> BodyTranslator<'a> {
     }
 
     // ── Method call translation ─────────────────────────────────────
+    //
+    // Dispatches to native_types modules based on resolved receiver type.
+    // System types (Arc, RwLock, Result, etc.) pass through — their TS
+    // implementations handle the method names directly.
 
-    fn translate_method_call(&self, receiver: &str, method: &str, args: &[String]) -> String {
-        match method {
-            // Result/Option
-            "unwrap" | "expect" => receiver.to_string(),
-            "unwrapOr" if args.len() == 1 => format!("{} ?? {}", receiver, args[0]),
-            "unwrapOrElse" if args.len() == 1 => format!("{} ?? ({})()", receiver, args[0]),
-            "unwrapOrDefault" => format!("{} ?? default()", receiver),
-            "isOk" | "isSome" => format!("{} != null", receiver),
-            "isErr" | "isNone" => format!("{} == null", receiver),
-            "ok" | "mapErr" => receiver.to_string(),
+    fn translate_method_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
+        // If we have type info, use type-aware dispatch
+        if let Some(registry) = self.registry {
+            if let Some(receiver_expr) = receiver_expr {
+                if let Some(receiver_ty) = self.resolve_receiver_type(receiver_expr) {
+                    match native_types::translate_method(&receiver_ty, receiver, rust_method, args) {
+                        native_types::MethodTranslation::Expr(result) => return result,
+                        native_types::MethodTranslation::Passthrough => {
+                            return format!("{}.{}({})", receiver, ts_method, args.join(", "));
+                        }
+                    }
+                }
+            }
+        }
 
-            // Collections
-            "len" if args.is_empty() => format!("{}.length", receiver),
-            "isEmpty" if args.is_empty() => format!("{}.length === 0", receiver),
-            "push" => format!("{}.push({})", receiver, args.join(", ")),
-            "pop" => format!("{}.pop()", receiver),
-            "last" => format!("{}.at(-1)", receiver),
-            "first" => format!("{}[0]", receiver),
-            "get" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
-            "contains" if args.len() == 1 => format!("{}.includes({})", receiver, args[0]),
-            "sort" if args.is_empty() => format!("{}.sort()", receiver),
-            "sortBy" if args.len() == 1 => format!("{}.sort({})", receiver, args[0]),
-            "reverse" => format!("{}.reverse()", receiver),
-            "join" if args.len() == 1 => format!("{}.join({})", receiver, args[0]),
-
-            // Iterators
-            "map" if args.len() == 1 => format!("{}.map({})", receiver, args[0]),
-            "filter" if args.len() == 1 => format!("{}.filter({})", receiver, args[0]),
-            "any" if args.len() == 1 => format!("{}.some({})", receiver, args[0]),
-            "all" if args.len() == 1 => format!("{}.every({})", receiver, args[0]),
-            "find" if args.len() == 1 => format!("{}.find({})", receiver, args[0]),
-            "position" if args.len() == 1 => format!("{}.findIndex({})", receiver, args[0]),
-            "enumerate" => format!("{}.entries()", receiver),
-            "collect" => receiver.to_string(),
-            // Spread to array — works for both arrays (copy) and Maps/Sets (entries)
-            // Preserves type inference better than Array.from()
-            "iter" | "intoIter" | "values" => format!("[...{}]", receiver),
-            "cloned" => format!("[...{}]", receiver),
-            "sum" => format!("{}.reduce((a, b) => a + b, 0)", receiver),
-            "count" if args.is_empty() => format!("{}.length", receiver),
-            "flatten" => format!("{}.flat()", receiver),
-            "chain" if args.len() == 1 => format!("[...{}, ...{}]", receiver, args[0]),
-
-            // Conversion
-            "clone" => format!("{}.clone()", receiver),
-            "toOwned" => format!("{}.clone()", receiver),
-            "toString" | "toStr" => format!("{}.toString()", receiver),
-            "into" | "from" | "asRef" | "asMut" => receiver.to_string(),
-
-            // Vec
-            "insert" if args.len() == 2 => format!("{}.splice({}, 0, {})", receiver, args[0], args[1]),
-            "remove" if args.len() == 1 => format!("{}.splice({}, 1)[0]", receiver, args[0]),
-            "extend" if args.len() == 1 => format!("{}.push(...{})", receiver, args[0]),
-            "clear" => format!("{}.length = 0", receiver),
-            "truncate" if args.len() == 1 => format!("{}.length = {}", receiver, args[0]),
-            "drain" => format!("{}.splice(0)", receiver),
-
-            // Map
-            "insertMap" if args.len() == 2 => format!("{}.set({}, {})", receiver, args[0], args[1]),
-            "entry" => format!("/* {}.entry({}) */", receiver, args.join(", ")),
-
-            // String
-            "startsWith" if args.len() == 1 => format!("{}.startsWith({})", receiver, args[0]),
-            "endsWith" if args.len() == 1 => format!("{}.endsWith({})", receiver, args[0]),
-            "trim" => format!("{}.trim()", receiver),
-            "splitStr" if args.len() == 1 => format!("{}.split({})", receiver, args[0]),
-            "replacen" | "replace" => format!("{}.replace({})", receiver, args.join(", ")),
-
-            // Comparison
-            "cmp" | "partialCmp" if args.len() == 1 => format!("{}.compareTo({})", receiver, args[0]),
-            "eq" if args.len() == 1 => format!("{}.equals({})", receiver, args[0]),
-            "binarySearch" if args.len() == 1 => format!("{}.binarySearch({})", receiver, args[0]),
-
-            // Slices
-            "splitLast" if args.is_empty() => format!("{}.length > 0 ? [{}.at(-1), {}.slice(0, -1)] : null", receiver, receiver, receiver),
-            "splitFirst" if args.is_empty() => format!("{}.length > 0 ? [{}[0], {}.slice(1)] : null", receiver, receiver, receiver),
-
-            // Atomics
-            "fetchAdd" if args.len() >= 1 => format!("(() => {{ const _v = {}; {} += {}; return _v; }})()", receiver, receiver, args[0]),
-            // Atomics — Ordering args are stripped (no JS equivalent)
-            "load" => receiver.to_string(),
-            "store" if args.len() >= 1 => format!("{} = {}", receiver, args[0]),
-
-            // Formatter — TS has no alternate formatting, always false
-            "alternate" if args.is_empty() => "false".to_string(),
-
-            _ => format!("{}.{}({})", receiver, method, args.join(", ")),
+        // No type info — try untyped dispatch (iterator methods, conversions)
+        match native_types::translate_untyped(receiver, rust_method, args) {
+            native_types::MethodTranslation::Expr(result) => result,
+            native_types::MethodTranslation::Passthrough => {
+                format!("{}.{}({})", receiver, ts_method, args.join(", "))
+            }
         }
     }
 

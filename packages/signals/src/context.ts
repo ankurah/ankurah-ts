@@ -25,8 +25,8 @@ export class CurrentObserver extends Struct {
 }
 
 export function track(signal: S): void {
-  OBSERVER_STACK.with((stack) => if (stack.borrow().at(-1) != null) {
-    const observer = stack.borrow().at(-1);
+  OBSERVER_STACK.with((stack) => if (stack.borrow().last() != null) {
+    const observer = stack.borrow().last();
     observer.observe(signal);
   });
 }
@@ -47,7 +47,7 @@ export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => (() => {
     let stack = stack.borrowMut();
-    if (/* let last = stack.at(-1) */ && last.observerId() === targetId) {
+    if (/* let last = stack.last() */ && last.observerId() === targetId) {
       stack.pop();
       return;
     }
@@ -58,6 +58,6 @@ export function remove(observer: Observer): void {
 }
 
 export function current(): Arc<Observer> | null {
-  return OBSERVER_STACK.with((stack) => [...stack.borrow().at(-1)]);
+  return OBSERVER_STACK.with((stack) => [...stack.borrow().last()]);
 }
 

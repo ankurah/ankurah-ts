@@ -51,10 +51,10 @@ describe('broadcast unit tests', () => {
     const counter = Arc.new(0);
     const counterClone = counter.clone();
     const Subscription = signal.subscribe((_) => (() => {
-      (() => { const _v = counterClone; counterClone += 1; return _v; })();
+      counterClone.fetchAdd(1, undefined /* Ordering */.SeqCst);
     })());
     signal.set(100);
-    expect(counter).toEqual(1);
+    expect(counter.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     Subscription.drop();
     counterClone.drop();
     counter.drop();
