@@ -1,6 +1,14 @@
-//! String/&str → string method translations
+//! String/&str → string method and static call translations
 
 use super::MethodTranslation;
+
+/// Translate String static/associated function calls
+pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+    match func {
+        "String::new" | "String.new" => Some("''".to_string()),
+        _ => None,
+    }
+}
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {

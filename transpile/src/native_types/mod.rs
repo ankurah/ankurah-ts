@@ -16,6 +16,17 @@ mod conversion; // into/from/as_ref — type-erased identity transforms
 
 use crate::resolve::ResolvedType;
 
+/// Translate a static/associated function call (e.g., Vec::new(), HashMap::new()).
+/// Returns Some(translation) if the call matches a native type constructor.
+pub fn translate_static_call(func: &str, args: &[String]) -> Option<String> {
+    // Try each native type module's static translator
+    array::translate_static(func, args)
+        .or_else(|| string::translate_static(func, args))
+        .or_else(|| map::translate_static(func, args))
+        .or_else(|| set::translate_static(func, args))
+        .or_else(|| number::translate_static(func, args))
+}
+
 /// Result of a method translation
 pub enum MethodTranslation {
     /// Translated to this expression string

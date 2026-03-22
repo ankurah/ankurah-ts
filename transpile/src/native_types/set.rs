@@ -1,6 +1,14 @@
-//! HashSet<T>/BTreeSet<T> → Set<T> method translations
+//! HashSet<T>/BTreeSet<T> → Set<T> method and static call translations
 
 use super::MethodTranslation;
+
+/// Translate HashSet/BTreeSet static/associated function calls
+pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+    match func {
+        "HashSet::new" | "HashSet.new" | "BTreeSet::new" | "BTreeSet.new" => Some("new Set()".to_string()),
+        _ => None,
+    }
+}
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {

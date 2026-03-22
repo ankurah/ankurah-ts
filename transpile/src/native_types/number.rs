@@ -1,9 +1,19 @@
-//! AtomicUsize/AtomicU32 → number method translations
+//! AtomicUsize/AtomicU32 → number method and static call translations
 //!
 //! Rust atomics map to plain numbers in single-threaded JS.
 //! Ordering arguments are stripped (no JS equivalent).
 
 use super::MethodTranslation;
+
+/// Translate Atomic static/associated function calls
+pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
+    match func {
+        // AtomicUsize::new(val) → val (just a number)
+        "AtomicUsize::new" | "AtomicUsize.new" | "AtomicU32::new" | "AtomicU32.new"
+            if args.len() == 1 => Some(args[0].clone()),
+        _ => None,
+    }
+}
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {

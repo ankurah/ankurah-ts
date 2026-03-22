@@ -589,102 +589,112 @@ impl<'a> BodyTranslator<'a> {
     }
 
     // ── Function call translation ───────────────────────────────────
+    //
+    // Language-level constructs (Self, Ok/Err/Some/None, enum variants,
+    // constructor heuristic) stay here. Type-specific translations
+    // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
 
     fn translate_call(&self, func: &str, args: &[String]) -> String {
+        // 1. Language-level constructs
         match func {
-            "Self" => format!("new {}({})", self.self_type, args.join(", ")),
-            "Ok" => {
-                if args.len() == 1 {
-                    format!("Result.Ok({})", args[0])
-                } else {
-                    format!("Result.Ok({})", args.join(", "))
-                }
-            }
-            "Err" => {
-                if args.len() == 1 {
-                    format!("Result.Err({})", args[0])
-                } else {
-                    format!("Result.Err({})", args.join(", "))
-                }
-            }
-            "Some" => {
-                if args.len() == 1 { args[0].clone() } else { args.join(", ") }
-            }
-            "None" => "null".to_string(),
-            // Serde crate calls
-            "serdeJson.toString" | "serde_json::to_string" if args.len() == 1 =>
-                format!("JSON.stringify({})", args[0]),
-            "serdeJson.fromStr" | "serde_json::from_str" if args.len() == 1 =>
-                format!("JSON.parse({})", args[0]),
+            "Self" => return format!("new {}({})", self.self_type, args.join(", ")),
+            "Ok" => return format!("Result.Ok({})", args.join(", ")),
+            "Err" => return format!("Result.Err({})", args.join(", ")),
+            "Some" if args.len() == 1 => return args[0].clone(),
+            "Some" => return args.join(", "),
+            "None" => return "null".to_string(),
+            _ => {}
+        }
+
+        // 2. Native type static calls (Vec::new, HashMap::new, etc.)
+        if let Some(result) = native_types::translate_static_call(func, args) {
+            return result;
+        }
+
+        // 3. Serde/bincode crate calls
+        match func {
+            "serde_json.to_string" | "serde_json::to_string" | "serdeJson.toString"
+                if args.len() == 1 => return format!("JSON.stringify({})", args[0]),
+            "serde_json.from_str" | "serde_json::from_str" | "serdeJson.fromStr"
+                if args.len() == 1 => return format!("JSON.parse({})", args[0]),
             "bincode.serialize" | "bincode::serialize" if args.len() == 1 =>
-                format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
+                return format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
             "bincode.deserialize" | "bincode::deserialize" if args.len() == 1 =>
-                format!("(() => {{ const _r = new BincodeReader({}); return /* TODO: need type */ _r; }})()", args[0]),
-            // Box is transparent in TS — Box::new(x) → x
-            "Box.new" | "Box::new" if args.len() == 1 => args[0].clone(),
-            // AtomicUsize/AtomicU32 are just numbers — new() → value
-            "AtomicUsize.new" | "AtomicUsize::new" if args.len() == 1 => args[0].clone(),
-            "AtomicU32.new" | "AtomicU32::new" if args.len() == 1 => args[0].clone(),
-            // Arc::as_ptr(x) → x.asPtr() (static → instance method)
-            "Arc.asPtr" | "Arc::asPtr" if args.len() == 1 => format!("{}.asPtr()", args[0]),
-            // Arc::downgrade(x) → x.downgrade()
-            "Arc.downgrade" | "Arc::downgrade" if args.len() == 1 => format!("{}.downgrade()", args[0]),
-            "Vec.new" | "Vec::new" => "[]".to_string(),
-            "HashMap.new" | "HashMap::new" | "BTreeMap.new" | "BTreeMap::new" => "new Map()".to_string(),
-            "HashSet.new" | "HashSet::new" | "BTreeSet.new" | "BTreeSet::new" => "new Set()".to_string(),
-            "String.new" | "String::new" => "''".to_string(),
-            // System types with factory .new() methods (private constructors in TS)
-            "Arc.new" | "Arc::new" => format!("Arc.new({})", args.join(", ")),
-            _ if func.ends_with(".new") || func.ends_with("::new") => {
-                let type_name = func.trim_end_matches(".new").trim_end_matches("::new");
-                let type_name = if type_name == "Self" { self.self_type } else { type_name };
-                format!("new {}({})", type_name, args.join(", "))
+                return format!("(() => {{ const _r = new BincodeReader({}); return /* TODO: need type */ _r; }})()", args[0]),
+            _ => {}
+        }
+
+        // 4. Box::new is transparent
+        if matches!(func, "Box.new" | "Box::new") && args.len() == 1 {
+            return args[0].clone();
+        }
+
+        // 5. Arc static methods → instance methods
+        match func {
+            "Arc.asPtr" | "Arc::asPtr" | "Arc.as_ptr" | "Arc::as_ptr"
+                if args.len() == 1 => return format!("{}.asPtr()", args[0]),
+            "Arc.downgrade" | "Arc::downgrade"
+                if args.len() == 1 => return format!("{}.downgrade()", args[0]),
+            _ => {}
+        }
+
+        // 6. Type::new() constructor pattern
+        if func.ends_with(".new") || func.ends_with("::new") {
+            let type_name = func.trim_end_matches(".new").trim_end_matches("::new");
+            let type_name = if type_name == "Self" { self.self_type } else { type_name };
+            // System types with factory methods (private constructors)
+            if matches!(type_name, "Arc") {
+                return format!("{}.new({})", type_name, args.join(", "));
             }
-            _ if func.starts_with("Self.") || func.starts_with("Self::") => {
-                let method = func.split('.').last().unwrap_or(func);
-                let method = func.split("::").last().unwrap_or(method);
-                format!("{}.{}({})", self.self_type, method, args.join(", "))
-            }
-            _ => {
-                // Enum variant constructor: Type.Variant(args) → new Type('Variant', { _0: arg, ... })
-                if let Some(dot) = func.rfind('.') {
-                    let type_name = &func[..dot];
-                    let variant = &func[dot+1..];
+            return format!("new {}({})", type_name, args.join(", "));
+        }
 
-                    // Use registry for definitive enum detection if available
-                    let is_enum_variant = if let Some(registry) = self.registry {
-                        registry.is_variant(type_name, variant)
-                    } else {
-                        // Fallback: PascalCase heuristic
-                        type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                            && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                            && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
-                    };
+        // 7. Self::method() → TypeName.method()
+        if func.starts_with("Self.") || func.starts_with("Self::") {
+            let method = func.split("::").last()
+                .or_else(|| func.split('.').last())
+                .unwrap_or(func);
+            return format!("{}.{}({})", self.self_type, method, args.join(", "));
+        }
 
-                    if is_enum_variant {
-                        if args.is_empty() {
-                            return format!("new {}('{}', {{}})", type_name, variant);
-                        } else if args.len() == 1 {
-                            return format!("new {}('{}', {{ _0: {} }})", type_name, variant, args[0]);
-                        } else {
-                            let fields: Vec<String> = args.iter().enumerate()
-                                .map(|(i, a)| format!("_{}: {}", i, a))
-                                .collect();
-                            return format!("new {}('{}', {{ {} }})", type_name, variant, fields.join(", "));
-                        }
-                    }
-                }
+        // 8. Enum variant constructor: Type.Variant(args) → new Type('Variant', {...})
+        if let Some(dot) = func.rfind('.') {
+            let type_name = &func[..dot];
+            let variant = &func[dot+1..];
 
-                if func.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                    && !func.contains('.')
-                    && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")
-                {
-                    format!("new {}({})", func, args.join(", "))
+            let is_enum_variant = if let Some(registry) = self.registry {
+                registry.is_variant(type_name, variant)
+            } else {
+                // Fallback: PascalCase heuristic
+                type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
+            };
+
+            if is_enum_variant {
+                if args.is_empty() {
+                    return format!("new {}('{}', {{}})", type_name, variant);
+                } else if args.len() == 1 {
+                    return format!("new {}('{}', {{ _0: {} }})", type_name, variant, args[0]);
                 } else {
-                    format!("{}({})", func, args.join(", "))
+                    let fields: Vec<String> = args.iter().enumerate()
+                        .map(|(i, a)| format!("_{}: {}", i, a))
+                        .collect();
+                    return format!("new {}('{}', {{ {} }})", type_name, variant, fields.join(", "));
                 }
             }
         }
+
+        // 9. PascalCase function → constructor heuristic
+        if func.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+            && !func.contains('.')
+            && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")
+        {
+            return format!("new {}({})", func, args.join(", "));
+        }
+
+        // 10. Default: plain function call
+        format!("{}({})", func, args.join(", "))
     }
 
     // ── Path translation (static) ───────────────────────────────────

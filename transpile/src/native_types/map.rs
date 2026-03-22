@@ -1,6 +1,14 @@
-//! HashMap<K,V>/BTreeMap<K,V> → Map<K,V> method translations
+//! HashMap<K,V>/BTreeMap<K,V> → Map<K,V> method and static call translations
 
 use super::MethodTranslation;
+
+/// Translate HashMap/BTreeMap static/associated function calls
+pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+    match func {
+        "HashMap::new" | "HashMap.new" | "BTreeMap::new" | "BTreeMap.new" => Some("new Map()".to_string()),
+        _ => None,
+    }
+}
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {

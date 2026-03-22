@@ -1,6 +1,15 @@
-//! Vec<T> → T[] method translations
+//! Vec<T> → T[] method and static call translations
 
 use super::MethodTranslation;
+
+/// Translate Vec static/associated function calls
+pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
+    match func {
+        "Vec::new" | "Vec.new" => Some("[]".to_string()),
+        "Vec::with_capacity" | "Vec.withCapacity" => Some("[]".to_string()),
+        _ => None,
+    }
+}
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {
