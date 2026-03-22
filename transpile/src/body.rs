@@ -88,11 +88,69 @@ pub fn indent(s: &str) -> String {
 
 pub struct BodyTranslator<'a> {
     pub self_type: &'a str,
+    /// Type registry for resolve_field, resolve_method, is_enum.
+    /// None for legacy codepaths (free function shims, match_expr, control_flow).
+    pub registry: Option<&'a crate::resolve::TypeRegistry>,
+    /// Current module path for module-qualified type lookups.
+    /// E.g., "broadcast" for broadcast.rs, "signal/memo" for signal/memo.rs.
+    pub current_module: Option<&'a str>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type }
+        Self { self_type, registry: None, current_module: None }
+    }
+
+    pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &'a str) -> Self {
+        Self { self_type, registry: Some(registry), current_module: Some(module) }
+    }
+
+    /// Resolve the type of a receiver expression for type-aware translation.
+    /// Returns the ResolvedType if the registry is available and the receiver
+    /// can be resolved from struct field types.
+    fn resolve_receiver_type(&self, expr: &syn::Expr) -> Option<crate::resolve::ResolvedType> {
+        let registry = self.registry?;
+        let module = self.current_module.unwrap_or("");
+        match expr {
+            // self.field → look up field type on self_type's struct
+            syn::Expr::Field(field) => {
+                if let syn::Expr::Path(path) = &*field.base {
+                    if path.path.is_ident("self") {
+                        let member = match &field.member {
+                            syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                            syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                        };
+                        let self_ty = crate::resolve::ResolvedType::Named {
+                            name: self.self_type.to_string(),
+                            args: vec![],
+                        };
+                        return registry.resolve_field_in_module(&self_ty, &member, module)
+                            .map(|(ty, _deref)| ty);
+                    }
+                }
+                // Nested field access: resolve the base, then look up the field
+                let base_ty = self.resolve_receiver_type(&field.base)?;
+                let member = match &field.member {
+                    syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                    syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                };
+                registry.resolve_field_in_module(&base_ty, &member, module).map(|(ty, _)| ty)
+            }
+            // self → self_type
+            syn::Expr::Path(path) if path.path.is_ident("self") => {
+                Some(crate::resolve::ResolvedType::Named {
+                    name: self.self_type.to_string(),
+                    args: vec![],
+                })
+            }
+            // method_call().field → resolve method return type
+            syn::Expr::MethodCall(call) => {
+                let receiver_ty = self.resolve_receiver_type(&call.receiver)?;
+                let rust_method = call.method.to_string();
+                registry.resolve_method_in_module(&receiver_ty, &rust_method, module)
+            }
+            _ => None,
+        }
     }
 
     // ── Block translation with ownership tracking ───────────────────
@@ -267,13 +325,47 @@ impl<'a> BodyTranslator<'a> {
                     syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
                     syn::Member::Unnamed(idx) => format!("_{}", idx.index),
                 };
-                if base == "self" { format!("this.{}", member) } else { format!("{}.{}", base, member) }
+                let base_str = if base == "self" { "this".to_string() } else { base };
+
+                // Type-aware deref insertion: if the base type has deref_field,
+                // insert the accessor (e.g., .value for Arc)
+                if let Some(registry) = self.registry {
+                    let module = self.current_module.unwrap_or("");
+                    if let Some(base_ty) = self.resolve_receiver_type(&field.base) {
+                        if let Some((ref _field_ty, Some(ref accessor))) = registry.resolve_field_in_module(&base_ty, &member, module) {
+                            if !accessor.is_empty() {
+                                return format!("{}.{}.{}", base_str, accessor, member);
+                            }
+                        }
+                    }
+                }
+
+                format!("{}.{}", base_str, member)
             }
 
             syn::Expr::MethodCall(call) => {
                 let receiver = self.expr(&call.receiver);
-                let method = name_map::map_fn_name(&call.method.to_string());
+                let rust_method = call.method.to_string();
+                let method = name_map::map_fn_name(&rust_method);
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
+
+                // Type-aware method dispatch: if we know the receiver type,
+                // check if this method requires deref insertion.
+                if let Some(registry) = self.registry {
+                    if let Some(receiver_ty) = self.resolve_receiver_type(&call.receiver) {
+                        // If the method is NOT on the wrapper type itself, we need to deref first
+                        if !registry.is_own_method(&receiver_ty, &rust_method) {
+                            if let Some(accessor) = registry.deref_field(&receiver_ty) {
+                                if !accessor.is_empty() {
+                                    // Insert .value (or other accessor) before the method call
+                                    let deref_receiver = format!("{}.{}", receiver, accessor);
+                                    return self.translate_method_call(&deref_receiver, &method, &args);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 self.translate_method_call(&receiver, &method, &args)
             }
 
@@ -615,10 +707,18 @@ impl<'a> BodyTranslator<'a> {
                 if let Some(dot) = func.rfind('.') {
                     let type_name = &func[..dot];
                     let variant = &func[dot+1..];
-                    if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
-                    {
+
+                    // Use registry for definitive enum detection if available
+                    let is_enum_variant = if let Some(registry) = self.registry {
+                        registry.is_variant(type_name, variant)
+                    } else {
+                        // Fallback: PascalCase heuristic
+                        type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                            && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                            && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
+                    };
+
+                    if is_enum_variant {
                         if args.is_empty() {
                             return format!("new {}('{}', {{}})", type_name, variant);
                         } else if args.len() == 1 {

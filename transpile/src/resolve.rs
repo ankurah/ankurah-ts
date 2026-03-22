@@ -118,7 +118,7 @@ pub struct VariantDef {
     pub fields: Vec<(String, ResolvedType)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MethodSig {
     pub params: Vec<(String, ResolvedType)>,
     pub ret: ResolvedType,
@@ -129,29 +129,80 @@ pub struct MethodSig {
 
 /// Crate-wide type registry. Populated from parsed Rust sources + config-declared
 /// provided types. Used for field lookups, method resolution, and enum detection.
+///
+/// Types are registered under module-qualified keys ("broadcast::Inner") for
+/// module-local resolution, AND under bare names ("Broadcast") for cross-module
+/// and public type resolution. This prevents name collisions when multiple
+/// modules define private types with the same name (e.g., multiple "Inner" structs).
 #[derive(Debug)]
 pub struct TypeRegistry {
-    /// All known types: user-defined + provided + cross-crate.
-    /// Keyed by Rust type name.
-    types: HashMap<String, TypeDef>,
+    /// All known types. Keyed by both qualified ("module::Type") and bare ("Type") names.
+    /// Module-qualified entries always exist. Bare entries exist for public types,
+    /// system types, and cross-crate types. When multiple modules define the same
+    /// bare name, the bare entry is removed (ambiguous).
+    pub types: HashMap<String, TypeDef>,
+    /// Bare names that have been seen in multiple modules — these are ambiguous
+    /// and can only be resolved via module-qualified lookup.
+    ambiguous_bare: std::collections::HashSet<String>,
 }
 
 impl TypeRegistry {
     pub fn new() -> Self {
-        TypeRegistry { types: HashMap::new() }
+        TypeRegistry { types: HashMap::new(), ambiguous_bare: std::collections::HashSet::new() }
     }
 
-    /// Register a type definition
+    /// Register a type definition under its bare name (for system/cross-crate types)
     pub fn register(&mut self, typedef: TypeDef) {
         self.types.insert(typedef.name.clone(), typedef);
     }
 
-    /// Look up a type definition by name
+    /// Register a type under a module-qualified key AND bare name.
+    /// If the bare name already exists from a different module, the bare entry
+    /// is removed (ambiguous) — only module-qualified lookups will work for that name.
+    pub fn register_in_module(&mut self, module: &str, typedef: TypeDef) {
+        let bare_name = typedef.name.clone();
+        let qualified = format!("{}::{}", module, bare_name);
+
+        // Register under qualified name (always unique per module)
+        self.types.insert(qualified.clone(), typedef.clone());
+
+        // Register under bare name if not yet taken, or remove if ambiguous
+        if self.types.contains_key(&bare_name) {
+            // Check if the existing bare entry is from a different module
+            // (i.e., it's not the same qualified key we just inserted)
+            let existing_is_ours = self.types.get(&bare_name)
+                .map_or(false, |t| t.name == typedef.name && t.fields.len() == typedef.fields.len());
+            // If there's already a bare entry from a previous module, and this is a
+            // different type, remove the bare entry (ambiguous)
+            if !existing_is_ours || self.ambiguous_bare.contains(&bare_name) {
+                self.types.remove(&bare_name);
+                self.ambiguous_bare.insert(bare_name);
+            }
+        } else {
+            self.types.insert(bare_name, typedef);
+        }
+    }
+
+    /// Look up a type definition by name, with module context for disambiguation.
+    /// Tries "module::name" first, then bare "name".
+    pub fn get_in_module(&self, name: &str, module: &str) -> Option<&TypeDef> {
+        let qualified = format!("{}::{}", module, name);
+        self.types.get(&qualified)
+            .or_else(|| self.types.get(name))
+    }
+
+    /// Look up a type definition by bare name (for contexts without module info)
     pub fn get(&self, name: &str) -> Option<&TypeDef> {
         self.types.get(name)
     }
 
-    /// Is this name an enum?
+    /// Is this name an enum? (module-aware)
+    pub fn is_enum_in_module(&self, name: &str, module: &str) -> bool {
+        self.get_in_module(name, module)
+            .map_or(false, |td| matches!(td.kind, TypeKind::Enum { .. }))
+    }
+
+    /// Is this name an enum? (bare name lookup)
     pub fn is_enum(&self, name: &str) -> bool {
         self.types.get(name).map_or(false, |td| matches!(td.kind, TypeKind::Enum { .. }))
     }
@@ -159,6 +210,16 @@ impl TypeRegistry {
     /// Is this a valid variant of the given enum?
     pub fn is_variant(&self, type_name: &str, variant_name: &str) -> bool {
         if let Some(td) = self.types.get(type_name) {
+            if let TypeKind::Enum { ref variants } = td.kind {
+                return variants.iter().any(|v| v.name == variant_name);
+            }
+        }
+        false
+    }
+
+    /// Is this a valid variant? (module-aware)
+    pub fn is_variant_in_module(&self, type_name: &str, variant_name: &str, module: &str) -> bool {
+        if let Some(td) = self.get_in_module(type_name, module) {
             if let TypeKind::Enum { ref variants } = td.kind {
                 return variants.iter().any(|v| v.name == variant_name);
             }
@@ -179,12 +240,24 @@ impl TypeRegistry {
     ///      recurse from step 1, return (field_type, Some(accessor))
     ///   4. If no deref_field → return None
     pub fn resolve_field(&self, ty: &ResolvedType, field: &str) -> Option<(ResolvedType, Option<String>)> {
+        self.resolve_field_impl(ty, field, None)
+    }
+
+    /// Module-aware field resolution
+    pub fn resolve_field_in_module(&self, ty: &ResolvedType, field: &str, module: &str) -> Option<(ResolvedType, Option<String>)> {
+        self.resolve_field_impl(ty, field, Some(module))
+    }
+
+    fn resolve_field_impl(&self, ty: &ResolvedType, field: &str, module: Option<&str>) -> Option<(ResolvedType, Option<String>)> {
         let (name, args) = match ty {
             ResolvedType::Named { name, args } => (name.as_str(), args.as_slice()),
             _ => return None,
         };
 
-        let typedef = self.types.get(name)?;
+        let typedef = match module {
+            Some(m) => self.get_in_module(name, m)?,
+            None => self.types.get(name)?,
+        };
 
         // Build substitution map for generic params
         let subst = self.build_subst(&typedef.type_params, args);
@@ -203,7 +276,7 @@ impl TypeRegistry {
         // it comes up, change return type to Vec<String> to accumulate deref chain.
         if let Some(ref accessor) = typedef.deref_field {
             if let Some(inner_ty) = args.first() {
-                if let Some((resolved, inner_deref)) = self.resolve_field(inner_ty, field) {
+                if let Some((resolved, inner_deref)) = self.resolve_field_impl(inner_ty, field, module) {
                     let deref = if accessor.is_empty() {
                         // Transparent deref (Box) — pass through inner deref if any
                         inner_deref
@@ -229,6 +302,15 @@ impl TypeRegistry {
     ///   3. If TypeDef has deref_field → unwrap inner type, recurse
     ///   4. return None
     pub fn resolve_method(&self, ty: &ResolvedType, method: &str) -> Option<ResolvedType> {
+        self.resolve_method_impl(ty, method, None)
+    }
+
+    /// Module-aware method resolution
+    pub fn resolve_method_in_module(&self, ty: &ResolvedType, method: &str, module: &str) -> Option<ResolvedType> {
+        self.resolve_method_impl(ty, method, Some(module))
+    }
+
+    fn resolve_method_impl(&self, ty: &ResolvedType, method: &str, module: Option<&str>) -> Option<ResolvedType> {
         let (name, args) = match ty {
             // Handle Nullable (Option) methods as special cases
             ResolvedType::Nullable(inner) => {
@@ -238,7 +320,10 @@ impl TypeRegistry {
             _ => return None,
         };
 
-        let typedef = self.types.get(name)?;
+        let typedef = match module {
+            Some(m) => self.get_in_module(name, m)?,
+            None => self.types.get(name)?,
+        };
         let subst = self.build_subst(&typedef.type_params, args);
 
         // Check own methods first
@@ -249,7 +334,7 @@ impl TypeRegistry {
         // Check deref — recurse into inner type
         if typedef.deref_field.is_some() {
             if let Some(inner_ty) = args.first() {
-                return self.resolve_method(inner_ty, method);
+                return self.resolve_method_impl(inner_ty, method, module);
             }
         }
 
@@ -536,17 +621,27 @@ pub fn build_registry(
         }
     }
 
-    // Register types from parsed Rust files
-    for (_path, file) in files {
+    // Register types from parsed Rust files with module-qualified keys.
+    // The module name is derived from the file path (e.g., "broadcast.rs" → "broadcast").
+    for (path, file) in files {
+        let module = path_to_module(path);
+
         for s in &file.structs {
-            registry.register(struct_to_typedef(s));
+            registry.register_in_module(&module, struct_to_typedef(s));
         }
         for e in &file.enums {
-            registry.register(enum_to_typedef(e));
+            registry.register_in_module(&module, enum_to_typedef(e));
         }
-        // Register method signatures from impl blocks
+        // Register method signatures from impl blocks.
+        // Try both qualified and bare names since the impl target might be from this module or another.
         for imp in &file.impls {
-            if let Some(td) = registry.types.get_mut(&imp.target_type) {
+            let qualified = format!("{}::{}", module, imp.target_type);
+            let target_key = if registry.types.contains_key(&qualified) {
+                qualified
+            } else {
+                imp.target_type.clone()
+            };
+            if let Some(td) = registry.types.get_mut(&target_key) {
                 for method in &imp.methods {
                     td.methods.insert(method.name.clone(), MethodSig {
                         params: method.params.iter()
@@ -557,10 +652,34 @@ pub fn build_registry(
                     });
                 }
             }
+            // Also merge into the bare name entry if it exists
+            let bare = &imp.target_type;
+            if bare != &target_key {
+                if let Some(td) = registry.types.get_mut(bare) {
+                    for method in &imp.methods {
+                        td.methods.insert(method.name.clone(), MethodSig {
+                            params: method.params.iter()
+                                .map(|p| (p.name.clone(), parse_type_string(&p.ty)))
+                                .collect(),
+                            ret: parse_type_string(&method.return_type),
+                            is_static: method.is_static,
+                        });
+                    }
+                }
+            }
         }
     }
 
     registry
+}
+
+/// Convert a file path to a module name for registry qualification.
+/// "broadcast.rs" → "broadcast", "signal/memo.rs" → "signal/memo"
+fn path_to_module(path: &str) -> String {
+    path.trim_end_matches(".rs")
+        .replace("mod", "index")
+        .replace("lib", "index")
+        .to_string()
 }
 
 /// Convert a StructInfo into a TypeDef

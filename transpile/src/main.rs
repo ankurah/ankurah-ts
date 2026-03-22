@@ -155,6 +155,12 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
     let registry = resolve::build_registry(&parsed_files, system_types);
 
     // Phase 3: Translate all deferred bodies with type context
+    let total_bodies: usize = parsed_files.iter().map(|(_, f)| {
+        f.functions.iter().filter(|f| f.body_ast.is_some()).count()
+        + f.impls.iter().flat_map(|i| i.methods.iter()).filter(|m| m.body_ast.is_some()).count()
+        + f.test_functions.iter().filter(|f| f.body_ast.is_some()).count()
+    }).sum();
+    eprintln!("  Phase 3: translating {} bodies with registry", total_bodies);
     translate_all_bodies(&mut parsed_files, &registry);
 
     // Phase 4: Generate TS with resolved imports
@@ -199,50 +205,50 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
 /// function body has access to the full crate's type information.
 fn translate_all_bodies(
     files: &mut [(String, types::RustFile)],
-    _registry: &resolve::TypeRegistry,
+    registry: &resolve::TypeRegistry,
 ) {
-    for (_path, file) in files.iter_mut() {
+    for (path, file) in files.iter_mut() {
+        let module = path.trim_end_matches(".rs")
+            .replace("mod", "index")
+            .replace("lib", "index");
+
         // Translate free functions
         for func in &mut file.functions {
-            translate_fn_body(func, "Self", _registry);
+            translate_fn_body(func, "Self", registry, &module);
         }
 
         // Translate impl methods
         for imp in &mut file.impls {
             let self_type = imp.target_type.clone();
             for method in &mut imp.methods {
-                translate_fn_body(method, &self_type, _registry);
+                translate_fn_body(method, &self_type, registry, &module);
             }
         }
 
         // Translate test functions
         for func in &mut file.test_functions {
-            translate_fn_body(func, "Self", _registry);
+            translate_fn_body(func, "Self", registry, &module);
         }
 
         // Translate trait default methods
         for tr in &mut file.traits {
             for method in &mut tr.methods {
-                translate_fn_body(method, "Self", _registry);
+                translate_fn_body(method, "Self", registry, &module);
             }
         }
     }
 }
 
-/// Translate a single function's body_ast → body_ts.
-/// Currently uses the legacy BodyTranslator (self_type only).
-/// TODO: Wire registry + scope for type-aware translation.
+/// Translate a single function's body_ast → body_ts with type-aware context.
 fn translate_fn_body(
     func: &mut types::FnInfo,
     self_type: &str,
-    _registry: &resolve::TypeRegistry,
+    registry: &resolve::TypeRegistry,
+    module: &str,
 ) {
     if let Some(ref block) = func.body_ast {
-        // For now, use the legacy translator to maintain identical output.
-        // Phase 4 of the spec will wire the registry + scope here.
-        func.body_ts = Some(body::translate_block_with_self(block, self_type));
-        // Drop the AST now that we've translated
-        // (can't set body_ast = None while borrowing block, done after)
+        let translator = body::BodyTranslator::with_registry(self_type, registry, module);
+        func.body_ts = Some(translator.translate_block(block));
     }
     // Free the AST memory after translation
     if func.body_ts.is_some() {
