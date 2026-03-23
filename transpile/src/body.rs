@@ -95,15 +95,33 @@ pub struct BodyTranslator<'a> {
     /// Current module path for module-qualified type lookups.
     /// E.g., "broadcast" for broadcast.rs, "signal/memo" for signal/memo.rs.
     pub current_module: Option<&'a str>,
+    /// Names bound in the current closure/function scope (for shadow detection).
+    /// When a `let` binding shadows a name in this set, emit assignment instead of declaration.
+    pub scope_names: std::cell::RefCell<Vec<std::collections::HashSet<String>>>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, registry: None, current_module: None }
+        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]) }
     }
 
     pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &'a str) -> Self {
-        Self { self_type, registry: Some(registry), current_module: Some(module) }
+        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]) }
+    }
+
+    /// Check if a name is in any active scope (for shadow detection)
+    fn is_in_scope(&self, name: &str) -> bool {
+        self.scope_names.borrow().iter().any(|s| s.contains(name))
+    }
+
+    /// Push a new scope with the given names
+    pub fn push_scope(&self, names: impl IntoIterator<Item = String>) {
+        self.scope_names.borrow_mut().push(names.into_iter().collect());
+    }
+
+    /// Pop the current scope
+    pub fn pop_scope(&self) {
+        self.scope_names.borrow_mut().pop();
     }
 
     /// Resolve the type of a receiver expression for type-aware translation.
@@ -264,6 +282,11 @@ impl<'a> BodyTranslator<'a> {
                 return format!("/* let-else */ const {} = {};\n", pat, expr);
             }
 
+            // Rust allows `let x = x.method()` to shadow — JS doesn't allow
+            // redeclaring a closure parameter. Use assignment instead.
+            if self.is_in_scope(&pat) {
+                return format!("{} = {};\n", pat, expr);
+            }
             let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
             format!("{} {} = {};\n", keyword, pat, expr)
         } else {
@@ -377,6 +400,28 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Binary(bin) => {
+                // Handle deref compound assignment: *guard += value → guard.value += value
+                if is_assign_op(&bin.op) {
+                    if let syn::Expr::Unary(unary) = &*bin.left {
+                        if matches!(unary.op, syn::UnOp::Deref(_)) {
+                            let inner = self.expr(&unary.expr);
+                            let op = translate_binop(&bin.op);
+                            let right = self.expr(&bin.right);
+                            // Check registry for deref_field
+                            if let Some(registry) = self.registry {
+                                if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
+                                    if let Some(accessor) = registry.deref_field(&inner_ty) {
+                                        if !accessor.is_empty() {
+                                            return format!("{}.{} {} {}", inner, accessor, op, right);
+                                        }
+                                    }
+                                }
+                            }
+                            // Fallback: .value
+                            return format!("{}.value {} {}", inner, op, right);
+                        }
+                    }
+                }
                 format!("{} {} {}", self.expr(&bin.left), translate_binop(&bin.op), self.expr(&bin.right))
             }
 
@@ -428,8 +473,9 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Closure(closure) => {
                 let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
+                self.push_scope(params.iter().cloned());
                 // Check if the body is a block — if so, translate as block with braces
-                match &*closure.body {
+                let result = match &*closure.body {
                     syn::Expr::Block(block) => {
                         let body = self.translate_block(&block.block);
                         format!("({}) => {{\n{}}}", params.join(", "), indent(&body))
@@ -444,7 +490,9 @@ impl<'a> BodyTranslator<'a> {
                             format!("({}) => {}", params.join(", "), body)
                         }
                     }
-                }
+                };
+                self.pop_scope();
+                result
             }
 
             syn::Expr::ForLoop(for_loop) => {
@@ -790,6 +838,13 @@ fn translate_lit(lit: &syn::Lit) -> String {
         syn::Lit::Byte(b) => format!("{}", b.value()),
         _ => "/* unknown literal */".to_string(),
     }
+}
+
+fn is_assign_op(op: &syn::BinOp) -> bool {
+    matches!(op, syn::BinOp::AddAssign(_) | syn::BinOp::SubAssign(_) | syn::BinOp::MulAssign(_)
+        | syn::BinOp::DivAssign(_) | syn::BinOp::RemAssign(_) | syn::BinOp::BitXorAssign(_)
+        | syn::BinOp::BitAndAssign(_) | syn::BinOp::BitOrAssign(_) | syn::BinOp::ShlAssign(_)
+        | syn::BinOp::ShrAssign(_))
 }
 
 fn translate_binop(op: &syn::BinOp) -> &'static str {

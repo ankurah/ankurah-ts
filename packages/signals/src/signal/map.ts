@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/map.rs
 import { Struct, Arc } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
+import { CurrentObserver } from '../context';
 import { SubscriptionGuard } from '../porcelain/subscribe';
 
 export class Map<Upstream, Input, Output, Transform> extends Struct implements Signal, With, Get, Peek, Subscribe {
@@ -19,6 +20,49 @@ export class Map<Upstream, Input, Output, Transform> extends Struct implements S
 
   clone(): Map<Upstream, Input, Output, Transform> {
     return new Map(this.source.clone(), this.transform.clone(), undefined /* PhantomData */);
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    return this.source.listen(listener);
+  }
+
+  broadcastId(): BroadcastId {
+    return this.source.broadcastId();
+  }
+
+  with<R>(f: (arg0: Output) => R): R {
+    CurrentObserver.track(this.source);
+    return this.source.with((input) => {
+      const output = (this.transform)(input);
+      const _ret = f(output);
+      output.drop();
+      return _ret;
+    });
+  }
+
+  get(): Output {
+    CurrentObserver.track(this.source);
+    return this.source.with((input) => (this.transform)(input));
+  }
+
+  peek(): Output {
+    return this.source.with((input) => (this.transform)(input));
+  }
+
+  subscribe<L>(listener: L): SubscriptionGuard {
+    listener = listener.intoSubscribeListener();
+    const source = this.source.clone();
+    const transform = this.transform.clone();
+    const subscription = this.source.listen(Arc.new((_) => {
+      source.with((input) => {
+        listener(transform(input));
+      });
+    }));
+    const _ret = new SubscriptionGuard(subscription);
+    transform.drop();
+    source.drop();
+    listener.drop();
+    return _ret;
   }
 }
 

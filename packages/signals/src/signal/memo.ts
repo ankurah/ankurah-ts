@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/memo.rs
 import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
+import { CurrentObserver } from '../context';
 import { SubscriptionGuard } from '../porcelain/subscribe';
 
 export class Memo<Upstream, Input, Output, Transform> extends Struct implements Signal, With, Get, Peek, Subscribe {
@@ -49,6 +50,47 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
 
   clone(): Memo<Upstream, Input, Output, Transform> {
     return new Memo(this.source.clone(), this.transform.clone());
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    return this.source.listen(listener);
+  }
+
+  broadcastId(): BroadcastId {
+    return this.source.broadcastId();
+  }
+
+  with<R>(f: (arg0: Output) => R): R {
+    CurrentObserver.track(this.source);
+    return this.withCached(f);
+  }
+
+  get(): Output {
+    CurrentObserver.track(this.source);
+    return this.withCached((v) => v.clone());
+  }
+
+  peek(): Output {
+    return this.withCached((v) => v.clone());
+  }
+
+  subscribe<L>(listener: L): SubscriptionGuard {
+    listener = listener.intoSubscribeListener();
+    const source = this.source.clone();
+    const transform = this.transform.clone();
+    const cached = this.cached.clone();
+    const subscription = this.source.listen(Arc.new((_) => {
+      const output = source.with((input) => transform(input));
+      cached.write().value = output.clone();
+      listener(output);
+      output.drop();
+    }));
+    const _ret = new SubscriptionGuard(subscription);
+    cached.drop();
+    transform.drop();
+    source.drop();
+    listener.drop();
+    return _ret;
   }
 }
 

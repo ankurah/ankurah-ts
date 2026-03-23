@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/observer/callback_observer.rs
 import { Struct, Arc, Weak, RwLock } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
+import { CurrentObserver } from '../context';
 import { Signal } from '../signal';
 
 export class CallbackObserver extends Struct implements Observer {
@@ -44,6 +45,34 @@ export class CallbackObserver extends Struct implements Observer {
     let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
     entries.retain((_, entry) => !entry.markedForRemoval);
     entries.drop();
+  }
+
+  observe(signal: Signal): void {
+    const broadcastId = signal.broadcastId();
+    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
+    if (entries.getMut(broadcastId) != null) {
+      const entry = entries.getMut(broadcastId);
+      entry.markedForRemoval = false;
+      return;
+    }
+    const weak = new WeakCallbackObserver(this._0.downgrade());
+    entries.insert(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
+      if (weak.upgrade() != null) {
+        const observer = weak.upgrade();
+        observer.trigger();
+      }
+    })), false));
+    weak.drop();
+    entries.drop();
+    broadcastId.drop();
+  }
+
+  observerId(): number {
+    return this._0.asPtr() as unknown as number;
+  }
+
+  asAny(): Any {
+    return this;
   }
 
   clone(): CallbackObserver {

@@ -249,26 +249,32 @@ fn emit_trait_methods(
             if *trait_name == "From" && type_args.iter().any(|a| a == "never" || a == "Infallible") {
                 continue;
             }
-            if let Some((base_ts_name, ret_override)) = trait_method_mapping(trait_name, &method.name) {
-                let ts_name = disambiguate_trait_method(base_ts_name, trait_name, type_args, plain_name);
-                if emitted.insert(ts_name.clone()) {
-                    let m = FnInfo {
-                        name: method.name.clone(),
-                        ts_name,
-                        is_pub: method.is_pub,
-                        is_async: method.is_async,
-                        is_static: method.is_static,
-                        params: method.params.clone(),
-                        return_type: ret_override.map(|s| s.to_string())
-                            .unwrap_or_else(|| method.return_type.clone()),
-                        generics: method.generics.clone(),
-                        is_test: false,
-                        body_ast: None,
-                        body_ts: method.body_ts.clone(),
-                    };
-                    out.push('\n');
-                    emit_method(out, &m, self_type);
-                }
+            // For known Rust traits (Display, Clone, etc.), apply name mapping
+            // For unknown/domain traits, pass through the method's ts_name directly
+            let (base_ts_name, ret_override) = if let Some(mapping) = trait_method_mapping(trait_name, &method.name) {
+                (mapping.0.to_string(), mapping.1)
+            } else {
+                // Unknown trait — emit method as-is unless it's a known-skip pattern
+                (method.ts_name.clone(), None)
+            };
+            let ts_name = disambiguate_trait_method(&base_ts_name, trait_name, type_args, plain_name);
+            if emitted.insert(ts_name.clone()) {
+                let m = FnInfo {
+                    name: method.name.clone(),
+                    ts_name,
+                    is_pub: method.is_pub,
+                    is_async: method.is_async,
+                    is_static: method.is_static,
+                    params: method.params.clone(),
+                    return_type: ret_override.map(|s| s.to_string())
+                        .unwrap_or_else(|| method.return_type.clone()),
+                    generics: method.generics.clone(),
+                    is_test: false,
+                    body_ast: None,
+                    body_ts: method.body_ts.clone(),
+                };
+                out.push('\n');
+                emit_method(out, &m, self_type);
             }
         }
     }

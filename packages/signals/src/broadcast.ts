@@ -69,6 +69,10 @@ export class Broadcast<T> extends Struct {
     return new Ref(this);
   }
 
+  toString(): Result {
+    return f.debugStruct('Broadcast').field('listeners', this._0.value.listeners.read().value.unwrap().length).finish();
+  }
+
   static default<T>(): Broadcast<T> {
     return new Broadcast();
   }
@@ -121,6 +125,13 @@ export class ListenerGuard<T> extends Drop implements TListenerGuard {
   broadcastId(): BroadcastId {
     return new BroadcastId(this.inner.asPtr() as number);
   }
+
+  drop(): void {
+    if (this.inner.upgrade() != null) {
+      const inner = this.inner.upgrade();
+      inner.listeners.write().remove(this.id);
+    }
+  }
 }
 
 export type BroadcastListenerV = {
@@ -129,6 +140,10 @@ export type BroadcastListenerV = {
 };
 
 export class BroadcastListener<T> extends Enum<BroadcastListenerV> {
+
+  intoBroadcastListener(): BroadcastListener<T> {
+    return this;
+  }
 
   clone(): BroadcastListener<T> {
     return this.match({

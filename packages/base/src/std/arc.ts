@@ -12,6 +12,18 @@ interface ArcInner<T> {
   dropped: boolean;
 }
 
+// Module-private identity generator (shared by Arc and Weak)
+let _ptrCounter = 0;
+const _ptrMap = new WeakMap<object, number>();
+function _ptrId(inner: object): number {
+  let id = _ptrMap.get(inner);
+  if (id === undefined) {
+    id = ++_ptrCounter;
+    _ptrMap.set(inner, id);
+  }
+  return id;
+}
+
 export class Arc<T> {
   readonly #inner: ArcInner<T>;
   #released = false;
@@ -64,19 +76,7 @@ export class Arc<T> {
 
   /** Identity-based pointer address (uses inner object identity) */
   asPtr(): number {
-    // Use a WeakMap-based ID generator for stable identity
-    return Arc.#ptrId(this.#inner);
-  }
-
-  static #ptrCounter = 0;
-  static #ptrMap = new WeakMap<object, number>();
-  static #ptrId(inner: object): number {
-    let id = Arc.#ptrMap.get(inner);
-    if (id === undefined) {
-      id = ++Arc.#ptrCounter;
-      Arc.#ptrMap.set(inner, id);
-    }
-    return id;
+    return _ptrId(this.#inner);
   }
 
   [disposeSymbol](): void {
@@ -101,7 +101,7 @@ export class Weak<T> {
 
   /** Identity-based pointer address (same inner → same address) */
   asPtr(): number {
-    return Arc.#ptrId(this.#inner);
+    return _ptrId(this.#inner);
   }
 
   drop(): void {

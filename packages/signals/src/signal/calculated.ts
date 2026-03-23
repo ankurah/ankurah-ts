@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs
 import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
+import { CurrentObserver } from '../context';
 import { SubscriptionGuard } from '../porcelain/subscribe';
 import { Signal } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
@@ -47,6 +48,46 @@ export class Calculated<T> extends Struct implements Get, Peek, With, GetReadCel
 
   clone(): Calculated<T> {
     return new Calculated(Arc.clone(this._0));
+  }
+
+  get(): T {
+    CurrentObserver.track(this);
+    return this._0.value.value.with((opt) => opt.asRef().clone());
+  }
+
+  peek(): T {
+    return this._0.value.value.with((opt) => opt.asRef().clone());
+  }
+
+  with<R>(f: (arg0: T) => R): R {
+    CurrentObserver.track(this);
+    return this._0.value.value.with((opt) => f(opt.asRef()));
+  }
+
+  getReadcell(): ReadValueCell<T | null> {
+    return this._0.value.value.readvalue();
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    return new ListenerGuard(this._0.value.broadcast.reference().listen(listener));
+  }
+
+  broadcastId(): BroadcastId {
+    return this._0.value.broadcast.id();
+  }
+
+  subscribe<F>(listener: F): SubscriptionGuard {
+    listener = listener.intoSubscribeListener();
+    const roValue = this._0.value.value.readvalue();
+    const subscription = this.listen(Arc.new((_) => {
+      const current = roValue.with((opt) => opt.asRef().clone());
+      listener(current);
+      current.drop();
+    }));
+    const _ret = new SubscriptionGuard(subscription);
+    roValue.drop();
+    listener.drop();
+    return _ret;
   }
 }
 

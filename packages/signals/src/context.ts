@@ -1,5 +1,6 @@
 // MIRRORS: ankurah/signals/src/context.rs
-import { Struct, Arc } from '@ankurah/base';
+import { Struct, Arc, RefCell, Ref, ThreadLocal } from '@ankurah/base';
+import { Observer } from './observer';
 
 export class CurrentObserver extends Struct {
 
@@ -48,7 +49,7 @@ export function pop(): void {
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
-    let stack = stack.borrowMut();
+    stack = stack.borrowMut();
     if (stack.last() != null) {
       const last = stack.last();
       if (last.observerId() === targetId) {

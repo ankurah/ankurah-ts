@@ -251,7 +251,13 @@ fn translate_fn_body(
 ) {
     if let Some(ref block) = func.body_ast {
         let translator = body::BodyTranslator::with_registry(self_type, registry, module);
+        // Push function params into scope for shadow detection
+        let param_names: Vec<String> = func.params.iter()
+            .map(|p| p.name.clone())
+            .collect();
+        translator.push_scope(param_names);
         func.body_ts = Some(translator.translate_block(block));
+        translator.pop_scope();
     }
     // Free the AST memory after translation
     if func.body_ts.is_some() {

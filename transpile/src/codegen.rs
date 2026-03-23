@@ -30,7 +30,7 @@ pub fn generate_ts_with_imports_configured(
     for e in &file.enums { local_types.insert(e.name.clone()); }
     for t in &file.traits { local_types.insert(t.name.clone()); }
 
-    // Collect all referenced types
+    // Collect all referenced types — including from function/method bodies
     let mut referenced: HashSet<String> = HashSet::new();
     for s in &file.structs {
         for f in &s.fields { imports::collect_type_refs(&f.ty, &mut referenced); }
@@ -44,11 +44,16 @@ pub fn generate_ts_with_imports_configured(
         for m in &imp.methods {
             imports::collect_type_refs(&m.return_type, &mut referenced);
             for p in &m.params { imports::collect_type_refs(&p.ty, &mut referenced); }
+            if let Some(b) = &m.body_ts { imports::collect_type_refs(b, &mut referenced); }
         }
     }
     for f in &file.functions {
         imports::collect_type_refs(&f.return_type, &mut referenced);
         for p in &f.params { imports::collect_type_refs(&p.ty, &mut referenced); }
+        if let Some(b) = &f.body_ts { imports::collect_type_refs(b, &mut referenced); }
+    }
+    for decl in &file.module_decls {
+        imports::collect_type_refs(decl, &mut referenced);
     }
 
     // Group external types by source module
@@ -176,7 +181,11 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     }
     for f in &file.functions {
         all_type_refs.push_str(&f.return_type); all_type_refs.push(' ');
+        for p in &f.params { all_type_refs.push_str(&p.ty); all_type_refs.push(' '); }
         if let Some(b) = &f.body_ts { all_type_refs.push_str(b); all_type_refs.push(' '); }
+    }
+    for decl in &file.module_decls {
+        all_type_refs.push_str(decl); all_type_refs.push(' ');
     }
     let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
@@ -231,15 +240,35 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         out.push_str("import { BincodeReader, BincodeWriter } from './codec';\n");
     }
 
-    // Remaining unresolved external type references
+    // Remaining unresolved external type references — scan everything
     let mut referenced_types: HashSet<String> = HashSet::new();
     for s in &file.structs {
+        if provided_set.contains(&s.name) { continue; }
         for f in &s.fields { imports::collect_type_refs(&f.ty, &mut referenced_types); }
     }
     for e in &file.enums {
+        if provided_set.contains(&e.name) { continue; }
         for v in &e.variants {
             for f in &v.fields { imports::collect_type_refs(&f.ty, &mut referenced_types); }
         }
+    }
+    // Also scan function/method signatures and bodies
+    for imp in &file.impls {
+        if provided_set.contains(&imp.target_type) { continue; }
+        for m in &imp.methods {
+            imports::collect_type_refs(&m.return_type, &mut referenced_types);
+            for p in &m.params { imports::collect_type_refs(&p.ty, &mut referenced_types); }
+            if let Some(b) = &m.body_ts { imports::collect_type_refs(b, &mut referenced_types); }
+        }
+    }
+    for f in &file.functions {
+        imports::collect_type_refs(&f.return_type, &mut referenced_types);
+        for p in &f.params { imports::collect_type_refs(&p.ty, &mut referenced_types); }
+        if let Some(b) = &f.body_ts { imports::collect_type_refs(b, &mut referenced_types); }
+    }
+    // Module-level declarations
+    for decl in &file.module_decls {
+        imports::collect_type_refs(decl, &mut referenced_types);
     }
 
     let mut imported_symbols: HashSet<String> = HashSet::new();

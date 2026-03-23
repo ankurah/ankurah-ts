@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
 import { Struct, Arc } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
+import { CurrentObserver } from '../context';
 import { SubscriptionGuard } from '../porcelain/subscribe';
 import { Read } from './read';
 import { ReadValueCell, ValueCell } from '../value';
@@ -35,6 +36,41 @@ export class Mut<T> extends Struct implements Get, Peek, With, GetReadCell, Sign
 
   value(): T {
     return this.value.value();
+  }
+
+  get(): T {
+    CurrentObserver.track(this);
+    return this.value.value();
+  }
+
+  peek(): T {
+    return this.value.value();
+  }
+
+  getReadcell(): ReadValueCell<T> {
+    return this.value.readvalue();
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    return new ListenerGuard(this.broadcast.reference().listen(listener));
+  }
+
+  broadcastId(): BroadcastId {
+    return this.broadcast.id();
+  }
+
+  subscribe<F>(listener: F): SubscriptionGuard {
+    listener = listener.intoSubscribeListener();
+    const roValue = this.getReadcell();
+    const subscription = this.listen(Arc.new((_) => {
+      const currentValue = roValue.value();
+      listener(currentValue);
+      currentValue.drop();
+    }));
+    const _ret = new SubscriptionGuard(subscription);
+    roValue.drop();
+    listener.drop();
+    return _ret;
   }
 
   clone(): Mut<T> {
