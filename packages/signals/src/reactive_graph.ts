@@ -35,9 +35,9 @@ class BridgeSource extends Struct {
   static new(broadcastId: BroadcastId, signal: Signal): Arc<BridgeSource> {
     const trigger = new ArcRwSignal([]);
     const triggerClone = trigger.clone();
-    const guard = signal.listen(Arc.new((_) => (() => {
+    const guard = signal.listen(Arc.new((_) => {
       triggerClone.notify();
-    })()));
+    }));
     const _ret = Arc.new(new BridgeSource(broadcastId, trigger, guard));
     triggerClone.drop();
     return _ret;

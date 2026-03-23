@@ -474,6 +474,25 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Continue(_) => "continue".to_string(),
 
             syn::Expr::Assign(assign) => {
+                // Check for deref-assign: *guard = value → guard.value = value
+                if let syn::Expr::Unary(unary) = &*assign.left {
+                    if matches!(unary.op, syn::UnOp::Deref(_)) {
+                        let inner = self.expr(&unary.expr);
+                        // If we can resolve the type and it has a deref_field, use it
+                        if let Some(registry) = self.registry {
+                            if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
+                                if let Some(accessor) = registry.deref_field(&inner_ty) {
+                                    if !accessor.is_empty() {
+                                        return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback: if we can't resolve the type, still try .value
+                        // since *x = y in Rust almost always means deref-assign through a guard
+                        return format!("{}.value = {}", inner, self.expr(&assign.right));
+                    }
+                }
                 format!("{} = {}", self.expr(&assign.left), self.expr(&assign.right))
             }
 

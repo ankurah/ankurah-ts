@@ -50,9 +50,9 @@ describe('broadcast unit tests', () => {
     const signal = new Mut(42);
     const counter = Arc.new(0);
     const counterClone = counter.clone();
-    const Subscription = signal.subscribe((_) => (() => {
+    const Subscription = signal.subscribe((_) => {
       counterClone.fetchAdd(1, undefined /* Ordering */.SeqCst);
-    })());
+    });
     signal.set(100);
     expect(counter.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     Subscription.drop();
@@ -66,12 +66,12 @@ describe('broadcast unit tests', () => {
     const counter = Arc.new(new Mutex(0));
     const senderClone = sender.clone();
     const counterClone = counter.clone();
-    const Sub = sender.reference().listen((_) => (() => {
+    const Sub = sender.reference().listen((_) => {
       counterClone.lock() += 1;
-      const TempSub = senderClone.reference().listen((_) => (() => {
-      })());
+      const TempSub = senderClone.reference().listen((_) => {
+      });
       TempSub.drop();
-    })());
+    });
     sender.send([]);
     expect(counter.lock()).toEqual(1);
     sender.send([]);

@@ -55,10 +55,10 @@ describe('calculated unit tests', () => {
     const counter = new Calculated((() => {
       const trigger = trigger.read();
       const count = Arc.new(0);
-      const _ret = () => (() => {
+      const _ret = () => {
         const _ = trigger.get();
         return count.fetchAdd(1, undefined /* Ordering */.SeqCst) + 1;
-      })();
+      };
       count.drop();
       trigger.drop();
       return _ret;
@@ -82,10 +82,10 @@ describe('calculated unit tests', () => {
     })());
     const callCount = Arc.new(0);
     const callCountRef = callCount.clone();
-    const Sub = doubled.subscribe((value) => (() => {
+    const Sub = doubled.subscribe((value) => {
       expect(value).toEqual(20);
       callCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
-    })());
+    });
     source.set(10);
     expect(callCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     Sub.drop();
@@ -119,19 +119,19 @@ describe('calculated unit tests', () => {
     const computeCountRef = computeCount.clone();
     const doubled = new Calculated((() => {
       const source = source.read();
-      const _ret = () => (() => {
+      const _ret = () => {
         computeCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
         return source.get() * 2;
-      })();
+      };
       source.drop();
       return _ret;
     })());
     expect(doubled.get()).toEqual(2);
     expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     const unrelatedRead = unrelated.read();
-    const Sub = doubled.subscribe((Value) => (() => {
+    const Sub = doubled.subscribe((Value) => {
       const _ = unrelatedRead.get();
-    })());
+    });
     source.set(2);
     expect(doubled.get()).toEqual(4);
     expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(2);

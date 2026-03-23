@@ -15,7 +15,7 @@ export class ValueCell<T> extends Struct {
 
   set(value: T): void {
     let current = this._0.value.write().value.unwrap();
-    current = value;
+    current.value = value;
     current.drop();
   }
 
@@ -28,7 +28,7 @@ export class ValueCell<T> extends Struct {
 
   setWith<R>(value: T, f: (arg0: T) => R): R {
     let current = this._0.value.write().value.unwrap();
-    current = value;
+    current.value = value;
     const _ret = f(current);
     current.drop();
     return _ret;

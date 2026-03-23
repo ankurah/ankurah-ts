@@ -20,9 +20,9 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
     const cached = Arc.new(new RwLock(null));
     const cachedRef = cached.clone();
-    const subscription = source.listen(Arc.new((_) => (() => {
-      cachedRef.write() = null;
-    })()));
+    const subscription = source.listen(Arc.new((_) => {
+      cachedRef.write().value = null;
+    }));
     const _ret = new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
     cachedRef.drop();
     return _ret;
@@ -39,7 +39,7 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
     let guard = this.cached.value.write().value.unwrap();
     if (guard == null) {
       const output = this.source.with((input) => (this.transform)(input));
-      guard = output;
+      guard.value = output;
       output.drop();
     }
     const _ret = f(guard.asRef());
