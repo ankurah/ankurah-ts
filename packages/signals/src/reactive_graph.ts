@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/signals/src/reactive_graph.rs
 import { Struct, Arc, Mutex } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from './broadcast';
+import { Observer } from './observer';
 import { Signal } from './signal';
 
 export class ReactiveGraphObserver extends Struct implements Observer {
@@ -22,7 +23,7 @@ export class ReactiveGraphObserver extends Struct implements Observer {
   observe(signal: Signal): void {
     const id = signal.broadcastId();
     const map = this.bridges.lock();
-    const bridge = map.entry(id).orInsertWith(() => new BridgeSource(id, signal)).clone();
+    const bridge = map.entry(id).orInsertWith(() => BridgeSource.new(id, signal)).clone();
     bridge.track();
     bridge.drop();
 
@@ -50,7 +51,7 @@ class BridgeSource extends Struct {
   }
 
   static new(broadcastId: BroadcastId, signal: Signal): Arc<BridgeSource> {
-    const trigger = new ArcRwSignal([]);
+    const trigger = ArcRwSignal.new([]);
     const triggerClone = trigger.clone();
     const guard = signal.listen(Arc.new((_) => {
       triggerClone.notify();

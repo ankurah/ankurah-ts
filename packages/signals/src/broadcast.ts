@@ -44,12 +44,11 @@ export class Broadcast<T> extends Struct {
   }
 
   send(value: T): void {
-    const subscribers = (() => {
-      const listeners = this._0.value.listeners.read().value.unwrap();
+    const subscribers = ((listeners) => {
       const _ret = [...[...listeners]];
       listeners.drop();
       return _ret;
-    })();
+    })(this._0.value.listeners.read().value.unwrap());
     if (subscribers.splitLast() != null) {
       const [last, rest] = subscribers.splitLast();
       for (const callback of rest) {
@@ -74,7 +73,7 @@ export class Broadcast<T> extends Struct {
   }
 
   static default<T>(): Broadcast<T> {
-    return new Broadcast();
+    return Broadcast.new();
   }
 
   clone(): Broadcast<T> {

@@ -2,7 +2,8 @@
 import { Struct, Arc } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { SubscriptionGuard } from '../porcelain/subscribe';
+import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Get, Peek, Signal, With } from '../signal';
 
 export class Map<Upstream, Input, Output, Transform> extends Struct implements Signal, With, Get, Peek, Subscribe {
   source: Upstream;
@@ -50,7 +51,6 @@ export class Map<Upstream, Input, Output, Transform> extends Struct implements S
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
-    listener = listener.intoSubscribeListener();
     const source = this.source.clone();
     const transform = this.transform.clone();
     const subscription = this.source.listen(Arc.new((_) => {
@@ -58,7 +58,7 @@ export class Map<Upstream, Input, Output, Transform> extends Struct implements S
         listener(transform(input));
       });
     }));
-    const _ret = new SubscriptionGuard(subscription);
+    const _ret = SubscriptionGuard.new(subscription);
     transform.drop();
     source.drop();
     listener.drop();

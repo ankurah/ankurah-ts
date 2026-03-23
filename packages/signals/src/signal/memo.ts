@@ -2,7 +2,8 @@
 import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { SubscriptionGuard } from '../porcelain/subscribe';
+import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Get, Peek, Signal, With } from '../signal';
 
 export class Memo<Upstream, Input, Output, Transform> extends Struct implements Signal, With, Get, Peek, Subscribe {
   source: Upstream;
@@ -49,7 +50,7 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
   }
 
   clone(): Memo<Upstream, Input, Output, Transform> {
-    return new Memo(this.source.clone(), this.transform.clone());
+    return Memo.new(this.source.clone(), this.transform.clone());
   }
 
   listen(listener: Listener): ListenerGuard {
@@ -75,7 +76,6 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
-    listener = listener.intoSubscribeListener();
     const source = this.source.clone();
     const transform = this.transform.clone();
     const cached = this.cached.clone();
@@ -85,7 +85,7 @@ export class Memo<Upstream, Input, Output, Transform> extends Struct implements 
       listener(output);
       output.drop();
     }));
-    const _ret = new SubscriptionGuard(subscription);
+    const _ret = SubscriptionGuard.new(subscription);
     cached.drop();
     transform.drop();
     source.drop();

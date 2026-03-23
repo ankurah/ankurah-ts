@@ -55,6 +55,12 @@ pub fn generate_ts_with_imports_configured(
     for decl in &file.module_decls {
         imports::collect_type_refs(decl, &mut referenced);
     }
+    // Trait names from `implements` clauses
+    for imp in &file.impls {
+        if let Some(trait_name) = &imp.trait_name {
+            referenced.insert(trait_name.clone());
+        }
+    }
 
     // Group external types by source module
     let mut imports_by_module: HashMap<String, Vec<String>> = HashMap::new();

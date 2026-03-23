@@ -283,8 +283,14 @@ impl<'a> BodyTranslator<'a> {
             }
 
             // Rust allows `let x = x.method()` to shadow — JS doesn't allow
-            // redeclaring a closure parameter. Use assignment instead.
+            // redeclaring a closure/function parameter. Use assignment instead.
+            // If the init expr references the same name (e.g., `let x = x.clone()`),
+            // and it's handled via IIFE param threading, skip entirely.
             if self.is_in_scope(&pat) {
+                if expr.contains(&pat) {
+                    // IIFE param already provides the value — skip this declaration
+                    return String::new();
+                }
                 return format!("{} = {};\n", pat, expr);
             }
             let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
@@ -457,8 +463,38 @@ impl<'a> BodyTranslator<'a> {
                     }
                 }
                 // Multi-statement block as expression → IIFE
-                let body = self.translate_block(&block.block);
-                format!("(() => {{\n{}}})()", indent(&body))
+                // Detect shadowed variables: if a local in the block has the same name
+                // as a variable used in its init, thread it as an IIFE parameter
+                let mut shadow_params: Vec<(String, String)> = Vec::new();
+                for stmt in &block.block.stmts {
+                    if let syn::Stmt::Local(local) = stmt {
+                        let pat_name = Self::pat_static(&local.pat);
+                        if let Some(init) = &local.init {
+                            // Check if the init expression references the same name
+                            let init_expr = &init.expr;
+                            let init_str = format!("{}", quote::quote!(#init_expr));
+                            if init_str.contains(&pat_name) {
+                                // This is a shadow pattern — pass as IIFE param
+                                let init_ts = self.expr(&init.expr);
+                                shadow_params.push((pat_name, init_ts));
+                            }
+                        }
+                    }
+                }
+                if !shadow_params.is_empty() {
+                    // Thread shadowed variables as IIFE parameters.
+                    // Push shadow names into scope so local() skips their declarations
+                    // (they're already bound as IIFE params).
+                    self.push_scope(shadow_params.iter().map(|(n, _)| n.clone()));
+                    let body = self.translate_block(&block.block);
+                    self.pop_scope();
+                    let params: Vec<&str> = shadow_params.iter().map(|(n, _)| n.as_str()).collect();
+                    let args: Vec<&str> = shadow_params.iter().map(|(_, v)| v.as_str()).collect();
+                    format!("(({}) => {{\n{}}})({})", params.join(", "), indent(&body), args.join(", "))
+                } else {
+                    let body = self.translate_block(&block.block);
+                    format!("(() => {{\n{}}})()", indent(&body))
+                }
             }
 
             syn::Expr::Return(ret) => {
@@ -721,14 +757,24 @@ impl<'a> BodyTranslator<'a> {
         }
 
         // 6. Type::new() constructor pattern
+        // System/base types (Arc, Mutex, RwLock, RefCell, etc.) use `new Type(args)` because
+        // their TS constructors match the Rust ::new() signature directly.
+        // Crate-defined types use `Type.new(args)` because the transpiler emits a
+        // `static new()` method with custom initialization logic.
         if func.ends_with(".new") || func.ends_with("::new") {
             let type_name = func.trim_end_matches(".new").trim_end_matches("::new");
             let type_name = if type_name == "Self" { self.self_type } else { type_name };
-            // System types with factory methods (private constructors)
-            if matches!(type_name, "Arc") {
-                return format!("{}.new({})", type_name, args.join(", "));
+            // System types with public constructors matching ::new() signature
+            let use_constructor = matches!(type_name,
+                "Mutex" | "RwLock" | "RefCell" | "HashMap" | "BTreeMap"
+                | "HashSet" | "BTreeSet" | "Vec" | "RwLockReadGuard" | "RwLockWriteGuard"
+                | "MutexGuard" | "Ref" | "RefMut" | "Box" | "ThreadLocal"
+            );
+            if use_constructor {
+                return format!("new {}({})", type_name, args.join(", "));
             }
-            return format!("new {}({})", type_name, args.join(", "));
+            // Everything else (crate-defined types + Arc/Weak): use static new()
+            return format!("{}.new({})", type_name, args.join(", "));
         }
 
         // 7. Self::method() → TypeName.method()

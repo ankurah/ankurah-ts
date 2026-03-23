@@ -2,8 +2,9 @@
 import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { SubscriptionGuard } from '../porcelain/subscribe';
-import { Signal } from '../signal';
+import { Observer } from '../observer';
+import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 
 class SubscriptionEntry extends Struct {
@@ -41,7 +42,7 @@ export class Calculated<T> extends Struct implements Get, Peek, With, GetReadCel
   }
 
   static new<T, F>(compute: F): Calculated<T> {
-    const inner = Arc.new(new Inner(compute, new ValueCell(null), new Broadcast(), new RwLock(new Map())));
+    const inner = Arc.new(new Inner(compute, ValueCell.new(null), Broadcast.new(), new RwLock(new Map())));
     trigger(inner);
     return new Calculated(inner);
   }
@@ -69,7 +70,7 @@ export class Calculated<T> extends Struct implements Get, Peek, With, GetReadCel
   }
 
   listen(listener: Listener): ListenerGuard {
-    return new ListenerGuard(this._0.value.broadcast.reference().listen(listener));
+    return ListenerGuard.new(this._0.value.broadcast.reference().listen(listener));
   }
 
   broadcastId(): BroadcastId {
@@ -77,14 +78,13 @@ export class Calculated<T> extends Struct implements Get, Peek, With, GetReadCel
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    listener = listener.intoSubscribeListener();
     const roValue = this._0.value.value.readvalue();
     const subscription = this.listen(Arc.new((_) => {
       const current = roValue.with((opt) => opt.asRef().clone());
       listener(current);
       current.drop();
     }));
-    const _ret = new SubscriptionGuard(subscription);
+    const _ret = SubscriptionGuard.new(subscription);
     roValue.drop();
     listener.drop();
     return _ret;
@@ -92,23 +92,21 @@ export class Calculated<T> extends Struct implements Get, Peek, With, GetReadCel
 }
 
 function trigger(inner: Arc<Inner<T>>): void {
-  (() => {
-    let entries = inner.entries.write();
+  ((entries) => {
     for (const entry of entries.valuesMut()) {
       entry.markedForRemoval = true;
     }
     entries.drop();
 
-  })()
+  })(inner.entries.write())
   CurrentObserver.set(Arc.clone(inner));
   const newValue = (inner.compute)();
   inner.value.set(newValue);
   CurrentObserver.remove(inner);
-  (() => {
-    let entries = inner.entries.write();
+  ((entries) => {
     entries.retain((_, entry) => !entry.markedForRemoval);
     entries.drop();
-  })()
+  })(inner.entries.write())
   inner.broadcast.send([]);
   newValue.drop();
 }

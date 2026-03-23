@@ -2,6 +2,7 @@
 import { Struct, Arc, Weak, RwLock } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
+import { Observer } from '../observer';
 import { Signal } from '../signal';
 
 export class CallbackObserver extends Struct implements Observer {

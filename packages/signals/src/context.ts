@@ -49,7 +49,6 @@ export function pop(): void {
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
-    stack = stack.borrowMut();
     if (stack.last() != null) {
       const last = stack.last();
       if (last.observerId() === targetId) {

@@ -2,7 +2,8 @@
 import { Struct, Result, Arc } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { SubscriptionGuard } from '../porcelain/subscribe';
+import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { Memo } from './memo';
 import { ReadValueCell, ValueCell } from '../value';
 
@@ -21,11 +22,11 @@ export class Read<T> extends Struct implements Get, Peek, With, GetReadCell, Sig
   }
 
   map<Output, Transform>(transform: Transform): Map<Read<T>, T, Output, Transform> {
-    return new Map(this.clone(), transform);
+    return Map.new(this.clone(), transform);
   }
 
   memo<Output, Transform>(transform: Transform): Memo<Read<T>, T, Output, Transform> {
-    return new Memo(this.clone(), transform);
+    return Memo.new(this.clone(), transform);
   }
 
   clone(): Read<T> {
@@ -51,7 +52,7 @@ export class Read<T> extends Struct implements Get, Peek, With, GetReadCell, Sig
   }
 
   listen(listener: Listener): ListenerGuard {
-    return new ListenerGuard(this.broadcast.reference().listen(new NotifyOnly(Arc.new(() => listener([])))));
+    return ListenerGuard.new(this.broadcast.reference().listen(new NotifyOnly(Arc.new(() => listener([])))));
   }
 
   broadcastId(): BroadcastId {
@@ -70,14 +71,13 @@ export class Read<T> extends Struct implements Get, Peek, With, GetReadCell, Sig
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    listener = listener.intoSubscribeListener();
     const roValue = this.getReadcell();
     const sigLguard = this.listen(Arc.new((_) => {
       const currentValue = roValue.value();
       listener(currentValue);
       currentValue.drop();
     }));
-    const _ret = new SubscriptionGuard(sigLguard);
+    const _ret = SubscriptionGuard.new(sigLguard);
     roValue.drop();
     listener.drop();
     return _ret;

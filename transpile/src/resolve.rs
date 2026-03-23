@@ -352,6 +352,12 @@ impl TypeRegistry {
             .map_or(false, |td| td.methods.contains_key(method))
     }
 
+    /// Check if a type (by name) has a specific method in the registry
+    pub fn has_method(&self, type_name: &str, method: &str) -> bool {
+        self.types.get(type_name)
+            .map_or(false, |td| td.methods.contains_key(method))
+    }
+
     /// Check if a type has a deref_field (is a wrapper type)
     pub fn deref_field(&self, ty: &ResolvedType) -> Option<&str> {
         let name = match ty {

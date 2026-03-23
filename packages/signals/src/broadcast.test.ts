@@ -7,20 +7,18 @@ import { Mut } from './signal/mutable';
 
 describe('broadcast unit tests', () => {
   test('test_multiple_subscribers', () => {
-    const sender = new Broadcast();
+    const sender = Broadcast.new();
     const counter = Arc.new(new Mutex(0));
-    const Sub1 = (() => {
-      const counter = counter.clone();
+    const Sub1 = ((counter) => {
       const _ret = sender.reference().listen((_) => counter.lock().value += 1);
       counter.drop();
       return _ret;
-    })();
-    const sub2 = (() => {
-      const counter = counter.clone();
+    })(counter.clone());
+    const sub2 = ((counter) => {
       const _ret = sender.reference().listen((_) => counter.lock().value += 10);
       counter.drop();
       return _ret;
-    })();
+    })(counter.clone());
     sender.send([]);
     expect(counter.lock()).toEqual(11);
     drop(sub2);
@@ -33,7 +31,7 @@ describe('broadcast unit tests', () => {
   });
 
   test('test_channel_sender_subscriber', () => {
-    const sender = new Broadcast();
+    const sender = Broadcast.new();
     const [tx, rx] = tokio.mpsc.unboundedChannel();
     const Sub = sender.reference().listen(tx);
     sender.send([]);
@@ -48,7 +46,7 @@ describe('broadcast unit tests', () => {
   });
 
   test('test_subscribe_trait', () => {
-    const signal = new Mut(42);
+    const signal = Mut.new(42);
     const counter = Arc.new(0);
     const counterClone = counter.clone();
     const Subscription = signal.subscribe((_) => {
@@ -63,7 +61,7 @@ describe('broadcast unit tests', () => {
   });
 
   test('test_reentrant_subscription_during_send', () => {
-    const sender = new Broadcast();
+    const sender = Broadcast.new();
     const counter = Arc.new(new Mutex(0));
     const senderClone = sender.clone();
     const counterClone = counter.clone();

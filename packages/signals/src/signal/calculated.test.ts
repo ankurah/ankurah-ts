@@ -7,16 +7,14 @@ import { Mut } from './mutable';
 
 describe('calculated unit tests', () => {
   test('test_basic_calculated', () => {
-    const a = new Mut(1);
-    const b = new Mut(2);
-    const sum = new Calculated((() => {
-      const a = a.read();
-      const b = b.read();
+    const a = Mut.new(1);
+    const b = Mut.new(2);
+    const sum = Calculated.new(((a, b) => {
       const _ret = () => a.get() + b.get();
       b.drop();
       a.drop();
       return _ret;
-    })());
+    })(a.read(), b.read()));
     expect(sum.get()).toEqual(3);
     a.set(10);
     expect(sum.get()).toEqual(12);
@@ -28,16 +26,14 @@ describe('calculated unit tests', () => {
   });
 
   test('test_two_independent_inputs', () => {
-    const firstName = new Mut('Alice'.toString());
-    const lastName = new Mut('Smith'.toString());
-    const fullName = (() => {
-      const first = firstName.read();
-      const last = lastName.read();
-      const _ret = new Calculated(() => `${first.get()} ${last.get()}`);
+    const firstName = Mut.new('Alice'.toString());
+    const lastName = Mut.new('Smith'.toString());
+    const fullName = ((first, last) => {
+      const _ret = Calculated.new(() => `${first.get()} ${last.get()}`);
       last.drop();
       first.drop();
       return _ret;
-    })();
+    })(firstName.read(), lastName.read());
     expect(fullName.get()).toEqual('Alice Smith');
     firstName.set('Bob'.toString());
     expect(fullName.get()).toEqual('Bob Smith');
@@ -52,9 +48,8 @@ describe('calculated unit tests', () => {
   });
 
   test('test_calculated_with_closed_over_state', () => {
-    const trigger = new Mut(0);
-    const counter = new Calculated((() => {
-      const trigger = trigger.read();
+    const trigger = Mut.new(0);
+    const counter = Calculated.new(((trigger) => {
       const count = Arc.new(0);
       const _ret = () => {
         const _ = trigger.get();
@@ -63,7 +58,7 @@ describe('calculated unit tests', () => {
       count.drop();
       trigger.drop();
       return _ret;
-    })());
+    })(trigger.read()));
     expect(counter.get()).toEqual(1);
     trigger.set(1);
     expect(counter.get()).toEqual(2);
@@ -74,13 +69,12 @@ describe('calculated unit tests', () => {
   });
 
   test('test_calculated_downstream_subscription', () => {
-    const source = new Mut(5);
-    const doubled = new Calculated((() => {
-      const source = source.read();
+    const source = Mut.new(5);
+    const doubled = Calculated.new(((source) => {
       const _ret = () => source.get() * 2;
       source.drop();
       return _ret;
-    })());
+    })(source.read()));
     const callCount = Arc.new(0);
     const callCountRef = callCount.clone();
     const Sub = doubled.subscribe((value) => {
@@ -97,14 +91,13 @@ describe('calculated unit tests', () => {
   });
 
   test('test_chained_calculated', () => {
-    const base = new Mut(2);
-    const doubled = new Calculated((() => {
-      const base = base.read();
+    const base = Mut.new(2);
+    const doubled = Calculated.new(((base) => {
       const _ret = () => base.get() * 2;
       base.drop();
       return _ret;
-    })());
-    const quadrupled = new Calculated(() => doubled.get() * 2);
+    })(base.read()));
+    const quadrupled = Calculated.new(() => doubled.get() * 2);
     expect(quadrupled.get()).toEqual(8);
     base.set(5);
     expect(quadrupled.get()).toEqual(20);
@@ -114,19 +107,18 @@ describe('calculated unit tests', () => {
   });
 
   test('test_listener_does_not_pollute_dependencies', () => {
-    const source = new Mut(1);
-    const unrelated = new Mut(100);
+    const source = Mut.new(1);
+    const unrelated = Mut.new(100);
     const computeCount = Arc.new(0);
     const computeCountRef = computeCount.clone();
-    const doubled = new Calculated((() => {
-      const source = source.read();
+    const doubled = Calculated.new(((source) => {
       const _ret = () => {
         computeCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
         return source.get() * 2;
       };
       source.drop();
       return _ret;
-    })());
+    })(source.read()));
     expect(doubled.get()).toEqual(2);
     expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
     const unrelatedRead = unrelated.read();
