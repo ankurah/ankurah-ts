@@ -484,10 +484,14 @@ fn extract_generics(generics: &syn::Generics) -> String {
                     }
                 }).collect();
 
+                let default_part = t.default.as_ref().map(|d| {
+                    format!(" = {}", name_map::map_type(d))
+                }).unwrap_or_default();
+
                 if bounds.is_empty() {
-                    Some(name)
+                    Some(format!("{}{}", name, default_part))
                 } else {
-                    Some(format!("{} extends {}", name, bounds.join(" & ")))
+                    Some(format!("{} extends {}{}", name, bounds.join(" & "), default_part))
                 }
             }
             syn::GenericParam::Lifetime(_) => None,

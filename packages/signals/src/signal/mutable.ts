@@ -7,7 +7,7 @@ import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { Read } from './read';
 import { ReadValueCell, ValueCell } from '../value';
 
-export class Mut<T> extends Struct implements Get, Peek, With, GetReadCell, Signal, Subscribe {
+export class Mut<T> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {
   value: ValueCell<T>;
   broadcast: Broadcast<void>;
 

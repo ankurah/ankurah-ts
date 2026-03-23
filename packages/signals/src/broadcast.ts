@@ -27,7 +27,7 @@ export class BroadcastId extends Struct {
   }
 }
 
-export class Broadcast<T> extends Struct {
+export class Broadcast<T = void> extends Struct {
   _0: Arc<Inner<T>>;
 
   constructor(_0: Arc<Inner<T>>) {
@@ -111,7 +111,7 @@ export class Ref<T> extends Struct {
   }
 }
 
-export class ListenerGuard<T> extends Drop implements TListenerGuard {
+export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   inner: Weak<Inner<T>>;
   id: number;
 
@@ -138,7 +138,7 @@ export type BroadcastListenerV = {
   NotifyOnly: { _0: Arc<() => void> };
 };
 
-export class BroadcastListener<T> extends Enum<BroadcastListenerV> {
+export class BroadcastListener<T = void> extends Enum<BroadcastListenerV> {
 
   intoBroadcastListener(): BroadcastListener<T> {
     return this;

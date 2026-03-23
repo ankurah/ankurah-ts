@@ -10,14 +10,15 @@ pub fn emit_struct(
     out: &mut String,
     s: &StructInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
-    trait_impls: &HashMap<String, Vec<&str>>,
+    trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
     trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
 ) {
     let export = if s.is_pub { "export " } else { "" };
     let traits = trait_impls.get(&s.name);
-    let has_drop_impl = traits.map(|t| t.contains(&"Drop")).unwrap_or(false);
+    let has_drop_impl = traits.map(|t| t.iter().any(|(n, _)| *n == "Drop")).unwrap_or(false);
     let base = if has_drop_impl { " extends Drop" } else { " extends Struct" };
-    let self_type = format!("{}{}", s.name, s.generics);
+    let generics_usage = strip_generic_defaults(&s.generics);
+    let self_type = format!("{}{}", s.name, generics_usage);
     let implements = format_implements(traits);
 
     out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, s.generics, base, implements));
@@ -60,7 +61,7 @@ pub fn emit_struct(
     emit_derive_methods(out, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields);
 
     // Deref delegation for wrapper types (tuple structs with a single field)
-    let has_deref = traits.map(|t| t.contains(&"Deref")).unwrap_or(false);
+    let has_deref = traits.map(|t| t.iter().any(|(n, _)| *n == "Deref")).unwrap_or(false);
     if has_deref && s.fields.len() == 1 {
         if let Some(field_name) = s.fields[0].name.as_deref() {
             let inner_ty = &s.fields[0].ty;
@@ -84,7 +85,7 @@ pub fn emit_enum(
     out: &mut String,
     e: &EnumInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
-    _trait_impls: &HashMap<String, Vec<&str>>,
+    _trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
     trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
 ) {
     let export = if e.is_pub { "export " } else { "" };
@@ -106,7 +107,8 @@ pub fn emit_enum(
     // Class
     out.push_str(&format!("{}class {}{} extends Enum<{}V> {{\n", export, e.name, e.generics, e.name));
 
-    let self_type = format!("{}{}", e.name, e.generics);
+    let generics_usage = strip_generic_defaults(&e.generics);
+    let self_type = format!("{}{}", e.name, generics_usage);
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
     emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
@@ -288,7 +290,7 @@ fn emit_derive_methods(
     emitted: &mut HashSet<String>,
     fields: &[crate::types::FieldInfo],
 ) {
-    let full_type = format!("{}{}", type_name, generics);
+    let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
     let field_names: Vec<&str> = fields.iter()
         .filter_map(|f| f.name.as_deref())
         .collect();
@@ -490,10 +492,10 @@ fn emit_field_eq(name: &str, ty: &str) -> String {
 fn emit_struct_bincode(
     out: &mut String,
     s: &StructInfo,
-    trait_impls: &HashMap<String, Vec<&str>>,
+    trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
 ) {
     let has_custom_serde = trait_impls.get(&s.name)
-        .map(|t| t.contains(&"Serialize"))
+        .map(|t| t.iter().any(|(n, _)| *n == "Serialize"))
         .unwrap_or(false)
         && !s.derives.iter().any(|d| d == "Serialize");
 
@@ -584,16 +586,39 @@ fn format_params_filtered(params: &[ParamInfo], self_type: &str) -> String {
         .join(", ")
 }
 
-fn format_implements(traits: Option<&Vec<&str>>) -> String {
+fn format_implements(traits: Option<&Vec<(&str, &[String])>>) -> String {
     if let Some(traits) = traits {
-        let ifaces: Vec<&str> = traits.iter()
-            .filter(|t| !is_skipped_trait(t))
-            .copied()
+        let ifaces: Vec<String> = traits.iter()
+            .filter(|(t, _)| !is_skipped_trait(t))
+            .map(|(name, type_args)| {
+                if type_args.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}<{}>", name, type_args.join(", "))
+                }
+            })
             .collect();
         if ifaces.is_empty() { String::new() } else { format!(" implements {}", ifaces.join(", ")) }
     } else {
         String::new()
     }
+}
+
+/// Strip default values from generic params for use in type references.
+/// `<T = void>` → `<T>`, `<T extends Foo = void, U>` → `<T extends Foo, U>`
+fn strip_generic_defaults(generics: &str) -> String {
+    if !generics.contains('=') { return generics.to_string(); }
+    // Parse the generics string, removing ` = ...` from each param
+    let inner = generics.trim_start_matches('<').trim_end_matches('>');
+    let params: Vec<&str> = inner.split(',').collect();
+    let stripped: Vec<String> = params.iter().map(|p| {
+        if let Some(idx) = p.find('=') {
+            p[..idx].trim().to_string()
+        } else {
+            p.trim().to_string()
+        }
+    }).collect();
+    format!("<{}>", stripped.join(", "))
 }
 
 fn is_rust_only_type(ty: &str) -> bool {

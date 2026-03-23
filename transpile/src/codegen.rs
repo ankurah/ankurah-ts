@@ -305,12 +305,12 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
 
     // Organize impl blocks
     let mut inherent_methods: HashMap<String, Vec<&FnInfo>> = HashMap::new();
-    let mut trait_impls: HashMap<String, Vec<&str>> = HashMap::new();
+    let mut trait_impls: HashMap<String, Vec<(&str, &[String])>> = HashMap::new();
     let mut trait_methods: HashMap<String, Vec<(&str, &[String], &FnInfo)>> = HashMap::new();
 
     for imp in &file.impls {
         if let Some(trait_name) = &imp.trait_name {
-            trait_impls.entry(imp.target_type.clone()).or_default().push(trait_name.as_str());
+            trait_impls.entry(imp.target_type.clone()).or_default().push((trait_name.as_str(), &imp.trait_type_args));
             for method in &imp.methods {
                 trait_methods.entry(imp.target_type.clone())
                     .or_default()
