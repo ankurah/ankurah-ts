@@ -180,7 +180,7 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     }
     let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-        "RefCell", "Ref", "RefMut"];
+        "RefCell", "Ref", "RefMut", "ThreadLocal"];
     for ty in &base_runtime_types {
         // Don't import if the file defines its own type with the same name
         if all_type_refs.contains(ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
@@ -314,6 +314,12 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     for c in &file.consts {
         let export = if c.is_pub { "export " } else { "" };
         out.push_str(&format!("{}const {}: {} = undefined as any; // TODO\n\n", export, c.name, c.ty));
+    }
+
+    // Module-level declarations (thread_local, etc.)
+    for decl in &file.module_decls {
+        out.push_str(decl);
+        out.push_str("\n\n");
     }
 
     out

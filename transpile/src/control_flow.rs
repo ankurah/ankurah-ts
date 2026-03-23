@@ -7,7 +7,16 @@ use crate::match_expr;
 /// Translate an if expression (handles if-let patterns)
 pub fn translate_if(if_expr: &syn::ExprIf) -> String {
     if let syn::Expr::Let(let_expr) = &*if_expr.cond {
-        return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch);
+        return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None);
+    }
+
+    // Handle let-chains: if let Some(x) = expr && guard { ... }
+    if let syn::Expr::Binary(bin) = &*if_expr.cond {
+        if matches!(bin.op, syn::BinOp::And(_)) {
+            if let syn::Expr::Let(let_expr) = &*bin.left {
+                return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, Some(&bin.right));
+            }
+        }
     }
 
     let cond = translate_expr(&if_expr.cond);
@@ -34,9 +43,11 @@ fn translate_if_let(
     let_expr: &syn::ExprLet,
     then_branch: &syn::Block,
     else_branch: &Option<(syn::token::Else, Box<syn::Expr>)>,
+    guard: Option<&syn::Expr>,
 ) -> String {
     let scrutinee = translate_expr(&let_expr.expr);
     let then_body = translate_block(then_branch);
+    let guard_str = guard.map(|g| format!(" && {}", translate_expr(g))).unwrap_or_default();
 
     let else_part = if let Some((_, else_expr)) = else_branch {
         match else_expr.as_ref() {
@@ -57,8 +68,15 @@ fn translate_if_let(
             match name.as_str() {
                 "Some" => {
                     let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
-                    format!("if ({} != null) {{\n  const {} = {};\n{}}}{}",
-                        scrutinee, var, scrutinee, indent(&then_body), else_part)
+                    if guard_str.is_empty() {
+                        format!("if ({} != null) {{\n  const {} = {};\n{}}}{}",
+                            scrutinee, var, scrutinee, indent(&then_body), else_part)
+                    } else {
+                        // Let-chain: bind the variable, then check the guard
+                        format!("if ({} != null) {{\n  const {} = {};\n  if ({}) {{\n{}\n  }}\n}}{}",
+                            scrutinee, var, scrutinee, guard_str.trim_start_matches(" && "),
+                            indent(&indent(&then_body)), else_part)
+                    }
                 }
                 "Ok" => {
                     let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());

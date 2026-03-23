@@ -12,3 +12,4 @@ export { RwLock, RwLockReadGuard, RwLockWriteGuard } from './std/rwlock.ts';
 export { AsyncMutex } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
+export { ThreadLocal } from './std/thread_local.ts';

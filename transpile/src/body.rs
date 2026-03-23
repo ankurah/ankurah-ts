@@ -428,8 +428,23 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Closure(closure) => {
                 let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
-                let body = self.expr(&closure.body);
-                format!("({}) => {}", params.join(", "), body)
+                // Check if the body is a block — if so, translate as block with braces
+                match &*closure.body {
+                    syn::Expr::Block(block) => {
+                        let body = self.translate_block(&block.block);
+                        format!("({}) => {{\n{}}}", params.join(", "), indent(&body))
+                    }
+                    _ => {
+                        let body = self.expr(&closure.body);
+                        // If body starts with { or if/for/while, wrap in braces
+                        // (arrow function expression body can't start with these)
+                        if body.starts_with("if ") || body.starts_with("for ") || body.starts_with("while ") || body.starts_with('{') {
+                            format!("({}) => {{\n  {}\n}}", params.join(", "), body)
+                        } else {
+                            format!("({}) => {}", params.join(", "), body)
+                        }
+                    }
+                }
             }
 
             syn::Expr::ForLoop(for_loop) => {

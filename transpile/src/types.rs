@@ -14,6 +14,8 @@ pub struct RustFile {
     pub consts: Vec<ConstInfo>,
     /// Test functions from #[cfg(test)] mod tests { ... }
     pub test_functions: Vec<FnInfo>,
+    /// Raw TS declarations to emit at module level (e.g., thread_local → const)
+    pub module_decls: Vec<String>,
 }
 
 #[derive(Debug)]

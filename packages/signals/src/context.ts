@@ -25,39 +25,47 @@ export class CurrentObserver extends Struct {
 }
 
 export function track(signal: S): void {
-  OBSERVER_STACK.with((stack) => if (stack.borrow().last() != null) {
-    const observer = stack.borrow().last();
-    observer.observe(signal);
+  OBSERVER_STACK.with((stack) => {
+    if (stack.borrow().last() != null) {
+      const observer = stack.borrow().last();
+      observer.observe(signal);
+    }
   });
 }
 
 export function set(observer: O): void {
-  OBSERVER_STACK.with((stack) => (() => {
+  OBSERVER_STACK.with((stack) => {
     stack.borrowMut().push(Arc.new(observer));
-  })());
+  });
 }
 
 export function pop(): void {
-  OBSERVER_STACK.with((stack) => (() => {
+  OBSERVER_STACK.with((stack) => {
     stack.borrowMut().pop();
-  })());
+  });
 }
 
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
-  OBSERVER_STACK.with((stack) => (() => {
+  OBSERVER_STACK.with((stack) => {
     let stack = stack.borrowMut();
-    if (/* let last = stack.last() */ && last.observerId() === targetId) {
-      stack.pop();
-      return;
+    if (stack.last() != null) {
+      const last = stack.last();
+      if (last.observerId() === targetId) {
+        stack.pop();
+        return;
+
+      }
     }
     stack.retain((o) => o.observerId() !== targetId);
     stack.drop();
-  })());
+  });
   targetId.drop();
 }
 
 export function current(): Arc<Observer> | null {
   return OBSERVER_STACK.with((stack) => [...stack.borrow().last()]);
 }
+
+const OBSERVER_STACK = new ThreadLocal<RefCell<Arc<Observer>[]>>(new RefCell([]));
 
