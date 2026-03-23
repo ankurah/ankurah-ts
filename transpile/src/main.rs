@@ -189,7 +189,7 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         println!("  {} → {}", rel_str, ts_relative);
 
         // Generate test file if there are test functions
-        if let Some(test_ts) = codegen::generate_test_ts(rust_file, &crate_path) {
+        if let Some(test_ts) = codegen::generate_test_ts_with_imports(rust_file, &crate_path, &type_to_file, &current_module) {
             let test_relative = ts_relative.replace(".ts", ".test.ts");
             let test_path = out_dir.join(&test_relative);
             std::fs::write(&test_path, &test_ts)

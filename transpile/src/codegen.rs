@@ -327,6 +327,15 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
 
 /// Generate test file content from extracted test functions
 pub fn generate_test_ts(file: &RustFile, rust_crate_path: &str) -> Option<String> {
+    generate_test_ts_with_imports(file, rust_crate_path, &HashMap::new(), ".")
+}
+
+pub fn generate_test_ts_with_imports(
+    file: &RustFile,
+    rust_crate_path: &str,
+    type_to_file: &HashMap<String, String>,
+    current_module: &str,
+) -> Option<String> {
     if file.test_functions.is_empty() {
         return None;
     }
@@ -348,22 +357,74 @@ pub fn generate_test_ts(file: &RustFile, rust_crate_path: &str) -> Option<String
     for e in &file.enums { available_types.insert(e.name.clone()); }
     for t in &file.traits { available_types.insert(t.name.clone()); }
 
+    // Collect all type references from test bodies
     let mut test_refs: HashSet<String> = HashSet::new();
     for f in &file.test_functions {
         if let Some(body) = &f.body_ts {
             imports::collect_type_refs(body, &mut test_refs);
         }
     }
-    let test_imports: Vec<&String> = test_refs.iter()
+
+    // Import types from the parent module (same file)
+    let local_imports: Vec<&String> = test_refs.iter()
         .filter(|t| available_types.contains(*t))
         .collect();
-    if !test_imports.is_empty() {
-        let mut sorted = test_imports;
+    if !local_imports.is_empty() {
+        let mut sorted = local_imports;
         sorted.sort();
         out.push_str(&format!("import {{ {} }} from './{}';\n",
             sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), module_name));
     }
-    out.push_str("import { BincodeWriter, BincodeReader } from './codec';\n");
+
+    // Import base types (Arc, Mutex, RefCell, etc.)
+    let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
+        "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
+        "RefCell", "Ref", "RefMut", "ThreadLocal", "Struct", "Enum", "Drop"];
+    let base_imports: Vec<&&str> = base_runtime_types.iter()
+        .filter(|t| test_refs.contains(**t) && !available_types.contains(**t))
+        .collect();
+    if !base_imports.is_empty() {
+        let mut sorted = base_imports;
+        sorted.sort();
+        out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n",
+            sorted.iter().map(|s| **s).collect::<Vec<_>>().join(", ")));
+    }
+
+    // Cross-file imports from the same crate (using type_to_file map)
+    let mut cross_file_imports: HashMap<String, Vec<String>> = HashMap::new();
+    for type_name in &test_refs {
+        if available_types.contains(type_name) || imports::is_primitive_or_base_type(type_name) {
+            continue;
+        }
+        if base_runtime_types.contains(&type_name.as_str()) {
+            continue; // Already imported from @ankurah/base
+        }
+        if let Some(source_module) = type_to_file.get(type_name) {
+            // Compute the test file's module path (test is in same dir as parent)
+            let test_module = current_module;
+            if source_module != test_module {
+                let import_path = relative_import_path(test_module, source_module);
+                cross_file_imports.entry(import_path)
+                    .or_default()
+                    .push(type_name.clone());
+            }
+        }
+    }
+    let mut sorted_cross: Vec<&String> = cross_file_imports.keys().collect();
+    sorted_cross.sort();
+    for module in sorted_cross {
+        let mut types = cross_file_imports[module].clone();
+        types.sort();
+        out.push_str(&format!("import {{ {} }} from '{}';\n", types.join(", "), module));
+    }
+
+    // Bincode imports if test bodies reference them
+    let all_test_body: String = file.test_functions.iter()
+        .filter_map(|f| f.body_ts.as_deref())
+        .collect::<Vec<_>>().join(" ");
+    if all_test_body.contains("BincodeWriter") || all_test_body.contains("BincodeReader") {
+        out.push_str("import { BincodeWriter, BincodeReader } from './codec';\n");
+    }
     out.push('\n');
 
     out.push_str(&format!("describe('{} unit tests', () => {{\n", module_name));
