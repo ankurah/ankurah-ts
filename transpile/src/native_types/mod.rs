@@ -48,6 +48,23 @@ pub fn translate_method(
         return MethodTranslation::Expr(result);
     }
 
+    // .unwrap()/.expect() on non-Result types are identity ops.
+    // In TS, system types (Mutex.lock(), RwLock.write()) return guards directly,
+    // not wrapped in Result. Strip the unwrap.
+    match rust_method {
+        "unwrap" | "expect" => {
+            // Only strip for types that aren't Result (Result.unwrap() is real)
+            if let ResolvedType::Named { name, .. } = receiver_ty {
+                if name != "Result" {
+                    return MethodTranslation::Expr(receiver.to_string());
+                }
+            } else {
+                return MethodTranslation::Expr(receiver.to_string());
+            }
+        }
+        _ => {}
+    }
+
     match receiver_ty {
         ResolvedType::Array(_) => array::translate(receiver, rust_method, args),
         ResolvedType::Nullable(_) => nullable::translate(receiver, rust_method, args),

@@ -32,13 +32,13 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
 
   withCached<R>(f: (arg0: Output) => R): R {
     (() => {
-      const guard = this.cached.value.read().value.unwrap();
+      const guard = this.cached.value.read().value;
       if (guard != null) {
         const value = guard;
         return f(value);
       }
     })()
-    let guard = this.cached.value.write().value.unwrap();
+    let guard = this.cached.value.write().value;
     if (guard == null) {
       const output = this.source.with((input) => (this.transform)(input));
       guard.value = output;

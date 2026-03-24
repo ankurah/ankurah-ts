@@ -30,11 +30,11 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   clear(): void {
-    this._0.value.entries.write().value.expect('entries lock is poisoned').clear();
+    this._0.value.entries.write().value.clear();
   }
 
   markAllForRemoval(): void {
-    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
+    let entries = this._0.value.entries.write().value;
     for (const entry of entries.valuesMut()) {
       entry.markedForRemoval = true;
     }
@@ -43,14 +43,14 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   sweepMarkedListeners(): void {
-    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
+    let entries = this._0.value.entries.write().value;
     entries.retain((_, entry) => !entry.markedForRemoval);
     entries.drop();
   }
 
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
-    let entries = this._0.value.entries.write().value.expect('entries lock is poisoned');
+    let entries = this._0.value.entries.write().value;
     if (entries.getMut(broadcastId) != null) {
       const entry = entries.getMut(broadcastId);
       entry.markedForRemoval = false;
