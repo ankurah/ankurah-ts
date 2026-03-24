@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/signals/src/value.rs
 import { Struct, Arc, RwLock } from '@ankurah/base';
 
-export class ValueCell<T> extends Struct {
+export class ValueCell<T extends Clone> extends Struct {
   _0: Arc<RwLock<T>>;
 
   constructor(_0: Arc<RwLock<T>>) {
@@ -47,7 +47,7 @@ export class ValueCell<T> extends Struct {
   }
 }
 
-export class ReadValueCell<T> extends Struct {
+export class ReadValueCell<T extends Clone> extends Struct {
   _0: Arc<RwLock<T>>;
 
   constructor(_0: Arc<RwLock<T>>) {

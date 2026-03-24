@@ -7,7 +7,7 @@ import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { Memo } from './memo';
 import { ReadValueCell, ValueCell } from '../value';
 
-export class Read<T> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {
+export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {
   value: ValueCell<T>;
   broadcast: Broadcast<void>;
 

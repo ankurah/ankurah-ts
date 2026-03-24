@@ -5,7 +5,7 @@ import { CurrentObserver } from '../context';
 import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, Peek, Signal, With } from '../signal';
 
-export class Map<Upstream, Input, Output, Transform> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
+export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
   source: Upstream;
   transform: Transform;
 

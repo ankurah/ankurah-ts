@@ -12,16 +12,23 @@ pub fn emit_struct(
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
     trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
+    impl_bounds: Option<&HashMap<String, Vec<String>>>,
 ) {
     let export = if s.is_pub { "export " } else { "" };
     let traits = trait_impls.get(&s.name);
     let has_drop_impl = traits.map(|t| t.iter().any(|(n, _)| *n == "Drop")).unwrap_or(false);
     let base = if has_drop_impl { " extends Drop" } else { " extends Struct" };
-    let generics_usage = strip_generic_defaults(&s.generics);
+    // Merge impl bounds into class generics declaration
+    let generics_decl = if let Some(bounds) = impl_bounds {
+        merge_bounds_into_generics(&s.generics, bounds)
+    } else {
+        s.generics.clone()
+    };
+    let generics_usage = strip_generic_defaults(&generics_decl);
     let self_type = format!("{}{}", s.name, generics_usage);
     let implements = format_implements(traits);
 
-    out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, s.generics, base, implements));
+    out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, generics_decl, base, implements));
 
     // Fields — Rust's "private" means module-private (same file), not class-private.
     // Since types within the same Rust module routinely access each other's fields,
@@ -604,19 +611,66 @@ fn format_implements(traits: Option<&Vec<(&str, &[String])>>) -> String {
     }
 }
 
-/// Strip default values from generic params for use in type references.
-/// `<T = void>` → `<T>`, `<T extends Foo = void, U>` → `<T extends Foo, U>`
+/// Merge impl block generic bounds into a class's generic declaration.
+/// E.g., `<Upstream, Input, Output, Transform>` with bounds
+/// `{Upstream: [Signal, With<Input>, Clone], Transform: [Clone]}` becomes
+/// `<Upstream extends Signal & With<Input> & Clone, Input, Output, Transform extends Clone>`
+fn merge_bounds_into_generics(generics: &str, bounds: &HashMap<String, Vec<String>>) -> String {
+    if generics.is_empty() || bounds.is_empty() { return generics.to_string(); }
+    let inner = generics.trim_start_matches('<').trim_end_matches('>');
+    let params: Vec<&str> = inner.split(',').collect();
+    let merged: Vec<String> = params.iter().map(|p| {
+        let p = p.trim();
+        // Extract existing param name (before any `extends` or `=`)
+        let param_name = p.split_whitespace().next().unwrap_or(p);
+        // Check if there are impl bounds for this param
+        if let Some(impl_bounds) = bounds.get(param_name) {
+            // Check if param already has `extends` constraints
+            if p.contains(" extends ") {
+                // Extract existing bounds and merge
+                let extends_pos = p.find(" extends ").unwrap();
+                let existing_part = &p[extends_pos + 9..]; // after " extends "
+                // Split on default " = " if present
+                let (existing_bounds_str, default_part) = if let Some(eq_pos) = existing_part.find(" = ") {
+                    (&existing_part[..eq_pos], &existing_part[eq_pos..])
+                } else {
+                    (existing_part, "")
+                };
+                let existing_bounds: Vec<&str> = existing_bounds_str.split(" & ").map(|s| s.trim()).collect();
+                let mut all_bounds: Vec<String> = existing_bounds.iter().map(|s| s.to_string()).collect();
+                for b in impl_bounds {
+                    if !all_bounds.iter().any(|eb| eb == b) {
+                        all_bounds.push(b.clone());
+                    }
+                }
+                format!("{} extends {}{}", param_name, all_bounds.join(" & "), default_part)
+            } else {
+                // No existing extends — check for default
+                let (base, default_part) = if let Some(eq_pos) = p.find(" = ") {
+                    (&p[..eq_pos], &p[eq_pos..])
+                } else {
+                    (p, "")
+                };
+                let _ = base; // unused, param_name is what we need
+                format!("{} extends {}{}", param_name, impl_bounds.join(" & "), default_part)
+            }
+        } else {
+            p.to_string()
+        }
+    }).collect();
+    format!("<{}>", merged.join(", "))
+}
+
+/// Strip bounds and defaults from generic params for use in type references.
+/// `<T = void>` → `<T>`, `<T extends Foo = void>` → `<T>`, `<T extends Signal & Clone>` → `<T>`
 fn strip_generic_defaults(generics: &str) -> String {
-    if !generics.contains('=') { return generics.to_string(); }
-    // Parse the generics string, removing ` = ...` from each param
+    if generics.is_empty() { return generics.to_string(); }
     let inner = generics.trim_start_matches('<').trim_end_matches('>');
     let params: Vec<&str> = inner.split(',').collect();
     let stripped: Vec<String> = params.iter().map(|p| {
-        if let Some(idx) = p.find('=') {
-            p[..idx].trim().to_string()
-        } else {
-            p.trim().to_string()
-        }
+        let p = p.trim();
+        // Extract just the param name (before any `extends` or `=`)
+        p.split_whitespace().next().unwrap_or(p).to_string()
     }).collect();
     format!("<{}>", stripped.join(", "))
 }

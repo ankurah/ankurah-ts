@@ -413,11 +413,75 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
         }
     }).collect();
 
+    // Extract generic bounds from impl params + where clause
+    let mut generic_bounds: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for param in &i.generics.params {
+        if let syn::GenericParam::Type(t) = param {
+            let name = t.ident.to_string();
+            for bound in &t.bounds {
+                if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                    let seg = trait_bound.path.segments.last().unwrap();
+                    let trait_name = seg.ident.to_string();
+                    if !matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
+                        let full_trait = if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                            let type_args: Vec<String> = args.args.iter().filter_map(|a| {
+                                if let syn::GenericArgument::Type(ty) = a {
+                                    Some(name_map::map_type(ty))
+                                } else { None }
+                            }).collect();
+                            if type_args.is_empty() { trait_name } else {
+                                format!("{}<{}>", trait_name, type_args.join(", "))
+                            }
+                        } else {
+                            trait_name
+                        };
+                        generic_bounds.entry(name.clone()).or_default().push(full_trait);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(where_clause) = &i.generics.where_clause {
+        for pred in &where_clause.predicates {
+            if let syn::WherePredicate::Type(pt) = pred {
+                let param_name = if let syn::Type::Path(p) = &pt.bounded_ty {
+                    p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
+                } else {
+                    continue;
+                };
+                for bound in &pt.bounds {
+                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                        let trait_name = trait_bound.path.segments.last()
+                            .map(|s| s.ident.to_string()).unwrap_or_default();
+                        if !matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
+                            // Include trait type args (e.g., With<Input> → "With<Input>")
+                            let full_trait = if let syn::PathArguments::AngleBracketed(args) =
+                                &trait_bound.path.segments.last().unwrap().arguments {
+                                let type_args: Vec<String> = args.args.iter().filter_map(|a| {
+                                    if let syn::GenericArgument::Type(ty) = a {
+                                        Some(name_map::map_type(ty))
+                                    } else { None }
+                                }).collect();
+                                if type_args.is_empty() { trait_name } else {
+                                    format!("{}<{}>", trait_name, type_args.join(", "))
+                                }
+                            } else {
+                                trait_name
+                            };
+                            generic_bounds.entry(param_name.clone()).or_default().push(full_trait);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     ImplInfo {
         target_type,
         trait_name,
         trait_type_args,
         methods,
+        generic_bounds,
     }
 }
 

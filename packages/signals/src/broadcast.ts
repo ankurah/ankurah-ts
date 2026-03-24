@@ -27,7 +27,7 @@ export class BroadcastId extends Struct {
   }
 }
 
-export class Broadcast<T = void> extends Struct {
+export class Broadcast<T extends Clone = void> extends Struct {
   _0: Arc<Inner<T>>;
 
   constructor(_0: Arc<Inner<T>>) {

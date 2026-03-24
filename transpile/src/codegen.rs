@@ -321,12 +321,29 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         }
     }
 
+    // Collect generic bounds from all impl blocks for each type.
+    // Merges inline bounds + where clause bounds across all impls.
+    let mut impl_bounds: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    for imp in &file.impls {
+        if !imp.generic_bounds.is_empty() {
+            let type_bounds = impl_bounds.entry(imp.target_type.clone()).or_default();
+            for (param, bounds) in &imp.generic_bounds {
+                let existing = type_bounds.entry(param.clone()).or_default();
+                for b in bounds {
+                    if !existing.contains(b) {
+                        existing.push(b.clone());
+                    }
+                }
+            }
+        }
+    }
+
     // Emit items (skip provided types — already imported and re-exported above)
     for s in &file.structs {
         if provided_set.contains(&s.name) {
             continue;
         }
-        emit::emit_struct(&mut out, s, &inherent_methods, &trait_impls, &trait_methods);
+        emit::emit_struct(&mut out, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name));
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) {

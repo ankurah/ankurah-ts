@@ -108,6 +108,10 @@ pub struct ImplInfo {
     /// For trait impls, the generic args (e.g., "String" for `impl From<String>`)
     pub trait_type_args: Vec<String>,
     pub methods: Vec<FnInfo>,
+    /// Generic param bounds from the impl block (params + where clause).
+    /// Maps param name → list of trait bound names.
+    /// E.g., `impl<T: Clone + Send> Foo<T> where T: Debug` → {"T": ["Clone", "Debug"]}
+    pub generic_bounds: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug)]

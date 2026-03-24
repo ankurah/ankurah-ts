@@ -33,7 +33,7 @@ class Inner<T> extends Struct {
   }
 }
 
-export class Calculated<T> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T | null>, Signal, Subscribe<T> {
+export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T | null>, Signal, Subscribe<T> {
   _0: Arc<Inner<T>>;
 
   constructor(_0: Arc<Inner<T>>) {
