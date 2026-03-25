@@ -61,9 +61,9 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    const roValue = this.getReadcell();
-    const subscription = this.listen(Arc.new((_) => {
-      const currentValue = roValue.value();
+    roValue = this.getReadcell();
+    subscription = this.listen(Arc.new((_) => {
+      currentValue = roValue.value();
       listener(currentValue);
       currentValue.drop();
     }));

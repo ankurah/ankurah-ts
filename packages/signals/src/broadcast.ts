@@ -45,7 +45,6 @@ export class Broadcast<T extends Clone = void> extends Struct {
 
   send(value: T): void {
     const subscribers = (() => {
-      const listeners = this._0.value.listeners.read();
       const _ret = [...listeners.value.values()];
       listeners.drop();
       return _ret;

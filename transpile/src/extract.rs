@@ -137,8 +137,9 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                                     let macro_name = mac.mac.path.segments.last()
                                         .map(|s| s.ident.to_string()).unwrap_or_default();
                                     if macro_name == "thread_local" {
-                                        if let Some(decl) = extract_thread_local(&mac.mac) {
+                                        if let Some((decl, name, ty)) = extract_thread_local(&mac.mac) {
                                             sub_file.module_decls.push(decl);
+                                            sub_file.consts.push(ConstInfo { name, ty, is_pub: false });
                                         }
                                     }
                                 }
@@ -154,8 +155,9 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                 let macro_name = mac.mac.path.segments.last()
                     .map(|s| s.ident.to_string()).unwrap_or_default();
                 if macro_name == "thread_local" {
-                    if let Some(decl) = extract_thread_local(&mac.mac) {
+                    if let Some((decl, name, ty)) = extract_thread_local(&mac.mac) {
                         file.module_decls.push(decl);
+                        file.consts.push(ConstInfo { name, ty, is_pub: false });
                     }
                 }
             }
@@ -284,7 +286,8 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
 /// Extract function with body — stores the raw syn::Block for deferred translation.
 /// Body translation happens in Phase 3 (with full type context), not during extraction.
 /// Extract thread_local! { static NAME: TYPE = INIT; } → const NAME = new ThreadLocal<TYPE>(INIT);
-fn extract_thread_local(mac: &syn::Macro) -> Option<String> {
+/// Returns (decl_string, const_name, const_type) for structured tracking
+fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String)> {
     // Parse the macro body as a static item
     let tokens = mac.tokens.clone();
     // Try to parse as: static NAME: TYPE = EXPR;
@@ -292,7 +295,9 @@ fn extract_thread_local(mac: &syn::Macro) -> Option<String> {
         let name = item.ident.to_string();
         let ty = name_map::map_type(&item.ty);
         let init = crate::body::translate_expr(&item.expr);
-        Some(format!("const {} = new ThreadLocal<{}>({});", name, ty, init))
+        let full_type = format!("ThreadLocal<{}>", ty);
+        let decl = format!("const {} = new ThreadLocal<{}>({});", name, ty, init);
+        Some((decl, name, full_type))
     } else {
         None
     }

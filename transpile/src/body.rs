@@ -92,130 +92,73 @@ pub struct BodyTranslator<'a> {
     /// Type registry for resolve_field, resolve_method, is_enum.
     /// None for legacy codepaths (free function shims, match_expr, control_flow).
     pub registry: Option<&'a crate::resolve::TypeRegistry>,
-    /// Current module path for module-qualified type lookups.
-    /// E.g., "broadcast" for broadcast.rs, "signal/memo" for signal/memo.rs.
-    pub current_module: Option<&'a str>,
-    /// Names bound in the current closure/function scope (for shadow detection).
-    /// When a `let` binding shadows a name in this set, emit assignment instead of declaration.
-    pub scope_names: std::cell::RefCell<Vec<std::collections::HashSet<String>>>,
-    /// Type bindings for local variables and function parameters.
-    /// Maps camelCase name → ResolvedType. Used by resolve_receiver_type
-    /// to resolve types of non-self expressions.
-    pub local_types: std::cell::RefCell<std::collections::HashMap<String, crate::resolve::ResolvedType>>,
-    /// Inline module names for the current file — these are path qualifiers
-    /// that should be stripped during path resolution (the module's symbols
-    /// are imported from the separate .ts file).
+    /// Type context for comprehensive expression type resolution.
+    /// Wraps ScopeStack + TypeRegistry. None when registry is None.
+    pub types: Option<std::cell::RefCell<crate::type_context::TypeContext<'a>>>,
+    /// Inline module names for the current file — path qualifiers
+    /// stripped during path resolution (symbols imported from separate .ts file).
     pub inline_module_names: Vec<String>,
-    /// Functions referenced from inline modules (collected during translation).
-    /// Maps module_name → set of function names used.
-    pub inline_module_refs: std::cell::RefCell<std::collections::HashMap<String, std::collections::HashSet<String>>>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()), inline_module_names: vec![], inline_module_refs: std::cell::RefCell::new(std::collections::HashMap::new()) }
+        Self { self_type, registry: None, types: None, inline_module_names: vec![] }
     }
 
-    pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &'a str) -> Self {
-        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()), inline_module_names: vec![], inline_module_refs: std::cell::RefCell::new(std::collections::HashMap::new()) }
-    }
-
-    /// Resolve the type of a local variable binding.
-    /// Uses explicit type annotation if present, otherwise tries to resolve from init expression.
-    fn resolve_local_type(&self, local: &syn::Local) -> Option<crate::resolve::ResolvedType> {
-        // 1. Check for explicit type annotation: `let x: Type = ...`
-        if let syn::Pat::Type(pat_type) = &local.pat {
-            let ty_str = name_map::map_type(&pat_type.ty);
-            let resolved = crate::resolve::parse_type_string(&ty_str);
-            if !matches!(resolved, crate::resolve::ResolvedType::Unknown) {
-                return Some(resolved);
-            }
+    pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &str) -> Self {
+        let tc = crate::type_context::TypeContext::new(registry, module, self_type);
+        Self {
+            self_type,
+            registry: Some(registry),
+            types: Some(std::cell::RefCell::new(tc)),
+            inline_module_names: vec![],
         }
-        // 2. Fall back to resolving from init expression
-        if let Some(init) = &local.init {
-            return self.resolve_receiver_type(&init.expr);
-        }
-        None
     }
 
-    /// Register a local variable or parameter type for type resolution
-    pub fn register_local_type(&self, name: &str, ty: crate::resolve::ResolvedType) {
-        self.local_types.borrow_mut().insert(name.to_string(), ty);
+    /// Resolve the type of an expression using the TypeContext.
+    fn resolve_expr_type(&self, expr: &syn::Expr) -> Option<crate::resolve::ResolvedType> {
+        self.types.as_ref()?.borrow().resolve_expr(expr)
     }
 
-    /// Check if a name is in any active scope (for shadow detection)
+    /// Check if a name is bound in any active scope.
     fn is_in_scope(&self, name: &str) -> bool {
-        self.scope_names.borrow().iter().any(|s| s.contains(name))
+        self.types.as_ref()
+            .map(|tc| tc.borrow().resolve_var(name).is_some())
+            .unwrap_or(false)
     }
 
-    /// Push a new scope with the given names
-    pub fn push_scope(&self, names: impl IntoIterator<Item = String>) {
-        self.scope_names.borrow_mut().push(names.into_iter().collect());
+    /// Bind a variable in the current TypeContext scope.
+    pub fn bind_var(&self, name: &str, ty: crate::resolve::ResolvedType) {
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().bind(name, ty);
+        }
     }
 
-    /// Pop the current scope
+    /// Push a block scope in the TypeContext.
+    pub fn push_block(&self) {
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().push_block();
+        }
+    }
+
+    /// Pop scope in the TypeContext.
     pub fn pop_scope(&self) {
-        self.scope_names.borrow_mut().pop();
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().pop();
+        }
     }
 
-    /// Resolve the type of a receiver expression for type-aware translation.
-    /// Returns the ResolvedType if the registry is available and the receiver
-    /// can be resolved from struct field types.
-    fn resolve_receiver_type(&self, expr: &syn::Expr) -> Option<crate::resolve::ResolvedType> {
-        let registry = self.registry?;
-        let module = self.current_module.unwrap_or("");
-        match expr {
-            // self.field → look up field type on self_type's struct
-            syn::Expr::Field(field) => {
-                if let syn::Expr::Path(path) = &*field.base {
-                    if path.path.is_ident("self") {
-                        let member = match &field.member {
-                            syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                            syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                        };
-                        let self_ty = crate::resolve::ResolvedType::Named {
-                            name: self.self_type.to_string(),
-                            args: vec![],
-                        };
-                        return registry.resolve_field_in_module(&self_ty, &member, module)
-                            .map(|(ty, _deref)| ty);
-                    }
-                }
-                // Nested field access: resolve the base, then look up the field
-                let base_ty = self.resolve_receiver_type(&field.base)?;
-                let member = match &field.member {
-                    syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                    syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                };
-                registry.resolve_field_in_module(&base_ty, &member, module).map(|(ty, _)| ty)
-            }
-            // self → self_type
-            syn::Expr::Path(path) if path.path.is_ident("self") => {
-                Some(crate::resolve::ResolvedType::Named {
-                    name: self.self_type.to_string(),
-                    args: vec![],
-                })
-            }
-            // method_call().field → resolve method return type
-            syn::Expr::MethodCall(call) => {
-                let receiver_ty = self.resolve_receiver_type(&call.receiver)?;
-                let rust_method = call.method.to_string();
-                // unwrap/expect on non-Result → identity (same type)
-                if matches!(rust_method.as_str(), "unwrap" | "expect") {
-                    if let crate::resolve::ResolvedType::Named { name, .. } = &receiver_ty {
-                        if name != "Result" {
-                            return Some(receiver_ty);
-                        }
-                    }
-                }
-                registry.resolve_method_in_module(&receiver_ty, &rust_method, module)
-            }
-            // Local variable or function parameter → look up in local_types
-            syn::Expr::Path(path) if path.path.segments.len() == 1 => {
-                let name = name_map::to_camel_case(&path.path.segments[0].ident.to_string());
-                self.local_types.borrow().get(&name).cloned()
-            }
-            _ => None,
+    /// Push a function scope with typed parameters.
+    pub fn push_fn_scope(&self, params: Vec<(String, crate::resolve::ResolvedType)>) {
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().push_fn(params);
+        }
+    }
+
+    /// Push a closure scope with typed parameters.
+    pub fn push_closure_scope(&self, params: Vec<(String, crate::resolve::ResolvedType)>) {
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().push_closure(params);
         }
     }
 
@@ -324,12 +267,11 @@ impl<'a> BodyTranslator<'a> {
             }
 
             // Register the local variable's type for downstream resolution.
-            // Prefer explicit type annotation (from `let x: Type = ...`)
-            // over inference from the init expression.
-            if self.registry.is_some() {
-                let resolved_ty = self.resolve_local_type(local);
-                if let Some(ty) = resolved_ty {
-                    self.register_local_type(&pat, ty);
+            // Prefer explicit type annotation, fall back to init expression.
+            if let Some(tc) = &self.types {
+                let resolved = tc.borrow().resolve_local_type(local);
+                if let Some(ty) = resolved {
+                    tc.borrow_mut().bind(&pat, ty);
                 }
             }
 
@@ -417,9 +359,9 @@ impl<'a> BodyTranslator<'a> {
                 // Type-aware deref insertion: if the base type has deref_field,
                 // insert the accessor (e.g., .value for Arc)
                 if let Some(registry) = self.registry {
-                    let module = self.current_module.unwrap_or("");
-                    if let Some(base_ty) = self.resolve_receiver_type(&field.base) {
-                        if let Some((ref _field_ty, Some(ref accessor))) = registry.resolve_field_in_module(&base_ty, &member, module) {
+                    let module = self.types.as_ref().map(|tc| tc.borrow().module.clone()).unwrap_or_default();
+                    if let Some(base_ty) = self.resolve_expr_type(&field.base) {
+                        if let Some((ref _field_ty, Some(ref accessor))) = registry.resolve_field_in_module(&base_ty, &member, &module) {
                             if !accessor.is_empty() {
                                 return format!("{}.{}.{}", base_str, accessor, member);
                             }
@@ -434,13 +376,33 @@ impl<'a> BodyTranslator<'a> {
                 let receiver = self.expr(&call.receiver);
                 let rust_method = call.method.to_string();
                 let ts_method = name_map::map_fn_name(&rust_method);
+
+                // ── closure param type resolution ──
+                // If a closure arg's param types can be resolved from the call context,
+                // register them before translating arguments.
+                let mut pushed_closure_scope = false;
+                if let Some(tc) = &self.types {
+                    if let Some(syn::Expr::Closure(closure)) = call.args.first() {
+                        let params = tc.borrow().resolve_closure_param_types(
+                            &call.receiver, &rust_method, closure);
+                        if !params.is_empty() {
+                            self.push_closure_scope(params);
+                            pushed_closure_scope = true;
+                        }
+                    }
+                }
+
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
+
+                if pushed_closure_scope {
+                    self.pop_scope();
+                }
 
                 // ── unwrap/expect: single decision point ──
                 // In TS, only Result has a real .unwrap(). All other types
                 // (guards, Option/nullable, etc.) treat it as identity.
                 if matches!(rust_method.as_str(), "unwrap" | "expect") {
-                    let is_result = self.resolve_receiver_type(&call.receiver)
+                    let is_result = self.resolve_expr_type(&call.receiver)
                         .map(|ty| matches!(&ty, crate::resolve::ResolvedType::Named { name, .. } if name == "Result"))
                         .unwrap_or(false);
                     if !is_result {
@@ -456,7 +418,7 @@ impl<'a> BodyTranslator<'a> {
 
                 // ── deref insertion: registry-based, no fallbacks ──
                 if let Some(registry) = self.registry {
-                    if let Some(receiver_ty) = self.resolve_receiver_type(&call.receiver) {
+                    if let Some(receiver_ty) = self.resolve_expr_type(&call.receiver) {
                         if !registry.is_own_method(&receiver_ty, &rust_method) {
                             if let Some(accessor) = registry.deref_field(&receiver_ty) {
                                 if !accessor.is_empty() {
@@ -499,7 +461,7 @@ impl<'a> BodyTranslator<'a> {
                             let right = self.expr(&bin.right);
                             // Deref compound-assign: resolve type for precise accessor
                             if let Some(registry) = self.registry {
-                                if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
+                                if let Some(inner_ty) = self.resolve_expr_type(&unary.expr) {
                                     if let Some(accessor) = registry.deref_field(&inner_ty) {
                                         if !accessor.is_empty() {
                                             return format!("{}.{} {} {}", inner, accessor, op, right);
@@ -569,7 +531,11 @@ impl<'a> BodyTranslator<'a> {
                     // Thread shadowed variables as IIFE parameters.
                     // Push shadow names into scope so local() skips their declarations
                     // (they're already bound as IIFE params).
-                    self.push_scope(shadow_params.iter().map(|(n, _)| n.clone()));
+                    self.push_block();
+                    for (name, _) in &shadow_params {
+                        // Bind with Unknown type — the IIFE param is the value
+                        self.bind_var(name, crate::resolve::ResolvedType::Unknown);
+                    }
                     let body = self.translate_block(&block.block);
                     self.pop_scope();
                     let params: Vec<&str> = shadow_params.iter().map(|(n, _)| n.as_str()).collect();
@@ -593,7 +559,9 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Closure(closure) => {
                 let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
-                self.push_scope(params.iter().cloned());
+                // Push closure scope — param types may already be registered
+                // by the calling method's closure param resolution
+                self.push_block();
                 // Check if the body is a block — if so, translate as block with braces
                 let result = match &*closure.body {
                     syn::Expr::Block(block) => {
@@ -648,7 +616,7 @@ impl<'a> BodyTranslator<'a> {
                         let inner = self.expr(&unary.expr);
                         // If we can resolve the type and it has a deref_field, use it
                         if let Some(registry) = self.registry {
-                            if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
+                            if let Some(inner_ty) = self.resolve_expr_type(&unary.expr) {
                                 if let Some(accessor) = registry.deref_field(&inner_ty) {
                                     if !accessor.is_empty() {
                                         return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
@@ -770,7 +738,7 @@ impl<'a> BodyTranslator<'a> {
         // If we have type info, use type-aware dispatch
         if let Some(registry) = self.registry {
             if let Some(receiver_expr) = receiver_expr {
-                if let Some(receiver_ty) = self.resolve_receiver_type(receiver_expr) {
+                if let Some(receiver_ty) = self.resolve_expr_type(receiver_expr) {
                     match native_types::translate_method(&receiver_ty, receiver, rust_method, args) {
                         native_types::MethodTranslation::Expr(result) => return result,
                         native_types::MethodTranslation::Passthrough => {
@@ -798,14 +766,11 @@ impl<'a> BodyTranslator<'a> {
 
     fn translate_call(&self, func: &str, args: &[String]) -> String {
         // 0. Resolve inline module qualifiers (e.g., stack.track → track)
-        // Records the reference for import generation.
+        // Resolve inline module qualifiers (e.g., stack.track → track).
+        // Import generation is handled by codegen.rs scanning the translated bodies.
         for mod_name in &self.inline_module_names {
             let prefix = format!("{}.", mod_name);
             if let Some(stripped) = func.strip_prefix(&prefix) {
-                self.inline_module_refs.borrow_mut()
-                    .entry(mod_name.clone())
-                    .or_default()
-                    .insert(stripped.to_string());
                 return self.translate_call(stripped, args);
             }
         }

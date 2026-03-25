@@ -27,6 +27,7 @@ export function pop(): void {
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
+    let stack = stack.borrowMut();
     if (stack.last() != null) {
       const last = stack.last();
       if (last.observerId() === targetId) {
@@ -44,6 +45,8 @@ export function remove(observer: Observer): void {
 export function current(): Arc<Observer> | null {
   return OBSERVER_STACK.with((stack) => [...stack.borrow().last()]);
 }
+
+const OBSERVER_STACK: ThreadLocal<RefCell<Arc<Observer>[]>> = undefined as any; // TODO
 
 const OBSERVER_STACK = new ThreadLocal<RefCell<Arc<Observer>[]>>(new RefCell([]));
 

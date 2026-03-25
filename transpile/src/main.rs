@@ -19,6 +19,7 @@ mod ownership;
 mod resolve;
 mod cfg;
 mod native_types;
+mod type_context;
 mod types;
 
 #[derive(Parser)]
@@ -244,20 +245,28 @@ fn translate_all_bodies(
         let inline_mod_names: Vec<String> = file.inline_modules.iter()
             .map(|(name, _)| name.clone()).collect();
 
+        // Collect file-level constants for type context
+        let file_consts: Vec<types::ConstInfo> = file.consts.iter()
+            .map(|c| types::ConstInfo { name: c.name.clone(), ty: c.ty.clone(), is_pub: c.is_pub })
+            .collect();
+
         // Translate free functions
         for func in &mut file.functions {
-            translate_fn_body_with_modules(func, "Self", registry, &module, &inline_mod_names);
+            translate_fn_body_with_context(func, "Self", registry, &module, &inline_mod_names, &file_consts);
         }
 
-        // Translate inline module bodies
+        // Translate inline module bodies (with their own consts)
         for (mod_name, sub_file) in &mut file.inline_modules {
             let sub_module = format!("{}/{}", module.trim_end_matches("/index"), mod_name);
+            let sub_consts: Vec<types::ConstInfo> = sub_file.consts.iter()
+                .map(|c| types::ConstInfo { name: c.name.clone(), ty: c.ty.clone(), is_pub: c.is_pub })
+                .collect();
             for func in &mut sub_file.functions {
-                translate_fn_body(func, "Self", registry, &sub_module);
+                translate_fn_body_with_context(func, "Self", registry, &sub_module, &[], &sub_consts);
             }
             for imp in &mut sub_file.impls {
                 for method in &mut imp.methods {
-                    translate_fn_body(method, &imp.target_type, registry, &sub_module);
+                    translate_fn_body_with_context(method, &imp.target_type, registry, &sub_module, &[], &sub_consts);
                 }
             }
         }
@@ -266,13 +275,13 @@ fn translate_all_bodies(
         for imp in &mut file.impls {
             let self_type = imp.target_type.clone();
             for method in &mut imp.methods {
-                translate_fn_body_with_modules(method, &self_type, registry, &module, &inline_mod_names);
+                translate_fn_body_with_context(method, &self_type, registry, &module, &inline_mod_names, &file_consts);
             }
         }
 
         // Translate test functions
         for func in &mut file.test_functions {
-            translate_fn_body(func, "Self", registry, &module);
+            translate_fn_body_with_context(func, "Self", registry, &module, &[], &file_consts);
         }
 
         // Translate trait default methods
@@ -301,25 +310,37 @@ fn translate_fn_body_with_modules(
     module: &str,
     inline_module_names: &[String],
 ) {
+    translate_fn_body_with_context(func, self_type, registry, module, inline_module_names, &[]);
+}
+
+fn translate_fn_body_with_context(
+    func: &mut types::FnInfo,
+    self_type: &str,
+    registry: &resolve::TypeRegistry,
+    module: &str,
+    inline_module_names: &[String],
+    file_consts: &[types::ConstInfo],
+) {
     if let Some(ref block) = func.body_ast {
         let mut translator = body::BodyTranslator::with_registry(self_type, registry, module);
         translator.inline_module_names = inline_module_names.to_vec();
-        // Push function params into scope for shadow detection + type resolution
-        let param_names: Vec<String> = func.params.iter()
-            .map(|p| p.name.clone())
-            .collect();
-        translator.push_scope(param_names);
-        // Register parameter types for resolve_receiver_type
-        for p in &func.params {
-            if !p.is_self && !p.ty.is_empty() {
-                let resolved = resolve::parse_type_string(&p.ty);
-                translator.register_local_type(&p.name, resolved);
-            }
+
+        // Register module-level constant types
+        for c in file_consts {
+            let resolved = resolve::parse_type_string(&c.ty);
+            translator.bind_var(&c.name, resolved);
         }
+
+        // Push function scope with typed parameters
+        let typed_params: Vec<(String, resolve::ResolvedType)> = func.params.iter()
+            .filter(|p| !p.is_self && !p.ty.is_empty())
+            .map(|p| (p.name.clone(), resolve::parse_type_string(&p.ty)))
+            .collect();
+        translator.push_fn_scope(typed_params);
+
         func.body_ts = Some(translator.translate_block(block));
         translator.pop_scope();
     }
-    // Free the AST memory after translation
     if func.body_ts.is_some() {
         func.body_ast = None;
     }
