@@ -9,60 +9,41 @@ Read these files first:
 
 ## Where we are
 
-Transpiler at `transpile/` is feature-complete. Next step: overwrite proto hand-port with transpiler output, audit the diff, then gradually expand to other crates.
+Transpiler at `transpile/` — signals crate being ported. All transpiled tests should pass.
 
-### Transpiler (transpile/)
+### Architecture (recently refactored)
 
-15 Rust source files, ~4000 lines. Generates 177 TS files / ~16K lines across all 10 crates with zero unhandled expressions.
+- **TypeContext** (`type_context.rs`, 284 lines) — comprehensive expression type resolution using ScopeStack + TypeRegistry. Single point of truth for all type decisions.
+- **BodyTranslator** (`body.rs`, 1012 lines) — expression/statement translation. NO direct registry access — all type queries go through TypeContext.
+- **control_flow.rs** — if/else/if-let translation. Now properly threaded with &BodyTranslator (type context preserved through branches).
+- **native_types/arc.rs** — Arc/Weak method translations in dedicated module.
+- Inline modules → separate files (context.rs + mod stack → context.ts + context/stack.ts).
 
-```bash
-cd /Users/daniel/ak/ankurah-ts/transpile
-cargo run -- batch <rust_src_dir> <ts_out_dir> --crate-name <name>
-cargo run -- skeleton <file.rs> --crate-path <crate/src/file.rs>
-cargo run -- drop-analysis <rust_src_dir>
-```
+### Immediate next bug
 
-Config: `transpile/transpile.toml` — provided_impls, hardcoded files, excluded files, crate mapping.
+**`Ref` system type not found in registry** — `deref_accessor(Ref)` returns `None` even though `transpile.toml` has `[system_types.Ref]` with `deref_field = "value"`. `RefMut` works correctly. Debug shows `Ref { args: [...] }.last own=false deref=None`.
 
-**What it does:**
-- Full struct/enum/trait/fn extraction and body translation via syn
-- Bincode encode/decode from derive(Serialize, Deserialize)
-- Derive method bodies (clone with null safety, equals with null guards)
-- Match → .match({}), if-let → .is(), Option → null check
-- Result<T,E> as Enum — Ok(x)→Result.Ok(x), Err(e)→Result.Err(e), ?→explicit isErr check
-- Ownership-based .drop() at end of scope (inside if/else branches via pending_drops threading)
-- Import resolution (cross-crate + intra-crate), cfg(test) → .test.ts splitting
-- BodyTranslator struct (clean context, no thread_local)
-- 50+ method call translations, format!/vec!/assert_eq! macros
+Likely cause: `Ref` may be conflicting with a TS/JS built-in name, or the config loader may be filtering it. Check `resolve.rs build_registry()` and the `config.rs` SystemTypeConfig parsing. Fixing this will make `stack.borrow().last()` → `stack.borrow().value.last()` and unblock the signals tests.
 
-**Architecture decisions:**
-- "Write Rust in TypeScript" — structural 1:1 correspondence, not idiomatic TS
-- Result<T,E> as Enum (not throw). throw reserved for panics only.
-- No `using`. Manual .drop() calls for block-scoped ownership.
-- All types extend AkObject. AkObject cascade for struct/enum fields.
-- Tuple struct fields named `_0` (not semantic names)
-- Code length restrictions don't apply to transpiled output
+### Signals test status
 
-### Immediate next step
+- 0 tsc errors
+- 18 transpiled files (17 source + 1 inline module)
+- Runtime blocked by RefCell borrow state — `track()` calls `stack.borrow().last()` without releasing the Ref guard, then other functions try `borrowMut()` and fail
+- Fix path: once `Ref` deref works, `borrow().value.last()` returns the value directly (Ref guard becomes a temporary that doesn't leak borrow state)... actually no, the Ref guard still leaks. The deeper issue is that temporary borrow guards in expression position aren't dropped.
 
-1. **Overwrite proto with transpiler output** — run batch into `packages/proto/src/`, audit `git diff`, check for lost implementation details, commit if acceptable
-2. **Validate** — run `npx tsc --noEmit` and `bun test packages/proto` on the overwritten code
-3. **Expand** — make a list of packages for transpiler management, gradually validate each
+### Transpiler architecture issues still open
 
-### Known transpiler limitations
-
-- **Attested<T> generic callback** — types containing Attested<T> fields get `v.encode(w)` but need `v.encode(w, callback)`. Config-driven fix needed.
-- **TS-only methods** — hand-port has methods not in Rust (Symbol.iterator, get length, entries, empty). These get erased on overwrite. Need preservation strategy.
-- **Nested block drops** — for-loop bodies don't drop their own locals yet (function-level only)
-- **Early return drops** — ? or return mid-function doesn't drop preceding locals
-
-### Hand-port alignment done
-
-Tuple struct fields renamed to `_0` in proto (Clock, AuthData, Attestation, AttestationSet, OperationSet, StateBuffers, TransactionId, RequestId, QueryId, UpdateId) and signals (BroadcastId, Broadcast, ValueCell, ReadValueCell).
+1. **body.rs still 1012 lines** — expr() match is 300+ lines, translate_call() is 100+ lines. Could extract into focused modules.
+2. **match_expr.rs** still uses free functions (no type context). Same issue as control_flow.rs had.
+3. **Closure param type resolution** only handles ThreadLocal.with — should be extensible.
+4. **String-matching** in body.rs closure body wrapping check (starts_with "if " etc.)
 
 ### Port status
 
-994 tests pass, 0 fail, 22 skip, tsc clean. Fatal leak severity set. Entity extends Struct.
+- Proto: COMPLETE (0 tsc, 33 tests, 0 leaks)
+- ankql: IN PROGRESS (0 tsc, 51 tests)
+- Signals: IN PROGRESS (0 tsc, runtime blocked by RefCell/Ref deref)
 
 ### Process rules
 
