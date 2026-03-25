@@ -30,12 +30,12 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   clear(): void {
-    this._0.value.entries.write().value.clear();
+    this._0.value.entries.write().clear();
   }
 
   markAllForRemoval(): void {
-    let entries = this._0.value.entries.write().value;
-    for (const entry of entries.valuesMut()) {
+    let entries = this._0.value.entries.write();
+    for (const entry of entries.values()) {
       entry.markedForRemoval = true;
     }
     entries.drop();
@@ -43,16 +43,16 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   sweepMarkedListeners(): void {
-    let entries = this._0.value.entries.write().value;
-    entries.retain((_, entry) => !entry.markedForRemoval);
+    let entries = this._0.value.entries.write();
+    { for (const [_k, _v] of entries) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.delete(_k); } };
     entries.drop();
   }
 
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
-    let entries = this._0.value.entries.write().value;
-    if (entries.getMut(broadcastId) != null) {
-      const entry = entries.getMut(broadcastId);
+    let entries = this._0.value.entries.write();
+    if (entries.get(broadcastId) != null) {
+      const entry = entries.get(broadcastId);
       entry.markedForRemoval = false;
       return;
     }

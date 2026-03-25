@@ -251,11 +251,18 @@ fn translate_fn_body(
 ) {
     if let Some(ref block) = func.body_ast {
         let translator = body::BodyTranslator::with_registry(self_type, registry, module);
-        // Push function params into scope for shadow detection
+        // Push function params into scope for shadow detection + type resolution
         let param_names: Vec<String> = func.params.iter()
             .map(|p| p.name.clone())
             .collect();
         translator.push_scope(param_names);
+        // Register parameter types for resolve_receiver_type
+        for p in &func.params {
+            if !p.is_self && !p.ty.is_empty() {
+                let resolved = resolve::parse_type_string(&p.ty);
+                translator.register_local_type(&p.name, resolved);
+            }
+        }
         func.body_ts = Some(translator.translate_block(block));
         translator.pop_scope();
     }

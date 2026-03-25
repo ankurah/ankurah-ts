@@ -25,6 +25,16 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "get" | "clear" | "keys" | "values" | "entries"
             => return MethodTranslation::Passthrough,
 
+        // Mutable iterator variants → same as immutable in JS
+        "values_mut" => format!("{}.values()", receiver),
+        "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
+
+        // retain(|k, v| predicate) → manual delete loop
+        "retain" if args.len() == 1 => format!(
+            "{{ for (const [_k, _v] of {}) {{ if (!({}(_k, _v))) {}.delete(_k); }} }}",
+            receiver, args[0], receiver
+        ),
+
         // Iterator entry points
         "iter" | "into_iter" => format!("[...{}]", receiver),
 

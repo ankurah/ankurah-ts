@@ -57,7 +57,7 @@ export function remove(observer: Observer): void {
 
       }
     }
-    stack.retain((o) => o.observerId() !== targetId);
+    { for (const [_k, _v] of stack) { if (!((o) => o.observerId() !== targetId(_k, _v))) stack.delete(_k); } };
     stack.drop();
   });
   targetId.drop();

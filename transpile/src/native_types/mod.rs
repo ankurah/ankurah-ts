@@ -132,6 +132,16 @@ pub fn translate_untyped(
         // .contains() → .includes() for arrays (Map/Set use .has() via typed dispatch)
         "contains" if args.len() == 1 => format!("{}.includes({})", receiver, args[0]),
 
+        // Mutable variants → same as immutable in JS
+        "values_mut" => format!("{}.values()", receiver),
+        "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
+
+        // .retain(predicate) — works for Map/Set/Vec when type unknown
+        "retain" if args.len() == 1 => format!(
+            "{{ for (const [_k, _v] of {}) {{ if (!({}(_k, _v))) {}.delete(_k); }} }}",
+            receiver, args[0], receiver
+        ),
+
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)

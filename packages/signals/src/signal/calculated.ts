@@ -92,22 +92,24 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
 }
 
 function trigger(inner: Arc<Inner<T>>): void {
-  ((entries) => {
-    for (const entry of entries.valuesMut()) {
+  (() => {
+    let entries = inner.value.entries.write();
+    for (const entry of entries.values()) {
       entry.markedForRemoval = true;
     }
     entries.drop();
 
-  })(inner.entries.write())
+  })()
   CurrentObserver.set(Arc.clone(inner));
-  const newValue = (inner.compute)();
-  inner.value.set(newValue);
+  const newValue = (inner.value.compute)();
+  inner.value.value.set(newValue);
   CurrentObserver.remove(inner);
-  ((entries) => {
-    entries.retain((_, entry) => !entry.markedForRemoval);
+  (() => {
+    let entries = inner.value.entries.write();
+    { for (const [_k, _v] of entries) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.delete(_k); } };
     entries.drop();
-  })(inner.entries.write())
-  inner.broadcast.send([]);
+  })()
+  inner.value.broadcast.send([]);
   newValue.drop();
 }
 

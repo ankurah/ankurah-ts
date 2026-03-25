@@ -28,12 +28,14 @@ describe('calculated unit tests', () => {
   test('test_two_independent_inputs', () => {
     const firstName = Mut.new('Alice'.toString());
     const lastName = Mut.new('Smith'.toString());
-    const fullName = ((first, last) => {
+    const fullName = (() => {
+      const first = firstName.read();
+      const last = lastName.read();
       const _ret = Calculated.new(() => `${first.get()} ${last.get()}`);
       last.drop();
       first.drop();
       return _ret;
-    })(firstName.read(), lastName.read());
+    })();
     expect(fullName.get()).toEqual('Alice Smith');
     firstName.set('Bob'.toString());
     expect(fullName.get()).toEqual('Bob Smith');

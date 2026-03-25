@@ -44,11 +44,12 @@ export class Broadcast<T extends Clone = void> extends Struct {
   }
 
   send(value: T): void {
-    const subscribers = ((listeners) => {
+    const subscribers = (() => {
+      const listeners = this._0.value.listeners.read();
       const _ret = [...[...listeners]];
       listeners.drop();
       return _ret;
-    })(this._0.value.listeners.read().value);
+    })();
     if (subscribers.splitLast() != null) {
       const [last, rest] = subscribers.splitLast();
       for (const callback of rest) {
@@ -69,7 +70,7 @@ export class Broadcast<T extends Clone = void> extends Struct {
   }
 
   toString(): Result {
-    return f.debugStruct('Broadcast').field('listeners', this._0.value.listeners.read().value.length).finish();
+    return f.debugStruct('Broadcast').field('listeners', this._0.value.listeners.read().length).finish();
   }
 
   static default<T>(): Broadcast<T> {
@@ -102,7 +103,7 @@ export class Ref<T> extends Struct {
 
   listen<L>(listener: L): ListenerGuard<T> {
     const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
-    this._0._0.value.listeners.write().value.insert(id, listener.intoBroadcastListener());
+    this._0._0.value.listeners.write().insert(id, listener.intoBroadcastListener());
     return new ListenerGuard(this._0._0.downgrade(), id);
   }
 

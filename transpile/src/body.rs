@@ -98,15 +98,24 @@ pub struct BodyTranslator<'a> {
     /// Names bound in the current closure/function scope (for shadow detection).
     /// When a `let` binding shadows a name in this set, emit assignment instead of declaration.
     pub scope_names: std::cell::RefCell<Vec<std::collections::HashSet<String>>>,
+    /// Type bindings for local variables and function parameters.
+    /// Maps camelCase name → ResolvedType. Used by resolve_receiver_type
+    /// to resolve types of non-self expressions.
+    pub local_types: std::cell::RefCell<std::collections::HashMap<String, crate::resolve::ResolvedType>>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]) }
+        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()) }
     }
 
     pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &'a str) -> Self {
-        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]) }
+        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()) }
+    }
+
+    /// Register a local variable or parameter type for type resolution
+    pub fn register_local_type(&self, name: &str, ty: crate::resolve::ResolvedType) {
+        self.local_types.borrow_mut().insert(name.to_string(), ty);
     }
 
     /// Check if a name is in any active scope (for shadow detection)
@@ -167,6 +176,11 @@ impl<'a> BodyTranslator<'a> {
                 let receiver_ty = self.resolve_receiver_type(&call.receiver)?;
                 let rust_method = call.method.to_string();
                 registry.resolve_method_in_module(&receiver_ty, &rust_method, module)
+            }
+            // Local variable or function parameter → look up in local_types
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+                let name = name_map::to_camel_case(&path.path.segments[0].ident.to_string());
+                self.local_types.borrow().get(&name).cloned()
             }
             _ => None,
         }
@@ -383,6 +397,15 @@ impl<'a> BodyTranslator<'a> {
                 // check if this method requires deref insertion.
                 if let Some(registry) = self.registry {
                     if let Some(receiver_ty) = self.resolve_receiver_type(&call.receiver) {
+                        // unwrap/expect on non-Result types: strip without deref insertion.
+                        // These are identity ops on system wrappers (lock/write/read returns).
+                        if matches!(rust_method.as_str(), "unwrap" | "expect") {
+                            if let crate::resolve::ResolvedType::Named { name, .. } = &receiver_ty {
+                                if name != "Result" {
+                                    return receiver.to_string();
+                                }
+                            }
+                        }
                         // If the method is NOT on the wrapper type itself, we need to deref first
                         if !registry.is_own_method(&receiver_ty, &rust_method) {
                             if let Some(accessor) = registry.deref_field(&receiver_ty) {
@@ -470,10 +493,9 @@ impl<'a> BodyTranslator<'a> {
                     if let syn::Stmt::Local(local) = stmt {
                         let pat_name = Self::pat_static(&local.pat);
                         if let Some(init) = &local.init {
-                            // Check if the init expression references the same name
-                            let init_expr = &init.expr;
-                            let init_str = format!("{}", quote::quote!(#init_expr));
-                            if init_str.contains(&pat_name) {
+                            // Check if the init expression references pat_name as a
+                            // standalone variable (not as a field name in a.b.c)
+                            if references_var(&init.expr, &pat_name) {
                                 // This is a shadow pattern — pass as IIFE param
                                 let init_ts = self.expr(&init.expr);
                                 shadow_params.push((pat_name, init_ts));
@@ -883,6 +905,45 @@ fn translate_lit(lit: &syn::Lit) -> String {
         syn::Lit::Char(c) => format!("'{}'", c.value()),
         syn::Lit::Byte(b) => format!("{}", b.value()),
         _ => "/* unknown literal */".to_string(),
+    }
+}
+
+/// Check if an expression references a variable name as a standalone path
+/// (not as a field name in `a.field`). Used for shadow detection.
+fn references_var(expr: &syn::Expr, name: &str) -> bool {
+    match expr {
+        syn::Expr::Path(path) => {
+            // Standalone variable reference: just the name
+            path.path.segments.len() == 1
+                && path.path.segments[0].ident == name
+        }
+        syn::Expr::MethodCall(call) => {
+            // Check receiver and args, but NOT the method name
+            references_var(&call.receiver, name)
+                || call.args.iter().any(|a| references_var(a, name))
+        }
+        syn::Expr::Call(call) => {
+            references_var(&call.func, name)
+                || call.args.iter().any(|a| references_var(a, name))
+        }
+        syn::Expr::Field(field) => {
+            // Check the base, but NOT the field name
+            references_var(&field.base, name)
+        }
+        syn::Expr::Binary(bin) => {
+            references_var(&bin.left, name) || references_var(&bin.right, name)
+        }
+        syn::Expr::Unary(unary) => references_var(&unary.expr, name),
+        syn::Expr::Reference(r) => references_var(&r.expr, name),
+        syn::Expr::Paren(p) => references_var(&p.expr, name),
+        syn::Expr::Block(b) => {
+            b.block.stmts.iter().any(|s| match s {
+                syn::Stmt::Expr(e, _) => references_var(e, name),
+                _ => false,
+            })
+        }
+        syn::Expr::Closure(c) => references_var(&c.body, name),
+        _ => false,
     }
 }
 
