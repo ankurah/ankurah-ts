@@ -487,7 +487,7 @@ impl<'a> BodyTranslator<'a> {
                 if let Some(ternary) = self.try_ternary(if_expr) {
                     ternary
                 } else {
-                    control_flow::translate_if(if_expr)
+                    control_flow::translate_if(if_expr, self)
                 }
             }
 

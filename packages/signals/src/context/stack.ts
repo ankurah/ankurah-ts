@@ -27,10 +27,10 @@ export function pop(): void {
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
-    if (stack.last() != null) {
-      const last = stack.last();
+    if (stack.value.at(-1) != null) {
+      const last = stack.value.at(-1);
       if (last.observerId() === targetId) {
-        stack.pop();
+        stack.value.pop();
         return;
 
       }

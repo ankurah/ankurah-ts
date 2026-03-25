@@ -1,35 +1,35 @@
 //! Control flow translation — if/else, if-let, return position handling
 
-use crate::body::{translate_expr, translate_pat, translate_block, translate_block_with_self, indent, BodyTranslator};
+use crate::body::{BodyTranslator, translate_pat, indent};
 use crate::name_map;
 use crate::match_expr;
 
 /// Translate an if expression (handles if-let patterns)
-pub fn translate_if(if_expr: &syn::ExprIf) -> String {
+pub fn translate_if(if_expr: &syn::ExprIf, t: &BodyTranslator) -> String {
     if let syn::Expr::Let(let_expr) = &*if_expr.cond {
-        return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None);
+        return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None, t);
     }
 
     // Handle let-chains: if let Some(x) = expr && guard { ... }
     if let syn::Expr::Binary(bin) = &*if_expr.cond {
         if matches!(bin.op, syn::BinOp::And(_)) {
             if let syn::Expr::Let(let_expr) = &*bin.left {
-                return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, Some(&bin.right));
+                return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, Some(&bin.right), t);
             }
         }
     }
 
-    let cond = translate_expr(&if_expr.cond);
-    let then_body = translate_block(&if_expr.then_branch);
+    let cond = t.expr(&if_expr.cond);
+    let then_body = t.translate_block(&if_expr.then_branch);
 
     let else_part = if let Some((_, else_expr)) = &if_expr.else_branch {
         match else_expr.as_ref() {
-            syn::Expr::If(else_if) => format!(" else {}", translate_if(else_if)),
+            syn::Expr::If(else_if) => format!(" else {}", translate_if(else_if, t)),
             syn::Expr::Block(block) => {
-                let body = translate_block(&block.block);
+                let body = t.translate_block(&block.block);
                 format!(" else {{\n{}}}", indent(&body))
             }
-            _ => format!(" else {{\n{}}}", indent(&translate_expr(else_expr))),
+            _ => format!(" else {{\n{}}}", indent(&t.expr(else_expr))),
         }
     } else {
         String::new()
@@ -44,19 +44,20 @@ fn translate_if_let(
     then_branch: &syn::Block,
     else_branch: &Option<(syn::token::Else, Box<syn::Expr>)>,
     guard: Option<&syn::Expr>,
+    t: &BodyTranslator,
 ) -> String {
-    let scrutinee = translate_expr(&let_expr.expr);
-    let then_body = translate_block(then_branch);
-    let guard_str = guard.map(|g| format!(" && {}", translate_expr(g))).unwrap_or_default();
+    let scrutinee = t.expr(&let_expr.expr);
+    let then_body = t.translate_block(then_branch);
+    let guard_str = guard.map(|g| format!(" && {}", t.expr(g))).unwrap_or_default();
 
     let else_part = if let Some((_, else_expr)) = else_branch {
         match else_expr.as_ref() {
-            syn::Expr::If(else_if) => format!(" else {}", translate_if(else_if)),
+            syn::Expr::If(else_if) => format!(" else {}", translate_if(else_if, t)),
             syn::Expr::Block(block) => {
-                let body = translate_block(&block.block);
+                let body = t.translate_block(&block.block);
                 format!(" else {{\n{}}}", indent(&body))
             }
-            _ => format!(" else {{\n{}}}", indent(&translate_expr(else_expr))),
+            _ => format!(" else {{\n{}}}", indent(&t.expr(else_expr))),
         }
     } else {
         String::new()
@@ -153,7 +154,7 @@ pub fn translate_expr_in_return_position_with(expr: &syn::Expr, t: &BodyTranslat
 /// If expression where each branch should return, with pending drops
 fn translate_if_returning_with(if_expr: &syn::ExprIf, t: &BodyTranslator, pending_drops: &str) -> String {
     if let syn::Expr::Let(_) = &*if_expr.cond {
-        return translate_if(if_expr);
+        return translate_if(if_expr, t);
     }
 
     let cond = t.expr(&if_expr.cond);
@@ -184,23 +185,17 @@ fn translate_if_returning_with(if_expr: &syn::ExprIf, t: &BodyTranslator, pendin
 }
 
 /// Translate a block that's a branch of an if/else in return position
-/// Emits pending_drops before the return value
 fn translate_branch_returning(block: &syn::Block, t: &BodyTranslator, pending_drops: &str) -> String {
     if block.stmts.len() == 1 {
         if let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() {
             return translate_expr_in_return_position_with(expr, t, pending_drops);
         }
     }
-    // Multi-statement branch — translate the block, then append outer drops
-    // The block's own translate_block handles inner locals; we add the outer ones
     let mut body = t.translate_block(block);
-    // The block translation already ends with a return. We need to insert
-    // pending_drops before that return. Find the last "return" and insert before it.
     if !pending_drops.is_empty() {
         if let Some(ret_pos) = body.rfind("return ") {
             body.insert_str(ret_pos, pending_drops);
         } else {
-            // No return found — append drops at end
             body.push_str(pending_drops);
         }
     }

@@ -51,8 +51,8 @@ export class CallbackObserver extends Struct implements Observer {
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
     let entries = this._0.value.entries.write();
-    if (entries.get(broadcastId) != null) {
-      const entry = entries.get(broadcastId);
+    if (entries.value.get(broadcastId) != null) {
+      const entry = entries.value.get(broadcastId);
       entry.markedForRemoval = false;
       return;
     }
