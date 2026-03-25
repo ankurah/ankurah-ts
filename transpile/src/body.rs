@@ -266,8 +266,12 @@ impl<'a> BodyTranslator<'a> {
                 );
             }
 
+            // Check for shadowing BEFORE binding the variable type.
+            // Rust allows `let x = x.method()` to shadow — JS doesn't allow
+            // redeclaring a closure/function parameter. Use assignment instead.
+            let already_in_scope = self.is_in_scope(&pat);
+
             // Register the local variable's type for downstream resolution.
-            // Prefer explicit type annotation, fall back to init expression.
             if let Some(tc) = &self.types {
                 let resolved = tc.borrow().resolve_local_type(local);
                 if let Some(ty) = resolved {
@@ -281,13 +285,16 @@ impl<'a> BodyTranslator<'a> {
                 return format!("/* let-else */ const {} = {};\n", pat, expr);
             }
 
-            // Rust allows `let x = x.method()` to shadow — JS doesn't allow
-            // redeclaring a closure/function parameter. Use assignment instead.
-            // If the init expr references the same name (e.g., `let x = x.clone()`),
-            // and it's handled via IIFE param threading, skip entirely.
-            if self.is_in_scope(&pat) {
-                if expr.contains(&pat) {
-                    // IIFE param already provides the value — skip this declaration
+            if already_in_scope {
+                // Check if the init expression references the same name as a
+                // standalone variable (not as a field name in a.b.c).
+                // If so, IIFE param threading already provided the value — skip.
+                let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
+                    ident.ident.to_string()
+                } else {
+                    pat.clone()
+                };
+                if references_var(&init.expr, &rust_name) {
                     return String::new();
                 }
                 return format!("{} = {};\n", pat, expr);

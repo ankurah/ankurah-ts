@@ -34,6 +34,7 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   markAllForRemoval(): void {
+    let entries = this._0.value.entries.write();
     for (const entry of entries.value.values()) {
       entry.markedForRemoval = true;
     }
@@ -42,12 +43,14 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   sweepMarkedListeners(): void {
+    let entries = this._0.value.entries.write();
     { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
     entries.drop();
   }
 
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
+    let entries = this._0.value.entries.write();
     if (entries.get(broadcastId) != null) {
       const entry = entries.get(broadcastId);
       entry.markedForRemoval = false;

@@ -78,9 +78,9 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    roValue = this._0.value.value.readvalue();
-    subscription = this.listen(Arc.new((_) => {
-      current = roValue.with((opt) => opt.asRef().clone());
+    const roValue = this._0.value.value.readvalue();
+    const subscription = this.listen(Arc.new((_) => {
+      const current = roValue.with((opt) => opt.asRef().clone());
       listener(current);
       current.drop();
     }));
@@ -93,6 +93,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
 
 function trigger<T>(inner: Arc<Inner<T>>): void {
   (() => {
+    let entries = inner.value.entries.write();
     for (const entry of entries.value.values()) {
       entry.markedForRemoval = true;
     }
@@ -104,6 +105,7 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
   inner.value.value.set(newValue);
   CurrentObserver.remove(inner);
   (() => {
+    entries = inner.value.entries.write();
     { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
     entries.drop();
   })()

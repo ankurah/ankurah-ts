@@ -20,8 +20,8 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
-    cached = Arc.new(new RwLock(null));
-    cachedRef = cached.clone();
+    const cached = Arc.new(new RwLock(null));
+    const cachedRef = cached.clone();
     const subscription = source.listen(Arc.new((_) => {
       cachedRef.value.write().value = null;
     }));
@@ -32,7 +32,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
 
   withCached<R>(f: (arg0: Output) => R): R {
     (() => {
-      guard = this.cached.value.read();
+      const guard = this.cached.value.read();
       if (guard != null) {
         const value = guard;
         return f(value);
@@ -76,6 +76,9 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
+    const source = this.source.clone();
+    const transform = this.transform.clone();
+    const cached = this.cached.clone();
     const subscription = this.source.listen(Arc.new((_) => {
       const output = source.with((input) => transform(input));
       cached.value.write().value = output.clone();

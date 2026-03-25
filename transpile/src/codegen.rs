@@ -392,6 +392,9 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         out.push_str(&format!("{}type {} = {};\n\n", export, t.name, t.ty));
     }
     for c in &file.consts {
+        // Skip consts that have a module_decl (e.g., thread_local constants)
+        let has_decl = file.module_decls.iter().any(|d| d.contains(&c.name));
+        if has_decl { continue; }
         let export = if c.is_pub { "export " } else { "" };
         out.push_str(&format!("{}const {}: {} = undefined as any; // TODO\n\n", export, c.name, c.ty));
     }

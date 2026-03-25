@@ -20,6 +20,8 @@ pub struct TypeContext<'a> {
 impl<'a> TypeContext<'a> {
     pub fn new(registry: &'a TypeRegistry, module: &str, self_type: &str) -> Self {
         let mut scopes = ScopeStack::new();
+        // Always push a base scope for module-level constants
+        scopes.push_block();
         if !self_type.is_empty() && self_type != "Self" {
             let self_ty = crate::resolve::parse_type_string(self_type);
             scopes.push_impl(self_ty);
