@@ -13,6 +13,7 @@ mod nullable;   // Option<T> → T | null
 mod number;     // AtomicUsize/AtomicU32 → number
 mod iterator;   // Iterator trait methods on arrays
 mod conversion; // into/from/as_ref — type-erased identity transforms
+mod arc;        // Arc<T>/Weak<T> — reference-counted pointer
 
 use crate::resolve::ResolvedType;
 
@@ -20,7 +21,8 @@ use crate::resolve::ResolvedType;
 /// Returns Some(translation) if the call matches a native type constructor.
 pub fn translate_static_call(func: &str, args: &[String]) -> Option<String> {
     // Try each native type module's static translator
-    array::translate_static(func, args)
+    arc::translate_static(func, args)
+        .or_else(|| array::translate_static(func, args))
         .or_else(|| string::translate_static(func, args))
         .or_else(|| map::translate_static(func, args))
         .or_else(|| set::translate_static(func, args))
@@ -72,6 +74,7 @@ pub fn translate_method(
             match name.as_str() {
                 "Map" | "HashMap" | "BTreeMap" => map::translate(receiver, rust_method, args),
                 "Set" | "HashSet" | "BTreeSet" => set::translate(receiver, rust_method, args),
+                "Arc" | "Weak" | "Rc" => arc::translate(receiver_ty, receiver, rust_method, args),
                 _ => MethodTranslation::Passthrough,
             }
         }

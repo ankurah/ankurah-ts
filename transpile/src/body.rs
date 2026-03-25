@@ -776,12 +776,7 @@ impl<'a> BodyTranslator<'a> {
             _ => {}
         }
 
-        // 2. Arc::clone(&x) → x.clone() (idiomatic Rust for ref counting)
-        if (func == "Arc.clone" || func == "Arc::clone") && args.len() == 1 {
-            return format!("{}.clone()", args[0]);
-        }
-
-        // 3. Native type static calls (Vec::new, HashMap::new, etc.)
+        // 2. Native type static calls (Vec::new, HashMap::new, Arc::clone, etc.)
         if let Some(result) = native_types::translate_static_call(func, args) {
             return result;
         }
