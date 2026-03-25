@@ -10,12 +10,12 @@ describe('broadcast unit tests', () => {
     const sender = Broadcast.new();
     const counter = Arc.new(new Mutex(0));
     const Sub1 = ((counter) => {
-      const _ret = sender.reference().listen((_) => counter.lock() += 1);
+      const _ret = sender.reference().listen((_) => counter.lock().value += 1);
       counter.drop();
       return _ret;
     })(counter.clone());
     const sub2 = ((counter) => {
-      const _ret = sender.reference().listen((_) => counter.lock() += 10);
+      const _ret = sender.reference().listen((_) => counter.lock().value += 10);
       counter.drop();
       return _ret;
     })(counter.clone());
@@ -66,7 +66,7 @@ describe('broadcast unit tests', () => {
     const senderClone = sender.clone();
     const counterClone = counter.clone();
     const Sub = sender.reference().listen((_) => {
-      counterClone.lock() += 1;
+      counterClone.lock().value += 1;
       const TempSub = senderClone.reference().listen((_) => {
       });
       TempSub.drop();

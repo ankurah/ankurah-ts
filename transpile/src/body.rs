@@ -120,6 +120,24 @@ impl<'a> BodyTranslator<'a> {
         Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()), inline_module_names: vec![], inline_module_refs: std::cell::RefCell::new(std::collections::HashMap::new()) }
     }
 
+    /// Resolve the type of a local variable binding.
+    /// Uses explicit type annotation if present, otherwise tries to resolve from init expression.
+    fn resolve_local_type(&self, local: &syn::Local) -> Option<crate::resolve::ResolvedType> {
+        // 1. Check for explicit type annotation: `let x: Type = ...`
+        if let syn::Pat::Type(pat_type) = &local.pat {
+            let ty_str = name_map::map_type(&pat_type.ty);
+            let resolved = crate::resolve::parse_type_string(&ty_str);
+            if !matches!(resolved, crate::resolve::ResolvedType::Unknown) {
+                return Some(resolved);
+            }
+        }
+        // 2. Fall back to resolving from init expression
+        if let Some(init) = &local.init {
+            return self.resolve_receiver_type(&init.expr);
+        }
+        None
+    }
+
     /// Register a local variable or parameter type for type resolution
     pub fn register_local_type(&self, name: &str, ty: crate::resolve::ResolvedType) {
         self.local_types.borrow_mut().insert(name.to_string(), ty);
@@ -305,10 +323,13 @@ impl<'a> BodyTranslator<'a> {
                 );
             }
 
-            // Try to resolve the init expression type and register for later resolution
-            if let Some(registry) = self.registry {
-                if let Some(init_ty) = self.resolve_receiver_type(&init.expr) {
-                    self.register_local_type(&pat, init_ty);
+            // Register the local variable's type for downstream resolution.
+            // Prefer explicit type annotation (from `let x: Type = ...`)
+            // over inference from the init expression.
+            if self.registry.is_some() {
+                let resolved_ty = self.resolve_local_type(local);
+                if let Some(ty) = resolved_ty {
+                    self.register_local_type(&pat, ty);
                 }
             }
 
@@ -476,7 +497,7 @@ impl<'a> BodyTranslator<'a> {
                             let inner = self.expr(&unary.expr);
                             let op = translate_binop(&bin.op);
                             let right = self.expr(&bin.right);
-                            // Deref-assign: resolve type, use registry for accessor
+                            // Deref compound-assign: resolve type for precise accessor
                             if let Some(registry) = self.registry {
                                 if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
                                     if let Some(accessor) = registry.deref_field(&inner_ty) {
@@ -486,8 +507,9 @@ impl<'a> BodyTranslator<'a> {
                                     }
                                 }
                             }
-                            // No type info — emit without deref, let tsc catch it
-                            return format!("{} {} {}", inner, op, right);
+                            // Deref in Rust (*x op= y) always means "assign through wrapper."
+                            // All current wrapper types use .value — use it as the semantic default.
+                            return format!("{}.value {} {}", inner, op, right);
                         }
                     }
                 }
@@ -634,8 +656,9 @@ impl<'a> BodyTranslator<'a> {
                                 }
                             }
                         }
-                        // No type info — emit without deref, let tsc catch it
-                        return format!("{} = {}", inner, self.expr(&assign.right));
+                        // Deref in Rust (*x = y) always means "assign through wrapper."
+                        // All current wrapper types use .value — use it as the semantic default.
+                        return format!("{}.value = {}", inner, self.expr(&assign.right));
                     }
                 }
                 format!("{} = {}", self.expr(&assign.left), self.expr(&assign.right))

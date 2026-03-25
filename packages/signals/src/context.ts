@@ -5,7 +5,7 @@ import { current, pop, remove, set, track } from './context/stack';
 
 export class CurrentObserver extends Struct {
 
-  static track<S>(): void {
+  static track<S>(signal: S): void {
     track(signal);
   }
 

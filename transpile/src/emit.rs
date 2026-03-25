@@ -678,7 +678,6 @@ fn strip_generic_defaults(generics: &str) -> String {
 fn is_rust_only_type(ty: &str) -> bool {
     ty.contains("Formatter") || ty.contains("Serializer") || ty.contains("Deserializer")
         || ty.contains("PhantomData")
-        || ty == "S" || ty == "D"
 }
 
 /// Check if a field should be skipped in TS emission (zero-sized Rust types)
