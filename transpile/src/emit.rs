@@ -222,8 +222,8 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
         "  throw new Error('TODO');\n".to_string()
     };
 
-    out.push_str(&format!("{}{}function {}({}): {} {{\n{}}}\n\n",
-        export, async_kw, f.ts_name, params, ret, body));
+    out.push_str(&format!("{}{}function {}{}({}): {} {{\n{}}}\n\n",
+        export, async_kw, f.ts_name, f.generics, params, ret, body));
 }
 
 // ── Method emitters ─────────────────────────────────────────────────────

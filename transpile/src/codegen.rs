@@ -43,12 +43,14 @@ pub fn generate_ts_with_imports_configured(
     for imp in &file.impls {
         for m in &imp.methods {
             imports::collect_type_refs(&m.return_type, &mut referenced);
+            imports::collect_type_refs(&m.generics, &mut referenced);
             for p in &m.params { imports::collect_type_refs(&p.ty, &mut referenced); }
             if let Some(b) = &m.body_ts { imports::collect_type_refs(b, &mut referenced); }
         }
     }
     for f in &file.functions {
         imports::collect_type_refs(&f.return_type, &mut referenced);
+        imports::collect_type_refs(&f.generics, &mut referenced);
         for p in &f.params { imports::collect_type_refs(&p.ty, &mut referenced); }
         if let Some(b) = &f.body_ts { imports::collect_type_refs(b, &mut referenced); }
     }

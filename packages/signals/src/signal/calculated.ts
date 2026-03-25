@@ -91,7 +91,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 }
 
-function trigger(inner: Arc<Inner<T>>): void {
+function trigger<T>(inner: Arc<Inner<T>>): void {
   (() => {
     let entries = inner.value.entries.write();
     for (const entry of entries.value.values()) {

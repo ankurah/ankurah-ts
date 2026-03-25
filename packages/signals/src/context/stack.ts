@@ -1,8 +1,9 @@
 // MIRRORS: ankurah/signals/src/context/stack
 import { Arc, RefCell, Ref, ThreadLocal } from '@ankurah/base';
 import { Observer } from '../observer';
+import { Signal } from '../signal';
 
-export function track(signal: S): void {
+export function track<S extends Signal>(signal: S): void {
   OBSERVER_STACK.with((stack) => {
     if (stack.borrow().value.last() != null) {
       const observer = stack.borrow().value.last();
@@ -11,7 +12,7 @@ export function track(signal: S): void {
   });
 }
 
-export function set(observer: O): void {
+export function set<O extends Observer>(observer: O): void {
   OBSERVER_STACK.with((stack) => {
     stack.borrowMut().value.push(Arc.new(observer));
   });
