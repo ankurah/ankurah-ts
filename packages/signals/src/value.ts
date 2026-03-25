@@ -39,7 +39,7 @@ export class ValueCell<T extends Clone> extends Struct {
   }
 
   value(): T {
-    return this._0.value.read().clone();
+    return this._0.value.read().value.clone();
   }
 
   clone(): ValueCell<T> {
@@ -63,7 +63,7 @@ export class ReadValueCell<T extends Clone> extends Struct {
   }
 
   value(): T {
-    return this._0.value.read().clone();
+    return this._0.value.read().value.clone();
   }
 
   clone(): ReadValueCell<T> {

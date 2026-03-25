@@ -175,6 +175,14 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::MethodCall(call) => {
                 let receiver_ty = self.resolve_receiver_type(&call.receiver)?;
                 let rust_method = call.method.to_string();
+                // unwrap/expect on non-Result → identity (same type)
+                if matches!(rust_method.as_str(), "unwrap" | "expect") {
+                    if let crate::resolve::ResolvedType::Named { name, .. } = &receiver_ty {
+                        if name != "Result" {
+                            return Some(receiver_ty);
+                        }
+                    }
+                }
                 registry.resolve_method_in_module(&receiver_ty, &rust_method, module)
             }
             // Local variable or function parameter → look up in local_types
@@ -288,6 +296,13 @@ impl<'a> BodyTranslator<'a> {
                     "const _r_{} = {};\nif (_r_{}.isErr()) return _r_{} as any;\n{} {} = _r_{}.unwrap();\n",
                     pat, inner, pat, pat, keyword, pat, pat
                 );
+            }
+
+            // Try to resolve the init expression type and register for later resolution
+            if let Some(registry) = self.registry {
+                if let Some(init_ty) = self.resolve_receiver_type(&init.expr) {
+                    self.register_local_type(&pat, init_ty);
+                }
             }
 
             let expr = self.expr(&init.expr);
@@ -412,6 +427,21 @@ impl<'a> BodyTranslator<'a> {
                                 if !accessor.is_empty() {
                                     // Insert .value (or other accessor) before the method call
                                     let deref_receiver = format!("{}.{}", receiver, accessor);
+                                    // Resolve the inner type for method dispatch
+                                    let inner_ty = match &receiver_ty {
+                                        crate::resolve::ResolvedType::Named { args, .. } if !args.is_empty() => {
+                                            // The inner type is the first generic arg (e.g., Arc<T> → T)
+                                            Some(args[0].clone())
+                                        }
+                                        _ => None,
+                                    };
+                                    // Dispatch with inner type knowledge
+                                    if let Some(ref inner) = inner_ty {
+                                        match native_types::translate_method(inner, &deref_receiver, &rust_method, &args) {
+                                            native_types::MethodTranslation::Expr(result) => return result,
+                                            native_types::MethodTranslation::Passthrough => {}
+                                        }
+                                    }
                                     return self.translate_method_call(&deref_receiver, &rust_method, &ts_method, &args, Some(&call.receiver));
                                 }
                             }
@@ -746,7 +776,12 @@ impl<'a> BodyTranslator<'a> {
             _ => {}
         }
 
-        // 2. Native type static calls (Vec::new, HashMap::new, etc.)
+        // 2. Arc::clone(&x) → x.clone() (idiomatic Rust for ref counting)
+        if (func == "Arc.clone" || func == "Arc::clone") && args.len() == 1 {
+            return format!("{}.clone()", args[0]);
+        }
+
+        // 3. Native type static calls (Vec::new, HashMap::new, etc.)
         if let Some(result) = native_types::translate_static_call(func, args) {
             return result;
         }

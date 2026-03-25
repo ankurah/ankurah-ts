@@ -44,7 +44,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
       guard.value = output;
       output.drop();
     }
-    const _ret = f(guard.asRef());
+    const _ret = f(guard.value.asRef());
     guard.drop();
     return _ret;
   }
@@ -81,7 +81,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
     const cached = this.cached.clone();
     const subscription = this.source.listen(Arc.new((_) => {
       const output = source.with((input) => transform(input));
-      cached.write().value = output.clone();
+      cached.value.write().value = output.clone();
       listener(output);
       output.drop();
     }));

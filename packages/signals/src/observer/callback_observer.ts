@@ -30,12 +30,12 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   clear(): void {
-    this._0.value.entries.write().clear();
+    this._0.value.entries.write().value.clear();
   }
 
   markAllForRemoval(): void {
     let entries = this._0.value.entries.write();
-    for (const entry of entries.values()) {
+    for (const entry of entries.value.values()) {
       entry.markedForRemoval = true;
     }
     entries.drop();
@@ -44,7 +44,7 @@ export class CallbackObserver extends Struct implements Observer {
 
   sweepMarkedListeners(): void {
     let entries = this._0.value.entries.write();
-    { for (const [_k, _v] of entries) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.delete(_k); } };
+    { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
     entries.drop();
   }
 
@@ -57,7 +57,7 @@ export class CallbackObserver extends Struct implements Observer {
       return;
     }
     const weak = new WeakCallbackObserver(this._0.downgrade());
-    entries.insert(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
+    entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
       if (weak.upgrade() != null) {
         const observer = weak.upgrade();
         observer.trigger();
