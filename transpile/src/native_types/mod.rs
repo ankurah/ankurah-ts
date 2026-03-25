@@ -139,6 +139,11 @@ pub fn translate_untyped(
         "values_mut" => format!("{}.values()", receiver),
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
 
+        // Methods on borrow guards — insert .value deref when receiver ends with borrow call.
+        // This handles the common pattern: refcell.borrow_mut().push/pop/last/retain(...)
+        "push" | "pop" | "last" | "retain" | "remove" if receiver.ends_with(".borrowMut()") || receiver.ends_with(".borrow()") =>
+            format!("{}.value.{}({})", receiver, rust_method, args.join(", ")),
+
         // .retain(predicate) — works for Map/Set/Vec when type unknown
         "retain" if args.len() == 1 => format!(
             "{{ for (const [_k, _v] of {}) {{ if (!({}(_k, _v))) {}.delete(_k); }} }}",

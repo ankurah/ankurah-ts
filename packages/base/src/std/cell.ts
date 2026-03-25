@@ -25,7 +25,7 @@ type BorrowState =
 //
 // Usage:
 //   const cell = new RefCell(value);
-//   { using guard = cell.borrow_mut(); guard.value.field = 42; }
+//   { using guard = cell.borrowMut(); guard.value.field = 42; }
 //   // borrow released on dispose
 
 export class RefCell<T> {
@@ -74,7 +74,7 @@ export class RefCell<T> {
    * Exclusive mutable borrow. Returns a RefMut<T> Drop guard.
    * Throws if any borrow (shared or mutable) is active.
    */
-  borrow_mut(): RefMut<T> {
+  borrowMut(): RefMut<T> {
     if (this.#state.kind !== 'not_borrowed') {
       if (this.#state.kind === 'mut_borrowed') {
         throw new Error(`${this.#label} already mutably borrowed`);
