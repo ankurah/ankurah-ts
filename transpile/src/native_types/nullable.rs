@@ -7,12 +7,7 @@ use super::MethodTranslation;
 
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
     let result = match method {
-        // Unwrapping — identity (the value IS the inner type or null)
-        "unwrap" | "expect" => receiver.to_string(),
-
-        // Fallback values
-        "unwrap_or" if args.len() == 1 => format!("{} ?? {}", receiver, args[0]),
-        "unwrap_or_else" if args.len() == 1 => format!("{} ?? ({})()", receiver, args[0]),
+        // unwrap/expect/unwrap_or/unwrap_or_else handled in body.rs before dispatch.
 
         // Null checks
         "is_some" => format!("{} != null", receiver),

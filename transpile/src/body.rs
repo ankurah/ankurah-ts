@@ -415,34 +415,37 @@ impl<'a> BodyTranslator<'a> {
                 let ts_method = name_map::map_fn_name(&rust_method);
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
 
-                // Type-aware method dispatch: if we know the receiver type,
-                // check if this method requires deref insertion.
+                // ── unwrap/expect: single decision point ──
+                // In TS, only Result has a real .unwrap(). All other types
+                // (guards, Option/nullable, etc.) treat it as identity.
+                if matches!(rust_method.as_str(), "unwrap" | "expect") {
+                    let is_result = self.resolve_receiver_type(&call.receiver)
+                        .map(|ty| matches!(&ty, crate::resolve::ResolvedType::Named { name, .. } if name == "Result"))
+                        .unwrap_or(false);
+                    if !is_result {
+                        return receiver.to_string();
+                    }
+                }
+                if rust_method == "unwrap_or" && args.len() == 1 {
+                    return format!("{} ?? {}", receiver, args[0]);
+                }
+                if rust_method == "unwrap_or_else" && args.len() == 1 {
+                    return format!("{} ?? ({})()", receiver, args[0]);
+                }
+
+                // ── deref insertion: registry-based, no fallbacks ──
                 if let Some(registry) = self.registry {
                     if let Some(receiver_ty) = self.resolve_receiver_type(&call.receiver) {
-                        // unwrap/expect on non-Result types: strip without deref insertion.
-                        // These are identity ops on system wrappers (lock/write/read returns).
-                        if matches!(rust_method.as_str(), "unwrap" | "expect") {
-                            if let crate::resolve::ResolvedType::Named { name, .. } = &receiver_ty {
-                                if name != "Result" {
-                                    return receiver.to_string();
-                                }
-                            }
-                        }
-                        // If the method is NOT on the wrapper type itself, we need to deref first
                         if !registry.is_own_method(&receiver_ty, &rust_method) {
                             if let Some(accessor) = registry.deref_field(&receiver_ty) {
                                 if !accessor.is_empty() {
-                                    // Insert .value (or other accessor) before the method call
                                     let deref_receiver = format!("{}.{}", receiver, accessor);
-                                    // Resolve the inner type for method dispatch
-                                    let inner_ty = match &receiver_ty {
-                                        crate::resolve::ResolvedType::Named { args, .. } if !args.is_empty() => {
-                                            // The inner type is the first generic arg (e.g., Arc<T> → T)
-                                            Some(args[0].clone())
-                                        }
-                                        _ => None,
+                                    // Resolve inner type (first generic arg) for dispatch
+                                    let inner_ty = if let crate::resolve::ResolvedType::Named { args: type_args, .. } = &receiver_ty {
+                                        type_args.first().cloned()
+                                    } else {
+                                        None
                                     };
-                                    // Dispatch with inner type knowledge
                                     if let Some(ref inner) = inner_ty {
                                         match native_types::translate_method(inner, &deref_receiver, &rust_method, &args) {
                                             native_types::MethodTranslation::Expr(result) => return result,
@@ -473,7 +476,7 @@ impl<'a> BodyTranslator<'a> {
                             let inner = self.expr(&unary.expr);
                             let op = translate_binop(&bin.op);
                             let right = self.expr(&bin.right);
-                            // Check registry for deref_field
+                            // Deref-assign: resolve type, use registry for accessor
                             if let Some(registry) = self.registry {
                                 if let Some(inner_ty) = self.resolve_receiver_type(&unary.expr) {
                                     if let Some(accessor) = registry.deref_field(&inner_ty) {
@@ -483,8 +486,8 @@ impl<'a> BodyTranslator<'a> {
                                     }
                                 }
                             }
-                            // Fallback: .value
-                            return format!("{}.value {} {}", inner, op, right);
+                            // No type info — emit without deref, let tsc catch it
+                            return format!("{} {} {}", inner, op, right);
                         }
                     }
                 }
@@ -631,9 +634,8 @@ impl<'a> BodyTranslator<'a> {
                                 }
                             }
                         }
-                        // Fallback: if we can't resolve the type, still try .value
-                        // since *x = y in Rust almost always means deref-assign through a guard
-                        return format!("{}.value = {}", inner, self.expr(&assign.right));
+                        // No type info — emit without deref, let tsc catch it
+                        return format!("{} = {}", inner, self.expr(&assign.right));
                     }
                 }
                 format!("{} = {}", self.expr(&assign.left), self.expr(&assign.right))

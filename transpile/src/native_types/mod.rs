@@ -50,22 +50,8 @@ pub fn translate_method(
         return MethodTranslation::Expr(result);
     }
 
-    // .unwrap()/.expect() on non-Result types are identity ops.
-    // In TS, system types (Mutex.lock(), RwLock.write()) return guards directly,
-    // not wrapped in Result. Strip the unwrap.
-    match rust_method {
-        "unwrap" | "expect" => {
-            // Only strip for types that aren't Result (Result.unwrap() is real)
-            if let ResolvedType::Named { name, .. } = receiver_ty {
-                if name != "Result" {
-                    return MethodTranslation::Expr(receiver.to_string());
-                }
-            } else {
-                return MethodTranslation::Expr(receiver.to_string());
-            }
-        }
-        _ => {}
-    }
+    // unwrap/expect is handled in body.rs before dispatch reaches here.
+    // Result.unwrap() passes through to Passthrough (handled by Result's class method).
 
     match receiver_ty {
         ResolvedType::Array(_) => array::translate(receiver, rust_method, args),
@@ -121,16 +107,11 @@ pub fn translate_untyped(
         "iter" | "into_iter" => format!("[...{}]", receiver),
         "values" if args.is_empty() => format!("[...{}]", receiver),
 
-        // .unwrap() → identity (most common: Result.unwrap() is on the class,
-        // but when type is unknown and the source had .unwrap(), it's usually
-        // Option which is nullable — stripping is the safer default)
-        "unwrap" | "expect" => receiver.to_string(),
+        // unwrap/expect handled in body.rs before reaching here.
 
         // Nullable checks
         "is_some" => format!("{} != null", receiver),
         "is_none" => format!("{} == null", receiver),
-        "unwrap_or" if args.len() == 1 => format!("{} ?? {}", receiver, args[0]),
-        "unwrap_or_else" if args.len() == 1 => format!("{} ?? ({})()", receiver, args[0]),
 
         // .contains() → .includes() for arrays (Map/Set use .has() via typed dispatch)
         "contains" if args.len() == 1 => format!("{}.includes({})", receiver, args[0]),
@@ -138,11 +119,6 @@ pub fn translate_untyped(
         // Mutable variants → same as immutable in JS
         "values_mut" => format!("{}.values()", receiver),
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
-
-        // Methods on borrow guards — insert .value deref when receiver ends with borrow call.
-        // This handles the common pattern: refcell.borrow_mut().push/pop/last/retain(...)
-        "push" | "pop" | "last" | "retain" | "remove" if receiver.ends_with(".borrowMut()") || receiver.ends_with(".borrow()") =>
-            format!("{}.value.{}({})", receiver, rust_method, args.join(", ")),
 
         // .retain(predicate) — works for Map/Set/Vec when type unknown
         "retain" if args.len() == 1 => format!(
