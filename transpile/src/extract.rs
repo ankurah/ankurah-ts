@@ -37,6 +37,7 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
         consts: Vec::new(),
         test_functions: Vec::new(),
         module_decls: Vec::new(),
+        inline_modules: Vec::new(),
     };
 
     for item in &syntax.items {
@@ -93,42 +94,58 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                         }
                     }
                 }
-                // Extract items from non-test cfg-gated mod blocks
-                // (e.g., mod stack { ... } with #[cfg(feature = "singlethread")])
+                // Extract inline modules as separate RustFile entries.
+                // These become sibling .ts files (e.g., context/stack.ts).
                 else if !is_skipped_cfg_with(&m.attrs, features) {
                     if let Some((_, items)) = &m.content {
+                        let mod_name = m.ident.to_string();
+                        let mut sub_file = RustFile {
+                            path: String::new(),
+                            structs: Vec::new(),
+                            enums: Vec::new(),
+                            traits: Vec::new(),
+                            functions: Vec::new(),
+                            impls: Vec::new(),
+                            uses: Vec::new(),
+                            type_aliases: Vec::new(),
+                            consts: Vec::new(),
+                            test_functions: Vec::new(),
+                            module_decls: Vec::new(),
+                            inline_modules: Vec::new(),
+                        };
                         for item in items {
                             match item {
                                 syn::Item::Fn(f) => {
                                     if !is_skipped_cfg_with(&f.attrs, features) {
-                                        file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
+                                        sub_file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
                                     }
                                 }
                                 syn::Item::Struct(s) => {
                                     if !is_skipped_cfg_with(&s.attrs, features) {
-                                        file.structs.push(extract_struct(s));
+                                        sub_file.structs.push(extract_struct(s));
                                     }
                                 }
                                 syn::Item::Enum(e) => {
                                     if !is_skipped_cfg_with(&e.attrs, features) {
-                                        file.enums.push(extract_enum(e));
+                                        sub_file.enums.push(extract_enum(e));
                                     }
                                 }
                                 syn::Item::Use(u) => {
-                                    file.uses.push(extract_use(u));
+                                    sub_file.uses.push(extract_use(u));
                                 }
                                 syn::Item::Macro(mac) => {
                                     let macro_name = mac.mac.path.segments.last()
                                         .map(|s| s.ident.to_string()).unwrap_or_default();
                                     if macro_name == "thread_local" {
                                         if let Some(decl) = extract_thread_local(&mac.mac) {
-                                            file.module_decls.push(decl);
+                                            sub_file.module_decls.push(decl);
                                         }
                                     }
                                 }
                                 _ => {}
                             }
                         }
+                        file.inline_modules.push((mod_name, sub_file));
                     }
                 }
             }

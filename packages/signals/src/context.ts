@@ -1,71 +1,28 @@
 // MIRRORS: ankurah/signals/src/context.rs
-import { Struct, Arc, RefCell, Ref, ThreadLocal } from '@ankurah/base';
+import { Struct, Arc } from '@ankurah/base';
 import { Observer } from './observer';
+import { current, pop, remove, set, track } from './context/stack';
 
 export class CurrentObserver extends Struct {
 
   static track<S>(): void {
-    stack.track(signal);
+    track(signal);
   }
 
   static set<O extends Observer>(observer: O): void {
-    stack.set(observer);
+    set(observer);
   }
 
   static pop(): void {
-    stack.pop();
+    pop();
   }
 
   static remove(observer: Observer): void {
-    stack.remove(observer);
+    remove(observer);
   }
 
   static current(): Arc<Observer> | null {
-    return stack.current();
+    return current();
   }
 }
-
-export function track(signal: S): void {
-  OBSERVER_STACK.with((stack) => {
-    if (stack.borrow().last() != null) {
-      const observer = stack.borrow().last();
-      observer.observe(signal);
-    }
-  });
-}
-
-export function set(observer: O): void {
-  OBSERVER_STACK.with((stack) => {
-    stack.borrowMut().push(Arc.new(observer));
-  });
-}
-
-export function pop(): void {
-  OBSERVER_STACK.with((stack) => {
-    stack.borrowMut().pop();
-  });
-}
-
-export function remove(observer: Observer): void {
-  const targetId = observer.observerId();
-  OBSERVER_STACK.with((stack) => {
-    if (stack.last() != null) {
-      const last = stack.last();
-      if (last.observerId() === targetId) {
-        stack.pop();
-        return;
-
-      }
-    }
-    { for (const [_k, _v] of stack) { if (!((o) => o.observerId() !== targetId(_k, _v))) stack.delete(_k); } };
-    stack.drop();
-  });
-  targetId.drop();
-}
-
-export function current(): Arc<Observer> | null {
-  return OBSERVER_STACK.with((stack) => [...stack.borrow().last()]);
-}
-
-const OBSERVER_STACK = new ThreadLocal<RefCell<Arc<Observer>[]>>(new RefCell([]));
 

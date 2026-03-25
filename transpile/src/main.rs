@@ -142,6 +142,13 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         for t in &rust_file.traits {
             type_to_file.insert(t.name.clone(), ts_module.clone());
         }
+        // Register inline module symbols (types go in type_to_file, functions tracked separately)
+        for (mod_name, sub_file) in &rust_file.inline_modules {
+            let sub_module = format!("{}/{}", ts_module.trim_end_matches("/index"), mod_name);
+            for s in &sub_file.structs { type_to_file.insert(s.name.clone(), sub_module.clone()); }
+            for e in &sub_file.enums { type_to_file.insert(e.name.clone(), sub_module.clone()); }
+            for t in &sub_file.traits { type_to_file.insert(t.name.clone(), sub_module.clone()); }
+        }
 
         parsed_files.push((rel_str, rust_file));
     }
@@ -188,6 +195,24 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         file_count += 1;
         println!("  {} → {}", rel_str, ts_relative);
 
+        // Generate inline module files
+        for (mod_name, sub_file) in &rust_file.inline_modules {
+            let sub_module = format!("{}/{}", current_module.trim_end_matches("/index"), mod_name);
+            let sub_crate_path = format!("{}/{}", crate_path.trim_end_matches(".rs"), mod_name);
+            let sub_ts = codegen::generate_ts_with_imports_configured(
+                sub_file, &sub_crate_path, &type_to_file, &sub_module, config);
+            let sub_relative = format!("{}/{}.ts",
+                ts_relative.trim_end_matches(".ts"), mod_name);
+            let sub_path = out_dir.join(&sub_relative);
+            if let Some(parent) = sub_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&sub_path, &sub_ts)
+                .with_context(|| format!("Failed to write {}", sub_path.display()))?;
+            file_count += 1;
+            println!("    {} (inline module)", sub_relative);
+        }
+
         // Generate test file if there are test functions
         if let Some(test_ts) = codegen::generate_test_ts_with_imports(rust_file, &crate_path, &type_to_file, &current_module) {
             let test_relative = ts_relative.replace(".ts", ".test.ts");
@@ -215,16 +240,33 @@ fn translate_all_bodies(
             .replace("mod", "index")
             .replace("lib", "index");
 
+        // Collect inline module names for this file
+        let inline_mod_names: Vec<String> = file.inline_modules.iter()
+            .map(|(name, _)| name.clone()).collect();
+
         // Translate free functions
         for func in &mut file.functions {
-            translate_fn_body(func, "Self", registry, &module);
+            translate_fn_body_with_modules(func, "Self", registry, &module, &inline_mod_names);
+        }
+
+        // Translate inline module bodies
+        for (mod_name, sub_file) in &mut file.inline_modules {
+            let sub_module = format!("{}/{}", module.trim_end_matches("/index"), mod_name);
+            for func in &mut sub_file.functions {
+                translate_fn_body(func, "Self", registry, &sub_module);
+            }
+            for imp in &mut sub_file.impls {
+                for method in &mut imp.methods {
+                    translate_fn_body(method, &imp.target_type, registry, &sub_module);
+                }
+            }
         }
 
         // Translate impl methods
         for imp in &mut file.impls {
             let self_type = imp.target_type.clone();
             for method in &mut imp.methods {
-                translate_fn_body(method, &self_type, registry, &module);
+                translate_fn_body_with_modules(method, &self_type, registry, &module, &inline_mod_names);
             }
         }
 
@@ -249,8 +291,19 @@ fn translate_fn_body(
     registry: &resolve::TypeRegistry,
     module: &str,
 ) {
+    translate_fn_body_with_modules(func, self_type, registry, module, &[]);
+}
+
+fn translate_fn_body_with_modules(
+    func: &mut types::FnInfo,
+    self_type: &str,
+    registry: &resolve::TypeRegistry,
+    module: &str,
+    inline_module_names: &[String],
+) {
     if let Some(ref block) = func.body_ast {
-        let translator = body::BodyTranslator::with_registry(self_type, registry, module);
+        let mut translator = body::BodyTranslator::with_registry(self_type, registry, module);
+        translator.inline_module_names = inline_module_names.to_vec();
         // Push function params into scope for shadow detection + type resolution
         let param_names: Vec<String> = func.params.iter()
             .map(|p| p.name.clone())

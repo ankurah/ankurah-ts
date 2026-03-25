@@ -16,6 +16,9 @@ pub struct RustFile {
     pub test_functions: Vec<FnInfo>,
     /// Raw TS declarations to emit at module level (e.g., thread_local → const)
     pub module_decls: Vec<String>,
+    /// Inline modules extracted as separate files.
+    /// (module_name, RustFile) — emitted to parent_dir/module_name.ts
+    pub inline_modules: Vec<(String, RustFile)>,
 }
 
 #[derive(Debug)]

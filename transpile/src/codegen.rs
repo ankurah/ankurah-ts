@@ -88,6 +88,32 @@ pub fn generate_ts_with_imports_configured(
         import_lines.push_str(&format!("import {{ {} }} from '{}';\n", types.join(", "), import_path));
     }
 
+    // Import functions from inline modules.
+    // Scan bodies for function names that exist in inline modules.
+    for (mod_name, sub_file) in &file.inline_modules {
+        let sub_module = format!("{}/{}", current_module.trim_end_matches("/index"), mod_name);
+        let func_names: std::collections::HashSet<String> = sub_file.functions.iter()
+            .map(|f| f.ts_name.clone()).collect();
+        let mut found: Vec<String> = Vec::new();
+        let all_bodies = file.impls.iter()
+            .flat_map(|imp| imp.methods.iter())
+            .chain(file.functions.iter())
+            .filter_map(|f| f.body_ts.as_deref());
+        for body in all_bodies {
+            for word in body.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if func_names.contains(word) && !found.contains(&word.to_string()) {
+                    found.push(word.to_string());
+                }
+            }
+        }
+        if !found.is_empty() {
+            found.sort();
+            let import_path = relative_import_path(current_module, &sub_module);
+            import_lines.push_str(&format!("import {{ {} }} from '{}';\n",
+                found.join(", "), import_path));
+        }
+    }
+
     // Replace the TODO imports line
     if import_lines.is_empty() {
         base.lines()

@@ -102,15 +102,22 @@ pub struct BodyTranslator<'a> {
     /// Maps camelCase name → ResolvedType. Used by resolve_receiver_type
     /// to resolve types of non-self expressions.
     pub local_types: std::cell::RefCell<std::collections::HashMap<String, crate::resolve::ResolvedType>>,
+    /// Inline module names for the current file — these are path qualifiers
+    /// that should be stripped during path resolution (the module's symbols
+    /// are imported from the separate .ts file).
+    pub inline_module_names: Vec<String>,
+    /// Functions referenced from inline modules (collected during translation).
+    /// Maps module_name → set of function names used.
+    pub inline_module_refs: std::cell::RefCell<std::collections::HashMap<String, std::collections::HashSet<String>>>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()) }
+        Self { self_type, registry: None, current_module: None, scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()), inline_module_names: vec![], inline_module_refs: std::cell::RefCell::new(std::collections::HashMap::new()) }
     }
 
     pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &'a str) -> Self {
-        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()) }
+        Self { self_type, registry: Some(registry), current_module: Some(module), scope_names: std::cell::RefCell::new(vec![]), local_types: std::cell::RefCell::new(std::collections::HashMap::new()), inline_module_names: vec![], inline_module_refs: std::cell::RefCell::new(std::collections::HashMap::new()) }
     }
 
     /// Register a local variable or parameter type for type resolution
@@ -765,6 +772,19 @@ impl<'a> BodyTranslator<'a> {
     // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
 
     fn translate_call(&self, func: &str, args: &[String]) -> String {
+        // 0. Resolve inline module qualifiers (e.g., stack.track → track)
+        // Records the reference for import generation.
+        for mod_name in &self.inline_module_names {
+            let prefix = format!("{}.", mod_name);
+            if let Some(stripped) = func.strip_prefix(&prefix) {
+                self.inline_module_refs.borrow_mut()
+                    .entry(mod_name.clone())
+                    .or_default()
+                    .insert(stripped.to_string());
+                return self.translate_call(stripped, args);
+            }
+        }
+
         // 1. Language-level constructs
         match func {
             "Self" => return format!("new {}({})", self.self_type, args.join(", ")),
