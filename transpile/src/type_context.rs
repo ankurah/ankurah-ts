@@ -196,6 +196,61 @@ impl<'a> TypeContext<'a> {
         None
     }
 
+    // ── Type-aware code generation queries ────────────────────────────
+    //
+    // These methods answer questions body.rs needs for code emission:
+    // deref insertion, method dispatch, enum variant checks.
+
+    /// Get the deref accessor for a type (e.g., "value" for Arc, RwLockWriteGuard).
+    /// Returns None if the type doesn't deref or isn't resolvable.
+    pub fn deref_accessor(&self, ty: &ResolvedType) -> Option<String> {
+        let accessor = self.registry.deref_field(ty)?;
+        if accessor.is_empty() { None } else { Some(accessor.to_string()) }
+    }
+
+    /// Check if a method is directly on the type (not inherited through deref).
+    pub fn is_own_method(&self, ty: &ResolvedType, method: &str) -> bool {
+        self.registry.is_own_method(ty, method)
+    }
+
+    /// Get the inner type after dereferencing (first generic arg).
+    /// E.g., Arc<Inner<T>> → Inner<T>, RwLockWriteGuard<Map<K,V>> → Map<K,V>
+    pub fn deref_inner_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        if let ResolvedType::Named { args, .. } = ty {
+            args.first().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Check if a field access on an expression needs deref insertion.
+    /// Returns Some((accessor, field_type)) if deref is needed, None otherwise.
+    pub fn field_deref(&self, base_expr: &syn::Expr, member: &str) -> Option<(String, ResolvedType)> {
+        let base_ty = self.resolve_expr(base_expr)?;
+        if let Some((field_ty, Some(accessor))) = self.registry.resolve_field_in_module(&base_ty, member, &self.module) {
+            if !accessor.is_empty() {
+                return Some((accessor, field_ty));
+            }
+        }
+        None
+    }
+
+    /// Check if a method call on an expression needs deref insertion.
+    /// Returns Some(accessor) if the method isn't on the wrapper type itself.
+    pub fn method_deref(&self, receiver_expr: &syn::Expr, method: &str) -> Option<String> {
+        let receiver_ty = self.resolve_expr(receiver_expr)?;
+        if !self.registry.is_own_method(&receiver_ty, method) {
+            self.deref_accessor(&receiver_ty)
+        } else {
+            None
+        }
+    }
+
+    /// Check if a name is an enum variant (for path resolution).
+    pub fn is_variant(&self, type_name: &str, variant: &str) -> bool {
+        self.registry.is_variant(type_name, variant)
+    }
+
     /// Resolve closure parameter types from the calling method's signature.
     /// Given a method call `receiver.method(|param| ...)`, resolves what type
     /// the callback parameter should be.

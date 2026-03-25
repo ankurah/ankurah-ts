@@ -89,11 +89,9 @@ pub fn indent(s: &str) -> String {
 
 pub struct BodyTranslator<'a> {
     pub self_type: &'a str,
-    /// Type registry for resolve_field, resolve_method, is_enum.
-    /// None for legacy codepaths (free function shims, match_expr, control_flow).
-    pub registry: Option<&'a crate::resolve::TypeRegistry>,
     /// Type context for comprehensive expression type resolution.
-    /// Wraps ScopeStack + TypeRegistry. None when registry is None.
+    /// Wraps ScopeStack + TypeRegistry. None for legacy codepaths
+    /// (free function shims, match_expr, control_flow).
     pub types: Option<std::cell::RefCell<crate::type_context::TypeContext<'a>>>,
     /// Inline module names for the current file — path qualifiers
     /// stripped during path resolution (symbols imported from separate .ts file).
@@ -102,14 +100,13 @@ pub struct BodyTranslator<'a> {
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, registry: None, types: None, inline_module_names: vec![] }
+        Self { self_type, types: None, inline_module_names: vec![] }
     }
 
     pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &str) -> Self {
         let tc = crate::type_context::TypeContext::new(registry, module, self_type);
         Self {
             self_type,
-            registry: Some(registry),
             types: Some(std::cell::RefCell::new(tc)),
             inline_module_names: vec![],
         }
@@ -363,16 +360,10 @@ impl<'a> BodyTranslator<'a> {
                 };
                 let base_str = if base == "self" { "this".to_string() } else { base };
 
-                // Type-aware deref insertion: if the base type has deref_field,
-                // insert the accessor (e.g., .value for Arc)
-                if let Some(registry) = self.registry {
-                    let module = self.types.as_ref().map(|tc| tc.borrow().module.clone()).unwrap_or_default();
-                    if let Some(base_ty) = self.resolve_expr_type(&field.base) {
-                        if let Some((ref _field_ty, Some(ref accessor))) = registry.resolve_field_in_module(&base_ty, &member, &module) {
-                            if !accessor.is_empty() {
-                                return format!("{}.{}.{}", base_str, accessor, member);
-                            }
-                        }
+                // Type-aware deref insertion for field access
+                if let Some(tc) = &self.types {
+                    if let Some((accessor, _field_ty)) = tc.borrow().field_deref(&field.base, &member) {
+                        return format!("{}.{}.{}", base_str, accessor, member);
                     }
                 }
 
@@ -423,29 +414,22 @@ impl<'a> BodyTranslator<'a> {
                     return format!("{} ?? ({})()", receiver, args[0]);
                 }
 
-                // ── deref insertion: registry-based, no fallbacks ──
-                if let Some(registry) = self.registry {
-                    if let Some(receiver_ty) = self.resolve_expr_type(&call.receiver) {
-                        if !registry.is_own_method(&receiver_ty, &rust_method) {
-                            if let Some(accessor) = registry.deref_field(&receiver_ty) {
-                                if !accessor.is_empty() {
-                                    let deref_receiver = format!("{}.{}", receiver, accessor);
-                                    // Resolve inner type (first generic arg) for dispatch
-                                    let inner_ty = if let crate::resolve::ResolvedType::Named { args: type_args, .. } = &receiver_ty {
-                                        type_args.first().cloned()
-                                    } else {
-                                        None
-                                    };
-                                    if let Some(ref inner) = inner_ty {
-                                        match native_types::translate_method(inner, &deref_receiver, &rust_method, &args) {
-                                            native_types::MethodTranslation::Expr(result) => return result,
-                                            native_types::MethodTranslation::Passthrough => {}
-                                        }
-                                    }
-                                    return self.translate_method_call(&deref_receiver, &rust_method, &ts_method, &args, Some(&call.receiver));
+                // ── deref insertion via TypeContext ──
+                if let Some(tc) = &self.types {
+                    let tc_ref = tc.borrow();
+                    if let Some(accessor) = tc_ref.method_deref(&call.receiver, &rust_method) {
+                        let deref_receiver = format!("{}.{}", receiver, accessor);
+                        // Dispatch against inner type (after deref)
+                        if let Some(receiver_ty) = tc_ref.resolve_expr(&call.receiver) {
+                            if let Some(inner) = tc_ref.deref_inner_type(&receiver_ty) {
+                                match native_types::translate_method(&inner, &deref_receiver, &rust_method, &args) {
+                                    native_types::MethodTranslation::Expr(result) => return result,
+                                    native_types::MethodTranslation::Passthrough => {}
                                 }
                             }
                         }
+                        drop(tc_ref);
+                        return self.translate_method_call(&deref_receiver, &rust_method, &ts_method, &args, Some(&call.receiver));
                     }
                 }
 
@@ -466,18 +450,15 @@ impl<'a> BodyTranslator<'a> {
                             let inner = self.expr(&unary.expr);
                             let op = translate_binop(&bin.op);
                             let right = self.expr(&bin.right);
-                            // Deref compound-assign: resolve type for precise accessor
-                            if let Some(registry) = self.registry {
-                                if let Some(inner_ty) = self.resolve_expr_type(&unary.expr) {
-                                    if let Some(accessor) = registry.deref_field(&inner_ty) {
-                                        if !accessor.is_empty() {
-                                            return format!("{}.{} {} {}", inner, accessor, op, right);
-                                        }
+                            // Deref compound-assign via TypeContext
+                            if let Some(tc) = &self.types {
+                                if let Some(inner_ty) = tc.borrow().resolve_expr(&unary.expr) {
+                                    if let Some(accessor) = tc.borrow().deref_accessor(&inner_ty) {
+                                        return format!("{}.{} {} {}", inner, accessor, op, right);
                                     }
                                 }
                             }
-                            // Deref in Rust (*x op= y) always means "assign through wrapper."
-                            // All current wrapper types use .value — use it as the semantic default.
+                            // Syntactic *x always means deref-assign; .value is the semantic default
                             return format!("{}.value {} {}", inner, op, right);
                         }
                     }
@@ -621,13 +602,10 @@ impl<'a> BodyTranslator<'a> {
                 if let syn::Expr::Unary(unary) = &*assign.left {
                     if matches!(unary.op, syn::UnOp::Deref(_)) {
                         let inner = self.expr(&unary.expr);
-                        // If we can resolve the type and it has a deref_field, use it
-                        if let Some(registry) = self.registry {
-                            if let Some(inner_ty) = self.resolve_expr_type(&unary.expr) {
-                                if let Some(accessor) = registry.deref_field(&inner_ty) {
-                                    if !accessor.is_empty() {
-                                        return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
-                                    }
+                        if let Some(tc) = &self.types {
+                            if let Some(inner_ty) = tc.borrow().resolve_expr(&unary.expr) {
+                                if let Some(accessor) = tc.borrow().deref_accessor(&inner_ty) {
+                                    return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
                                 }
                             }
                         }
@@ -742,15 +720,13 @@ impl<'a> BodyTranslator<'a> {
     // implementations handle the method names directly.
 
     fn translate_method_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
-        // If we have type info, use type-aware dispatch
-        if let Some(registry) = self.registry {
-            if let Some(receiver_expr) = receiver_expr {
-                if let Some(receiver_ty) = self.resolve_expr_type(receiver_expr) {
-                    match native_types::translate_method(&receiver_ty, receiver, rust_method, args) {
-                        native_types::MethodTranslation::Expr(result) => return result,
-                        native_types::MethodTranslation::Passthrough => {
-                            return format!("{}.{}({})", receiver, ts_method, args.join(", "));
-                        }
+        // Type-aware dispatch via TypeContext
+        if let Some(receiver_expr) = receiver_expr {
+            if let Some(receiver_ty) = self.resolve_expr_type(receiver_expr) {
+                match native_types::translate_method(&receiver_ty, receiver, rust_method, args) {
+                    native_types::MethodTranslation::Expr(result) => return result,
+                    native_types::MethodTranslation::Passthrough => {
+                        return format!("{}.{}({})", receiver, ts_method, args.join(", "));
                     }
                 }
             }
@@ -859,10 +835,10 @@ impl<'a> BodyTranslator<'a> {
             let type_name = &func[..dot];
             let variant = &func[dot+1..];
 
-            let is_enum_variant = if let Some(registry) = self.registry {
-                registry.is_variant(type_name, variant)
+            let is_enum_variant = if let Some(tc) = &self.types {
+                tc.borrow().is_variant(type_name, variant)
             } else {
-                // Fallback: PascalCase heuristic
+                // Fallback: PascalCase heuristic (no type context available)
                 type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                     && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                     && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
