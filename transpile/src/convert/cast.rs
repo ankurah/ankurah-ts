@@ -106,10 +106,14 @@ pub fn numeric(from: Prim, to: Prim, value: &str) -> Option<String> {
             })
         }
         (Repr::BigInt, Repr::Number) => {
-            let (bits, signed) = width(to)?;
+            // A float destination first: `width` has no answer for `f32`/`f64`,
+            // and asking it before this left `u64 as f64` unreachable — the
+            // cast was reported as unwritable and the bigint was handed on as
+            // it stood, where a `number` was wanted.
             if is_float(to) {
                 return Some(format!("Number({})", value));
             }
+            let (bits, signed) = width(to)?;
             Some(format!(
                 "Number(BigInt.as{}N({}, {}))",
                 if signed { "Int" } else { "Uint" },
@@ -124,6 +128,15 @@ pub fn numeric(from: Prim, to: Prim, value: &str) -> Option<String> {
             Repr::BigInt => format!("BigInt({})", value),
             _ => format!("Number({})", value),
         }),
+        // The port writes a `char` as a one-character string, and Rust's two
+        // casts through it are about its code point: `c as u32` is that number,
+        // and `b as char` — which Rust allows from `u8` alone — is the
+        // character with that code.
+        _ if from == Prim::Char => Some(match repr(to) {
+            Repr::BigInt => format!("BigInt({}.codePointAt(0) ?? 0)", value),
+            _ => format!("({}.codePointAt(0) ?? 0)", value),
+        }),
+        _ if to == Prim::Char => Some(format!("String.fromCharCode(Number({}))", value)),
         _ => None,
     }
 }
@@ -139,16 +152,41 @@ fn narrow_number(from: Prim, to: Prim, value: &str) -> String {
             _ => value.to_string(),
         };
     }
-    // A float becomes an integer by truncation before the width is applied;
-    // an integer that already fits keeps every bit it has.
-    let truncated = if is_float(from) {
-        format!("Math.trunc({})", value)
-    } else if fits(from, to) {
+    // Rust's float-to-integer `as` SATURATES at the target's bounds and
+    // answers 0 for NaN. It is the one `as` that does not wrap: `1e30f64 as
+    // u32` is `u32::MAX`, and masking the low bits of a truncated double gave
+    // an arbitrary number instead.
+    if is_float(from) {
+        return saturating(to, value);
+    }
+    // An integer that already fits keeps every bit it has.
+    if fits(from, to) {
         return value.to_string();
-    } else {
-        value.to_string()
+    }
+    wrap(to, value)
+}
+
+/// A float truncated into an integer type the way Rust's `as` does it: towards
+/// zero, clamped to the type's bounds, and `0` for a NaN.
+///
+/// `Math.trunc(NaN)` is `NaN` and `NaN || 0` is `0`, which is also what a real
+/// zero answers, so the one expression covers both.
+fn saturating(to: Prim, value: &str) -> String {
+    let Some((bits, signed)) = width(to) else {
+        return value.to_string();
     };
-    wrap(to, &truncated)
+    let (low, high) = if signed {
+        (
+            format!("-{}", 1u128 << (bits - 1)),
+            format!("{}", (1u128 << (bits - 1)) - 1),
+        )
+    } else {
+        ("0".to_string(), format!("{}", (1u128 << bits) - 1))
+    };
+    format!(
+        "Math.min(Math.max(Math.trunc({}) || 0, {}), {})",
+        value, low, high
+    )
 }
 
 /// A value brought back inside a type's range, the way Rust's `as` and its

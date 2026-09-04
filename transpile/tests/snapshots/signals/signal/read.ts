@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/signal/read.rs
 import { Struct, Arc, OwnedClosure } from '@ankurah/base';
-import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
+import { Broadcast, BroadcastId, BroadcastListener, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, GetReadCell, Peek, Signal, With } from '../signal';
@@ -54,7 +54,7 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   listen(listener: Listener): ListenerGuard {
     const _t0 = this.broadcast.reference();
     try {
-      return ListenerGuard.new(_t0.listen(new NotifyOnly(Arc.new(new OwnedClosure([listener], () => listener([]))))));
+      return ListenerGuard.new(_t0.listen(BroadcastListener.NotifyOnly(Arc.new(new OwnedClosure([listener], () => listener([]))))));
     } finally {
       _t0.drop();
     }

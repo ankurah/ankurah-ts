@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Sender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -19,11 +19,17 @@ export class BroadcastId extends Struct {
   }
 
   compareTo(other: BroadcastId): number {
-    throw new Error('TODO');
+    let c = this._0 < other._0 ? -1 : this._0 > other._0 ? 1 : 0;
+    if (c !== 0) return c;
+    return 0;
   }
 
   clone(): BroadcastId {
     return new BroadcastId(this._0);
+  }
+
+  debug(): string {
+    return `BroadcastId(${String(this._0)})`;
   }
 }
 

@@ -66,7 +66,35 @@ impl BodyTranslator<'_> {
             if op.native == "/=" {
                 return Some(format!("{} = Math.trunc({} / {})", left, left, right));
             }
+            if let Some(written) = bitwise(op, left_ty, left, right) {
+                return Some(written);
+            }
         }
         None
     }
+}
+
+/// The bit operators, which JavaScript performs on a *signed* 32-bit number
+/// whatever it was given.
+///
+/// `x >> 1` on a `u32` above 2^31 is negative in JavaScript and positive in
+/// Rust, because JavaScript's `>>` keeps the sign bit; `>>>` is the one that
+/// does what Rust's `>>` on an unsigned type does. And a result outside the
+/// type's range — `1u32 << 31`, `!0u16 & 0xFFFF` — has to come back inside it,
+/// which is what `cast::wrap` writes.
+fn bitwise(op: &Operator, left_ty: Prim, left: &str, right: &str) -> Option<String> {
+    let unsigned = matches!(left_ty, Prim::U8 | Prim::U16 | Prim::U32 | Prim::Usize);
+    let native = match (op.native, unsigned) {
+        // Rust's `>>` on an unsigned type shifts zeroes in; JavaScript's `>>`
+        // shifts the sign bit in.
+        (">>", true) => ">>>",
+        ("&" | "|" | "^" | "<<" | ">>", _) => op.native,
+        _ => return None,
+    };
+    // The operation is parenthesised before it is wrapped: `a & b >>> 0` is
+    // `a & (b >>> 0)` in JavaScript, which masks the wrong side.
+    Some(crate::convert::cast::wrap(
+        left_ty,
+        &format!("({} {} {})", left, native, right),
+    ))
 }

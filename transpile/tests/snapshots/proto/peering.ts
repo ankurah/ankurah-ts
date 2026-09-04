@@ -39,6 +39,10 @@ export class Presence extends Struct {
     return new Presence(this.nodeId.clone(), this.durable, this.systemRoot?.clone() ?? null);
   }
 
+  debug(): string {
+    return `Presence { nodeId: ${this.nodeId}, durable: ${String(this.durable)}, systemRoot: ${this.systemRoot} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.nodeId.encode(writer);
     writer.writeBool(this.durable);

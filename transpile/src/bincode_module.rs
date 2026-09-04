@@ -96,21 +96,18 @@ pub fn generate_enum_codec(reg: &TypeRegistry, info: &EnumInfo) -> String {
     out.push_str("  encode(writer: BincodeWriter): void {\n");
     out.push_str("    this.match({\n");
     for (i, variant) in info.variants.iter().enumerate() {
-        if variant.is_serde_other {
-            // serde(other) variants are decode-only catch-alls — encoding throws
-            out.push_str(&format!("      {}: () => {{\n", variant.name));
-            out.push_str(&format!("        throw new Error('Cannot encode {}::{} — it is a decode-only catch-all');\n", info.name, variant.name));
-            out.push_str("      },\n");
-        } else {
-            out.push_str(&format!("      {}: (v) => {{\n", variant.name));
-            out.push_str(&format!("        writer.writeVariant({});\n", i));
-            for field in &variant.fields {
-                if let Some(name) = &field.name {
-                    out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ts_ty(reg))));
-                }
+        // `#[serde(other)]` says what a *decoder* does with a tag it does not
+        // know; it takes nothing away from the variant itself, which keeps its
+        // own index and is written like any other. Refusing to encode it made
+        // `Item::Other` — a value the Rust fixture round-trips — unwritable.
+        out.push_str(&format!("      {}: (v) => {{\n", variant.name));
+        out.push_str(&format!("        writer.writeVariant({});\n", i));
+        for field in &variant.fields {
+            if let Some(name) = &field.name {
+                out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ts_ty(reg))));
             }
-            out.push_str("      },\n");
         }
+        out.push_str("      },\n");
     }
     out.push_str("    });\n");
     out.push_str("  }\n\n");
@@ -121,7 +118,8 @@ pub fn generate_enum_codec(reg: &TypeRegistry, info: &EnumInfo) -> String {
     out.push_str("    const variant = reader.readVariant();\n");
     out.push_str("    switch (variant) {\n");
     for (i, variant) in info.variants.iter().enumerate() {
-        if variant.is_serde_other { continue; } // handled as default case
+        // The catch-all is reached through `default` as well, for every tag
+        // this decoder does not know; its own index still decodes to it.
         out.push_str(&format!("      case {}: {{\n", i));
         for field in &variant.fields {
             if let Some(name) = &field.name {
@@ -218,7 +216,7 @@ fn encode_expr(value: &str, ts_type: &str) -> String {
 
 /// Generate the decode expression for a given TS type
 /// `rd` is the reader variable name
-fn decode_expr_with(ts_type: &str, rd: &str) -> String {
+pub(crate) fn decode_expr_with(ts_type: &str, rd: &str) -> String {
     match ts_type {
         "string" => format!("{}.readString()", rd),
         "boolean" => format!("{}.readBool()", rd),
@@ -309,5 +307,55 @@ fn next_reader_var(current: &str) -> String {
         "reader" => "r".to_string(),
         "r" => "r2".to_string(),
         _ => format!("{}x", current),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Fixture;
+
+    fn enum_codec(src: &str, name: &str) -> String {
+        let f = Fixture::build(&[("lib.rs", src)]);
+        let info = f.files[0]
+            .file
+            .enums
+            .iter()
+            .find(|e| e.name == name)
+            .expect("enum");
+        generate_enum_codec(&f.reg, info)
+    }
+
+    /// `#[serde(other)]` says what a decoder does with a tag it does not know.
+    /// It takes nothing away from the variant, which keeps its own index and is
+    /// written like any other — the Rust fixture round-trips `Item::Other`.
+    #[test]
+    fn a_serde_other_variant_encodes_under_its_own_index() {
+        let ts = enum_codec(
+            "use serde::{Serialize, Deserialize};\n\
+             #[derive(Serialize, Deserialize)] pub enum Item {\n\
+               SysRoot,\n\
+               Collection { name: String },\n\
+               #[serde(other)] Other,\n\
+             }",
+            "Item",
+        );
+        assert!(!ts.contains("decode-only"), "{}", ts);
+        assert!(ts.contains("writer.writeVariant(2);"), "{}", ts);
+    }
+
+    /// It is still the catch-all a decoder falls back to for an unknown tag.
+    #[test]
+    fn a_serde_other_variant_is_still_the_default_case() {
+        let ts = enum_codec(
+            "use serde::{Serialize, Deserialize};\n\
+             #[derive(Serialize, Deserialize)] pub enum Item {\n\
+               SysRoot,\n\
+               #[serde(other)] Other,\n\
+             }",
+            "Item",
+        );
+        assert!(ts.contains("default: return new Item('Other', {});"), "{}", ts);
+        assert!(ts.contains("case 1: {"), "{}", ts);
     }
 }

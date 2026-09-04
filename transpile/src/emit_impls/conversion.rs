@@ -39,7 +39,14 @@ pub fn conversion_call(
         return Err("the impl performing it takes no source type".to_string());
     };
     let trait_name = leaf(&reg.name_of(implemented.id));
-    let source_ts = crate::name_map::map_ty(reg, source);
+    // The impl's trait argument *as written*, which is what named the emitted
+    // method. Resolving it instead expands an alias — `bincode::Error` is
+    // `Box<ErrorKind>` — and the call then named `fromErrorKind` on a class
+    // that declares `fromError`. The written spelling is one rule for both.
+    let source_ts = match def.trait_args_written.first() {
+        Some(written) => written.clone(),
+        None => crate::name_map::map_ty(reg, source),
+    };
     // `From<Infallible>` is a conversion from a type that cannot be
     // constructed, so emission leaves the method out; a call to it would name
     // nothing.
@@ -112,7 +119,14 @@ pub fn conversion_names(reg: &TypeRegistry, target: &Ty, trait_path: &str) -> Ve
                 return None;
             }
             let source = def.trait_ref.as_ref()?.args.first()?;
-            let source_ts = crate::name_map::map_ty(reg, source);
+            // The written spelling, which is what names the emitted method —
+            // the same rule `conversion_call` uses. Reading the resolved type
+            // here and the written one there made this list disagree with the
+            // names it is checking for collisions.
+            let source_ts = match def.trait_args_written.first() {
+                Some(written) => written.clone(),
+                None => crate::name_map::map_ty(reg, source),
+            };
             if source_ts == "never" || source_ts == "Infallible" {
                 return None;
             }

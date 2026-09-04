@@ -47,30 +47,64 @@ pub fn resolve_use_import(use_path: &str) -> Option<(String, Vec<String>)> {
 ///       "{EntityId, EventId}" → ["EntityId", "EventId"]
 ///       "*" → [] (glob import, skip for now)
 fn extract_import_symbols(path: &str) -> Vec<String> {
-    if path == "*" {
+    let path = path.trim();
+    if path == "*" || path.is_empty() {
         return Vec::new();
     }
 
-    if path.starts_with('{') && path.ends_with('}') {
-        let inner = &path[1..path.len()-1];
-        return inner.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
-            .collect();
+    // A group names several things at once, and only its own commas separate
+    // them: `broadcast::{Broadcast, BroadcastId}, Get` inside one group names
+    // `Get` here and two more inside the nested one. Splitting the flattened
+    // text on every comma left the inner group's closing brace stuck to its
+    // last symbol — `import { BroadcastId}, Get } from …` — which does not
+    // parse, and took the rest of the file's diagnostics with it.
+    if let Some(open) = path.find('{') {
+        if path.ends_with('}') {
+            let inner = &path[open + 1..path.len() - 1];
+            return split_top_level(inner)
+                .into_iter()
+                .flat_map(|item| extract_import_symbols(&item))
+                // A group's lowercase entries are its modules, which the port
+                // does not import: `{broadcast::{..}, Get}` imports `Get`.
+                .filter(|s| s.chars().next().is_some_and(|c| c.is_uppercase()))
+                .collect();
+        }
     }
 
     if let Some(last_sep) = path.rfind("::") {
-        let symbol = &path[last_sep + 2..];
+        let symbol = path[last_sep + 2..].trim();
         if symbol == "*" {
             Vec::new()
-        } else if symbol.starts_with('{') {
-            extract_import_symbols(symbol)
         } else {
             vec![symbol.to_string()]
         }
     } else {
         vec![path.to_string()]
     }
+}
+
+/// Split on the commas that belong to this level, leaving a nested group's own
+/// commas inside it.
+fn split_top_level(inner: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for c in inner.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    if !current.trim().is_empty() {
+        items.push(current);
+    }
+    items
 }
 
 /// Extract PascalCase type names from a TS type string

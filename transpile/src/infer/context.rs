@@ -587,6 +587,11 @@ impl<'a> TypeContext<'a> {
         // 64-bit arithmetic rather than the literal's default `i32`.
         let left = self.resolve_expr_expecting(&bin.left, expected)?;
         let Ty::Prim(prim) = left.peel_refs() else {
+            // An operator between ported types is a call, and its impl says
+            // what the call answers.
+            if let Some(output) = self.overloaded_result(bin, &left) {
+                return Ok(output);
+            }
             return Err(self.refuse(
                 syn::spanned::Spanned::span(bin),
                 format!(
@@ -609,6 +614,33 @@ impl<'a> TypeContext<'a> {
                 "the two sides of this operator are different types",
             ))
         }
+    }
+
+    /// What an overloaded operator answers: its impl's `Output`.
+    ///
+    /// Only an impl with no parameters of its own is read. A generic one —
+    /// `impl<T> Add for Wrapper<T>` — writes its `Output` in terms of those
+    /// parameters, and the impl table hands back the impl it matched without
+    /// the substitution that matched it, so there is nothing here to put in
+    /// their place. Asking is not translating: what the right operand could not
+    /// say is reported where the operator is written.
+    fn overloaded_result(&self, bin: &syn::ExprBinary, left: &Ty) -> Option<Ty> {
+        let trait_path = crate::operators::operator_trait(&bin.op)?;
+        let mark = self.sink.mark();
+        let right = self.resolve_expr(&bin.right);
+        self.sink.rewind(mark);
+        // Rust's operator traits default `Rhs` to `Self`, which every operator
+        // impl in the corpus takes.
+        let right = right.unwrap_or_else(|_| left.clone());
+        let found = self
+            .probe()
+            .operator_impl(&trait_path, left.peel_refs(), right.peel_refs())
+            .ok()?;
+        let def = self.registry.impl_def(found.impl_id);
+        if !def.generics.is_empty() {
+            return None;
+        }
+        def.assoc_types.get("Output").cloned()
     }
 
     /// The type of an arithmetic operator where one side is an unsuffixed

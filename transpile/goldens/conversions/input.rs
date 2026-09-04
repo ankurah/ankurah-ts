@@ -47,7 +47,9 @@ pub fn narrow(n: u64) -> u32 {
     n as u32
 }
 
-/// A float truncated towards zero on its way to an integer.
+/// A float truncated towards zero on its way to an integer. Rust's
+/// float-to-integer `as` also SATURATES at the target's bounds and answers 0
+/// for a NaN — it is the one `as` that does not wrap.
 pub fn truncate(f: f64) -> i32 {
     f as i32
 }

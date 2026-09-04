@@ -173,6 +173,22 @@ impl<'a> BodyTranslator<'a> {
         out
     }
 
+    /// `_moved_x = true;` for a subject a *pattern* handed away rather than an
+    /// expression: `other => ..` moves the whole subject into the arm's name,
+    /// and the scan that reads expressions sees nothing to report at the site.
+    pub(crate) fn flag_set_for_subject(&self, subject: &syn::Expr) -> String {
+        let syn::Expr::Path(path) = subject else {
+            return String::new();
+        };
+        let Some(name) = ownership::moves::local_name(path) else {
+            return String::new();
+        };
+        match self.own.flags.borrow().get(&name) {
+            Some(flag) => format!("{} = true;\n", flag),
+            None => String::new(),
+        }
+    }
+
     /// The flag assignments an expression owes, for a position that is not a
     /// statement — a match arm's body, which the arm renders as a block.
     pub fn flag_sets_for(&self, expr: &syn::Expr) -> String {

@@ -77,6 +77,12 @@ pub trait Consumes {
     /// The same for the pattern of an `if let` or a `while let`, which takes
     /// its subject apart exactly as an arm does.
     fn consumes_let_scrutinee(&self, let_expr: &syn::ExprLet) -> bool;
+
+    /// Which operands an overloaded operator takes by value. Rust's operator
+    /// traits are written `fn add(self, rhs: Rhs)`, so `a + b` between two
+    /// ported types releases both — and the syntax of `+` says nothing about
+    /// it, which is why the impl table has to.
+    fn consumes_operands(&self, bin: &syn::ExprBinary) -> (bool, bool);
 }
 
 pub struct Scan<'c> {
@@ -338,6 +344,15 @@ impl<'c> Scan<'c> {
                 let short_circuit =
                     matches!(bin.op, syn::BinOp::And(_) | syn::BinOp::Or(_));
                 let operand = if short_circuit { Where::Unwritable } else { at };
+                // An overloaded operator is a method call whose impl takes its
+                // operands by value, and the call releases them.
+                let (left, right) = self.consumes.consumes_operands(bin);
+                if left {
+                    self.moved(&bin.left, at, out);
+                }
+                if right {
+                    self.moved(&bin.right, operand, out);
+                }
                 self.walk(&bin.left, at, out);
                 self.walk(&bin.right, operand, out);
             }
@@ -359,6 +374,12 @@ impl<'c> Scan<'c> {
                 for arm in &m.arms {
                     if let Some((_, guard)) = &arm.guard {
                         self.walk(guard, Where::Unwritable, out);
+                    }
+                    // `other => ..` takes the whole subject into its own name,
+                    // and only where that arm runs: the block keeps a flag and
+                    // releases the subject on the paths the other arms took.
+                    if crate::ownership::scrutinee::binds_whole_subject(&arm.pat) {
+                        self.moved(&m.expr, nested(at), out);
                     }
                     self.walk(&arm.body, nested(at), out);
                     self.tail(&arm.body, nested(at), out);
@@ -536,7 +557,7 @@ fn nested(at: Where) -> Where {
 }
 
 /// The local a path names, or nothing where the path is not a plain name.
-fn local_name(path: &syn::ExprPath) -> Option<String> {
+pub(crate) fn local_name(path: &syn::ExprPath) -> Option<String> {
     if path.qself.is_some() || path.path.segments.len() != 1 {
         return None;
     }

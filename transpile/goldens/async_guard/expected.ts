@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/async_guard/src/input.rs
-import { Struct, AsyncMutex, mpsc, select, dropOwned } from '@ankurah/base';
+import { Struct, AsyncMutex, select, Receiver, dropOwned } from '@ankurah/base';
 
 export class Gate extends Struct {
   readonly lock: AsyncMutex<number>;
@@ -24,7 +24,7 @@ export async function step(): Promise<number> {
   return 1;
 }
 
-export async function race(left: mpsc.Receiver<number>, right: mpsc.Receiver<number>): Promise<number> {
+export async function race(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
     try {
       let winner = 0;

@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/select_value/src/input.rs
-import { mpsc, select, dropOwned } from '@ankurah/base';
+import { select, Receiver, dropOwned } from '@ankurah/base';
 
-export async function firstOf(left: mpsc.Receiver<number>, right: mpsc.Receiver<number>): Promise<number> {
+export async function firstOf(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
     try {
       const winner = await (async () => {
@@ -31,7 +31,7 @@ export async function firstOf(left: mpsc.Receiver<number>, right: mpsc.Receiver<
   }
 }
 
-export async function doubled(left: mpsc.Receiver<number>, right: mpsc.Receiver<number>): Promise<number> {
+export async function doubled(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
     try {
       return twice(await (async () => {
@@ -64,7 +64,7 @@ export function twice(n: number): number {
   return n * 2;
 }
 
-export async function lastWord(left: mpsc.Receiver<number>, right: mpsc.Receiver<number>): Promise<number> {
+export async function lastWord(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
     try {
       return await (async () => {
@@ -93,7 +93,7 @@ export async function lastWord(left: mpsc.Receiver<number>, right: mpsc.Receiver
   }
 }
 
-export async function answer(left: mpsc.Receiver<number>, right: mpsc.Receiver<number>): Promise<number> {
+export async function answer(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
     try {
       const _v = [

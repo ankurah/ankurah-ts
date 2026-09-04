@@ -181,7 +181,7 @@ const NO_GLUE: [&str; 6] = [
 /// `oneshot` and `mpsc` as namespaces, and both declare a `Receiver`, a
 /// `Sender` and a `TryRecvError`; a bare leaf name picks whichever the
 /// importing file happened to bring in, or nothing at all.
-const RUNTIME_NAMES: [(&str, &str); 21] = [
+const RUNTIME_NAMES: [(&str, &str); 22] = [
     ("tokio::sync::Mutex", "AsyncMutex"),
     ("tokio::sync::MutexGuard", "AsyncMutexGuard"),
     ("tokio::sync::RwLock", "AsyncRwLock"),
@@ -194,15 +194,21 @@ const RUNTIME_NAMES: [(&str, &str); 21] = [
     ("tokio::sync::oneshot::Receiver", "oneshot.Receiver"),
     ("tokio::sync::oneshot::error::RecvError", "oneshot.RecvError"),
     ("tokio::sync::oneshot::error::TryRecvError", "oneshot.TryRecvError"),
-    ("tokio::sync::mpsc::Sender", "mpsc.Sender"),
-    ("tokio::sync::mpsc::Receiver", "mpsc.Receiver"),
-    ("tokio::sync::mpsc::UnboundedSender", "mpsc.UnboundedSender"),
-    ("tokio::sync::mpsc::UnboundedReceiver", "mpsc.UnboundedReceiver"),
+    // The four channel ends the runtime exports flat, by the ruling: only
+    // `oneshot`'s stay behind their namespace, because both channels declare a
+    // `Sender` and a `Receiver` and only one pair can have the bare name.
+    ("tokio::sync::mpsc::Sender", "Sender"),
+    ("tokio::sync::mpsc::Receiver", "Receiver"),
+    ("tokio::sync::mpsc::UnboundedSender", "UnboundedSender"),
+    ("tokio::sync::mpsc::UnboundedReceiver", "UnboundedReceiver"),
     ("tokio::sync::mpsc::error::SendError", "mpsc.SendError"),
     ("tokio::sync::mpsc::error::TrySendError", "mpsc.TrySendError"),
     ("tokio::sync::mpsc::error::TryRecvError", "mpsc.TryRecvError"),
     ("tokio::task::JoinHandle", "JoinHandle"),
     ("tokio::task::JoinError", "JoinError"),
+    // `anyhow::Error` is `AnyhowError` in the runtime: `Error` is JavaScript's
+    // own, and a signature saying `Result<T, Error>` promised that one.
+    ("anyhow::Error", "AnyhowError"),
 ];
 
 /// The resolved policy: the same tables, keyed by identity.

@@ -861,6 +861,39 @@ addressed by the step that found it.
   `core/src/reactor/watcherset.rs`; the alternatives that agree — two variants of
   one enum — are lowered.
 
+- **Integer overflow is not wrapped, and division by zero does not panic.** Rust
+  wraps in release and panics in debug; JavaScript's numbers grow without bound
+  and its integer division by zero is `Infinity` (or `NaN`), where Rust's
+  panics. The `as` casts and the bit operators DO wrap — that is the type's
+  range, which the cast is about — but `a + b` on a `u8` does not, and `a / b`
+  is written without a zero check. Step 7 decided to leave both rather than
+  wrap every arithmetic operator: wrapping would put a mask on the hot path of
+  arithmetic that never overflows in this corpus, and a zero check would put a
+  branch on every division. Whichever way step 9 goes, it goes for both.
+- **`/=` evaluates its place twice.** `a[i()] /= 2` is written
+  `a[i()] = Math.trunc(a[i()] / 2)`, and a place with a side effect performs it
+  twice. Rust evaluates the place once.
+- **A `String` is ordered by UTF-16 code unit, not by byte.** A derived `Ord`
+  compares strings with JavaScript's `<`, which orders by code unit; Rust
+  compares a `String` by byte. The two agree below U+10000 and disagree on the
+  order of an astral character against one in the surrogate range.
+- **Rust's `&` and `|` on booleans evaluate both operands; the port's `&&` and
+  `||` do not.** A right operand that is not a place is reported at the site.
+- **`Clone`, `Any`, `Listener` and `Fn` appear in emitted signatures with no
+  TypeScript spelling.** A trait the declared surface holds has no emitted
+  interface, so a bound written in terms of one names something that does not
+  exist. Step 7 removed the `implements` half of this (a class says `implements
+  X` only for a trait this crate declares); the parameter and return positions
+  remain, and are most of signals' unresolved-name errors.
+- **A function whose body awaits is not always emitted `async`.** 45 sites in
+  core say "'await' expressions are only allowed within async functions"; the
+  `async` belongs on whatever function the emitter wrapped the body in.
+- **`#[derive(Serialize, Deserialize)]` writes the bincode half and not the
+  JSON half.** `encode`/`decode` are emitted; `toJSON`/`static fromJson` are
+  not, and what error type an emitted `fromJson` answers with is a contract
+  question that has not been put. The provided proto ids carry hand-written
+  JSON, which is what `json_serde.test.ts` exercises.
+
 ## 8. Non-goals
 
 General Rust inference; lifetimes and borrow checking; coherence and

@@ -176,6 +176,36 @@ pub fn generate_ts_with_imports_configured(
 
 /// Generate TypeScript skeleton from extracted Rust file
 /// `config` is optional — when provided, skips types/methods listed in provided_impls
+/// Every name `@ankurah/base` exports that emitted code can write.
+///
+/// One table, read by both import passes — a file's own declarations and its
+/// test file's — so that a symbol the emitter starts writing cannot be imported
+/// in one and left undeclared in the other. The match is on whole words:
+/// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
+/// std's `Mutex` into a file that only ever names tokio's.
+///
+/// `tracing` is the one name here the runtime does not export yet. The macro
+/// hook emits `tracing.warn(..)` because the alternative is the comment the
+/// port used to emit, which logged nothing at all; the report that goes with
+/// this pass carries the exact API the runtime owes.
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 40] = [
+    "Result", "Arc", "Weak", "Mutex", "MutexGuard",
+    "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
+    "RefCell", "Ref", "RefMut", "ThreadLocal",
+    // The closure that owns its captures, and the error `?` converts into.
+    "OwnedClosure", "AnyhowError", "anyhow",
+    // The logger every `tracing::` macro writes a call on.
+    "tracing",
+    "AsyncMutex", "AsyncMutexGuard",
+    "AsyncRwLock", "AsyncRwLockReadGuard", "AsyncRwLockWriteGuard",
+    "Notify", "Notified", "TryLockError",
+    "JoinHandle", "JoinError", "Elapsed",
+    "tokio", "oneshot", "mpsc", "select", "spawn", "spawn_local", "yield_now",
+    "sleep", "timeout",
+    // The channel ends, which `mpsc::channel` hands back and a dispatcher names.
+    "Sender", "UnboundedSender", "Receiver", "UnboundedReceiver",
+];
+
 pub fn generate_ts(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str) -> String {
     generate_ts_inner(reg, file, rust_crate_path, None)
 }
@@ -254,18 +284,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     for decl in &file.module_decls {
         all_type_refs.push_str(decl); all_type_refs.push(' ');
     }
-    let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
-        "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-        "RefCell", "Ref", "RefMut", "ThreadLocal",
-        // The closure that owns its captures, and the tokio stand-ins the
-        // emitter now writes by identity rather than by leaf name.
-        "OwnedClosure",
-        "AsyncMutex", "AsyncMutexGuard",
-        "AsyncRwLock", "AsyncRwLockReadGuard", "AsyncRwLockWriteGuard",
-        "Notify", "Notified", "TryLockError",
-        "JoinHandle", "JoinError", "Elapsed",
-        "tokio", "oneshot", "mpsc", "select", "spawn", "spawn_local", "yield_now",
-        "sleep", "timeout"];
+    let base_runtime_types = BASE_RUNTIME_SYMBOLS;
     for ty in &base_runtime_types {
         // Read the emitted text, not the types the file mentions: a body that
         // was generated and then not emitted used to pull in an import nothing
@@ -636,11 +655,7 @@ pub fn generate_test_ts_with_imports(
     }
 
     // Import base types (Arc, Mutex, RefCell, etc.)
-    let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
-        "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-        "RefCell", "Ref", "RefMut", "ThreadLocal", "Struct", "Enum", "Drop",
-        "OwnedClosure", "AsyncMutex", "AsyncRwLock", "Notify", "JoinHandle",
-        "tokio", "oneshot", "mpsc", "select", "spawn", "sleep", "timeout"];
+    let base_runtime_types = BASE_RUNTIME_SYMBOLS;
     let all_bodies: String = file
         .test_functions
         .iter()

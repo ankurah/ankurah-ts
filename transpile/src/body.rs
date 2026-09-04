@@ -205,6 +205,14 @@ impl<'a> BodyTranslator<'a> {
         (*at == span_position(span)).then(|| ty.clone())
     }
 
+    /// The registry this body is translated against, where there is one.
+    ///
+    /// The type context holds it by shared reference for the whole run, so it
+    /// comes out of the borrow rather than staying inside it.
+    pub(crate) fn registry(&self) -> Option<&'a crate::registry::TypeRegistry> {
+        self.types.as_ref().map(|tc| tc.borrow().registry)
+    }
+
     /// Resolve the type of an expression, or say why not.
     pub(crate) fn resolve_expr_type(&self, expr: &syn::Expr) -> Result<crate::ty::Ty, crate::diag::Diag> {
         let expected = self.expectation_for(expr);
@@ -1100,6 +1108,7 @@ impl<'a> BodyTranslator<'a> {
                     self.expr(&call.receiver)
                 });
                 let receiver = self.hoist_receiver(call, receiver);
+                let receiver = parenthesise_literal(&call.receiver, receiver);
                 let rust_method = call.method.to_string();
                 let ts_method = name_map::map_fn_name(&rust_method);
 
@@ -1635,9 +1644,26 @@ impl<'a> BodyTranslator<'a> {
                 written
             }
 
+            // `unsafe { expr }` is its expression; the keyword says only who is
+            // answerable for it. Translating the block as *statements* wrote a
+            // `return` into an expression position — `const item = /* unsafe */
+            // return data[i].assumeInitRef();;` — which does not parse.
             syn::Expr::Unsafe(unsafe_block) => {
-                let body = self.translate_block(&unsafe_block.block).trim().to_string();
-                format!("/* unsafe — consider provided impl */ {}", body)
+                let written = match single_block_expr(&unsafe_block.block) {
+                    Some(value) => self.expr_value(value),
+                    None => {
+                        self.fallback(
+                            syn::spanned::Spanned::span(unsafe_block),
+                            "this `unsafe` block is a run of statements rather than one                              expression, and the port has nowhere to put them where its value                              is wanted; a `.provided.ts` is what such a block needs",
+                        );
+                        format!(
+                            "(() => {{
+{}}})()",
+                            indent(&self.translate_block(&unsafe_block.block))
+                        )
+                    }
+                };
+                format!("/* unsafe — consider provided impl */ {}", written)
             }
 
             syn::Expr::Async(async_block) => {
@@ -1760,6 +1786,18 @@ impl<'a> BodyTranslator<'a> {
             _ => return self.expr(expr),
         }
         let body = control_flow::translate_expr_in_return_position(expr, self);
+        // The wrapper is a function, and `break` and `continue` cannot leave
+        // one: a match used as a value whose arm jumps out of the loop around
+        // it has no form here at all, and TypeScript says so as "jump target
+        // cannot cross function boundary".
+        if crate::match_expr::jumps_out_of_a_loop(expr) {
+            self.fallback(
+                syn::spanned::Spanned::span(expr),
+                "this expression's value is wanted here, and an arm of it leaves the loop \
+                 around it — the value is computed inside a function, which a `break` or a \
+                 `continue` cannot leave, so the jump is written where it does not run",
+            );
+        }
         format!("(() => {{\n{}}})()", indent(&format!("{}\n", body)))
     }
 
@@ -1917,6 +1955,63 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// Does this pattern match whatever it is given?
+    ///
+    /// A name and a `_` take the value and always match; every other pattern
+    /// asks a question of it. Callers use the answer to decide whether a
+    /// position can be written as a binding alone, or needs a test written
+    /// beside it so that the question still gets asked.
+    pub(crate) fn is_irrefutable(pat: &syn::Pat) -> bool {
+        match pat {
+            // `x @ Some(_)` binds *and* asks.
+            syn::Pat::Ident(ident) => ident
+                .subpat
+                .as_ref()
+                .map(|(_, inner)| Self::is_irrefutable(inner))
+                .unwrap_or(true),
+            syn::Pat::Wild(_) => true,
+            syn::Pat::Reference(r) => Self::is_irrefutable(&r.pat),
+            syn::Pat::Paren(p) => Self::is_irrefutable(&p.pat),
+            syn::Pat::Type(t) => Self::is_irrefutable(&t.pat),
+            syn::Pat::Tuple(t) => t.elems.iter().all(Self::is_irrefutable),
+            _ => false,
+        }
+    }
+
+    /// What a variant's payload contributes to the arm: the tests its members
+    /// ask, the names the destructuring takes out of `subject.value`, and the
+    /// bindings that live inside a member which asks a question of its own.
+    ///
+    /// A member that only binds is a name in the destructuring, which is what
+    /// the port has always written. A member that tests — `Expr::Literal(
+    /// Literal::String(s))`, `Op::Eq(0, b)` — needs its test written against the
+    /// place the value sits in, or the arm runs for values it does not match;
+    /// its own names then come out of that place rather than out of the
+    /// destructuring, so they arrive here as statements instead.
+    pub(crate) fn payload_parts<'p>(
+        &self,
+        subject: &str,
+        members: impl Iterator<Item = (String, &'p syn::Pat)>,
+    ) -> (Vec<String>, Vec<String>, String) {
+        let mut tests = Vec::new();
+        let mut names = Vec::new();
+        let mut nested = String::new();
+        for (member, pat) in members {
+            if Self::is_irrefutable(pat) {
+                let local = Self::pat_static(pat);
+                names.push(if local == member { member } else { format!("{}: {}", member, local) });
+                continue;
+            }
+            let place = format!("{}.value.{}", subject, member);
+            let (test, bind) = self.pattern_test(&place, pat);
+            if test != "true" {
+                tests.push(test);
+            }
+            nested.push_str(&bind);
+        }
+        (tests, names, nested)
+    }
+
     /// How TypeScript asks whether a value matches a pattern, and what it writes
     /// to take the pattern's names out of it.
     ///
@@ -1926,22 +2021,82 @@ impl<'a> BodyTranslator<'a> {
         match pat {
             syn::Pat::TupleStruct(ts) => {
                 let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let var = ts.elems.first().map(Self::pat_static).unwrap_or_else(|| "v".to_string());
                 match name.as_str() {
-                    "Some" => (format!("{} != null", subject), format!("const {} = {};\n", var, subject)),
-                    "Ok" => (format!("{}.isOk()", subject), format!("const {} = {}.unwrap();\n", var, subject)),
-                    "Err" => (format!("{}.isErr()", subject), format!("const {} = {}.unwrapErr();\n", var, subject)),
+                    // The port writes an `Option<T>` as `T | null`, so the
+                    // payload of a `Some` *is* the subject — which is why a
+                    // pattern inside it tests against the same place, and
+                    // `Some(true)` is a test and not only a binding.
+                    "Some" => {
+                        let Some(inner) = ts.elems.first() else {
+                            return (format!("{} != null", subject), String::new());
+                        };
+                        // A pattern that only binds takes the whole payload in
+                        // one declaration, so `Some((last, rest))` stays the
+                        // array destructuring a reader of the port expects.
+                        if Self::is_irrefutable(inner) {
+                            return (
+                                format!("{} != null", subject),
+                                format!("const {} = {};\n", Self::pat_static(inner), subject),
+                            );
+                        }
+                        let (inner_test, bind) = self.pattern_test(subject, inner);
+                        (format!("{} != null && ({})", subject, inner_test), bind)
+                    }
+                    // A `Result`'s payload is behind `unwrap`, which the runtime
+                    // counts as a read, so it is written once — into the
+                    // binding. A pattern that would have to be *tested* there
+                    // cannot be, and is reported rather than dropped.
+                    "Ok" | "Err" => {
+                        let inner = ts.elems.first();
+                        if let Some(pat) = inner.filter(|p| !Self::is_irrefutable(p)) {
+                            self.fallback(
+                                syn::spanned::Spanned::span(pat),
+                                format!(
+                                    "`{}` carries a pattern that has to be tested, and the port \
+                                     reads a `Result`'s payload once, into the binding, so what \
+                                     it tests is not tested",
+                                    name
+                                ),
+                            );
+                        }
+                        // A pattern that only binds names the payload; one that
+                        // tests has no name of its own, and writing the pattern
+                        // where a name belongs emitted `const /* pat literal */
+                        // = _v.unwrap();` and `const PropertyError.Missing =
+                        // ..`, neither of which is a declaration.
+                        let var = match inner {
+                            Some(pat) if Self::is_irrefutable(pat) => Self::pat_static(pat),
+                            Some(_) => self.fresh_temp(),
+                            None => "v".to_string(),
+                        };
+                        if name == "Ok" {
+                            (
+                                format!("{}.isOk()", subject),
+                                format!("const {} = {}.unwrap();\n", var, subject),
+                            )
+                        } else {
+                            (
+                                format!("{}.isErr()", subject),
+                                format!("const {} = {}.unwrapErr();\n", var, subject),
+                            )
+                        }
+                    }
                     _ => {
-                        let names: Vec<String> = ts.elems.iter().enumerate()
-                            .map(|(i, p)| {
-                                let local = Self::pat_static(p);
-                                if local == format!("_{}", i) { local } else { format!("_{}: {}", i, local) }
-                            })
-                            .collect();
-                        (
-                            format!("{}.is('{}')", subject, name),
-                            format!("const {{ {} }} = {}.value;\n", names.join(", "), subject),
-                        )
+                        let (payload_tests, names, nested) =
+                            self.payload_parts(subject, ts.elems.iter().enumerate().map(|(i, p)| {
+                                (format!("_{}", i), p)
+                            }));
+                        let mut test = format!("{}.is('{}')", subject, name);
+                        for extra in payload_tests {
+                            test.push_str(&format!(" && ({})", extra));
+                        }
+                        let mut bind = if names.is_empty() {
+                            String::new()
+                        } else {
+                            format!("const {{ {} }} = {}.value;\n", names.join(", "), subject)
+                        };
+                        bind.push_str(&nested);
+                        (test, bind)
                     }
                 }
             }
@@ -1954,18 +2109,27 @@ impl<'a> BodyTranslator<'a> {
             }
             syn::Pat::Struct(st) => {
                 let name = st.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let fields: Vec<String> = st.fields.iter().map(|f| {
-                    let member = match &f.member {
-                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    };
-                    let local = Self::pat_static(&f.pat);
-                    if member == local { member } else { format!("{}: {}", member, local) }
-                }).collect();
-                (
-                    format!("{}.is('{}')", subject, name),
-                    format!("const {{ {} }} = {}.value;\n", fields.join(", "), subject),
-                )
+                let (payload_tests, names, nested) = self.payload_parts(
+                    subject,
+                    st.fields.iter().map(|f| {
+                        let member = match &f.member {
+                            syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                            syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                        };
+                        (member, &*f.pat)
+                    }),
+                );
+                let mut test = format!("{}.is('{}')", subject, name);
+                for extra in payload_tests {
+                    test.push_str(&format!(" && ({})", extra));
+                }
+                let mut bind = if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("const {{ {} }} = {}.value;\n", names.join(", "), subject)
+                };
+                bind.push_str(&nested);
+                (test, bind)
             }
             // `(a, b)` tests each element against its own pattern and binds
             // through all of them; the port writes a Rust tuple as an array.
@@ -2312,8 +2476,21 @@ impl<'a> BodyTranslator<'a> {
             .collect();
         let joined = segments.join(".");
         match joined.as_str() {
+            // `crate::` names this crate's own module tree, which the port
+            // flattens: a module is a file and its names are imported. What
+            // survives is the *type* and whatever is written after it —
+            // `crate::TypeResolver::new` is `TypeResolver.new` — while a path
+            // that names no type is a free function and keeps its own name.
+            // Taking the last segment alone took the type away with the
+            // modules and left a bare `new()`.
             s if s.starts_with("crate.") => {
-                segments.last().cloned().unwrap_or(joined)
+                let at = segments
+                    .iter()
+                    .position(|seg| seg.chars().next().is_some_and(|c| c.is_uppercase()));
+                match at {
+                    Some(at) => segments[at..].join("."),
+                    None => segments.last().cloned().unwrap_or(joined),
+                }
             }
             _ => joined,
         }
@@ -2365,6 +2542,34 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
     fn consumes_let_scrutinee(&self, let_expr: &syn::ExprLet) -> bool {
         self.let_takes(let_expr) == ownership::scrutinee::Takes::Payload
     }
+
+    fn consumes_operands(&self, bin: &syn::ExprBinary) -> (bool, bool) {
+        self.operator_takes(bin)
+    }
+}
+
+/// A numeric literal receiver, in parentheses.
+///
+/// `0xFFu8.wrapping_sub(b)` is written `255.wrappingSub(b)`, and JavaScript
+/// reads the `.` after a digit as a decimal point rather than a member access.
+/// Rust has no such ambiguity, so nothing in the source says the parentheses
+/// are needed; the literal is what says it.
+fn parenthesise_literal(receiver: &syn::Expr, written: String) -> String {
+    let is_number = match receiver {
+        syn::Expr::Lit(lit) => matches!(lit.lit, syn::Lit::Int(_) | syn::Lit::Float(_)),
+        // `(-1).abs()`: the minus is part of the literal as far as this is
+        // concerned, and the whole of it needs the parentheses.
+        syn::Expr::Unary(unary) => matches!(
+            (&unary.op, &*unary.expr),
+            (syn::UnOp::Neg(_), syn::Expr::Lit(lit))
+                if matches!(lit.lit, syn::Lit::Int(_) | syn::Lit::Float(_))
+        ),
+        _ => false,
+    };
+    if is_number && !written.starts_with('(') {
+        return format!("({})", written);
+    }
+    written
 }
 
 /// The names a `let` pattern introduces, in the TypeScript spelling.

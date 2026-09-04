@@ -186,6 +186,26 @@ fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::C
     false
 }
 
+/// The format string of a `#[error("..")]`, which is what thiserror's derive
+/// renders that variant as.
+///
+/// Only the plain string form is read. `#[error(transparent)]` and an `#[error]`
+/// carrying its own arguments are different lowerings, and returning `None` for
+/// them leaves the caller to say so at the variant rather than rendering the
+/// wrong text.
+fn error_attribute(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("error") {
+            continue;
+        }
+        let list = attr.meta.require_list().ok()?;
+        return syn::parse2::<syn::LitStr>(list.tokens.clone())
+            .ok()
+            .map(|lit| lit.value());
+    }
+    None
+}
+
 fn extract_derives(attrs: &[syn::Attribute]) -> Vec<String> {
     let mut derives = Vec::new();
     for attr in attrs {
@@ -229,6 +249,7 @@ fn extract_struct(s: &syn::ItemStruct) -> StructInfo {
         type_params: type_param_names(&s.generics),
         param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&s.attrs),
+        span: s.ident.span(),
     }
 }
 
@@ -246,6 +267,8 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
             name: v.ident.to_string(),
             fields: extract_fields(&v.fields),
             is_serde_other,
+            error_format: error_attribute(&v.attrs),
+            span: v.ident.span(),
         }
     }).collect();
 
@@ -258,6 +281,7 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
         type_params: type_param_names(&e.generics),
         param_defaults: type_param_defaults(&e.generics),
         derives: extract_derives(&e.attrs),
+        span: e.ident.span(),
     }
 }
 
@@ -641,8 +665,13 @@ fn extract_generics(generics: &syn::Generics) -> String {
                 }
             }
             syn::GenericParam::Lifetime(_) => None,
+            // A const generic is a value in Rust and a type in TypeScript:
+            // `IVec<T, 3>` is written against a numeric literal type, so the
+            // parameter is bounded by `number`. Writing `N: number` — Rust's
+            // own spelling — is not a TypeScript parameter at all, and the
+            // stripped use site then read `IVec<T, N:>`.
             syn::GenericParam::Const(c) => {
-                Some(format!("{}: number", c.ident))
+                Some(format!("{} extends number", c.ident))
             }
         }
     }).collect();

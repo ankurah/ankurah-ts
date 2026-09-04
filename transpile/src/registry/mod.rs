@@ -188,6 +188,9 @@ pub struct TypeRegistry {
     /// Every trait declaration, by the id its name resolves to.
     traits: HashMap<TypeId, traits::TraitDef>,
     foreign: RefCell<ForeignTypes>,
+    /// Types whose TypeScript a person wrote: the `[provided_impls]` entries and
+    /// everything declared in a `[hardcode]` file. See `mark_hand_written`.
+    hand_written: std::collections::HashSet<TypeId>,
     /// Aliases part-way through expansion, so a cycle stops rather than recurses.
     expanding: RefCell<Vec<AliasId>>,
     /// What each declared system type becomes in TypeScript, by identity.
@@ -239,6 +242,7 @@ impl TypeRegistry {
             impls: impls::ImplTable::default(),
             traits: HashMap::new(),
             foreign: RefCell::new(ForeignTypes::default()),
+            hand_written: std::collections::HashSet::new(),
             expanding: RefCell::new(Vec::new()),
             shapes: Default::default(),
         }
@@ -367,6 +371,21 @@ impl TypeRegistry {
     }
 
     /// The definition behind an id, or nothing for a type with no declaration.
+    /// Does the port write a TypeScript interface for this trait?
+    ///
+    /// A trait this crate declares is emitted as an interface, so a class that
+    /// implements it can say so in its `implements` clause. A trait the
+    /// declared surface holds — `Add`, `Iterator`, `Clone`, `Future` — has no
+    /// TypeScript at all, and naming one there named something that does not
+    /// exist: `class Weight extends Struct implements Add`.
+    pub fn emits_interface(&self, trait_name: &str) -> bool {
+        self.defs.iter().any(|def| {
+            def.name == trait_name
+                && matches!(def.kind, TypeKind::Trait)
+                && !self.modules().get(def.module).is_system
+        })
+    }
+
     pub fn def(&self, id: TypeId) -> Option<&TypeDef> {
         if id.is_foreign() {
             None
@@ -541,6 +560,25 @@ impl TypeRegistry {
     /// interned but carry no shape, so they are neither listed nor counted.
     pub fn undeclared_reported(&self) -> usize {
         self.foreign.borrow().reported.len()
+    }
+
+    /// Record that this type's TypeScript is written by hand rather than
+    /// emitted — a `[provided_impls]` entry, or a type declared in a
+    /// `[hardcode]` file.
+    ///
+    /// The declaration is still the engine's: the type resolves, its fields
+    /// have types, and its derives register impls, because the Rust source says
+    /// so. What changes is that the *members* are whatever the hand-written file
+    /// wrote, so a hook that would call a method the emitter generates — the
+    /// `debug()` a `#[derive(Debug)]` writes, the `toJSON` a serde derive writes
+    /// — has to say it cannot, instead of calling a method that is not there.
+    pub fn mark_hand_written(&mut self, id: TypeId) {
+        self.hand_written.insert(id);
+    }
+
+    /// Is this type's TypeScript written by hand?
+    pub fn is_hand_written(&self, id: TypeId) -> bool {
+        self.hand_written.contains(&id)
     }
 }
 

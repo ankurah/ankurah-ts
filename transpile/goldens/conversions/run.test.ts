@@ -43,6 +43,17 @@ test('a float truncates towards zero on its way to an integer', () => {
   expect(truncate(-3.9)).toBe(-3);
 });
 
+test('a float outside the range saturates rather than wrapping', () => {
+  // Rust answers i32::MAX here; masking the low bits of the truncated double
+  // answered an arbitrary number.
+  expect(truncate(1e30)).toBe(2147483647);
+  expect(truncate(-1e30)).toBe(-2147483648);
+});
+
+test('a NaN becomes zero, as Rust says', () => {
+  expect(truncate(Number.NaN)).toBe(0);
+});
+
 test('nothing leaked and nothing was reported', async () => {
   await expectNoOwnershipReports();
 });

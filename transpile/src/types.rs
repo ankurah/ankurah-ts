@@ -82,6 +82,9 @@ pub struct StructInfo {
     /// the use site leaves it unwritten, positionally alongside `type_params`.
     pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
+    /// Where the type's name is written, so a derive hook that cannot carry
+    /// something over reports it at the declaration a reader has to open.
+    pub span: proc_macro2::Span,
 }
 
 #[derive(Debug)]
@@ -110,6 +113,8 @@ pub struct EnumInfo {
     pub type_params: Vec<String>,
     pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
+    /// Where the type's name is written. See `StructInfo::span`.
+    pub span: proc_macro2::Span,
 }
 
 #[derive(Debug)]
@@ -118,6 +123,12 @@ pub struct VariantInfo {
     pub fields: Vec<FieldInfo>,
     /// True if the variant has `#[serde(other)]` — catch-all for unknown discriminants
     pub is_serde_other: bool,
+    /// The format string of this variant's `#[error("..")]`, where thiserror's
+    /// derive is what writes the type's `Display`. `None` where the variant
+    /// carries no such attribute, or carries one this reader does not handle.
+    pub error_format: Option<String>,
+    /// Where the variant's name is written.
+    pub span: proc_macro2::Span,
 }
 
 #[derive(Debug)]
@@ -377,6 +388,12 @@ impl FieldInfo {
     /// filed a diagnostic, and emission keeps the syntactic mapping so that
     /// output stays comparable step to step; the fail-loud step removes the
     /// second arm along with every other fallback.
+    /// Where the field's type is written, so a gap found at emission is filed
+    /// at the line a reader has to open.
+    pub fn rust_ty_span(&self) -> proc_macro2::Span {
+        syn::spanned::Spanned::span(&self.rust_ty)
+    }
+
     pub fn ts_ty(&self, reg: &crate::registry::TypeRegistry) -> String {
         match &self.ty {
             Some(ty) => crate::name_map::map_ty(reg, ty),

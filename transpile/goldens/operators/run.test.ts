@@ -6,7 +6,7 @@
 // rather than adding.
 
 import { expect, test } from 'bun:test';
-import { Tag, bigger, different, flipped, halves, negated, same, shifted } from './input.ts';
+import { Tag, bigger, different, flipped, halves, negated, same, shifted, Weight, combined, heavier } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('== compares values, not references', () => {
@@ -44,6 +44,19 @@ test('64-bit arithmetic is bigint arithmetic throughout', () => {
 test('comparison on ordinary numbers is the JavaScript operator', () => {
   expect(bigger(3, 2)).toBe(true);
   expect(bigger(2, 3)).toBe(false);
+});
+
+test('an overloaded operator releases both operands, so the caller does not', () => {
+  // Both used to be released twice: `add` takes them by value and drops them,
+  // and the caller's `finally` dropped them again.
+  const total = combined(new Weight('a', 1n), new Weight('b', 2n));
+  expect(total.grams).toBe(3n);
+  total.drop();
+});
+
+test('what the operator answers is a value the block owns and releases', () => {
+  expect(heavier(new Weight('a', 60n), new Weight('b', 60n))).toBe(true);
+  expect(heavier(new Weight('a', 1n), new Weight('b', 2n))).toBe(false);
 });
 
 test('nothing leaked and nothing was reported', async () => {

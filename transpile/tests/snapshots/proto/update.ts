@@ -46,6 +46,10 @@ export class SubscriptionUpdateItem extends Struct {
     return new SubscriptionUpdateItem(this.entityId.clone(), this.collection.clone(), this.content.clone(), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
   }
 
+  debug(): string {
+    return `SubscriptionUpdateItem { entityId: ${this.entityId}, collection: ${this.collection.debug()}, content: ${this.content.debug()}, predicateRelevance: ${this.predicateRelevance} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.entityId.encode(writer);
     this.collection.encode(writer);
@@ -78,6 +82,10 @@ export class NodeUpdate extends Struct {
 
   toString(): string {
     return `Update ${this.id} from ${this.from}->${this.to}: ${this.body}`;
+  }
+
+  debug(): string {
+    return `NodeUpdate { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -114,6 +122,10 @@ export class NodeUpdateAck extends Struct {
     return `UpdateAck(${this.id})`;
   }
 
+  debug(): string {
+    return `NodeUpdateAck { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.id.encode(writer);
     this.from.encode(writer);
@@ -142,6 +154,12 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
         const items = v.items;
         return `SubscriptionUpdate [${[...items].map((i) => `${i}`).join(', ')}]`;
       },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      SubscriptionUpdate: (v) => `SubscriptionUpdate { items: ${`[${Array.from(v.items).map((e) => e.debug()).join(', ')}]`} }`,
     });
   }
 
@@ -194,6 +212,13 @@ export class UpdateContent extends Enum<UpdateContentV> {
     });
   }
 
+  debug(): string {
+    return this.match({
+      EventOnly: (v) => `EventOnly(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      StateAndEvent: (v) => `StateAndEvent(${v._0.debug()}, ${`[${Array.from(v._1).map((e) => e.debug()).join(', ')}]`})`,
+    });
+  }
+
   encode(writer: BincodeWriter): void {
     this.match({
       EventOnly: (v) => {
@@ -241,6 +266,14 @@ export class MembershipChange extends Enum<MembershipChangeV> {
     return true;
   }
 
+  debug(): string {
+    return this.match({
+      Initial: () => 'Initial',
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
+  }
+
   encode(writer: BincodeWriter): void {
     this.match({
       Initial: (v) => {
@@ -281,11 +314,18 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
 
   toString(): string {
     return this.match({
-      Success: () => `Success`,
+      Success: () => 'Success',
       Error: (v) => {
         const e = v._0;
         return `Error: ${e}`;
       },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Success: () => 'Success',
+      Error: (v) => `Error(${JSON.stringify(v._0)})`,
     });
   }
 

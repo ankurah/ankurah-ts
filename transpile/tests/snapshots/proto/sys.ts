@@ -14,6 +14,14 @@ export class Item extends Enum<ItemV> {
     return new Item(this.type, { ...this.value });
   }
 
+  debug(): string {
+    return this.match({
+      SysRoot: () => 'SysRoot',
+      Collection: (v) => `Collection { name: ${JSON.stringify(v.name)} }`,
+      Other: () => 'Other',
+    });
+  }
+
   encode(writer: BincodeWriter): void {
     this.match({
       SysRoot: (v) => {
@@ -23,8 +31,8 @@ export class Item extends Enum<ItemV> {
         writer.writeVariant(1);
         writer.writeString(v.name);
       },
-      Other: () => {
-        throw new Error('Cannot encode Item::Other — it is a decode-only catch-all');
+      Other: (v) => {
+        writer.writeVariant(2);
       },
     });
   }
@@ -38,6 +46,9 @@ export class Item extends Enum<ItemV> {
       case 1: {
         const name = reader.readString();
         return new Item('Collection', { name });
+      }
+      case 2: {
+        return new Item('Other', {});
       }
       default: return new Item('Other', {});
     }

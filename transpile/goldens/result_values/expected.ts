@@ -14,6 +14,12 @@ export class WireError extends Enum<WireErrorV> {
   equals(other: WireError): boolean {
     return true;
   }
+
+  debug(): string {
+    return this.match({
+      Truncated: () => 'Truncated',
+    });
+  }
 }
 
 export function width(raw: string): Result<number, WireError> {

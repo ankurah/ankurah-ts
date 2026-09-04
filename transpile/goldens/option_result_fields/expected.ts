@@ -25,6 +25,10 @@ export class Slot extends Struct {
     return new Slot(this.name, this.count);
   }
 
+  debug(): string {
+    return `Slot { name: ${(this.name === null ? 'None' : `Some(${JSON.stringify(this.name)})`)}, count: ${(this.count === null ? 'None' : `Some(${String(this.count)})`)} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeOption(this.name, (w, v) => w.writeString(v));
     writer.writeOption(this.count, (w, v) => w.writeU32(v));
@@ -49,6 +53,12 @@ export class SlotError extends Enum<SlotErrorV> {
 
   equals(other: SlotError): boolean {
     return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Missing: () => 'Missing',
+    });
   }
 }
 

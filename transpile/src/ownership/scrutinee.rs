@@ -95,3 +95,19 @@ fn binds_by_value(pat: &syn::Pat) -> bool {
         _ => false,
     }
 }
+
+/// Does this arm's pattern take the whole subject into a name of its own?
+///
+/// `other => ..` binds the subject itself rather than a part of it, so Rust
+/// moves the subject into that binding on the path where that arm runs — and on
+/// no other path, which is what a drop flag is for. A `_` takes nothing and
+/// leaves the subject to be dropped where the match ends.
+pub fn binds_whole_subject(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Ident(ident) => {
+            ident.by_ref.is_none() && ident.subpat.is_none() && ident.ident != "_"
+        }
+        syn::Pat::Paren(p) => binds_whole_subject(&p.pat),
+        _ => false,
+    }
+}

@@ -1,8 +1,13 @@
 //! Macro translation — Rust macros → TS expressions
 
+pub mod format_call;
+pub mod format_emit;
+pub mod format_spec;
+pub mod items;
+pub mod logging;
+
 use crate::body::{indent, BodyTranslator};
 use crate::control_flow;
-use crate::name_map;
 
 /// Translate a macro invocation to TS.
 ///
@@ -15,33 +20,45 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
     let name = mac.path.segments.last()
         .map(|s| s.ident.to_string())
         .unwrap_or_default();
+    let at = syn::spanned::Spanned::span(mac);
+
+    // `tracing::warn!` and a bare `warn!` behind a `use tracing::warn` are one
+    // macro, so the leaf name decides. Nothing else in the corpus answers to
+    // these five names.
+    if let Some(level) = logging::level(&name) {
+        return logging::call(level, &mac.tokens, t, at);
+    }
 
     match name.as_str() {
         "vec" => {
             // A `Vec<u8>` is a `Uint8Array` in the port, so the position the
             // literal stands in decides which of the two is written.
-            let want = t.expectation_at(syn::spanned::Spanned::span(mac));
+            let want = t.expectation_at(at);
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 let translated: Vec<String> =
                     args.iter().map(|e| t.moved_value(e)).collect();
                 t.sequence_literal(translated, want.as_ref())
             } else {
                 t.fallback(
-                    syn::spanned::Spanned::span(mac),
+                    at,
                     "the contents of this `vec!` are not expressions the engine could read, \
                      so they are written through unchanged",
                 );
                 format!("[{}]", mac.tokens)
             }
         }
-        "format" => translate_format_from_tokens(&mac.tokens, t),
-        "println" | "eprintln" => format!("console.log({})", translate_format_from_tokens(&mac.tokens, t)),
-        "dbg" => format!("console.log({})", mac.tokens),
-        "write" | "writeln" => {
-            // write!(f, "...", args) → parse tokens, skip formatter, format the rest
-            translate_write_from_tokens(&mac.tokens, t)
+        "format" => formatted(&mac.tokens, t, at, &name),
+        "println" | "eprintln" | "print" | "eprint" => {
+            format!("console.log({})", formatted(&mac.tokens, t, at, &name))
         }
-        "panic" | "unreachable" => format!("throw new Error({})", translate_format_from_tokens(&mac.tokens, t)),
+        "dbg" => format!("console.log({})", mac.tokens),
+        // `write!(f, "..")` puts its text into the formatter the caller handed
+        // it, and the port's `Display` returns that text, so the formatter is
+        // dropped and the text is the value.
+        "write" | "writeln" => written_text(&name, &mac.tokens, t, at),
+        "panic" | "unreachable" => {
+            format!("throw new Error({})", formatted(&mac.tokens, t, at, &name))
+        }
         // The condition is Rust, so it is translated as Rust. Printing the
         // token stream put the source back out verbatim — `event_ids . contains
         // (& 7)` — which is neither TypeScript nor what the assertion meant.
@@ -52,7 +69,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 // failure says only that the assertion failed, as Rust's does.
                 let message = if args.len() > 1 {
                     let tail = args[1..].iter().map(|e| quote::quote!(#e));
-                    translate_format_from_tokens(&quote::quote!(#(#tail),*), t)
+                    formatted(&quote::quote!(#(#tail),*), t, at, &name)
                 } else {
                     "'assertion failed'".to_string()
                 };
@@ -60,7 +77,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
             }
             _ => {
                 t.fallback(
-                    syn::spanned::Spanned::span(mac),
+                    at,
                     format!(
                         "the condition of this `{}!` is not an expression the engine could read, \
                          so the assertion is emitted as a comment and never runs",
@@ -81,169 +98,118 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
         "select" => translate_select(&mac.tokens, t),
         "todo" => "throw new Error('TODO')".to_string(),
         "unimplemented" => "throw new Error('unimplemented')".to_string(),
-        // A macro nothing here expands is emitted as a comment, so whatever its
-        // arguments hand away goes nowhere. Where one of them is a value the
-        // block owns, that is a leak, and the site says so.
+        "matches" => items::matches_macro(&mac.tokens, t).unwrap_or_else(|| {
+            t.fallback(
+                at,
+                "the pattern of this `matches!` is not one the engine could read, so the test is \
+                 written as `false`",
+            );
+            format!("false /* matches!({}) */", mac.tokens)
+        }),
+        "anyhow" => items::anyhow_macro(&mac.tokens, t, at),
+        // `bail!(..)` is `return Err(anyhow!(..))`. The corpus writes none, so
+        // nothing here exercises it; the hook exists because the alternative to
+        // a wrong lowering is no lowering at all, and this one is anyhow's own.
+        "bail" => format!(
+            "return Result.Err({})",
+            items::anyhow_macro(&mac.tokens, t, at)
+        ),
+        "stringify" => items::stringify_macro(&mac.tokens),
+        "hashmap" => items::hashmap_macro(&mac.tokens, t).unwrap_or_else(|| {
+            t.fallback(
+                at,
+                "the entries of this `hashmap!` are not `key => value` pairs the engine could \
+                 read, so the map is empty",
+            );
+            format!("new Map() /* hashmap!({}) */", mac.tokens)
+        }),
+        "json" => items::json_macro(&mac.tokens, t, at),
+        "cfg" | "include_str" | "include_bytes" | "env" | "option_env" | "concat" => {
+            items::unimplemented_macro(&name, &mac.tokens, t, at)
+        }
+        // A macro with no hook is emitted as a comment, so everything it was
+        // going to do does not happen. That is a gap in the port whether or not
+        // it was handed a value to release, which is why this reports at every
+        // one and not only where something leaks.
         _ => {
+            t.fallback(
+                at,
+                format!(
+                    "`{}!` has no hook, so it is emitted as a comment and what it stood for does \
+                     not run",
+                    name
+                ),
+            );
             t.report_unsupported_macro(mac, &name);
             format!("undefined /* {}!({}) */", name, mac.tokens)
         }
     }
 }
 
-/// Translate format!("...", args) to template literal
-/// Parses the macro tokens properly using syn to handle complex expressions
-pub fn translate_format_macro(tokens: &str, t: &BodyTranslator) -> String {
-    // Try to parse using syn's macro token parsing
-    if let Ok(parsed) = parse_format_args(tokens, t) {
-        return parsed;
-    }
-
-    // Fallback: simple string
-    format!("'{}'", tokens.replace('\'', "\\'"))
-}
-
-/// Parse format!("fmt", arg1, arg2) into a template literal
-fn parse_format_args(tokens: &str, t: &BodyTranslator) -> Result<String, ()> {
-    let tokens = tokens.trim();
-
-    // Extract the format string (first quoted string)
-    if !tokens.starts_with('"') { return Err(()); }
-
-    // Find end of format string, handling escaped quotes
-    let mut i = 1;
-    let bytes = tokens.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            i += 2; // skip escaped char
-            continue;
-        }
-        if bytes[i] == b'"' {
-            break;
-        }
-        i += 1;
-    }
-    if i >= bytes.len() { return Err(()); }
-
-    let fmt_str = &tokens[1..i];
-    let rest = tokens[i + 1..].trim().trim_start_matches(',').trim().trim_end_matches(',').trim();
-
-    if rest.is_empty() && !fmt_str.contains('{') {
-        return Ok(format!("'{}'", fmt_str));
-    }
-
-    // Parse arguments as syn expressions
-    let args: Vec<String> = if rest.is_empty() {
-        Vec::new()
-    } else {
-        parse_comma_separated_exprs(rest, t)
+/// A formatting macro's text, or its format string alone where the arguments
+/// could not be read.
+fn formatted(
+    tokens: &TokenStream,
+    t: &BodyTranslator,
+    at: proc_macro2::Span,
+    name: &str,
+) -> String {
+    let Some(written) = format_call::written(tokens) else {
+        t.fallback(
+            at,
+            format!(
+                "this `{}!` does not begin with a format string the engine could read, so its \
+                 text is the tokens as written",
+                name
+            ),
+        );
+        return format_emit::quoted(&tokens.to_string());
     };
-
-    // Build template literal
-    let mut result = String::from("`");
-    let mut arg_idx = 0;
-
-    let mut chars = fmt_str.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            if let Some(&'}') = chars.peek() {
-                // {} — simple placeholder
-                chars.next();
-                if arg_idx < args.len() {
-                    result.push_str(&format!("${{{}}}", args[arg_idx]));
-                    arg_idx += 1;
-                }
-            } else {
-                // {name} or {:format} — consume until }
-                let mut spec = String::new();
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next == '}' { break; }
-                    spec.push(next);
-                }
-                // Check if it's a named arg like {name} or a format spec like {:?}
-                if spec.starts_with(':') || spec.starts_with('#') {
-                    // Format spec — use the next positional arg
-                    if arg_idx < args.len() {
-                        result.push_str(&format!("${{{}}}", args[arg_idx]));
-                        arg_idx += 1;
-                    }
-                } else if !spec.is_empty() {
-                    // Named arg like {name} — translate as variable
-                    result.push_str(&format!("${{{}}}", name_map::to_camel_case(&spec)));
-                }
-            }
-        } else if c == '\\' {
-            if let Some(&next) = chars.peek() {
-                chars.next();
-                result.push(c);
-                result.push(next);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result.push('`');
-    Ok(result)
+    format_call::format_string(&written, t, at)
+        .unwrap_or_else(|| format_emit::quoted(&written.fmt.value()))
 }
 
-/// Parse comma-separated expressions, respecting nesting
-/// This handles cases like: `self.0.iter().map(|id| id.to_string()).join(",")`
-fn parse_comma_separated_exprs(input: &str, t: &BodyTranslator) -> Vec<String> {
-    // Try to parse as syn expressions using a helper wrapper
-    let wrapped = format!("fn _args_() {{ let _x_ = ({},); }}", input);
-    if let Ok(file) = syn::parse_file(&wrapped) {
-        if let Some(syn::Item::Fn(func)) = file.items.first() {
-            if let Some(syn::Stmt::Local(local)) = func.block.stmts.first() {
-                if let Some(init) = &local.init {
-                    if let syn::Expr::Tuple(tuple) = &*init.expr {
-                        return tuple.elems.iter()
-                            // A format argument is read through, not handed
-                            // over: `Display` takes `&self`, so `{}` on a field
-                            // is a borrow and not a partial move.
-                            .map(|e| t.expr_value(e))
-                            .collect();
-                    }
-                }
-            }
+/// `write!(f, "..", ..)` and `writeln!`: the formatter the first argument names
+/// is what the port's `toString` returns, so it is dropped and the text stands.
+fn written_text(
+    name: &str,
+    tokens: &TokenStream,
+    t: &BodyTranslator,
+    at: proc_macro2::Span,
+) -> String {
+    struct Rest {
+        rest: TokenStream,
+    }
+    impl Parse for Rest {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let _formatter: Expr = input.parse()?;
+            input.parse::<Token![,]>()?;
+            Ok(Rest { rest: input.parse()? })
         }
     }
-
-    // Fallback: split on top-level commas (respecting parens/brackets)
-    split_respecting_nesting(input)
-}
-
-/// Split on commas, respecting parentheses and bracket nesting
-fn split_respecting_nesting(input: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0i32;
-
-    for c in input.chars() {
-        match c {
-            '(' | '[' | '{' | '<' => { depth += 1; current.push(c); }
-            ')' | ']' | '}' | '>' => { depth -= 1; current.push(c); }
-            ',' if depth == 0 => {
-                let trimmed = current.trim().to_string();
-                if !trimmed.is_empty() {
-                    parts.push(trimmed);
-                }
-                current.clear();
-            }
-            _ => current.push(c),
-        }
+    let Ok(Rest { rest }) = syn::parse2::<Rest>(tokens.clone()) else {
+        t.fallback(
+            at,
+            format!(
+                "this `{}!` is not a formatter followed by a format string, so its text is the \
+                 tokens as written",
+                name
+            ),
+        );
+        return format_emit::quoted(&tokens.to_string());
+    };
+    let text = formatted(&rest, t, at, name);
+    if name == "writeln" {
+        // `writeln!` is `write!` with a newline after it.
+        return format!("{} + '\\n'", text);
     }
-    let trimmed = current.trim().to_string();
-    if !trimmed.is_empty() {
-        parts.push(trimmed);
-    }
-    parts
+    text
 }
 
 // ── Token-based macro parsing (avoids string round-trip) ────────────
 
 use syn::parse::{Parse, ParseStream};
-use syn::{Expr, LitStr, Token};
+use syn::{Expr, Token};
 use proc_macro2::TokenStream;
 
 /// Parse comma-separated expressions from a TokenStream
@@ -338,113 +304,6 @@ fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error
     }
     syn::parse2::<ExprList>(tokens.clone()).map(|el| el.0)
 }
-
-/// Parse format!("fmt", args...) directly from TokenStream
-fn translate_format_from_tokens(tokens: &TokenStream, t: &BodyTranslator) -> String {
-    struct FormatArgs { fmt: LitStr, args: Vec<Expr> }
-    impl Parse for FormatArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let fmt: LitStr = input.parse()?;
-            let mut args = Vec::new();
-            while input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                if input.is_empty() { break; } // trailing comma
-                args.push(input.parse()?);
-            }
-            Ok(FormatArgs { fmt, args })
-        }
-    }
-    match syn::parse2::<FormatArgs>(tokens.clone()) {
-        Ok(parsed) => {
-            let translated_args: Vec<String> = parsed.args.iter()
-                .map(|e| t.expr_value(e))
-                .collect();
-            build_template_literal(&parsed.fmt.value(), &translated_args)
-        }
-        Err(_) => {
-            // Fallback to string-based parsing
-            translate_format_macro(&tokens.to_string(), t)
-        }
-    }
-}
-
-/// Parse write!(f, "fmt", args...) directly from TokenStream
-fn translate_write_from_tokens(tokens: &TokenStream, t: &BodyTranslator) -> String {
-    struct WriteArgs { _formatter: Expr, fmt: LitStr, args: Vec<Expr> }
-    impl Parse for WriteArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let formatter: Expr = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let fmt: LitStr = input.parse()?;
-            let mut args = Vec::new();
-            while input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                if input.is_empty() { break; }
-                args.push(input.parse()?);
-            }
-            Ok(WriteArgs { _formatter: formatter, fmt, args })
-        }
-    }
-    match syn::parse2::<WriteArgs>(tokens.clone()) {
-        Ok(parsed) => {
-            let translated_args: Vec<String> = parsed.args.iter()
-                .map(|e| t.expr_value(e))
-                .collect();
-            build_template_literal(&parsed.fmt.value(), &translated_args)
-        }
-        Err(_) => {
-            // Fallback
-            let s = tokens.to_string();
-            let without_f = s.trim_start_matches("f ,").trim_start_matches("f,").trim();
-            translate_format_macro(without_f, t)
-        }
-    }
-}
-
-/// Build a TS template literal from a format string and translated args
-fn build_template_literal(fmt_str: &str, args: &[String]) -> String {
-    let mut result = String::from("`");
-    let mut arg_idx = 0;
-
-    let mut chars = fmt_str.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            if let Some(&'}') = chars.peek() {
-                chars.next();
-                if arg_idx < args.len() {
-                    result.push_str(&format!("${{{}}}", args[arg_idx]));
-                    arg_idx += 1;
-                }
-            } else {
-                let mut spec = String::new();
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next == '}' { break; }
-                    spec.push(next);
-                }
-                if spec.starts_with(':') || spec.starts_with('#') {
-                    if arg_idx < args.len() {
-                        result.push_str(&format!("${{{}}}", args[arg_idx]));
-                        arg_idx += 1;
-                    }
-                } else if !spec.is_empty() {
-                    result.push_str(&format!("${{{}}}", name_map::to_camel_case(&spec)));
-                }
-            }
-        } else if c == '\\' {
-            if let Some(&next) = chars.peek() {
-                chars.next();
-                result.push(c);
-                result.push(next);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result.push('`');
-    result
-}
-
 
 /// One arm of a `select!`: what it waits for, and what it does when that arm wins.
 struct SelectArm {

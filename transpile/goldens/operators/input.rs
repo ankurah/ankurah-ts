@@ -45,3 +45,29 @@ pub fn shifted(bits: u64) -> u64 {
 pub fn bigger(a: u32, b: u32) -> bool {
     a > b
 }
+
+/// An overloaded operator is a method call, and Rust's operator traits take
+/// both operands by value: `a + b` releases both, so the block that held them
+/// must not release them again — and what the call answers is what its impl's
+/// `Output` says, so the local it is bound to is released like any other.
+pub struct Weight {
+    pub label: String,
+    pub grams: u64,
+}
+
+impl std::ops::Add for Weight {
+    type Output = Weight;
+    fn add(self, rhs: Weight) -> Weight {
+        Weight { label: self.label, grams: self.grams + rhs.grams }
+    }
+}
+
+pub fn combined(a: Weight, b: Weight) -> Weight {
+    a + b
+}
+
+/// The result is a value of its own: the block owns it and releases it.
+pub fn heavier(a: Weight, b: Weight) -> bool {
+    let total = a + b;
+    total.grams > 100
+}

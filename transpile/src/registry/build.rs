@@ -498,6 +498,7 @@ fn derived_impls(
                 args: Vec::new(),
                 bindings: Vec::new(),
             }),
+            trait_args_written: Vec::new(),
             assoc_types: HashMap::new(),
             methods: HashMap::new(),
         }));
@@ -522,6 +523,7 @@ fn derived_impls(
                     args: Vec::new(),
                     bindings: Vec::new(),
                 }),
+                trait_args_written: Vec::new(),
                 assoc_types: HashMap::new(),
                 methods: HashMap::new(),
             }));
@@ -572,6 +574,9 @@ fn thiserror_from_impls(
                     args: vec![source],
                     bindings: Vec::new(),
                 }),
+                // The derive writes `impl From<the field's type>`, so the
+                // field's type as written is what names the emitted static.
+                trait_args_written: vec![crate::name_map::map_type(&field.rust_ty)],
                 assoc_types: HashMap::new(),
                 methods: HashMap::new(),
             }));
@@ -773,6 +778,7 @@ fn resolve_impl(
         bounds,
         self_ty,
         trait_ref,
+        trait_args_written: imp.trait_type_args(),
         assoc_types,
         methods,
     })

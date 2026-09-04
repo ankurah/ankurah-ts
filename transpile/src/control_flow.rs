@@ -63,10 +63,27 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
             let ts = t.moved_value(expr);
             // throw/panic is already a terminator — don't prefix with return
             if ts.starts_with("throw ") {
-                format!("{};", ts)
-            } else {
-                format!("return {};", ts)
+                return format!("{};", ts);
             }
+            // A macro whose lowering is a run of statements has already said
+            // what it does: `tokio::select!` declares the arms it is waiting
+            // on, and `return const _v = [` does not parse.
+            if matches!(expr, syn::Expr::Macro(_)) && match_expr::begins_a_statement(&ts) {
+                return ts;
+            }
+            // A tail whose Rust value is `()` hands nothing back, and the port's
+            // spelling of the same call may still produce something:
+            // `Vec::push` answers `()` where `Array.prototype.push` answers the
+            // new length, and returning that from a `void` function is a value
+            // its signature does not admit. Asking is not translating, so the
+            // question this resolution defers is not reported twice.
+            let mark = t.mark();
+            let unit = matches!(t.resolve_expr_type(expr), Ok(crate::ty::Ty::Unit));
+            t.rewind(mark);
+            if unit {
+                return format!("{};", ts);
+            }
+            format!("return {};", ts)
         }
     }
 }

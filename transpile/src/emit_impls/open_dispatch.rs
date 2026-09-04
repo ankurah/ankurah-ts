@@ -164,6 +164,28 @@ fn write(
     } else {
         format!("<{}>", generics.join(", "))
     };
+    // A closure the port had to own is an `OwnedClosure`, not a function, and
+    // an `Arc` holding one answers `typeof 'object'`: the arity test never
+    // matched it. Where one impl is written for an `Arc` of a callable, the
+    // `Arc` alone tells it apart and the test can accept both shapes. Where
+    // several are — an `Arc<dyn Fn(T)>` and an `Arc<dyn Fn()>` — only the arity
+    // separates them, and an `OwnedClosure` does not expose the arity of the
+    // function it holds; that is a runtime addition, and until it lands such a
+    // receiver reaches the fatal at the end rather than the wrong impl.
+    let arity_tests = branches
+        .iter()
+        .filter(|(test, _)| test.contains("self.value.length ==="))
+        .count();
+    if arity_tests == 1 {
+        for (test, _) in branches.iter_mut() {
+            if let Some(at) = test.find(" && typeof self.value === 'function'") {
+                test.truncate(at);
+                test.push_str(
+                    " && (typeof self.value === 'function' || self.value instanceof OwnedClosure)",
+                );
+            }
+        }
+    }
     let name = dispatcher_name(trait_name, &ts_method);
     let mut body = String::new();
     for (test, call) in &branches {

@@ -3,6 +3,8 @@
 //! Handles Option match (Some/None → null checks), Result match (Ok/Err → try/catch),
 //! and enum match (variants → .match({}) pattern).
 
+mod catch_all;
+
 use crate::name_map;
 use crate::body::{translate_pat, indent, BodyTranslator};
 
@@ -20,6 +22,9 @@ pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator
         return translate_result_match(&scrutinee, match_expr, t, Position::Returning);
     }
     if looks_like_enum_match(&match_expr.arms) {
+        if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Returning) {
+            return written;
+        }
         return format!(
             "return {};",
             translate_enum_match(&scrutinee, match_expr, t, Position::Returning)
@@ -138,10 +143,82 @@ pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> Strin
         return translate_result_match(&scrutinee, match_expr, t, Position::Statement);
     }
     if looks_like_enum_match(&match_expr.arms) {
+        if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Statement) {
+            return written;
+        }
         return translate_enum_match(&scrutinee, match_expr, t, Position::Statement);
     }
 
     translate_value_match(&scrutinee, match_expr, t, Position::Statement)
+}
+
+/// A match whose arm leaves the loop around it, written as the if-chain that
+/// keeps the arm inside the loop.
+///
+/// The runtime's `match` runs each arm as a function, and `break` and
+/// `continue` cannot leave one: `Object: (v) => continue` does not even parse.
+/// The if-chain writes each arm as a block of the enclosing function, where
+/// both keywords mean what Rust meant by them.
+///
+/// A match that hands its payload to the arms has no such form — the if-chain
+/// reads the payload without marking the enum moved, and the enum's owner would
+/// release what the arm took — so that is reported rather than rewritten.
+fn leaves_the_loop(
+    scrutinee: &str,
+    match_expr: &syn::ExprMatch,
+    t: &BodyTranslator,
+    position: Position,
+) -> Option<String> {
+    if !match_expr.arms.iter().any(|arm| jumps_out(&arm.body)) {
+        return None;
+    }
+    if t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload {
+        t.report_match_gap(
+            match_expr,
+            "an arm of this `match` leaves the loop around it, and the match hands its payload              to the arms — which needs `intoMatch`, whose arms are functions a `break` cannot              leave; the jump is written where it does not parse",
+        );
+        return None;
+    }
+    Some(translate_value_match(scrutinee, match_expr, t, position))
+}
+
+/// Does this expression, or an arm of it, leave a loop that stands outside it?
+pub(crate) fn jumps_out_of_a_loop(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Match(m) => m.arms.iter().any(|arm| jumps_out(&arm.body)),
+        other => jumps_out(other),
+    }
+}
+
+/// Does this expression leave a loop that stands outside it?
+///
+/// A `break` or a `continue` written inside a loop of its own belongs to that
+/// loop and goes nowhere the arm cannot follow.
+fn jumps_out(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Break(_) | syn::Expr::Continue(_) => true,
+        syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => false,
+        syn::Expr::Closure(_) => false,
+        syn::Expr::Block(block) => block.block.stmts.iter().any(stmt_jumps_out),
+        syn::Expr::If(if_expr) => {
+            if_expr.then_branch.stmts.iter().any(stmt_jumps_out)
+                || if_expr.else_branch.as_ref().is_some_and(|(_, e)| jumps_out(e))
+        }
+        syn::Expr::Match(inner) => inner.arms.iter().any(|arm| jumps_out(&arm.body)),
+        syn::Expr::Unsafe(block) => block.block.stmts.iter().any(stmt_jumps_out),
+        _ => false,
+    }
+}
+
+fn stmt_jumps_out(stmt: &syn::Stmt) -> bool {
+    match stmt {
+        syn::Stmt::Expr(expr, _) => jumps_out(expr),
+        syn::Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(|init| jumps_out(&init.expr)),
+        _ => false,
+    }
 }
 
 /// A match with a guard, written the one way a guard can be written.
@@ -217,7 +294,18 @@ fn translate_value_match(
         return format!("{}{}", declaration, tested_in_turn(&arms, t));
     }
     let mut out = declaration;
+    let mut everything_matched = false;
     for (i, arm) in arms.iter().enumerate() {
+        // An arm that matches everything is the end of the chain: Rust never
+        // reaches what is written after it, and an `else` written after a block
+        // that is not an `if` does not parse at all.
+        if everything_matched {
+            t.report_match_gap(
+                match_expr,
+                "an arm above this one matches everything, and Rust tries arms in order, so                  this one never runs and is not written",
+            );
+            break;
+        }
         let block = indent(&format!("{}{}{}", arm.flags, arm.bind, arm.body));
         // Rust's match is exhaustive, so the last arm runs whenever nothing
         // above it matched and its own test is redundant. Writing it as one
@@ -235,6 +323,7 @@ fn translate_value_match(
             (_, false) => format!(" else if ({}) ", arm.test),
         };
         out.push_str(&format!("{}{{\n{}}}", head, block));
+        everything_matched = arm.test == "true";
     }
     out
 }
@@ -595,7 +684,59 @@ fn translate_enum_match(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
+    // An arm naming no variant has no key in the runtime's match. It is written
+    // as the test the arms above it amount to, with the catch-all as the else.
+    if let Some(split) = catch_all::split(match_expr) {
+        let after = catch_all::unreachable_after(match_expr);
+        if after > 0 {
+            t.report_match_gap(
+                match_expr,
+                format!(
+                    "{} arm(s) stand after the one that matches anything, and Rust tries arms in \
+                     order, so they never run",
+                    after
+                ),
+            );
+        }
+        return catch_all::lower(scrutinee, match_expr, &split, t, position);
+    }
+    enum_match_over(scrutinee, match_expr, &arms_of(match_expr), t, position)
+}
+
+/// Every arm, as the slice the writer below takes.
+fn arms_of(match_expr: &syn::ExprMatch) -> Vec<&syn::Arm> {
+    match_expr.arms.iter().collect()
+}
+
+/// The variant names a pattern stands for: one, or several where it is written
+/// with `|`, and none where it names no variant at all.
+fn variants_of(pat: &syn::Pat) -> Vec<String> {
+    match pat {
+        syn::Pat::Or(or) => or.cases.iter().flat_map(variants_of).collect(),
+        other => payload_of(other).map(|(v, _)| v).into_iter().collect(),
+    }
+}
+
+/// The runtime's own match written over exactly these arms.
+fn enum_match_over(
+    scrutinee: &str,
+    match_expr: &syn::ExprMatch,
+    written_arms: &[&syn::Arm],
+    t: &BodyTranslator,
+    position: Position,
+) -> String {
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    // Does the match hand a value back at all? A `match` whose Rust value is
+    // `()` is run for what its arms do, and an arm that returned what the
+    // port's own spelling produced gave it one anyway. Asking is not
+    // translating, so what this resolution cannot say is not reported here.
+    let produces = {
+        let mark = t.mark();
+        let whole = syn::Expr::Match(match_expr.clone());
+        let answer = !matches!(t.resolve_expr_type(&whole), Ok(crate::ty::Ty::Unit));
+        t.rewind(mark);
+        answer
+    };
     let takes = t.match_takes(match_expr);
     let method = match takes {
         crate::ownership::scrutinee::Takes::Payload => "intoMatch",
@@ -608,7 +749,7 @@ fn translate_enum_match(
     // JavaScript keeps the last of those, so the arm the source wrote first
     // never ran.
     let mut written: Vec<String> = Vec::new();
-    for arm in &match_expr.arms {
+    for arm in written_arms.iter().copied() {
         // An `|` pattern writes one body for several variants; each gets its own
         // arm with the same body, bound through its own payload.
         let cases: Vec<&syn::Pat> = match &arm.pat {
@@ -617,6 +758,15 @@ fn translate_enum_match(
         };
         for case in cases {
             let Some((variant, fields)) = payload_of(case) else {
+                // A catch-all is lowered before this point, so a pattern with
+                // no variant here is one the runtime's match has no key for at
+                // all — a literal, a slice, a tuple against an enum — and the
+                // arm would otherwise vanish without a word.
+                t.report_match_gap(
+                    match_expr,
+                    "an arm of this match names no variant, and the runtime's match dispatches \
+                     on the variant name, so the arm is not written and its body never runs",
+                );
                 continue;
             };
             if written.contains(&variant) {
@@ -676,7 +826,7 @@ fn translate_enum_match(
             // written had the arm been a statement of it.
             let flags = t.flag_sets_for(&arm.body);
             out.push_str(&render_arm(
-                &variant, &fields, &body, &flags, &owned, &lifted, t,
+                &variant, &fields, &body, &flags, &owned, &lifted, t, produces,
             ));
         }
     }
@@ -733,6 +883,7 @@ fn render_arm(
     owned: &[crate::ownership::Owned],
     lifted: &[crate::ownership::Hoist],
     t: &BodyTranslator,
+    produces: bool,
 ) -> String {
     // The arm's parameter must not collide with a name the pattern binds.
     let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
@@ -749,14 +900,14 @@ fn render_arm(
         bindings.push_str(&format!("const {} = {}.{};\n", local, param, accessor));
     }
     if owned.is_empty() && lifted.is_empty() {
-        return format!("{}{},\n", head, as_arm_value(body, &bindings));
+        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces));
     }
     // An arm that owns what it was handed, or that lifted a declaration out of
     // its own body, is always a block: the release goes in a `finally`, so the
     // arm cannot be the bare expression form.
     let inner = t.wrap_bindings(
         owned,
-        crate::ownership::hoisted(&arm_statements(body), lifted),
+        crate::ownership::hoisted(&arm_statements(body, produces), lifted),
     );
     format!(
         "{}{{\n{}  }},\n",
@@ -767,9 +918,19 @@ fn render_arm(
 
 /// An arm body as statements: its own control flow where it has some, and
 /// otherwise the `return` that makes its value the arm's.
-fn arm_statements(body: &str) -> String {
+fn arm_statements(body: &str, produces: bool) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
     if is_statements(body) {
         return format!("{}\n", body);
+    }
+    // An arm of a match whose Rust value is `()` produces nothing. Handing back
+    // what the port's own spelling produced — `Array.prototype.push` answers a
+    // number where `Vec::push` answers nothing — gave the match a value its
+    // position could not take.
+    if !produces {
+        return format!("{};\n", body);
     }
     format!("return {};\n", body)
 }
@@ -783,13 +944,49 @@ pub(crate) fn is_statements(body: &str) -> bool {
         || body.starts_with("throw ")
         || body.starts_with('{')
         || body.contains(";\n")
+        // A tail whose Rust value is `()` is written as the statement it is,
+        // and a value expression never ends in a semicolon, so the semicolon
+        // is what tells them apart: without this the arm put a `return` back
+        // in front of it and handed back what the port's own spelling produced.
+        || body.trim_end().ends_with(';')
+}
+
+/// Does this text *open* with a statement, rather than merely contain one?
+///
+/// `is_statements` answers the looser question — an expression written over
+/// several lines contains a `;` too — and the difference matters where the
+/// caller is deciding whether to write `return` in front of the text: `return
+/// const _v = [` does not parse, and `return await (async () => { … })()` is
+/// exactly what a value-producing macro wants.
+pub(crate) fn begins_a_statement(body: &str) -> bool {
+    let body = body.trim_start();
+    ["const ", "let ", "var ", "if ", "for ", "while ", "do ", "return ", "throw ", "{"]
+        .iter()
+        .any(|opener| body.starts_with(opener))
 }
 
 /// An arm's value: its declarations, then the body. A body that is already a
 /// sequence of statements keeps its own control flow; anything else is the
 /// value the arm produces.
-fn as_arm_value(body: &str, bindings: &str) -> String {
+fn as_arm_value(body: &str, bindings: &str, produces: bool) -> String {
+    // An arm whose body is nothing — `Self::Large(_) => { /* Vec drops itself */ }`
+    // — still has to be a function. `Large: (v) => ,` is not one.
+    if body.trim().is_empty() {
+        if bindings.trim().is_empty() {
+            return "{}".to_string();
+        }
+        return format!("{{\n{}  }}", indent(&indent(bindings)));
+    }
     let statements = is_statements(body);
+    // An arm that produces nothing is always written as statements: the bare
+    // expression form would make the arrow hand back whatever the expression
+    // produced, and the match's own value is `()`.
+    if !produces {
+        return format!(
+            "{{\n{}  }}",
+            indent(&indent(&format!("{}{}\n", bindings, arm_statements(body, false).trim_end())))
+        );
+    }
     // A tuple literal confuses TypeScript's inference across arms: `match`
     // takes its result type from the first arm it reads, and `[null, events]`
     // makes every later arm an error against it.

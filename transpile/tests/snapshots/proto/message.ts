@@ -28,6 +28,13 @@ export class Message extends Enum<MessageV> {
     });
   }
 
+  debug(): string {
+    return this.match({
+      Presence: (v) => `Presence(${v._0.debug()})`,
+      PeerMessage: (v) => `PeerMessage(${v._0.debug()})`,
+    });
+  }
+
   encode(writer: BincodeWriter): void {
     this.match({
       Presence: (v) => {
@@ -90,6 +97,16 @@ export class NodeMessage extends Enum<NodeMessageV> {
         const queryId = v.queryId;
         return `Unsubscribe: ${from} ${queryId}`;
       },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Request: (v) => `Request { auth: ${`[${Array.from(v.auth).map((e) => e.debug()).join(', ')}]`}, request: ${v.request.debug()} }`,
+      Response: (v) => `Response(${v._0.debug()})`,
+      Update: (v) => `Update(${v._0.debug()})`,
+      UpdateAck: (v) => `UpdateAck(${v._0.debug()})`,
+      UnsubscribeQuery: (v) => `UnsubscribeQuery { from: ${v.from}, queryId: ${v.queryId} }`,
     });
   }
 

@@ -44,6 +44,10 @@ export class Event extends Struct {
     return new Event(this.collection.clone(), this.entityId.clone(), this.operations.clone(), this.parent.clone());
   }
 
+  debug(): string {
+    return `Event { collection: ${this.collection.debug()}, entityId: ${this.entityId}, operations: ${this.operations.debug()}, parent: ${this.parent} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.collection.encode(writer);
     this.entityId.encode(writer);
@@ -95,6 +99,10 @@ export class EventFragment extends Struct {
     return new EventFragment(this.operations.clone(), this.parent.clone(), this.attestations.clone());
   }
 
+  debug(): string {
+    return `EventFragment { operations: ${this.operations.debug()}, parent: ${this.parent}, attestations: ${this.attestations.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.operations.encode(writer);
     this.parent.encode(writer);
@@ -141,6 +149,10 @@ export class StateFragment extends Struct {
     return new StateFragment(this.state.clone(), this.attestations.clone());
   }
 
+  debug(): string {
+    return `StateFragment { state: ${this.state.debug()}, attestations: ${this.attestations.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.state.encode(writer);
     this.attestations.encode(writer);
@@ -176,6 +188,10 @@ export class OperationSet extends Struct {
 
   clone(): OperationSet {
     return new OperationSet(new Map(Array.from(this._0.entries()).map(([k, v]) => [k, v])));
+  }
+
+  debug(): string {
+    return `OperationSet(${this._0})`;
   }
 
   get size(): number {
@@ -221,6 +237,10 @@ export class Operation extends Struct {
     return new Operation(new Uint8Array(this.diff));
   }
 
+  debug(): string {
+    return `Operation { diff: ${`[${Array.from(this.diff).map((e) => String(e)).join(', ')}]`} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeByteVec(this.diff);
   }
@@ -256,6 +276,10 @@ export class EntityState extends Struct {
 
   clone(): EntityState {
     return new EntityState(this.entityId.clone(), this.collection.clone(), this.state.clone());
+  }
+
+  debug(): string {
+    return `EntityState { entityId: ${this.entityId}, collection: ${this.collection.debug()}, state: ${this.state.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -300,6 +324,10 @@ export class State extends Struct {
     return new State(StateBuffers.default(), Clock.default());
   }
 
+  debug(): string {
+    return `State { stateBuffers: ${this.stateBuffers.debug()}, head: ${this.head} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.stateBuffers.encode(writer);
     this.head.encode(writer);
@@ -335,6 +363,10 @@ export class StateBuffers extends Struct {
 
   static default(): StateBuffers {
     return new StateBuffers(new Map());
+  }
+
+  debug(): string {
+    return `StateBuffers(${this._0})`;
   }
 
   get size(): number {

@@ -29,6 +29,10 @@ export class Envelope extends Struct {
     return new Envelope(this.id, this.label, new Uint8Array(this.payload));
   }
 
+  debug(): string {
+    return `Envelope { id: ${String(this.id)}, label: ${JSON.stringify(this.label)}, payload: ${`[${Array.from(this.payload).map((e) => String(e)).join(', ')}]`} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeU64(this.id);
     writer.writeString(this.label);
@@ -58,6 +62,10 @@ export class Signature extends Struct {
 
   clone(): Signature {
     return new Signature(new Uint8Array(this._0));
+  }
+
+  debug(): string {
+    return `Signature(${`[${Array.from(this._0).map((e) => String(e)).join(', ')}]`})`;
   }
 
   encode(writer: BincodeWriter): void {

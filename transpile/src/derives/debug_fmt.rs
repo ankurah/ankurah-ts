@@ -1,0 +1,213 @@
+//! `#[derive(Debug)]`, and what `{:?}` renders.
+//!
+//! For: a Rust program prints its data with `{:?}` in panics, assertions, error
+//! messages and log lines, and the port has to print the same thing. rustc's
+//! derive writes one shape — `Name { field: .. }`, `Variant(payload)`, the bare
+//! name for a unit — and this writes that shape in TypeScript.
+//!
+//! `Debug` is a trait, so which rendering a value gets is decided by its type
+//! and not by what it looks like at runtime. That is why every choice here is
+//! made from the `Ty` the engine resolved: a Rust `String` prints quoted, a Rust
+//! enum prints its variant name, and both are a JavaScript string. A value the
+//! engine could not type has no Debug the port can name, and the caller says so
+//! rather than picking one.
+
+use crate::registry::{TypeKind, TypeRegistry};
+use crate::ty::{Prim, Ty, TypeId};
+
+/// The TypeScript expression that renders `expr` the way `{:?}` renders the
+/// value it holds, or the reason the port cannot say.
+pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<String, String> {
+    let Some(ty) = ty else {
+        return Err("the engine could not type it".to_string());
+    };
+    match ty.peel_refs() {
+        // Rust quotes and escapes a string under Debug, which is what JSON's
+        // own string form does.
+        Ty::Str => Ok(format!("JSON.stringify({})", expr)),
+        Ty::Prim(Prim::Char) => Err(
+            "a `char` prints between single quotes under Debug and the port has no rendering \
+             that does that"
+                .to_string(),
+        ),
+        Ty::Prim(_) => Ok(format!("String({})", expr)),
+        Ty::Slice(elem) => sequence(reg, elem, expr),
+        Ty::Array { elem, .. } => sequence(reg, elem, expr),
+        Ty::Named { id, args } => named(reg, *id, args, expr),
+        other => Err(format!("`{}` has no Debug rendering in the port", describe(other))),
+    }
+}
+
+/// A named type: the std containers Rust prints structurally, then the crate's
+/// own types, which print through the `debug()` the derive writes for them.
+fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<String, String> {
+    let path = reg.name_of(id);
+    let leaf = path.rsplit("::").next().unwrap_or(&path);
+    match leaf {
+        "String" => return Ok(format!("JSON.stringify({})", expr)),
+        // `Box<T>` is invisible on the wire and invisible under Debug: Rust
+        // prints what is inside it.
+        "Box" | "Rc" | "Arc" => {
+            if let Some(inner) = args.first() {
+                return debug_expr(reg, Some(inner), expr);
+            }
+        }
+        "Option" => {
+            let Some(inner) = args.first() else {
+                return Err("an `Option` with no element type".to_string());
+            };
+            let some = debug_expr(reg, Some(inner), expr)?;
+            return Ok(format!(
+                "({} === null ? 'None' : `Some(${{{}}})`)",
+                expr, some
+            ));
+        }
+        "Vec" | "VecDeque" => {
+            let Some(inner) = args.first() else {
+                return Err("a `Vec` with no element type".to_string());
+            };
+            return sequence(reg, inner, expr);
+        }
+        _ => {}
+    }
+
+    // The crate's own types print through the method the derive emits for them.
+    let Some(def) = reg.def(id) else {
+        return Err(format!("`{}` is not declared", path));
+    };
+    if !matches!(def.kind, TypeKind::Struct | TypeKind::Enum { .. }) {
+        return Err(format!("`{}` is not a struct or an enum", path));
+    }
+    if reg.is_system(id) {
+        return Err(format!("`{}` is a std type with no Debug rendering in the port", path));
+    }
+    if reg.is_hand_written(id) {
+        return Err(format!(
+            "`{}`'s TypeScript is written by hand, so it has no emitted `debug()` to call",
+            path
+        ));
+    }
+    if !has_debug(reg, id) {
+        return Err(format!("`{}` has no Debug the engine can find", path));
+    }
+    Ok(format!("{}.debug()", expr))
+}
+
+/// `[a, b, c]` — Rust's Debug for every sequence.
+///
+/// A `Vec<u8>` is a `Uint8Array` in the port, whose own `map` builds another
+/// `Uint8Array` and would turn the rendered strings back into numbers, so the
+/// elements are taken out into a plain array first.
+fn sequence(reg: &TypeRegistry, elem: &Ty, expr: &str) -> Result<String, String> {
+    let each = debug_expr(reg, Some(elem), "e")?;
+    Ok(format!(
+        "`[${{Array.from({}).map((e) => {}).join(', ')}}]`",
+        expr, each
+    ))
+}
+
+/// Does the impl table hold a `Debug` for this type?
+pub fn has_debug(reg: &TypeRegistry, id: TypeId) -> bool {
+    let Some(debug) = reg.system_type("std::fmt::Debug") else {
+        return false;
+    };
+    let probe = crate::registry::method::Probe::new(reg, reg.crate_root());
+    let def = match reg.def(id) {
+        Some(def) => def,
+        None => return false,
+    };
+    let ty = Ty::Named {
+        id,
+        args: def.type_params.iter().map(|p| Ty::Param(p.clone())).collect(),
+    };
+    probe.implements(&ty, debug)
+}
+
+fn describe(ty: &Ty) -> String {
+    match ty {
+        Ty::Tuple(_) => "a tuple".to_string(),
+        Ty::Unit => "()".to_string(),
+        Ty::Param(name) => format!("the type parameter `{}`", name),
+        Ty::Dyn { .. } => "a trait object".to_string(),
+        Ty::Assoc { name, .. } => format!("the projection `{}`", name),
+        _ => "this type".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Fixture;
+
+    fn built(src: &str) -> Fixture {
+        Fixture::build(&[("lib.rs", src)])
+    }
+
+    #[test]
+    fn a_string_prints_quoted() {
+        let f = built("pub struct S { pub name: String }");
+        let ty = f.field("lib.rs", "S", "name");
+        assert_eq!(
+            debug_expr(&f.reg, Some(&ty), "this.name").unwrap(),
+            "JSON.stringify(this.name)"
+        );
+    }
+
+    #[test]
+    fn an_integer_prints_as_itself() {
+        let f = built("pub struct S { pub n: u32 }");
+        let ty = f.field("lib.rs", "S", "n");
+        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.n").unwrap(), "String(this.n)");
+    }
+
+    #[test]
+    fn a_crate_type_prints_through_its_own_debug() {
+        let f = built(
+            "#[derive(Debug)] pub struct Inner { pub n: u32 }\n\
+             pub struct S { pub inner: Inner }",
+        );
+        let ty = f.field("lib.rs", "S", "inner");
+        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.inner").unwrap(), "this.inner.debug()");
+    }
+
+    #[test]
+    fn a_crate_type_without_the_derive_is_refused() {
+        let f = built("pub struct Inner { pub n: u32 }\npub struct S { pub inner: Inner }");
+        let ty = f.field("lib.rs", "S", "inner");
+        let err = debug_expr(&f.reg, Some(&ty), "this.inner").unwrap_err();
+        assert!(err.contains("no Debug"), "{}", err);
+    }
+
+    #[test]
+    fn an_option_prints_none_or_some() {
+        let f = built("pub struct S { pub n: Option<u32> }");
+        let ty = f.field("lib.rs", "S", "n");
+        assert_eq!(
+            debug_expr(&f.reg, Some(&ty), "this.n").unwrap(),
+            "(this.n === null ? 'None' : `Some(${String(this.n)})`)"
+        );
+    }
+
+    #[test]
+    fn a_vec_prints_its_elements() {
+        let f = built("pub struct S { pub xs: Vec<u32> }");
+        let ty = f.field("lib.rs", "S", "xs");
+        assert_eq!(
+            debug_expr(&f.reg, Some(&ty), "this.xs").unwrap(),
+            "`[${Array.from(this.xs).map((e) => String(e)).join(', ')}]`"
+        );
+    }
+
+    #[test]
+    fn a_box_prints_what_is_inside_it() {
+        let f = built("pub struct S { pub n: Box<u32> }");
+        let ty = f.field("lib.rs", "S", "n");
+        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.n").unwrap(), "String(this.n)");
+    }
+
+    #[test]
+    fn an_untyped_value_is_refused_rather_than_guessed() {
+        let f = built("pub struct S { pub n: u32 }");
+        assert!(debug_expr(&f.reg, None, "x").is_err());
+    }
+}

@@ -26,7 +26,10 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
                 map_ty(reg, &args[0]),
                 map_ty(reg, &args[1])
             ),
-            1 => format!("Result<{}, Error>", map_ty(reg, &args[0])),
+            // A `Result` written with one argument is `anyhow::Result<T>`,
+            // whose alias defaults the error to `anyhow::Error`. `Error` is
+            // JavaScript's own error and promised the wrong type.
+            1 => format!("Result<{}, AnyhowError>", map_ty(reg, &args[0])),
             _ => named(reg, ty),
         },
         JsShape::Tuple(elems) => {
@@ -89,6 +92,15 @@ fn named(reg: &TypeRegistry, ty: &Ty) -> String {
         Ty::Param(name) => name.clone(),
         // A projection is written by its last segment, as any path is.
         Ty::Assoc { name, .. } => map_type_name(name).to_string(),
+        // The primitives `js_shape` has no shape for. Each one still has a
+        // spelling a reader can use, and writing the debug form put `Prim(Char)`
+        // in a type position, which is not a TypeScript type at all.
+        Ty::Prim(crate::ty::Prim::Char) => "string".to_string(),
+        Ty::Prim(crate::ty::Prim::Isize) => "number".to_string(),
+        Ty::Prim(crate::ty::Prim::U128) | Ty::Prim(crate::ty::Prim::I128) => "bigint".to_string(),
+        Ty::Str => "string".to_string(),
+        Ty::Unit => "void".to_string(),
+        Ty::Never => "never".to_string(),
         other => format!("{:?}", other),
     }
 }

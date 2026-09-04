@@ -50,7 +50,7 @@ const OWNERSHIP_REPORTS: [&str; 3] = ["BUG:", "OwnershipFatal", "the drop cascad
 /// one would prove nothing the text does not already say: the encode and decode
 /// pair means something only against bytes Rust produced, and those bytes are
 /// what the wire-protocol fixtures compare, not this runner.
-const TEXT_ONLY: [(&str, &str); 4] = [
+const TEXT_ONLY: [(&str, &str); 5] = [
     (
         "struct_bincode",
         "a named-field struct and a byte newtype, with the encode/decode pair the derive writes",
@@ -63,6 +63,12 @@ const TEXT_ONLY: [(&str, &str); 4] = [
         "option_result_fields",
         "`Option<T>` fields and a method returning `Result<T, E>`; the README records its emitted \
          error construction as unvetted, so a driver would pin output nobody has read yet",
+    ),
+    (
+        "tracing",
+        "the calls the five tracing macros are written as. `@ankurah/base` exports no `tracing` \
+         yet — the report for this pass carries the API it owes — so nothing can execute the \
+         emitted module, and the text is what there is to pin",
     ),
     (
         "question_mark",
@@ -84,7 +90,15 @@ const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-const TYPECHECK_DEBT: [(&str, &[&str], &str); 1] = [
+const TYPECHECK_DEBT: [(&str, &[&str], &str); 2] = [
+    (
+        "tracing",
+        &["tracing/input.ts:TS2305"],
+        "the emitted calls are right and the runtime does not export `tracing` yet. The hook \
+         emits them because the alternative is the comment the port used to emit, which logged \
+         nothing at all; the report for this pass carries the exact API `@ankurah/base` owes, \
+         and this line goes when it lands",
+    ),
     (
         "blanket_free_fn",
         &["blanket_free_fn/run.test.ts:TS2345"],

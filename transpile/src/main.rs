@@ -11,6 +11,7 @@ mod codegen;
 mod config;
 mod control_flow;
 mod convert;
+mod derives;
 mod diag;
 mod emit;
 mod emit_impls;
@@ -303,7 +304,7 @@ fn batch_generate(
     // each registry the run builds.
     let crate_names = crate_names_for(crate_name, config);
     let surface_dir = registry::std_surface::default_dir(std_surface_dir);
-    let registry = registry::std_surface::with_cached(&surface_dir, |surface| {
+    let mut registry = registry::std_surface::with_cached(&surface_dir, |surface| {
         if surface.is_empty() {
             eprintln!(
                 "WARNING no std surface found at {}; every std type will be undeclared",
@@ -312,6 +313,8 @@ fn batch_generate(
         }
         registry::build_registry(&mut parsed_files, surface, &crate_names, &sink)
     });
+    mark_hand_written_types(&mut registry, &parsed_files, config);
+    let registry = registry;
 
     // Phase 3: Translate all deferred bodies with type context
     let total_bodies: usize = parsed_files
@@ -387,6 +390,11 @@ fn batch_generate(
 
         let crate_path = format!("{}/src/{}", crate_name, rel_str);
         let current_module = rs_to_ts_module(rel_str);
+        // Emission is the last place that asks the engine a question — a derive
+        // hook wanting a field's `Debug`, a format string wanting a type — so
+        // what it could not answer is filed against this file, the way a
+        // fallback taken during translation is.
+        sink.set_file(rel_str);
         let ts = codegen::generate_ts_with_imports_configured(
             &registry,
             rust_file,
@@ -395,6 +403,8 @@ fn batch_generate(
             &current_module,
             config,
         );
+
+        diag::pending::drain(&sink);
 
         std::fs::write(&ts_path, &ts)
             .with_context(|| format!("Failed to write {}", ts_path.display()))?;
@@ -460,6 +470,55 @@ fn batch_generate(
 /// The names this crate answers to in a written path: the TypeScript package
 /// name the run was given, plus the Cargo and Rust spellings of the crate it
 /// maps to, so `ankurah_proto::id::EntityId` written inside proto resolves.
+/// Record which types the emitter will not write TypeScript for.
+///
+/// Two kinds: a `[provided_impls]` entry, whose TypeScript is a `.provided.ts`
+/// file, and everything declared in a `[hardcode]` file, whose TypeScript is
+/// kept as it stands. Both are still declared — their fields have types and
+/// their derives register impls — but their *members* are whatever the person
+/// who wrote the file wrote, so a hook must not call a method it did not emit.
+fn mark_hand_written_types(
+    registry: &mut registry::TypeRegistry,
+    files: &[registry::ExtractedFile],
+    config: Option<&config::Config>,
+) {
+    let mut ids = Vec::new();
+    for entry in files.iter().filter(|e| e.declarations_only) {
+        let Some(module) = registry.modules().lookup_file(&entry.path) else {
+            continue;
+        };
+        let names = entry
+            .file
+            .structs
+            .iter()
+            .map(|s| s.name.clone())
+            .chain(entry.file.enums.iter().map(|e| e.name.clone()));
+        for name in names {
+            if let Some(id) = registry.module_type(module, &name) {
+                ids.push(id);
+            }
+        }
+    }
+    if let Some(cfg) = config {
+        for fqn in cfg.provided_impls.keys() {
+            // `ankurah_proto::id::EntityId` — the crate name, then the module
+            // path the registry knows the type by.
+            let segments: Vec<String> = fqn.split("::").skip(1).map(|s| s.to_string()).collect();
+            if segments.is_empty() {
+                continue;
+            }
+            if let Ok(Some(registry::Def::Type(id))) =
+                registry.lookup_type(registry.crate_root(), &segments)
+            {
+                ids.push(id);
+            }
+        }
+    }
+    for id in ids {
+        registry.mark_hand_written(id);
+    }
+}
+
 fn crate_names_for(crate_name: &str, config: Option<&config::Config>) -> Vec<String> {
     // The TypeScript package name is not a Rust crate name, and `core` is a
     // real standard-library root: never let it capture `core::mem::swap`.

@@ -42,6 +42,15 @@ pub struct ImplDef {
     pub self_ty: Ty,
     /// `None` for an inherent impl.
     pub trait_ref: Option<TraitRef>,
+    /// The trait's type arguments in the TypeScript spelling of the types as
+    /// they are *written*: `From<bincode::Error>` is `["Error"]`.
+    ///
+    /// This is what names the emitted method, and it has to be one rule for
+    /// both halves. `trait_ref.args` holds the same arguments *resolved*, and
+    /// resolving expands an alias — `bincode::Error` is `Box<ErrorKind>` — so a
+    /// call site that named the method from those called `fromErrorKind` on a
+    /// class that declares `fromError`.
+    pub trait_args_written: Vec<String>,
     /// `type Target = [Attestation];` — what this impl supplies for the trait's
     /// associated types.
     pub assoc_types: HashMap<String, Ty>,

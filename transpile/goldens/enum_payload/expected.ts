@@ -22,6 +22,14 @@ export class Notice extends Enum<NoticeV> {
     return new Notice(this.type, { ...this.value });
   }
 
+  debug(): string {
+    return this.match({
+      Idle: () => 'Idle',
+      Text: (v) => `Text(${JSON.stringify(v._0)})`,
+      Span: (v) => `Span { start: ${String(v.start)}, end: ${String(v.end)} }`,
+    });
+  }
+
   encode(writer: BincodeWriter): void {
     this.match({
       Idle: (v) => {

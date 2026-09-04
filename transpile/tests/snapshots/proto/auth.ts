@@ -20,6 +20,10 @@ export class AuthData extends Struct {
     return new AuthData(new Uint8Array(0));
   }
 
+  debug(): string {
+    return `AuthData(${`[${Array.from(this._0).map((e) => String(e)).join(', ')}]`})`;
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeByteVec(this._0);
   }
@@ -49,6 +53,10 @@ export class Attestation extends Struct {
 
   static default(): Attestation {
     return new Attestation(new Uint8Array(0));
+  }
+
+  debug(): string {
+    return `Attestation(${`[${Array.from(this._0).map((e) => String(e)).join(', ')}]`})`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -90,6 +98,10 @@ export class AttestationSet extends Struct {
     return new AttestationSet(this._0.map(e => e.clone()));
   }
 
+  debug(): string {
+    return `AttestationSet(${`[${Array.from(this._0).map((e) => e.debug()).join(', ')}]`})`;
+  }
+
   get length(): number {
     return this._0.length;
   }
@@ -112,6 +124,10 @@ export class Principal extends Struct {
 
   clone(): Principal {
     return new Principal();
+  }
+
+  debug(): string {
+    return 'Principal';
   }
 
   encode(writer: BincodeWriter): void {

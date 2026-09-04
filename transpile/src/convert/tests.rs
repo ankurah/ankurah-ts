@@ -179,3 +179,55 @@ fn a_conversion_no_impl_performs_says_so() {
         messages
     );
 }
+
+// ── Casts, where the two languages answer differently ────────────────
+
+fn cast_body(rust: &str, method: &str) -> (String, Vec<String>) {
+    let mut fixture = Fixture::build(&[("lib.rs", rust)]);
+    let ts = fixture.translated_method("lib.rs", method);
+    (ts, fixture.messages())
+}
+
+/// `u64 as f64` used to be unreachable: the width lookup ran first and has no
+/// answer for a float, so the cast was reported and the bigint handed on where
+/// a `number` was wanted.
+#[test]
+fn a_bigint_widened_to_a_float_is_a_number() {
+    let (ts, said) = cast_body("pub fn wide(n: u64) -> f64 { n as f64 }", "wide");
+    assert!(ts.contains("Number(n)"), "{}", ts);
+    assert!(said.is_empty(), "{:?}", said);
+}
+
+/// Rust's float-to-integer `as` saturates and answers 0 for NaN. It is the one
+/// `as` that does not wrap.
+#[test]
+fn a_float_narrowed_to_an_integer_saturates() {
+    let (ts, said) = cast_body("pub fn narrow(f: f64) -> u32 { f as u32 }", "narrow");
+    assert!(
+        ts.contains("Math.min(Math.max(Math.trunc(f) || 0, 0), 4294967295)"),
+        "{}",
+        ts
+    );
+    assert!(said.is_empty(), "{:?}", said);
+}
+
+/// The port writes a `char` as a one-character string, and Rust's casts through
+/// it are about its code point.
+#[test]
+fn a_char_casts_through_its_code_point() {
+    let (ts, said) = cast_body("pub fn code(c: char) -> u32 { c as u32 }", "code");
+    assert!(ts.contains("c.codePointAt(0) ?? 0"), "{}", ts);
+    assert!(said.is_empty(), "{:?}", said);
+    let (ts, said) = cast_body("pub fn letter(b: u8) -> char { b as char }", "letter");
+    assert!(ts.contains("String.fromCharCode(Number(b))"), "{}", ts);
+    assert!(said.is_empty(), "{:?}", said);
+}
+
+/// `to_owned` on a number is the number: there is nothing to clone, and
+/// `n.clone()` was a TypeError.
+#[test]
+fn to_owned_on_a_primitive_is_the_value() {
+    let (ts, _) = cast_body("pub fn own(n: &u32) -> u32 { n.to_owned() }", "own");
+    assert!(!ts.contains(".clone()"), "{}", ts);
+    assert!(ts.contains("return n;"), "{}", ts);
+}

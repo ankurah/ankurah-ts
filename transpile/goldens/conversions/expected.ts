@@ -48,6 +48,6 @@ export function narrow(n: bigint): number {
 }
 
 export function truncate(f: number): number {
-  return (Math.trunc(f) | 0);
+  return Math.min(Math.max(Math.trunc(f) || 0, -2147483648), 2147483647);
 }
 

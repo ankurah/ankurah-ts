@@ -79,13 +79,14 @@ impl BodyTranslator<'_> {
             "serde_json.from_str" | "serde_json::from_str" | "serdeJson.fromStr"
                 if args.len() == 1 =>
             {
-                return match self.read_into_type(callee, span) {
+                return match self.read_into_type(callee, span).and_then(class_head) {
                     Some(ty) => format!("{}.fromJson(JSON.parse({}))", ty, args[0]),
                     None => {
                         self.fallback(
                             span,
-                            "`serde_json::from_str` is written without saying which type reads \
-                             itself out of the parsed value, so the parse stands alone",
+                            "`serde_json::from_str` is written without a type with a `fromJson` \
+                             of its own to read itself out of the parsed value, so the parse \
+                             stands alone",
                         );
                         format!("JSON.parse({})", args[0])
                     }
@@ -95,9 +96,16 @@ impl BodyTranslator<'_> {
                 return format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
             "bincode.deserialize" | "bincode::deserialize" if args.len() == 1 => {
                 return match self.read_into_type(callee, span) {
+                    // What reads the bytes depends on the shape: a `Map` is a
+                    // length and its entries, a `Vec` a length and its
+                    // elements, and only a type with a class of its own has a
+                    // `decode` static. Writing `Map<K, V>.decode(_r)` named a
+                    // type where a value belongs and called a static nothing
+                    // declares.
                     Some(ty) => format!(
-                        "(() => {{ const _r = new BincodeReader({}); return {}.decode(_r); }})()",
-                        args[0], ty
+                        "(() => {{ const _r = new BincodeReader({}); return {}; }})()",
+                        args[0],
+                        crate::bincode_module::decode_expr_with(&ty, "_r")
                     ),
                     None => {
                         self.fallback(
@@ -216,4 +224,26 @@ impl BodyTranslator<'_> {
         format!("{}({})", func, args.join(", "))
     }
 
+}
+
+/// The class a static is called on: a type's name without its type arguments.
+///
+/// `Attested<Event>.fromJson(..)` names an instantiation where a value belongs,
+/// and TypeScript reads it as one. `None` where the type has no class at all —
+/// a `Map`, an array, a primitive, or a wrapper whose payload the position
+/// never named — because there is then no static to call.
+fn class_head(ts_type: String) -> Option<String> {
+    let head = ts_type.split('<').next().unwrap_or(&ts_type).trim().to_string();
+    if head.is_empty()
+        || head.ends_with("[]")
+        || head.contains(' ')
+        || matches!(
+            head.as_str(),
+            "Map" | "Set" | "Result" | "Option" | "string" | "number" | "bigint" | "boolean"
+                | "unknown" | "Uint8Array" | "void" | "never"
+        )
+    {
+        return None;
+    }
+    Some(head)
 }

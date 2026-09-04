@@ -29,7 +29,7 @@ pub fn emit_struct(
     };
     let generics_usage = strip_generic_defaults(&generics_decl);
     let self_type = format!("{}{}", s.name, generics_usage);
-    let implements = format_implements(traits);
+    let implements = format_implements(reg, traits);
 
     out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, generics_decl, base, implements));
 
@@ -73,7 +73,23 @@ pub fn emit_struct(
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
     emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
-    emit_derive_methods(out, reg, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields);
+    // The ordering a `PartialOrd`/`Ord` derive writes needs the whole
+    // declaration, which `emit_derive_methods` is not handed.
+    let ordering = crate::derives::ordering::struct_compare(
+        reg,
+        s,
+        &format!("{}{}", s.name, strip_generic_defaults(&s.generics)),
+    );
+    emit_derive_methods(
+        out, reg, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields, Some(ordering),
+    );
+    // The derives that write code rather than only proving an impl: Debug's
+    // `debug()`, and thiserror's `toString`/`from`. `emitted` keeps a
+    // hand-written `impl Display` ahead of a derived one, the way Rust's
+    // coherence would.
+    let (derived, gaps) = crate::derives::struct_members(reg, s, &mut emitted);
+    out.push_str(&derived);
+    crate::derives::report(gaps);
 
     // Deref delegation for wrapper types (tuple structs with a single field)
     let has_deref = traits.map(|t| t.iter().any(|(n, _)| *n == "Deref")).unwrap_or(false);
@@ -183,7 +199,20 @@ pub fn emit_enum(
     }
 
     // Handle remaining derives (PartialEq, Default, etc.) — pass empty fields for enums
-    emit_derive_methods(out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[]);
+    let ordering = crate::derives::ordering::enum_compare(
+        reg,
+        e,
+        &format!("{}{}", e.name, strip_generic_defaults(&e.generics)),
+    );
+    emit_derive_methods(
+        out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[], Some(ordering),
+    );
+    // `emitted` already holds every method a written impl put on the class, so a
+    // hand-written `Display` keeps its `toString` and the derive does not write
+    // a second one over it.
+    let (derived, gaps) = crate::derives::enum_members(reg, e, &mut emitted);
+    out.push_str(&derived);
+    crate::derives::report(gaps);
 
     if crate::bincode_module::has_serde_derive(&e.derives) {
         out.push('\n');
@@ -444,6 +473,7 @@ fn emit_derive_methods(
     derives: &[String],
     emitted: &mut HashSet<String>,
     fields: &[crate::types::FieldInfo],
+    ordering_of: Option<(String, Vec<crate::derives::Gap>)>,
 ) {
     let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
     let field_names: Vec<&str> = fields.iter()
@@ -485,7 +515,19 @@ fn emit_derive_methods(
 
     if derive_set.contains("PartialOrd") || derive_set.contains("Ord") {
         if emitted.insert("compareTo".to_string()) {
-            out.push_str(&format!("\n  compareTo(other: {}): number {{\n    throw new Error('TODO');\n  }}\n", full_type));
+            // The derive compares field by field in declaration order and stops
+            // at the first pair that differs. Writing `throw new Error('TODO')`
+            // compiled and then threw the moment anything ordered the type.
+            match ordering_of {
+                Some((written, gaps)) => {
+                    out.push_str(&written);
+                    crate::derives::report(gaps);
+                }
+                None => out.push_str(&format!(
+                    "\n  compareTo(other: {}): number {{\n    return 0;\n  }}\n",
+                    full_type
+                )),
+            }
         }
     }
 
@@ -574,27 +616,33 @@ fn emit_derive_methods(
                     if field_names.is_empty() {
                         out.push_str(&format!("\n  static default{}(): {} {{\n    return new {}();\n  }}\n", static_generics, full_type, type_name));
                     } else {
+                        // What each field's `Default::default()` is, read off
+                        // the field's *type*. Reading its TypeScript spelling
+                        // wrote `Arc<RwLock<Map<K, V>>>.default()`, which names
+                        // a type where a value belongs.
                         let default_fields: Vec<String> = fields.iter()
-                            .filter_map(|f| {
-                                let ty = f.ts_ty(reg);
-                                let base_ty = ty.trim_end_matches(" | null");
-                                Some(if ty.ends_with(" | null") {
-                                    "null".to_string()
-                                } else if base_ty == "string" {
-                                    "''".to_string()
-                                } else if base_ty == "boolean" {
-                                    "false".to_string()
-                                } else if base_ty == "number" || base_ty == "bigint" {
-                                    "0".to_string()
-                                } else if base_ty == "Uint8Array" {
-                                    "new Uint8Array(0)".to_string()
-                                } else if base_ty.ends_with("[]") {
-                                    "[]".to_string()
-                                } else if base_ty.starts_with("Map<") {
-                                    "new Map()".to_string()
-                                } else {
-                                    format!("{}.default()", base_ty)
-                                })
+                            .map(|f| match f.ty.as_ref() {
+                                Some(ty) => crate::derives::default_value::default_value(reg, ty)
+                                    .unwrap_or_else(|why| {
+                                        crate::diag::pending::park(
+                                            f.rust_ty_span(),
+                                            format!(
+                                                "`{}`'s derived `Default` has no value for this field, because {}",
+                                                type_name, why
+                                            ),
+                                        );
+                                        "undefined".to_string()
+                                    }),
+                                None => {
+                                    crate::diag::pending::park(
+                                        f.rust_ty_span(),
+                                        format!(
+                                            "`{}`'s derived `Default` has no value for this field, because the engine could not type it",
+                                            type_name
+                                        ),
+                                    );
+                                    "undefined".to_string()
+                                }
                             })
                             .collect();
                         out.push_str(&format!("\n  static default{}(): {} {{\n    return new {}({});\n  }}\n",
@@ -773,10 +821,17 @@ fn format_params_filtered(params: &[ParamInfo], self_type: &str) -> String {
         .join(", ")
 }
 
-fn format_implements(traits: Option<&Vec<(&str, &[String])>>) -> String {
+/// The `implements` clause: the traits this class implements that the port has
+/// a TypeScript name for.
+///
+/// Only a trait the crate declares is emitted as an interface. A trait from the
+/// declared surface has none, and naming one here named something that does not
+/// exist — `class Weight extends Struct implements Add`, `implements Clone` —
+/// which is where a good part of signals' unresolved-name errors came from.
+fn format_implements(reg: &TypeRegistry, traits: Option<&Vec<(&str, &[String])>>) -> String {
     if let Some(traits) = traits {
         let ifaces: Vec<String> = traits.iter()
-            .filter(|(t, _)| !is_skipped_trait(t))
+            .filter(|(t, _)| reg.emits_interface(t))
             .map(|(name, type_args)| {
                 if type_args.is_empty() {
                     name.to_string()
@@ -795,10 +850,43 @@ fn format_implements(traits: Option<&Vec<(&str, &[String])>>) -> String {
 /// E.g., `<Upstream, Input, Output, Transform>` with bounds
 /// `{Upstream: [Signal, With<Input>, Clone], Transform: [Clone]}` becomes
 /// `<Upstream extends Signal & With<Input> & Clone, Input, Output, Transform extends Clone>`
+/// The parameters written inside a generic list.
+///
+/// Two things have to be read the way TypeScript reads them. The list ends at
+/// ONE `>`, however many the last parameter's own type ends with — taking every
+/// trailing `>` off took the list's terminator with them, and the class then
+/// read `class Reactor<E extends .., Ev extends Clone = Attested<Event> extends
+/// Struct {`, which swallowed the rest of the file. And a comma inside a type
+/// argument belongs to that argument: `<A, B<C, D>>` declares two parameters.
+fn generic_params(generics: &str) -> Vec<String> {
+    let inner = generics
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(generics);
+    let mut params = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for c in inner.chars() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                params.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    if !current.trim().is_empty() {
+        params.push(current);
+    }
+    params
+}
+
 fn merge_bounds_into_generics(generics: &str, bounds: &HashMap<String, Vec<String>>) -> String {
     if generics.is_empty() || bounds.is_empty() { return generics.to_string(); }
-    let inner = generics.trim_start_matches('<').trim_end_matches('>');
-    let params: Vec<&str> = inner.split(',').collect();
+    let params = generic_params(generics);
     let merged: Vec<String> = params.iter().map(|p| {
         let p = p.trim();
         // Extract existing param name (before any `extends` or `=`)
@@ -845,8 +933,7 @@ fn merge_bounds_into_generics(generics: &str, bounds: &HashMap<String, Vec<Strin
 /// `<T = void>` → `<T>`, `<T extends Foo = void>` → `<T>`, `<T extends Signal & Clone>` → `<T>`
 fn strip_generic_defaults(generics: &str) -> String {
     if generics.is_empty() { return generics.to_string(); }
-    let inner = generics.trim_start_matches('<').trim_end_matches('>');
-    let params: Vec<&str> = inner.split(',').collect();
+    let params = generic_params(generics);
     let stripped: Vec<String> = params.iter().map(|p| {
         let p = p.trim();
         // Extract just the param name (before any `extends` or `=`)
@@ -865,15 +952,6 @@ fn is_phantom_field(reg: &TypeRegistry, f: &FieldInfo) -> bool {
     f.ts_ty(reg).contains("PhantomData")
 }
 
-fn is_skipped_trait(trait_name: &str) -> bool {
-    matches!(trait_name,
-        "Display" | "Debug" | "FromStr" | "TryFrom" | "From" |
-        "Serialize" | "Deserialize" | "Clone" | "PartialEq" | "Eq" |
-        "PartialOrd" | "Ord" | "Hash" | "Default" | "Send" | "Sync" |
-        "Deref" | "DerefMut" | "Into" | "TryInto" | "IntoIterator" |
-        "AsRef" | "AsMut" | "Borrow" | "BorrowMut" | "Error" | "Drop"
-    )
-}
 
 pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[String], _self_type: &str) -> String {
     if type_args.is_empty() {

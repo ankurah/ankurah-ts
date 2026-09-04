@@ -136,6 +136,22 @@ impl<'a> BodyTranslator<'a> {
         self.hoist_temporary(written, drops)
     }
 
+    /// Give an expression a name that stands before the statement it is written
+    /// in, with no release of its own.
+    ///
+    /// For a value that is read more than once by the text being written —
+    /// matched on, and then named again by an arm — where Rust evaluates it
+    /// once. Who releases it is decided elsewhere, by whatever owns the value
+    /// the expression produced, so this adds nothing to that.
+    pub(crate) fn hoist_name(&self, written: String) -> String {
+        let name = self.fresh_hoist("_m");
+        self.own.prelude.borrow_mut().push(ownership::Hoist {
+            declaration: format!("const {} = {};\n", name, written),
+            owned: None,
+        });
+        name
+    }
+
     /// Give a value produced inside an expression a name and a release.
     ///
     /// Returns the name to write in place of the expression.

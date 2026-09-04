@@ -259,6 +259,10 @@ impl BodyTranslator<'_> {
             // implements `Display` is emitted with one, so the ordinary method
             // call is what `to_string` wants.
             _ if method == "to_string" => None,
+            // A number, a bigint and a boolean are copied by being read: there
+            // is nothing to clone and no `clone` on them to call, and
+            // `n.clone()` was a TypeError at run time.
+            JsShape::Number | JsShape::BigInt | JsShape::Boolean => Some(receiver.to_string()),
             JsShape::Bytes => Some(format!("{}.slice()", receiver)),
             JsShape::Array(_) => Some(format!("[...{}]", receiver)),
             // `ToOwned` for everything else in the corpus is `Clone`, and the

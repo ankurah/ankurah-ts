@@ -52,5 +52,11 @@ export class ParseError extends Enum<ParseErrorV> {
   equals(other: ParseError): boolean {
     return true;
   }
+
+  debug(): string {
+    return this.match({
+      Empty: () => 'Empty',
+    });
+  }
 }
 

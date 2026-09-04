@@ -40,11 +40,17 @@ export class CollectionId extends Struct {
   }
 
   compareTo(other: CollectionId): number {
-    throw new Error('TODO');
+    let c = this._0 < other._0 ? -1 : this._0 > other._0 ? 1 : 0;
+    if (c !== 0) return c;
+    return 0;
   }
 
   clone(): CollectionId {
     return new CollectionId(this._0);
+  }
+
+  debug(): string {
+    return `CollectionId(${JSON.stringify(this._0)})`;
   }
 
   encode(writer: BincodeWriter): void {

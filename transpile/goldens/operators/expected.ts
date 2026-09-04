@@ -19,6 +19,29 @@ export class Tag extends Struct {
   }
 }
 
+export class Weight extends Struct {
+  readonly label: string;
+  readonly grams: bigint;
+
+  constructor(label: string, grams: bigint) {
+    super();
+    this.label = label;
+    this.grams = grams;
+  }
+
+  add(rhs: Weight): Weight {
+    try {
+      try {
+        return new Weight(this.label, this.grams + rhs.grams);
+      } finally {
+        rhs.drop();
+      }
+    } finally {
+      this.drop();
+    }
+  }
+}
+
 export function same(a: Tag, b: Tag): boolean {
   return a.equals(b);
 }
@@ -45,5 +68,18 @@ export function shifted(bits: bigint): bigint {
 
 export function bigger(a: number, b: number): boolean {
   return a > b;
+}
+
+export function combined(a: Weight, b: Weight): Weight {
+  return a.add(b);
+}
+
+export function heavier(a: Weight, b: Weight): boolean {
+  const total = a.add(b);
+  try {
+    return total.grams > 100n;
+  } finally {
+    total.drop();
+  }
 }
 
