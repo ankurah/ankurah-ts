@@ -1,5 +1,11 @@
 // PROVIDED: Hand-written Attested<T> — generic type requires callback-based encode/decode.
 // The transpiler never overwrites this file. Generated auth.ts re-exports this type.
+//
+// No toJSON here on purpose: Rust derives serde for Attested, and a derived struct with
+// named fields writes `{"payload":…,"attestations":…}` — which is what JSON.stringify
+// already produces from these two fields, in this declaration order. Whether that JSON
+// matches Rust end to end depends on AttestationSet, a generated newtype that serde sees
+// through and JSON.stringify does not; that belongs to the emitter, not to this file.
 
 import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';

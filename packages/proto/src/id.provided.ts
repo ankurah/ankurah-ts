@@ -9,8 +9,16 @@
 //
 // TransactionId, RequestId, QueryId, UpdateId — ULID wrappers.
 //   Derived serde on Ulid: serialized as 26-char string (u64 length + 26 ASCII bytes in bincode).
+//
+// JSON convention: Rust's serde picks a different representation for human-readable
+// formats, so every id here carries both halves of that split. `toJSON()` is what
+// `Serialize` writes when the format is human-readable — `JSON.stringify` calls it, so
+// the emitter's `serde_json::to_string(&x)` → `JSON.stringify(x)` needs nothing else.
+// `fromJson(value)` is `Deserialize` for the same case, and returns the `Result` Rust
+// returns so `serde_json::from_str::<T>(&s).unwrap()` → `T.fromJson(JSON.parse(s)).unwrap()`.
+// `encode`/`decode` below stay the binary half and are untouched by any of this.
 
-import { Struct } from '@ankurah/base';
+import { Result, Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { DecodeError } from './error';
 
@@ -37,21 +45,35 @@ function base64urlEncode(bytes: Uint8Array): string {
   return result;
 }
 
-const BASE64URL_DECODE = new Uint8Array(128);
+// 0xff marks "not in the alphabet", so a character Rust's URL_SAFE_NO_PAD engine
+// rejects — '=', '+', '/', anything outside base64url — is told apart from 'A', which
+// is 0. Without the sentinel every stray character silently decoded to a zero byte.
+const BASE64URL_DECODE = new Uint8Array(128).fill(0xff);
 for (let i = 0; i < BASE64URL_CHARS.length; i++) {
   BASE64URL_DECODE[BASE64URL_CHARS.charCodeAt(i)] = i;
 }
 
+function base64urlSextet(str: string, i: number): number {
+  const code = str.charCodeAt(i);
+  const v = code < 128 ? BASE64URL_DECODE[code] : 0xff;
+  if (v === 0xff) throw DecodeError.invalidBase64(`invalid symbol '${str[i]}' at offset ${i}`);
+  return v;
+}
+
+/** Rust: `general_purpose::URL_SAFE_NO_PAD.decode` — throws `DecodeError` on input it rejects. */
 function base64urlDecode(str: string): Uint8Array {
   const len = str.length;
+  // A trailing group of one character carries 6 bits and encodes no whole byte, so
+  // no unpadded base64 string has this length.
+  if (len % 4 === 1) throw DecodeError.invalidBase64(`invalid length ${len}`);
   const outLen = Math.floor((len * 3) / 4);
   const out = new Uint8Array(outLen);
   let j = 0;
   for (let i = 0; i < len; i += 4) {
-    const c0 = BASE64URL_DECODE[str.charCodeAt(i)];
-    const c1 = i + 1 < len ? BASE64URL_DECODE[str.charCodeAt(i + 1)] : 0;
-    const c2 = i + 2 < len ? BASE64URL_DECODE[str.charCodeAt(i + 2)] : 0;
-    const c3 = i + 3 < len ? BASE64URL_DECODE[str.charCodeAt(i + 3)] : 0;
+    const c0 = base64urlSextet(str, i);
+    const c1 = i + 1 < len ? base64urlSextet(str, i + 1) : 0;
+    const c2 = i + 2 < len ? base64urlSextet(str, i + 2) : 0;
+    const c3 = i + 3 < len ? base64urlSextet(str, i + 3) : 0;
     out[j++] = ((c0 << 2) | (c1 >> 4)) & 0xff;
     if (i + 2 < len) {
       out[j++] = ((c1 << 4) | (c2 >> 2)) & 0xff;
@@ -113,15 +135,16 @@ function ulidBytesToString(bytes: Uint8Array): string {
   return chars.join('');
 }
 
+/** Rust: `Ulid::from_string` — throws `DecodeError` on input it rejects. */
 function ulidStringToBytes(str: string): Uint8Array {
   if (str.length !== 26) {
-    throw new Error(`Invalid ULID string length: ${str.length} (expected 26)`);
+    throw new DecodeError('InvalidUlid', `Invalid ULID string length: ${str.length} (expected 26)`);
   }
   let value = 0n;
   for (let i = 0; i < 26; i++) {
     const v = CROCKFORD_DECODE.get(str[i]);
     if (v === undefined) {
-      throw new Error(`Invalid ULID character: '${str[i]}' at position ${i}`);
+      throw new DecodeError('InvalidUlid', `Invalid ULID character: '${str[i]}' at position ${i}`);
     }
     value = (value << 5n) | BigInt(v);
   }
@@ -131,6 +154,35 @@ function ulidStringToBytes(str: string): Uint8Array {
     value >>= 8n;
   }
   return bytes;
+}
+
+// ─── Human-readable deserialization ─────────────────────────────────────────
+
+/**
+ * Stands in for `?` inside a hand-written `Deserialize`: the first `DecodeError` raised
+ * on the way to a value becomes the `Err`. Every step a Deserialize body takes throws
+ * rather than returning its own Result, so one call builds exactly one Result — the one
+ * the caller receives — and a sequence that fails on its tenth element leaves none
+ * behind for the leak registry to collect.
+ *
+ * The port has no serde error type, so the `Err` keeps the `DecodeError` the id itself
+ * produced: the value Rust passes to `serde::de::Error::custom`.
+ */
+function deserialized<T>(build: () => T): Result<T, DecodeError> {
+  try {
+    return Result.Ok(build());
+  } catch (e) {
+    // Only a decode failure is an error value. Anything else — an ownership fatal above
+    // all — says the emitted code is wrong, and must reach the caller as a throw.
+    if (e instanceof DecodeError) return Result.Err(e);
+    throw e;
+  }
+}
+
+/** Rust: `String::deserialize(deserializer)?` — every id reads a string first. */
+function jsonString(value: unknown): string {
+  if (typeof value !== 'string') throw DecodeError.notStringValue();
+  return value;
 }
 
 // ─── EntityId ───────────────────────────────────────────────────────────────
@@ -159,12 +211,7 @@ export class EntityId extends Struct {
   }
 
   static fromBase64(input: string): EntityId {
-    let decoded: Uint8Array;
-    try {
-      decoded = base64urlDecode(input);
-    } catch {
-      throw DecodeError.invalidBase64();
-    }
+    const decoded = base64urlDecode(input);
     if (decoded.length !== 16) throw DecodeError.invalidLength();
     return new EntityId(decoded);
   }
@@ -198,6 +245,18 @@ export class EntityId extends Struct {
   // impl Default for EntityId
   static default(): EntityId {
     return EntityId.new();
+  }
+
+  // ── JSON: custom serde — base64url, no padding ──
+
+  // impl Serialize for EntityId (human-readable branch)
+  toJSON(): string {
+    return this.toBase64();
+  }
+
+  // impl<'de> Deserialize<'de> for EntityId (human-readable branch)
+  static fromJson(value: unknown): Result<EntityId, DecodeError> {
+    return deserialized(() => EntityId.fromBase64(jsonString(value)));
   }
 
   // ── Bincode: custom serde — raw 16 bytes ──
@@ -245,12 +304,7 @@ export class EventId extends Struct {
   }
 
   static fromBase64(input: string): EventId {
-    let decoded: Uint8Array;
-    try {
-      decoded = base64urlDecode(input);
-    } catch {
-      throw DecodeError.invalidBase64();
-    }
+    const decoded = base64urlDecode(input);
     if (decoded.length !== 32) throw DecodeError.invalidLength();
     return new EventId(decoded);
   }
@@ -294,6 +348,18 @@ export class EventId extends Struct {
     return EventId.fromBytes(new Uint8Array(this.bytes));
   }
 
+  // ── JSON: custom serde — base64url, no padding ──
+
+  // impl Serialize for EventId (human-readable branch)
+  toJSON(): string {
+    return this.toBase64();
+  }
+
+  // impl<'de> Deserialize<'de> for EventId (human-readable branch)
+  static fromJson(value: unknown): Result<EventId, DecodeError> {
+    return deserialized(() => EventId.fromBase64(jsonString(value)));
+  }
+
   // ── Bincode: custom serde — raw 32 bytes ──
 
   encode(writer: BincodeWriter): void {
@@ -310,8 +376,10 @@ export class EventId extends Struct {
 // Divergence: TransactionId (transaction.rs), RequestId (request.rs), QueryId (subscription.rs),
 // UpdateId (update.rs) are each in separate Rust files but co-located here
 // to share ULID utilities. Re-exported from their respective generated TS module files. [E4]
-// serde: Ulid serialized as 26-char Crockford Base32 string.
-// In bincode: u64 length (26) + 26 ASCII bytes = 34 bytes total.
+// serde: Ulid serialized as 26-char Crockford Base32 string. The ulid crate writes that
+// string whatever the format asks for, so unlike EntityId/EventId these four have one
+// representation: in bincode, u64 length (26) + 26 ASCII bytes = 34 bytes total; in JSON,
+// the bare string. A newtype struct is transparent to serde, so the wrapper adds nothing.
 
 export class TransactionId extends Struct {
   readonly _0: Uint8Array; // 16-byte ULID
@@ -348,6 +416,14 @@ export class TransactionId extends Struct {
 
   clone(): TransactionId {
     return TransactionId.fromBytes(new Uint8Array(this._0));
+  }
+
+  toJSON(): string {
+    return ulidBytesToString(this._0);
+  }
+
+  static fromJson(value: unknown): Result<TransactionId, DecodeError> {
+    return deserialized(() => TransactionId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 
   encode(writer: BincodeWriter): void {
@@ -395,6 +471,14 @@ export class RequestId extends Struct {
 
   clone(): RequestId {
     return RequestId.fromBytes(new Uint8Array(this._0));
+  }
+
+  toJSON(): string {
+    return ulidBytesToString(this._0);
+  }
+
+  static fromJson(value: unknown): Result<RequestId, DecodeError> {
+    return deserialized(() => RequestId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 
   encode(writer: BincodeWriter): void {
@@ -455,6 +539,14 @@ export class QueryId extends Struct {
     return QueryId.fromBytes(new Uint8Array(this._0));
   }
 
+  toJSON(): string {
+    return ulidBytesToString(this._0);
+  }
+
+  static fromJson(value: unknown): Result<QueryId, DecodeError> {
+    return deserialized(() => QueryId.fromBytes(ulidStringToBytes(jsonString(value))));
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeString(ulidBytesToString(this._0));
   }
@@ -502,6 +594,14 @@ export class UpdateId extends Struct {
     return UpdateId.fromBytes(new Uint8Array(this._0));
   }
 
+  toJSON(): string {
+    return ulidBytesToString(this._0);
+  }
+
+  static fromJson(value: unknown): Result<UpdateId, DecodeError> {
+    return deserialized(() => UpdateId.fromBytes(ulidStringToBytes(jsonString(value))));
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeString(ulidBytesToString(this._0));
   }
@@ -512,5 +612,6 @@ export class UpdateId extends Struct {
   }
 }
 
-// Re-export base64 utilities for use by other modules
+// Re-export base64, ULID and serde utilities for use by other modules
 export { base64urlEncode, base64urlDecode, ulidBytesToString, ulidStringToBytes, generateUlidBytes };
+export { deserialized, jsonString };

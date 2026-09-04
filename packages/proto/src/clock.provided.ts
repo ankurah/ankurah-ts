@@ -1,9 +1,9 @@
 // PROVIDED: Hand-written Clock — complex binary search, iterator patterns, TryInto impls.
 // The transpiler never overwrites this file. Generated clock.ts re-exports this type.
 
-import { Struct } from '@ankurah/base';
+import { Result, Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
-import { EventId } from './id.provided';
+import { EventId, deserialized, jsonString } from './id.provided';
 import { DecodeError } from './error';
 
 export class Clock extends Struct {
@@ -35,13 +35,18 @@ export class Clock extends Struct {
   }
 
   static fromStrings(strings: string[]): Clock {
-    const ids = strings.map(s => {
-      try {
-        return EventId.fromBase64(s);
-      } catch {
-        throw DecodeError.invalidFormat();
-      }
-    });
+    const ids: EventId[] = [];
+    try {
+      for (const s of strings) ids.push(EventId.fromBase64(s));
+    } catch (e) {
+      // Rust's `?` returns before the half-built Vec is named, and drops it. The ids
+      // decoded so far have no other owner, so release them before leaving.
+      for (const built of ids) built.drop();
+      // Divergence kept from the original hand port: Rust's `?` propagates the id's own
+      // DecodeError, where this collapses every one of them to InvalidFormat.
+      if (e instanceof DecodeError) throw DecodeError.invalidFormat();
+      throw e;
+    }
     ids.sort((a, b) => a.compareTo(b));
     return new Clock(ids);
   }
@@ -59,9 +64,9 @@ export class Clock extends Struct {
   }
 
   withEvent(id: EventId): Clock {
-    const clone = new Clock([...this._0]);
-    clone.insert(id);
-    return clone;
+    const n = this.clone();
+    n.insert(id);
+    return n;
   }
 
   get length(): number {
@@ -84,8 +89,10 @@ export class Clock extends Struct {
     return this._0[Symbol.iterator]();
   }
 
+  // Rust: `self.0.clone()` — the caller owns the ids it gets back, so they are cloned
+  // rather than aliased; handing out the clock's own ids would make two owners of each.
   toVec(): EventId[] {
-    return [...this._0];
+    return this._0.map(id => id.clone());
   }
 
   static from(ids: EventId[]): Clock {
@@ -125,8 +132,10 @@ export class Clock extends Struct {
     return this.toBase64();
   }
 
+  // derive(Clone) clones each element; sharing the id objects would give the original
+  // and the copy the same owned values, and dropping both would drop each id twice.
   clone(): Clock {
-    return new Clock(this._0.map(id => id));
+    return new Clock(this._0.map(id => id.clone()));
   }
 
   private binarySearch(id: EventId): number {
@@ -151,6 +160,31 @@ export class Clock extends Struct {
       else hi = mid;
     }
     return lo;
+  }
+
+  // ── JSON: derive(Serialize/Deserialize) ──
+  // Clock is a newtype over Vec<EventId>, and serde looks straight through a newtype, so
+  // the JSON is the array of the ids' own JSON form — not `toBase64()`, which is the
+  // bracketed display string. Deserialization does not sort; only `fromStrings` does.
+
+  toJSON(): string[] {
+    return this._0.map(id => id.toJSON());
+  }
+
+  static fromJson(value: unknown): Result<Clock, DecodeError> {
+    return deserialized(() => {
+      if (!Array.isArray(value)) throw DecodeError.invalidFormat();
+      const ids: EventId[] = [];
+      try {
+        for (const item of value) ids.push(EventId.fromBase64(jsonString(item)));
+      } catch (e) {
+        // Rust returns before the half-built Vec is named, and drops it. The ids decoded
+        // so far have no other owner, so release them before the failure carries on out.
+        for (const built of ids) built.drop();
+        throw e;
+      }
+      return new Clock(ids);
+    });
   }
 
   encode(writer: BincodeWriter): void {
