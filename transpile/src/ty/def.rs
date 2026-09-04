@@ -50,6 +50,26 @@ pub enum Prim {
 }
 
 impl Prim {
+    /// Is this one of the integer widths? An unsuffixed literal takes the type
+    /// of whatever it is written against, and only an integer can be that.
+    pub fn is_integer(self) -> bool {
+        matches!(
+            self,
+            Prim::U8
+                | Prim::U16
+                | Prim::U32
+                | Prim::U64
+                | Prim::U128
+                | Prim::Usize
+                | Prim::I8
+                | Prim::I16
+                | Prim::I32
+                | Prim::I64
+                | Prim::I128
+                | Prim::Isize
+        )
+    }
+
     pub fn from_rust_name(name: &str) -> Option<Prim> {
         Some(match name {
             "bool" => Prim::Bool,

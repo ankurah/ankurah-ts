@@ -115,6 +115,29 @@ pub struct TraitInfo {
     pub has_default_impls: bool,
     pub generics: String,
     pub type_params: Vec<String>,
+    /// `trait Signal: Debug` — the traits an implementor must also implement,
+    /// as written. A method reached on a `dyn Signal` may be declared on one of
+    /// these rather than on `Signal` itself.
+    pub supertraits: Vec<syn::TraitBound>,
+    /// `type Item;` — the associated types each impl has to supply.
+    pub assoc_types: Vec<String>,
+}
+
+/// How a method takes its receiver. Method resolution picks the borrow it needs
+/// from this: `fn len(&self)` is found on `&C` and never on `C`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfKind {
+    /// `self` or `mut self` — the receiver is taken by value.
+    Value,
+    /// `&self`.
+    Ref,
+    /// `&mut self`.
+    RefMut,
+    /// `self: Arc<Self>`, `self: Pin<&mut Self>` — a receiver written as a type.
+    /// Reading one as by-value put the method on the wrong step of the deref
+    /// chain, so it is reported and left out of the table until a step supports
+    /// it; the written type travels on `FnInfo::self_receiver`.
+    Arbitrary,
 }
 
 pub struct FnInfo {
@@ -124,12 +147,22 @@ pub struct FnInfo {
     pub vis: VisInfo,
     pub is_async: bool,
     pub is_static: bool,
+    /// How the receiver is taken; `None` for an associated function with none.
+    pub self_kind: Option<SelfKind>,
+    /// The type an arbitrary receiver was written as, e.g. `Arc<Self>`.
+    pub self_receiver: Option<syn::Type>,
+    /// True for a trait method the trait wrote a body for, so an impl need not.
+    /// The body is extracted with it and emitted on the abstract class.
+    pub has_default_body: bool,
     pub params: Vec<ParamInfo>,
     pub return_type: String,
     /// The written return type; `None` for a function that returns nothing.
     pub rust_return: Option<syn::Type>,
     pub generics: String,
     pub type_params: Vec<String>,
+    /// The function's generics as written, so the bounds on its parameters are
+    /// available where a call on one of them has to be resolved.
+    pub syn_generics: syn::Generics,
     pub is_test: bool,
     /// Raw syn AST for the function body — populated in Phase 1, consumed in Phase 3.
     /// Cloned from the parsed syn::File so it outlives the parse.
@@ -163,21 +196,122 @@ pub struct ParamInfo {
     pub is_mut_self: bool,
 }
 
+/// An `impl` block as written.
+///
+/// The trait it implements is kept as the `syn::Path` the source wrote and the
+/// generics as `syn::Generics`, so that the engine resolves both against the
+/// registry. The TypeScript spellings emission needs are derived from those
+/// below; nothing goes out as a string and comes back as a type.
 #[derive(Debug)]
 pub struct ImplInfo {
+    /// The class the emitted methods are written onto. Emission's business:
+    /// the engine reads `self_ty`.
     pub target_type: String,
     /// The type the impl is written for, as written.
     pub self_ty: Option<syn::Type>,
     /// Generic parameter names declared by the impl block.
     pub type_params: Vec<String>,
-    pub trait_name: Option<String>,
-    /// For trait impls, the generic args (e.g., "String" for `impl From<String>`)
-    pub trait_type_args: Vec<String>,
+    /// `impl Deref for X` — the trait's path as written, with its arguments.
+    pub trait_path: Option<syn::Path>,
+    /// The impl block's generics, carrying both the inline bounds and the
+    /// `where` clause.
+    pub generics: syn::Generics,
+    /// `type Target = T;` — what this impl supplies for the trait's associated
+    /// types.
+    pub assoc_types: Vec<(String, syn::Type)>,
     pub methods: Vec<FnInfo>,
-    /// Generic param bounds from the impl block (params + where clause).
-    /// Maps param name → list of trait bound names.
-    /// E.g., `impl<T: Clone + Send> Foo<T> where T: Debug` → {"T": ["Clone", "Debug"]}
-    pub generic_bounds: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl ImplInfo {
+    /// The trait's name as TypeScript writes it: the path's last segment.
+    pub fn trait_name(&self) -> Option<String> {
+        let path = self.trait_path.as_ref()?;
+        Some(path.segments.last()?.ident.to_string())
+    }
+
+    /// The trait's type arguments, in the TypeScript spelling emission puts in
+    /// an `implements` clause and in a disambiguated method name.
+    pub fn trait_type_args(&self) -> Vec<String> {
+        let Some(path) = &self.trait_path else {
+            return Vec::new();
+        };
+        let Some(segment) = path.segments.last() else {
+            return Vec::new();
+        };
+        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+            return Vec::new();
+        };
+        args.args
+            .iter()
+            .filter_map(|a| match a {
+                syn::GenericArgument::Type(ty) => Some(crate::name_map::map_type(ty)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The bounds on each generic parameter, inline and `where` alike, in the
+    /// TypeScript spelling emission writes into a class's type parameter list.
+    /// Marker traits carry no shape and are left out.
+    pub fn generic_bounds(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut out: std::collections::HashMap<String, Vec<String>> = Default::default();
+        let mut add = |name: String, bound: &syn::TypeParamBound| {
+            let syn::TypeParamBound::Trait(trait_bound) = bound else {
+                return;
+            };
+            let Some(seg) = trait_bound.path.segments.last() else {
+                return;
+            };
+            let trait_name = seg.ident.to_string();
+            if matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
+                return;
+            }
+            let written = match &seg.arguments {
+                syn::PathArguments::AngleBracketed(args) => {
+                    let type_args: Vec<String> = args
+                        .args
+                        .iter()
+                        .filter_map(|a| match a {
+                            syn::GenericArgument::Type(ty) => Some(crate::name_map::map_type(ty)),
+                            _ => None,
+                        })
+                        .collect();
+                    if type_args.is_empty() {
+                        trait_name
+                    } else {
+                        format!("{}<{}>", trait_name, type_args.join(", "))
+                    }
+                }
+                _ => trait_name,
+            };
+            out.entry(name).or_default().push(written);
+        };
+
+        for param in &self.generics.params {
+            if let syn::GenericParam::Type(t) = param {
+                for bound in &t.bounds {
+                    add(t.ident.to_string(), bound);
+                }
+            }
+        }
+        if let Some(where_clause) = &self.generics.where_clause {
+            for pred in &where_clause.predicates {
+                let syn::WherePredicate::Type(pt) = pred else {
+                    continue;
+                };
+                let syn::Type::Path(p) = &pt.bounded_ty else {
+                    continue;
+                };
+                let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) else {
+                    continue;
+                };
+                for bound in &pt.bounds {
+                    add(name.clone(), bound);
+                }
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug)]

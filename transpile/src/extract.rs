@@ -282,10 +282,25 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
             if method.default.is_some() {
                 has_default_impls = true;
             }
-            Some(extract_fn(&method.sig, true, &method.attrs))
+            let mut info = extract_fn(&method.sig, true, &method.attrs);
+            info.has_default_body = method.default.is_some();
+            // A default body is ordinary code that every implementor inherits.
+            // Keeping only the flag meant emission wrote a `throw` in its place
+            // and each implementor that omitted the method lost it.
+            info.body_ast = method.default.clone();
+            Some(info)
         } else {
             None
         }
+    }).collect();
+
+    let supertraits = t.supertraits.iter().filter_map(|b| match b {
+        syn::TypeParamBound::Trait(t) => Some(t.clone()),
+        _ => None,
+    }).collect();
+    let assoc_types = t.items.iter().filter_map(|item| match item {
+        syn::TraitItem::Type(ty) => Some(ty.ident.to_string()),
+        _ => None,
     }).collect();
 
     TraitInfo {
@@ -296,6 +311,8 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
         has_default_impls,
         generics: extract_generics(&t.generics),
         type_params: type_param_names(&t.generics),
+        supertraits,
+        assoc_types,
     }
 }
 
@@ -351,10 +368,16 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
     let is_async = sig.asyncness.is_some();
 
     let mut is_static = true;
+    let mut self_kind = None;
+    let mut self_receiver = None;
     let params: Vec<ParamInfo> = sig.inputs.iter().filter_map(|arg| {
         match arg {
-            FnArg::Receiver(_r) => {
+            FnArg::Receiver(r) => {
                 is_static = false;
+                self_kind = Some(receiver_kind(r));
+                if self_kind == Some(SelfKind::Arbitrary) {
+                    self_receiver = Some((*r.ty).clone());
+                }
                 None
             }
             FnArg::Typed(pat) => {
@@ -386,11 +409,15 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
         vis,
         is_async,
         is_static,
+        self_kind,
+        self_receiver,
+        has_default_body: false,
         params,
         return_type,
         rust_return,
         generics: extract_generics(&sig.generics),
         type_params: type_param_names(&sig.generics),
+        syn_generics: sig.generics.clone(),
         is_test: is_test_fn(attrs),
         body_ast: None,
         body_ts: None,
@@ -434,26 +461,6 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
         self_type_name
     };
 
-    let (trait_name, trait_type_args) = if let Some((_, path, _)) = &i.trait_ {
-        let name = path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-        let args = path.segments.last().map(|s| {
-            if let syn::PathArguments::AngleBracketed(args) = &s.arguments {
-                args.args.iter().filter_map(|a| {
-                    if let syn::GenericArgument::Type(ty) = a {
-                        Some(name_map::map_type(ty))
-                    } else {
-                        None
-                    }
-                }).collect()
-            } else {
-                Vec::new()
-            }
-        }).unwrap_or_default();
-        (Some(name), args)
-    } else {
-        (None, Vec::new())
-    };
-
     let methods = i.items.iter().filter_map(|item| {
         if let syn::ImplItem::Fn(method) = item {
             if is_skipped_cfg(&method.attrs) { return None; }
@@ -465,77 +472,36 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
         }
     }).collect();
 
-    // Extract generic bounds from impl params + where clause
-    let mut generic_bounds: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for param in &i.generics.params {
-        if let syn::GenericParam::Type(t) = param {
-            let name = t.ident.to_string();
-            for bound in &t.bounds {
-                if let syn::TypeParamBound::Trait(trait_bound) = bound {
-                    let seg = trait_bound.path.segments.last().unwrap();
-                    let trait_name = seg.ident.to_string();
-                    if !matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
-                        let full_trait = if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                            let type_args: Vec<String> = args.args.iter().filter_map(|a| {
-                                if let syn::GenericArgument::Type(ty) = a {
-                                    Some(name_map::map_type(ty))
-                                } else { None }
-                            }).collect();
-                            if type_args.is_empty() { trait_name } else {
-                                format!("{}<{}>", trait_name, type_args.join(", "))
-                            }
-                        } else {
-                            trait_name
-                        };
-                        generic_bounds.entry(name.clone()).or_default().push(full_trait);
-                    }
-                }
-            }
-        }
-    }
-    if let Some(where_clause) = &i.generics.where_clause {
-        for pred in &where_clause.predicates {
-            if let syn::WherePredicate::Type(pt) = pred {
-                let param_name = if let syn::Type::Path(p) = &pt.bounded_ty {
-                    p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
-                } else {
-                    continue;
-                };
-                for bound in &pt.bounds {
-                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
-                        let trait_name = trait_bound.path.segments.last()
-                            .map(|s| s.ident.to_string()).unwrap_or_default();
-                        if !matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
-                            // Include trait type args (e.g., With<Input> → "With<Input>")
-                            let full_trait = if let syn::PathArguments::AngleBracketed(args) =
-                                &trait_bound.path.segments.last().unwrap().arguments {
-                                let type_args: Vec<String> = args.args.iter().filter_map(|a| {
-                                    if let syn::GenericArgument::Type(ty) = a {
-                                        Some(name_map::map_type(ty))
-                                    } else { None }
-                                }).collect();
-                                if type_args.is_empty() { trait_name } else {
-                                    format!("{}<{}>", trait_name, type_args.join(", "))
-                                }
-                            } else {
-                                trait_name
-                            };
-                            generic_bounds.entry(param_name.clone()).or_default().push(full_trait);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let assoc_types = i.items.iter().filter_map(|item| match item {
+        syn::ImplItem::Type(ty) => Some((ty.ident.to_string(), ty.ty.clone())),
+        _ => None,
+    }).collect();
 
     ImplInfo {
         target_type,
         self_ty: Some((*i.self_ty).clone()),
         type_params: type_param_names(&i.generics),
-        trait_name,
-        trait_type_args,
+        trait_path: i.trait_.as_ref().map(|(_, path, _)| path.clone()),
+        generics: i.generics.clone(),
+        assoc_types,
         methods,
-        generic_bounds,
+    }
+}
+
+/// How a method's `self` parameter is written.
+///
+/// `self`, `&self` and `&mut self` are the three the engine models. `self: T`
+/// for any other `T` — `Arc<Self>`, `Pin<&mut Self>` — is its own kind: reading
+/// it as by-value would say the method sits on `Self` when it sits on the
+/// wrapper, and put it on the wrong step of the deref chain.
+fn receiver_kind(r: &syn::Receiver) -> SelfKind {
+    if r.colon_token.is_some() {
+        return SelfKind::Arbitrary;
+    }
+    match &r.reference {
+        Some((_, _)) if r.mutability.is_some() => SelfKind::RefMut,
+        Some((_, _)) => SelfKind::Ref,
+        None => SelfKind::Value,
     }
 }
 

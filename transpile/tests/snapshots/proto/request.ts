@@ -354,11 +354,35 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
 
   toString(): string {
     return this.match({
-      CommitTransaction: (v) => `CommitTransaction ${v.id} [${[...v.events].map((e) => `${e}`).join(', ')}]`,
-      Get: (v) => `Get ${v.collection} ${[...v.ids].map((id) => id.toBase64Short()).join(', ')}`,
-      GetEvents: (v) => `GetEvents ${v.collection} ${[...v.eventIds].map((id) => id.toBase64Short()).join(', ')}`,
-      Fetch: (v) => `Fetch ${v.collection} ${v.selection} known:${v.knownMatches.length}`,
-      SubscribeQuery: (v) => `Subscribe ${v.queryId} ${v.collection} ${v.selection} v${v.version} known:${v.knownMatches.length}`,
+      CommitTransaction: (v) => {
+        const id = v.id;
+        const events = v.events;
+        return `CommitTransaction ${id} [${[...events].map((e) => `${e}`).join(', ')}]`;
+      },
+      Get: (v) => {
+        const collection = v.collection;
+        const ids = v.ids;
+        return `Get ${collection} ${[...ids].map((id) => id.toBase64Short()).join(', ')}`;
+      },
+      GetEvents: (v) => {
+        const collection = v.collection;
+        const eventIds = v.eventIds;
+        return `GetEvents ${collection} ${[...eventIds].map((id) => id.toBase64Short()).join(', ')}`;
+      },
+      Fetch: (v) => {
+        const collection = v.collection;
+        const query = v.selection;
+        const knownMatches = v.knownMatches;
+        return `Fetch ${collection} ${query} known:${knownMatches.length}`;
+      },
+      SubscribeQuery: (v) => {
+        const queryId = v.queryId;
+        const collection = v.collection;
+        const query = v.selection;
+        const version = v.version;
+        const knownMatches = v.knownMatches;
+        return `Subscribe ${queryId} ${collection} ${query} v${version} known:${knownMatches.length}`;
+      },
     });
   }
 
@@ -447,13 +471,32 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
 
   toString(): string {
     return this.match({
-      CommitComplete: (v) => `CommitComplete ${v.id}`,
-      Fetch: (v) => `Fetch [${v._0.length}]`,
-      Get: (v) => `Get [${[...v._0].map((s) => s.toString()).join(', ')}]`,
-      GetEvents: (v) => `GetEvents [${[...v._0].map((e) => e.payload.toString()).join(', ')}]`,
-      QuerySubscribed: (v) => `Subscribed ${v.queryId} v.deltas:${v.deltas.length}`,
+      CommitComplete: (v) => {
+        const id = v.id;
+        return `CommitComplete ${id}`;
+      },
+      Fetch: (v) => {
+        const deltas = v._0;
+        return `Fetch [${deltas.length}]`;
+      },
+      Get: (v) => {
+        const states = v._0;
+        return `Get [${[...states].map((s) => s.toString()).join(', ')}]`;
+      },
+      GetEvents: (v) => {
+        const events = v._0;
+        return `GetEvents [${[...events].map((e) => e.payload.toString()).join(', ')}]`;
+      },
+      QuerySubscribed: (v) => {
+        const queryId = v.queryId;
+        const initial = v.deltas;
+        return `Subscribed ${queryId} initial:${initial.length}`;
+      },
       Success: () => `Success`,
-      Error: (v) => `Error: ${v._0}`,
+      Error: (v) => {
+        const e = v._0;
+        return `Error: ${e}`;
+      },
     });
   }
 

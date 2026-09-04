@@ -27,15 +27,16 @@ export function pop(): void {
 export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
-    if (stack.value.at(-1) != null) {
-      const last = stack.value.at(-1);
+    let stack_1 = stack.borrowMut();
+    if (stack_1.value.at(-1) != null) {
+      const last = stack_1.value.at(-1);
       if (last.observerId() === targetId) {
-        stack.value.pop();
+        stack_1.value.pop();
         return;
 
       }
     }
-    /* TODO: retain */ stack.value.filter((o) => o.observerId() !== targetId);
+    /* TODO: retain */ stack_1.value.filter((o) => o.observerId() !== targetId);
     stack.drop();
   });
   targetId.drop();

@@ -400,12 +400,15 @@ fn a_crate_ref_and_std_cell_ref_both_resolve() {
     assert_eq!(c.ty("context.rs", "Ref<u8>").id(), Some(system_ref));
 
     // The system type kept the accessor that reaching through it needs.
-    assert_eq!(
-        c.reg
-            .deref_field(&c.system(CELL_REF, vec![Ty::Prim(Prim::U8)])),
-        Some("value")
+    let probe = c.probe("broadcast.rs");
+    let step = probe
+        .deref_once(&c.system(CELL_REF, vec![Ty::Prim(Prim::U8)]))
+        .expect("std's Ref dereferences");
+    assert_eq!(step.accessor.map(|a| a.written()).as_deref(), Some("value"));
+    assert!(
+        probe.deref_once(&c.ty("broadcast.rs", "Ref<u8>")).is_none(),
+        "the crate's own Ref is not a wrapper"
     );
-    assert_eq!(c.reg.deref_field(&c.ty("broadcast.rs", "Ref<u8>")), None);
 }
 
 #[test]
@@ -589,12 +592,13 @@ fn struct_fields_are_recorded_as_resolved_types() {
 
     // Reaching a field through the wrapper reports the accessor emission needs.
     let broadcast = c.named("lib.rs", "Broadcast", vec![Ty::Prim(Prim::U8)]);
-    let (field_ty, accessor) = c.reg.resolve_field(&broadcast, "inner").unwrap();
-    assert_eq!(accessor, None);
-    let (inner_v, accessor) = c.reg.resolve_field(&field_ty, "v").unwrap();
-    assert_eq!(accessor.as_deref(), Some("value"));
+    let probe = c.probe("lib.rs");
+    let found = probe.resolve_field(&broadcast, "inner").expect("field");
+    assert!(found.accessors().is_empty());
+    let inner = probe.resolve_field(&found.ty, "v").expect("field through Arc");
+    assert_eq!(inner.accessors(), vec!["value"]);
     assert_eq!(
-        inner_v,
+        inner.ty,
         Ty::Prim(Prim::U8),
         "the wrapper's argument is substituted in"
     );
@@ -604,10 +608,8 @@ fn struct_fields_are_recorded_as_resolved_types() {
 fn a_method_return_type_is_substituted_through_the_receiver() {
     let c = Fixture::build(&[("lib.rs", "")]);
     let lock = c.system(RWLOCK, vec![Ty::Prim(Prim::U8)]);
-    assert_eq!(
-        c.reg.resolve_method(&lock, "write"),
-        Some(c.system(GUARD, vec![Ty::Prim(Prim::U8)]))
-    );
+    let found = c.probe("lib.rs").resolve_method(&lock, "write").expect("declared");
+    assert_eq!(found.ret, c.system(GUARD, vec![Ty::Prim(Prim::U8)]));
 }
 
 /// The impl block writes its own name for the receiver's argument. Two impls
@@ -625,9 +627,10 @@ fn an_impl_substitutes_through_its_own_parameter_names() {
 
     for c in [&with_r, &with_e] {
         let wrap = c.named("lib.rs", "Wrap", vec![Ty::Prim(Prim::U8)]);
+        let found = c.probe("lib.rs").resolve_method(&wrap, "get").expect("declared");
         assert_eq!(
-            c.reg.resolve_method(&wrap, "get"),
-            Some(Ty::Prim(Prim::U8)),
+            found.ret,
+            Ty::Prim(Prim::U8),
             "the receiver's argument is bound to whatever the impl calls it"
         );
     }
@@ -639,13 +642,13 @@ fn an_impl_whose_target_does_not_resolve_is_reported() {
         "lib.rs",
         "pub trait Listen<T> { fn listen(self); }\nimpl<F: Fn(u8)> Listen<u8> for F { fn listen(self) {} }",
     )]);
-    assert!(
-        c.messages()
-            .iter()
-            .any(|m| m.contains("impl target `F` does not resolve")),
-        "{:?}",
-        c.messages()
-    );
+    // The impl table holds it as what it is: an impl written for a parameter,
+    // which applies to whatever the receiver turns out to be.
+    let blanket = c.reg.impls().blanket();
+    assert_eq!(blanket.len(), 1, "{:?}", c.messages());
+    let def = c.reg.impl_def(blanket[0]);
+    assert_eq!(def.self_ty, Ty::Param("F".into()));
+    assert!(def.methods.contains_key("listen"));
 }
 
 #[test]
@@ -718,4 +721,37 @@ fn a_field_the_engine_refuses_is_left_unresolved_and_reported() {
     let entry = c.files.iter().find(|e| e.path == "lib.rs").unwrap();
     assert!(entry.file.structs[0].fields[0].ty.is_none());
     assert!(c.messages().iter().any(|m| m.contains("raw pointer")));
+}
+
+/// `<F as Future>::Output` where nothing declares `Future`: the projection has
+/// to keep the trait it was written through, or it is indistinguishable from
+/// `F::Output`, which may be a different associated type entirely.
+#[test]
+fn a_projection_through_an_undeclared_trait_keeps_the_trait() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let through = c.ty_in("lib.rs", "<F as futures::Future>::Output", &["F"]).unwrap();
+    let bare = c.ty_in("lib.rs", "F::Output", &["F"]).unwrap();
+    let Ty::Assoc { trait_: Some(named), .. } = &through else {
+        panic!("the trait was dropped: {:?}", through);
+    };
+    assert!(named.id.is_foreign(), "and it is interned as the foreign trait it is");
+    assert_ne!(through, bare, "the two projections are not the same type");
+    assert!(
+        c.messages().iter().any(|m| m.contains("futures::Future")),
+        "and the missing declaration is reported once: {:?}",
+        c.messages()
+    );
+}
+
+/// A crate type called `Result` is its own type. Recognising the runtime one by
+/// leaf name gave it the runtime's `unwrap`.
+#[test]
+fn a_crate_result_is_not_the_runtime_result() {
+    let c = Fixture::build(&[("lib.rs", "pub struct Result;")]);
+    let cx = c.context("lib.rs", None);
+    assert!(!cx.is_result(&c.named("lib.rs", "Result", vec![])));
+    assert!(cx.is_result(&c.system(
+        "std::result::Result",
+        vec![Ty::Prim(Prim::U8), Ty::Prim(Prim::U8)]
+    )));
 }

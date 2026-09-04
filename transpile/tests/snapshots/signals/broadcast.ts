@@ -54,13 +54,25 @@ export class Broadcast<T extends Clone = void> extends Struct {
       const [last, rest] = subscribers.splitLast();
       for (const callback of rest) {
         return callback.match({
-          Payload: (v) => v._0(value.clone()),
-          NotifyOnly: (v) => v._0(),
+          Payload: (v) => {
+            const callback = v._0;
+            return callback(value.clone());
+          },
+          NotifyOnly: (v) => {
+            const callback = v._0;
+            return callback();
+          },
         });
       }
       return last.match({
-        Payload: (v) => v._0(value),
-        NotifyOnly: (v) => v._0(),
+        Payload: (v) => {
+          const callback = v._0;
+          return callback(value);
+        },
+        NotifyOnly: (v) => {
+          const callback = v._0;
+          return callback();
+        },
       });
     }
   }
@@ -129,7 +141,7 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   drop(): void {
     if (this.inner.upgrade() != null) {
       const inner = this.inner.upgrade();
-      inner.listeners.write().remove(this.id);
+      inner.value.listeners.write().value.delete(this.id);
     }
   }
 }

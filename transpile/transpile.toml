@@ -111,21 +111,27 @@ Selection = "@ankurah/ankql"
 # Methods that return an iterator are absent: `slice::Iter` needs associated
 # types, which arrive with the std surface.
 
+# Each method is written as the whole Rust signature it has in the port's
+# runtime, receiver included, and is parsed by syn. `deref_field` says how
+# TypeScript reaches through a wrapper; `deref_target` says what it dereferences
+# to when that is not its first type argument. The std-surface step replaces
+# this table with signature-only Rust stub files.
+
 [system_types.Arc]
 path = "std::sync::Arc"
 deref_field = "value"
 type_params = ["T"]
-methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
+methods = { clone = "fn clone(&self) -> Arc<T>", downgrade = "fn downgrade(&self) -> Weak<T>" }
 
 [system_types.Weak]
 path = "std::sync::Weak"
 type_params = ["T"]
-methods = { upgrade = "Option<Arc<T>>", clone = "Weak<T>" }
+methods = { upgrade = "fn upgrade(&self) -> Option<Arc<T>>", clone = "fn clone(&self) -> Weak<T>" }
 
 [system_types.Mutex]
 path = "std::sync::Mutex"
 type_params = ["T"]
-methods = { lock = "MutexGuard<T>" }
+methods = { lock = "fn lock(&self) -> MutexGuard<T>" }
 
 [system_types.MutexGuard]
 path = "std::sync::MutexGuard"
@@ -135,7 +141,7 @@ type_params = ["T"]
 [system_types.RwLock]
 path = "std::sync::RwLock"
 type_params = ["T"]
-methods = { read = "RwLockReadGuard<T>", write = "RwLockWriteGuard<T>" }
+methods = { read = "fn read(&self) -> RwLockReadGuard<T>", write = "fn write(&self) -> RwLockWriteGuard<T>" }
 
 [system_types.RwLockReadGuard]
 path = "std::sync::RwLockReadGuard"
@@ -150,7 +156,7 @@ type_params = ["T"]
 [system_types.RefCell]
 path = "std::cell::RefCell"
 type_params = ["T"]
-methods = { borrow = "Ref<T>", borrow_mut = "RefMut<T>" }
+methods = { borrow = "fn borrow(&self) -> Ref<T>", borrow_mut = "fn borrow_mut(&self) -> RefMut<T>" }
 
 [system_types.Ref]
 path = "std::cell::Ref"
@@ -172,40 +178,50 @@ type_params = ["T"]
 [system_types.Option]
 path = "std::option::Option"
 type_params = ["T"]
-methods = { unwrap = "T", expect = "T", is_some = "bool", is_none = "bool" }
+methods = { unwrap = "fn unwrap(self) -> T", expect = "fn expect(self, msg: &str) -> T", is_some = "fn is_some(&self) -> bool", is_none = "fn is_none(&self) -> bool", clone = "fn clone(&self) -> Option<T>" }
 
+# A `String` dereferences to `str`, which is why `s.chars()` on a `&String`
+# takes three steps in Rust. The hop is invisible in TypeScript, where a string
+# is a string.
 [system_types.String]
 path = "std::string::String"
+deref_field = ""
+deref_target = "str"
+methods = { clone = "fn clone(&self) -> String", len = "fn len(&self) -> usize", is_empty = "fn is_empty(&self) -> bool" }
 
 [system_types.Result]
 path = "std::result::Result"
 type_params = ["T", "E"]
-methods = { unwrap = "T", expect = "T", is_ok = "bool", is_err = "bool" }
+methods = { unwrap = "fn unwrap(self) -> T", expect = "fn expect(self, msg: &str) -> T", is_ok = "fn is_ok(&self) -> bool", is_err = "fn is_err(&self) -> bool" }
 
+# `Vec<T>` dereferences to the slice `[T]`, so the slice's methods are reached
+# through it exactly as in Rust.
 [system_types.Vec]
 path = "std::vec::Vec"
+deref_field = ""
+deref_target = "[T]"
 type_params = ["T"]
-methods = { len = "usize", push = "()", pop = "Option<T>", clone = "Vec<T>" }
+methods = { len = "fn len(&self) -> usize", is_empty = "fn is_empty(&self) -> bool", push = "fn push(&mut self, value: T)", pop = "fn pop(&mut self) -> Option<T>", clone = "fn clone(&self) -> Vec<T>" }
 
 [system_types.HashMap]
 path = "std::collections::HashMap"
 type_params = ["K", "V"]
-methods = { get = "Option<&V>", insert = "Option<V>", len = "usize", contains_key = "bool" }
+methods = { get = "fn get(&self, key: &K) -> Option<&V>", insert = "fn insert(&mut self, key: K, value: V) -> Option<V>", len = "fn len(&self) -> usize", contains_key = "fn contains_key(&self, key: &K) -> bool", clone = "fn clone(&self) -> HashMap<K, V>", is_empty = "fn is_empty(&self) -> bool" }
 
 [system_types.BTreeMap]
 path = "std::collections::BTreeMap"
 type_params = ["K", "V"]
-methods = { get = "Option<&V>", insert = "Option<V>", len = "usize", contains_key = "bool" }
+methods = { get = "fn get(&self, key: &K) -> Option<&V>", insert = "fn insert(&mut self, key: K, value: V) -> Option<V>", len = "fn len(&self) -> usize", contains_key = "fn contains_key(&self, key: &K) -> bool", clone = "fn clone(&self) -> BTreeMap<K, V>", is_empty = "fn is_empty(&self) -> bool" }
 
 [system_types.HashSet]
 path = "std::collections::HashSet"
 type_params = ["T"]
-methods = { insert = "bool", contains = "bool", len = "usize" }
+methods = { insert = "fn insert(&mut self, value: T) -> bool", contains = "fn contains(&self, value: &T) -> bool", len = "fn len(&self) -> usize", clone = "fn clone(&self) -> HashSet<T>", is_empty = "fn is_empty(&self) -> bool" }
 
 [system_types.BTreeSet]
 path = "std::collections::BTreeSet"
 type_params = ["T"]
-methods = { insert = "bool", contains = "bool", len = "usize" }
+methods = { insert = "fn insert(&mut self, value: T) -> bool", contains = "fn contains(&self, value: &T) -> bool", len = "fn len(&self) -> usize", clone = "fn clone(&self) -> BTreeSet<T>", is_empty = "fn is_empty(&self) -> bool" }
 
 # The port models `thread_local!` as a ThreadLocal<T> value; Rust's name for
 # what the macro declares is `std::thread::LocalKey`, and that is the path a

@@ -112,6 +112,12 @@ impl Fixture {
             .unwrap_or_else(|| panic!("no system type at `{}`", path))
     }
 
+    /// The impl table, asked from a file's module, which is how method and
+    /// field resolution are reached in a test.
+    pub fn probe(&self, file: &str) -> crate::registry::Probe<'_> {
+        crate::registry::Probe::new(&self.reg, self.module(file))
+    }
+
     /// A type context for `file`, as body translation would build one.
     pub fn context(&self, file: &str, self_ty: Option<Ty>) -> crate::infer::TypeContext<'_> {
         self.sink.set_file(file);

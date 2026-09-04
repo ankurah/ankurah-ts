@@ -415,6 +415,16 @@ pub fn trait_ref(bound: &syn::TraitBound, env: &TypeEnv) -> Result<TraitRef, Dia
     path_trait_ref(&segments, segment, env, span)
 }
 
+/// A trait named by a bare path, as an `impl Trait for T` block writes it.
+pub fn trait_ref_of_path(path: &syn::Path, env: &TypeEnv) -> Result<TraitRef, Diag> {
+    let span = path.span();
+    let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    match path.segments.last() {
+        Some(segment) => path_trait_ref(&segments, segment, env, span),
+        None => Err(env.refuse(span, "an impl names no trait")),
+    }
+}
+
 fn path_trait_ref(
     segments: &[String],
     segment: &syn::PathSegment,

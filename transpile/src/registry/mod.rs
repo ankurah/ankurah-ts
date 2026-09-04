@@ -6,20 +6,27 @@
 //! declare a `Ref` and a crate type can never displace a system type.
 
 mod build;
+mod describe;
 #[cfg(test)]
 mod engine_tests;
+pub mod impls;
 mod lookup;
-mod members;
+pub mod method;
+#[cfg(test)]
+mod method_tests;
 mod module;
 mod resolve_type;
 mod system;
+mod traits;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ty::{Ty, TypeId};
+use crate::types::SelfKind;
 
-pub use build::{build_registry, ExtractedFile};
+pub use build::{build_registry, resolve_bounds, ExtractedFile};
+pub use method::{AutoRef, Callee, FieldResolution, MethodResolution, Probe, Undecided};
 pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
 pub use resolve_type::{resolve_type, TypeEnv};
 pub use system::SystemTypeDecl;
@@ -32,24 +39,37 @@ pub enum TypeKind {
     Trait,
 }
 
-/// An enum's variant. Payload types are resolved into the extracted fields but
-/// not copied here: nothing reads them until pattern binding needs them.
+/// An enum's variant, with the types of whatever it carries.
+///
+/// A tuple variant's fields are named `_0`, `_1`, the way emission writes them,
+/// so that `Foo::Bar(x)` in a pattern reads its type off position 0.
 #[derive(Debug, Clone)]
 pub struct VariantDef {
     pub name: String,
+    pub fields: Vec<(String, Ty)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodSig {
     pub params: Vec<(String, Ty)>,
     pub ret: Ty,
-    pub is_static: bool,
-    /// The parameter name standing at each argument position of the receiver
-    /// type, as the impl block wrote it. `impl<E> Wrap<E>` on `struct Wrap<R>`
-    /// binds `E`, not `R`, to the receiver's first argument; substituting
-    /// through the struct's own names would leave `E` dangling.
-    /// `None` at a position the impl did not write as a bare parameter.
-    pub receiver_params: Vec<Option<String>>,
+    /// How the receiver is taken. `None` is an associated function, which a
+    /// method call never reaches.
+    pub self_kind: Option<SelfKind>,
+    /// The type this method accepts as its receiver, written in terms of the
+    /// impl's own parameters — `&Arc<Inner<T>>` for a `&self` method on
+    /// `Arc<Inner<T>>`. Method resolution matches this against the receiver it
+    /// has, which is the question Rust's probe asks; comparing borrow kinds
+    /// instead let a blanket impl win a step early.
+    pub receiver: Option<Ty>,
+    /// Parameters the method declares on top of its impl's.
+    pub type_params: Vec<String>,
+}
+
+impl MethodSig {
+    pub fn is_static(&self) -> bool {
+        self.self_kind.is_none()
+    }
 }
 
 /// A declared type. Fields and method signatures are filled in after every
@@ -62,12 +82,13 @@ pub struct TypeDef {
     pub kind: TypeKind,
     /// Field name (in the TypeScript spelling emission uses) to field type.
     pub fields: Vec<(String, Ty)>,
-    /// Methods by their Rust name; `name_map` handles the TypeScript spelling.
-    pub methods: HashMap<String, MethodSig>,
     /// How reaching through this type is written in TypeScript.
     ///   `None`          — not a wrapper, read fields directly
     ///   `Some("")`      — transparent (Box): unwrap the inner type, emit nothing
     ///   `Some("value")` — a wrapper (Arc): emit `.value`, then the inner type
+    ///
+    /// Where the type dereferences *to* is an ordinary `Deref` impl in the impl
+    /// table; this is only how TypeScript writes the hop.
     pub deref_field: Option<String>,
     /// Declared generic parameter names, in order.
     pub type_params: Vec<String>,
@@ -132,6 +153,10 @@ pub struct TypeRegistry {
     /// Declared system types by the full Rust path they are declared under, so
     /// `std::sync::Arc` reaches one and `std::io::Result` reaches none.
     system_by_path: HashMap<String, TypeId>,
+    /// Every `impl` block, indexed by what it is written for.
+    impls: impls::ImplTable,
+    /// Every trait declaration, by the id its name resolves to.
+    traits: HashMap<TypeId, traits::TraitDef>,
     foreign: RefCell<ForeignTypes>,
     /// Aliases part-way through expansion, so a cycle stops rather than recurses.
     expanding: RefCell<Vec<AliasId>>,
@@ -149,6 +174,25 @@ impl std::fmt::Display for IdSpaceExhausted {
 }
 
 impl TypeRegistry {
+    /// Does this enum have a variant of that name?
+    pub fn is_variant_of(&self, id: TypeId, variant: &str) -> bool {
+        matches!(
+            self.def(id).map(|d| &d.kind),
+            Some(TypeKind::Enum { variants }) if variants.iter().any(|v| v.name == variant)
+        )
+    }
+
+    /// The payload a variant carries, by the field names emission writes.
+    pub fn variant_fields(&self, id: TypeId, variant: &str) -> Option<&[(String, Ty)]> {
+        let TypeKind::Enum { variants } = &self.def(id)?.kind else {
+            return None;
+        };
+        variants
+            .iter()
+            .find(|v| v.name == variant)
+            .map(|v| v.fields.as_slice())
+    }
+
     pub fn new(crate_name: &str) -> Self {
         TypeRegistry {
             defs: Vec::new(),
@@ -157,6 +201,8 @@ impl TypeRegistry {
             modules: ModuleTree::new(),
             crate_names: vec![crate_name.to_string()],
             system_by_path: HashMap::new(),
+            impls: impls::ImplTable::default(),
+            traits: HashMap::new(),
             foreign: RefCell::new(ForeignTypes::default()),
             expanding: RefCell::new(Vec::new()),
         }
@@ -210,7 +256,6 @@ impl TypeRegistry {
             name: decl.name,
             kind: decl.kind,
             fields: Vec::new(),
-            methods: HashMap::new(),
             deref_field: decl.deref_field,
             type_params: decl.type_params,
         });

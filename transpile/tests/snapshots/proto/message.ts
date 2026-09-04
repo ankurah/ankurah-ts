@@ -17,8 +17,14 @@ export class Message extends Enum<MessageV> {
 
   toString(): string {
     return this.match({
-      Presence: (v) => `Presence: ${v._0}`,
-      PeerMessage: (v) => `PeerMessage: ${v._0}`,
+      Presence: (v) => {
+        const presence = v._0;
+        return `Presence: ${presence}`;
+      },
+      PeerMessage: (v) => {
+        const nodeMessage = v._0;
+        return `PeerMessage: ${nodeMessage}`;
+      },
     });
   }
 
@@ -63,11 +69,27 @@ export class NodeMessage extends Enum<NodeMessageV> {
 
   toString(): string {
     return this.match({
-      Request: (v) => `Request: ${v.request}`,
-      Response: (v) => `Response: ${v._0}`,
-      Update: (v) => `Update: ${v._0}`,
-      UpdateAck: (v) => `UpdateAck: ${v._0}`,
-      UnsubscribeQuery: (v) => `Unsubscribe: ${v.from} ${v.queryId}`,
+      Request: (v) => {
+        const request = v.request;
+        return `Request: ${request}`;
+      },
+      Response: (v) => {
+        const response = v._0;
+        return `Response: ${response}`;
+      },
+      Update: (v) => {
+        const update = v._0;
+        return `Update: ${update}`;
+      },
+      UpdateAck: (v) => {
+        const updateAck = v._0;
+        return `UpdateAck: ${updateAck}`;
+      },
+      UnsubscribeQuery: (v) => {
+        const from = v.from;
+        const queryId = v.queryId;
+        return `Unsubscribe: ${from} ${queryId}`;
+      },
     });
   }
 

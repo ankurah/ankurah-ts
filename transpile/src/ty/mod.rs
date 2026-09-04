@@ -4,6 +4,8 @@
 
 mod def;
 pub mod subst;
+mod unify;
 
 pub use def::{ArrayLen, Prim, TraitRef, Ty, TypeId};
 pub use subst::bind_params;
+pub use unify::unify;

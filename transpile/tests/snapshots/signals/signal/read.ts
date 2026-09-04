@@ -71,10 +71,11 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
+    const listener_1 = listener.intoSubscribeListener();
     const roValue = this.getReadcell();
     const sigLguard = this.listen(Arc.new((_) => {
       const currentValue = roValue.value();
-      listener(currentValue);
+      listener_1(currentValue);
       currentValue.drop();
     }));
     const _ret = SubscriptionGuard.new(sigLguard);

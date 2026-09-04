@@ -231,3 +231,62 @@ fn edit_script(a: &[&str], b: &[&str]) -> Vec<String> {
     }
     out
 }
+
+/// One row of `resolve`: which function a method call landed on.
+#[derive(Debug, Clone)]
+pub struct Resolved {
+    /// Path relative to the support checkout, e.g. `signals/src/broadcast.rs`.
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+    pub method: String,
+    pub receiver: String,
+    pub adjusted: String,
+    pub callee: String,
+    pub result: String,
+    /// `from>to` for each dereference taken, in order.
+    pub steps: Vec<(String, String)>,
+}
+
+/// Ask the engine which function every method call in a crate resolves to.
+pub fn run_resolve(crate_name: &str, src_rel: &str) -> Vec<Resolved> {
+    let output = Command::new(transpile_bin())
+        .current_dir(transpile_dir())
+        .arg("resolve")
+        .arg(support_tree().join(src_rel))
+        .arg("--crate-name")
+        .arg(crate_name)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run the transpiler binary: {e}"));
+    assert!(
+        output.status.success(),
+        "resolve {crate_name} failed ({}):\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let prefix = format!("{}/", src_rel);
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("RESOLVED\t"))
+        .map(|row| {
+            let f: Vec<&str> = row.split('\t').collect();
+            assert!(f.len() >= 9, "malformed resolve row: {row}");
+            Resolved {
+                file: format!("{prefix}{}", f[0]),
+                line: f[1].parse().unwrap_or(0),
+                col: f[2].parse().unwrap_or(0),
+                method: f[3].to_string(),
+                receiver: f[4].to_string(),
+                adjusted: f[5].to_string(),
+                callee: f[6].to_string(),
+                result: f[7].to_string(),
+                steps: f[8]
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.split_once('>'))
+                    .map(|(a, b)| (a.to_string(), b.to_string()))
+                    .collect(),
+            }
+        })
+        .collect()
+}

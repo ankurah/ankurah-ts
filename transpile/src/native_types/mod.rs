@@ -6,7 +6,8 @@
 //! don't need entries here — they pass through as-is.
 
 mod arc;
-mod array; // Vec<T> → T[]
+pub(crate) mod array; // Vec<T> → T[]
+mod bytes; // Vec<u8>/[u8] → Uint8Array
 mod conversion; // into/from/as_ref — type-erased identity transforms
 mod iterator; // Iterator trait methods on arrays
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
@@ -37,6 +38,12 @@ pub enum MethodTranslation {
     Expr(String),
     /// No translation needed — pass through as receiver.method(args)
     Passthrough,
+    /// The call has no translation that runs. `fallback` is emitted anyway so
+    /// the output keeps its shape, and `message` says what is missing.
+    Refused {
+        message: String,
+        fallback: Box<MethodTranslation>,
+    },
 }
 
 /// Translate a method call based on the resolved receiver type.
@@ -59,6 +66,9 @@ pub fn translate_method(
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
         JsShape::Array(_) => array::translate(receiver, rust_method, args),
+        // A `Vec<u8>` is a `Uint8Array`, which is fixed-length and shares only
+        // the reading half of an array's surface.
+        JsShape::Bytes => bytes::translate(receiver, rust_method, args),
         JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args),
         JsShape::Map(_, _) => map::translate(receiver, rust_method, args),
         JsShape::Set(_) => set::translate(receiver, rust_method, args),

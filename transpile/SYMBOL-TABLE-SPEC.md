@@ -309,6 +309,49 @@ auto-deref, and the right impl decides the emitted TypeScript.
 - `dyn Trait` receivers resolve to the trait's method; the emitted call is a
   normal TypeScript method call, and the emission layer needs only the trait
   method signature.
+
+Resolution order as implemented (step 2). Rust has two tiers and so does this:
+
+  1. Build the receiver list by auto-deref, then append the unsized form of the
+     last entry (`[T; N]` to `[T]`). `Vec<T>` to `[T]`, `String` to `str` and
+     `Box<T>` to `T` are `Deref` impls, which is the mechanism Rust uses for
+     them; only the array is an unsizing.
+  2. At each receiver, take by value, then `&`, then `&mut`.
+  3. At each (receiver, borrow), match the *method's declared receiver type*
+     against the borrowed receiver — not the borrow kind against the borrow
+     being tried. `impl Direct for Conc` declaring `fn tag(&self)` accepts a
+     `&Conc` with no borrow added, so it competes at the first step; comparing
+     borrow kinds let a blanket impl win a step earlier with a different answer.
+  4. Inherent impls first. Then one extension tier holding every trait impl
+     written for a definite type, every impl written for one of its own
+     parameters, and the declaration a `dyn Trait` or a bounded parameter
+     dispatches through. Coherence forbids two impls of one trait for one type,
+     so splitting the extension tier further could only ever hide a clash
+     between two different traits — which is the clash Rust reports (E0034,
+     checked against rustc).
+  5. Exactly one match at a step wins. Two is a diagnostic naming both. None
+     after the chain is exhausted is a diagnostic naming every receiver tried.
+
+Trait visibility. Rust admits an extension method only when its trait is in
+scope. The engine applies that as a tie-break, not as a filter: where two
+candidates compete it decides between them, and where one candidate stands alone
+it is taken and reported ("resolved through trait `T`, which is not in scope
+here"). Filtering instead would make the answer depend on the `use` map being
+complete, and a gap there would delete a method silently rather than show up in
+the diagnostics count.
+
+Bounds. An impl whose `where` clause definitely fails is not a candidate. One
+the engine cannot decide — `F: Fn(T)` before the closures step, a trait with no
+declaration yet — stays a candidate, and the undecided bound travels with the
+answer as a deferred obligation and is reported at the call. A bound written on
+a parameter in scope is its own proof: inside `impl<SE: Engine> Node<SE>` there
+is no impl to go looking for. Bound lookup and projection compare the whole
+`TraitRef`, arguments and associated bindings included, so `impl Marker<u16> for
+S` does not prove `S: Marker<u8>`.
+
+Emission of a step. A declared system wrapper names the field to write
+(`.value`); a transparent one writes nothing; a crate's own `impl Deref` writes
+the `deref()` call Rust inserts and the emitted class carries.
 - Result: `MethodResolution { steps: Vec<DerefStep>, autoref, callee: Callee::{
   Inherent(impl, method) | TraitImpl(impl, method) | TraitObject(trait, method)
   | Blanket(impl, method) }, subst: Subst, ret: Ty }`. Emission derives the
@@ -420,9 +463,16 @@ for `equals` versus `===`, `compareTo` versus `<`, and `Index` on a `Map`.
   the prelude, and `Self` in impl scope bound to the impl's `self_ty` with its
   generics.
 - Constants and statics are bound at module scope with resolved types.
-- Match arms and `if let` bind pattern variables through `bind_pattern`
-  (already specified in March, still unimplemented for enum payloads); the
-  textual `replace_identifier` in `match_expr.rs` is deleted when this lands.
+- Match arms and `if let` bind pattern variables through `bind_pattern`, with
+  Rust's default binding modes (RFC 2005): a non-reference pattern matched
+  against a reference peels one layer and binds everything under it by
+  reference, `&pat` consumes exactly one layer, and `ref`/`ref mut` say the
+  borrow outright. The textual `replace_identifier` in `match_expr.rs` is gone;
+  an arm emits its payload as real declarations.
+- A Rust shadow is a new variable. JavaScript cannot declare a name twice in one
+  scope, so the shadow is emitted under a fresh identifier and every later use
+  of the name follows it; assigning to the old one instead changed a value that
+  a closure capturing it, or a caller owning it, could still see.
 
 ### 4.10 Types for macros and derives
 
@@ -571,6 +621,31 @@ Acceptance for the engine as a whole: every expression the transpiler translates
 in proto, ankql, and signals resolves or produces an expected diagnostic; the
 oracle comparison has zero mismatches on covered sites; proto's output is
 unchanged where it was already correct.
+
+## 7a. Known gaps, recorded rather than fixed
+
+Each of these is understood, has a place in the plan, and is deliberately not
+addressed by the step that found it.
+
+- **A crate `Deref` body needs a coercion the engine does not yet insert.**
+  `impl Deref for Entity { type Target = EntityInner; fn deref(&self) -> &Self::Target { &self.0 } }`
+  where `self.0: Arc<EntityInner>` relies on Rust's deref coercion at the return
+  position. The call site now writes `.deref()` and the signature now reads
+  `deref(): EntityInner`, so the gap is a TypeScript type error in one method
+  body instead of a silent wrong read at every use. It closes with expected
+  types (4.6, step 4).
+- **`self: Arc<Self>` and `self: Pin<&mut Self>` are reported and left out of
+  the method table.** Five methods in core (`as_arc_dyn_any` ×4, `poll_next`),
+  none of them called by method syntax. The written receiver type is kept on the
+  extracted function and on `MethodSig.receiver`, so supporting them is a
+  matching change, not a modelling one.
+- **A growable `Vec<u8>` has no runtime type.** `Uint8Array` is fixed-length, so
+  the read-only half of `Vec<u8>` translates and every call that would grow or
+  shrink one is reported. Choosing a byte-buffer type is a runtime decision
+  (`packages/base`), not a transpiler one.
+- **Drop insertion still names locals by their Rust name**, so a shadow emitted
+  under a fresh identifier is dropped under the old one. The ownership-emission
+  step owns `ownership::generate_drops`.
 
 ## 8. Non-goals
 

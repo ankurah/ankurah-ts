@@ -196,12 +196,28 @@ pub fn emit_trait(out: &mut String, t: &TraitInfo) {
     for method in &t.methods {
         let async_kw = if method.is_async { "async " } else { "" };
         let params = format_params(&method.params);
-        if t.has_default_impls {
-            out.push_str(&format!("  {}{}({}): {} {{ throw new Error('TODO'); }}\n",
-                async_kw, method.ts_name, params, method.return_type));
-        } else {
-            out.push_str(&format!("  {}{}({}): {};\n",
-                async_kw, method.ts_name, params, method.return_type));
+        // A method the trait wrote a body for is emitted with it; one it only
+        // declared stays abstract, so an implementor that omits it is a
+        // TypeScript error rather than a runtime throw.
+        match (&method.body_ts, t.has_default_impls) {
+            (Some(body), _) => {
+                out.push_str(&format!(
+                    "  {}{}({}): {} {{\n{}  }}\n",
+                    async_kw,
+                    method.ts_name,
+                    params,
+                    method.return_type,
+                    indent_body(body)
+                ));
+            }
+            (None, true) => out.push_str(&format!(
+                "  abstract {}{}({}): {};\n",
+                async_kw, method.ts_name, params, method.return_type
+            )),
+            (None, false) => out.push_str(&format!(
+                "  {}{}({}): {};\n",
+                async_kw, method.ts_name, params, method.return_type
+            )),
         }
     }
 
@@ -280,12 +296,16 @@ fn emit_trait_methods(
                     vis: method.vis,
                     is_async: method.is_async,
                     is_static: method.is_static,
+                    self_kind: method.self_kind,
+                    self_receiver: method.self_receiver.clone(),
+                    has_default_body: method.has_default_body,
                     params: method.params.clone(),
                     return_type: ret_override.map(|s| s.to_string())
                         .unwrap_or_else(|| method.return_type.clone()),
                     rust_return: method.rust_return.clone(),
                     generics: method.generics.clone(),
                     type_params: method.type_params.clone(),
+                    syn_generics: method.syn_generics.clone(),
                     is_test: false,
                     body_ast: None,
                     body_ts: method.body_ts.clone(),
@@ -584,8 +604,34 @@ fn indent_body(body: &str) -> String {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
+/// Substitute the impl's own type for `Self` in a written TypeScript type.
+///
+/// Anchored on identifier boundaries: an unanchored replace also rewrote the
+/// `Self` inside `SelfDescribing` or `MySelf`.
 fn resolve_self_type(ty: &str, self_type: &str) -> String {
-    if ty == "Self" { self_type.to_string() } else { ty.replace("Self", self_type) }
+    if ty == "Self" {
+        return self_type.to_string();
+    }
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(ty.len());
+    let bytes = ty.as_bytes();
+    let mut i = 0;
+    while i < ty.len() {
+        if ty[i..].starts_with("Self") {
+            let before_ok = i == 0 || !is_ident(bytes[i - 1] as char);
+            let after = i + 4;
+            let after_ok = after >= bytes.len() || !is_ident(bytes[after] as char);
+            if before_ok && after_ok {
+                out.push_str(self_type);
+                i = after;
+                continue;
+            }
+        }
+        let ch = ty[i..].chars().next().expect("in bounds");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 fn format_params(params: &[ParamInfo]) -> String {

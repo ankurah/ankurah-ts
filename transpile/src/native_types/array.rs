@@ -3,7 +3,7 @@
 use super::MethodTranslation;
 
 /// Translate Vec static/associated function calls
-pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
+pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
     match func {
         "Vec::new" | "Vec.new" => Some("[]".to_string()),
         "Vec::with_capacity" | "Vec.withCapacity" => Some("[]".to_string()),

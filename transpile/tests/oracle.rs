@@ -181,35 +181,246 @@ fn oracle_loads() {
     assert_eq!(counts.crates["ankql"]["method_calls"], 367);
 }
 
-/// Ignored on purpose. It activates when the engine's method resolution lands
-/// (SYMBOL-TABLE-SPEC.md section 6.3, "rust-analyzer as a one-time oracle"):
-/// at that point the engine can be asked, for each site below, which method the
-/// call resolves to and what the receiver's type is, and the answers must equal
-/// rust-analyzer's. Until then there is nothing to ask, so running this only
-/// proves the data loads — which `oracle_loads` above already does.
+/// One site the engine is expected to keep resolving.
+#[derive(Deserialize)]
+struct Pinned {
+    file: String,
+    line: u32,
+    method: String,
+    /// Set where the port declares a different signature from Rust's, so the
+    /// two result types are not expected to agree.
+    #[serde(default)]
+    result_differs: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PinnedSites {
+    site: Vec<Pinned>,
+}
+
+fn pinned_sites() -> Vec<Pinned> {
+    let path = transpile_dir().join("tests/oracle/covered_sites.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let parsed: PinnedSites = toml::from_str(&text)
+        .unwrap_or_else(|e| panic!("{} does not match the schema: {e}", path.display()));
+    parsed.site
+}
+
+/// The engine's answers, against rust-analyzer's, on the sites both cover.
 ///
-/// Run it once the engine exists with:
-///     cd transpile && cargo test --test oracle -- --ignored
+/// The two do not name types the same way — rust-analyzer writes
+/// `Vec<EventId, Global>` and `&mut DebugStruct<'_, '_>`, the engine writes
+/// `Vec<EventId>` — so the comparison is on the shape that decides the emitted
+/// TypeScript: the borrow taken, the outermost type constructor of the adjusted
+/// receiver, which function was selected including the trait it came through,
+/// the result type, and the ordered chain of dereferences.
+///
+/// Every site in `covered_sites.toml` must resolve. A site the engine does not
+/// cover *and* is not pinned is a gap, printed by category, which is the
+/// std-surface step's work list.
 #[test]
-#[ignore = "activates when the engine's method resolution lands (spec 6.3)"]
 fn engine_matches_oracle() {
+    let engine = common::run_resolve("signals", "signals/src");
     let calls = load::<MethodCall>("method_calls.json");
-    let derefs = load::<OverloadedDeref>("overloaded_derefs.json");
+    let pinned = pinned_sites();
 
-    // The shape the comparison takes. Each `resolve_method_call` below is the
-    // engine entry point that does not exist yet; wiring it up is the whole of
-    // activating this test.
+    let mut mismatches = Vec::new();
+    let mut uncovered: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut covered = 0usize;
+
     for site in &calls.sites {
-        let _ = (&site.file, site.line, site.col, &site.callee, &site.receiver_type);
-    }
-    for site in &derefs.sites {
-        let _ = (&site.file, site.line, &site.steps);
+        let method = callee_method(&site.callee);
+        let pin = pinned
+            .iter()
+            .find(|p| p.file == site.file && p.line == site.line && p.method == method);
+        let Some(row) = engine
+            .iter()
+            .find(|r| r.file == site.file && r.line == site.line && r.method == method)
+        else {
+            if pin.is_some() {
+                mismatches.push(format!(
+                    "{}:{} {}: pinned as covered, but the engine no longer resolves it",
+                    site.file, site.line, method
+                ));
+            } else {
+                uncovered
+                    .entry(callee_owner(&site.callee))
+                    .or_default()
+                    .push(format!("{}:{} {}", site.file, site.line, site.callee));
+            }
+            continue;
+        };
+        covered += 1;
+
+        // The receiver, after the dereferences and the borrow.
+        if site.receiver_type_adjusted != "(none)"
+            && shape(&site.receiver_type_adjusted) != shape(&row.adjusted)
+        {
+            mismatches.push(format!(
+                "{}:{} {}: receiver is `{}`, rust-analyzer says `{}`",
+                site.file, site.line, method, row.adjusted, site.receiver_type_adjusted
+            ));
+        }
+
+        // Which function, including the trait it came through: selecting the
+        // right receiver through the wrong trait is a different answer.
+        if callee_identity(&site.callee, &site.callee_kind) != engine_callee_identity(&row.callee) {
+            mismatches.push(format!(
+                "{}:{} {}: callee is `{}`, rust-analyzer says `{}` ({})",
+                site.file, site.line, method, row.callee, site.callee, site.callee_kind
+            ));
+        }
+
+        // And what the call produced.
+        match pin.and_then(|p| p.result_differs.as_ref()) {
+            Some(_) => {}
+            None if shape(&site.result_type) != shape(&row.result) => mismatches.push(format!(
+                "{}:{} {}: result is `{}`, rust-analyzer says `{}`",
+                site.file, site.line, method, row.result, site.result_type
+            )),
+            None => {}
+        }
     }
 
-    panic!(
-        "the engine has no method-resolution entry point to compare against yet; \
-         {} call sites and {} deref chains are waiting in tests/oracle/",
+    for pin in &pinned {
+        let seen = calls.sites.iter().any(|s| {
+            s.file == pin.file && s.line == pin.line && callee_method(&s.callee) == pin.method
+        });
+        if !seen {
+            mismatches.push(format!(
+                "{}:{} {}: pinned, but the oracle has no such site",
+                pin.file, pin.line, pin.method
+            ));
+        }
+    }
+
+    // The deref chains, from the whole-corpus pass: the same steps, in the same
+    // order, from and to the same types.
+    let derefs = load::<OverloadedDeref>("overloaded_derefs.json");
+    let ours: Vec<&OverloadedDeref> = derefs
+        .sites
+        .iter()
+        .filter(|s| s.file.starts_with("signals/"))
+        .collect();
+    let mut deref_covered = 0usize;
+    for site in &ours {
+        let expected: Vec<(String, String)> = site
+            .steps
+            .iter()
+            .map(|s| (head(&s.from), head(&s.to)))
+            .collect();
+        let matched = engine.iter().any(|r| {
+            r.file == site.file
+                && r.line == site.line
+                && r.steps
+                    .iter()
+                    .map(|(from, to)| (head(from), head(to)))
+                    .collect::<Vec<_>>()
+                    == expected
+        });
+        if matched {
+            deref_covered += 1;
+        } else {
+            uncovered
+                .entry("deref chain not reproduced".to_string())
+                .or_default()
+                .push(format!("{}:{} {}", site.file, site.line, site.expr));
+        }
+    }
+
+    let mut report = String::new();
+    for (category, sites) in &uncovered {
+        report.push_str(&format!("\n  {} ({} sites)\n", category, sites.len()));
+        for site in sites {
+            report.push_str(&format!("    {}\n", site));
+        }
+    }
+    eprintln!(
+        "oracle: {} of {} method-call sites covered ({} pinned), {} of {} deref chains; \
+         the rest are gaps, by what is missing:{}",
+        covered,
         calls.sites.len(),
-        derefs.sites.len()
+        pinned.len(),
+        deref_covered,
+        ours.len(),
+        report
     );
+
+    assert!(
+        mismatches.is_empty(),
+        "the engine disagrees with rust-analyzer on {} site(s):\n  {}",
+        mismatches.len(),
+        mismatches.join("\n  ")
+    );
+    assert!(
+        covered >= pinned.len(),
+        "every pinned site has to be covered"
+    );
+}
+
+/// `HashMap<K, V, S, A>::len` gives `len`.
+fn callee_method(callee: &str) -> String {
+    callee.rsplit("::").next().unwrap_or(callee).to_string()
+}
+
+/// `HashMap<K, V, S, A>::len` gives `HashMap<K, V, S, A>`; `<Foo as Bar>::baz`
+/// gives `Foo`.
+fn callee_owner(callee: &str) -> String {
+    let owner = match callee.rfind("::") {
+        Some(at) => &callee[..at],
+        None => callee,
+    };
+    let owner = owner.trim_start_matches('<');
+    match owner.find(" as ") {
+        Some(at) => owner[..at].to_string(),
+        None => owner.trim_end_matches('>').to_string(),
+    }
+}
+
+/// Which function was selected, as a pair the two sides can both produce: the
+/// trait it came through if it came through one, otherwise the type it is an
+/// inherent method of, plus the method's name.
+fn callee_identity(callee: &str, _kind: &str) -> (String, String) {
+    // rust-analyzer writes a trait method as `Trait::method` and an inherent one
+    // as `Type<..>::method`; either way the owner is what identifies it.
+    (head(&callee_owner(callee)), callee_method(callee))
+}
+
+/// The engine writes a trait callee as `<Self as Trait>::method`.
+fn engine_callee_identity(callee: &str) -> (String, String) {
+    let name = callee_method(callee);
+    let owner = match callee.rfind("::") {
+        Some(at) => &callee[..at],
+        None => callee,
+    };
+    if let Some(at) = owner.find(" as ") {
+        let trait_name = owner[at + 4..].trim_end_matches('>');
+        return (head(trait_name), name);
+    }
+    (head(owner.trim_start_matches('<')), name)
+}
+
+/// The borrow a type is behind and the constructor at its head, which is what
+/// the emitted TypeScript turns on. Lifetimes and the allocator and hasher
+/// parameters rust-analyzer prints are not part of that.
+fn shape(ty: &str) -> (String, String) {
+    let ty = ty.trim();
+    let (borrow, rest) = if let Some(rest) = ty.strip_prefix("&mut ") {
+        ("&mut", rest)
+    } else if let Some(rest) = ty.strip_prefix('&') {
+        ("&", rest)
+    } else {
+        ("", ty)
+    };
+    (borrow.to_string(), head(rest))
+}
+
+fn head(ty: &str) -> String {
+    let ty = ty.trim().trim_start_matches('&').trim_start_matches("mut ").trim();
+    if ty.starts_with('[') {
+        return "[]".to_string();
+    }
+    let name = ty.split(['<', ' ']).next().unwrap_or(ty);
+    name.rsplit("::").next().unwrap_or(name).to_string()
 }

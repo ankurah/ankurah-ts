@@ -19,6 +19,11 @@ pub struct ScopeStack {
 pub struct Scope {
     pub kind: ScopeKind,
     pub bindings: HashMap<String, Ty>,
+    /// Names this scope emits under a different identifier than the source
+    /// wrote. A Rust shadow is a new variable, and JavaScript cannot declare one
+    /// twice in a scope, so the second one is emitted under a fresh name and
+    /// every later use of it follows.
+    pub renames: HashMap<String, String>,
     /// Names bound here whose type the engine could not read. They still
     /// shadow, because shadowing is about names; a diagnostic was filed where
     /// the type was needed.
@@ -44,6 +49,7 @@ impl Scope {
         Scope {
             kind,
             bindings: HashMap::new(),
+            renames: HashMap::new(),
             untyped: HashSet::new(),
         }
     }
@@ -73,6 +79,7 @@ impl ScopeStack {
         self.scopes.push(Scope {
             kind: ScopeKind::Impl { self_type },
             bindings,
+            renames: HashMap::new(),
             untyped: HashSet::new(),
         });
     }
@@ -81,6 +88,7 @@ impl ScopeStack {
         self.scopes.push(Scope {
             kind: ScopeKind::Fn,
             bindings: params.into_iter().collect(),
+            renames: HashMap::new(),
             untyped: HashSet::new(),
         });
     }
@@ -89,6 +97,7 @@ impl ScopeStack {
         self.scopes.push(Scope {
             kind: ScopeKind::Closure,
             bindings: params.into_iter().collect(),
+            renames: HashMap::new(),
             untyped: HashSet::new(),
         });
     }
@@ -112,11 +121,74 @@ impl ScopeStack {
             })
     }
 
-    /// Is this name bound at all, typed or not?
+    /// The identifier this name is emitted under, innermost binding first.
+    pub fn emitted_name(&self, name: &str) -> Option<String> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(fresh) = scope.renames.get(name) {
+                return Some(fresh.clone());
+            }
+            if scope.bindings.contains_key(name) || scope.untyped.contains(name) {
+                return Some(name.to_string());
+            }
+        }
+        None
+    }
+
+    /// An identifier nothing in scope is using, for a shadow that cannot be
+    /// declared twice.
+    pub fn fresh_name(&self, base: &str) -> String {
+        let taken = |candidate: &str| {
+            self.scopes.iter().any(|scope| {
+                scope.bindings.contains_key(candidate)
+                    || scope.untyped.contains(candidate)
+                    || scope.renames.values().any(|v| v == candidate)
+            })
+        };
+        for n in 1.. {
+            let candidate = format!("{}_{}", base, n);
+            if !taken(&candidate) {
+                return candidate;
+            }
+        }
+        unreachable!("there is always a free suffix")
+    }
+
+    /// Emit this name under `fresh` from here on.
+    pub fn rename(&mut self, name: &str, fresh: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.renames.insert(name.to_string(), fresh);
+        }
+    }
+
+    /// Is this name bound at all, typed or not? Shadowing is a question about
+    /// names, not about types.
     pub fn is_bound(&self, name: &str) -> bool {
         self.scopes
             .iter()
             .any(|scope| scope.bindings.contains_key(name) || scope.untyped.contains(name))
+    }
+
+    /// Would a `let` of this name here be a redeclaration JavaScript refuses?
+    ///
+    /// Two places conflict: the block the `let` lands in, and the parameter list
+    /// of the function or closure it is inside — `(x) => { let x = ... }` is a
+    /// syntax error even though the parameters are not written in the block.
+    /// Every block in between is a nested scope, where a fresh declaration is
+    /// exactly what shadowing means and is legal.
+    pub fn redeclares(&self, name: &str) -> bool {
+        let holds = |scope: &Scope| scope.bindings.contains_key(name) || scope.untyped.contains(name);
+        let mut frames = self.scopes.iter().rev();
+        if let Some(innermost) = frames.next() {
+            if holds(innermost) {
+                return true;
+            }
+        }
+        for scope in frames {
+            if matches!(scope.kind, ScopeKind::Fn | ScopeKind::Closure) {
+                return holds(scope);
+            }
+        }
+        false
     }
 
     /// Bind a name in the innermost scope, replacing any binding of the same

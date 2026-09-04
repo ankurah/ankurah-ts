@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use syn::{self, visit::Visit, Item, Type, Fields, GenericArgument, PathArguments};
+use syn::{self, visit::Visit, Type, Fields, GenericArgument, PathArguments};
 use walkdir::WalkDir;
 
 /// Information about a Rust type

@@ -38,7 +38,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
         return f(value);
       }
     })()
-    guard = this.cached.value.write();
+    let guard = this.cached.value.write();
     if (guard.value == null) {
       const output = this.source.with((input) => (this.transform)(input));
       guard.value = output;
@@ -76,13 +76,14 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
+    const listener_1 = listener.intoSubscribeListener();
     const source = this.source.clone();
     const transform = this.transform.clone();
     const cached = this.cached.clone();
     const subscription = this.source.listen(Arc.new((_) => {
       const output = source.with((input) => transform(input));
       cached.value.write().value = output.clone();
-      listener(output);
+      listener_1(output);
       output.drop();
     }));
     const _ret = SubscriptionGuard.new(subscription);

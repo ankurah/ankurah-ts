@@ -152,7 +152,7 @@ export class OperationSet extends Struct {
     return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
-  deref(): Target {
+  deref(): Map<string, Operation[]> {
     return this._0;
   }
 
@@ -307,7 +307,7 @@ export class StateBuffers extends Struct {
     this._0 = _0;
   }
 
-  deref(): Target {
+  deref(): Map<string, Uint8Array> {
     return this._0;
   }
 

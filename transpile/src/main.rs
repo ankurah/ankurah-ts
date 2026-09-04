@@ -23,6 +23,7 @@ mod ownership;
 mod registry;
 #[cfg(test)]
 mod testing;
+mod trace;
 mod ty;
 mod types;
 
@@ -52,6 +53,22 @@ enum Command {
         /// Rust crate path for MIRRORS annotation (e.g., "proto/src/id.rs")
         #[arg(long)]
         crate_path: Option<String>,
+    },
+
+    /// Report which function every method call in a crate resolves to.
+    ///
+    /// One tab-separated row per call: file, line, column, method, receiver,
+    /// adjusted receiver, callee, result type, deref steps. Read by the oracle
+    /// test, which compares the rows against rust-analyzer's answers for the
+    /// same sites.
+    Resolve {
+        /// Rust crate source directory
+        #[arg()]
+        src_dir: PathBuf,
+
+        /// Crate name, as `batch` takes it
+        #[arg(long)]
+        crate_name: String,
     },
 
     /// Batch-generate TS skeletons for an entire crate, writing to an output directory
@@ -92,6 +109,26 @@ fn main() -> Result<()> {
             let ts = codegen::generate_ts(&registry, &parsed[0].file, &crate_path);
             print!("{}", ts);
         }
+        Command::Resolve {
+            src_dir,
+            crate_name,
+        } => {
+            let config_path = PathBuf::from("transpile.toml");
+            let config = if config_path.exists() {
+                Some(config::Config::load(&config_path)?)
+            } else {
+                None
+            };
+            trace::start();
+            let out = tempdir_for_resolve()?;
+            batch_generate(&src_dir, &out, &crate_name, config.as_ref())?;
+            std::fs::remove_dir_all(&out).ok();
+            // `batch` prints the files it writes; the rows are tagged so the
+            // reader can tell them apart without silencing that.
+            for row in trace::rows() {
+                println!("RESOLVED\t{}", row);
+            }
+        }
         Command::Batch {
             src_dir,
             out_dir,
@@ -109,6 +146,19 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// `resolve` runs the same pipeline `batch` does, because the answers it
+/// reports are the ones body translation actually used. The TypeScript it
+/// writes on the way is thrown away.
+fn tempdir_for_resolve() -> Result<PathBuf> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ankurah-resolve-{}-{}", std::process::id(), nanos));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 fn batch_generate(
@@ -403,6 +453,7 @@ fn translate_module(
             "Self",
             None,
             &[],
+            &[],
             registry,
             module,
             &inline_mod_names,
@@ -427,12 +478,24 @@ fn translate_module(
     for imp in &mut file.impls {
         let self_type = imp.target_type.clone();
         let self_ty = impl_self_ty(registry, module, imp, sink);
+        // What the impl's own parameters are known to implement, so that a call
+        // on one of them — `self.0.read().unwrap().clone()` under
+        // `impl<T: Clone> ValueCell<T>` — reaches the trait's declaration.
+        let env = registry::TypeEnv::new(registry, module, sink)
+            .with_params(&imp.type_params)
+            .with_self(self_ty.as_ref());
+        let bounds = registry::method::param_bounds_of(&registry::resolve_bounds(
+            &imp.generics,
+            &env,
+            sink,
+        ));
         for method in &mut imp.methods {
             translate_fn_body(
                 method,
                 &self_type,
                 self_ty.clone(),
                 &imp.type_params,
+                &bounds,
                 registry,
                 module,
                 &inline_mod_names,
@@ -448,6 +511,7 @@ fn translate_module(
             "Self",
             None,
             &[],
+            &[],
             registry,
             module,
             &[],
@@ -456,9 +520,35 @@ fn translate_module(
         );
     }
 
+    // Inside a trait's own default body `Self` is whatever implements it: a
+    // parameter carrying that one bound, which is what a call on `self`
+    // dispatches through.
     for tr in &mut file.traits {
+        let Some(trait_id) = registry.module_type(module, &tr.name) else {
+            continue;
+        };
+        let self_ty = ty::Ty::Param("Self".to_string());
+        let bounds = vec![(
+            "Self".to_string(),
+            ty::TraitRef {
+                id: trait_id,
+                args: tr.type_params.iter().cloned().map(ty::Ty::Param).collect(),
+                bindings: Vec::new(),
+            },
+        )];
         for method in &mut tr.methods {
-            translate_fn_body(method, "Self", None, &[], registry, module, &[], &[], sink);
+            translate_fn_body(
+                method,
+                &tr.name,
+                Some(self_ty.clone()),
+                &tr.type_params,
+                &bounds,
+                registry,
+                module,
+                &[],
+                &[],
+                sink,
+            );
         }
     }
 }
@@ -470,9 +560,8 @@ fn impl_self_ty(
     imp: &types::ImplInfo,
     sink: &diag::DiagSink,
 ) -> Option<ty::Ty> {
-    if imp.target_type.is_empty() {
-        return None;
-    }
+    // `impl Collatable for &str` has no path to name a target class by, but it
+    // still has a self type, and `self` inside it is a `&str`.
     let syn_ty = imp.self_ty.as_ref()?;
     let env = registry::TypeEnv::new(registry, module, sink).with_params(&imp.type_params);
     match registry::resolve_type(syn_ty, &env) {
@@ -509,6 +598,7 @@ fn translate_fn_body(
     self_type: &str,
     self_ty: Option<ty::Ty>,
     impl_params: &[String],
+    impl_bounds: &[(String, ty::TraitRef)],
     registry: &registry::TypeRegistry,
     module: registry::ModuleId,
     inline_module_names: &[String],
@@ -519,7 +609,20 @@ fn translate_fn_body(
         let mut params = impl_params.to_vec();
         params.extend(func.type_params.iter().cloned());
 
-        let mut tc = infer::TypeContext::new(registry, module, self_ty, params, sink);
+        let mut tc = infer::TypeContext::new(registry, module, self_ty.clone(), params, sink);
+        // The bounds in scope: the impl block's, plus this function's own.
+        let mut bounds = impl_bounds.to_vec();
+        {
+            let env = registry::TypeEnv::new(registry, module, sink)
+                .with_params(&tc.params)
+                .with_self(self_ty.as_ref());
+            bounds.extend(registry::method::param_bounds_of(&registry::resolve_bounds(
+                &func.syn_generics,
+                &env,
+                sink,
+            )));
+        }
+        tc.param_bounds = bounds;
         for (name, ty) in consts {
             tc.bind(name, ty.clone());
         }
@@ -541,6 +644,18 @@ fn translate_fn_body(
             .collect();
         tc.push_fn(typed_params);
 
+        // A return type written as `Self::Target` has no TypeScript name of its
+        // own: the syntactic mapping renders it as the bare associated name,
+        // which is not a type. The impl that supplies it is in the table, so ask.
+        if let Some(written) = func.rust_return.as_ref().filter(|t| projects_through_self(t)) {
+            if let Ok(resolved) = tc.resolve_written_type(written) {
+                let normalized = tc.probe().normalize(&resolved);
+                if normalized != resolved {
+                    func.return_type = name_map::map_ty(registry, &normalized);
+                }
+            }
+        }
+
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
         translator.inline_module_names = inline_module_names.to_vec();
         func.body_ts = Some(translator.translate_block(block));
@@ -550,6 +665,20 @@ fn translate_fn_body(
     }
     if func.body_ts.is_some() {
         func.body_ast = None;
+    }
+}
+
+/// Does this written type project through `Self` — `Self::Target`, `&Self::Item`?
+/// Those are the ones whose TypeScript name the syntactic mapping cannot write.
+fn projects_through_self(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(path) => {
+            path.path.segments.len() > 1 && path.path.segments[0].ident == "Self"
+        }
+        syn::Type::Reference(r) => projects_through_self(&r.elem),
+        syn::Type::Paren(p) => projects_through_self(&p.elem),
+        syn::Type::Group(g) => projects_through_self(&g.elem),
+        _ => false,
     }
 }
 

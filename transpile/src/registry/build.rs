@@ -2,16 +2,20 @@
 //!
 //! Two passes, because a field's type can name a type declared in another file:
 //! first every module, `use` binding and declaration; then every field,
-//! variant, constant and method signature, resolved against the declarations.
+//! variant, constant, trait and `impl` block, resolved against the declarations.
 
+use std::collections::HashMap;
+
+use super::impls::{Bound, ImplDef, ImplId};
 use super::module::{ModuleId, UseBinding, Vis};
+use super::traits::{TraitDef, TraitMethod};
 use super::{
     resolve_type, AliasDef, MethodSig, SystemTypeDecl, TypeDecl, TypeEnv, TypeKind, TypeRegistry,
     ValueDef, VariantDef,
 };
 use crate::diag::DiagSink;
 use crate::ty::{Ty, TypeId};
-use crate::types::{FieldInfo, FnInfo, ImplInfo, RustFile, VisInfo};
+use crate::types::{FieldInfo, FnInfo, ImplInfo, RustFile, TraitInfo, VisInfo};
 
 /// A parsed file, the path it came from, and whether anything is emitted for it.
 #[derive(Debug)]
@@ -35,12 +39,14 @@ enum Update {
         id: TypeId,
         variants: Vec<VariantDef>,
     },
-    Method {
-        id: TypeId,
-        name: String,
-        sig: MethodSig,
-    },
+    Impl(ImplDef),
+    Trait(TraitDef),
     ConstType {
+        id: super::ValueId,
+        ty: Ty,
+    },
+    /// A function's return type, so a call to it can be typed.
+    ValueType {
         id: super::ValueId,
         ty: Ty,
     },
@@ -111,12 +117,11 @@ pub fn build_registry(
                     def.kind = TypeKind::Enum { variants };
                 }
             }
-            Update::Method { id, name, sig } => {
-                if let Some(def) = reg.def_mut(id) {
-                    def.methods.insert(name, sig);
-                }
+            Update::Impl(def) => {
+                reg.add_impl(def);
             }
-            Update::ConstType { id, ty } => {
+            Update::Trait(def) => reg.insert_trait(def),
+            Update::ConstType { id, ty } | Update::ValueType { id, ty } => {
                 if let Some(value) = reg.value_mut(id) {
                     value.ty = Some(ty);
                 }
@@ -261,6 +266,11 @@ fn resolve_file(
         let id = reg.module_type(module, &s.name);
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
+            if s.derives.iter().any(|d| d == "Clone") {
+                if let Some(def) = derived_clone(reg, id, &s.type_params) {
+                    updates.push(Update::Impl(def));
+                }
+            }
             updates.push(Update::Fields { id, fields });
         }
     }
@@ -269,12 +279,18 @@ fn resolve_file(
         let id = reg.module_type(module, &e.name);
         let mut variants = Vec::new();
         for v in &mut e.variants {
-            resolve_fields(reg, module, &e.type_params, &mut v.fields, sink);
+            let fields = resolve_fields(reg, module, &e.type_params, &mut v.fields, sink);
             variants.push(VariantDef {
                 name: v.name.clone(),
+                fields,
             });
         }
         if let Some(id) = id {
+            if e.derives.iter().any(|d| d == "Clone") {
+                if let Some(def) = derived_clone(reg, id, &e.type_params) {
+                    updates.push(Update::Impl(def));
+                }
+            }
             updates.push(Update::Variants { id, variants });
         }
     }
@@ -291,8 +307,33 @@ fn resolve_file(
         }
     }
 
-    for imp in &mut file.impls {
-        resolve_impl(reg, module, imp, sink, updates);
+    // A free function's return type, so that `foo()` in expression position has
+    // a type. Its parameters are the caller's business and are not stored.
+    for f in &file.functions {
+        let Some(id) = reg.module_value(module, &f.name) else {
+            continue;
+        };
+        let Some(rust_ty) = &f.rust_return else {
+            updates.push(Update::ValueType { id, ty: Ty::Unit });
+            continue;
+        };
+        let env = TypeEnv::new(reg, module, sink).with_params(&f.type_params);
+        match resolve_type(rust_ty, &env) {
+            Ok(ty) => updates.push(Update::ValueType { id, ty }),
+            Err(diag) => sink.push(diag),
+        }
+    }
+
+    for t in &file.traits {
+        if let Some(def) = resolve_trait(reg, module, t, sink) {
+            updates.push(Update::Trait(def));
+        }
+    }
+
+    for imp in &file.impls {
+        if let Some(def) = resolve_impl(reg, module, imp, sink) {
+            updates.push(Update::Impl(def));
+        }
     }
 
     for (name, sub_file) in &mut file.inline_modules {
@@ -301,6 +342,52 @@ fn resolve_file(
         };
         resolve_file(reg, child, sub_file, sink, updates);
     }
+}
+
+/// `#[derive(Clone)]` written out as the impl it stands for.
+///
+/// This is the first of the derive hooks the spec calls for (4.10, step 7), and
+/// it is here now because the engine used to answer `.clone()` by assuming
+/// every receiver was cloneable. With the impl registered, `node.clone()`
+/// resolves on `Node` and `guard.clone()` reaches through the guard to what it
+/// holds, which is what Rust does.
+fn derived_clone(
+    reg: &TypeRegistry,
+    id: TypeId,
+    type_params: &[String],
+) -> Option<ImplDef> {
+    let clone = reg.system_type(super::system::CLONE_PATH)?;
+    let self_ty = Ty::Named {
+        id,
+        args: type_params.iter().map(|p| Ty::Param(p.clone())).collect(),
+    };
+    let mut methods = HashMap::new();
+    methods.insert(
+        "clone".to_string(),
+        MethodSig {
+            params: Vec::new(),
+            ret: self_ty.clone(),
+            self_kind: Some(crate::types::SelfKind::Ref),
+            receiver: Some(Ty::Ref {
+                mutable: false,
+                inner: Box::new(self_ty.clone()),
+            }),
+            type_params: Vec::new(),
+        },
+    );
+    Some(ImplDef {
+        id: ImplId(0),
+        generics: type_params.to_vec(),
+        bounds: Vec::new(),
+        self_ty,
+        trait_ref: Some(crate::ty::TraitRef {
+            id: clone,
+            args: Vec::new(),
+            bindings: Vec::new(),
+        }),
+        assoc_types: HashMap::new(),
+        methods,
+    })
 }
 
 fn resolve_fields(
@@ -328,101 +415,219 @@ fn resolve_fields(
     out
 }
 
+/// A trait declaration: its supertraits, the associated types an impl has to
+/// supply, and the signature of every method it declares.
+fn resolve_trait(
+    reg: &TypeRegistry,
+    module: ModuleId,
+    t: &TraitInfo,
+    sink: &DiagSink,
+) -> Option<TraitDef> {
+    let id = reg.module_type(module, &t.name)?;
+    // A trait's own declarations speak about `Self`, which stands for whatever
+    // implements it. Method resolution substitutes the real type in.
+    let self_ty = Ty::Param("Self".to_string());
+    let env = TypeEnv::new(reg, module, sink)
+        .with_params(&t.type_params)
+        .with_self(Some(&self_ty));
+
+    let mut supertraits = Vec::new();
+    for bound in &t.supertraits {
+        match super::resolve_type::trait_ref(bound, &env) {
+            Ok(tr) => supertraits.push(tr),
+            Err(diag) => sink.push(diag),
+        }
+    }
+
+    let mut methods = HashMap::new();
+    for method in &t.methods {
+        let mut params = t.type_params.clone();
+        params.extend(method.type_params.iter().cloned());
+        if let Some(sig) = method_sig(reg, module, &params, Some(&self_ty), method, sink) {
+            methods.insert(
+                method.name.clone(),
+                TraitMethod {
+                    sig,
+                    has_default: method.has_default_body,
+                },
+            );
+        }
+    }
+
+    Some(TraitDef {
+        id,
+        generics: t.type_params.clone(),
+        supertraits,
+        assoc_types: t.assoc_types.clone(),
+        methods,
+    })
+}
+
+/// An `impl` block: what it is for, the trait it implements, what its `where`
+/// clauses require, and every signature it supplies.
 fn resolve_impl(
     reg: &TypeRegistry,
     module: ModuleId,
     imp: &ImplInfo,
     sink: &DiagSink,
-    updates: &mut Vec<Update>,
-) {
-    let self_ty = imp.self_ty.as_ref().and_then(|ty| {
-        let env = TypeEnv::new(reg, module, sink).with_params(&imp.type_params);
-        match resolve_type(ty, &env) {
-            Ok(ty) => Some(ty),
+) -> Option<ImplDef> {
+    let syn_self = imp.self_ty.as_ref()?;
+    let env = TypeEnv::new(reg, module, sink).with_params(&imp.type_params);
+    let self_ty = match resolve_type(syn_self, &env) {
+        Ok(ty) => ty,
+        Err(diag) => {
+            sink.push(diag);
+            return None;
+        }
+    };
+    let env = TypeEnv::new(reg, module, sink)
+        .with_params(&imp.type_params)
+        .with_self(Some(&self_ty));
+
+    let trait_ref = match &imp.trait_path {
+        None => None,
+        Some(path) => match super::resolve_type::trait_ref_of_path(path, &env) {
+            Ok(tr) => Some(tr),
             Err(diag) => {
                 sink.push(diag);
-                None
+                return None;
             }
-        }
-    });
-
-    // Methods attach to the type the impl block names. `impl TryInto<Clock> for
-    // Vec<Vec<u8>>` is recorded against `Clock`, which is where extraction
-    // points `target_type` and where the emitted class puts the method.
-    let target = reg
-        .module_type(module, &imp.target_type)
-        .or_else(|| reg.lookup_item(module, &imp.target_type));
-    let Some(target) = target else {
-        // A blanket impl, or an impl on a type from another crate. Neither has
-        // a home in this table; the impl table gives them one.
-        if let Some(syn_ty) = &imp.self_ty {
-            sink.report(
-                syn::spanned::Spanned::span(syn_ty),
-                format!(
-                    "impl target `{}` does not resolve here; its methods are not registered",
-                    imp.target_type
-                ),
-            );
-        }
-        return;
+        },
     };
 
-    // The impl writes its own names for the receiver's arguments.
-    let receiver_params = receiver_params(self_ty.as_ref(), &imp.type_params);
+    let bounds = resolve_bounds(&imp.generics, &env, sink);
 
+    let mut assoc_types = HashMap::new();
+    for (name, rust_ty) in &imp.assoc_types {
+        match resolve_type(rust_ty, &env) {
+            Ok(ty) => {
+                assoc_types.insert(name.clone(), ty);
+            }
+            Err(diag) => sink.push(diag),
+        }
+    }
+
+    let mut methods = HashMap::new();
     for method in &imp.methods {
         let mut params = imp.type_params.clone();
         params.extend(method.type_params.iter().cloned());
-        if let Some(sig) = method_sig(
-            reg,
-            module,
-            &params,
-            self_ty.as_ref(),
-            &receiver_params,
-            method,
-            sink,
-        ) {
-            updates.push(Update::Method {
-                id: target,
-                name: method.name.clone(),
-                sig,
-            });
+        if let Some(sig) = method_sig(reg, module, &params, Some(&self_ty), method, sink) {
+            methods.insert(method.name.clone(), sig);
         }
     }
+
+    Some(ImplDef {
+        // Filled in when the table takes it.
+        id: ImplId(0),
+        generics: imp.type_params.clone(),
+        bounds,
+        self_ty,
+        trait_ref,
+        assoc_types,
+        methods,
+    })
 }
 
-/// The impl's parameter name standing at each argument position of its self
-/// type. `impl<E> Wrap<E>` gives `[Some("E")]`, whatever the struct calls its
-/// own parameter; `impl Signal for Arc<Inner<T>>` gives `[None]`, because the
-/// argument there is not a bare parameter and binds nothing.
-fn receiver_params(self_ty: Option<&Ty>, impl_params: &[String]) -> Vec<Option<String>> {
-    let Some(Ty::Named { args, .. }) = self_ty else {
-        return Vec::new();
+/// The `T: Trait` requirements an impl or trait writes, inline and in its
+/// `where` clause alike.
+pub fn resolve_bounds(generics: &syn::Generics, env: &TypeEnv, sink: &DiagSink) -> Vec<Bound> {
+    let mut out = Vec::new();
+    for param in &generics.params {
+        let syn::GenericParam::Type(t) = param else {
+            continue;
+        };
+        let subject = Ty::Param(t.ident.to_string());
+        for bound in &t.bounds {
+            push_bound(&subject, bound, env, sink, &mut out);
+        }
+    }
+    let Some(where_clause) = &generics.where_clause else {
+        return out;
     };
-    args.iter()
-        .map(|arg| match arg {
-            Ty::Param(name) if impl_params.iter().any(|p| p == name) => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
+    for pred in &where_clause.predicates {
+        let syn::WherePredicate::Type(pt) = pred else {
+            continue;
+        };
+        let subject = match resolve_type(&pt.bounded_ty, env) {
+            Ok(ty) => ty,
+            Err(diag) => {
+                sink.push(diag);
+                continue;
+            }
+        };
+        for bound in &pt.bounds {
+            push_bound(&subject, bound, env, sink, &mut out);
+        }
+    }
+    out
+}
+
+fn push_bound(
+    subject: &Ty,
+    bound: &syn::TypeParamBound,
+    env: &TypeEnv,
+    sink: &DiagSink,
+    out: &mut Vec<Bound>,
+) {
+    let syn::TypeParamBound::Trait(t) = bound else {
+        return;
+    };
+    match super::resolve_type::trait_ref(t, env) {
+        Ok(trait_ref) => out.push(Bound {
+            subject: subject.clone(),
+            trait_ref,
+        }),
+        Err(diag) => sink.push(diag),
+    }
 }
 
 /// A method's signature, or nothing when the engine could not name a type in
 /// it. A method whose return type the engine cannot read stays out of the
 /// table: "no answer" is the truth, and calling it `()` would not be.
-#[allow(clippy::too_many_arguments)]
 fn method_sig(
     reg: &TypeRegistry,
     module: ModuleId,
     params: &[String],
     self_ty: Option<&Ty>,
-    receiver_params: &[Option<String>],
     method: &FnInfo,
     sink: &DiagSink,
 ) -> Option<MethodSig> {
     let env = TypeEnv::new(reg, module, sink)
         .with_params(params)
         .with_self(self_ty);
+
+    // `self: Arc<Self>` and the other written receivers put the method on a
+    // type the engine does not yet walk to. Reading one as by-value would say it
+    // sits on `Self`; leaving it out says the truth, and the written type is
+    // kept on the extracted function for the step that supports it.
+    if method.self_kind == Some(crate::types::SelfKind::Arbitrary) {
+        if let Some(written) = &method.self_receiver {
+            sink.push(crate::diag::Diag::at(
+                &sink.file(),
+                syn::spanned::Spanned::span(written),
+                format!(
+                    "`self: {}` is a receiver the engine does not model; `{}` is left out of the method table",
+                    quote::ToTokens::to_token_stream(written),
+                    method.name
+                ),
+            ));
+        }
+        return None;
+    }
+
+    let receiver = self_ty.map(|ty| match method.self_kind {
+        Some(crate::types::SelfKind::Ref) => Ty::Ref {
+            mutable: false,
+            inner: Box::new(ty.clone()),
+        },
+        Some(crate::types::SelfKind::RefMut) => Ty::Ref {
+            mutable: true,
+            inner: Box::new(ty.clone()),
+        },
+        _ => ty.clone(),
+    });
+    let receiver = method.self_kind.and(receiver);
+
     let mut resolved_params = Vec::new();
     for param in &method.params {
         let Some(rust_ty) = &param.rust_ty else {
@@ -450,8 +655,9 @@ fn method_sig(
     Some(MethodSig {
         params: resolved_params,
         ret,
-        is_static: method.is_static,
-        receiver_params: receiver_params.to_vec(),
+        self_kind: method.self_kind,
+        receiver,
+        type_params: method.type_params.clone(),
     })
 }
 

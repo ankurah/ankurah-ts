@@ -4,18 +4,18 @@
 //! and enum match (variants → .match({}) pattern).
 
 use crate::name_map;
-use crate::body::{translate_expr, translate_pat, indent};
+use crate::body::{translate_pat, indent, BodyTranslator};
 
 /// Translate a match expression in return position (adds return to each arm)
-pub fn translate_match_returning(match_expr: &syn::ExprMatch) -> String {
-    let scrutinee = translate_expr(&match_expr.expr);
+pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let scrutinee = t.expr(&match_expr.expr);
 
     if is_option_match(&match_expr.arms) {
-        return translate_option_match_returning(&scrutinee, &match_expr.arms);
+        return translate_option_match_returning(&scrutinee, match_expr, t);
     }
 
     // For enum and other matches, the standard translation + return wrapping works
-    let ts = translate_match(match_expr);
+    let ts = translate_match(match_expr, t);
     if ts.contains(".match(") {
         format!("return {};", ts)
     } else {
@@ -24,7 +24,9 @@ pub fn translate_match_returning(match_expr: &syn::ExprMatch) -> String {
 }
 
 /// Option match with return in each branch
-fn translate_option_match_returning(scrutinee: &str, arms: &[syn::Arm]) -> String {
+fn translate_option_match_returning(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let arms = &match_expr.arms;
+    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
     let mut some_arm = None;
     let mut none_arm = None;
 
@@ -42,9 +44,10 @@ fn translate_option_match_returning(scrutinee: &str, arms: &[syn::Arm]) -> Strin
                 let var_name = if let syn::Pat::TupleStruct(ts) = &arm.pat {
                     ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string())
                 } else { "v".to_string() };
-                some_arm = Some((var_name, translate_expr(&arm.body)));
+                let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
+                some_arm = Some((var_name, t.expr(&arm.body)));
             }
-            "None" | "_" => { none_arm = Some(translate_expr(&arm.body)); }
+            "None" | "_" => { none_arm = Some(t.expr(&arm.body)); }
             _ => {}
         }
     }
@@ -66,25 +69,28 @@ fn translate_option_match_returning(scrutinee: &str, arms: &[syn::Arm]) -> Strin
 }
 
 /// Translate a match expression
-pub fn translate_match(match_expr: &syn::ExprMatch) -> String {
-    let scrutinee = translate_expr(&match_expr.expr);
+pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let scrutinee = t.expr(&match_expr.expr);
 
     if is_option_match(&match_expr.arms) {
-        return translate_option_match(&scrutinee, &match_expr.arms);
+        return translate_option_match(&scrutinee, match_expr, t);
     }
     if is_result_match(&match_expr.arms) {
-        return translate_result_match(&scrutinee, &match_expr.arms);
+        return translate_result_match(&scrutinee, match_expr, t);
     }
     if looks_like_enum_match(&match_expr.arms) {
-        return translate_enum_match(&scrutinee, &match_expr.arms);
+        return translate_enum_match(&scrutinee, match_expr, t);
     }
 
     // Fallback: if/else chain
+    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
     let mut out = String::new();
     for (i, arm) in match_expr.arms.iter().enumerate() {
         let pat = translate_pat(&arm.pat);
-        let body = translate_expr(&arm.body);
-        let guard = arm.guard.as_ref().map(|(_, g)| format!(" && {}", translate_expr(g))).unwrap_or_default();
+        let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
+        let body = t.expr(&arm.body);
+        let guard = arm.guard.as_ref().map(|(_, g)| format!(" && {}", t.expr(g))).unwrap_or_default();
+        drop(_arm);
 
         if i == 0 {
             out.push_str(&format!("if ({}{}) {{\n{}}}", pat, guard, indent(&format!("{}\n", body))));
@@ -113,7 +119,9 @@ fn is_option_match(arms: &[syn::Arm]) -> bool {
     })
 }
 
-fn translate_option_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
+fn translate_option_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let arms = &match_expr.arms;
+    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
     let mut some_arm = None;
     let mut none_arm = None;
 
@@ -133,10 +141,11 @@ fn translate_option_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
                 } else {
                     "v".to_string()
                 };
-                some_arm = Some((var_name, translate_expr(&arm.body)));
+                let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
+                some_arm = Some((var_name, t.expr(&arm.body)));
             }
             "None" | "_" => {
-                none_arm = Some(translate_expr(&arm.body));
+                none_arm = Some(t.expr(&arm.body));
             }
             _ => {}
         }
@@ -169,13 +178,16 @@ fn is_result_match(arms: &[syn::Arm]) -> bool {
     })
 }
 
-fn translate_result_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
-    for arm in arms {
+fn translate_result_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    for arm in &match_expr.arms {
         if let syn::Pat::TupleStruct(ts) = &arm.pat {
             let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
             if name == "Ok" {
                 let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
-                let body = translate_expr(&arm.body);
+                let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
+                let body = t.expr(&arm.body);
+                drop(_arm);
                 return format!("const {} = {};\n{}", var, scrutinee, body);
             }
         }
@@ -201,104 +213,25 @@ fn looks_like_enum_match(arms: &[syn::Arm]) -> bool {
     })
 }
 
-fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
+fn translate_enum_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
     let mut out = format!("{}.match({{\n", scrutinee);
 
-    for arm in arms {
-        // Collect field mappings: local_name → v.fieldName
-        let (variant_name, field_mappings) = match &arm.pat {
-            syn::Pat::TupleStruct(ts) => {
-                let variant = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let mappings: Vec<(String, String)> = ts.elems.iter().enumerate().map(|(i, pat)| {
-                    let local = translate_pat(pat);
-                    let accessor = format!("v._{}", i);
-                    (local, accessor)
-                }).collect();
-                (variant, mappings)
-            }
-            syn::Pat::Struct(s) => {
-                let variant = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let mappings: Vec<(String, String)> = s.fields.iter().map(|f| {
-                    let field_name = match &f.member {
-                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    };
-                    // The local variable name may differ if renamed: `selection: query`
-                    let local = translate_pat(&f.pat);
-                    let accessor = format!("v.{}", field_name);
-                    (local, accessor)
-                }).collect();
-                (variant, mappings)
-            }
-            syn::Pat::Path(p) => {
-                let variant = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                (variant, Vec::new())
-            }
-            syn::Pat::Or(or_pat) => {
-                // OR pattern: And(l,r) | Or(l,r) => body
-                // Emit separate arms for each alternative with the same body
-                for case in &or_pat.cases {
-                    let (vname, fmaps) = match case {
-                        syn::Pat::TupleStruct(ts) => {
-                            let v = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                            let m: Vec<(String, String)> = ts.elems.iter().enumerate().map(|(i, pat)| {
-                                (translate_pat(pat), format!("v._{}", i))
-                            }).collect();
-                            (v, m)
-                        }
-                        syn::Pat::Struct(s) => {
-                            let v = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                            let m: Vec<(String, String)> = s.fields.iter().map(|f| {
-                                let field_name = match &f.member {
-                                    syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                                    syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                                };
-                                (translate_pat(&f.pat), format!("v.{}", field_name))
-                            }).collect();
-                            (v, m)
-                        }
-                        syn::Pat::Path(p) => {
-                            let v = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                            (v, Vec::new())
-                        }
-                        _ => continue,
-                    };
-                    let mut b = translate_expr(&arm.body);
-                    let mut sorted = fmaps.clone();
-                    sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-                    for (local, accessor) in &sorted {
-                        b = replace_identifier(&b, local, accessor);
-                    }
-                    let b = if b.starts_with('[') { format!("{} as any", b) } else { b };
-                    if fmaps.is_empty() {
-                        out.push_str(&format!("  {}: () => {},\n", vname, b));
-                    } else {
-                        out.push_str(&format!("  {}: (v) => {},\n", vname, b));
-                    }
-                }
-                continue;
-            }
-            syn::Pat::Wild(_) => continue,
-            _ => (translate_pat(&arm.pat), Vec::new()),
+    for arm in &match_expr.arms {
+        // An `|` pattern writes one body for several variants; each gets its own
+        // arm with the same body, bound through its own payload.
+        let cases: Vec<&syn::Pat> = match &arm.pat {
+            syn::Pat::Or(or_pat) => or_pat.cases.iter().collect(),
+            other => vec![other],
         };
-
-        let mut body = translate_expr(&arm.body);
-
-        // Replace field references: local_name → v.fieldName
-        // Process longer names first to avoid partial replacements
-        let mut sorted_mappings = field_mappings.clone();
-        sorted_mappings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-        for (local, accessor) in &sorted_mappings {
-            body = replace_identifier(&body, local, accessor);
-        }
-
-        // Add type cast for array/tuple returns to avoid TS inference issues
-        let body = if body.starts_with('[') { format!("{} as any", body) } else { body };
-
-        if field_mappings.is_empty() {
-            out.push_str(&format!("  {}: () => {},\n", variant_name, body));
-        } else {
-            out.push_str(&format!("  {}: (v) => {},\n", variant_name, body));
+        for case in cases {
+            let Some((variant, fields)) = payload_of(case) else {
+                continue;
+            };
+            let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
+            let body = t.expr(&arm.body);
+            drop(_bindings);
+            out.push_str(&render_arm(&variant, &fields, &body));
         }
     }
 
@@ -306,41 +239,90 @@ fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
     out
 }
 
-/// Replace standalone identifier occurrences (not part of longer identifiers or property access).
-///
-/// Walks characters, not bytes: the text is translated TypeScript and can hold
-/// a string literal with any character in it. This is the textual substitution
-/// spec section 4.11 deletes once match arms bind their pattern variables
-/// through the scope stack; until then it must at least not cut a character in
-/// half.
-fn replace_identifier(text: &str, from: &str, to: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut chars = text.char_indices().peekable();
-
-    while let Some((i, ch)) = chars.next() {
-        if text[i..].starts_with(from) {
-            let end = i + from.len();
-            // Check that it's a standalone identifier (not part of a longer word)
-            let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
-            let after_ok = end >= bytes.len() || !is_ident_char(bytes[end]);
-            // Skip if preceded by '.' (property access) but NOT '...' (spread)
-            let not_property = i == 0 || bytes[i - 1] != b'.'
-                || (i >= 3 && bytes[i-3] == b'.' && bytes[i-2] == b'.' && bytes[i-1] == b'.');
-
-            if before_ok && after_ok && not_property {
-                result.push_str(to);
-                while chars.peek().is_some_and(|(j, _)| *j < end) {
-                    chars.next();
-                }
-                continue;
-            }
+/// The variant a pattern names and the payload slots it takes out of it, as
+/// (local name, accessor within the arm's payload).
+fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)>)> {
+    match pat {
+        syn::Pat::TupleStruct(ts) => {
+            let variant = ts.path.segments.last()?.ident.to_string();
+            let fields = ts
+                .elems
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (translate_pat(p), format!("_{}", i)))
+                .collect();
+            Some((variant, fields))
         }
-        result.push(ch);
+        syn::Pat::Struct(s) => {
+            let variant = s.path.segments.last()?.ident.to_string();
+            let fields = s
+                .fields
+                .iter()
+                .map(|f| {
+                    let member = match &f.member {
+                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                    };
+                    (translate_pat(&f.pat), member)
+                })
+                .collect();
+            Some((variant, fields))
+        }
+        syn::Pat::Path(p) => Some((p.path.segments.last()?.ident.to_string(), Vec::new())),
+        _ => None,
     }
-    result
 }
 
-fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+/// One arm of a `.match({..})`.
+///
+/// The payload's names are declared inside the arm, from the value the arm is
+/// handed. They used to be substituted into the rendered TypeScript by walking
+/// its characters, which could not tell a binding from the same word inside a
+/// string literal or a comment, and knew nothing of a name shadowed further in.
+fn render_arm(variant: &str, fields: &[(String, String)], body: &str) -> String {
+    if fields.is_empty() {
+        return format!("  {}: () => {},\n", variant, as_arm_value(body, ""));
+    }
+    // The arm's parameter must not collide with a name the pattern binds.
+    let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
+    let mut bindings = String::new();
+    for (local, accessor) in fields {
+        if local == "_" {
+            continue;
+        }
+        bindings.push_str(&format!("const {} = {}.{};\n", local, param, accessor));
+    }
+    format!("  {}: ({}) => {},\n", variant, param, as_arm_value(body, &bindings))
+}
+
+/// An arm's value: its declarations, then the body. A body that is already a
+/// sequence of statements keeps its own control flow; anything else is the
+/// value the arm produces.
+fn as_arm_value(body: &str, bindings: &str) -> String {
+    let statements = body.starts_with("if ")
+        || body.starts_with("for ")
+        || body.starts_with("while ")
+        || body.starts_with("return ")
+        || body.starts_with("throw ")
+        || body.starts_with('{')
+        || body.contains(";\n");
+    if bindings.is_empty() && !statements {
+        // A tuple literal confuses TypeScript's inference across arms.
+        return if body.starts_with('[') {
+            format!("{} as any", body)
+        } else {
+            body.to_string()
+        };
+    }
+    let tail = if statements {
+        body.to_string()
+    } else {
+        format!("return {};", body)
+    };
+    // The arm sits two spaces in, so its block's contents sit at four and the
+    // closing brace lines up with the arm.
+    format!(
+        "{{\n{}  }}",
+        indent(&indent(&format!("{}{}\n", bindings, tail)))
+    )
 }

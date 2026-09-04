@@ -93,14 +93,6 @@ impl TypeRegistry {
         self.lookup(from, Ns::Type, segments)
     }
 
-    /// Resolve a single written name in the type namespace.
-    pub fn lookup_item(&self, from: ModuleId, name: &str) -> Option<TypeId> {
-        match self.lookup_type(from, &[name.to_string()]) {
-            Ok(Some(Def::Type(id))) => Some(id),
-            _ => None,
-        }
-    }
-
     /// The enum a written path names, together with the variant on the end.
     /// `Signal::Constant` resolves through `Signal`, never by the last segment.
     pub fn lookup_variant(&self, from: ModuleId, segments: &[String]) -> Option<(TypeId, String)> {

@@ -26,8 +26,15 @@ export class SubscriptionUpdateItem extends Struct {
     let _result = '';
     _result += `${this.collection}/${this.entityId}: `;
     _result += this.content.match({
-      EventOnly: (v) => `Events(${v._0.length})`,
-      StateAndEvent: (v) => `State+Events(${v._0}, ${v._1.length})`,
+      EventOnly: (v) => {
+        const events = v._0;
+        return `Events(${events.length})`;
+      },
+      StateAndEvent: (v) => {
+        const state = v._0;
+        const events = v._1;
+        return `State+Events(${state}, ${events.length})`;
+      },
     })
     if (!(this.predicateRelevance.length === 0)) {
       _result += ` predicates:${this.predicateRelevance.length}`;
@@ -131,7 +138,10 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
 
   toString(): string {
     return this.match({
-      SubscriptionUpdate: (v) => `SubscriptionUpdate [${[...v.items].map((i) => `${i}`).join(', ')}]`,
+      SubscriptionUpdate: (v) => {
+        const items = v.items;
+        return `SubscriptionUpdate [${[...items].map((i) => `${i}`).join(', ')}]`;
+      },
     });
   }
 
@@ -165,8 +175,15 @@ export class UpdateContent extends Enum<UpdateContentV> {
 
   intoParts(): [StateFragment | null, EventFragment[] | null] {
     return this.match({
-      EventOnly: (v) => [null, v._0] as any,
-      StateAndEvent: (v) => [v._0, v._1] as any,
+      EventOnly: (v) => {
+        const events = v._0;
+        return [null, events];
+      },
+      StateAndEvent: (v) => {
+        const state = v._0;
+        const events = v._1;
+        return [state, events];
+      },
     });
   }
 
@@ -265,7 +282,10 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
   toString(): string {
     return this.match({
       Success: () => `Success`,
-      Error: (v) => `Error: ${v._0}`,
+      Error: (v) => {
+        const e = v._0;
+        return `Error: ${e}`;
+      },
     });
   }
 

@@ -47,8 +47,13 @@ fn translate_if_let(
     t: &BodyTranslator,
 ) -> String {
     let scrutinee = t.expr(&let_expr.expr);
+    // The names the pattern introduces are in scope for the branch it guards,
+    // and for the guard expression written after it.
+    let scrutinee_ty = t.scrutinee_type(&let_expr.expr);
+    let bound = t.enter_pattern(&let_expr.pat, scrutinee_ty.as_ref());
     let then_body = t.translate_block(then_branch);
     let guard_str = guard.map(|g| format!(" && {}", t.expr(g))).unwrap_or_default();
+    drop(bound);
 
     let else_part = if let Some((_, else_expr)) = else_branch {
         match else_expr.as_ref() {
@@ -79,9 +84,28 @@ fn translate_if_let(
                             indent(&indent(&then_body)), else_part)
                     }
                 }
-                "Ok" => {
+                // `if let Ok(v) = r` is a test, not an unwrapping: without it
+                // the branch runs whatever `r` turned out to be, and a fallible
+                // call becomes an unconditional one.
+                //
+                // The exception is the lock-guard shim: the port's `read()`
+                // yields the guard where Rust yields a `LockResult`, so the `Ok`
+                // the source writes has nothing to test and the binding is the
+                // guard itself (spec 4.4, deleted when the stubs land).
+                "Ok" | "Err" => {
                     let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
-                    format!("const {} = {};\n{}", var, scrutinee, then_body)
+                    if t.is_lock_guard_expr(&let_expr.expr) {
+                        return format!("const {} = {};\n{}", var, scrutinee, then_body);
+                    }
+                    let (test, take) = if name == "Ok" {
+                        ("isOk", "unwrap")
+                    } else {
+                        ("isErr", "unwrapErr")
+                    };
+                    format!(
+                        "if ({}.{}()) {{\n  const {} = {}.{}();\n{}}}{}",
+                        scrutinee, test, var, scrutinee, take, indent(&then_body), else_part
+                    )
                 }
                 _ => {
                     let vars: Vec<String> = ts.elems.iter().map(translate_pat).collect();
@@ -115,12 +139,8 @@ pub fn translate_expr_in_return_position_with(expr: &syn::Expr, t: &BodyTranslat
     match expr {
         syn::Expr::If(if_expr) => translate_if_returning_with(if_expr, t, pending_drops),
         syn::Expr::Match(match_expr) => {
-            if pending_drops.is_empty() {
-                match_expr::translate_match_returning(match_expr)
-            } else {
-                // TODO: thread drops into match arms
-                match_expr::translate_match_returning(match_expr)
-            }
+            // Drops are not yet threaded into match arms.
+            match_expr::translate_match_returning(match_expr, t)
         }
         syn::Expr::Block(block) => {
             if block.block.stmts.len() == 1 {

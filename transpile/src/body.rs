@@ -56,16 +56,6 @@ fn single_block_expr(block: &syn::Block) -> Option<&syn::Expr> {
 
 // ── Public entry points ─────────────────────────────────────────────────
 
-/// Translate a block of statements to TS (default Self type)
-pub fn translate_block(block: &syn::Block) -> String {
-    BodyTranslator::new("Self").translate_block(block)
-}
-
-/// Translate a block with a known self type name for Self resolution
-pub fn translate_block_with_self(block: &syn::Block, self_type: &str) -> String {
-    BodyTranslator::new(self_type).translate_block(block)
-}
-
 /// Translate a single expression (used by match_expr, control_flow, macros modules)
 pub fn translate_expr(expr: &syn::Expr) -> String {
     BodyTranslator::new("Self").expr(expr)
@@ -96,11 +86,21 @@ pub struct BodyTranslator<'a> {
     /// Inline module names for the current file — path qualifiers
     /// stripped during path resolution (symbols imported from separate .ts file).
     pub inline_module_names: Vec<String>,
+    /// Names the enclosing block-as-expression already supplies as arrow
+    /// function parameters. The `let` that would have introduced each of them
+    /// has nothing left to do, and re-declaring one would shadow the value that
+    /// was threaded in.
+    threaded: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
-        Self { self_type, types: None, inline_module_names: vec![] }
+        Self {
+            self_type,
+            types: None,
+            inline_module_names: vec![],
+            threaded: std::cell::RefCell::new(Vec::new()),
+        }
     }
 
     pub fn with_context(self_type: &'a str, tc: crate::infer::TypeContext<'a>) -> Self {
@@ -108,6 +108,7 @@ impl<'a> BodyTranslator<'a> {
             self_type,
             types: Some(std::cell::RefCell::new(tc)),
             inline_module_names: vec![],
+            threaded: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -157,9 +158,10 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// Check if a name is bound in any active scope.
-    fn is_in_scope(&self, name: &str) -> bool {
-        self.types.as_ref().map(|tc| tc.borrow().is_bound(name)).unwrap_or(false)
+    /// Is a `let` of this name here a second declaration in the same block?
+    /// JavaScript refuses that, and the translator writes an assignment instead.
+    fn redeclares_here(&self, name: &str) -> bool {
+        self.types.as_ref().map(|tc| tc.borrow().redeclares(name)).unwrap_or(false)
     }
 
     /// Bind a variable in the current TypeContext scope.
@@ -197,9 +199,116 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// What one turn of a `for` loop over this expression hands out.
+    pub fn iteration_item(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
+        let tc = self.types.as_ref()?;
+        let ty = self.scrutinee_type(iterated)?;
+        // A sequence the engine cannot name the element of leaves the loop
+        // variable untyped; the uses of that variable are what report it, so
+        // that one gap is counted once per site rather than twice.
+        tc.borrow().iteration_item(&ty)
+    }
+
+    /// Is this expression one of the lock guards the port's runtime yields
+    /// where Rust yields a `LockResult`? The `Ok` written around it has nothing
+    /// to test.
+    pub fn is_lock_guard_expr(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        tc.resolve_expr(expr).map(|ty| tc.is_lock_guard(&ty)).unwrap_or(false)
+    }
+
+    /// The type of the value a `match` or an `if let` takes apart. `None` means
+    /// the engine could not read it, and the fallback has been recorded.
+    pub fn scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
+        let resolved = self.resolve_expr_type(expr);
+        self.or_fallback(resolved, "the pattern's names are bound without types")
+    }
+
+    /// Open a scope holding the names a pattern introduces, typed from the value
+    /// being taken apart. The scope closes when the returned guard drops.
+    ///
+    /// A name the engine could not type is still bound, so that it shadows and
+    /// so that a use of it says "bound but untyped" rather than "does not name a
+    /// value". The gap is reported where the name is used, which is where the
+    /// translator has to fall back; reporting it here as well would count one
+    /// gap twice.
+    pub fn enter_pattern<'t>(
+        &'t self,
+        pat: &syn::Pat,
+        scrutinee: Option<&crate::ty::Ty>,
+    ) -> PatternScope<'t, 'a> {
+        self.push_block();
+        self.bind_pattern_here(pat, scrutinee);
+        PatternScope { translator: self }
+    }
+
+    /// Write out what a native-type translation decided, reporting the calls it
+    /// had to refuse.
+    fn render_translation(
+        &self,
+        translated: native_types::MethodTranslation,
+        receiver: &str,
+        ts_method: &str,
+        args: &[String],
+        span: proc_macro2::Span,
+    ) -> String {
+        match translated {
+            native_types::MethodTranslation::Expr(result) => result,
+            native_types::MethodTranslation::Passthrough => {
+                format!("{}.{}({})", receiver, ts_method, args.join(", "))
+            }
+            native_types::MethodTranslation::Refused { message, fallback } => {
+                self.fallback(span, message);
+                self.render_translation(*fallback, receiver, ts_method, args, span)
+            }
+        }
+    }
+
+    /// Emit this name under a fresh identifier from here on.
+    fn freshen(&self, name: &str) -> String {
+        match &self.types {
+            Some(tc) => tc.borrow_mut().shadow(name),
+            None => name.to_string(),
+        }
+    }
+
+    /// The identifier a bound name is emitted under, which differs from the one
+    /// the source wrote wherever a shadow was freshened.
+    fn emitted_name(&self, name: &str) -> Option<String> {
+        self.types.as_ref().and_then(|tc| tc.borrow().emitted_name(name))
+    }
+
+    /// The type a `let` introduces, asked before the name is bound so that the
+    /// initialiser is read in the scope it shadows.
+    fn resolve_local(&self, local: &syn::Local) -> Option<crate::ty::Ty> {
+        let tc = self.types.as_ref()?;
+        let resolved = tc.borrow().resolve_local_type(local);
+        let pat = Self::pat_static(&local.pat);
+        let instead = format!("local `{}` is left untyped", pat);
+        self.or_fallback(resolved, &instead)
+    }
+
+    /// Bind a pattern's names in the scope that is already open. Used where the
+    /// binding outlives the statement, as a `let` does.
+    pub fn bind_pattern_here(&self, pat: &syn::Pat, scrutinee: Option<&crate::ty::Ty>) {
+        let Some(tc) = &self.types else { return };
+        tc.borrow_mut().bind_pattern(pat, scrutinee);
+    }
+
     // ── Block translation with ownership tracking ───────────────────
 
     pub fn translate_block(&self, block: &syn::Block) -> String {
+        // A Rust block is a scope: a `let` inside it shadows what is outside and
+        // stops shadowing at the closing brace, and TypeScript's `const` in a
+        // nested block does the same.
+        self.push_block();
+        let out = self.translate_block_stmts(block);
+        self.pop_scope();
+        out
+    }
+
+    fn translate_block_stmts(&self, block: &syn::Block) -> String {
         let mut out = String::new();
         let stmts = &block.stmts;
 
@@ -291,9 +400,14 @@ impl<'a> BodyTranslator<'a> {
         let pat = Self::pat_static(&local.pat);
 
         if let Some(init) = &local.init {
-            // Detect `let x = expr?` pattern — emit Result check + early return
+            // `let x = expr?` — check the Result, propagate the error, then bind.
+            // The binding is made here as it is for any other `let`: the name is
+            // in scope for everything after this statement, and skipping it left
+            // every later use of `x` untyped.
             if let syn::Expr::Try(try_expr) = &*init.expr {
                 let inner = self.expr(&try_expr.expr);
+                let ty = self.resolve_local(local);
+                self.bind_pattern_here(&local.pat, ty.as_ref());
                 let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
                 return format!(
                     "const _r_{} = {};\nif (_r_{}.isErr()) return _r_{} as any;\n{} {} = _r_{}.unwrap();\n",
@@ -301,33 +415,35 @@ impl<'a> BodyTranslator<'a> {
                 );
             }
 
-            // Check for shadowing BEFORE binding the variable type.
-            // Rust allows `let x = x.method()` to shadow — JS doesn't allow
-            // redeclaring a closure/function parameter. Use assignment instead.
-            let already_in_scope = self.is_in_scope(&pat);
+            // Rust allows `let x = x.method()` to shadow; JavaScript refuses a
+            // second declaration of the same name in the same block. This has to
+            // be asked before the binding is made.
+            let already_in_scope = self.redeclares_here(&pat);
 
-            // Register the local variable's type for downstream resolution.
-            if let Some(tc) = &self.types {
-                let resolved = tc.borrow().resolve_local_type(local);
-                let instead = format!("local `{}` is left untyped", pat);
-                match self.or_fallback(resolved, &instead) {
-                    Some(ty) => tc.borrow_mut().bind(&pat, ty),
-                    // The name is still bound, so a later `let` of the same
-                    // name is still a shadow.
-                    None => tc.borrow_mut().bind_untyped(&pat),
-                }
-            }
+            // The initialiser is translated before the binding exists, because
+            // it is written in the scope the `let` is shadowing:
+            // `let stack = stack.borrow_mut()` borrows the *outer* `stack`, and
+            // binding first would resolve that receiver to the guard the line is
+            // about to introduce and reach through it.
+            let ty = self.resolve_local(local);
 
             let expr = self.expr(&init.expr);
+
+            // Only now does the name mean the new value. A `let` may take one
+            // apart — `let (a, b) = ...`, `let Foo { x } = ...` — so every name
+            // the pattern writes is bound, each typed from its own position.
+            if self.types.is_some() {
+                self.bind_pattern_here(&local.pat, ty.as_ref());
+            }
 
             if let Some((_tok, _diverge)) = &init.diverge {
                 return format!("/* let-else */ const {} = {};\n", pat, expr);
             }
 
-            if already_in_scope {
-                // Check if the init expression references the same name as a
-                // standalone variable (not as a field name in a.b.c).
-                // If so, IIFE param threading already provided the value — skip.
+            // A name the enclosing block-as-expression already threaded in as a
+            // parameter is already this value; declaring it again would shadow
+            // what was threaded.
+            if self.threaded.borrow().iter().any(|n| *n == pat) {
                 let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
                     ident.ident.to_string()
                 } else {
@@ -336,9 +452,17 @@ impl<'a> BodyTranslator<'a> {
                 if references_var(&init.expr, &rust_name) {
                     return String::new();
                 }
-                return format!("{} = {};\n", pat, expr);
             }
             let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
+            // A Rust shadow introduces a *new* variable. Assigning to the old
+            // one instead changed a value other code — a closure that captured
+            // it, a caller that owns it — can still see. JavaScript will not
+            // declare the same name twice here, so the shadow is emitted under a
+            // fresh identifier and every later use of the name follows it.
+            if already_in_scope {
+                let fresh = self.freshen(&pat);
+                return format!("{} {} = {};\n", keyword, fresh, expr);
+            }
             format!("{} {} = {};\n", keyword, pat, expr)
         } else {
             format!("let {};\n", pat)
@@ -402,14 +526,19 @@ impl<'a> BodyTranslator<'a> {
                 };
                 let base_str = if base == "self" { "this".to_string() } else { base };
 
-                // Type-aware deref insertion for field access
+                // Every wrapper the field sits behind is written out, one
+                // accessor per hop the engine took to find it.
                 if let Some(tc) = &self.types {
-                    if let Some((accessor, _field_ty)) = tc.borrow().field_deref(&field.base, &member) {
-                        return format!("{}.{}.{}", base_str, accessor, member);
-                    }
-                    let base_ty = tc.borrow().resolve_expr(&field.base);
+                    let found = tc.borrow().resolve_field_access(&field.base, &member);
                     let instead = format!("`.{}` is emitted without a wrapper accessor", member);
-                    self.or_fallback(base_ty, &instead);
+                    if let Some(found) = self.or_fallback(found, &instead) {
+                        let mut out = base_str;
+                        for accessor in found.accessors() {
+                            out.push('.');
+                            out.push_str(&accessor);
+                        }
+                        return format!("{}.{}", out, member);
+                    }
                 }
 
                 format!("{}.{}", base_str, member)
@@ -462,26 +591,47 @@ impl<'a> BodyTranslator<'a> {
                     return format!("{} ?? ({})()", receiver, args[0]);
                 }
 
-                // ── deref insertion via TypeContext ──
+                // ── the resolved call ──
+                // The engine says which function this is and what has to be
+                // written between the receiver and it: one accessor per wrapper
+                // the chain went through. The translation is then chosen by the
+                // type the callee is actually written for, not by the method's
+                // name.
                 if let Some(tc) = &self.types {
-                    let tc_ref = tc.borrow();
-                    if let Some(accessor) = tc_ref.method_deref(&call.receiver, &rust_method) {
-                        let deref_receiver = format!("{}.{}", receiver, accessor);
-                        // Dispatch against inner type (after deref)
-                        if let Ok(receiver_ty) = tc_ref.resolve_expr(&call.receiver) {
-                            if let Some(inner) = tc_ref.deref_inner_type(&receiver_ty) {
-                                match native_types::translate_method(tc_ref.registry, &inner, &deref_receiver, &rust_method, &args) {
-                                    native_types::MethodTranslation::Expr(result) => return result,
-                                    native_types::MethodTranslation::Passthrough => {}
-                                }
-                            }
+                    let found = tc.borrow().resolve_method_call(&call.receiver, &rust_method);
+                    let instead = format!("`{}` is dispatched by name", rust_method);
+                    if let Some(found) = self.or_fallback(found, &instead) {
+                        let mut recv = receiver.clone();
+                        for accessor in found.accessors() {
+                            recv = format!("{}.{}", recv, accessor);
                         }
+                        let tc_ref = tc.borrow();
+                        crate::trace::record(
+                            tc_ref.registry,
+                            &tc_ref.sink.file(),
+                            syn::spanned::Spanned::span(&call.receiver),
+                            &rust_method,
+                            &found,
+                        );
+                        let translated = native_types::translate_method(
+                            tc_ref.registry,
+                            found.receiver_type(),
+                            &recv,
+                            &rust_method,
+                            &args,
+                        );
                         drop(tc_ref);
-                        return self.translate_method_call(&deref_receiver, &rust_method, &ts_method, &args, Some(&call.receiver));
+                        return self.render_translation(
+                            translated,
+                            &recv,
+                            &ts_method,
+                            &args,
+                            syn::spanned::Spanned::span(call),
+                        );
                     }
                 }
 
-                self.translate_method_call(&receiver, &rust_method, &ts_method, &args, Some(&call.receiver))
+                self.translate_unresolved_call(&receiver, &rust_method, &ts_method, &args, Some(&call.receiver))
             }
 
             syn::Expr::Call(call) => {
@@ -583,8 +733,12 @@ impl<'a> BodyTranslator<'a> {
                             Some(ty) => self.bind_var(name, ty.clone()),
                             None => self.bind_untyped(name),
                         }
+                        self.threaded.borrow_mut().push(name.clone());
                     }
-                    let body = self.translate_block(&block.block);
+                    let body = self.translate_block_stmts(&block.block);
+                    for _ in &shadow_params {
+                        self.threaded.borrow_mut().pop();
+                    }
                     self.pop_scope();
                     let params: Vec<&str> =
                         shadow_params.iter().map(|(n, _, _)| n.as_str()).collect();
@@ -604,7 +758,7 @@ impl<'a> BodyTranslator<'a> {
                 }
             }
 
-            syn::Expr::Match(me) => match_expr::translate_match(me),
+            syn::Expr::Match(me) => match_expr::translate_match(me, self),
 
             syn::Expr::Closure(closure) => {
                 let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
@@ -635,11 +789,24 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::ForLoop(for_loop) => {
                 let pat = Self::pat_static(&for_loop.pat);
                 let iter = self.expr(&for_loop.expr);
+                // The loop variable is whatever one turn of the sequence hands
+                // out; `iteration_item` says so for the collections the std
+                // surface will declare, and refuses for anything else.
+                let item = self.iteration_item(&for_loop.expr);
+                let _bindings = self.enter_pattern(&for_loop.pat, item.as_ref());
                 let body = self.translate_block(&for_loop.body);
+                drop(_bindings);
                 format!("for (const {} of {}) {{\n{}}}", pat, iter, indent(&body))
             }
 
             syn::Expr::While(while_loop) => {
+                // `while let PAT = e` is a loop that re-evaluates `e` each turn,
+                // tests it against the pattern and stops when it does not match.
+                // Emitting the condition as an expression produced a comment
+                // where the test should be and left the binding undeclared.
+                if let syn::Expr::Let(let_expr) = &*while_loop.cond {
+                    return self.while_let(let_expr, &while_loop.body);
+                }
                 let cond = self.expr(&while_loop.cond);
                 let body = self.translate_block(&while_loop.body);
                 format!("while ({}) {{\n{}}}", cond, indent(&body))
@@ -683,6 +850,24 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Index(idx) => {
+                // `v[a..b]` is a slice, not an index. Emitting the range as an
+                // index expression produced `v[/* range a..b */]`, which does
+                // not parse.
+                if let syn::Expr::Range(range) = &*idx.index {
+                    let from = range
+                        .start
+                        .as_ref()
+                        .map(|e| self.expr(e))
+                        .unwrap_or_else(|| "0".to_string());
+                    let to = range.end.as_ref().map(|e| self.expr(e));
+                    let end = match (&range.limits, to) {
+                        // `..=b` includes the last element.
+                        (syn::RangeLimits::Closed(_), Some(to)) => format!(", {} + 1", to),
+                        (_, Some(to)) => format!(", {}", to),
+                        (_, None) => String::new(),
+                    };
+                    return format!("{}.slice({}{})", self.expr(&idx.expr), from, end);
+                }
                 format!("{}[{}]", self.expr(&idx.expr), self.expr(&idx.index))
             }
 
@@ -758,6 +943,93 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// `while let PAT = e { body }` as a loop that tests each turn.
+    ///
+    /// The scrutinee is read once per turn into a temporary, tested against the
+    /// pattern, and its payload bound inside the body — which is what Rust does
+    /// and what the previous emission, a comment in the condition, did not.
+    fn while_let(&self, let_expr: &syn::ExprLet, body: &syn::Block) -> String {
+        let scrutinee = self.expr(&let_expr.expr);
+        let ty = self.scrutinee_type(&let_expr.expr);
+        let _bindings = self.enter_pattern(&let_expr.pat, ty.as_ref());
+        let translated = self.translate_block(body);
+        drop(_bindings);
+
+        let (test, bind) = self.pattern_test("_v", &let_expr.pat);
+        format!(
+            "for (;;) {{\n  const _v = {};\n  if (!({})) break;\n{}{}}}",
+            scrutinee,
+            test,
+            indent(&bind),
+            indent(&translated)
+        )
+    }
+
+    /// How TypeScript asks whether a value matches a pattern, and what it writes
+    /// to take the pattern's names out of it.
+    ///
+    /// `Some`/`None` test the nullable the port maps `Option` to, `Ok`/`Err` ask
+    /// the `Result`, a variant asks the `Enum`, and a plain name always matches.
+    fn pattern_test(&self, subject: &str, pat: &syn::Pat) -> (String, String) {
+        match pat {
+            syn::Pat::TupleStruct(ts) => {
+                let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                let var = ts.elems.first().map(Self::pat_static).unwrap_or_else(|| "v".to_string());
+                match name.as_str() {
+                    "Some" => (format!("{} != null", subject), format!("const {} = {};\n", var, subject)),
+                    "Ok" => (format!("{}.isOk()", subject), format!("const {} = {}.unwrap();\n", var, subject)),
+                    "Err" => (format!("{}.isErr()", subject), format!("const {} = {}.unwrapErr();\n", var, subject)),
+                    _ => {
+                        let names: Vec<String> = ts.elems.iter().enumerate()
+                            .map(|(i, p)| {
+                                let local = Self::pat_static(p);
+                                if local == format!("_{}", i) { local } else { format!("_{}: {}", i, local) }
+                            })
+                            .collect();
+                        (
+                            format!("{}.is('{}')", subject, name),
+                            format!("const {{ {} }} = {}.value;\n", names.join(", "), subject),
+                        )
+                    }
+                }
+            }
+            syn::Pat::Path(p) => {
+                let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                match name.as_str() {
+                    "None" => (format!("{} == null", subject), String::new()),
+                    _ => (format!("{}.is('{}')", subject, name), String::new()),
+                }
+            }
+            syn::Pat::Struct(st) => {
+                let name = st.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                let fields: Vec<String> = st.fields.iter().map(|f| {
+                    let member = match &f.member {
+                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
+                    };
+                    let local = Self::pat_static(&f.pat);
+                    if member == local { member } else { format!("{}: {}", member, local) }
+                }).collect();
+                (
+                    format!("{}.is('{}')", subject, name),
+                    format!("const {{ {} }} = {}.value;\n", fields.join(", "), subject),
+                )
+            }
+            // A plain name binds whatever it was given, and always matches.
+            syn::Pat::Ident(_) => {
+                let var = Self::pat_static(pat);
+                ("true".to_string(), format!("const {} = {};\n", var, subject))
+            }
+            other => {
+                self.fallback(
+                    syn::spanned::Spanned::span(other),
+                    "this pattern has no test the translator can write, so the loop runs unconditionally",
+                );
+                ("true".to_string(), String::new())
+            }
+        }
+    }
+
     /// Try to translate an if/else as a ternary expression.
     /// Returns Some(ternary) if both branches are single expressions.
     fn try_ternary(&self, if_expr: &syn::ExprIf) -> Option<String> {
@@ -784,31 +1056,53 @@ impl<'a> BodyTranslator<'a> {
     // System types (Arc, RwLock, Result, etc.) pass through — their TS
     // implementations handle the method names directly.
 
-    fn translate_method_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
-        // Type-aware dispatch via TypeContext
-        if let Some(receiver_expr) = receiver_expr {
-            let resolved = self.resolve_expr_type(receiver_expr);
-            let instead = format!("`{}` is dispatched by name", rust_method);
-            if let Some(receiver_ty) = self.or_fallback(resolved, &instead) {
-                let registry = self.types.as_ref().map(|tc| tc.borrow().registry);
-                if let Some(registry) = registry {
-                    match native_types::translate_method(registry, &receiver_ty, receiver, rust_method, args) {
-                        native_types::MethodTranslation::Expr(result) => return result,
-                        native_types::MethodTranslation::Passthrough => {
-                            return format!("{}.{}({})", receiver, ts_method, args.join(", "));
-                        }
+    /// A call the engine could not resolve to a function.
+    ///
+    /// This is the transitional path spec section 4.11 keeps: the diagnostic has
+    /// already been filed, and the translator does what it did before the impl
+    /// table existed — reach through one wrapper if the receiver has one and the
+    /// name is not its own, dispatch on whatever type it does know, and fall
+    /// back to the name when it knows nothing. The std-surface step is what
+    /// empties this path out; the fail-loud step deletes it.
+    fn translate_unresolved_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
+        if let (Some(receiver_expr), Some(tc)) = (receiver_expr, &self.types) {
+            let tc_ref = tc.borrow();
+            if let Ok(receiver_ty) = tc_ref.resolve_expr(receiver_expr) {
+                let probe = tc_ref.probe();
+                let step = probe.deref_once(&receiver_ty);
+                let reach_through = !probe.declares_method(&receiver_ty, rust_method);
+                let (target, receiver) = match (&step, reach_through) {
+                    (Some(step), true) => {
+                        let written = match &step.accessor {
+                            Some(accessor) => format!("{}.{}", receiver, accessor.written()),
+                            None => receiver.to_string(),
+                        };
+                        (step.to.clone(), written)
                     }
-                }
+                    _ => (receiver_ty.clone(), receiver.to_string()),
+                };
+                let translated =
+                    native_types::translate_method(tc_ref.registry, &target, &receiver, rust_method, args);
+                drop(tc_ref);
+                return self.render_translation(
+                    translated,
+                    &receiver,
+                    ts_method,
+                    args,
+                    syn::spanned::Spanned::span(receiver_expr),
+                );
             }
         }
 
-        // No type info — try untyped dispatch (iterator methods, conversions)
-        match native_types::translate_untyped(receiver, rust_method, args) {
-            native_types::MethodTranslation::Expr(result) => result,
-            native_types::MethodTranslation::Passthrough => {
-                format!("{}.{}({})", receiver, ts_method, args.join(", "))
-            }
-        }
+        // No type at all — the methods that translate the same way whatever the
+        // receiver is.
+        self.render_translation(
+            native_types::translate_untyped(receiver, rust_method, args),
+            receiver,
+            ts_method,
+            args,
+            proc_macro2::Span::call_site(),
+        )
     }
 
     // ── Function call translation ───────────────────────────────────
@@ -905,21 +1199,27 @@ impl<'a> BodyTranslator<'a> {
             let type_name = &func[..dot];
             let variant = &func[dot+1..];
 
-            let is_enum_variant = if let Some(tc) = &self.types {
-                tc.borrow().is_variant(type_name, variant)
-            } else {
-                // No type context on this path, so the shape of the name is
-                // all there is to go on.
-                let guess = type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                    && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                    && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise");
-                if guess {
-                    self.fallback(
-                        span,
-                        format!("`{}` is guessed to be an enum variant from its capitalisation", func),
-                    );
+            // The registry answers wherever it has a declaration, which is now
+            // everywhere a body is translated — match arms included. A type from
+            // another crate has no declaration here, because each crate is
+            // transpiled on its own; the engine says "not a variant" and the
+            // call is written as the associated function the other crate's
+            // TypeScript exposes. Only a translation path with no type context
+            // at all is left to guess from the shape of the name.
+            let is_enum_variant = match &self.types {
+                Some(tc) => tc.borrow().is_variant(type_name, variant),
+                None => {
+                    let guess = type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise");
+                    if guess {
+                        self.fallback(
+                            span,
+                            format!("`{}` is guessed to be an enum variant from its capitalisation", func),
+                        );
+                    }
+                    guess
                 }
-                guess
             };
 
             if is_enum_variant {
@@ -970,6 +1270,16 @@ impl<'a> BodyTranslator<'a> {
                 format!("path qualifiers {} are dropped by name", dropped.join(", ")),
             );
         }
+        // A single name may be a local the translator had to emit under a
+        // different identifier, because a Rust shadow cannot be declared twice
+        // in one JavaScript scope.
+        if path.segments.len() == 1 {
+            let written = Self::path_static(path);
+            if let Some(emitted) = self.emitted_name(&written) {
+                return emitted;
+            }
+            return written;
+        }
         Self::path_static(path)
     }
 
@@ -1007,6 +1317,17 @@ impl<'a> BodyTranslator<'a> {
             }
             _ => joined,
         }
+    }
+}
+
+/// A scope holding one pattern's bindings; it closes when this drops.
+pub struct PatternScope<'t, 'a> {
+    translator: &'t BodyTranslator<'a>,
+}
+
+impl Drop for PatternScope<'_, '_> {
+    fn drop(&mut self) {
+        self.translator.pop_scope();
     }
 }
 

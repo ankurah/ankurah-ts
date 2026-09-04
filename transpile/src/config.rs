@@ -183,14 +183,14 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
 }
 
 /// Parse the `[system_types]` section into declarations for the reserved
-/// system module. Method return types are written as Rust and parsed by syn,
-/// which is the shape the std-surface step needs when these entries become
+/// system module. Every signature is written as Rust and parsed by syn, which
+/// is the shape the std-surface step needs when these entries become
 /// signature-only Rust stub files:
 ///   [system_types.Arc]
 ///   path = "std::sync::Arc"
 ///   deref_field = "value"
 ///   type_params = ["T"]
-///   methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
+///   methods = { clone = "fn clone(&self) -> Arc<T>" }
 fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::registry::SystemTypeDecl> {
     use crate::registry::SystemTypeDecl;
 
@@ -219,6 +219,10 @@ fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::registry::Syste
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let deref_target = entry.get("deref_target")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         let type_params: Vec<String> = entry.get("type_params")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
@@ -226,14 +230,21 @@ fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::registry::Syste
 
         let mut methods = Vec::new();
         if let Some(methods_table) = entry.get("methods").and_then(|v| v.as_table()) {
-            for (method_name, ret_type_val) in methods_table {
-                if let Some(ret_str) = ret_type_val.as_str() {
-                    methods.push((method_name.clone(), ret_str.to_string()));
+            for (method_name, signature) in methods_table {
+                if let Some(source) = signature.as_str() {
+                    methods.push((method_name.clone(), source.to_string()));
                 }
             }
         }
 
-        types.push(SystemTypeDecl { name: name.clone(), path, type_params, deref_field, methods });
+        types.push(SystemTypeDecl {
+            name: name.clone(),
+            path,
+            type_params,
+            deref_field,
+            deref_target,
+            methods,
+        });
     }
 
     types
@@ -276,6 +287,15 @@ mod tests {
         assert!(rwlock.is_some(), "RwLock should be in system_types");
         let rwlock = rwlock.unwrap();
         let write = rwlock.methods.iter().find(|(m, _)| m == "write");
-        assert_eq!(write.map(|(_, ret)| ret.as_str()), Some("RwLockWriteGuard<T>"));
+        assert_eq!(
+            write.map(|(_, sig)| sig.as_str()),
+            Some("fn write(&self) -> RwLockWriteGuard<T>"),
+            "a declared method is a whole Rust signature, receiver included"
+        );
+
+        // `Vec<T>` dereferences to `[T]`, which is not one of its type
+        // arguments and so has to be written out.
+        let vec = config.system_types.iter().find(|t| t.name == "Vec").unwrap();
+        assert_eq!(vec.deref_target.as_deref(), Some("[T]"));
     }
 }

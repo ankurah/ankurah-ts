@@ -1,0 +1,32 @@
+# Sites where the engine and rust-analyzer both have an answer.
+#
+# This list may only grow. A site here that the engine stops resolving is a
+# regression in method resolution, not a coverage gap, and the oracle test fails
+# on it rather than reporting one fewer covered site. Adding a site is what
+# happens when a capability lands; removing one is a decision.
+#
+# `result_differs` records a place where the port deliberately declares a
+# different signature from Rust's, so the two result types are not expected to
+# agree. Each one names the reason and the step that deletes it.
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "read"
+result_differs = "the port's RwLock::read yields the guard; Rust yields a LockResult (spec 4.4, step 3)"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "len"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 76
+method = "broadcast_id"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 99
+method = "read"
+result_differs = "the port's RwLock::read yields the guard; Rust yields a LockResult (spec 4.4, step 3)"

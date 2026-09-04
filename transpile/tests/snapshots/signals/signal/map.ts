@@ -51,11 +51,12 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
+    const listener_1 = listener.intoSubscribeListener();
     const source = this.source.clone();
     const transform = this.transform.clone();
     const subscription = this.source.listen(Arc.new((_) => {
       source.with((input) => {
-        listener(transform(input));
+        listener_1(transform(input));
       });
     }));
     const _ret = SubscriptionGuard.new(subscription);

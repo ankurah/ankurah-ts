@@ -73,7 +73,7 @@ export class AttestationSet extends Struct {
     this._0.push(attestation);
   }
 
-  deref(): Target {
+  deref(): Attestation[] {
     return this._0;
   }
 

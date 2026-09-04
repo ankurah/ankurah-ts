@@ -62,8 +62,8 @@ pub fn generate_ts_with_imports_configured(
     }
     // Trait names from `implements` clauses
     for imp in &file.impls {
-        if let Some(trait_name) = &imp.trait_name {
-            referenced.insert(trait_name.clone());
+        if let Some(trait_name) = imp.trait_name() {
+            referenced.insert(trait_name);
         }
     }
 
@@ -192,10 +192,8 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     if has_non_provided_structs { base_imports.push("Struct"); }
     if has_non_provided_enums { base_imports.push("Enum"); }
     for imp in &file.impls {
-        if let Some(trait_name) = &imp.trait_name {
-            if trait_name == "Drop" && !base_imports.contains(&"Drop") {
-                base_imports.push("Drop");
-            }
+        if imp.trait_name().as_deref() == Some("Drop") && !base_imports.contains(&"Drop") {
+            base_imports.push("Drop");
         }
     }
     // Auto-detect base types used in fields, return types, and method bodies
@@ -339,13 +337,19 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     let mut trait_impls: HashMap<String, Vec<(&str, &[String])>> = HashMap::new();
     let mut trait_methods: HashMap<String, Vec<(&str, &[String], &FnInfo)>> = HashMap::new();
 
-    for imp in &file.impls {
-        if let Some(trait_name) = &imp.trait_name {
-            trait_impls.entry(imp.target_type.clone()).or_default().push((trait_name.as_str(), &imp.trait_type_args));
+    // The trait an impl block names lives on it as the `syn::Path` the source
+    // wrote. Emission needs the TypeScript spelling of the name and of each
+    // argument, derived once here so the maps below can borrow it.
+    let impl_traits: Vec<(Option<String>, Vec<String>)> =
+        file.impls.iter().map(|i| (i.trait_name(), i.trait_type_args())).collect();
+
+    for (imp, (trait_name, type_args)) in file.impls.iter().zip(&impl_traits) {
+        if let Some(trait_name) = trait_name {
+            trait_impls.entry(imp.target_type.clone()).or_default().push((trait_name.as_str(), type_args.as_slice()));
             for method in &imp.methods {
                 trait_methods.entry(imp.target_type.clone())
                     .or_default()
-                    .push((trait_name.as_str(), &imp.trait_type_args, method));
+                    .push((trait_name.as_str(), type_args.as_slice(), method));
             }
         } else {
             inherent_methods.entry(imp.target_type.clone()).or_default().extend(imp.methods.iter());
@@ -356,9 +360,10 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     // Merges inline bounds + where clause bounds across all impls.
     let mut impl_bounds: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for imp in &file.impls {
-        if !imp.generic_bounds.is_empty() {
+        let bounds = imp.generic_bounds();
+        if !bounds.is_empty() {
             let type_bounds = impl_bounds.entry(imp.target_type.clone()).or_default();
-            for (param, bounds) in &imp.generic_bounds {
+            for (param, bounds) in &bounds {
                 let existing = type_bounds.entry(param.clone()).or_default();
                 for b in bounds {
                     if !existing.contains(b) {
