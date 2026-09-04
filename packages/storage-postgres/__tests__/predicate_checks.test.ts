@@ -20,7 +20,7 @@ import {
 } from './common.ts';
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fixturePath } from '../../proto/__tests__/support/fixtures.ts';
 
 interface Expectation {
   query: string;
@@ -43,7 +43,7 @@ interface PredicateCases {
 }
 
 function allTestCases(): TestCase[] {
-  const jsonPath = resolve(import.meta.dir, '../../../../ankurah-ts-support/tests/predicate_cases.json');
+  const jsonPath = fixturePath('tests/predicate_cases.json');
   const raw = readFileSync(jsonPath, 'utf-8');
   const cases: PredicateCases = JSON.parse(raw);
   return cases.suites.flatMap((s) => s.cases);

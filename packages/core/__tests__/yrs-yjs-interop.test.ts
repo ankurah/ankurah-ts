@@ -1,230 +1,212 @@
 // MIRRORS: ankurah/core/src/property/backend/yrs.rs
-import { describe, test, expect, beforeAll } from 'bun:test';
+//
+// The yrs_v2 fixtures are Yrs 0.24 documents in the lib0 v2 update format — the
+// exact bytes `YrsBackend::to_state_buffer` and `to_operations` produce. Yjs is
+// what the TypeScript port has in their place, so these tests are the proof that
+// the two libraries agree: Yjs must reconstruct the same text and reach the same
+// state vector from bytes Yrs wrote.
+//
+// Every fixture carries a sidecar naming the document state *after* the update is
+// applied — its `text_fields` and its `state_vector`, and for a diff, the base it
+// applies on top of. The suite walks that manifest rather than naming fixtures, so
+// a fixture added on the Rust side is covered the next time this runs.
+//
+// The trap the sidecars exist to catch: yrs's default `OffsetKind::Bytes` positions
+// text edits by UTF-8 byte offset, while Yjs positions by UTF-16 code unit. Any
+// port that computes an insert position from `string.length` lands inside a
+// multi-byte sequence. `unicode_text.bin` is where that shows.
+
+import { describe, test, expect } from 'bun:test';
 import * as Y from 'yjs';
-import * as fs from 'fs';
-import * as path from 'path';
+import { existsSync } from 'fs';
 
-const FIXTURE_DIR = path.resolve(__dirname, '../../../../ankurah-ts-support/proto/test_fixtures/yrs_v2');
+import { fixturePath, listFixtureDir, readFixtureBytes, readSidecar, toHex } from '../../proto/__tests__/support/fixtures';
 
-// Hard-fail if fixture directory is missing
-beforeAll(() => {
-  if (!fs.existsSync(FIXTURE_DIR)) {
-    throw new Error(
-      `Yrs V2 fixture directory not found at ${FIXTURE_DIR}. ` +
-      `Ensure ankurah-ts-support worktree exists and fixtures are generated. ` +
-      `Run: cd ../ankurah-ts-support && OVERWRITE_FIXTURES=1 cargo test -p ankurah-proto --test yrs_v2_fixtures`
-    );
+const YRS_DIR = 'proto/test_fixtures/yrs_v2';
+
+interface YrsSidecar {
+  fixture: string;
+  total_len: number;
+  applies_on_top_of: string | null;
+  text_fields?: Record<string, string>;
+  state_vector?: Record<string, number>;
+  bytes?: number[];
+}
+
+function loadFixture(name: string): Uint8Array {
+  return readFixtureBytes(YRS_DIR, name);
+}
+
+/** The doc's state vector as {clientId: clock}, the shape the sidecars use. */
+function stateVectorOf(doc: Y.Doc): Record<string, number> {
+  const sv = Y.decodeStateVector(Y.encodeStateVector(doc));
+  const out: Record<string, number> = {};
+  for (const [client, clock] of sv) out[String(client)] = clock;
+  return out;
+}
+
+const fixtures = listFixtureDir(YRS_DIR)
+  .filter((f) => f.endsWith('.bin'))
+  .filter((f) => existsSync(fixturePath(YRS_DIR, f.replace(/\.bin$/, '.json'))));
+
+if (fixtures.length === 0) {
+  throw new Error(`No .bin/.json fixture pairs under ${fixturePath(YRS_DIR)}`);
+}
+
+describe('Yrs V2 fixtures applied by Yjs', () => {
+  for (const binName of fixtures) {
+    const bytes = loadFixture(binName);
+    const sidecar = readSidecar(YRS_DIR, binName.replace(/\.bin$/, '.json')) as YrsSidecar;
+
+    describe(binName, () => {
+      test('file length matches the sidecar', () => {
+        expect(bytes.length).toBe(sidecar.total_len);
+      });
+
+      if (sidecar.bytes) {
+        test('bytes match the sidecar', () => {
+          expect(toHex(bytes)).toBe(toHex(new Uint8Array(sidecar.bytes!)));
+        });
+      }
+
+      test('text fields after applying', () => {
+        const doc = new Y.Doc();
+        if (sidecar.applies_on_top_of) Y.applyUpdateV2(doc, loadFixture(sidecar.applies_on_top_of));
+        Y.applyUpdateV2(doc, bytes);
+
+        const expected = sidecar.text_fields ?? {};
+        // Read the roots before touching any of them: getText() creates a missing
+        // root, which would hide a diff that failed to introduce a new field.
+        expect(Array.from(doc.share.keys()).sort()).toEqual(Object.keys(expected).sort());
+        for (const [field, text] of Object.entries(expected)) {
+          expect(doc.getText(field).toString()).toBe(text);
+        }
+      });
+
+      test('state vector after applying', () => {
+        const doc = new Y.Doc();
+        if (sidecar.applies_on_top_of) Y.applyUpdateV2(doc, loadFixture(sidecar.applies_on_top_of));
+        Y.applyUpdateV2(doc, bytes);
+        expect(stateVectorOf(doc)).toEqual(sidecar.state_vector ?? {});
+      });
+    });
   }
 });
 
-function loadFixture(name: string): Uint8Array {
-  const filePath = path.join(FIXTURE_DIR, name);
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Fixture not found: ${filePath}`);
-  }
-  return new Uint8Array(fs.readFileSync(filePath));
-}
-
-describe('Yrs<->Yjs V2 interop', () => {
-
-  describe('Decode: Yrs V2 state loaded by Yjs', () => {
-
-    test('empty document', () => {
-      const bytes = loadFixture('empty_doc.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-      // Empty doc should have no meaningful content
-      // getText on a non-existent key returns an empty YText
-      const text = doc.getText('nonexistent');
-      expect(text.toString()).toBe('');
-    });
-
-    test('simple text field', () => {
-      const bytes = loadFixture('simple_text.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-      const content = doc.getText('content');
-      expect(content.toString()).toBe('Hello, World!');
-    });
-
-    test('multiple text fields', () => {
-      const bytes = loadFixture('multifield.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-      expect(doc.getText('title').toString()).toBe('Cat video #2918');
-      expect(doc.getText('description').toString()).toBe('Very cute cats playing');
-    });
-
-    test('text with multiple edits', () => {
-      const bytes = loadFixture('text_with_edits.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-      expect(doc.getText('content').toString()).toBe('Hello, World!');
-    });
-
-    test('incremental base state', () => {
-      const bytes = loadFixture('incremental_base.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-      expect(doc.getText('content').toString()).toBe('Hello');
-    });
-
-    test('incremental diff applied to base', () => {
-      const base = loadFixture('incremental_base.bin');
-      const diff = loadFixture('incremental_diff.bin');
-
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, base);
-      expect(doc.getText('content').toString()).toBe('Hello');
-
-      Y.applyUpdateV2(doc, diff);
-      expect(doc.getText('content').toString()).toBe('Hello, World!');
-    });
-
-    test('concurrent merge from two clients', () => {
-      const bytes = loadFixture('concurrent_merge.bin');
-      const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, bytes);
-
-      // The merged state contains "Hello" (client 10) and "World" (client 20)
-      // inserted concurrently at position 0. The Yrs fixture produces "HelloWorld".
-      const content = doc.getText('content').toString();
-      expect(content).toBe('HelloWorld');
-    });
+describe('Yrs V2 fixture invariants', () => {
+  // `YrsBackend::to_operations` decides a backend produced nothing by comparing
+  // its output against `Update::EMPTY_V2`, which is byte-identical to the encoding
+  // of a document with no roots and no edits. That equality is the invariant.
+  test('empty_update.bin is byte-identical to empty_doc.bin', () => {
+    expect(toHex(loadFixture('empty_update.bin'))).toBe(toHex(loadFixture('empty_doc.bin')));
   });
 
-  describe('Round-trip: Yjs encode -> Yrs-compatible V2', () => {
-
-    test('Yjs V2 encode produces valid update', () => {
-      const doc = new Y.Doc();
-      const text = doc.getText('content');
-      text.insert(0, 'Hello, World!');
-
-      const update = Y.encodeStateAsUpdateV2(doc);
-      expect(update).toBeInstanceOf(Uint8Array);
-      expect(update.length).toBeGreaterThan(0);
-
-      // Verify self-decode works
-      const doc2 = new Y.Doc();
-      Y.applyUpdateV2(doc2, update);
-      expect(doc2.getText('content').toString()).toBe('Hello, World!');
-    });
-
-    test('Yjs state vector is compatible format', () => {
-      const doc = new Y.Doc();
-      const text = doc.getText('content');
-      text.insert(0, 'test');
-
-      const sv = Y.encodeStateVector(doc);
-      expect(sv).toBeInstanceOf(Uint8Array);
-      expect(sv.length).toBeGreaterThan(0);
-
-      // A diff from an empty state vector should produce the full state
-      const emptySV = Y.encodeStateVector(new Y.Doc());
-      const diff = Y.encodeStateAsUpdateV2(doc, emptySV);
-
-      const doc2 = new Y.Doc();
-      Y.applyUpdateV2(doc2, diff);
-      expect(doc2.getText('content').toString()).toBe('test');
-    });
-
-    test('Yjs incremental diff V2', () => {
-      const doc = new Y.Doc();
-      const text = doc.getText('content');
-
-      text.insert(0, 'Hello');
-      const sv1 = Y.encodeStateVector(doc);
-      const baseUpdate = Y.encodeStateAsUpdateV2(doc);
-
-      text.insert(5, ', World!');
-      const diff = Y.encodeStateAsUpdateV2(doc, sv1);
-
-      // Apply base state then diff to a fresh doc
-      const baseDoc = new Y.Doc();
-      Y.applyUpdateV2(baseDoc, baseUpdate);
-      expect(baseDoc.getText('content').toString()).toBe('Hello');
-
-      Y.applyUpdateV2(baseDoc, diff);
-      expect(baseDoc.getText('content').toString()).toBe('Hello, World!');
-    });
+  test('empty_update.bin applied to a populated doc is a no-op', () => {
+    const doc = new Y.Doc();
+    Y.applyUpdateV2(doc, loadFixture('simple_text.bin'));
+    const before = doc.getText('content').toString();
+    Y.applyUpdateV2(doc, loadFixture('empty_update.bin'));
+    expect(doc.getText('content').toString()).toBe(before);
   });
 
-  describe('Reproduce: Yjs concurrent merge matches Yrs fixture', () => {
-
-    test('two Yjs docs merge concurrently and match fixture content', () => {
-      // Reproduce the Rust test_concurrent_merge scenario in Yjs
-      const docA = new Y.Doc(); docA.clientID = 10;
-      const docB = new Y.Doc(); docB.clientID = 20;
-
-      const textA = docA.getText('content');
-      const textB = docB.getText('content');
-
-      // Doc A inserts "Hello"
-      textA.insert(0, 'Hello');
-
-      // Doc B inserts "World" (concurrently, without seeing A's edit)
-      textB.insert(0, 'World');
-
-      // Merge: apply A's state into B, and B's state into A
-      const stateA = Y.encodeStateAsUpdateV2(docA);
-      const stateB = Y.encodeStateAsUpdateV2(docB);
-
-      Y.applyUpdateV2(docA, stateB);
-      Y.applyUpdateV2(docB, stateA);
-
-      // Both docs should have the same merged content
-      const mergedA = textA.toString();
-      const mergedB = textB.toString();
-      expect(mergedA).toBe(mergedB);
-      expect(mergedA).toContain('Hello');
-      expect(mergedA).toContain('World');
-      expect(mergedA.length).toBe(10);
-
-      // Load the Yrs fixture and verify semantic equivalence
-      const fixtureBytes = loadFixture('concurrent_merge.bin');
-      const fixtureDoc = new Y.Doc();
-      Y.applyUpdateV2(fixtureDoc, fixtureBytes);
-      const fixtureContent = fixtureDoc.getText('content').toString();
-
-      // Yrs fixture merges as "HelloWorld" (lower client_id first).
-      // Yjs may produce "WorldHello" due to different tie-breaking.
-      // Both contain the same characters — semantic equivalence holds.
-      expect(fixtureContent).toBe('HelloWorld');
-      expect(new Set([...mergedA])).toEqual(new Set([...fixtureContent]));
-      expect(mergedA.length).toBe(fixtureContent.length);
-    });
+  // Text indices are UTF-8 byte offsets, so the Rust edit positions are past where
+  // a UTF-16-indexed port would put them. If Yjs disagreed with yrs about that, the
+  // rendered string would differ — which is what the text_fields assertion above
+  // checks. This pins the specific string so the intent is visible in the failure.
+  test('unicode_text.bin renders the byte-offset result', () => {
+    const doc = new Y.Doc();
+    Y.applyUpdateV2(doc, loadFixture('unicode_text.bin'));
+    expect(doc.getText('content').toString()).toBe('café 日本 🚀');
   });
 
-  describe('Cross-validation: Yrs fixture -> Yjs encode -> byte comparison', () => {
+  // Deleting all the text leaves the root and the delete set behind, so the bytes
+  // are nothing like the empty document even though both render as "".
+  test('fully_deleted_text.bin is not the empty document', () => {
+    const deleted = loadFixture('fully_deleted_text.bin');
+    expect(toHex(deleted)).not.toBe(toHex(loadFixture('empty_doc.bin')));
+    const doc = new Y.Doc();
+    Y.applyUpdateV2(doc, deleted);
+    expect(doc.getText('content').toString()).toBe('');
+    expect(Array.from(doc.share.keys())).toEqual(['content']);
+  });
 
-    test('simple text re-encoded by Yjs matches Yrs bytes', () => {
-      // Load Yrs fixture
-      const yrsBytes = loadFixture('simple_text.bin');
+  // The merged string pins the conflict-resolution rule — order by client id —
+  // not just the layout. Yrs resolves the two concurrent inserts at index 0 as
+  // "HelloWorld"; a port that ties differently produces "WorldHello".
+  test('concurrent_merge.bin resolves by client id', () => {
+    const doc = new Y.Doc();
+    Y.applyUpdateV2(doc, loadFixture('concurrent_merge.bin'));
+    expect(doc.getText('content').toString()).toBe('HelloWorld');
+  });
+});
 
-      // Decode with Yjs
+describe('Yjs reproduces the Yrs scenarios', () => {
+  // Two clients insert at index 0 without seeing each other, then merge. Yjs must
+  // land on the same merged string as the Yrs fixture, or the two libraries
+  // disagree about conflict resolution and the port cannot interoperate.
+  test('two Yjs docs merging concurrently match concurrent_merge.bin', () => {
+    const docA = new Y.Doc(); docA.clientID = 10;
+    const docB = new Y.Doc(); docB.clientID = 20;
+
+    docA.getText('content').insert(0, 'Hello');
+    docB.getText('content').insert(0, 'World');
+
+    const stateA = Y.encodeStateAsUpdateV2(docA);
+    const stateB = Y.encodeStateAsUpdateV2(docB);
+    Y.applyUpdateV2(docA, stateB);
+    Y.applyUpdateV2(docB, stateA);
+
+    const fixtureDoc = new Y.Doc();
+    Y.applyUpdateV2(fixtureDoc, loadFixture('concurrent_merge.bin'));
+    const fixtureContent = fixtureDoc.getText('content').toString();
+
+    expect(docA.getText('content').toString()).toBe(docB.getText('content').toString());
+    expect(docA.getText('content').toString()).toBe(fixtureContent);
+  });
+
+  // `to_state_buffer` is a full-state encode and `to_operations` a diff against the
+  // previously-seen state vector. This is that pair driven through Yjs, checked
+  // against the Yrs fixture that recorded the same pair.
+  test('a Yjs full state plus a Yjs diff reaches the incremental fixture content', () => {
+    const doc = new Y.Doc();
+    const text = doc.getText('content');
+
+    text.insert(0, 'Hello');
+    const baseState = Y.encodeStateAsUpdateV2(doc);
+    const seen = Y.encodeStateVector(doc);
+
+    text.insert(5, ', World!');
+    const diff = Y.encodeStateAsUpdateV2(doc, seen);
+
+    const replay = new Y.Doc();
+    Y.applyUpdateV2(replay, baseState);
+    expect(replay.getText('content').toString()).toBe('Hello');
+    Y.applyUpdateV2(replay, diff);
+
+    const fixtureDoc = new Y.Doc();
+    Y.applyUpdateV2(fixtureDoc, loadFixture('incremental_base.bin'));
+    Y.applyUpdateV2(fixtureDoc, loadFixture('incremental_diff.bin'));
+
+    expect(replay.getText('content').toString()).toBe(fixtureDoc.getText('content').toString());
+  });
+
+  // Yjs and Yrs do not promise byte-identical v2 output for the same document, so
+  // this asserts what a port actually depends on: re-encoding a Yrs document with
+  // Yjs preserves both its content and its state vector.
+  test('re-encoding a Yrs document with Yjs preserves content and state vector', () => {
+    for (const binName of fixtures) {
+      const sidecar = readSidecar(YRS_DIR, binName.replace(/\.bin$/, '.json')) as YrsSidecar;
       const doc = new Y.Doc();
-      Y.applyUpdateV2(doc, yrsBytes);
+      if (sidecar.applies_on_top_of) Y.applyUpdateV2(doc, loadFixture(sidecar.applies_on_top_of));
+      Y.applyUpdateV2(doc, loadFixture(binName));
 
-      // Re-encode with Yjs
-      const yjsBytes = Y.encodeStateAsUpdateV2(doc);
+      const reEncoded = new Y.Doc();
+      Y.applyUpdateV2(reEncoded, Y.encodeStateAsUpdateV2(doc));
 
-      // The re-encoded state should decode to the same content
-      const doc2 = new Y.Doc();
-      Y.applyUpdateV2(doc2, yjsBytes);
-      expect(doc2.getText('content').toString()).toBe('Hello, World!');
-
-      // Note: byte-for-byte comparison may not match due to encoding differences,
-      // but semantic equivalence must hold. Let's test it anyway:
-      // If they DO match, great. If not, that's acceptable as long as content matches.
-      if (Buffer.from(yrsBytes).equals(Buffer.from(yjsBytes))) {
-        // Byte-identical -- best case
-        expect(true).toBe(true);
-      } else {
-        // Bytes differ but content is the same -- still valid
-        // This documents whether Yrs and Yjs produce identical V2 bytes
-        console.log('Note: Yrs and Yjs V2 encodings differ in bytes but are semantically equivalent');
-        console.log(`  Yrs: ${yrsBytes.length} bytes, Yjs: ${yjsBytes.length} bytes`);
+      for (const [field, text] of Object.entries(sidecar.text_fields ?? {})) {
+        expect(`${binName}:${field}=${reEncoded.getText(field).toString()}`).toBe(`${binName}:${field}=${text}`);
       }
-    });
+      expect(stateVectorOf(reEncoded)).toEqual(stateVectorOf(doc));
+    }
   });
 });
