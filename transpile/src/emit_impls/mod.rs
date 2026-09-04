@@ -32,13 +32,21 @@
 //! Two impls in one file that would take the same name is a diagnostic, not a
 //! silent overwrite.
 
+mod conversion;
 mod dispatch;
 mod name;
+mod open_dispatch;
 #[cfg(test)]
 mod tests;
 
-pub use dispatch::{free_call, has_emitted_class, is_reference_forwarding, FreeCall};
-pub use name::free_fn_name;
+pub use conversion::{conversion_call, conversion_names};
+pub use dispatch::{
+    forwards_every_method, free_call, has_emitted_class, is_reference_forwarding, FreeCall,
+};
+pub use open_dispatch::{
+    dispatcher_name, dispatchers, record_wanted, refusal as dispatcher_refusal, Dispatcher,
+};
+pub use name::{free_fn_name, method_symbol};
 
 use syn::spanned::Spanned;
 
@@ -58,37 +66,115 @@ pub struct FreeFn {
 /// a bare type parameter, a declared system type, a foreign type. Everything
 /// else is a method on a class and is emitted there.
 pub fn free_functions(reg: &TypeRegistry, module: ModuleId, file: &RustFile) -> Vec<FreeFn> {
+    free_functions_reporting(reg, module, file, &crate::diag::DiagSink::new())
+}
+
+/// The same, with a sink the run reads.
+///
+/// `free_functions` is asked several times per run — once to build the import
+/// map, once to write the file — so what it reports has to go somewhere a
+/// caller decides, or one gap would be counted once per ask. The pass that
+/// owns the file's diagnostics hands in the run's sink; every other ask hands
+/// in one nobody reads.
+pub fn free_functions_reporting(
+    reg: &TypeRegistry,
+    module: ModuleId,
+    file: &RustFile,
+    sink: &crate::diag::DiagSink,
+) -> Vec<FreeFn> {
     // Resolving the impl's self type a second time can only repeat what the
     // registry already reported when it built the impl table, so the repeat is
     // dropped rather than counted twice.
     let quiet = crate::diag::DiagSink::new();
     let mut out: Vec<FreeFn> = Vec::new();
+    // What each emitted name's impl was written for, so a name two impls take
+    // can say whether they differ in anything emission keeps.
+    let mut written_for: Vec<(String, String)> = Vec::new();
     for imp in &file.impls {
         let Some(self_ty) = resolved_self(reg, module, imp, &quiet) else {
             continue;
         };
-        if has_emitted_class(reg, &self_ty)
-            || is_reference_forwarding(&self_ty, &imp.type_params)
-        {
+        if has_emitted_class(reg, &self_ty) {
+            continue;
+        }
+        // An impl written for a reference to its own parameter forwards to the
+        // value inside, and emission erases the reference — so emitting it
+        // would write a function whose body calls itself. That is true only of
+        // an impl that really does forward; one that does something of its own
+        // is a real impl, and skipping it left every call to it naming nothing.
+        if is_reference_forwarding(&self_ty, &imp.type_params) {
+            if forwards_every_method(imp) {
+                continue;
+            }
+            sink.push(crate::diag::Diag::at(
+                &sink.file(),
+                imp.self_ty
+                    .as_ref()
+                    .map(|t| t.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site),
+                format!(
+                    "`impl {} for &{}` does something of its own rather than forwarding to the \
+                     value inside, and emission erases the reference, so its function and the \
+                     one for the value itself would be the same name",
+                    imp.trait_name().unwrap_or_default(),
+                    imp.target_type
+                ),
+            ));
+            // Emitting it anyway would write a function no call site names —
+            // `free_call` decides from the impl's shape, which is all the
+            // registry keeps — so the impl stays out and the line above is what
+            // says it did.
             continue;
         }
         for method in &imp.methods {
             if method.is_test {
                 continue;
             }
-            let name = free_fn_name(reg, &self_ty, &imp.type_params, &method.ts_name);
+            let symbol = method_symbol(
+                imp.trait_name().as_deref(),
+                &imp.trait_type_args(),
+                &method.ts_name,
+            );
+            let name = free_fn_name(reg, &self_ty, &imp.type_params, &symbol);
+            // Two impls of two traits can write one method name for one self
+            // type — `Get::get` and `Peek::get` on the same `Arc<Inner<T>>` —
+            // and the scheme, which names the self type and the method, gives
+            // both the same function. Adding the trait to the name would
+            // separate them, but the name is computed here *and* at every call
+            // site from the impl alone, so a rule that reads "unless another
+            // impl took it first" cannot be computed at a call. The rule that
+            // can — every trait impl's function carries its trait — renames
+            // every module-level function the port emits, which is a decision
+            // of its own. Until it is taken, the second impl is lost and the
+            // site says so.
+            let source = trait_source(imp);
             if out.iter().any(|f| f.name == name) {
-                crate::diag::pending::park(
-                    imp.self_ty.as_ref().map(|t| t.span()).unwrap_or_else(proc_macro2::Span::call_site),
+                let earlier = written_for
+                    .iter()
+                    .find(|(taken, _)| *taken == name)
+                    .map(|(_, source)| source.clone())
+                    .unwrap_or_default();
+                let why = if earlier.trim_start_matches('&').trim() == source.trim_start_matches('&').trim() {
+                    "the two are written for the same type through a reference and without \
+                     one, and emission erases the reference, so they are one function here"
+                } else {
+                    "the two impls differ in something the naming scheme does not write down"
+                };
+                sink.push(crate::diag::Diag::at(
+                    &sink.file(),
+                    imp.self_ty
+                        .as_ref()
+                        .map(|t| t.span())
+                        .unwrap_or_else(proc_macro2::Span::call_site),
                     format!(
                         "`{}` and an earlier impl in this file both emit a module-level \
-                         function called `{}`, so one of them would be lost: the two impls \
-                         differ in something the naming scheme does not write down",
-                        method.name, name
+                         function called `{}`, so one of them is lost: {}",
+                        method.name, name, why
                     ),
-                );
+                ));
                 continue;
             }
+            written_for.push((name.clone(), source));
             out.push(FreeFn {
                 name: name.clone(),
                 text: write(reg, module, &self_ty, imp, method, &name),
@@ -96,6 +182,24 @@ pub fn free_functions(reg: &TypeRegistry, module: ModuleId, file: &RustFile) -> 
         }
     }
     out
+}
+
+/// The trait argument an impl was written with, as the source wrote it.
+fn trait_source(imp: &ImplInfo) -> String {
+    let Some(path) = &imp.trait_path else {
+        return String::new();
+    };
+    let Some(segment) = path.segments.last() else {
+        return String::new();
+    };
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return String::new();
+    };
+    args.args
+        .iter()
+        .map(|a| quote::ToTokens::to_token_stream(a).to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Does this impl's self type have an emitted class for its methods to hang

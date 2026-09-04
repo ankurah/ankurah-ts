@@ -27,14 +27,6 @@ pub struct ClosureSig {
 }
 
 impl ClosureSig {
-    /// The parameters that have a type, which is what a scope binds.
-    pub fn typed_params(&self) -> Vec<(String, Ty)> {
-        self.params
-            .iter()
-            .filter_map(|(name, ty)| ty.clone().map(|ty| (name.clone(), ty)))
-            .collect()
-    }
-
     /// The parameters nothing typed, named so a diagnostic can say which.
     pub fn untyped_params(&self) -> Vec<String> {
         self.params
@@ -63,6 +55,25 @@ impl TypeContext<'_> {
             expected::fn_shape_through_impls(&probe, self.registry, ty, &self.param_bounds)
         });
 
+        // A closure written with more or fewer parameters than the position
+        // calls it with is one rustc rejects, so the two disagreeing means the
+        // engine read one of them wrongly and neither can be trusted to type
+        // the body.
+        if let Some(shape) = &shape {
+            if shape.inputs.len() != closure.inputs.len() {
+                self.sink.report(
+                    syn::spanned::Spanned::span(closure),
+                    format!(
+                        "this closure is written with {} parameter(s) and the position it \
+                         stands in calls it with {}, which Rust does not allow, so one of the \
+                         two is not what the engine read",
+                        closure.inputs.len(),
+                        shape.inputs.len()
+                    ),
+                );
+            }
+        }
+
         let mut params: Vec<(String, Option<Ty>)> = Vec::new();
         for (index, pat) in closure.inputs.iter().enumerate() {
             let name = crate::body::BodyTranslator::pat_static(pat);
@@ -72,7 +83,30 @@ impl TypeContext<'_> {
             };
             let from_position = shape.as_ref().and_then(|s| s.inputs.get(index)).cloned();
             let ty = match (annotated, from_position) {
-                (Some(written), Some(want)) => Some(expected::fill_infer(&written, &want)),
+                (Some(written), Some(want)) => {
+                    // The annotation is what the source said and it stands; but
+                    // an annotation the position contradicts is one rustc would
+                    // have rejected, so the disagreement is a fact about the
+                    // engine's reading and is said out loud.
+                    let filled = expected::fill_infer(&written, &want);
+                    if filled.peel_refs() != want.peel_refs()
+                        && !expected::has_infer(&written)
+                        && expected::is_settled(&want, &self.params)
+                    {
+                        self.sink.report(
+                            syn::spanned::Spanned::span(pat),
+                            format!(
+                                "this closure annotates `{}` as `{}` and the position it \
+                                 stands in wants a `{}`, which Rust does not allow; the \
+                                 annotation is what the body is typed with",
+                                name,
+                                self.registry.describe(&filled),
+                                self.registry.describe(&want)
+                            ),
+                        );
+                    }
+                    Some(filled)
+                }
                 (Some(written), None) => Some(written),
                 (None, Some(want)) => self.through_pattern(pat, &want),
                 (None, None) => None,

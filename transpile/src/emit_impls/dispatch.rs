@@ -45,13 +45,19 @@ pub fn free_call(reg: &TypeRegistry, found: &MethodResolution) -> Option<FreeCal
     {
         return None;
     }
+    let trait_name = def.trait_ref.as_ref().map(|t| leaf(reg.name_of(t.id)));
+    let type_args: Vec<String> = def
+        .trait_ref
+        .as_ref()
+        .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(reg, ty)).collect())
+        .unwrap_or_default();
+    let symbol = super::method_symbol(
+        trait_name.as_deref(),
+        &type_args,
+        &crate::name_map::map_fn_name(method),
+    );
     Some(FreeCall {
-        name: super::free_fn_name(
-            reg,
-            &def.self_ty,
-            &def.generics,
-            &crate::name_map::map_fn_name(method),
-        ),
+        name: super::free_fn_name(reg, &def.self_ty, &def.generics, &symbol),
         impl_id,
         is_blanket: def.is_blanket(),
     })
@@ -70,6 +76,55 @@ pub fn is_reference_forwarding(self_ty: &Ty, generics: &[String]) -> bool {
         return false;
     };
     matches!(inner.as_ref(), Ty::Param(name) if generics.iter().any(|g| g == name))
+}
+
+/// Does this impl's body actually forward — every method calling the same
+/// method on the value the reference points at?
+///
+/// The shape alone is not enough. `impl<T: Signal> Signal for &T` forwards, and
+/// emitting it would write a function whose body calls itself; but an
+/// `impl<T> Trait for &T` whose methods do something of their own is a real
+/// impl, and dropping it left its call sites naming a function nothing
+/// declares. Only a body that is one call to its own method name is skipped.
+pub fn forwards_every_method(imp: &crate::types::ImplInfo) -> bool {
+    imp.methods.iter().all(|method| {
+        let Some(block) = &method.body_ast else {
+            // A method that inherits the trait's default body writes nothing of
+            // its own, so there is nothing here that would call itself.
+            return true;
+        };
+        forwards(block, &method.name)
+    })
+}
+
+/// Is this block one call to `name`, on whatever it was handed?
+///
+/// Both spellings count: `self.0.listen(l)` and the qualified
+/// `Signal::listen(*self, l)` that the corpus writes to say which trait's
+/// `listen` it means.
+fn forwards(block: &syn::Block, name: &str) -> bool {
+    let [syn::Stmt::Expr(expr, None)] = &block.stmts[..] else {
+        return false;
+    };
+    let mut expr = expr;
+    loop {
+        match expr {
+            syn::Expr::Paren(p) => expr = &p.expr,
+            syn::Expr::Group(g) => expr = &g.expr,
+            syn::Expr::MethodCall(call) => return call.method == name,
+            syn::Expr::Call(call) => {
+                let syn::Expr::Path(path) = &*call.func else {
+                    return false;
+                };
+                return path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == name);
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Does the port emit a class whose methods this impl's could be?
@@ -95,4 +150,9 @@ pub fn has_emitted_class(reg: &TypeRegistry, self_ty: &Ty) -> bool {
         def.kind,
         crate::registry::TypeKind::Struct | crate::registry::TypeKind::Enum { .. }
     )
+}
+
+/// The last segment of a module-qualified name.
+fn leaf(name: String) -> String {
+    name.rsplit("::").next().unwrap_or(&name).to_string()
 }

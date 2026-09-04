@@ -39,7 +39,9 @@ pub enum JsShape {
     SameAs(Ty),
     Str,
     Number,
-    /// `u64` / `i64`, which the port still emits as `bigint | number`.
+    /// `u64` and `i64`, which the port writes as `bigint` (spec section 9,
+    /// answer 1): a value that is sometimes a `number` is neither, and the
+    /// codec's `writeU64` takes a `bigint`.
     BigInt,
     Boolean,
     Void,

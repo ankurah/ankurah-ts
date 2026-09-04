@@ -535,9 +535,13 @@ impl<'a> BodyTranslator<'a> {
                 }
                 _ => unreachable!("the tail was just matched"),
             };
-            // A block's tail leaves through the function's return type, so that
-            // is what the tail expression is expected to produce (spec 4.6).
-            let want = self.fn_return.clone();
+            // A block's tail is the block's value, so it leaves through
+            // whatever the block itself was expected to produce — and through
+            // the function's return type where the block *is* the function's
+            // body (spec 4.6). Forcing the function's return on every tail made
+            // `let bytes: Vec<u8> = { vec![10, 11] };` ask the tail for the
+            // function's type instead of the `let`'s.
+            let want = self.expectation_for(expr).or_else(|| self.fn_return.clone());
             self.expecting(expr, want.as_ref(), || {
                 format!(
                     "{}\n",
@@ -869,20 +873,64 @@ impl<'a> BodyTranslator<'a> {
         args: &[String],
         call: &syn::ExprMethodCall,
     ) -> String {
-        if free.is_blanket {
+        let name = if free.is_blanket {
+            self.open_dispatcher(free, call).unwrap_or_else(|| free.name.clone())
+        } else {
+            free.name.clone()
+        };
+        let mut written = vec![receiver.to_string()];
+        written.extend(args.iter().cloned());
+        format!("{}({})", name, written.join(", "))
+    }
+
+    /// The function that picks among a trait's impls at run time, for a call
+    /// the engine resolved only to the blanket one.
+    ///
+    /// The blanket impl is what the engine picks when the bound is open, and it
+    /// is right only for the receivers the blanket is written for. The
+    /// dispatcher tests the receiver's shape instead, so every impl of the
+    /// trait is reachable — and where no dispatcher can be written, the site
+    /// says which impls the emitted call cannot reach.
+    fn open_dispatcher(
+        &self,
+        free: &crate::emit_impls::FreeCall,
+        call: &syn::ExprMethodCall,
+    ) -> Option<String> {
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        let reg = tc.registry;
+        let trait_ref = reg.impl_def(free.impl_id).trait_ref.as_ref()?;
+        let trait_id = trait_ref.id;
+        let trait_name = reg.name_of(trait_id);
+        // A trait another crate declares carries its dispatcher there, and this
+        // run does not read that crate.
+        let declared_here = reg
+            .def(trait_id)
+            .is_some_and(|def| !reg.modules().get(def.module).is_system);
+        let refused = if declared_here {
+            crate::emit_impls::dispatcher_refusal(reg, trait_id, &trait_name, &call.method.to_string())
+        } else {
+            Some("the trait is declared outside this crate, where its dispatcher lives".to_string())
+        };
+        if let Some(why) = refused {
+            drop(tc);
             self.fallback(
                 syn::spanned::Spanned::span(call),
                 format!(
-                    "`{}` here dispatches through a bound the engine cannot close, so the \
-                     call is written as `{}`, the blanket impl's function; a receiver that \
-                     one of the trait's other impls is written for reaches the wrong one",
-                    call.method, free.name
+                    "`{}` here dispatches through a bound the engine cannot close, and no \
+                     run-time selection among the trait's impls can be written because {}; the \
+                     call is written as `{}`, the blanket impl's function, and a receiver one \
+                     of the trait's other impls is written for reaches the wrong one",
+                    call.method, why, free.name
                 ),
             );
+            return None;
         }
-        let mut written = vec![receiver.to_string()];
-        written.extend(args.iter().cloned());
-        format!("{}({})", free.name, written.join(", "))
+        crate::emit_impls::record_wanted(trait_id, &call.method.to_string());
+        Some(crate::emit_impls::dispatcher_name(
+            &trait_name,
+            &crate::name_map::map_fn_name(&call.method.to_string()),
+        ))
     }
 
     /// What the receiver of a wrapper-opening call is expected to produce.
@@ -964,7 +1012,7 @@ impl<'a> BodyTranslator<'a> {
     /// position otherwise — `let id: EntityId = bincode::deserialize(&bytes)?`
     /// names `EntityId` as surely as `deserialize::<EntityId>` does — so both
     /// are read here, the turbofish first because it is what the source said.
-    fn read_into_type(
+    pub(crate) fn read_into_type(
         &self,
         callee: Option<&syn::Path>,
         span: proc_macro2::Span,
@@ -1017,7 +1065,24 @@ impl<'a> BodyTranslator<'a> {
     pub fn expr(&self, expr: &syn::Expr) -> String {
         let expected = self.expectation_for(expr);
         match expr {
-            syn::Expr::Lit(lit) => translate_lit(&lit.lit),
+            // A 64-bit integer is a `bigint`, and JavaScript will not mix one
+            // with a `number`: `1n + 1` throws rather than adding. So a literal
+            // the engine typed as one carries the suffix that makes it a
+            // `bigint` too.
+            syn::Expr::Lit(lit) => {
+                let Some(written) = translate_lit(&lit.lit) else {
+                    self.fallback(
+                        syn::spanned::Spanned::span(lit),
+                        "this literal form has no spelling in the port, so the expression is \
+                         written as `undefined`",
+                    );
+                    return "undefined".to_string();
+                };
+                match self.is_bigint_literal(&lit.lit, expected.as_ref()) {
+                    true => format!("{}n", written),
+                    false => written,
+                }
+            }
             syn::Expr::Path(path) => self.path_expr(&path.path),
 
             syn::Expr::Field(field) => {
@@ -1105,6 +1170,18 @@ impl<'a> BodyTranslator<'a> {
                             _ => format!("{} ?? ({})()", receiver, args[0]),
                         };
                     }
+                }
+
+                // ── a conversion ──
+                // `into`, `try_into`, `to_string` and `to_owned` name a
+                // conversion rather than a method the receiver's type carries,
+                // and what the port writes for one is decided by the pair of
+                // types, not by the name.
+                if let Some(converted) =
+                    self.conversion_method(call, &receiver, expected.as_ref())
+                {
+                    self.record_resolution(call, &rust_method);
+                    return converted;
                 }
 
                 // ── the resolved call ──
@@ -1210,6 +1287,13 @@ impl<'a> BodyTranslator<'a> {
                     syn::Expr::Path(path) => Some(&path.path),
                     _ => None,
                 };
+                // `Target::from(x)` and `Target::try_from(x)` name the
+                // conversion the impl table answers, and the function they land
+                // on is the one emission gave that impl: `Wrapped.fromWire`,
+                // not a `from` the class does not declare.
+                if let Some(written) = self.conversion_call(path, call, &args) {
+                    return written;
+                }
                 self.translate_call(&func, &args, syn::spanned::Spanned::span(call), path)
             }
 
@@ -1231,7 +1315,9 @@ impl<'a> BodyTranslator<'a> {
                         }
                     }
                 }
-                let left = self.expr(&bin.left);
+                let left = self.expecting(&bin.left, shift_expectation(&bin.op, expected.as_ref()), || {
+                    self.expr(&bin.left)
+                });
                 // `&&` and `||` evaluate their right operand only if the left
                 // one allows it, so anything that operand took to evaluate
                 // itself belongs inside the branch the short circuit guards.
@@ -1240,13 +1326,45 @@ impl<'a> BodyTranslator<'a> {
                     let right = self.short_circuit_operand(&bin.right, right, lifted);
                     return format!("{} {} {}", left, translate_binop(&bin.op), right);
                 }
-                format!("{} {} {}", left, translate_binop(&bin.op), self.expr(&bin.right))
+                // The other operand of a comparison is what says how wide an
+                // unsuffixed literal is, and which type a bare `into` on the
+                // right of an `==` converts to.
+                //
+                // A shift is the exception. What the position wants of the
+                // shift is what it wants of the value being shifted, and the
+                // shift *amount* — a `u32` in Rust — has to be a `bigint` in
+                // JavaScript whenever the value is, because `1n << 63` throws.
+                // So the amount is asked for under the same type: a written
+                // literal comes out as a `bigint`, and an amount that is a
+                // value of its own keeps its type and is converted at the
+                // operator instead.
+                let shift = matches!(bin.op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_));
+                let want = if shift {
+                    expected.clone()
+                } else {
+                    self.quietly(|| self.resolve_expr_type(&bin.left)).ok()
+                };
+                let right =
+                    self.expecting(&bin.right, want.as_ref(), || self.expr(&bin.right));
+                // What the operator resolves to: the impl's method where the
+                // operands are not primitives, and the JavaScript operator with
+                // whatever correction its arithmetic needs where they are.
+                if let Some(resolved) = self.binary_operator(bin, &left, &right) {
+                    return resolved;
+                }
+                format!("{} {} {}", left, translate_binop(&bin.op), right)
             }
 
             syn::Expr::Unary(unary) => {
                 let e = self.expr(&unary.expr);
                 match &unary.op {
                     syn::UnOp::Not(_) => {
+                        // Rust's `!` is the bitwise complement on an integer
+                        // and the logical negation on a `bool`; JavaScript
+                        // spells the first one `~`.
+                        if let Some(complement) = self.unary_not(unary, &e) {
+                            return complement;
+                        }
                         if e.contains("===") || e.contains("!==") || e.contains(">=") || e.contains("<=") {
                             format!("!({})", e)
                         } else {
@@ -1281,61 +1399,26 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::If(if_expr) => control_flow::translate_if(if_expr, self),
 
+            // A block hands its value on from its tail, so what the position
+            // wants of the block it wants of the tail — re-keyed onto the tail,
+            // because an expectation is matched by the span of the expression
+            // it was written for.
             syn::Expr::Block(block) => {
-                if block.block.stmts.len() == 1 {
-                    if let syn::Stmt::Expr(expr, None) = &block.block.stmts[0] {
-                        return self.expr(expr);
+                let tail = block.block.stmts.last().and_then(|stmt| match stmt {
+                    syn::Stmt::Expr(tail, None) => Some(tail),
+                    _ => None,
+                });
+                if let Some(tail) = tail {
+                    if block.block.stmts.len() == 1 {
+                        return self.expecting(tail, expected.as_ref(), || self.expr(tail));
+                    }
+                    if expected.is_some() {
+                        return self.expecting(tail, expected.as_ref(), || {
+                            self.block_as_value(block)
+                        });
                     }
                 }
-                // Multi-statement block as expression → IIFE
-                // Detect shadowed variables: if a local in the block has the same name
-                // as a variable used in its init, thread it as an IIFE parameter
-                let mut shadow_params: Vec<(String, String, Option<crate::ty::Ty>)> = Vec::new();
-                for stmt in &block.block.stmts {
-                    if let syn::Stmt::Local(local) = stmt {
-                        let pat_name = Self::pat_static(&local.pat);
-                        if let Some(init) = &local.init {
-                            // Check if the init expression references pat_name as a
-                            // standalone variable (not as a field name in a.b.c)
-                            if references_var(&init.expr, &pat_name) {
-                                // This is a shadow pattern — pass as IIFE param.
-                                // The parameter holds the value of the initialiser,
-                                // resolved out here, before the block's scope exists.
-                                let resolved = self.resolve_expr_type(&init.expr);
-                                let instead =
-                                    format!("IIFE parameter `{}` is left untyped", pat_name);
-                                let ty = self.or_fallback(resolved, &instead);
-                                let init_ts = self.expr(&init.expr);
-                                shadow_params.push((pat_name, init_ts, ty));
-                            }
-                        }
-                    }
-                }
-                if !shadow_params.is_empty() {
-                    // Thread shadowed variables as IIFE parameters.
-                    // Push shadow names into scope so local() skips their declarations
-                    // (they're already bound as IIFE params).
-                    self.push_block();
-                    for (name, _, ty) in &shadow_params {
-                        match ty {
-                            Some(ty) => self.bind_var(name, ty.clone()),
-                            None => self.bind_untyped(name),
-                        }
-                        self.threaded.borrow_mut().push(name.clone());
-                    }
-                    let body = self.translate_block_stmts(&block.block);
-                    for _ in &shadow_params {
-                        self.threaded.borrow_mut().pop();
-                    }
-                    self.pop_scope();
-                    let params: Vec<&str> =
-                        shadow_params.iter().map(|(n, _, _)| n.as_str()).collect();
-                    let args: Vec<&str> = shadow_params.iter().map(|(_, v, _)| v.as_str()).collect();
-                    format!("(({}) => {{\n{}}})({})", params.join(", "), indent(&body), args.join(", "))
-                } else {
-                    let body = self.translate_block(&block.block);
-                    format!("(() => {{\n{}}})()", indent(&body))
-                }
+                self.block_as_value(block)
             }
 
             syn::Expr::Return(ret) => {
@@ -1460,7 +1543,12 @@ impl<'a> BodyTranslator<'a> {
                 self.hoist_produced(&reference.expr, written)
             }
 
-            syn::Expr::Paren(paren) => format!("({})", self.expr(&paren.expr)),
+            // Parentheses group and say nothing else, so whatever the position
+            // wants of the whole it wants of what is inside.
+            syn::Expr::Paren(paren) => format!(
+                "({})",
+                self.expecting(&paren.expr, expected.as_ref(), || self.expr(&paren.expr))
+            ),
 
             syn::Expr::Tuple(tuple) => {
                 let parts: Vec<String> = tuple.elems.iter().map(|e| self.moved_value(e)).collect();
@@ -1496,7 +1584,13 @@ impl<'a> BodyTranslator<'a> {
                     let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap(), self);
                     return fmt_str;
                 }
-                let lowered = self.lower_try(try_expr);
+                // What the position wants of the `?` is what it wants of the
+                // payload, so the operand is asked for a `Result` of it:
+                // `let id: EntityId = s.parse()?` is the only thing that says
+                // which type the parse produces.
+                let want = self.try_operand_expectation(expected.as_ref());
+                let lowered =
+                    self.expecting(&try_expr.expr, want.as_ref(), || self.lower_try(try_expr));
                 self.own.prelude.borrow_mut().push(ownership::Hoist {
                     declaration: lowered.declaration,
                     owned: None,
@@ -1505,15 +1599,27 @@ impl<'a> BodyTranslator<'a> {
             }
             syn::Expr::Await(await_expr) => format!("await {}", self.expr(&await_expr.base)),
 
+            // A range is a value in Rust — `(0..n).rev()` calls a method on one
+            // — and the port has no type for it. It used to be written as a
+            // comment, which is not an expression: `(/* range 0..n */).rev()`
+            // does not parse, and one of those stopped the compiler from
+            // checking the rest of the file it was in. `undefined` parses and
+            // is wrong, which is what the diagnostic says.
             syn::Expr::Range(range) => {
                 let from = range.start.as_ref().map(|e| self.expr(e)).unwrap_or_default();
                 let to = range.end.as_ref().map(|e| self.expr(e)).unwrap_or_default();
-                format!("/* range {}..{} */", from, to)
+                self.fallback(
+                    syn::spanned::Spanned::span(range),
+                    format!(
+                        "the range types in `std::ops` are not declared, so `{}..{}` is \
+                         written as `undefined`",
+                        from, to
+                    ),
+                );
+                format!("undefined /* range {}..{} */", from, to)
             }
 
-            syn::Expr::Cast(cast) => {
-                format!("{} as {}", self.expr(&cast.expr), name_map::map_type(&cast.ty))
-            }
+            syn::Expr::Cast(cast) => self.cast(cast),
 
             // A macro's own span is what its translation asks the expectation
             // by, so the type the position wants is re-keyed onto it: `vec![1,
@@ -1549,7 +1655,79 @@ impl<'a> BodyTranslator<'a> {
                 format!("Array({}).fill({})", self.expr(&repeat.len), self.expr(&repeat.expr))
             }
 
-            _ => "/* TODO: unhandled expr */".to_string(),
+            syn::Expr::Group(group) => {
+                self.expecting(&group.expr, expected.as_ref(), || self.expr(&group.expr))
+            }
+
+            // Every remaining form — a `Verbatim` `syn` did not parse among
+            // them — is one the translator has no writing for, so the site says
+            // so rather than leaving a comment where an expression stood.
+            other => {
+                self.fallback(
+                    syn::spanned::Spanned::span(other),
+                    format!(
+                        "a {} is a form the translator has no writing for, so the expression \
+                         is written as `undefined`",
+                        crate::infer::expr_form(other)
+                    ),
+                );
+                "undefined".to_string()
+            }
+        }
+    }
+
+    /// A multi-statement block standing where a value is wanted: an
+    /// immediately-called arrow function, with the shadowing a Rust block
+    /// allows and JavaScript does not threaded through as parameters.
+    fn block_as_value(&self, block: &syn::ExprBlock) -> String {
+        // Multi-statement block as expression → IIFE
+        // Detect shadowed variables: if a local in the block has the same name
+        // as a variable used in its init, thread it as an IIFE parameter
+        let mut shadow_params: Vec<(String, String, Option<crate::ty::Ty>)> = Vec::new();
+        for stmt in &block.block.stmts {
+            if let syn::Stmt::Local(local) = stmt {
+                let pat_name = Self::pat_static(&local.pat);
+                if let Some(init) = &local.init {
+                    // Check if the init expression references pat_name as a
+                    // standalone variable (not as a field name in a.b.c)
+                    if references_var(&init.expr, &pat_name) {
+                        // This is a shadow pattern — pass as IIFE param.
+                        // The parameter holds the value of the initialiser,
+                        // resolved out here, before the block's scope exists.
+                        let resolved = self.resolve_expr_type(&init.expr);
+                        let instead =
+                            format!("IIFE parameter `{}` is left untyped", pat_name);
+                        let ty = self.or_fallback(resolved, &instead);
+                        let init_ts = self.expr(&init.expr);
+                        shadow_params.push((pat_name, init_ts, ty));
+                    }
+                }
+            }
+        }
+        if !shadow_params.is_empty() {
+            // Thread shadowed variables as IIFE parameters.
+            // Push shadow names into scope so local() skips their declarations
+            // (they're already bound as IIFE params).
+            self.push_block();
+            for (name, _, ty) in &shadow_params {
+                match ty {
+                    Some(ty) => self.bind_var(name, ty.clone()),
+                    None => self.bind_untyped(name),
+                }
+                self.threaded.borrow_mut().push(name.clone());
+            }
+            let body = self.translate_block_stmts(&block.block);
+            for _ in &shadow_params {
+                self.threaded.borrow_mut().pop();
+            }
+            self.pop_scope();
+            let params: Vec<&str> =
+                shadow_params.iter().map(|(n, _, _)| n.as_str()).collect();
+            let args: Vec<&str> = shadow_params.iter().map(|(_, v, _)| v.as_str()).collect();
+            format!("(({}) => {{\n{}}})({})", params.join(", "), indent(&body), args.join(", "))
+        } else {
+            let body = self.translate_block(&block.block);
+            format!("(() => {{\n{}}})()", indent(&body))
         }
     }
 
@@ -1562,115 +1740,28 @@ impl<'a> BodyTranslator<'a> {
     /// position wrote a block where an expression had to stand, which does not
     /// parse.
     pub fn expr_value(&self, expr: &syn::Expr) -> String {
-        let syn::Expr::If(if_expr) = expr else {
-            return self.expr(expr);
-        };
-        if let Some(ternary) = self.try_ternary(if_expr) {
-            return ternary;
+        match expr {
+            syn::Expr::If(if_expr) => {
+                if let Some(ternary) = self.try_ternary(if_expr) {
+                    return ternary;
+                }
+            }
+            // A `match` is a value in Rust too. Where the port writes one as
+            // the runtime's `match`, that is already an expression; where it
+            // writes an `if`/`else` chain — an `Option` or a `Result` match —
+            // the statements have to stand inside an arrow function, or
+            // `const x = if (..) {` is what comes out, which does not parse.
+            syn::Expr::Match(_) => {
+                let written = self.expr(expr);
+                if !match_expr::is_statements(&written) {
+                    return written;
+                }
+            }
+            _ => return self.expr(expr),
         }
         let body = control_flow::translate_expr_in_return_position(expr, self);
         format!("(() => {{\n{}}})()", indent(&format!("{}\n", body)))
     }
-
-    /// `e?` — take the value out, or leave with the error.
-    ///
-    /// The test and the early exit are statements, so they are lifted into the
-    /// prelude and the expression becomes the name they left behind. That is
-    /// what makes `f(g()?)` work: `g()` is asked once, its error leaves the
-    /// function, and `f` is called with the value.
-    ///
-    /// The `Ok` wrapper is consumed by the `unwrap` that follows, and the `Err`
-    /// wrapper by the `unwrapErr` that rebuilds it, so neither is left for the
-    /// leak registry to find.
-    pub(crate) fn lower_try(&self, try_expr: &syn::ExprTry) -> Lowered {
-        let inner = self.expr(&try_expr.expr);
-        let span = syn::spanned::Spanned::span(try_expr);
-        let ty = self.resolve_expr_type(&try_expr.expr).ok();
-        let temp = self.fresh_hoist("_r");
-
-        // `?` on an `Option<T>` leaves with `None`, which this port writes as
-        // null. The engine names the type; a receiver it could not name is a
-        // `Result`, which is what all but a handful of `?` in the corpus are.
-        let is_option = ty.as_ref().is_some_and(|ty| self.is_nullable(ty));
-        if is_option {
-            return Lowered {
-                declaration: format!(
-                    "const {} = {};\nif ({} == null) return null;\n",
-                    temp, inner, temp
-                ),
-                value: temp,
-                wrapper: None,
-            };
-        }
-
-        if ty.is_none() {
-            self.fallback(
-                span,
-                "`?` is lowered as a `Result` without the engine having named what it tests",
-            );
-        } else {
-            self.report_try_conversion(ty.as_ref(), span);
-        }
-        Lowered {
-            declaration: format!(
-                "const {} = {};\nif ({}.isErr()) return Result.Err({}.unwrapErr());\n",
-                temp, inner, temp, temp
-            ),
-            value: format!("{}.unwrap()", temp),
-            wrapper: Some(temp),
-        }
-    }
-
-    /// Is this the `Option<T>` the port writes as `T | null`?
-    pub(crate) fn is_nullable(&self, ty: &crate::ty::Ty) -> bool {
-        let Some(tc) = &self.types else { return false };
-        let Some(id) = ty.peel_refs().id() else {
-            return false;
-        };
-        matches!(
-            tc.borrow().registry.shapes().form(id),
-            Some(crate::name_map::system_shapes::Form::Nullable)
-        )
-    }
-
-    /// Say so when `?` crosses two different error types.
-    ///
-    /// Rust calls `From` there, and the engine does not yet say which `From`.
-    /// The emitted code hands the error on unchanged, which is right wherever
-    /// the two types agree and wrong wherever they do not — so every site where
-    /// they differ is reported rather than silently mistranslated.
-    pub(crate) fn report_try_conversion(&self, ty: Option<&crate::ty::Ty>, span: proc_macro2::Span) {
-        let (Some(ty), Some(returns)) = (ty, self.fn_return.as_ref()) else {
-            return;
-        };
-        let error_of = |ty: &crate::ty::Ty| match ty.peel_refs() {
-            crate::ty::Ty::Named { args, .. } if args.len() == 2 => Some(args[1].clone()),
-            _ => None,
-        };
-        let (Some(from), Some(to)) = (error_of(ty), error_of(returns)) else {
-            return;
-        };
-        if from == to {
-            return;
-        }
-        let Some(tc) = &self.types else { return };
-        let tc = tc.borrow();
-        self.fallback(
-            span,
-            format!(
-                "`?` converts {} to {} through `From`, which the engine has not resolved; \
-                 the error is handed on unconverted",
-                name_map::map_ty(tc.registry, &from),
-                name_map::map_ty(tc.registry, &to),
-            ),
-        );
-    }
-
-
-
-
-
-
 
     /// A name for a value the emitted code has to hold on to.
     ///
@@ -1793,15 +1884,7 @@ impl<'a> BodyTranslator<'a> {
             return false;
         };
         let tc = tc.borrow();
-        let arm = syn::Arm {
-            attrs: Vec::new(),
-            pat: pat.clone(),
-            guard: None,
-            fat_arrow_token: syn::token::FatArrow::default(),
-            body: Box::new(syn::Expr::Verbatim(proc_macro2::TokenStream::new())),
-            comma: None,
-        };
-        let takes = ownership::scrutinee::takes(&tc.probe(), &subject, &[arm], |path| {
+        let takes = ownership::scrutinee::takes(&tc.probe(), &subject, &[pat], |path| {
             let mark = tc.sink.mark();
             let payload = tc.payload_of(path, Some(&subject));
             tc.sink.rewind(mark);
@@ -1934,10 +2017,17 @@ impl<'a> BodyTranslator<'a> {
             }
             // `0 => ..` compares. Writing the pattern where the test belongs
             // emitted `if (/* pat literal */)`, which does not parse.
-            syn::Pat::Lit(lit) => (
-                format!("{} === {}", subject, translate_lit(&lit.lit)),
-                String::new(),
-            ),
+            syn::Pat::Lit(lit) => match translate_lit(&lit.lit) {
+                Some(written) => (format!("{} === {}", subject, written), String::new()),
+                None => {
+                    self.fallback(
+                        syn::spanned::Spanned::span(lit),
+                        "this literal pattern has a form the port has no spelling for, so the \
+                         arm is written as one that never matches",
+                    );
+                    ("false".to_string(), String::new())
+                }
+            },
             // `1..=9 => ..`. Rust's exclusive form stops one short of the end.
             syn::Pat::Range(range) => {
                 let mut tests = Vec::new();
@@ -2074,211 +2164,6 @@ impl<'a> BodyTranslator<'a> {
     // constructor heuristic) stay here. Type-specific translations
     // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
 
-    pub(crate) fn translate_call(
-        &self,
-        func: &str,
-        args: &[String],
-        span: proc_macro2::Span,
-        callee: Option<&syn::Path>,
-    ) -> String {
-        // 0. Resolve inline module qualifiers (e.g., stack.track → track)
-        // Resolve inline module qualifiers (e.g., stack.track → track).
-        // Import generation is handled by codegen.rs scanning the translated bodies.
-        for mod_name in &self.inline_module_names {
-            let prefix = format!("{}.", mod_name);
-            if let Some(stripped) = func.strip_prefix(&prefix) {
-                return self.translate_call(stripped, args, span, callee);
-            }
-        }
-
-        // 1. Language-level constructs
-        match func {
-            "Self" => return format!("new {}({})", self.self_type, args.join(", ")),
-            "Ok" => return format!("Result.Ok({})", args.join(", ")),
-            "Err" => return format!("Result.Err({})", args.join(", ")),
-            "Some" if args.len() == 1 => return args[0].clone(),
-            "Some" => return args.join(", "),
-            "None" => return "null".to_string(),
-            // `drop(x)` takes x by value and runs its glue there and then. The
-            // move analysis has already taken x off the block's list — it is an
-            // argument passed by value like any other — so this releases it
-            // once, where the source says.
-            "drop" | "mem.drop" | "mem::drop" if args.len() == 1 => {
-                return format!("{}.drop()", args[0]);
-            }
-            // `forget` is the one thing this model cannot express: it hands a
-            // value to nobody and cancels its drop. Emitting the release would
-            // run glue Rust suppressed, and emitting nothing leaks.
-            "mem.forget" | "mem::forget" | "forget" if args.len() == 1 => {
-                self.fallback(
-                    span,
-                    "`mem::forget` suppresses drop glue, which the emitted ownership model \
-                     has no way to say; the value is left to the leak registry",
-                );
-                return format!("/* mem::forget */ void {}", args[0]);
-            }
-            _ => {}
-        }
-
-        // 2. Native type static calls (Vec::new, HashMap::new, Arc::clone, etc.)
-        //
-        // The table is keyed by the written name, so it is only consulted where
-        // that name does not belong to a type this crate declared. A crate's own
-        // `Vec` is its own class, and `Vec::new()` on it is `Vec.new()`, not a
-        // JavaScript array literal.
-        if !self.names_crate_type(callee) {
-            if let Some(result) = native_types::translate_static_call(func, args) {
-                return result;
-            }
-        }
-
-        // 3. Serde/bincode crate calls
-        match func {
-            "serde_json.to_string" | "serde_json::to_string" | "serdeJson.toString"
-                if args.len() == 1 => return format!("JSON.stringify({})", args[0]),
-            // `from_str::<T>(s)` parses the text and then asks `T` to read
-            // itself out of it, which is what `Deserialize` does. Parsing alone
-            // hands back a plain object where a `T` was wanted.
-            "serde_json.from_str" | "serde_json::from_str" | "serdeJson.fromStr"
-                if args.len() == 1 =>
-            {
-                return match self.read_into_type(callee, span) {
-                    Some(ty) => format!("{}.fromJson(JSON.parse({}))", ty, args[0]),
-                    None => {
-                        self.fallback(
-                            span,
-                            "`serde_json::from_str` is written without saying which type reads \
-                             itself out of the parsed value, so the parse stands alone",
-                        );
-                        format!("JSON.parse({})", args[0])
-                    }
-                };
-            }
-            "bincode.serialize" | "bincode::serialize" if args.len() == 1 =>
-                return format!("(() => {{ const _w = new BincodeWriter(); {}.encode(_w); return _w.finish(); }})()", args[0]),
-            "bincode.deserialize" | "bincode::deserialize" if args.len() == 1 => {
-                return match self.read_into_type(callee, span) {
-                    Some(ty) => format!(
-                        "(() => {{ const _r = new BincodeReader({}); return {}.decode(_r); }})()",
-                        args[0], ty
-                    ),
-                    None => {
-                        self.fallback(
-                            span,
-                            "`bincode::deserialize` is written without saying which type reads \
-                             itself out of the bytes, so the reader stands alone",
-                        );
-                        format!(
-                            "(() => {{ const _r = new BincodeReader({}); return _r; }})()",
-                            args[0]
-                        )
-                    }
-                };
-            }
-            _ => {}
-        }
-
-        // 4. Box::new is transparent
-        if matches!(func, "Box.new" | "Box::new") && args.len() == 1 {
-            return args[0].clone();
-        }
-
-        // 5. Arc static methods → instance methods
-        match func {
-            "Arc.asPtr" | "Arc::asPtr" | "Arc.as_ptr" | "Arc::as_ptr"
-                if args.len() == 1 => return format!("{}.asPtr()", args[0]),
-            "Arc.downgrade" | "Arc::downgrade"
-                if args.len() == 1 => return format!("{}.downgrade()", args[0]),
-            _ => {}
-        }
-
-        // 6. Type::new() constructor pattern
-        // System/base types (Arc, Mutex, RwLock, RefCell, etc.) use `new Type(args)` because
-        // their TS constructors match the Rust ::new() signature directly.
-        // Crate-defined types use `Type.new(args)` because the transpiler emits a
-        // `static new()` method with custom initialization logic.
-        if func.ends_with(".new") || func.ends_with("::new") {
-            let type_name = func.trim_end_matches(".new").trim_end_matches("::new");
-            let type_name = if type_name == "Self" { self.self_type } else { type_name };
-            // System types with public constructors matching ::new() signature
-            let use_constructor = matches!(type_name,
-                "Mutex" | "RwLock" | "RefCell" | "HashMap" | "BTreeMap"
-                | "HashSet" | "BTreeSet" | "Vec" | "RwLockReadGuard" | "RwLockWriteGuard"
-                | "MutexGuard" | "Ref" | "RefMut" | "Box" | "ThreadLocal"
-            );
-            if use_constructor {
-                return format!("new {}({})", type_name, args.join(", "));
-            }
-            // Everything else (crate-defined types + Arc/Weak): use static new()
-            return format!("{}.new({})", type_name, args.join(", "));
-        }
-
-        // 7. Self::method() → TypeName.method()
-        if func.starts_with("Self.") || func.starts_with("Self::") {
-            let method = func.split("::").last()
-                .or_else(|| func.split('.').last())
-                .unwrap_or(func);
-            return format!("{}.{}({})", self.self_type, method, args.join(", "));
-        }
-
-        // 8. Enum variant constructor: Type.Variant(args) → new Type('Variant', {...})
-        if let Some(dot) = func.rfind('.') {
-            let type_name = &func[..dot];
-            let variant = &func[dot+1..];
-
-            // The registry answers wherever it has a declaration, which is now
-            // everywhere a body is translated — match arms included. A type from
-            // another crate has no declaration here, because each crate is
-            // transpiled on its own; the engine says "not a variant" and the
-            // call is written as the associated function the other crate's
-            // TypeScript exposes. Only a translation path with no type context
-            // at all is left to guess from the shape of the name.
-            let is_enum_variant = match &self.types {
-                Some(tc) => tc.borrow().is_variant(type_name, variant),
-                None => {
-                    let guess = type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise");
-                    if guess {
-                        self.fallback(
-                            span,
-                            format!("`{}` is guessed to be an enum variant from its capitalisation", func),
-                        );
-                    }
-                    guess
-                }
-            };
-
-            if is_enum_variant {
-                if args.is_empty() {
-                    return format!("new {}('{}', {{}})", type_name, variant);
-                } else if args.len() == 1 {
-                    return format!("new {}('{}', {{ _0: {} }})", type_name, variant, args[0]);
-                } else {
-                    let fields: Vec<String> = args.iter().enumerate()
-                        .map(|(i, a)| format!("_{}: {}", i, a))
-                        .collect();
-                    return format!("new {}('{}', {{ {} }})", type_name, variant, fields.join(", "));
-                }
-            }
-        }
-
-        // 9. PascalCase function → constructor heuristic
-        if func.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-            && !func.contains('.')
-            && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")
-        {
-            self.fallback(
-                span,
-                format!("`{}` is guessed to be a constructor from its capitalisation", func),
-            );
-            return format!("new {}({})", func, args.join(", "));
-        }
-
-        // 10. Default: plain function call
-        format!("{}({})", func, args.join(", "))
-    }
-
     /// Does the type part of this callee path name a type this crate declared?
     ///
     /// `Vec::new` in ankurah is std's `Vec` unless ankurah declares one of its
@@ -2336,6 +2221,12 @@ impl<'a> BodyTranslator<'a> {
                 format!("path qualifiers {} are dropped by name", dropped.join(", ")),
             );
         }
+        // `ParseError::Empty` is a value, and building it is what every other
+        // construction of that enum does. Written as a member of the class it
+        // named a static nothing declares.
+        if let Some(built) = self.unit_variant(path) {
+            return built;
+        }
         // A single name may be a local the translator had to emit under a
         // different identifier, because a Rust shadow cannot be declared twice
         // in one JavaScript scope.
@@ -2366,6 +2257,18 @@ impl<'a> BodyTranslator<'a> {
             return written;
         }
         Self::path_static(path)
+    }
+
+    /// A unit enum variant written as a path, built the way one is built.
+    fn unit_variant(&self, path: &syn::Path) -> Option<String> {
+        if path.segments.len() < 2 {
+            return None;
+        }
+        let segments: Vec<String> =
+            path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let tc = self.types.as_ref()?;
+        let (owner, variant) = tc.borrow().unit_variant_of_emitted_enum(&segments)?;
+        Some(format!("new {}('{}', {{}})", owner, variant))
     }
 
     pub(crate) fn path_static(path: &syn::Path) -> String {
@@ -2457,6 +2360,10 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
 
     fn consumes_scrutinee(&self, m: &syn::ExprMatch) -> bool {
         self.match_takes(m) == ownership::scrutinee::Takes::Payload
+    }
+
+    fn consumes_let_scrutinee(&self, let_expr: &syn::ExprLet) -> bool {
+        self.let_takes(let_expr) == ownership::scrutinee::Takes::Payload
     }
 }
 
@@ -2610,16 +2517,26 @@ fn is_mut_binding(pat: &syn::Pat) -> bool {
     }
 }
 
-fn translate_lit(lit: &syn::Lit) -> String {
-    match lit {
+/// A literal as the port writes it, or `None` where the port has no spelling
+/// for that literal form and the site has to say so.
+fn translate_lit(lit: &syn::Lit) -> Option<String> {
+    Some(match lit {
         syn::Lit::Str(s) => format!("'{}'", s.value().replace('\'', "\\'")),
         syn::Lit::Int(i) => i.base10_digits().to_string(),
         syn::Lit::Float(f) => f.base10_digits().to_string(),
         syn::Lit::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
         syn::Lit::Char(c) => format!("'{}'", c.value()),
         syn::Lit::Byte(b) => format!("{}", b.value()),
-        _ => "/* unknown literal */".to_string(),
-    }
+        // `b"abc"` is a `&[u8; 3]`, and the port writes a byte sequence as a
+        // `Uint8Array`. It used to come out as a comment, which is not an
+        // expression at all.
+        syn::Lit::ByteStr(bytes) => {
+            let values: Vec<String> =
+                bytes.value().iter().map(|b| b.to_string()).collect();
+            format!("new Uint8Array([{}])", values.join(", "))
+        }
+        _ => return None,
+    })
 }
 
 /// Check if an expression references a variable name as a standalone path
@@ -2661,6 +2578,17 @@ fn references_var(expr: &syn::Expr, name: &str) -> bool {
     }
 }
 
+
+/// What the position wants of a shift's left operand: everything it wants of
+/// the shift, because a shift hands back the type of the value it shifted.
+fn shift_expectation<'e>(
+    op: &syn::BinOp,
+    expected: Option<&'e crate::ty::Ty>,
+) -> Option<&'e crate::ty::Ty> {
+    matches!(op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_))
+        .then_some(expected)
+        .flatten()
+}
 
 fn translate_binop(op: &syn::BinOp) -> &'static str {
     match op {

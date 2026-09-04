@@ -158,7 +158,7 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str) -> String {
         "string" => format!("{}.writeString({})", wr, value),
         "boolean" => format!("{}.writeBool({})", wr, value),
         "number" => format!("{}.writeU32({})", wr, value),
-        "bigint | number" => format!("{}.writeU64({})", wr, value),
+        "bigint" => format!("{}.writeU64({})", wr, value),
         "Uint8Array" => format!("{}.writeByteVec({})", wr, value),
         t if t.ends_with("[]") => {
             let inner = &t[..t.len()-2];
@@ -223,7 +223,7 @@ fn decode_expr_with(ts_type: &str, rd: &str) -> String {
         "string" => format!("{}.readString()", rd),
         "boolean" => format!("{}.readBool()", rd),
         "number" => format!("{}.readU32()", rd),
-        "bigint | number" => format!("{}.readU64()", rd),
+        "bigint" => format!("{}.readU64()", rd),
         "Uint8Array" => format!("{}.readByteVec()", rd),
         t if t.ends_with("[]") => {
             let inner = &t[..t.len()-2];
@@ -283,7 +283,7 @@ fn is_tuple_type(t: &str) -> bool {
 }
 
 fn is_primitive_type(t: &str) -> bool {
-    matches!(t, "string" | "boolean" | "number" | "bigint | number")
+    matches!(t, "string" | "boolean" | "number" | "bigint")
 }
 
 fn capitalize(s: &str) -> String {

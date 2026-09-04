@@ -17,7 +17,7 @@ export class Slot extends Struct {
       const n = this.count;
       return Result.Ok(n);
     } else {
-      return Result.Err(SlotError.Missing);
+      return Result.Err(new SlotError('Missing', {}));
     }
   }
 

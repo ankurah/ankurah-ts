@@ -24,9 +24,9 @@ export function borrow(entity: Entity): number {
 }
 
 export function replace(first: string, second: string): number {
-  let entity = new Entity(first.toString());
+  let entity = new Entity(first);
   try {
-    const _a0 = new Entity(second.toString());
+    const _a0 = new Entity(second);
     entity.drop();
     entity = _a0;
     return borrow(entity);
@@ -36,10 +36,10 @@ export function replace(first: string, second: string): number {
 }
 
 export function maybeReplace(swap: boolean): number {
-  let entity = new Entity('a'.toString());
+  let entity = new Entity('a');
   try {
     if (swap) {
-      const _a0 = new Entity('bb'.toString());
+      const _a0 = new Entity('bb');
       entity.drop();
       entity = _a0;
     }
@@ -50,7 +50,7 @@ export function maybeReplace(swap: boolean): number {
 }
 
 export function setField(holder: Holder, name: string): number {
-  const _a0 = new Entity(name.toString());
+  const _a0 = new Entity(name);
   holder.inner.drop();
   holder.inner = _a0;
   return borrow(holder.inner);
@@ -59,7 +59,7 @@ export function setField(holder: Holder, name: string): number {
 export function setThroughGuard(cell: Mutex<Entity>, name: string): number {
   let guard = cell.lock();
   try {
-    guard.value = new Entity(name.toString());
+    guard.value = new Entity(name);
     return guard.value.name.length;
   } finally {
     guard.drop();

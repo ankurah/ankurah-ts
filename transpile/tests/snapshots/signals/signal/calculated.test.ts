@@ -20,20 +20,20 @@ describe('calculated unit tests', () => {
   });
 
   test('test_two_independent_inputs', () => {
-    const firstName = Mut.new('Alice'.toString());
-    const lastName = Mut.new('Smith'.toString());
+    const firstName = Mut.new('Alice');
+    const lastName = Mut.new('Smith');
     const fullName = (() => {
       const first = firstName.read();
       const last = lastName.read();
       return Calculated.new(() => `${first.get()} ${last.get()}`);
     })();
     expect(fullName.get()).toEqual('Alice Smith');
-    firstName.set('Bob'.toString());
+    firstName.set('Bob');
     expect(fullName.get()).toEqual('Bob Smith');
-    lastName.set('Jones'.toString());
+    lastName.set('Jones');
     expect(fullName.get()).toEqual('Bob Jones');
-    firstName.set('Carol'.toString());
-    lastName.set('Williams'.toString());
+    firstName.set('Carol');
+    lastName.set('Williams');
     expect(fullName.get()).toEqual('Carol Williams');
   });
 

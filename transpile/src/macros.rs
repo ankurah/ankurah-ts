@@ -67,7 +67,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                         name
                     ),
                 );
-                format!("/* {}!({}) */", name, mac.tokens)
+                format!("undefined /* {}!({}) */", name, mac.tokens)
             }
         },
         // Rust compares two values of one type, so whichever side the engine
@@ -86,7 +86,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
         // block owns, that is a leak, and the site says so.
         _ => {
             t.report_unsupported_macro(mac, &name);
-            format!("/* {}!({}) */", name, mac.tokens)
+            format!("undefined /* {}!({}) */", name, mac.tokens)
         }
     }
 }
@@ -262,7 +262,7 @@ fn compare(mac: &syn::Macro, t: &BodyTranslator, name: &str, written: &str) -> S
                 name
             ),
         );
-        return format!("/* {}!({}) */", name, mac.tokens);
+        return format!("undefined /* {}!({}) */", name, mac.tokens);
     };
     if args.len() < 2 {
         t.fallback(
@@ -273,7 +273,7 @@ fn compare(mac: &syn::Macro, t: &BodyTranslator, name: &str, written: &str) -> S
                 name
             ),
         );
-        return format!("/* {}!({}) */", name, mac.tokens);
+        return format!("undefined /* {}!({}) */", name, mac.tokens);
     }
     let left_ty = t.quietly(|| t.resolve_expr_type(&args[0])).ok();
     let right_ty = t.quietly(|| t.resolve_expr_type(&args[1])).ok();
@@ -480,7 +480,7 @@ struct SelectArm {
 fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> String {
     let Some(arms) = parse_select(tokens) else {
         t.report_select_gap(tokens, "its arms are not `pattern = future => body`");
-        return format!("/* select!({}) */", tokens);
+        return format!("undefined /* select!({}) */", tokens);
     };
     if arms.is_empty() {
         t.report_select_gap(

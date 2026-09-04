@@ -359,3 +359,39 @@ pub fn element_of(reg: &TypeRegistry, expected: &Ty) -> Option<Ty> {
         _ => None,
     }
 }
+
+/// The bindings the parts of an expectation that do agree produce.
+///
+/// For: an expectation is matched against a call's result whole, and one part
+/// disagreeing throws the rest away with it. `s.parse()` returns `Result<F,
+/// <F as FromStr>::Err>`, and a `?` above it says what the payload has to be
+/// and leaves the error a hole — so the whole match fails on the error slot and
+/// `F` goes unbound, which is the difference between parsing an `EntityId` and
+/// parsing nothing in particular.
+///
+/// Only arguments of the same type constructor are walked, and only a part that
+/// matches on its own contributes. Where two parts would bind one parameter
+/// differently the leftmost stands, because an expectation that says two things
+/// about one parameter is one the position wrote inconsistently and neither
+/// answer is better than the other.
+pub fn partial_bindings(
+    vars: &[String],
+    pattern: &Ty,
+    want: &Ty,
+    subst: &mut crate::ty::subst::Subst,
+) {
+    let (Ty::Named { id: a, args: xs }, Ty::Named { id: b, args: ys }) = (pattern, want) else {
+        return;
+    };
+    if a != b || xs.len() != ys.len() {
+        return;
+    }
+    for (x, y) in xs.iter().zip(ys) {
+        let mut one = crate::ty::subst::Subst::new();
+        if crate::ty::unify(vars, x, y, &mut one).is_ok() {
+            for (name, ty) in one {
+                subst.entry(name).or_insert(ty);
+            }
+        }
+    }
+}

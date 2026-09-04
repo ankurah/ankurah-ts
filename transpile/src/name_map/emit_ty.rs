@@ -4,7 +4,7 @@
 //! reproduces the syntactic mapping in `map_type` case for case, including its
 //! warts, so that moving a consumer from the written type to the resolved one
 //! cannot change what is emitted. The warts themselves — `&[u32]` becoming
-//! `Uint8Array`, `u64` becoming `bigint | number` — are emission decisions to
+//! `Uint8Array` — are emission decisions to
 //! revisit on their own.
 
 use super::map_type_name;
@@ -49,7 +49,7 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
         JsShape::SameAs(inner) => map_ty(reg, &inner),
         JsShape::Str => "string".to_string(),
         JsShape::Number => "number".to_string(),
-        JsShape::BigInt => "bigint | number".to_string(),
+        JsShape::BigInt => "bigint".to_string(),
         JsShape::Boolean => "boolean".to_string(),
         JsShape::Void => "void".to_string(),
         JsShape::Never => "never".to_string(),

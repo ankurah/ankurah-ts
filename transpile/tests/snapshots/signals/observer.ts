@@ -1,4 +1,5 @@
 // MIRRORS: ankurah/signals/src/observer.rs
+export * from './observer/callback_observer';
 
 export interface ObserverBounds {
 }

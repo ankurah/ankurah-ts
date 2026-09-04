@@ -61,6 +61,7 @@ fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String 
 fn translate_option_match_returning(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
     let arms = &match_expr.arms;
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let takes = t.match_takes(match_expr);
     let mut some_arm = None;
     let mut none_arm = None;
 
@@ -79,26 +80,47 @@ fn translate_option_match_returning(scrutinee: &str, match_expr: &syn::ExprMatch
                     ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string())
                 } else { "v".to_string() };
                 let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
-                some_arm = Some((var_name, t.expr(&arm.body)));
+                let owned = option_payload_owned(&var_name, arm, takes, t);
+                // An arm whose body is an `if`, a `match` or a block of its own
+                // is written as statements with the `return` on its tail. The
+                // `return <body>` this used to write put a `return` in front of
+                // a run of statements, which does not parse — and one of those
+                // stopped the compiler reading the rest of the file.
+                some_arm = Some((var_name, arm_body(&arm.body, t, Position::Returning), owned));
             }
-            "None" | "_" => { none_arm = Some(t.expr(&arm.body)); }
+            "None" | "_" => { none_arm = Some(arm_body(&arm.body, t, Position::Returning)); }
             _ => {}
         }
     }
 
     match (some_arm, none_arm) {
-        (Some((var, some_body)), Some(none_body)) => {
-            format!("if ({} != null) {{\n  const {} = {};\n  return {};\n}} else {{\n  return {};\n}}",
-                scrutinee, var, scrutinee, some_body, none_body)
+        (Some((var, some_body, owned)), Some(none_body)) => {
+            let taken = t.wrap_bindings(&owned, format!("{}\n", some_body));
+            format!(
+                "if ({} != null) {{\n  const {} = {};\n{}}} else {{\n{}}}",
+                scrutinee,
+                var,
+                scrutinee,
+                indent(&taken),
+                indent(&format!("{}\n", none_body))
+            )
         }
-        (Some((var, some_body)), None) => {
-            format!("if ({} != null) {{\n  const {} = {};\n  return {};\n}}",
-                scrutinee, var, scrutinee, some_body)
+        (Some((var, some_body, owned)), None) => {
+            let taken = t.wrap_bindings(&owned, format!("{}\n", some_body));
+            format!("if ({} != null) {{\n  const {} = {};\n{}}}",
+                scrutinee, var, scrutinee, indent(&taken))
         }
         (None, Some(none_body)) => {
-            format!("if ({} == null) {{\n  return {};\n}}", scrutinee, none_body)
+            format!("if ({} == null) {{\n{}}}", scrutinee, indent(&format!("{}\n", none_body)))
         }
-        _ => format!("return /* match {} */;", scrutinee),
+        _ => {
+            t.report_match_gap(
+                match_expr,
+                "this `Option` match names neither `Some` nor `None`, so nothing was written \
+                 for it",
+            );
+            format!("undefined /* match {} */;", scrutinee)
+        }
     }
 }
 
@@ -355,6 +377,7 @@ fn is_option_match(arms: &[syn::Arm]) -> bool {
 fn translate_option_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
     let arms = &match_expr.arms;
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let takes = t.match_takes(match_expr);
     let mut some_arm = None;
     let mut none_arm = None;
 
@@ -375,7 +398,9 @@ fn translate_option_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &Body
                     "v".to_string()
                 };
                 let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
-                some_arm = Some((var_name, t.expr(&arm.body)));
+                let owned = option_payload_owned(&var_name, arm, takes, t);
+                let body = t.wrap_bindings(&owned, t.expr(&arm.body));
+                some_arm = Some((var_name, body));
             }
             "None" | "_" => {
                 none_arm = Some(t.expr(&arm.body));
@@ -398,6 +423,29 @@ fn translate_option_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &Body
         }
         _ => format!("/* match {} */", scrutinee),
     }
+}
+
+/// What the `Some` arm of an `Option` match owns.
+///
+/// `Option<T>` is `T | null` in the port, so the payload is the scrutinee
+/// itself and the binding is another name for it. Where the match consumes —
+/// `match value { Some(p) => .. }` on a value the block owns — the arm owns `p`
+/// for its own length and has to release it however the arm is left, exactly as
+/// an enum arm does. Without this the payload was never dropped and nothing
+/// said so.
+fn option_payload_owned(
+    var: &str,
+    arm: &syn::Arm,
+    takes: crate::ownership::scrutinee::Takes,
+    t: &BodyTranslator,
+) -> Vec<crate::ownership::Owned> {
+    if takes != crate::ownership::scrutinee::Takes::Payload || var == "_" {
+        return Vec::new();
+    }
+    t.claim_bindings(
+        std::slice::from_ref(&var.to_string()),
+        std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
+    )
 }
 
 fn is_result_match(arms: &[syn::Arm]) -> bool {
@@ -727,7 +775,7 @@ fn arm_statements(body: &str) -> String {
 }
 
 /// Does this body already read as a run of statements?
-fn is_statements(body: &str) -> bool {
+pub(crate) fn is_statements(body: &str) -> bool {
     body.starts_with("if ")
         || body.starts_with("for ")
         || body.starts_with("while ")

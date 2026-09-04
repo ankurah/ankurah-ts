@@ -17,6 +17,7 @@ thread_local! {
     static RECORDING: RefCell<bool> = const { RefCell::new(false) };
     static SITES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static CLOSURES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static TRIES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn start() {
@@ -116,6 +117,43 @@ pub fn record_closure(
             ret
         ))
     });
+}
+
+/// One `?` whose error type changed, as a tab-separated row: `file, line,
+/// column, the error the operand carries, the error the function returns,
+/// whether a conversion was written`.
+///
+/// The oracle has rust-analyzer's answer for 57 of these, and what the two can
+/// be held to is the question the emitted code turns on: does this `?` convert,
+/// and did the engine write the conversion or say why it could not.
+pub fn record_try(
+    reg: &TypeRegistry,
+    file: &str,
+    span: proc_macro2::Span,
+    from: &crate::ty::Ty,
+    to: &crate::ty::Ty,
+    written: Option<&str>,
+) {
+    if !RECORDING.with(|r| *r.borrow()) {
+        return;
+    }
+    let start = span.start();
+    TRIES.with(|s| {
+        s.borrow_mut().push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            file,
+            start.line,
+            start.column + 1,
+            reg.describe(from),
+            reg.describe(to),
+            written.unwrap_or("-")
+        ))
+    });
+}
+
+/// The `?` conversions recorded so far, in the same order.
+pub fn try_rows() -> Vec<String> {
+    TRIES.with(|s| s.borrow().clone())
 }
 
 /// Everything recorded so far, in the order the translator asked.

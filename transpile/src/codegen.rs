@@ -28,6 +28,9 @@ pub fn generate_ts_with_imports_configured(
         for f in crate::emit_impls::free_functions(reg, module, file) {
             local_types.insert(f.name);
         }
+        for d in crate::emit_impls::dispatchers(reg, module, file) {
+            local_types.insert(d.name);
+        }
     }
 
     // Collect all referenced types — including from function/method bodies
@@ -40,7 +43,21 @@ pub fn generate_ts_with_imports_configured(
             for f in &v.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); }
         }
     }
-    for imp in &file.impls {
+    // An impl whose target this file does not declare has its methods emitted
+    // onto that type's class, which is written where the type is — so nothing
+    // of it reaches this file and importing what its signature names would
+    // import a symbol nothing here uses. (An impl written for a type another
+    // file declares is emitted nowhere at all today; that is its own gap.)
+    let declares = |name: &String| {
+        file.structs.iter().any(|s| s.name == *name) || file.enums.iter().any(|e| e.name == *name)
+    };
+    let emitted_here = |imp: &ImplInfo| match reg.modules().lookup_file(&file.path) {
+        Some(module) => {
+            declares(&imp.target_type) || !crate::emit_impls::impl_has_class(reg, module, imp)
+        }
+        None => true,
+    };
+    for imp in file.impls.iter().filter(|imp| emitted_here(imp)) {
         for m in &imp.methods {
             imports::collect_type_refs(&m.return_type, &mut referenced);
             imports::collect_type_refs(&m.generics, &mut referenced);
@@ -366,10 +383,80 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         out.push_str(&format!("export {{ {} }};\n", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     }
 
+    // `pub use auth::*;` is what makes a crate's names reachable from its root,
+    // and the port's `index.ts` has to say the same or the package exports
+    // nothing at all. Without it the emitted index was a header and a blank
+    // line, and every name the package is supposed to offer — `QueryId` among
+    // them — was reachable only by importing the module it was declared in.
+    for line in public_reexports(reg, file) {
+        out.push_str(&line);
+    }
+
     out.push('\n');
 
     out.push_str(&emitted);
     out
+}
+
+/// What this file re-exports from the modules under it, as the `export` lines
+/// the port writes.
+///
+/// `pub use auth::*;` and `pub use subscription::QueryId;` are what make a
+/// crate's names reachable from its root, and the port's `index.ts` has to say
+/// the same or the package offers nothing. Without them the emitted index was a
+/// header and a blank line, and `QueryId` — re-exported by name — was reachable
+/// only by importing the module it was declared in.
+///
+/// Only a module this file declares: `pub use serde::*` is another crate's
+/// business, and the cross-crate import machinery writes that where it is used.
+fn public_reexports(reg: &TypeRegistry, file: &RustFile) -> Vec<String> {
+    let Some(module) = reg.modules().lookup_file(&file.path) else {
+        return Vec::new();
+    };
+    let children = &reg.modules().get(module).children;
+    let mut out: Vec<String> = Vec::new();
+    for u in &file.uses {
+        if u.vis != crate::types::VisInfo::Public {
+            continue;
+        }
+        for binding in &u.bindings {
+            let line = match (&binding.local, &binding.path[..]) {
+                (None, [name]) if children.contains_key(name) => {
+                    format!("export * from '{}';\n", child_module(&file.path, name))
+                }
+                (Some(local), [name, ..]) if children.contains_key(name) => {
+                    format!(
+                        "export {{ {} }} from '{}';\n",
+                        local,
+                        child_module(&file.path, name)
+                    )
+                }
+                _ => continue,
+            };
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+    }
+    out
+}
+
+/// Where a child module's file sits, as this file would import it.
+///
+/// A crate root — `lib.rs`, emitted as `index.ts` — has its children beside it:
+/// `./auth`. Any other module keeps its children in a directory named after
+/// itself, so `signal.rs`'s `calculated` is at `./signal/calculated`. Writing
+/// `./calculated` from `signal.ts` named a file that is not there.
+fn child_module(file_path: &str, child: &str) -> String {
+    let stem = file_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(file_path)
+        .trim_end_matches(".rs");
+    match stem {
+        "lib" | "mod" => format!("./{}", child),
+        other => format!("./{}/{}", other, child),
+    }
 }
 
 /// Everything the file declares, as TypeScript.
@@ -402,6 +489,14 @@ fn generate_declarations(
         Some(module) => crate::emit_impls::free_functions(reg, module, file),
         None => Vec::new(),
     };
+    // A trait this file declares carries the function that picks among its
+    // impls at run time, for the calls that dispatch through a bound the engine
+    // cannot close.
+    let dispatchers: Vec<crate::emit_impls::Dispatcher> =
+        match reg.modules().lookup_file(&file.path) {
+            Some(module) => crate::emit_impls::dispatchers(reg, module, file),
+            None => Vec::new(),
+        };
     let on_a_class = |imp: &ImplInfo| match reg.modules().lookup_file(&file.path) {
         Some(module) => crate::emit_impls::impl_has_class(reg, module, imp),
         None => true,
@@ -477,6 +572,12 @@ fn generate_declarations(
     // The impls with no class of their own, as the functions they become.
     for f in &free {
         out.push_str(&f.text);
+    }
+
+    // The run-time selection among a trait's impls, for the calls that cannot
+    // name one.
+    for d in &dispatchers {
+        out.push_str(&d.text);
     }
 
     // Module-level declarations (thread_local, etc.)

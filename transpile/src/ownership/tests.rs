@@ -333,26 +333,6 @@ fn unwrap_or_on_an_option_stays_the_null_coalesce() {
     assert!(ts.contains("?? 0"), "{}", ts);
 }
 
-#[test]
-fn a_question_mark_across_two_error_types_is_reported() {
-    let mut fixture = Fixture::build(&[(
-        "lib.rs",
-        "pub struct Wire;\n\
-         pub struct Wrapped;\n\
-         pub fn g() -> Result<u32, Wire> { Ok(1) }\n\
-         pub fn f() -> Result<u32, Wrapped> { let n = g()?; Ok(n) }",
-    )]);
-    let _ = fixture.translated_method("lib.rs", "f");
-    assert!(
-        fixture
-            .messages()
-            .iter()
-            .any(|m| m.contains("through `From`, which the engine has not resolved")),
-        "{:?}",
-        fixture.messages()
-    );
-}
-
 // ── Function parameters ───────────────────────────────────────────────
 
 #[test]

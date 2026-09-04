@@ -82,49 +82,18 @@ const TEXT_ONLY: [(&str, &str); 4] = [
 ///
 /// Every entry is a defect in the transpiler or in a decision the goldens' own
 /// README already doubts. None of them is a reason to relax the check.
-const TYPECHECK_DEBT: [(&str, &[&str], &str); 6] = [
+/// What each golden still fails to compile with, as one entry per error:
+/// `<file>:<code>`, sorted. Every entry is a decision somebody read.
+const TYPECHECK_DEBT: [(&str, &[&str], &str); 1] = [
     (
         "blanket_free_fn",
-        &["TS2345"],
-        "`fromAny` hands an `L extends IntoListener` to the function the blanket impl became, \
-         which takes a callable. Where a call dispatches through a bound the engine cannot \
-         close, the blanket impl's function is what gets written, and the site reports that a \
-         receiver one of the trait's other impls is written for reaches the wrong one; \
-         TypeScript states the same fact from the other end. The choice is under review",
-    ),
-    (
-        "arc_mutex_field",
-        &["TS2416", "TS2610"],
-        "a field called `label` collides with the `label` accessor every `AkObject` carries. \
-         Renaming the field would change the wire protocol, so the engine reports the collision \
-         and emits it anyway (spec section 7a, the ownership-emission gaps)",
-    ),
-    (
-        "struct_bincode",
-        &["TS2345", "TS2610"],
-        "the same `label` collision, and `u64` emitted as `bigint | number` where the codec's \
-         `writeU64` takes a `bigint`. Which of the two the port means by `u64` is a wire-protocol \
-         question the goldens' README already raises",
-    ),
-    (
-        "option_result_fields",
-        &["TS2339"],
-        "an error value built as `SlotError.Missing` where every other construction of that enum \
-         in the same file goes through `new SlotError('Missing', {})`. The class has no such \
-         static, so the value is `undefined` at runtime",
-    ),
-    (
-        "question_mark",
-        &["TS2339"],
-        "`ParseError.Empty` for the same reason: a unit variant written as a static the emitted \
-         class does not declare",
-    ),
-    (
-        "result_values",
-        &["TS2339"],
-        "`WireError.Truncated`, again the same. This golden has a driver and bun passes it, \
-         because no test in the driver reaches the line that reads the missing static — which is \
-         why compiling the file and executing it are two different checks",
+        &["blanket_free_fn/run.test.ts:TS2345"],
+        "the driver hands `fromAny` a closure, and `fromAny` is emitted with the bound Rust \
+         wrote — `L extends IntoListener` — which a closure does not implement structurally \
+         in TypeScript, though the blanket impl makes it an `IntoListener` in Rust. The call \
+         inside the function now goes through the run-time dispatcher and reaches every impl; \
+         what is left is the signature, and what a bound with a blanket impl behind it should \
+         emit as is open",
     ),
 ];
 
@@ -257,7 +226,8 @@ fn goldens_typecheck() {
                  Take it off the list."
             )),
             (false, Some((_, expected, why))) => {
-                let expected: BTreeSet<String> = expected.iter().map(|c| c.to_string()).collect();
+                let mut expected: Vec<String> = expected.iter().map(|c| c.to_string()).collect();
+                expected.sort();
                 if codes != expected {
                     problems.push(format!(
                         "{name} fails to compile with {codes:?}, and TYPECHECK_DEBT records \
@@ -391,13 +361,24 @@ fn write_tsconfig(dir: &Path, tsc: &Path) {
 }
 
 /// The TypeScript error codes tsc reported against one golden's files.
-fn error_codes(output: &str, name: &str) -> BTreeSet<String> {
-    error_lines(output, name)
+/// Every error a golden produced, as `file:code` — one entry per error, not a
+/// set of the codes seen.
+///
+/// A set of codes hid an error: a second `TS2345` somewhere else in the same
+/// golden left the set unchanged, so the ledger went on saying the golden
+/// failed in exactly the way it was recorded as failing. The position's line
+/// and column are dropped, because a line moving is not a new error and the
+/// ledger would otherwise have to be rewritten for every emitter change.
+fn error_codes(output: &str, name: &str) -> Vec<String> {
+    let mut out: Vec<String> = error_lines(output, name)
         .filter_map(|line| {
-            let rest = line.split(": error ").nth(1)?;
-            Some(rest.split(':').next()?.trim().to_string())
+            let (position, rest) = line.split_once(": error ")?;
+            let file = position.split('(').next()?;
+            Some(format!("{}:{}", file, rest.split(':').next()?.trim()))
         })
-        .collect()
+        .collect();
+    out.sort();
+    out
 }
 
 fn errors_for(output: &str, name: &str) -> String {

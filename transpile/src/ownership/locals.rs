@@ -69,9 +69,18 @@ impl<'a> BodyTranslator<'a> {
     pub(crate) fn analyse_moves(&self, stmts: &[syn::Stmt]) -> ownership::Dispositions {
         let scan = ownership::Scan::new(self);
         let mut declarations: Vec<(usize, Vec<String>)> = Vec::new();
+        // The scan asks whether a `match` or an `if let` takes its subject
+        // apart, which is a question about the subject's *type*. This runs
+        // before the first statement is written, so the block's own `let`s are
+        // not bound yet and a subject that is one of them answered nothing —
+        // the move went unrecorded and the block released a value an arm had
+        // already taken. Binding them here, in a scope of their own, is what
+        // lets the scan ask.
+        self.bind_locals_for_scan(stmts);
         // One walk over the whole block, not one per statement: whether a
         // straight-line move is on every path depends on what stands above it.
         let sites = scan.block_indexed(stmts);
+        self.pop_scope();
         for (index, stmt) in stmts.iter().enumerate() {
             if let syn::Stmt::Local(local) = stmt {
                 declarations.push((index, crate::body::pattern_names(&local.pat)));
@@ -91,6 +100,26 @@ impl<'a> BodyTranslator<'a> {
             );
         }
         dispositions
+    }
+
+    /// Bind this block's `let` names to the types their initializers resolve
+    /// to, in a scope the caller pops.
+    ///
+    /// In source order, because a later initializer reads an earlier name. A
+    /// `let` whose initializer the engine could not type binds nothing, which
+    /// leaves the scan exactly where it stood before.
+    fn bind_locals_for_scan(&self, stmts: &[syn::Stmt]) {
+        self.push_block();
+        for stmt in stmts {
+            let syn::Stmt::Local(local) = stmt else { continue };
+            let Some(init) = &local.init else { continue };
+            let Ok(ty) = self.quietly(|| self.resolve_expr_type(&init.expr)) else {
+                continue;
+            };
+            for name in crate::body::pattern_names(&local.pat) {
+                self.bind_var(&name, ty.clone());
+            }
+        }
     }
 
     /// Publish, for the statement about to be translated, what its block

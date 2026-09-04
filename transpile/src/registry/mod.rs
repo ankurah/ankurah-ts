@@ -8,6 +8,7 @@
 mod assoc;
 mod bounds;
 mod build;
+pub mod convert;
 mod describe;
 #[cfg(test)]
 mod engine_tests;
@@ -28,6 +29,7 @@ use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
 pub use build::{build_registry, resolve_bounds, ExtractedFile};
+pub use convert::NoConversion;
 pub use impls::ImplId;
 pub use method::{Callee, FieldResolution, MethodResolution, Probe, Undecided};
 pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
@@ -136,9 +138,15 @@ pub struct AliasDef {
 #[derive(Debug, Clone)]
 pub struct ValueDef {
     pub name: String,
-    /// The declared type of a constant or static; `None` for a function, whose
-    /// item type this engine does not model.
+    /// The declared type of a constant or static, and a function's return type;
+    /// `None` where the engine could not name it.
     pub ty: Option<Ty>,
+    /// What a free function declares, so a call to one can hand each argument
+    /// the type its parameter was written with. Without it, `wants(x.into())`
+    /// and `wants(|v| ..)` have nothing to read: only associated functions were
+    /// reached, and 89 closures and 48 `.into()`s in the corpus stood in a
+    /// position that said nothing.
+    pub sig: Option<MethodSig>,
 }
 
 /// Types the corpus names but nothing declares — `ulid::Ulid`, `anyhow::Error`,
@@ -377,6 +385,11 @@ impl TypeRegistry {
 
     pub fn alias(&self, id: AliasId) -> Option<&AliasDef> {
         self.aliases.get(id.0 as usize)
+    }
+
+    /// What a free function declares, where this value is one.
+    pub fn function_sig(&self, id: ValueId) -> Option<&MethodSig> {
+        self.value(id)?.sig.as_ref()
     }
 
     pub fn value(&self, id: ValueId) -> Option<&ValueDef> {

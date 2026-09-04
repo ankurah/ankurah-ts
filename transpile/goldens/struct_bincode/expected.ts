@@ -3,18 +3,18 @@ import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
-  readonly id: bigint | number;
+  readonly id: bigint;
   readonly label: string;
   readonly payload: Uint8Array;
 
-  constructor(id: bigint | number, label: string, payload: Uint8Array) {
+  constructor(id: bigint, label: string, payload: Uint8Array) {
     super();
     this.id = id;
     this.label = label;
     this.payload = payload;
   }
 
-  static new(id: bigint | number, label: string, payload: Uint8Array): Envelope {
+  static new(id: bigint, label: string, payload: Uint8Array): Envelope {
     return new Envelope(id, label, payload);
   }
 

@@ -1,14 +1,12 @@
-// Runs the emitted result_values against the real runtime. What is under test is
-// the fate of every Result the emitter builds: `?` must consume the wrapper it
-// tested on both paths, and neither the Ok nor the Err may be left behind.
-//
-// The error payload is released through `dropOwned` rather than by calling
-// `.drop()` on it. `width` builds its error as `WireError.Truncated`, and the
-// emitted class has no such static, so what comes back today is `undefined`.
-// That is a value defect, not an ownership one — it is the same thing the
-// goldens README already doubts about `option_result_fields` — and this file
-// checks ownership, so it releases whatever the payload turns out to be instead
-// of naming a type the emitter does not hand it.
+// Runs the emitted result_values against the real runtime. Two things are under
+// test. The fate of every Result the emitter builds: `?` must consume the
+// wrapper it tested on both paths, and neither the Ok nor the Err may be left
+// behind. And what the error actually is: `width` builds it from the unit
+// variant `WireError::Truncated`, and every test below that takes an error out
+// READS it — `.type` on a value, not a truthiness check — because the emitter
+// used to write that variant as a static the class does not declare, which
+// hands back `undefined` and passes every check that only asks whether a
+// failure happened.
 
 import { expect, test } from 'bun:test';
 import { dropOwned } from '@ankurah/base';
@@ -31,7 +29,10 @@ test('width returns Ok for a non-empty string', () => {
 test('width returns Err for an empty string', () => {
   const result = width('');
   expect(result.isErr()).toBe(true);
-  dropOwned(result.unwrapErr());
+  const error = result.unwrapErr();
+  expect(error).toBeInstanceOf(WireError);
+  expect(error.type).toBe('Truncated');
+  error.drop();
 });
 
 test('bound unwraps through ? and adds one', () => {
@@ -41,7 +42,9 @@ test('bound unwraps through ? and adds one', () => {
 test('bound hands the error back out', () => {
   const result = bound('');
   expect(result.isErr()).toBe(true);
-  dropOwned(result.unwrapErr());
+  const error = result.unwrapErr();
+  expect(error.type).toBe('Truncated');
+  error.drop();
 });
 
 test('insideAnExpression calls once and lifts the test out of the expression', () => {

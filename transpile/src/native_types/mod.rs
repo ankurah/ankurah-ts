@@ -8,7 +8,7 @@
 mod arc;
 pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
-mod conversion; // into/from/as_ref — type-erased identity transforms
+pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
 pub(crate) mod iterator; // Iterator trait methods on arrays
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 mod nullable; // Option<T> → T | null

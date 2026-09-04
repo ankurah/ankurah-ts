@@ -2,7 +2,7 @@
 import { Struct, Arc, OwnedClosure } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { Subscribe, SubscriptionGuard, intoSubscribeListener } from '../porcelain/subscribe';
+import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, Peek, Signal, With } from '../signal';
 
 export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
@@ -49,7 +49,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
-    const listener_1 = intoSubscribeListener(listener);
+    const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const source = this.source.clone();
     const transform = this.transform.clone();
     const subscription = this.source.listen(Arc.new(new OwnedClosure([listener_1], (_) => {

@@ -11,7 +11,7 @@ export class CollectionId extends Struct {
   }
 
   static fixedName(name: string): CollectionId {
-    return new CollectionId(name.toString());
+    return new CollectionId(name);
   }
 
   asStr(): string {
@@ -19,7 +19,7 @@ export class CollectionId extends Struct {
   }
 
   static from(val: string): CollectionId {
-    return new CollectionId(val.toString());
+    return new CollectionId(val);
   }
 
   equalsStr(other: string): boolean {
@@ -57,7 +57,7 @@ export class CollectionId extends Struct {
   }
 }
 
-export function String_from(self: string, collectionId: CollectionId): Self {
+export function String_fromCollectionId(self: string, collectionId: CollectionId): string {
   try {
     return collectionId._0;
   } finally {

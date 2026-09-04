@@ -15,7 +15,7 @@ export function borrow(entity: Entity): number {
 }
 
 export function runNow(): number {
-  const entity = new Entity('abc'.toString());
+  const entity = new Entity('abc');
   return (() => {
     try {
       return borrow(entity);
@@ -26,7 +26,7 @@ export function runNow(): number {
 }
 
 export function runLater(): number {
-  const entity = new Entity('abcd'.toString());
+  const entity = new Entity('abcd');
   const f = new OwnedClosure([entity], () => borrow(entity));
   try {
     return f.call() + f.call();
@@ -41,7 +41,7 @@ export function plain(n: number): number {
 }
 
 export function borrowing(): number {
-  const entity = new Entity('ab'.toString());
+  const entity = new Entity('ab');
   try {
     const f = () => borrow(entity);
     return f();

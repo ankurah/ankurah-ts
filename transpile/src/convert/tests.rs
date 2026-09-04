@@ -1,0 +1,181 @@
+//! What the emitted TypeScript does at a conversion, rule by rule.
+
+use crate::testing::Fixture;
+
+/// Two error types with one `From` between them, so a `?` across them has an
+/// impl to find, and a third with none, so a `?` across those has not.
+const ERRORS: &str = "\
+pub struct Wire;\n\
+pub struct Wrapped;\n\
+pub struct Stray;\n\
+impl From<Wire> for Wrapped { fn from(e: Wire) -> Wrapped { Wrapped } }\n\
+pub fn g() -> Result<u32, Wire> { Ok(1) }\n\
+pub fn stray() -> Result<u32, Stray> { Ok(1) }\n\
+";
+
+fn translated(rust: &str, method: &str) -> (String, Vec<String>) {
+    let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", ERRORS, rust))]);
+    let ts = fixture.translated_method("lib.rs", method);
+    (ts, fixture.messages())
+}
+
+#[test]
+fn a_question_mark_across_two_error_types_calls_the_from_impl() {
+    let (ts, messages) = translated(
+        "pub fn f() -> Result<u32, Wrapped> { let n = g()?; Ok(n) }",
+        "f",
+    );
+    assert!(
+        ts.contains("Result.Err(Wrapped.fromWire(_r0.unwrapErr()))"),
+        "{}\n{:?}",
+        ts,
+        messages
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("`?` converts")),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
+fn a_question_mark_between_one_error_type_writes_no_conversion() {
+    let (ts, _) = translated(
+        "pub fn f() -> Result<u32, Wire> { let n = g()?; Ok(n) }",
+        "f",
+    );
+    assert!(ts.contains("Result.Err(_r0.unwrapErr())"), "{}", ts);
+}
+
+#[test]
+fn a_question_mark_with_no_from_impl_says_so_and_hands_the_error_on() {
+    let (ts, messages) = translated(
+        "pub fn f() -> Result<u32, Wrapped> { let n = stray()?; Ok(n) }",
+        "f",
+    );
+    assert!(ts.contains("Result.Err(_r0.unwrapErr())"), "{}", ts);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("no impl in the table performs it")),
+        "{:?}",
+        messages
+    );
+}
+
+/// The reflexive `impl<T> From<T> for T` is written for every type in the
+/// language. Matching the target and the source in separate substitutions would
+/// let it stand for a conversion between two different types, and every `?`
+/// would resolve to a conversion that does nothing.
+#[test]
+fn the_reflexive_from_impl_does_not_convert_two_different_types() {
+    let (_, messages) = translated(
+        "pub fn f() -> Result<u32, Wrapped> { let n = stray()?; Ok(n) }",
+        "f",
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("no impl in the table performs it")),
+        "the reflexive impl answered a conversion between two types: {:?}",
+        messages
+    );
+}
+
+/// Rust allows `?` on an `Option` only in a function that returns one, so a
+/// `Result` return here means the engine read one of the two types wrongly.
+#[test]
+fn an_option_question_mark_in_a_result_function_is_reported() {
+    let (_, messages) = translated(
+        "pub fn m() -> Option<u32> { None }\n\
+         pub fn f() -> Result<u32, Wire> { let n = m()?; Ok(n) }",
+        "f",
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("inside a function returning a `Result`")),
+        "{:?}",
+        messages
+    );
+}
+
+/// A crate whose conversions cover the three answers: an impl the corpus wrote,
+/// a conversion the runtime performs, and one nothing performs.
+const CONVERSIONS: &str = "\
+pub struct Tag { pub id: u32 }\n\
+pub struct Name { pub text: String }\n\
+impl From<Tag> for Name { fn from(t: Tag) -> Name { Name { text: String::new() } } }\n\
+pub struct Loose;\n\
+";
+
+fn converted(rust: &str, method: &str) -> (String, Vec<String>) {
+    let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", CONVERSIONS, rust))]);
+    let ts = fixture.translated_method("lib.rs", method);
+    (ts, fixture.messages())
+}
+
+#[test]
+fn into_calls_the_impl_the_position_names() {
+    let (ts, messages) = converted("pub fn f(t: Tag) -> Name { t.into() }", "f");
+    assert!(ts.contains("Name.fromTag(t)"), "{}\n{:?}", ts, messages);
+}
+
+#[test]
+fn a_target_qualified_from_calls_the_same_impl() {
+    let (ts, _) = converted("pub fn f(t: Tag) -> Name { Name::from(t) }", "f");
+    assert!(ts.contains("Name.fromTag(t)"), "{}", ts);
+}
+
+#[test]
+fn into_with_no_expected_type_says_so_and_writes_the_value() {
+    let (ts, messages) = converted(
+        "pub fn g(n: Name) -> u32 { 1 }\npub fn f(t: Tag) -> u32 { let x = t.into(); g(x) }",
+        "f",
+    );
+    assert!(!ts.contains(".into()"), "{}", ts);
+    assert!(
+        messages.iter().any(|m| m.contains("has no expected type here")),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
+fn to_string_on_a_string_is_the_string() {
+    let (ts, _) = converted("pub fn f(s: &str) -> String { s.to_string() }", "f");
+    assert!(!ts.contains("toString"), "{}", ts);
+    assert!(ts.contains("return s;"), "{}", ts);
+}
+
+#[test]
+fn a_widening_cast_into_a_64_bit_integer_crosses_into_bigint() {
+    let (ts, _) = converted("pub fn f(n: u32) -> u64 { n as u64 }", "f");
+    assert!(ts.contains("BigInt(n)"), "{}", ts);
+}
+
+#[test]
+fn a_narrowing_cast_keeps_the_low_bits() {
+    let (ts, _) = converted("pub fn f(n: u64) -> u32 { n as u32 }", "f");
+    assert!(ts.contains("Number(BigInt.asUintN(32, n))"), "{}", ts);
+}
+
+#[test]
+fn a_cast_that_is_not_between_two_numbers_is_reported() {
+    let (_, messages) = converted("pub fn f(t: &Tag) -> u32 { t.id }", "f");
+    assert!(messages.is_empty(), "{:?}", messages);
+    let (ts, messages) = converted("pub fn f(n: u32) -> u32 { n as u32 }", "f");
+    assert!(ts.contains("return n;"), "{}\n{:?}", ts, messages);
+}
+
+#[test]
+fn a_conversion_no_impl_performs_says_so() {
+    let (_, messages) = converted("pub fn f(l: Loose) -> Name { l.into() }", "f");
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("no impl in the table performs it")),
+        "{:?}",
+        messages
+    );
+}

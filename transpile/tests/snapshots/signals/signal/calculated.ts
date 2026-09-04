@@ -3,7 +3,7 @@ import { Struct, Arc, RwLock, OwnedClosure } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
-import { Subscribe, SubscriptionGuard, intoSubscribeListener } from '../porcelain/subscribe';
+import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 
@@ -83,7 +83,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    const listener_1 = intoSubscribeListener(listener);
+    const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const roValue = this._0.value.value.readvalue();
     const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
       const current = roValue.with((opt) => opt.asRef().clone());
@@ -161,7 +161,7 @@ export function Arc_Inner_observe<T>(self: Arc<Inner<T>>, signal: Signal): void 
 }
 
 export function Arc_Inner_observerId<T>(self: Arc<Inner<T>>): number {
-  return self.asPtr() as number;
+  return self.asPtr();
 }
 
 export function Arc_Inner_asAny<T>(self: Arc<Inner<T>>): Any {

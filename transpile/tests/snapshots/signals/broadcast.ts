@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -40,7 +40,7 @@ export class Broadcast<T extends Clone = void> extends Struct {
   }
 
   id(): BroadcastId {
-    return new BroadcastId(this._0.asPtr() as number);
+    return new BroadcastId(this._0.asPtr());
   }
 
   send(value: T): void {
@@ -133,7 +133,7 @@ export class Ref<T> extends Struct {
     const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
     const _t0 = this._0._0.value.listeners.write();
     try {
-      _t0.value.set(id, intoBroadcastListener(listener));
+      _t0.value.set(id, IntoBroadcastListener_dispatch_intoBroadcastListener(listener));
     } finally {
       _t0.drop();
     }
@@ -141,7 +141,7 @@ export class Ref<T> extends Struct {
   }
 
   broadcastId(): BroadcastId {
-    return new BroadcastId(this._0._0.asPtr() as number);
+    return new BroadcastId(this._0._0.asPtr());
   }
 }
 
@@ -156,7 +156,7 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   }
 
   broadcastId(): BroadcastId {
-    return new BroadcastId(this.inner.asPtr() as number);
+    return new BroadcastId(this.inner.asPtr());
   }
 
   protected override onDrop(): void {
@@ -230,5 +230,14 @@ export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListe
   return new BroadcastListener('Payload', { _0: Arc.new((value) => {
     const _ = self.send(value);
   }) });
+}
+
+export function IntoBroadcastListener_dispatch_intoBroadcastListener<T>(self: unknown): BroadcastListener<T> {
+  if (typeof self === 'function' || self instanceof OwnedClosure) return intoBroadcastListener(self as any);
+  if (self instanceof BroadcastListener) return (self as any).intoBroadcastListener();
+  if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 1) return Arc_Fn1_intoBroadcastListener(self as any);
+  if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 0) return Arc_Fn0_intoBroadcastListener(self as any);
+  if (self instanceof Sender) return Sender_intoBroadcastListener(self as any);
+  throw new Error(`BUG: no IntoBroadcastListener impl for ${(self as object)?.constructor?.name ?? typeof self}`);
 }
 

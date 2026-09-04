@@ -45,9 +45,9 @@ export function borrowFailure(failure: Failure): number {
 
 export function fetch(raw: string): Result<Entity, Failure> {
   if (raw.length === 0) {
-    return Result.Err(new Failure('empty'.toString()));
+    return Result.Err(new Failure('empty'));
   }
-  return Result.Ok(new Entity(raw.toString()));
+  return Result.Ok(new Entity(raw));
 }
 
 export function width(raw: string): number {
@@ -88,7 +88,7 @@ export function orDefault(raw: string): Entity {
   } else {
     const failure = _v.unwrapErr();
     try {
-      return new Entity('fallback'.toString());
+      return new Entity('fallback');
     } finally {
       failure.drop();
     }

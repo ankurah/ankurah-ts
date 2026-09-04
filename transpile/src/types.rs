@@ -94,6 +94,10 @@ pub struct FieldInfo {
     /// filed a diagnostic; the fail-loud step turns that into an error.
     pub ty: Option<Ty>,
     pub is_pub: bool,
+    /// `#[from]` on a `thiserror` variant field: the derive writes an
+    /// `impl From<this field's type> for the enum`, and the registry has to
+    /// know it as one so a `?` can find it.
+    pub is_from: bool,
 }
 
 #[derive(Debug)]

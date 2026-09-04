@@ -18,19 +18,19 @@ export function make(raw: string): Entity | null {
   if (raw.length === 0) {
     return null;
   }
-  return new Entity(raw.toString());
+  return new Entity(raw);
 }
 
 export function orFallback(raw: string): Entity {
   const _o0 = make(raw);
-  const _d1 = new Entity('fallback'.toString());
+  const _d1 = new Entity('fallback');
   const _u2 = _o0 ?? _d1;
   if (_u2 !== _d1) _d1.drop();
   return _u2;
 }
 
 export function orElse(raw: string): Entity {
-  return make(raw) ?? (() => new Entity('lazy'.toString()))();
+  return make(raw) ?? (() => new Entity('lazy'))();
 }
 
 export function width(raw: string): number | null {

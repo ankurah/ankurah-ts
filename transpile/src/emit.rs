@@ -403,15 +403,8 @@ fn emit_trait_methods(
             if *trait_name == "From" && type_args.iter().any(|a| a == "never" || a == "Infallible") {
                 continue;
             }
-            // For known Rust traits (Display, Clone, etc.), apply name mapping
-            // For unknown/domain traits, pass through the method's ts_name directly
-            let (base_ts_name, ret_override) = if let Some(mapping) = trait_method_mapping(trait_name, &method.name) {
-                (mapping.0.to_string(), mapping.1)
-            } else {
-                // Unknown trait — emit method as-is unless it's a known-skip pattern
-                (method.ts_name.clone(), None)
-            };
-            let ts_name = disambiguate_trait_method(&base_ts_name, trait_name, type_args, plain_name);
+            let ret_override = trait_method_mapping(trait_name, &method.name).and_then(|m| m.1);
+            let ts_name = trait_method_name(trait_name, type_args, method);
             // `Drop` declares `onDrop` protected, so the override has to say so.
             let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
             if emitted.insert(ts_name.clone()) {
@@ -591,7 +584,7 @@ fn emit_derive_methods(
                                     "''".to_string()
                                 } else if base_ty == "boolean" {
                                     "false".to_string()
-                                } else if base_ty == "number" || base_ty == "bigint | number" {
+                                } else if base_ty == "number" || base_ty == "bigint" {
                                     "0".to_string()
                                 } else if base_ty == "Uint8Array" {
                                     "new Uint8Array(0)".to_string()
@@ -615,7 +608,7 @@ fn emit_derive_methods(
 }
 
 fn is_primitive_ts_type(ty: &str) -> bool {
-    matches!(ty, "string" | "boolean" | "number" | "bigint | number")
+    matches!(ty, "string" | "boolean" | "number" | "bigint")
 }
 
 /// Generate an equality check expression for a field
@@ -882,7 +875,7 @@ fn is_skipped_trait(trait_name: &str) -> bool {
     )
 }
 
-fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[String], _self_type: &str) -> String {
+pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[String], _self_type: &str) -> String {
     if type_args.is_empty() {
         return base_name.to_string();
     }
@@ -906,7 +899,7 @@ fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[Str
 
     if source.ends_with("[]") || source.starts_with("Map<") || source.starts_with("Set<")
         || source.contains("Uint8Array")
-        || matches!(source.as_str(), "string" | "boolean" | "number" | "bigint | number")
+        || matches!(source.as_str(), "string" | "boolean" | "number" | "bigint")
     {
         return base_name.to_string();
     }
@@ -982,6 +975,38 @@ fn merge_class_type_params_for_static(method_generics: &str, self_type: &str) ->
         new_params.push(inner.to_string());
     }
     format!("<{}>", new_params.join(", "))
+}
+
+/// What one trait method is emitted as on the class.
+///
+/// One function, because the name is computed twice: here, where the method is
+/// written, and in the check that looks for a name the runtime already uses. A
+/// second rule would drift from this one and the check would then be about a
+/// name nobody emits.
+pub(crate) fn trait_method_name(
+    trait_name: &str,
+    type_args: &[String],
+    method: &FnInfo,
+) -> String {
+    impl_method_name(trait_name, &method.name, &method.ts_name, type_args)
+}
+
+/// The same, for a caller that has the trait's method by name rather than an
+/// extracted declaration to read it off: an operator, whose method the trait
+/// declares and the impl need not write out.
+pub(crate) fn impl_method_name(
+    trait_name: &str,
+    rust_method: &str,
+    ts_method: &str,
+    type_args: &[String],
+) -> String {
+    // For known Rust traits (Display, Clone, etc.), apply name mapping. For
+    // unknown or domain traits, the method's own TypeScript name stands.
+    let base = match trait_method_mapping(trait_name, rust_method) {
+        Some((mapped, _)) => mapped.to_string(),
+        None => ts_method.to_string(),
+    };
+    disambiguate_trait_method(&base, trait_name, type_args, "")
 }
 
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {

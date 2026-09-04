@@ -29,17 +29,34 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
     match expr {
         syn::Expr::If(if_expr) => translate_if_at(if_expr, t, Position::Returning),
         syn::Expr::Match(match_expr) => match_expr::translate_match_returning(match_expr, t),
+        // A block hands its value on from its tail, so what the position wants
+        // of the block it wants of the tail — re-keyed onto the tail, because
+        // an expectation is matched by the span of the expression it was
+        // written for.
         syn::Expr::Block(block) => {
+            let want = t.expectation_for(expr);
             if block.block.stmts.len() == 1 {
                 if let syn::Stmt::Expr(inner, None) = &block.block.stmts[0] {
-                    return translate_expr_in_return_position(inner, t);
+                    return t.expecting(inner, want.as_ref(), || {
+                        translate_expr_in_return_position(inner, t)
+                    });
                 }
             }
-            let body = t.translate_block(&block.block);
+            let body = match block.block.stmts.last() {
+                Some(syn::Stmt::Expr(tail, None)) => {
+                    t.expecting(tail, want.as_ref(), || t.translate_block(&block.block))
+                }
+                _ => t.translate_block(&block.block),
+            };
             format!("{{\n{}}}", indent(&body))
         }
         // A loop is a statement and its value is `()`.
         syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => t.expr(expr),
+        // These already leave the function, so putting a `return` in front of
+        // one wrote `return return Result.Ok(..)`, which does not parse.
+        syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_) => {
+            format!("{};", t.expr(expr))
+        }
         _ => {
             // A block's last expression is its value, so a field read here
             // hands the field to whoever asked for the block.
@@ -196,6 +213,15 @@ fn translate_if_let(
     // Where the pattern took a value out of the scrutinee, the branch owns it
     // and releases it however the branch is left.
     let owned = t.claim_bindings(&crate::body::pattern_names(&let_expr.pat), &then_branch.stmts);
+    // Taking the payload out means the scrutinee stops being the block's to
+    // release — otherwise the payload is dropped twice. Where the scrutinee is
+    // a wrapper the port builds rather than the payload itself, that leaves the
+    // wrapper for this construct to release: `Option<T>` is `T | null` and has
+    // no wrapper, an enum is an object of its own and does.
+    let wrapper = t.let_takes(let_expr) == crate::ownership::scrutinee::Takes::Payload
+        && !t
+            .scrutinee_type(&let_expr.expr)
+            .is_some_and(|ty| t.is_nullable(&ty));
     let then_body = t.wrap_bindings(&owned, branch(then_branch, t, position));
     let guard_str = guard.map(|g| t.expr(g)).unwrap_or_default();
     drop(bound);
@@ -203,6 +229,35 @@ fn translate_if_let(
     let else_part = else_part(else_branch, t, position);
 
     let subject = t.fresh_temp();
+    // The path where the pattern did not match took nothing out, so the value
+    // this construct read is still whole and nobody else owns it: it is
+    // released here, the way a `while let` releases the turn it did not take.
+    // The path that *did* match is the reported one — the payload belongs to
+    // the branch from there, and marking the wrapper moved is what `intoMatch`
+    // does and an `if` cannot.
+    let abandoned = match wrapper {
+        true => t.release_of(&let_expr.expr, &subject).unwrap_or_default(),
+        false => String::new(),
+    };
+    if wrapper {
+        t.fallback(
+            syn::spanned::Spanned::span(let_expr),
+            "this pattern takes the payload out of the value it tests, and the wrapper it came \
+             out of is not marked moved, so nothing releases the rest of it on the path that \
+             matched",
+        );
+    }
+    let else_part = if abandoned.is_empty() {
+        else_part
+    } else {
+        // The release runs on the failed-pattern path whether or not the source
+        // wrote an `else`.
+        let rest = else_part
+            .strip_prefix(" else {\n")
+            .and_then(|s| s.strip_suffix("}"))
+            .unwrap_or("");
+        format!(" else {{\n{}{}}}", indent(&format!("{}\n", abandoned)), rest)
+    };
     // `if let Ok(guard) = lock.lock()`. The port's `lock()` and `read()` hand
     // back the guard itself, so there is no `Ok` to test. Only those calls get
     // this: a `Result` that merely carries a `PoisonError` is a real `Result`

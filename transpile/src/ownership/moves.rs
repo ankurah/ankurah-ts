@@ -73,6 +73,10 @@ pub trait Consumes {
     /// subject there, and the emitted `intoMatch` leaves it moved, so the block
     /// that declared it must not release it as well.
     fn consumes_scrutinee(&self, m: &syn::ExprMatch) -> bool;
+
+    /// The same for the pattern of an `if let` or a `while let`, which takes
+    /// its subject apart exactly as an arm does.
+    fn consumes_let_scrutinee(&self, let_expr: &syn::ExprLet) -> bool;
 }
 
 pub struct Scan<'c> {
@@ -376,7 +380,14 @@ impl<'c> Scan<'c> {
 
             syn::Expr::Loop(l) => self.nested_block(&l.body.stmts, at, out),
 
-            syn::Expr::Let(let_expr) => self.walk(&let_expr.expr, at, out),
+            // `if let Some(payload) = value` moves out of `value` exactly as
+            // a `match` arm does, and the block that owned it stops owning it.
+            syn::Expr::Let(let_expr) => {
+                if self.consumes.consumes_let_scrutinee(let_expr) {
+                    self.moved(&let_expr.expr, at, out);
+                }
+                self.walk(&let_expr.expr, at, out)
+            }
             syn::Expr::Async(block) => self.nested_block(&block.block.stmts, at, out),
             syn::Expr::Unsafe(block) => self.nested_block(&block.block.stmts, at, out),
 
@@ -460,6 +471,26 @@ impl<'c> Scan<'c> {
         self.shadowed.borrow_mut().push(params);
         let mut out = Vec::new();
         self.mentions(&closure.body, &mut out);
+        self.shadowed.borrow_mut().pop();
+        out
+    }
+
+    /// Every local this closure's body hands away.
+    ///
+    /// A closure written without `move` still captures by value whatever its
+    /// body moves — Rust infers the mode per capture — so a non-`move` closure
+    /// that hands a value to a callee owns it exactly as a `move` one does. It
+    /// is also what says a capture is *consumed* by the body rather than merely
+    /// held, which is the difference between an `FnOnce` and an `Fn`.
+    pub fn moved_captures(&self, closure: &syn::ExprClosure) -> Vec<Site> {
+        let mut params = Vec::new();
+        for input in &closure.inputs {
+            collect_pattern_names(input, &mut params);
+        }
+        self.shadowed.borrow_mut().push(params);
+        let mut out = Vec::new();
+        self.walk(&closure.body, Where::Closure, &mut out);
+        self.tail(&closure.body, Where::Closure, &mut out);
         self.shadowed.borrow_mut().pop();
         out
     }

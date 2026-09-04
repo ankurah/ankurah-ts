@@ -84,11 +84,10 @@ impl<'a> BodyTranslator<'a> {
         use ownership::closures::Placement;
         let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
         let params = params.join(", ");
-        let captures = if closure.capture.is_some() {
-            self.owned_captures(closure)
-        } else {
-            Vec::new()
-        };
+        // A `move` closure captures everything it names; one written without
+        // `move` captures by value only what its body hands away, which Rust
+        // infers per capture. Both own what they took.
+        let captures = self.owned_captures(closure);
         // The closure's own scope, with its parameters bound to whatever the
         // position it stands in says they are (spec 4.5). Without them the body
         // names values nothing has typed, and every call inside it falls back.
@@ -219,8 +218,36 @@ impl<'a> BodyTranslator<'a> {
             return Vec::new();
         };
         let scan = ownership::Scan::new(self);
+        // What the body hands away. Rust moves those into the body when the
+        // closure runs, so the closure no longer has them to drop — and the
+        // runtime's `OwnedClosure` has no way to be told that, because its
+        // captures are private to it and there is no call that transfers them.
+        // Listing one anyway drops it a second time when the closure is
+        // dropped, which the runtime reports as a fatal; leaving it out leaks
+        // it only where the closure is never called, which the leak registry
+        // reports. The fatal is the worse of the two, so the consumed capture
+        // is left out and the site says so. The runtime change that would close
+        // it is a `callOnce` that marks the closure moved before running the
+        // body.
+        let consumed: Vec<String> = scan
+            .moved_captures(closure)
+            .into_iter()
+            .map(|site| site.name)
+            .collect();
         let mut out: Vec<(String, ownership::Drops)> = Vec::new();
-        for site in scan.captures(closure) {
+        let mut seen: Vec<String> = Vec::new();
+        let names = match closure.capture.is_some() {
+            true => scan.captures(closure),
+            false => scan.moved_captures(closure),
+        };
+        for site in names {
+            // One name, one answer: a value handed away in a tail position is
+            // recorded by both the walk and the tail scan, and each capture is
+            // decided once whichever way it was reached.
+            if seen.iter().any(|name| *name == site.name) {
+                continue;
+            }
+            seen.push(site.name.clone());
             if out.iter().any(|(name, _)| *name == site.name) {
                 continue;
             }
@@ -254,6 +281,19 @@ impl<'a> BodyTranslator<'a> {
                 continue;
             };
             let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
+            if drops.is_droppable() && consumed.iter().any(|n| *n == site.name) {
+                self.fallback(
+                    site.span,
+                    format!(
+                        "this closure hands `{}` away when it runs, so it is not the closure's \
+                         to drop afterwards; the runtime has no call that transfers a capture, \
+                         so `{}` is left out of what the closure owns and nothing releases it \
+                         if the closure is never called",
+                        site.name, site.name
+                    ),
+                );
+                continue;
+            }
             if drops.is_droppable() {
                 // A shadow is emitted under a fresh identifier, and the capture
                 // list has to name the value the body closes over rather than

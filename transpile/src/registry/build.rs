@@ -55,6 +55,12 @@ pub(super) enum Update {
         id: super::ValueId,
         ty: Ty,
     },
+    /// A free function's whole signature, so a call to it can hand each
+    /// argument the type its parameter was written with.
+    ValueSig {
+        id: super::ValueId,
+        sig: MethodSig,
+    },
 }
 
 /// Translate the visibility a declaration was written with into the module the
@@ -170,6 +176,11 @@ pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
                     value.ty = Some(ty);
                 }
             }
+            Update::ValueSig { id, sig } => {
+                if let Some(value) = reg.value_mut(id) {
+                    value.sig = Some(sig);
+                }
+            }
         }
     }
 }
@@ -247,6 +258,7 @@ pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &Rust
             ValueDef {
                 name: c.name.clone(),
                 ty: None,
+                sig: None,
             },
             vis,
         );
@@ -258,6 +270,7 @@ pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &Rust
             ValueDef {
                 name: f.name.clone(),
                 ty: None,
+                sig: None,
             },
             vis,
         );
@@ -325,6 +338,7 @@ pub(super) fn resolve_file(
         }
         if let Some(id) = id {
             derived_impls(reg, module, id, &e.type_params, &e.derives, updates);
+            thiserror_from_impls(reg, module, id, e, updates);
             updates.push(Update::Variants { id, variants });
         }
     }
@@ -341,12 +355,23 @@ pub(super) fn resolve_file(
         }
     }
 
-    // A free function's return type, so that `foo()` in expression position has
-    // a type. Its parameters are the caller's business and are not stored.
+    // A free function's signature: its return type, so that `foo()` in
+    // expression position has a type, and its parameters, so that an argument
+    // written as `x.into()` or as a closure can read what it has to be.
+    //
+    // The parameters are resolved into a sink nobody reads. A signature the
+    // engine cannot name in full is simply not stored — the call falls back to
+    // saying nothing about its arguments, which is where it stood before — and
+    // reporting it here would count one gap once per declaration and again at
+    // every use.
+    let quiet = DiagSink::new();
     for f in &file.functions {
         let Some(id) = reg.module_value(module, &f.name) else {
             continue;
         };
+        if let Some(sig) = method_sig(reg, module, &f.type_params, None, f, &quiet) {
+            updates.push(Update::ValueSig { id, sig });
+        }
         let Some(rust_ty) = &f.rust_return else {
             updates.push(Update::ValueType { id, ty: Ty::Unit });
             continue;
@@ -388,9 +413,8 @@ pub(super) fn resolve_file(
 /// supply the signatures, which is what a derive does.
 ///
 /// This is the first of the derive hooks the spec calls for (4.10, step 7),
-/// narrowed to the derives whose absence stops resolution. `Serialize`,
-/// `Deserialize` and `thiserror::Error` produce code as well as impls and are
-/// that step's business.
+/// narrowed to the derives whose absence stops resolution. `Serialize` and
+/// `Deserialize` produce code as well as impls and are that step's business.
 const DERIVED: [(&str, &str); 9] = [
     ("Clone", CLONE_PATH),
     ("Copy", "std::marker::Copy"),
@@ -402,6 +426,30 @@ const DERIVED: [(&str, &str); 9] = [
     ("Default", "std::default::Default"),
     ("Debug", "std::fmt::Debug"),
 ];
+
+/// What `#[derive(thiserror::Error)]` writes that the engine has to know about.
+///
+/// The derive generates a `Display` from the `#[error("..")]` attributes and an
+/// `std::error::Error` from the type being one. Neither has a method the engine
+/// needs to read, and both are what other bounds are decided against: `impl<E:
+/// std::error::Error> From<E> for anyhow::Error` is the impl every `?` into an
+/// `anyhow::Result` selects, and without these two registered it selects
+/// nothing and 33 sites in core report a conversion that does exist.
+///
+/// The `From` impls the derive writes for `#[from]` fields are registered
+/// alongside, in `thiserror_from_impls`.
+const THISERROR_DERIVED: [&str; 2] = ["std::error::Error", "std::fmt::Display"];
+
+/// Is this the thiserror derive? It is written `Error` behind a `use
+/// thiserror::Error`, and `thiserror::Error` where the import is not there.
+///
+/// `std::error::Error` cannot be derived, so an `Error` in a derive list is
+/// thiserror's in every case rustc accepts.
+fn is_thiserror(derives: &[String]) -> bool {
+    derives
+        .iter()
+        .any(|d| d == "Error" || d.replace(' ', "") == "thiserror::Error")
+}
 
 fn derived_impls(
     reg: &TypeRegistry,
@@ -453,6 +501,81 @@ fn derived_impls(
             assoc_types: HashMap::new(),
             methods: HashMap::new(),
         }));
+    }
+    if is_thiserror(derives) {
+        // The derive proves these of the type itself, with no bound on the
+        // parameters: `#[error("{0}")]` writes a `Display` whatever the fields
+        // hold. That is thiserror's own rule and not rustc's derive rule, so
+        // the bounds the loop above adds do not belong here.
+        for path in THISERROR_DERIVED {
+            let Some(trait_id) = reg.system_type(path) else {
+                continue;
+            };
+            updates.push(Update::Impl(ImplDef {
+                id: ImplId(0),
+                module,
+                generics: type_params.to_vec(),
+                bounds: Vec::new(),
+                self_ty: self_ty.clone(),
+                trait_ref: Some(crate::ty::TraitRef {
+                    id: trait_id,
+                    args: Vec::new(),
+                    bindings: Vec::new(),
+                }),
+                assoc_types: HashMap::new(),
+                methods: HashMap::new(),
+            }));
+        }
+    }
+}
+
+/// The `impl From<Inner> for Outer` that `#[derive(thiserror::Error)]` writes
+/// for each variant field marked `#[from]`.
+///
+/// One field in the corpus carries the attribute — `SendError::Other(#[from]
+/// anyhow::Error)` — and a `?` handing an `anyhow::Error` into a function
+/// returning `Result<_, SendError>` calls it. Nothing else generates the impl,
+/// so without this hook that site has no conversion to find.
+fn thiserror_from_impls(
+    reg: &TypeRegistry,
+    module: ModuleId,
+    id: TypeId,
+    e: &crate::types::EnumInfo,
+    updates: &mut Vec<Update>,
+) {
+    if !is_thiserror(&e.derives) {
+        return;
+    }
+    let Some(trait_id) = reg.system_type(super::convert::FROM_PATH) else {
+        return;
+    };
+    let self_ty = Ty::Named {
+        id,
+        args: e.type_params.iter().map(|p| Ty::Param(p.clone())).collect(),
+    };
+    for variant in &e.variants {
+        for field in &variant.fields {
+            if !field.is_from {
+                continue;
+            }
+            let Some(source) = field.ty.clone() else {
+                continue;
+            };
+            updates.push(Update::Impl(ImplDef {
+                id: ImplId(0),
+                module,
+                generics: e.type_params.clone(),
+                bounds: Vec::new(),
+                self_ty: self_ty.clone(),
+                trait_ref: Some(crate::ty::TraitRef {
+                    id: trait_id,
+                    args: vec![source],
+                    bindings: Vec::new(),
+                }),
+                assoc_types: HashMap::new(),
+                methods: HashMap::new(),
+            }));
+        }
     }
 }
 

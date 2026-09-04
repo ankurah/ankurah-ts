@@ -757,8 +757,13 @@ addressed by the step that found it.
     emitter rewrites the call sites it can see — a closure bound to a local —
     and reports the ones it cannot, because the callee that receives the closure
     still writes `f(x)`.
-  - **`?` across two error types hands the error on unconverted.** Rust calls
-    `From` there; resolving which `From` is step 5.
+  - **`?` across two error types calls the `From` impl the engine resolved**
+    (step 5). What is left is named at each site: a conversion whose source or
+    target is still a type parameter, which Rust decides per instantiation and
+    one emitted body cannot; a conversion the declared surface performs, where
+    the port has no runtime type to call it on — every `?` into an
+    `anyhow::Error` is one of those, because `@ankurah/base` has no anyhow
+    stand-in; and a target two `From` impls emit under one name.
   - **`mem::forget` cannot be said at all**: the emitted value has no way to
     cancel its own drop glue, so it is left for the leak registry.
   - **A discarded value whose runtime call is not the Rust call is not
@@ -774,7 +779,29 @@ addressed by the step that found it.
     elements it never handed out; a `Vec` is an array and the emitter can name
     them, and a `HashMap` or an adaptor is not and it cannot.
   - **A macro the emitter does not expand releases nothing it was handed.** The
-    macro becomes a comment, so a value passed into one goes with it.
+    macro becomes `undefined` with the source in a comment beside it, so a value
+    passed into one goes with it. It is `undefined` rather than the comment
+    alone because a comment is not an expression: one written where an argument
+    stood did not parse, and a file that does not parse stops the TypeScript
+    compiler from checking anything else in the project.
+  - **A closure whose body hands a capture away owns nothing of it.** Rust moves
+    the capture into the body when an `FnOnce` runs, so the closure has nothing
+    left to drop; the runtime's `OwnedClosure` keeps its captures private and
+    offers no call that transfers them, so listing one drops it a second time
+    when the closure is dropped — a fatal — and leaving it out leaks it only
+    where the closure is never called. The capture is left out and the site says
+    so. The runtime change that would close it is a `callOnce` that marks the
+    closure moved before running the body.
+  - **An `if let` that takes a payload out of a wrapper leaves the wrapper.**
+    The path where the pattern did not match releases the value it tested, as a
+    `while let` does; the path that matched has taken the payload, and marking
+    the wrapper moved is what `intoMatch` does and an `if` cannot. An
+    `Option<T>` has no wrapper — it is `T | null` — so only an enum reaches
+    this.
+  - **Two `From` impls for one target that differ only in a reference are one
+    function here.** `impl From<EntityId> for Ref<T>` and `impl From<&EntityId>
+    for Ref<T>` take the same emitted name, because emission erases the
+    reference; the second is dropped and the site says so. Six in the corpus.
   - **A `?` inside a match arm, where the match is a statement.** An arm is an
     arrow function, so the early exit leaves the arm rather than the function.
     Where the match is the enclosing function's value the arm's `Result` is what
@@ -784,18 +811,23 @@ addressed by the step that found it.
   - **A field name that is also an `AkObject` member** — `label`, `drop`,
     `takeField` — shadows the runtime's own member. Renaming the field would
     change the wire protocol, so the collision is reported instead.
-- **A call that dispatches through a bound the engine cannot close is written
-  as the blanket impl's function.** `Ref::listen<L: IntoBroadcastListener<T>>`
+- **A call that dispatches through a bound the engine cannot close goes through
+  a generated run-time dispatcher.** `Ref::listen<L: IntoBroadcastListener<T>>`
   calls `listener.into_broadcast_listener()`, and `L` is open: at run time the
   listener may be a closure, an `Arc` holding one, a `BroadcastListener`, or a
   `Sender`, and Rust picks the impl per instantiation where a single emitted
-  body cannot. The blanket impl is the one written, because it is the impl the
-  corpus's call sites overwhelmingly reach and the only one a closure can
-  satisfy; every such site reports which impls the emitted call cannot reach,
-  and TypeScript reports the same fact as a type error at the call. Six sites in
-  signals, four in core. Choosing differently — a run-time dispatcher over the
-  trait's impls — is a decision about what the port emits, not about what the
-  engine can work out, and it is open.
+  body cannot. The port writes one function per trait method that chooses by the
+  receiver's shape — `instanceof` for a class the port emits and for the
+  runtime's own wrappers, `typeof === 'function' || instanceof OwnedClosure` for
+  a callable blanket, and the declared argument count of the function an `Arc`
+  holds where two impls differ only in that. A receiver matching none is fatal,
+  which rustc's having compiled the crate makes unreachable. Two limits stay.
+  An impl written for a bare parameter with no bound the run time can see —
+  `impl<T> Iterable<T> for T` — is the last branch rather than a test, so a
+  receiver that is a `Vec` reaches the `Vec` impl even where Rust's *item* type
+  would have chosen the blanket; the item type is erased and no test can see it.
+  And two impls the run time cannot tell apart mean no dispatcher is written at
+  all, and the site says which they are.
 - **Expectations propagate one level and stop.** A `let` annotation, a return
   position, a call argument, a struct-literal field, the other operand of an
   equality assertion and an `unwrap` receiver each hand the expression under
@@ -803,12 +835,18 @@ addressed by the step that found it.
   s.try_into()).collect::<Result<Vec<_>, _>>()` settles the closure's `U` from a
   turbofish two calls downstream, which is inference across a chain rather than
   one position, so the engine says it cannot tell rather than answering with
-  somebody else's open parameter. An enum variant's payload is not yet a
-  source of expectations either, which is why the closure inside
-  `BroadcastListener::Payload(Arc::new(move |value| ..))` stays untyped.
-- **An impl written for a reference to its own parameter is not emitted.**
-  `impl<T: Signal> Signal for &T` exists because `&T` is a distinct type in
-  Rust, and each of its methods forwards to the same method on the `T` inside.
+  somebody else's open parameter. The positions that supply one now also include
+  a free function's parameter (read from the signature the registry keeps for
+  it), an enum variant's payload — `Err(e.into())` inside a function returning
+  `Result<_, MutationError>` — the place an assignment stores into, and the
+  operand opposite a binary operator.
+- **An impl written for a reference to its own parameter, whose methods really
+  forward, is not emitted.** `impl<T: Signal> Signal for &T` exists because
+  `&T` is a distinct type in Rust, and each of its methods forwards to the same
+  method on the `T` inside. Forwarding is checked against the body — one call to
+  the method's own name, written either way `Signal::listen(*self, l)` and
+  `self.0.listen(l)` are — because an impl for `&T` that does something of its
+  own is a real impl, and skipping it left every call to it naming nothing.
   Emission erases the reference, so the value already carries the method;
   emitting the impl would write a function whose body calls itself.
 - **A trait's method reached through a bounded parameter is emitted as a call on

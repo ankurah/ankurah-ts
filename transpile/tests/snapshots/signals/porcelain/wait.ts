@@ -17,7 +17,7 @@ export function Bool_result(self: boolean): Output | null {
   }
 }
 
-export function Option_result<T>(self: T | null): Output | null {
+export function Option_result<T>(self: T | null): T | null {
   return self;
 }
 

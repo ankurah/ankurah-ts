@@ -19,6 +19,26 @@ impl<'a> BodyTranslator<'a> {
     /// Whether this `match` hands the subject's payload to an arm, which is
     /// what tells the consuming form from the borrowing one.
     pub fn match_takes(&self, m: &syn::ExprMatch) -> ownership::scrutinee::Takes {
+        let patterns: Vec<&syn::Pat> = m.arms.iter().map(|arm| &arm.pat).collect();
+        self.pattern_takes(&m.expr, &patterns)
+    }
+
+    /// The same question for an `if let` or a `while let`, whose one pattern
+    /// takes the subject apart exactly as an arm does.
+    ///
+    /// Without this the scrutinee of `if let Some(payload) = value` was still
+    /// the block's to release after the branch had taken the payload out of it,
+    /// and the two releases landed on one value.
+    pub fn let_takes(&self, let_expr: &syn::ExprLet) -> ownership::scrutinee::Takes {
+        self.pattern_takes(&let_expr.expr, &[&let_expr.pat])
+    }
+
+    /// Do any of these patterns bind, by value, something the subject owns?
+    fn pattern_takes(
+        &self,
+        subject_expr: &syn::Expr,
+        patterns: &[&syn::Pat],
+    ) -> ownership::scrutinee::Takes {
         let Some(tc) = &self.types else {
             return ownership::scrutinee::Takes::Nothing;
         };
@@ -26,17 +46,17 @@ impl<'a> BodyTranslator<'a> {
         // Asking is not translating: the questions this resolution defers are
         // reported once, where the match is written out.
         let mark = tc.sink.mark();
-        let subject = tc.resolve_expr(&m.expr);
+        let subject = tc.resolve_expr(subject_expr);
         tc.sink.rewind(mark);
         let Ok(subject) = subject else {
             return ownership::scrutinee::Takes::Nothing;
         };
         drop(tc);
-        if !self.owns_place(&m.expr) {
+        if !self.owns_place(subject_expr) {
             return ownership::scrutinee::Takes::Nothing;
         }
         let tc = self.types.as_ref().expect("just borrowed").borrow();
-        ownership::scrutinee::takes(&tc.probe(), &subject, &m.arms, |path| {
+        ownership::scrutinee::takes(&tc.probe(), &subject, patterns, |path| {
             let mark = tc.sink.mark();
             let payload = tc.payload_of(path, Some(&subject));
             tc.sink.rewind(mark);

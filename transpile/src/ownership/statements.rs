@@ -40,10 +40,10 @@ impl<'a> BodyTranslator<'a> {
         // the order Rust runs it in. A release written here as well dropped
         // that value a second time, which the runtime reports as a double drop.
         if self.stores_through_a_guard(&assign.left) {
-            return format!("{} = {}", left, self.moved_value(&assign.right));
+            return format!("{} = {}", left, self.assigned_value(assign));
         }
         let Some(release) = self.release_of(&assign.left, &left) else {
-            return format!("{} = {}", left, self.moved_value(&assign.right));
+            return format!("{} = {}", left, self.assigned_value(assign));
         };
         // Where a branch already handed the old value away, whether there is
         // anything left to release is what the drop flag answers, and a flag
@@ -57,15 +57,26 @@ impl<'a> BodyTranslator<'a> {
                     left
                 ),
             );
-            return format!("{} = {}", left, self.moved_value(&assign.right));
+            return format!("{} = {}", left, self.assigned_value(assign));
         }
         let held = self.fresh_hoist("_a");
-        let right = self.moved_value(&assign.right);
+        let right = self.assigned_value(assign);
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: format!("const {} = {};\n{}\n", held, right, release),
             owned: None,
         });
         format!("{} = {}", left, held)
+    }
+
+    /// The value being stored, asked for as the type the place holds.
+    ///
+    /// `state.head = event.id().into()` says what the `.into()` converts to
+    /// nowhere else: the field is the only thing that names it.
+    fn assigned_value(&self, assign: &syn::ExprAssign) -> String {
+        let want = self.quietly(|| self.resolve_expr_type(&assign.left)).ok();
+        self.expecting(&assign.right, want.as_ref(), || {
+            self.moved_value(&assign.right)
+        })
     }
 
     /// Does this place write through a guard, which releases what the container

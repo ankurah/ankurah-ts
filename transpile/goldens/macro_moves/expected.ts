@@ -24,15 +24,15 @@ export function borrow(entity: Entity): number {
 }
 
 export function gather(): Batch {
-  const first = new Entity('a'.toString());
-  const second = new Entity('bb'.toString());
+  const first = new Entity('a');
+  const second = new Entity('bb');
   return new Batch([first, second]);
 }
 
 export function describe(): string {
-  const first = new Entity('a'.toString());
+  const first = new Entity('a');
   try {
-    const second = new Entity('bb'.toString());
+    const second = new Entity('bb');
     try {
       return `${first.name}:${borrow(second)}`;
     } finally {

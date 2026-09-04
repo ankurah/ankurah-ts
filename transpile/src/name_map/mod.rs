@@ -109,7 +109,7 @@ pub fn map_type_name(rust_name: &str) -> &str {
         "String" | "str" => "string",
         "bool" => "boolean",
         "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "usize" | "f64" | "f32" => "number",
-        "i64" | "u64" => "bigint | number",
+        "i64" | "u64" => "bigint",
         "AtomicBool" => "boolean",
         "AtomicU32" | "AtomicUsize" => "number",
         "Infallible" => "never",

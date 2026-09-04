@@ -16,7 +16,7 @@ export class ReactiveGraphObserver extends Struct implements Observer {
 
   static new(): ReactiveGraphObserver {
     const bridges = new Mutex(new Map());
-    const observerId = bridges as unknown as number;
+    const observerId = bridges;
     return new ReactiveGraphObserver(bridges, observerId);
   }
 
@@ -36,7 +36,9 @@ export class ReactiveGraphObserver extends Struct implements Observer {
         } finally {
           map.drop();
         }
-      }
+      } else {
+      _v.drop();
+    }
     }
   }
 

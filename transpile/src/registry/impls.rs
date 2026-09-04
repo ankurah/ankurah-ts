@@ -243,6 +243,12 @@ impl ImplTable {
         self.blanket_by_method = index;
     }
 
+    /// Every impl in the table, for a test that asks what the build put there.
+    #[cfg(test)]
+    pub fn all(&self) -> impl Iterator<Item = &ImplDef> {
+        self.impls.iter()
+    }
+
     pub fn of_trait(&self, trait_id: TypeId) -> &[ImplId] {
         self.by_trait
             .get(&trait_id)
@@ -250,9 +256,6 @@ impl ImplTable {
             .unwrap_or(&[])
     }
 
-    pub fn all(&self) -> impl Iterator<Item = &ImplDef> {
-        self.impls.iter()
-    }
 }
 
 impl TypeRegistry {

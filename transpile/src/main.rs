@@ -5,10 +5,12 @@ use walkdir::WalkDir;
 
 mod bincode_module;
 mod body;
+mod calls;
 mod cfg;
 mod codegen;
 mod config;
 mod control_flow;
+mod convert;
 mod diag;
 mod emit;
 mod emit_impls;
@@ -19,6 +21,7 @@ mod macros;
 mod match_expr;
 mod name_map;
 mod native_types;
+mod operators;
 mod ownership;
 mod registry;
 #[cfg(test)]
@@ -126,6 +129,9 @@ fn main() -> Result<()> {
             }
             for row in trace::closure_rows() {
                 println!("CLOSURE\t{}", row);
+            }
+            for row in trace::try_rows() {
+                println!("TRYCONV\t{}", row);
             }
         }
         Command::Batch {
@@ -341,7 +347,29 @@ fn batch_generate(
         };
         let ts_module = rs_to_ts_module(&entry.path);
         for f in emit_impls::free_functions(&registry, module, &entry.file) {
+            // The import map is keyed by name alone, so two files each emitting
+            // a function of one name would have every call to either import
+            // whichever file was read last.
+            if let Some(other) = type_to_file.get(&f.name) {
+                if *other != ts_module {
+                    sink.set_file(&entry.path);
+                    sink.push(diag::Diag {
+                        file: entry.path.clone(),
+                        line: 0,
+                        col: 0,
+                        message: format!(
+                            "`{}` is emitted as a module-level function here and in `{}`, and \
+                             the import map is keyed by the name alone, so every call to \
+                             either reaches one of them",
+                            f.name, other
+                        ),
+                    });
+                }
+            }
             type_to_file.insert(f.name, ts_module.clone());
+        }
+        for d in emit_impls::dispatchers(&registry, module, &entry.file) {
+            type_to_file.insert(d.name, ts_module.clone());
         }
     }
 
@@ -472,15 +500,21 @@ fn translate_all_bodies(
     }
 }
 
-/// The members every ported type inherits from `AkObject`.
+/// The members every ported type inherits from `AkObject`, and — for an enum —
+/// from `Enum`.
 ///
 /// A Rust field with one of these names becomes a class property that shadows
 /// the runtime's own member, and the ownership machinery then reads the field
-/// where it meant to read itself. `label` is the one that bites: it is a
-/// `protected get`, so the emitted constructor assigns through a getter with no
-/// setter and throws.
-const RUNTIME_MEMBERS: [&str; 9] = [
-    "label",
+/// where it meant to read itself.
+///
+/// These are the runtime's *contract*: what the emitted code calls on a ported
+/// value. Its conveniences are not here. The diagnostic accused `label` in
+/// eight proto and core fields until the runtime renamed its own accessor to
+/// `$label` — the ruling being that the runtime moves and the port does not,
+/// because renaming a field changes the wire protocol. A name that is only
+/// spelled inside the runtime cannot collide with anything the port emits, so
+/// listing one here reports a collision that does not exist.
+const RUNTIME_MEMBERS: [&str; 8] = [
     "drop",
     "isDropped",
     "isMoved",
@@ -491,36 +525,72 @@ const RUNTIME_MEMBERS: [&str; 9] = [
     "markMoved",
 ];
 
-/// Say so where a declared field's name is one the runtime already uses.
+/// The members an emitted enum inherits on top of those, from `Enum`.
+///
+/// `type` and `value` are the variant tag and its payload, `match` and
+/// `intoMatch` are how every emitted arm reads them, and `is` is the narrowing
+/// test. A *method* of any of those names replaces the machinery that reads the
+/// variant. A variant's *fields* do not: they are keys of the payload object
+/// the class holds, not members of the class, so a field called `value` is
+/// `this.value.value` and collides with nothing.
+const ENUM_MEMBERS: [&str; 5] = ["type", "value", "match", "intoMatch", "is"];
+
+/// Say so where a declared name is one the runtime already uses.
 fn report_member_collisions(file: &types::RustFile, sink: &diag::DiagSink) {
-    let mut say = |owner: &str, field: &Option<String>, at: &syn::Type| {
-        let Some(name) = field else { return };
-        if !RUNTIME_MEMBERS.contains(&name.as_str()) {
-            return;
-        }
-        let start = syn::spanned::Spanned::span(at).start();
-        sink.push(diag::Diag {
-            file: sink.file(),
-            line: start.line,
-            col: start.column + 1,
-            message: format!(
-                "`{}.{}` has the name of a member every ported type inherits from `AkObject`, \
-                 so the field shadows the runtime's own and the ownership checks read the \
-                 wrong one",
-                owner, name
-            ),
-        });
-    };
     for s in &file.structs {
         for f in &s.fields {
-            say(&s.name, &f.name, &f.rust_ty);
+            let Some(name) = &f.name else { continue };
+            if !RUNTIME_MEMBERS.contains(&name.as_str()) {
+                continue;
+            }
+            let start = syn::spanned::Spanned::span(&f.rust_ty).start();
+            sink.push(diag::Diag {
+                file: sink.file(),
+                line: start.line,
+                col: start.column + 1,
+                message: format!(
+                    "`{}.{}` has the name of a member every ported type inherits from \
+                     `AkObject`, so the field shadows the runtime's own and the ownership \
+                     checks read the wrong one",
+                    s.name, name
+                ),
+            });
         }
     }
-    for e in &file.enums {
-        for v in &e.variants {
-            for f in &v.fields {
-                say(&e.name, &f.name, &f.rust_ty);
+    // A method takes a class member where a field takes a property, so the same
+    // names are at stake — and an enum's methods are at stake against `Enum`'s
+    // as well. The name checked is the one emission writes, not the one the
+    // source wrote: `impl Drop for T { fn drop }` is emitted as `onDrop`, which
+    // is the hook the runtime declares for exactly that.
+    for imp in &file.impls {
+        let on_an_enum = file.enums.iter().any(|e| e.name == imp.target_type);
+        let trait_name = imp.trait_name();
+        let type_args = imp.trait_type_args();
+        // `impl Drop` is *meant* to land on `onDrop`: that is the hook the
+        // runtime declares for it, called between the mark and the cascade.
+        if trait_name.as_deref() == Some("Drop") {
+            continue;
+        }
+        for m in &imp.methods {
+            let emitted = match &trait_name {
+                Some(trait_name) => emit::trait_method_name(trait_name, &type_args, m),
+                None => m.ts_name.clone(),
+            };
+            let taken = RUNTIME_MEMBERS.contains(&emitted.as_str())
+                || (on_an_enum && ENUM_MEMBERS.contains(&emitted.as_str()));
+            if !taken {
+                continue;
             }
+            sink.push(diag::Diag {
+                file: sink.file(),
+                line: 0,
+                col: 0,
+                message: format!(
+                    "`{}::{}` is emitted as `{}`, which is a member every ported type inherits \
+                     from the runtime, so the method replaces the runtime's own",
+                    imp.target_type, m.name, emitted
+                ),
+            });
         }
     }
 }
@@ -538,6 +608,10 @@ fn translate_module(
         .collect();
     let consts = resolve_module_consts(registry, module, &file.consts, sink);
     report_member_collisions(file, sink);
+    // The module-level functions this file's impls become, asked for once with
+    // the run's sink so that a name two impls would take is reported here and
+    // nowhere else.
+    let _ = emit_impls::free_functions_reporting(registry, module, file, sink);
     // Read while the bodies are still ASTs: translation drops them below.
     file.assigned_fields = emit::assigned_fields(file);
 
@@ -752,14 +826,31 @@ fn translate_fn_body(
             .collect();
         tc.push_fn(typed_params);
 
-        // A return type written as `Self::Target` has no TypeScript name of its
-        // own: the syntactic mapping renders it as the bare associated name,
-        // which is not a type. The impl that supplies it is in the table, so ask.
-        if let Some(written) = func.rust_return.as_ref().filter(|t| projects_through_self(t)) {
-            if let Ok(resolved) = tc.resolve_written_type(written) {
-                let normalized = tc.probe().normalize(&resolved);
-                if normalized != resolved {
-                    func.return_type = name_map::map_ty(registry, &normalized);
+        // Every parameter and the return type, written from the type the
+        // engine resolved rather than from the syntax.
+        //
+        // The syntactic mapping cannot see what a name means: `Self` came out
+        // as the word `Self`, `Self::Target` as the bare associated name, and a
+        // crate type sharing a leaf with a std one as the std one's spelling.
+        // `map_ty` reproduces that mapping case for case where the two agree,
+        // so a signature only moves where the syntax was wrong. A type the
+        // engine could not name keeps what it had, which is where it stood
+        // before.
+        for param in func.params.iter_mut().filter(|p| !p.is_self) {
+            let Some(written) = param.rust_ty.as_ref() else {
+                continue;
+            };
+            if names_an_alias(registry, module, written) {
+                continue;
+            }
+            if let Ok(resolved) = quiet_type(&tc, written) {
+                param.ty = name_map::map_ty(registry, &resolved);
+            }
+        }
+        if let Some(written) = func.rust_return.as_ref() {
+            if !names_an_alias(registry, module, written) {
+                if let Ok(resolved) = quiet_type(&tc, written) {
+                    func.return_type = name_map::map_ty(registry, &resolved);
                 }
             }
         }
@@ -809,18 +900,42 @@ fn translate_fn_body(
     }
 }
 
-/// Does this written type project through `Self` — `Self::Target`, `&Self::Item`?
-/// Those are the ones whose TypeScript name the syntactic mapping cannot write.
-fn projects_through_self(ty: &syn::Type) -> bool {
-    match ty {
-        syn::Type::Path(path) => {
-            path.path.segments.len() > 1 && path.path.segments[0].ident == "Self"
-        }
-        syn::Type::Reference(r) => projects_through_self(&r.elem),
-        syn::Type::Paren(p) => projects_through_self(&p.elem),
-        syn::Type::Group(g) => projects_through_self(&g.elem),
-        _ => false,
-    }
+/// Does this written type name a type alias?
+///
+/// A resolved type has no memory of the alias it was written as, so writing the
+/// signature from it turns `Listener` into the `Arc<dyn Fn(T)>` the alias
+/// stands for. The port emits the alias, and the alias is what the source said,
+/// so the syntactic spelling stays where one is named.
+fn names_an_alias(
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    written: &syn::Type,
+) -> bool {
+    let syn::Type::Path(path) = written else {
+        return false;
+    };
+    let segments: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    matches!(
+        registry.lookup_type(module, &segments),
+        Ok(Some(registry::Def::Alias(_)))
+    )
+}
+
+/// A written type resolved and read through the impl table, with no diagnostic
+/// filed for it.
+///
+/// The body translation asks the same questions and reports what it could not
+/// answer; asking again here to write the signature would count each gap twice.
+fn quiet_type(tc: &infer::TypeContext<'_>, written: &syn::Type) -> Result<ty::Ty, diag::Diag> {
+    let mark = tc.sink.mark();
+    let resolved = tc.resolve_written_type(written);
+    tc.sink.rewind(mark);
+    Ok(tc.probe().normalize(&resolved?))
 }
 
 /// Convert Rust file path to TS module name (for import resolution)

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/blanket_free_fn/src/input.rs
-import { Struct, Arc } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure } from '@ankurah/base';
 
 export class Listener extends Struct {
   readonly tag: number;
@@ -28,7 +28,7 @@ export function fromWrapped(inner: Arc<Inner>): Listener {
 }
 
 export function fromAny<L extends IntoListener>(listener: L): Listener {
-  return intoListener(listener);
+  return IntoListener_dispatch_intoListener(listener);
 }
 
 export function intoListener<F extends (arg0: number) => number>(self: F): Listener {
@@ -41,5 +41,11 @@ export function Arc_Inner_intoListener(self: Arc<Inner>): Listener {
   } finally {
     self.drop();
   }
+}
+
+export function IntoListener_dispatch_intoListener(self: unknown): Listener {
+  if (typeof self === 'function' || self instanceof OwnedClosure) return intoListener(self as any);
+  if (self instanceof Arc) return Arc_Inner_intoListener(self as any);
+  throw new Error(`BUG: no IntoListener impl for ${(self as object)?.constructor?.name ?? typeof self}`);
 }
 

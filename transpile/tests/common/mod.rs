@@ -342,3 +342,47 @@ pub fn run_closures(crate_name: &str, src_rel: &str) -> Vec<ClosureRow> {
         })
         .collect()
 }
+
+/// One `?` the engine saw convert: the two error types, and the function it
+/// wrote to convert them where it could name one.
+pub struct TryRow {
+    pub file: String,
+    pub line: u32,
+    pub from: String,
+    pub to: String,
+    pub written: Option<String>,
+}
+
+/// Ask the engine what every `?` in a crate converts, and how.
+pub fn run_tries(crate_name: &str, src_rel: &str) -> Vec<TryRow> {
+    let output = Command::new(transpile_bin())
+        .current_dir(transpile_dir())
+        .arg("resolve")
+        .arg(support_tree().join(src_rel))
+        .arg("--crate-name")
+        .arg(crate_name)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run the transpiler binary: {e}"));
+    assert!(
+        output.status.success(),
+        "resolve {crate_name} failed ({}):\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let prefix = format!("{}/", src_rel);
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("TRYCONV\t"))
+        .map(|row| {
+            let f: Vec<&str> = row.split('\t').collect();
+            assert!(f.len() >= 6, "malformed try row: {row}");
+            TryRow {
+                file: format!("{prefix}{}", f[0]),
+                line: f[1].parse().unwrap_or(0),
+                from: f[3].to_string(),
+                to: f[4].to_string(),
+                written: (f[5] != "-").then(|| f[5].to_string()),
+            }
+        })
+        .collect()
+}

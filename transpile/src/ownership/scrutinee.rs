@@ -32,7 +32,7 @@ pub enum Takes {
 pub fn takes(
     probe: &Probe,
     subject: &Ty,
-    arms: &[syn::Arm],
+    patterns: &[&syn::Pat],
     payload_of: impl Fn(&syn::Path) -> Vec<Ty>,
 ) -> Takes {
     // A `&T` subject cannot be moved out of, whatever the arms say.
@@ -42,9 +42,9 @@ pub fn takes(
     if !drops_of(probe, subject).is_droppable() {
         return Takes::Nothing;
     }
-    let moved = arms
+    let moved = patterns
         .iter()
-        .any(|arm| binds_owned_payload(probe, &arm.pat, &payload_of));
+        .any(|pat| binds_owned_payload(probe, pat, &payload_of));
     if moved {
         Takes::Payload
     } else {

@@ -86,7 +86,7 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   observerId(): number {
-    return this._0.asPtr() as unknown as number;
+    return this._0.asPtr();
   }
 
   asAny(): Any {

@@ -11,9 +11,9 @@ export class Header extends Struct {
 
   static parse(raw: string): Result<Header, ParseError> {
     if (raw.length === 0) {
-      return Result.Err(ParseError.Empty);
+      return Result.Err(new ParseError('Empty', {}));
     }
-    return Result.Ok(new Header(raw.toString()));
+    return Result.Ok(new Header(raw));
   }
 
   static parseTwice(raw: string): Result<[Header, Header], ParseError> {

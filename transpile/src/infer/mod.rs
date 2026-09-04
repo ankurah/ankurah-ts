@@ -11,5 +11,8 @@ mod patterns;
 mod scope;
 
 pub use closures::ClosureSig;
-pub use context::{member_name, TypeContext};
-pub use expected::{fn_shape, FnShape};
+pub use context::{expr_form, member_name, TypeContext};
+/// The callable an expected type describes. Only the closure tests ask for it
+/// directly; the engine reaches it through `closure_signature`.
+#[cfg(test)]
+pub use expected::fn_shape;

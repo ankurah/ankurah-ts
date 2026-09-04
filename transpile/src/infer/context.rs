@@ -31,9 +31,6 @@ pub struct TypeContext<'a> {
     pub param_bounds: Vec<(String, TraitRef)>,
     /// What `Self` means in the enclosing impl.
     pub self_ty: Option<Ty>,
-    /// What the body being translated returns, so a tail expression and a
-    /// `return` know what type is wanted of them (spec 4.6).
-    pub ret_ty: Option<Ty>,
     /// The parameters of the closure whose body is being typed right now,
     /// innermost frame last.
     ///
@@ -66,7 +63,6 @@ impl<'a> TypeContext<'a> {
             params,
             param_bounds: Vec::new(),
             self_ty,
-            ret_ty: None,
             closure_params: std::cell::RefCell::new(Vec::new()),
             sink,
         }
@@ -142,11 +138,33 @@ impl<'a> TypeContext<'a> {
         let mut subst = Subst::new();
         match unify(&open, &filled, want.peel_refs(), &mut subst) {
             Ok(()) => filled.substitute(&subst),
-            // The expectation and the call disagree in shape. That is either a
-            // conversion the position performs or a gap in what the engine
-            // reads; either way the call's own answer stands.
-            Err(_) => filled,
+            // The two disagree somewhere. They may still agree where it
+            // counts: `s.parse()` returns `Result<F, F::Err>` and a `?`
+            // handing an expectation inward says what the payload is and
+            // leaves the error slot a hole, so matching the two whole fails on
+            // the error and loses the payload with it. Take the bindings the
+            // parts that do agree produced, and where no part agrees the
+            // call's own answer stands.
+            Err(_) => {
+                let mut subst = Subst::new();
+                expected::partial_bindings(&open, &filled, want.peel_refs(), &mut subst);
+                filled.substitute(&subst)
+            }
         }
+    }
+
+    /// What a `?` operand has to be, given what the `?` itself has to produce.
+    ///
+    /// The error slot is left a hole: no position ever says what a `?` throws
+    /// away, and naming one would put a type the source never wrote into the
+    /// match.
+    pub fn try_operand_expectation(&self, expected: Option<&Ty>) -> Option<Ty> {
+        let want = expected?;
+        let id = self.registry.system_type("std::result::Result")?;
+        Some(Ty::Named {
+            id,
+            args: vec![want.clone(), Ty::Infer],
+        })
     }
 
     /// The callable type a closure has: `impl Fn(A, B) -> R` with what the
@@ -346,10 +364,14 @@ impl<'a> TypeContext<'a> {
             // the call already had.
             syn::Expr::Await(await_expr) => self.resolve_expr(&await_expr.base),
 
-            // `e?` is `T` whether or not the error type has to be converted;
-            // which `From` performs the conversion is the conversions step.
+            // `e?` is `T` whether or not the error type has to be converted.
+            // What the position wants of the `?` is what it wants of the
+            // payload, so it is handed inward wrapped in a `Result`: that is
+            // what types `let id: EntityId = s.parse()?`, whose call says
+            // nothing about which type it parses.
             syn::Expr::Try(try_expr) => {
-                let inner = self.resolve_expr(&try_expr.expr)?;
+                let want = self.try_operand_expectation(expected);
+                let inner = self.resolve_expr_expecting(&try_expr.expr, want.as_ref())?;
                 self.try_payload(&inner).ok_or_else(|| {
                     self.refuse(
                         expr.span(),
@@ -411,7 +433,7 @@ impl<'a> TypeContext<'a> {
                 })
             }
 
-            syn::Expr::Binary(bin) => self.binary_type(bin),
+            syn::Expr::Binary(bin) => self.binary_type(bin, expected),
 
             syn::Expr::Index(idx) => {
                 let base = self.resolve_expr(&idx.expr)?;
@@ -538,7 +560,7 @@ impl<'a> TypeContext<'a> {
     /// whatever they are applied to; arithmetic on primitives is the primitive.
     /// An operator on anything else resolves through its trait's `Output`, which
     /// is the operators step.
-    fn binary_type(&self, bin: &syn::ExprBinary) -> Result<Ty, Diag> {
+    fn binary_type(&self, bin: &syn::ExprBinary, expected: Option<&Ty>) -> Result<Ty, Diag> {
         use syn::BinOp::*;
         match bin.op {
             Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_) | And(_) | Or(_) => {
@@ -552,10 +574,18 @@ impl<'a> TypeContext<'a> {
         // An unsuffixed integer literal takes the type of whatever it is written
         // against — `n + 1` where `n: usize` is `usize` arithmetic, not a type
         // mismatch between `usize` and the literal's default `i32`.
-        if let Some(ty) = self.literal_against(&bin.left, &bin.right)? {
-            return Ok(ty);
+        // A shift is the exception: its right operand has a type of its own —
+        // `1u64 << 63i32` is a `u64` — so reading the whole expression off the
+        // shift amount answered `i32` for what the position said was 64-bit.
+        if !matches!(bin.op, Shl(_) | Shr(_)) {
+            if let Some(ty) = self.literal_against(&bin.left, &bin.right)? {
+                return Ok(ty);
+            }
         }
-        let left = self.resolve_expr(&bin.left)?;
+        // Where both operands are literals the whole expression takes its type
+        // from the position, which is how `bits ^ (1 << 63)` beside a `u64` is
+        // 64-bit arithmetic rather than the literal's default `i32`.
+        let left = self.resolve_expr_expecting(&bin.left, expected)?;
         let Ty::Prim(prim) = left.peel_refs() else {
             return Err(self.refuse(
                 syn::spanned::Spanned::span(bin),
@@ -588,10 +618,30 @@ impl<'a> TypeContext<'a> {
         left: &syn::Expr,
         right: &syn::Expr,
     ) -> Result<Option<Ty>, Diag> {
-        let unsuffixed = |e: &syn::Expr| {
-            matches!(e, syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. })
-                if i.suffix().is_empty())
-        };
+        // Not only a bare literal: `bits ^ (1 << 63)` writes an operand built
+        // entirely out of unsuffixed literals, and Rust gives the whole of it
+        // the other side's type. Reading `1 << 63` as the literal's default
+        // `i32` made it a `number` beside a `bigint`, which JavaScript refuses
+        // to combine at all.
+        fn unsuffixed(e: &syn::Expr) -> bool {
+            match e {
+                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
+                    i.suffix().is_empty()
+                }
+                syn::Expr::Paren(p) => unsuffixed(&p.expr),
+                syn::Expr::Group(g) => unsuffixed(&g.expr),
+                syn::Expr::Unary(u) => {
+                    matches!(u.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) && unsuffixed(&u.expr)
+                }
+                // A shift's right operand has a type of its own, so only the
+                // left one carries the whole expression's.
+                syn::Expr::Binary(b) if matches!(b.op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) => {
+                    unsuffixed(&b.left)
+                }
+                syn::Expr::Binary(b) => unsuffixed(&b.left) && unsuffixed(&b.right),
+                _ => false,
+            }
+        }
         let other = if unsuffixed(left) {
             right
         } else if unsuffixed(right) {
@@ -1017,6 +1067,9 @@ impl<'a> TypeContext<'a> {
         let syn::Expr::Path(path) = &*call.func else {
             return None;
         };
+        if let Some(fields) = self.variant_argument_types(path, expected) {
+            return Some(fields);
+        }
         let name = path.path.segments.last()?.ident.to_string();
         // `Box::new(..)` names `Box` with no arguments, and the impl is written
         // for `Box<T>`; a bare `Box` does not resolve to a type at all. What
@@ -1025,8 +1078,13 @@ impl<'a> TypeContext<'a> {
         // is matched against.
         let owner = self
             .expectation_as_owner(path, expected)
-            .or_else(|| self.type_of_prefix(path))?;
-        let (sig, mut subst) = self.static_method(&owner, &name)?;
+            .or_else(|| self.type_of_prefix(path));
+        let (sig, mut subst) = match owner {
+            Some(owner) => self.static_method(&owner, &name)?,
+            // A path with no type in front of it names a free function, whose
+            // parameters are declared where the function is.
+            None => (self.free_function_sig(path)?, Subst::new()),
+        };
         // Whatever the position wants of the call binds the parameters the
         // signature left open.
         if let Some(want) = expected {
@@ -1040,6 +1098,90 @@ impl<'a> TypeContext<'a> {
                 .map(|(_, ty)| {
                     let filled = probe.normalize(&ty.substitute(&subst));
                     (!expected::has_infer(&filled) && open_params(&filled).is_empty())
+                        .then_some(filled)
+                })
+                .collect(),
+        )
+    }
+
+    /// What a free function this path names declares.
+    ///
+    /// Resolved through the module that wrote the call, in the value namespace,
+    /// so a `use` and a module-qualified path both arrive at the same
+    /// declaration and a local of the same name never stands in for one.
+    fn free_function_sig(&self, path: &syn::ExprPath) -> Option<crate::registry::MethodSig> {
+        let segments: Vec<String> = path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let crate::registry::Def::Value(id) = self
+            .registry
+            .lookup(self.module, crate::registry::Ns::Value, &segments)
+            .ok()??
+        else {
+            return None;
+        };
+        self.registry.function_sig(id).cloned()
+    }
+
+    /// What each position of an enum variant's payload holds, where the path
+    /// names a variant.
+    ///
+    /// `Err(e.into())` inside a function returning `Result<_, MutationError>`
+    /// is the case that matters: the `.into()` has nothing else to read, and
+    /// the variant is what says its payload is a `MutationError`. The enum's
+    /// own parameters are closed by the position where the position names this
+    /// enum, which is what makes `Ok`, `Err` and `Some` answer at all — their
+    /// payload *is* a parameter.
+    fn variant_argument_types(
+        &self,
+        path: &syn::ExprPath,
+        expected: Option<&Ty>,
+    ) -> Option<Vec<Option<Ty>>> {
+        let last = path.path.segments.last()?.ident.to_string();
+        // Rust's prelude writes these with one segment, and the type they
+        // belong to is named by the position rather than by the path.
+        if path.path.segments.len() == 1 {
+            let want = expected?.peel_refs();
+            let Ty::Named { args, .. } = want else {
+                return None;
+            };
+            return match last.as_str() {
+                "Ok" if self.is_result(want) => Some(vec![args.first().cloned()]),
+                "Err" if self.is_result(want) => Some(vec![args.get(1).cloned()]),
+                "Some" if self.is_option(want) => Some(vec![args.first().cloned()]),
+                _ => None,
+            };
+        }
+        let segments: Vec<String> = path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let (id, variant) = self.registry.lookup_variant(self.module, &segments)?;
+        let def = self.registry.def(id)?;
+        let crate::registry::TypeKind::Enum { variants } = &def.kind else {
+            return None;
+        };
+        let found = variants.iter().find(|v| v.name == variant)?;
+        let mut subst = Subst::new();
+        if let Some(Ty::Named { id: want, args }) = expected.map(|ty| ty.peel_refs()) {
+            if *want == id {
+                for (param, arg) in def.type_params.iter().zip(args) {
+                    subst.insert(param.clone(), arg.clone());
+                }
+            }
+        }
+        Some(
+            found
+                .fields
+                .iter()
+                .map(|(_, ty)| {
+                    let filled = ty.substitute(&subst);
+                    (open_params(&filled).is_empty() && !expected::has_infer(&filled))
                         .then_some(filled)
                 })
                 .collect(),
@@ -1293,6 +1435,34 @@ impl<'a> TypeContext<'a> {
             .is_some()
     }
 
+    /// The enum and variant a path names, where it names a *unit* variant of an
+    /// enum this crate emits a class for.
+    ///
+    /// A unit variant in expression position is a value that has to be built —
+    /// `new ParseError('Empty', {})` — exactly as a payload-carrying one is.
+    /// Writing it as a member of the class instead named a static nothing
+    /// declares, which reads `undefined` and compares unequal to every variant
+    /// the same file constructs properly.
+    pub fn unit_variant_of_emitted_enum(&self, segments: &[String]) -> Option<(String, String)> {
+        let (id, variant) = self.registry.lookup_variant(self.module, segments)?;
+        let ty = Ty::Named {
+            id,
+            args: Vec::new(),
+        };
+        if !crate::emit_impls::has_emitted_class(self.registry, &ty) {
+            return None;
+        }
+        let def = self.registry.def(id)?;
+        let crate::registry::TypeKind::Enum { variants } = &def.kind else {
+            return None;
+        };
+        let found = variants.iter().find(|v| v.name == variant)?;
+        if !found.fields.is_empty() {
+            return None;
+        }
+        Some((self.registry.name_of(id), variant))
+    }
+
     /// Is this the `Result` the transpiler emits a real `unwrap` for?
     ///
     /// A `LockResult` is not, even though it is a `Result`: the port's
@@ -1396,36 +1566,6 @@ impl<'a> TypeContext<'a> {
             .any(|(path, name)| *name == method && self.is_system(owner, path))
     }
 
-    /// The types a callee's closure parameter takes.
-    ///
-    /// Step 2 still only knows `LocalKey<T>::with` — what `thread_local!`
-    /// declares, and what the port calls `ThreadLocal`; typing a closure from
-    /// the callee's `Fn` bound is the closures step, which reads the bound off
-    /// the resolved signature the impl table now supplies.
-    pub fn resolve_closure_param_types(
-        &self,
-        receiver_expr: &syn::Expr,
-        method: &str,
-        closure: &syn::ExprClosure,
-    ) -> Vec<(String, Ty)> {
-        let mut result = Vec::new();
-        let Ok(receiver_ty) = self.resolve_expr(receiver_expr) else {
-            return result;
-        };
-        let Ty::Named { id, args } = receiver_ty.peel_refs() else {
-            return result;
-        };
-        if self.is_system(*id, "std::thread::LocalKey")
-            && method == "with"
-            && !args.is_empty()
-        {
-            if let Some(param) = closure.inputs.first() {
-                let param_name = crate::body::BodyTranslator::pat_static(param);
-                result.push((param_name, args[0].clone()));
-            }
-        }
-        result
-    }
 }
 
 
@@ -1474,7 +1614,7 @@ pub fn prim_name(p: Prim) -> String {
 
 /// The name of an expression form, so a refusal says which one it could not
 /// read rather than only that it could not.
-fn expr_form(expr: &syn::Expr) -> &'static str {
+pub fn expr_form(expr: &syn::Expr) -> &'static str {
     match expr {
         syn::Expr::Array(_) => "array",
         syn::Expr::Assign(_) => "assignment",

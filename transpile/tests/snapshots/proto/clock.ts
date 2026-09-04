@@ -5,12 +5,12 @@ import { EventId } from './data';
 import { DecodeError } from './error';
 export { Clock };
 
-export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, Error> {
+export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeError> {
   let _moved0 = false;
   const ids = [];
   try {
     for (const idBytes of self) {
-      const _r1 = idBytes.tryInto().mapErr((_) => DecodeError.InvalidLength);
+      const _r1 = idBytes.tryInto().mapErr((_) => new DecodeError('InvalidLength', {}));
       if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
       const bytes = _r1.unwrap();
       let _moved2 = false;
@@ -29,7 +29,7 @@ export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, Error> {
   }
 }
 
-export function Vec_EventId_from(self: EventId[], clock: Clock): Self {
+export function Vec_EventId_fromClock(self: EventId[], clock: Clock): EventId[] {
   return clock._0.toVec();
 }
 

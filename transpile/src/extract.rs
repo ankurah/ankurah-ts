@@ -551,6 +551,13 @@ fn use_tree_to_string(tree: &syn::UseTree) -> String {
     }
 }
 
+/// `#[from]` on a field of a `thiserror` enum. The attribute is thiserror's
+/// instruction to write an `impl From` for the enum, and it implies `#[source]`
+/// — which is why `#[source]` alone does not count here.
+fn has_from_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("from"))
+}
+
 fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
     match fields {
         Fields::Named(named) => named.named.iter().map(|f| {
@@ -559,6 +566,7 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 rust_ty: f.ty.clone(),
                 ty: None,
                 is_pub: is_public(&f.vis),
+                is_from: has_from_attr(&f.attrs),
             }
         }).collect(),
         Fields::Unnamed(unnamed) => unnamed.unnamed.iter().enumerate().map(|(i, f)| {
@@ -567,6 +575,7 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 rust_ty: f.ty.clone(),
                 ty: None,
                 is_pub: is_public(&f.vis),
+                is_from: has_from_attr(&f.attrs),
             }
         }).collect(),
         Fields::Unit => Vec::new(),

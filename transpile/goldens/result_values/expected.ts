@@ -18,7 +18,7 @@ export class WireError extends Enum<WireErrorV> {
 
 export function width(raw: string): Result<number, WireError> {
   if (raw.length === 0) {
-    return Result.Err(WireError.Truncated);
+    return Result.Err(new WireError('Truncated', {}));
   }
   return Result.Ok(raw.length);
 }

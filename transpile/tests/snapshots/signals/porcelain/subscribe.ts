@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
-import { Struct } from '@ankurah/base';
+import { Struct, OwnedClosure } from '@ankurah/base';
 import { ListenerGuard } from '../broadcast';
 
 export class SubscriptionGuard extends Struct {
@@ -44,5 +44,11 @@ export function Sender_intoSubscribeListener<T>(self: Sender<T>): SubscribeListe
 
 export function intoSubscribeListener<F extends (arg0: T) => void, T>(self: F): SubscribeListener<T> {
   return self;
+}
+
+export function IntoSubscribeListener_dispatch_intoSubscribeListener<T>(self: unknown): (arg0: T) => void {
+  if (self instanceof Sender) return Sender_intoSubscribeListener(self as any);
+  if (typeof self === 'function' || self instanceof OwnedClosure) return intoSubscribeListener(self as any);
+  throw new Error(`BUG: no IntoSubscribeListener impl for ${(self as object)?.constructor?.name ?? typeof self}`);
 }
 

@@ -720,3 +720,128 @@ fn callable_inputs(written: &str) -> Vec<String> {
     }
     split_arguments(inside)
 }
+
+/// Every `?` rust-analyzer recorded as converting its error, against what the
+/// engine did there.
+///
+/// The two do not name types the same way — rust-analyzer writes
+/// `<Vec<u8, Global> as TryInto<EntityId>>::Error` where the engine writes
+/// `DecodeError` — so the comparison is not on the spellings. It is on the
+/// question the emitted code turns on: does this `?` convert at all? A site
+/// whose two error types differ in nothing but a lifetime is one `From` never
+/// runs at, and the engine has to agree; a site where they really differ is one
+/// the engine has to have seen, because a `?` it passed over in silence hands
+/// the wrong value on.
+#[test]
+fn engine_matches_the_try_oracle() {
+    let oracle = load::<TryConversion>("try_conversions.json");
+    let mut engine: Vec<common::TryRow> = Vec::new();
+    for (name, dir) in [
+        ("proto", "proto/src"),
+        ("ankql", "ankql/src"),
+        ("signals", "signals/src"),
+        ("core", "core/src"),
+    ] {
+        engine.extend(common::run_tries(name, dir));
+    }
+
+    let mut wrong = Vec::new();
+    let mut checked = 0usize;
+    let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
+    let mut unsettled: BTreeMap<String, usize> = BTreeMap::new();
+    for site in &oracle.sites {
+        if NOT_READ.contains(&site.file.as_str()) {
+            *skipped.entry(site.file.clone()).or_default() += 1;
+            continue;
+        }
+        checked += 1;
+        // rust-analyzer records the `?` on the line the expression under it
+        // starts, which is where the engine records it too; the column differs
+        // between the two and is not compared.
+        let found = engine
+            .iter()
+            .any(|r| r.file == site.file && r.line == site.line);
+        // A projection rust-analyzer left unnormalised — `<Vec<u8> as
+        // TryInto<EntityId>>::Error` — says nothing about which type it is, and
+        // the engine resolved it to the concrete one the impl declares. The
+        // oracle cannot settle whether those two differ, so the site is
+        // recorded as one it does not answer rather than compared against a
+        // spelling.
+        if is_projection(&site.from_error) || is_projection(&site.to_error) {
+            let both_projections =
+                is_projection(&site.from_error) && is_projection(&site.to_error);
+            // Two projections of one name off one base are one type, and the
+            // engine has to agree; anything else the oracle leaves open.
+            if !both_projections {
+                *unsettled.entry(site.file.clone()).or_default() += 1;
+                continue;
+            }
+        }
+        let converts = strip_lifetimes(&site.from_error) != strip_lifetimes(&site.to_error);
+        if converts && !found {
+            wrong.push(format!(
+                "{}:{} — rust-analyzer converts `{}` to `{}` and the engine saw no conversion",
+                site.file, site.line, site.from_error, site.to_error
+            ));
+        }
+        if !converts && found {
+            wrong.push(format!(
+                "{}:{} — the two error types differ only in a lifetime, which the engine does \
+                 not model, and it recorded a conversion anyway",
+                site.file, site.line
+            ));
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "{} of {} oracle `?` sites disagree with the engine:\n{}\n\nnot read by this run: \
+         {skipped:?}\nleft open by the oracle's own spelling: {unsettled:?}",
+        wrong.len(),
+        checked,
+        wrong.join("\n")
+    );
+    assert_eq!(
+        checked + skipped.values().sum::<usize>(),
+        oracle.sites.len(),
+        "every oracle site is either checked or named in NOT_READ"
+    );
+}
+
+/// The oracle's files this run does not read, and why each one is out.
+///
+/// `wasm.rs` and `postgres.rs` are `#[cfg(feature = ..)]` modules the configured
+/// feature set leaves out (spec 1a). `parser.rs` and `sql.rs` hold their `?`
+/// sites inside `#[cfg(test)]` functions, whose bodies the extractor keeps apart
+/// from the crate's own and never translates.
+const NOT_READ: [&str; 4] = [
+    "proto/src/wasm.rs",
+    "proto/src/postgres.rs",
+    "ankql/src/parser.rs",
+    "ankql/src/selection/sql.rs",
+];
+
+/// Is this rust-analyzer's unnormalised spelling of an associated type —
+/// `<X as Trait<..>>::Error` — rather than the type itself?
+fn is_projection(written: &str) -> bool {
+    written.starts_with('<') && written.contains(" as ") && written.contains(">::")
+}
+
+/// A rust-analyzer type with its lifetimes and its allocator parameter taken
+/// out, so that `<D as Deserializer<'_>>::Error` and
+/// `<D as Deserializer<'de>>::Error` read as the one type they are (spec 7a
+/// records the same for the method oracle).
+fn strip_lifetimes(written: &str) -> String {
+    let mut out = String::with_capacity(written.len());
+    let mut chars = written.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            while chars.peek().is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+                chars.next();
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out.replace(", Global", "").replace("<>", "").replace(' ', "")
+}
