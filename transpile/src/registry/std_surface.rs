@@ -57,9 +57,66 @@ const REVIEW_SPLITS: [(&str, &str); 8] = [
 /// all.
 const PRIMITIVE_IMPLS: [&str; 1] = ["std/primitive.rs"];
 
-/// The crate a `core::` or `alloc::` path reaches. Both re-export into `std`,
-/// and ankurah writes `core::time::Duration` for `std::time::Duration`.
-pub const STD_ALIASES: [&str; 2] = ["core", "alloc"];
+/// What `core::` and `alloc::` really name.
+///
+/// `std` re-exports selected items *from* `core` and `alloc`, not the other way
+/// round, so aliasing the whole of `std` under both names admitted paths that
+/// do not exist in Rust — `core::collections::HashMap`, `alloc::sync::Mutex` —
+/// and would have resolved a typo rather than reporting it. Each row is a
+/// module one of those crates genuinely has, named by the `std` module that
+/// declares the same items in this surface.
+///
+/// `core::sync` and `alloc::sync` are deliberately absent: `std::sync` holds
+/// `Mutex` and `RwLock`, which live in neither, and the one thing the corpus
+/// reaches for under them — `core::sync::atomic` — is listed on its own.
+const ROOT_REEXPORTS: [(&str, &str, &str); 33] = [
+    ("core", "any", "any"),
+    ("core", "array", "array"),
+    ("core", "borrow", "borrow"),
+    ("core", "cell", "cell"),
+    ("core", "char", "char"),
+    ("core", "clone", "clone"),
+    ("core", "cmp", "cmp"),
+    ("core", "convert", "convert"),
+    ("core", "default", "default"),
+    ("core", "fmt", "fmt"),
+    ("core", "future", "future"),
+    ("core", "hash", "hash"),
+    ("core", "iter", "iter"),
+    ("core", "marker", "marker"),
+    ("core", "mem", "mem"),
+    ("core", "num", "num"),
+    ("core", "ops", "ops"),
+    ("core", "option", "option"),
+    ("core", "pin", "pin"),
+    ("core", "result", "result"),
+    ("core", "slice", "slice"),
+    ("core", "str", "str"),
+    ("core", "task", "task"),
+    ("core", "time", "time"),
+    ("alloc", "borrow", "borrow"),
+    ("alloc", "boxed", "boxed"),
+    ("alloc", "collections", "collections"),
+    ("alloc", "fmt", "fmt"),
+    ("alloc", "rc", "rc"),
+    ("alloc", "slice", "slice"),
+    ("alloc", "str", "str"),
+    ("alloc", "string", "string"),
+    ("alloc", "vec", "vec"),
+];
+
+/// The two roots built out of aliases, which the indexing walks skip so that a
+/// declaration is recorded once, under the path that declares it.
+const ALIAS_ROOTS: [&str; 2] = ["core", "alloc"];
+
+/// The items `core::sync` and `alloc::sync` hold, which is not what
+/// `std::sync` holds. `core::sync` has only the atomics module; `alloc::sync`
+/// has `Arc` and `Weak` and nothing else.
+const SYNC_REEXPORTS: [(&str, &str); 3] = [
+    ("core", "atomic"),
+    ("alloc", "Arc"),
+    ("alloc", "Weak"),
+];
 
 /// One stub file: where it was read from, which module its items belong to, and
 /// what the extractor made of it.
@@ -196,13 +253,7 @@ pub fn declare(reg: &mut TypeRegistry, surface: &mut Surface, sink: &DiagSink) {
         super::build::declare_file(reg, *module, &stub.file, sink);
     }
 
-    // `core::sync::atomic` and `alloc::vec` name what `std` names.
-    let std_root = reg.modules().system_crates().get("std").copied();
-    if let Some(std_root) = std_root {
-        for alias in STD_ALIASES {
-            reg.modules_mut().alias_child(system, alias, std_root);
-        }
-    }
+    declare_root_reexports(reg, system);
 
     // Both indexes read declarations only, so they are built before the pass
     // that resolves written types — which is the pass that needs them.
@@ -277,7 +328,7 @@ fn reexports(
         .map(|(n, id)| (n.clone(), *id))
         .collect();
     for (name, child) in children {
-        if STD_ALIASES.contains(&name.as_str()) {
+        if ALIAS_ROOTS.contains(&name.as_str()) {
             continue;
         }
         prefix.push(name);
@@ -305,8 +356,8 @@ fn walk(
         .collect();
     for (name, child) in children {
         // The tree is built from file paths, so it is a tree — except for the
-        // `core` and `alloc` aliases, which point back at `std`.
-        if STD_ALIASES.contains(&name.as_str()) {
+        // `core` and `alloc` roots, whose modules point back into `std`.
+        if ALIAS_ROOTS.contains(&name.as_str()) {
             continue;
         }
         prefix.push(name);
@@ -399,5 +450,49 @@ mod tests {
     fn a_file_outside_the_conventions_names_no_module() {
         assert_eq!(module_of("README.md"), None);
         assert_eq!(module_of("scratch/thing.rs"), None);
+    }
+}
+
+
+/// Build the `core` and `alloc` roots out of what those crates really export.
+///
+/// Every declaration lives under `std` in this surface, because that is where
+/// the stubs are written; these roots give the other two crates their own
+/// module trees, each holding only the modules and items Rust puts in them.
+fn declare_root_reexports(reg: &mut TypeRegistry, system: ModuleId) {
+    let Some(std_root) = reg.modules().system_crates().get("std").copied() else {
+        return;
+    };
+    for (root, module, std_module) in ROOT_REEXPORTS {
+        let Some(target) = reg
+            .modules()
+            .get(std_root)
+            .children
+            .get(std_module)
+            .copied()
+        else {
+            continue;
+        };
+        let root_id = reg.modules_mut().child(system, root);
+        reg.modules_mut().alias_child(root_id, module, target);
+    }
+    // `sync` is the one module whose contents differ per crate, so it is built
+    // item by item rather than aliased whole.
+    let Some(std_sync) = reg.modules().get(std_root).children.get("sync").copied() else {
+        return;
+    };
+    for (root, name) in SYNC_REEXPORTS {
+        let root_id = reg.modules_mut().child(system, root);
+        let sync_id = reg.modules_mut().child(root_id, "sync");
+        if let Some(child) = reg.modules().get(std_sync).children.get(name).copied() {
+            reg.modules_mut().alias_child(sync_id, name, child);
+            continue;
+        }
+        if let Some(item) = reg.modules().get(std_sync).item(super::Ns::Type, name).cloned() {
+            reg.modules_mut()
+                .get_mut(sync_id)
+                .items
+                .insert((super::Ns::Type, name.to_string()), item);
+        }
     }
 }

@@ -135,6 +135,10 @@ pub fn build_registry(
     }
     apply(&mut reg, updates);
 
+    // Both the surface's and the crate's declarations are in by now, which is
+    // what the blanket index needs to know which methods each blanket offers.
+    reg.index_blankets();
+
     reg
 }
 
@@ -417,10 +421,27 @@ fn derived_impls(
         let Some(trait_id) = reg.system_type(path) else {
             continue;
         };
+        // rustc's derive puts the derived trait on every type parameter:
+        // `#[derive(Clone)] struct W<T>(T)` expands to
+        // `impl<T: Clone> Clone for W<T>`, so a `W<NoClone>` is not `Clone`.
+        // Registering the impl without those bounds proved every instantiation
+        // clonable, and a bound that rests on one then held for the wrong
+        // reason.
+        let bounds: Vec<crate::registry::impls::Bound> = type_params
+            .iter()
+            .map(|param| crate::registry::impls::Bound {
+                subject: Ty::Param(param.clone()),
+                trait_ref: crate::ty::TraitRef {
+                    id: trait_id,
+                    args: Vec::new(),
+                    bindings: Vec::new(),
+                },
+            })
+            .collect();
         updates.push(Update::Impl(ImplDef {
             id: ImplId(0),
             generics: type_params.to_vec(),
-            bounds: Vec::new(),
+            bounds,
             self_ty: self_ty.clone(),
             trait_ref: Some(crate::ty::TraitRef {
                 id: trait_id,

@@ -178,26 +178,33 @@ fn iterator_shape(reg: &TypeRegistry, id: crate::ty::TypeId, args: &[Ty]) -> Opt
 /// bound says nothing, so the caller moves on to the next one — that is how
 /// `dyn Fn(T) + Send + Sync` stays a function.
 fn trait_shape(reg: &TypeRegistry, tr: &TraitRef) -> Option<JsShape> {
-    let name = reg.name_of(tr.id);
     let binding = |key: &str| {
         tr.bindings
             .iter()
             .find(|(n, _)| n == key)
             .map(|(_, t)| t.clone())
     };
-    match name.as_str() {
-        "Fn" | "FnMut" | "FnOnce" => {
-            let ret = binding("Output")?;
-            let params = match tr.args.first()? {
-                Ty::Unit => Vec::new(),
-                Ty::Tuple(elems) => elems.clone(),
-                single => vec![single.clone()],
-            };
-            Some(JsShape::Fn { params, ret })
-        }
-        "Into" | "AsRef" => tr.args.first().cloned().map(JsShape::SameAs),
-        "Iterator" | "IntoIterator" => binding("Item").map(JsShape::Array),
-        "Future" => Some(JsShape::Future(binding("Output"))),
-        _ => Some(JsShape::Trait(name)),
+    // By identity, not by leaf name. A crate that declares its own `Iterator`
+    // or `Future` — ankurah's `signals` very nearly does — would otherwise have
+    // every value behind that bound written as a JavaScript array or a promise.
+    let is = |path: &str| reg.system_type(path).is_some_and(|id| id == tr.id);
+    if is("std::ops::Fn") || is("std::ops::FnMut") || is("std::ops::FnOnce") {
+        let ret = binding("Output")?;
+        let params = match tr.args.first()? {
+            Ty::Unit => Vec::new(),
+            Ty::Tuple(elems) => elems.clone(),
+            single => vec![single.clone()],
+        };
+        return Some(JsShape::Fn { params, ret });
     }
+    if is("std::convert::Into") || is("std::convert::AsRef") {
+        return tr.args.first().cloned().map(JsShape::SameAs);
+    }
+    if is("std::iter::Iterator") || is("std::iter::IntoIterator") {
+        return binding("Item").map(JsShape::Array);
+    }
+    if is("std::future::Future") {
+        return Some(JsShape::Future(binding("Output")));
+    }
+    Some(JsShape::Trait(reg.name_of(tr.id)))
 }

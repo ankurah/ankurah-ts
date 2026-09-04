@@ -809,11 +809,44 @@ fn a_stub_type_is_declared_under_its_real_path_and_the_prelude_rule_holds() {
     // `Arc` is `std::sync::Arc` — the module its file says, not the file's name.
     let by_path = c.reg.lookup_type(module, &["std".into(), "sync".into(), "Arc".into()]);
     assert_eq!(by_path, Ok(Some(Def::Type(c.system_id(ARC)))));
-    // And `core::sync::Arc` names the same one, because `core` re-exports into
-    // `std` and ankurah writes both.
+    // `alloc::sync::Arc` names the same one: `std` re-exports it from `alloc`,
+    // and a path written either way reaches the one declaration.
+    assert_eq!(
+        c.reg.lookup_type(module, &["alloc".into(), "sync".into(), "Arc".into()]),
+        by_path
+    );
+    // `core::sync::Arc` does not exist in Rust — `core::sync` holds the atomics
+    // and nothing else — so it names nothing here either. Aliasing the whole of
+    // `std` under `core` used to resolve it, along with every other impossible
+    // path a typo could write.
     assert_eq!(
         c.reg.lookup_type(module, &["core".into(), "sync".into(), "Arc".into()]),
-        by_path
+        Ok(None)
+    );
+    assert_eq!(
+        c.reg.lookup_type(module, &["core".into(), "collections".into(), "HashMap".into()]),
+        Ok(None),
+        "`core` has no collections"
+    );
+    assert_eq!(
+        c.reg.lookup_type(module, &["alloc".into(), "sync".into(), "Mutex".into()]),
+        Ok(None),
+        "`alloc::sync` holds Arc and Weak, not the locks"
+    );
+    // The two the corpus actually writes.
+    assert_eq!(
+        c.reg.lookup_type(module, &["core".into(), "time".into(), "Duration".into()]),
+        c.reg.lookup_type(module, &["std".into(), "time".into(), "Duration".into()])
+    );
+    assert_eq!(
+        c.reg.lookup_type(
+            module,
+            &["core".into(), "sync".into(), "atomic".into(), "Ordering".into()]
+        ),
+        c.reg.lookup_type(
+            module,
+            &["std".into(), "sync".into(), "atomic".into(), "Ordering".into()]
+        )
     );
 
     // A bare `Arc` is not in Rust's prelude and is not in scope without an
@@ -1156,4 +1189,94 @@ fn a_named_type_takes_its_module_from_its_file() {
     // `std/primitive.rs` is still read in `std`, and now holds no named type at
     // all, so nothing is reachable at the wrong path through it.
     assert!(c.reg.system_type("std::char::ToLowercase").is_some());
+}
+
+// ── The closed-world policy and identity-keyed emission ───────────────
+
+#[test]
+fn sized_holds_for_anything_the_corpus_can_write() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub trait Marker { fn tag(&self) -> u8; }\n\
+         impl<T: Sized> Marker for T { fn tag(&self) -> u8 { 0 } }\n\
+         pub struct S;",
+    )]);
+    let s = c.named("lib.rs", "S", vec![]);
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&s, "tag")
+        .expect("a blanket written with `T: Sized` applies to an ordinary struct");
+    assert_eq!(found.ret, Ty::Prim(Prim::U8));
+}
+
+#[test]
+fn a_crate_type_keeps_its_own_name_and_its_own_statics() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct String { pub n: u8 }\n\
+         impl String { pub fn new() -> String { String { n: 0 } } }\n\
+         pub fn make() -> String { String::new() }",
+    )]);
+    let ts = c.translated_method("lib.rs", "make");
+    assert_eq!(
+        ts.trim(),
+        "return String.new();",
+        "a crate's own `String` is its class, not TypeScript's `string`, and \
+         `String::new()` is its static: {}",
+        ts
+    );
+}
+
+#[test]
+fn a_derive_on_a_generic_carries_the_bound_rustc_writes() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "#[derive(Clone)] pub struct W<T> { pub inner: T }\n\
+         pub struct NoClone;",
+    )]);
+    let clone = c.system_id("std::clone::Clone");
+    let no_clone = c.named("lib.rs", "NoClone", vec![]);
+    let wrapped = c.named("lib.rs", "W", vec![no_clone]);
+    assert!(
+        !c.probe("lib.rs").implements(&wrapped, clone),
+        "`#[derive(Clone)] struct W<T>` expands to `impl<T: Clone> Clone for W<T>`, \
+         so a `W<NoClone>` is not Clone"
+    );
+    let cloneable = c.named("lib.rs", "W", vec![Ty::Prim(Prim::U8)]);
+    assert!(c.probe("lib.rs").implements(&cloneable, clone));
+}
+
+#[test]
+fn a_default_type_parameter_is_filled_in_for_a_crate_type_too() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Hasher;\n\
+         pub struct Pair<T, U = T> { pub left: T, pub right: U }\n\
+         pub struct Bag<T, S = Hasher> { pub items: T, pub with: S }",
+    )]);
+    // A dependent default reads the argument written before it.
+    assert_eq!(
+        c.ty("lib.rs", "Pair<u8>"),
+        c.named("lib.rs", "Pair", vec![Ty::Prim(Prim::U8), Ty::Prim(Prim::U8)])
+    );
+    let hasher = c.named("lib.rs", "Hasher", vec![]);
+    assert_eq!(
+        c.ty("lib.rs", "Bag<u8>"),
+        c.named("lib.rs", "Bag", vec![Ty::Prim(Prim::U8), hasher])
+    );
+}
+
+#[test]
+fn a_struct_cannot_be_written_as_a_trait_bound() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Shape;\n\
+         pub struct Holder<T> { pub inner: T }\n\
+         impl<T: Shape> Holder<T> { pub fn tag(&self) -> u8 { 0 } }",
+    )]);
+    assert!(
+        c.messages().iter().any(|m| m.contains("is a struct, not a trait")),
+        "{:?}",
+        c.messages()
+    );
 }

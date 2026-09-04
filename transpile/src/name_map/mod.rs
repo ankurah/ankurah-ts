@@ -46,16 +46,26 @@ pub fn to_camel_case(s: &str) -> String {
 ///
 /// Property names are not in this position: `obj.default` and a method called
 /// `delete` are legal JavaScript, so nothing renames a field or a method.
-const RESERVED: [&str; 42] = [
-    "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
-    "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function",
-    "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "package",
-    "private", "protected", "public", "return", "static", "super", "switch", "this", "throw",
-    "true", "typeof", "var", "void",
+/// The list is ECMAScript's reserved words, plus the strict-mode reserved
+/// words (a module is always strict), plus the three names a module scope
+/// cannot rebind: `arguments` and `eval` are unassignable in strict mode, and
+/// `undefined` shadows the global every other line relies on.
+const RESERVED: [&str; 51] = [
+    "arguments", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+    "default", "delete", "do", "else", "enum", "eval", "export", "extends", "false", "finally",
+    "for", "function", "if", "implements", "import", "in", "instanceof", "interface", "let",
+    "new", "null", "package", "private", "protected", "public", "return", "static", "super",
+    "switch", "this", "throw", "true", "try", "typeof", "undefined", "var", "void", "while",
+    "with", "yield", "as", "of",
 ];
 
 /// The identifier a bound name is written under.
+///
+/// A Rust identifier can be written `r#type`, which is the name `type` with the
+/// raw-identifier marker in front of it; the marker is Rust syntax and not part
+/// of the name, so it comes off before the word is looked up.
 pub fn escape_reserved(name: &str) -> String {
+    let name = name.strip_prefix("r#").unwrap_or(name);
     if RESERVED.contains(&name) {
         format!("{}_", name)
     } else {
@@ -345,5 +355,32 @@ mod tests {
         assert_eq!(map_fn_name("serialize"), "encode");
         assert_eq!(map_fn_name("eq"), "equals");
         assert_eq!(map_fn_name("fetch_from_peer"), "fetchFromPeer");
+    }
+
+    use super::*;
+
+    #[test]
+    fn a_name_javascript_reserves_is_written_with_a_suffix() {
+        // The ones a Rust identifier can be and JavaScript cannot.
+        for word in ["new", "default", "class", "yield", "with", "eval", "arguments", "of", "as"] {
+            assert_eq!(escape_reserved(word), format!("{word}_"), "{word}");
+        }
+        // And the ones it can.
+        for word in ["entity", "collection", "id", "drop", "value"] {
+            assert_eq!(escape_reserved(word), word, "{word}");
+        }
+    }
+
+    #[test]
+    fn a_raw_identifier_loses_its_marker_before_the_word_is_looked_up() {
+        assert_eq!(escape_reserved("r#type"), "type");
+        assert_eq!(escape_reserved("r#new"), "new_");
+    }
+
+    #[test]
+    fn a_leading_underscore_is_kept_rather_than_read_as_a_word_break() {
+        assert_eq!(to_camel_case("_sub1"), "_sub1");
+        assert_eq!(to_camel_case("_unused_value"), "_unusedValue");
+        assert_eq!(to_camel_case("entity_id"), "entityId");
     }
 }

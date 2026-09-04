@@ -13,59 +13,71 @@
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 9
 method = "finish"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 9
 method = "field"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 9
 method = "debug_struct"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 57
 method = "len"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 57
 method = "unwrap"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
+col = 57
 method = "read"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 76
+col = 45
 method = "broadcast_id"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 99
+col = 29
 method = "unwrap"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 99
+col = 29
 method = "read"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 100
+col = 13
 method = "collect"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 100
+col = 13
 method = "cloned"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 100
+col = 13
 method = "values"

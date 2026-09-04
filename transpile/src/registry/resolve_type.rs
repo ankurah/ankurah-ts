@@ -280,9 +280,6 @@ fn fill_defaults(
     span: proc_macro2::Span,
     segments: &[String],
 ) -> Result<Vec<Ty>, Diag> {
-    if !env.reg.is_system(id) {
-        return Ok(args);
-    }
     let Some(def) = env.reg.def(id) else {
         return Ok(args);
     };
@@ -291,12 +288,26 @@ fn fill_defaults(
         return Ok(args);
     }
     if args.len() < declared {
-        // A default is written in the declaring type's own parameters, and
-        // std's are all closed (`RandomState`), so nothing has to be
-        // substituted into them here.
+        // A default is written in the declaring type's own parameters, so it is
+        // filled in one at a time and each one substituted through what came
+        // before it: `struct Pair<T, U = T>` written as `Pair<u8>` is
+        // `Pair<u8, u8>`, and reading the default without substituting gave a
+        // `Pair<u8, T>` whose `T` names nothing.
+        //
+        // A crate's own type is filled in the same way. Restricting this to the
+        // declared std surface left `struct Wrapper<T, S = Sha256>` in ankurah
+        // resolving to the wrong arity at every use.
+        let mut subst = crate::ty::subst::Subst::new();
+        for (param, arg) in def.type_params.iter().zip(&args) {
+            subst.insert(param.clone(), arg.clone());
+        }
         let missing: Vec<Option<Ty>> = def.param_defaults[args.len()..].to_vec();
         if missing.iter().all(|d| d.is_some()) {
-            args.extend(missing.into_iter().map(|d| d.unwrap()));
+            for (param, default) in def.type_params[args.len()..].iter().zip(missing) {
+                let filled = default.expect("just checked").substitute(&subst);
+                subst.insert(param.clone(), filled.clone());
+                args.push(filled);
+            }
             return Ok(args);
         }
     }
@@ -454,7 +465,31 @@ fn path_trait_ref(
 ) -> Result<TraitRef, Diag> {
     let id = match env.reg.lookup_type(env.module, segments) {
         Err(err) => return Err(env.refuse(span, err.message)),
-        Ok(Some(Def::Type(id))) => id,
+        // A name that resolves is only a trait if it was declared as one.
+        // Taking any declaration installed a struct that happened to share the
+        // leaf name as a bound, and every impl behind that bound then answered
+        // to a trait nobody wrote.
+        Ok(Some(Def::Type(id)))
+            if matches!(
+                env.reg.def(id).map(|d| &d.kind),
+                Some(crate::registry::TypeKind::Trait)
+            ) =>
+        {
+            id
+        }
+        Ok(Some(Def::Type(id))) => {
+            return Err(env.refuse(
+                span,
+                format!(
+                    "`{}` is a {}, not a trait, so it cannot be written as a bound",
+                    segments.join("::"),
+                    match env.reg.def(id).map(|d| &d.kind) {
+                        Some(crate::registry::TypeKind::Enum { .. }) => "enum",
+                        _ => "struct",
+                    }
+                ),
+            ))
+        }
         Ok(Some(_)) | Ok(None) => undeclared(segments, env, span, Position::Trait)?,
     };
 

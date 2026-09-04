@@ -30,6 +30,11 @@ const CRATES: [(&str, &str); 4] = [
 #[derive(Default)]
 struct Run {
     total: usize,
+    /// What the run said about the declared std surface. It is the same in
+    /// every crate's run — the stubs do not change between them — and it is
+    /// held to its own exact number, so a stub that starts failing to resolve
+    /// is a failing test rather than a line nobody reads.
+    surface: usize,
     /// Diagnostics by the reason the engine gave, so a failure says which kind
     /// of gap grew rather than only that the number did.
     by_cause: BTreeMap<String, usize>,
@@ -56,30 +61,67 @@ fn diagnostics_stay_within_budget() {
     });
     let budget: toml::Table = text.parse().expect("the budget file is not valid TOML");
 
-    let mut over = String::new();
+    let mut moved = String::new();
+
+    // The declared surface is one fact about `transpile/std_surface/`, so every
+    // crate's run has to report the same number, and that number is held
+    // exactly. The README says what those diagnostics are: the receivers and
+    // the raw pointers the engine does not model. Anything else is a stub that
+    // stopped resolving.
+    let surface = runs[0].1.surface;
+    for (name, run) in &runs {
+        assert_eq!(
+            run.surface, surface,
+            "`{name}` saw {} surface diagnostics and `{}` saw {surface}; the stubs \
+             are the same in both runs",
+            run.surface, runs[0].0
+        );
+    }
+    let recorded_surface = budget
+        .get("surface")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("total"))
+        .and_then(|v| v.as_integer())
+        .unwrap_or_else(|| panic!("no surface budget recorded; refresh with UPDATE_DIAGNOSTICS_BUDGET=1"))
+        as usize;
+    if surface != recorded_surface {
+        let _ = writeln!(
+            moved,
+            "\nstd_surface: {surface} diagnostics, recorded {recorded_surface}"
+        );
+    }
+
     for (name, run) in &runs {
         let entry = budget.get(*name).and_then(|v| v.as_table()).unwrap_or_else(|| {
             panic!("no budget recorded for `{name}`; refresh with UPDATE_DIAGNOSTICS_BUDGET=1")
         });
-        let allowed = entry
+        let recorded = entry
             .get("total")
             .and_then(|v| v.as_integer())
             .unwrap_or_else(|| panic!("`{name}` has no `total` in the budget file"))
             as usize;
-        if run.total <= allowed {
+        let deltas = cause_deltas(entry, &run.by_cause);
+        if run.total == recorded && deltas.is_empty() {
             continue;
         }
-        let _ = writeln!(over, "\n{name}: {} diagnostics, budget {allowed}", run.total);
-        for line in cause_deltas(entry, &run.by_cause) {
-            let _ = writeln!(over, "    {line}");
+        let _ = writeln!(
+            moved,
+            "\n{name}: {} diagnostics, recorded {recorded}",
+            run.total
+        );
+        for line in deltas {
+            let _ = writeln!(moved, "    {line}");
         }
     }
 
     assert!(
-        over.is_empty(),
-        "the engine types less of the corpus than it did:{over}\n\
-         Each of these is a fallback the translator still takes. If the rise is \
-         a step reporting something nobody counted before, record it with:\n    \
+        moved.is_empty(),
+        "the diagnostics moved:{moved}\n\
+         Each of these is a fallback the translator takes. The count is matched \
+         exactly, in both directions: a rise is coverage lost, and a fall is \
+         coverage gained that has to be recorded so the next run holds the new \
+         line. An upper bound alone let a step that stopped reporting a whole \
+         category pass unnoticed. Read the change, then record it with:\n    \
          cd transpile && UPDATE_DIAGNOSTICS_BUDGET=1 cargo test --test diagnostics_budget"
     );
 }
@@ -94,6 +136,9 @@ fn measure(crate_name: &str, src_dir: &str) -> Run {
         if let Some(rest) = line.strip_prefix("DIAGNOSTICS ") {
             run.total = field(rest, "total").unwrap_or_else(|| {
                 panic!("the summary line for `{crate_name}` has no total: {line}")
+            });
+            run.surface = field(rest, "surface").unwrap_or_else(|| {
+                panic!("the summary line for `{crate_name}` has no surface count: {line}")
             });
         } else if let Some(cause) = cause_of(line) {
             *run.by_cause.entry(cause).or_default() += 1;
@@ -188,13 +233,23 @@ fn cause_deltas(entry: &toml::Table, actual: &BTreeMap<String, usize>) -> Vec<St
 }
 
 fn render(runs: &[(&str, Run)]) -> String {
+    let surface = runs[0].1.surface;
     let mut out = String::from(
         "# Diagnostics budget, written by transpile/tests/diagnostics_budget.rs.\n\
          # Each number is how many fallbacks the translator still takes in that\n\
-         # crate — how much of it the engine cannot yet type. The test fails when\n\
-         # a count EXCEEDS its budget, so these only go down. Generated: do not\n\
+         # crate — how much of it the engine cannot yet type. Every number is\n\
+         # matched EXACTLY, in both directions: a rise is coverage lost, and a\n\
+         # fall is coverage gained that has to be recorded, so a step that stops\n\
+         # reporting a whole category cannot pass unnoticed. Generated: do not\n\
          # hand-edit. Refresh with:\n\
          #     cd transpile && UPDATE_DIAGNOSTICS_BUDGET=1 cargo test --test diagnostics_budget\n",
+    );
+    let _ = write!(
+        out,
+        "\n# What the declared std surface itself reports, which is the same in\n\
+         # every crate's run. The README's \"Engine gaps the stubs expose\" says\n\
+         # what these are; anything else is a stub that stopped resolving.\n\
+         [surface]\ntotal = {surface}\n"
     );
     for (name, run) in runs {
         let _ = write!(out, "\n[{name}]\ntotal = {}\n\n[{name}.by_cause]\n", run.total);

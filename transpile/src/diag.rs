@@ -53,9 +53,9 @@ impl Diag {
 pub struct DiagSink {
     file: RefCell<String>,
     diags: RefCell<Vec<Diag>>,
-    /// Messages already filed once. A type with no declaration is reported at
-    /// its first use, not at all several thousand of them.
-    once: RefCell<HashSet<String>>,
+    /// Messages already filed once, per domain: the declared surface and the
+    /// crate are counted apart and must not silence each other.
+    once: RefCell<HashSet<(bool, String)>>,
 }
 
 impl DiagSink {
@@ -84,9 +84,18 @@ impl DiagSink {
 
     /// Report at a span, but only the first time this exact message is seen.
     /// Used for a missing declaration, which is one fact however many sites hit it.
+    ///
+    /// The record of what has been said is kept per *domain* — the declared
+    /// surface and the crate being transpiled are two — because they are two
+    /// measures that must not silence each other. A stub reporting
+    /// "no declaration for `Waker`" used to suppress the identical sentence
+    /// about ankurah's own code, and the crate's coverage number then depended
+    /// on which file the run happened to read first.
     pub fn report_once(&self, span: proc_macro2::Span, message: impl Into<String>) {
         let message = message.into();
-        if !self.once.borrow_mut().insert(message.clone()) {
+        let file = self.file.borrow().clone();
+        let key = (is_surface(&file), message.clone());
+        if !self.once.borrow_mut().insert(key) {
             return;
         }
         self.report(span, message);

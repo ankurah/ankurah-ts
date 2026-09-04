@@ -186,6 +186,9 @@ fn oracle_loads() {
 struct Pinned {
     file: String,
     line: u32,
+    /// Pinned by span, not by line: two calls on one line — `a.b().c()` — are
+    /// two sites, and matching by line alone let either one satisfy the pin.
+    col: u32,
     method: String,
     /// Set where the port declares a different signature from Rust's, so the
     /// two result types are not expected to agree.
@@ -233,10 +236,12 @@ fn engine_matches_oracle() {
         let method = callee_method(&site.callee);
         let pin = pinned
             .iter()
-            .find(|p| p.file == site.file && p.line == site.line && p.method == method);
+            .find(|p| p.file == site.file && p.line == site.line && p.col == site.col && p.method == method);
         let Some(row) = engine
             .iter()
-            .find(|r| r.file == site.file && r.line == site.line && r.method == method)
+            .find(|r| {
+                r.file == site.file && r.line == site.line && r.col == site.col && r.method == method
+            })
         else {
             if pin.is_some() {
                 mismatches.push(format!(
@@ -398,7 +403,7 @@ fn callee_owner(callee: &str) -> String {
 fn callee_identity(callee: &str, _kind: &str) -> (String, String) {
     // rust-analyzer writes a trait method as `Trait::method` and an inherent one
     // as `Type<..>::method`; either way the owner is what identifies it.
-    (head(&callee_owner(callee)), callee_method(callee))
+    (head_name(&callee_owner(callee)), callee_method(callee))
 }
 
 /// The engine writes a trait callee as `<Self as Trait>::method`.
@@ -410,9 +415,9 @@ fn engine_callee_identity(callee: &str) -> (String, String) {
     };
     if let Some(at) = owner.find(" as ") {
         let trait_name = owner[at + 4..].trim_end_matches('>');
-        return (head(trait_name), name);
+        return (head_name(trait_name), name);
     }
-    (head(owner.trim_start_matches('<')), name)
+    (head_name(owner.trim_start_matches('<')), name)
 }
 
 /// The borrow a type is behind and the constructor at its head, which is what
@@ -430,11 +435,87 @@ fn shape(ty: &str) -> (String, String) {
     (borrow.to_string(), head(rest))
 }
 
+/// The whole written type, reduced to the tree of names it is built from:
+/// `alloc::vec::Vec<u8>` and `Vec<u8>` both become `Vec<u8>`, and
+/// `Vec<String>` does not.
+///
+/// Only the *leaf* of each name is compared, because rust-analyzer and the
+/// engine render module paths differently and there is no mapping between the
+/// two spellings; the arguments are compared all the way down, which is what
+/// tells `Result<Entity, RetrievalError>` from `Result<Entity, MutationError>`.
+/// Comparing only the outermost name let an inner-generic difference pass.
 fn head(ty: &str) -> String {
     let ty = ty.trim().trim_start_matches('&').trim_start_matches("mut ").trim();
     if ty.starts_with('[') {
         return "[]".to_string();
     }
-    let name = ty.split(['<', ' ']).next().unwrap_or(ty);
+    let Some(open) = ty.find('<') else {
+        let name = ty.split([' ', ',']).next().unwrap_or(ty);
+        return name.rsplit("::").next().unwrap_or(name).to_string();
+    };
+    let Some(close) = ty.rfind('>') else {
+        let name = &ty[..open];
+        return name.rsplit("::").next().unwrap_or(name).to_string();
+    };
+    let name = ty[..open].rsplit("::").next().unwrap_or(&ty[..open]).to_string();
+    let args: Vec<String> = split_arguments(&ty[open + 1..close])
+        .into_iter()
+        .map(|arg| head(&arg))
+        .collect();
+    if args.is_empty() {
+        return name;
+    }
+    format!("{}<{}>", name, args.join(","))
+}
+
+/// Split a generic argument list on the commas that are not inside a nested
+/// argument list of its own.
+fn split_arguments(inner: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for ch in inner.chars() {
+        match ch {
+            '<' | '(' | '[' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '>' | ')' | ']' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let part = current.trim().to_string();
+                if !part.is_empty() {
+                    out.push(part);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let part = current.trim().to_string();
+    if !part.is_empty() {
+        out.push(part);
+    }
+    // A lifetime is not a type, and neither is the allocator parameter
+    // rust-analyzer prints on `Vec` and `HashMap`: nightly declares
+    // `Vec<T, A = Global>`, the declared surface does not model allocators, and
+    // the README says so. Both are dropped rather than compared.
+    out.retain(|p| !p.starts_with('\'') && p != "Global");
+    out
+}
+
+/// A type's outermost name, with no arguments. The owner of a callee is
+/// identified by its name; the parameters printed beside it are the
+/// declaration's own placeholders — `HashMap<K, V, S>` here and
+/// `HashMap<K, V, S, A>` in rust-analyzer — and say nothing about which
+/// function was selected.
+fn head_name(ty: &str) -> String {
+    let ty = ty.trim().trim_start_matches('&').trim_start_matches("mut ").trim();
+    if ty.starts_with('[') {
+        return "[]".to_string();
+    }
+    let name = ty.split(['<', ' ', ',']).next().unwrap_or(ty);
     name.rsplit("::").next().unwrap_or(name).to_string()
 }

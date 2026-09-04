@@ -1,9 +1,17 @@
 # Diagnostics budget, written by transpile/tests/diagnostics_budget.rs.
 # Each number is how many fallbacks the translator still takes in that
-# crate — how much of it the engine cannot yet type. The test fails when
-# a count EXCEEDS its budget, so these only go down. Generated: do not
+# crate — how much of it the engine cannot yet type. Every number is
+# matched EXACTLY, in both directions: a rise is coverage lost, and a
+# fall is coverage gained that has to be recorded, so a step that stops
+# reporting a whole category cannot pass unnoticed. Generated: do not
 # hand-edit. Refresh with:
 #     cd transpile && UPDATE_DIAGNOSTICS_BUDGET=1 cargo test --test diagnostics_budget
+
+# What the declared std surface itself reports, which is the same in
+# every crate's run. The README's "Engine gaps the stubs expose" says
+# what these are; anything else is a stub that stopped resolving.
+[surface]
+total = 66
 
 [proto]
 total = 149
@@ -34,15 +42,15 @@ total = 3
 "no declaration for type X" = 1
 
 [signals]
-total = 273
+total = 266
 
 [signals.by_cause]
-"X is bound here but the engine could not type it" = 136
+"X is bound here but the engine could not type it" = 131
 "the closure takes ownership of X" = 35
-"no associated function X on X" = 21
+"X does not name a function here" = 17
 "X does not name a value here" = 17
+"no associated function X on X" = 12
 "obligation deferred: X (the subject is still a type parameter)" = 11
-"X does not name a function here" = 10
 "X has a type the engine cannot say owns anything, so nothing releases it" = 10
 "X is guessed to be a constructor from its capitalisation" = 7
 "path qualifiers std, sync, atomic are dropped by name" = 6
@@ -57,29 +65,31 @@ total = 273
 "path qualifiers sync are dropped by name" = 1
 
 [core]
-total = 3306
+total = 3327
 
 [core.by_cause]
-"X is bound here but the engine could not type it" = 1185
-"no method X on X" = 409
-"obligation deferred: X (the subject is still a type parameter)" = 260
+"X is bound here but the engine could not type it" = 1163
+"no method X on X" = 407
+"obligation deferred: X (the subject is still a type parameter)" = 276
 "X does not name a value here" = 245
-"no field X on X" = 216
-"no associated function X on X" = 201
-"X does not name a function here" = 109
-"method X resolved through trait X, which is not in scope here" = 109
+"no field X on X" = 217
+"X does not name a function here" = 154
+"no associated function X on X" = 146
+"method X resolved through trait X, which is not in scope here" = 111
 "no declaration for type X" = 87
-"X has a type the engine cannot say owns anything, so nothing releases it" = 66
-"X is lowered as a X without the engine having named what it tests" = 64
+"X has a type the engine cannot say owns anything, so nothing releases it" = 64
+"X is lowered as a X without the engine having named what it tests" = 63
 "the closure takes ownership of X" = 30
 "path qualifiers std are dropped by name" = 28
 "X is guessed to be a constructor from its capitalisation" = 22
+"X outside an impl" = 20
 "X has no declared type" = 18
 "X converts RetrievalError to Error through X, which the engine has not resolved" = 16
 "X converts RetrievalError to MutationError through X, which the engine has not resolved" = 16
 "no arm of this match has a type the engine could read" = 16
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 16
 "X expressions are not typed yet" = 15
+"X is declared with 1 type argument(s) but 2 written here" = 15
 "path qualifiers std, sync are dropped by name" = 14
 "no X impl reaches X with the index written here" = 13
 "X converts F to RetrievalError through X, which the engine has not resolved" = 11
@@ -91,13 +101,13 @@ total = 3306
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 8
 "X converts AccessDenied to Error through X, which the engine has not resolved" = 6
 "X converts AccessDenied to MutationError through X, which the engine has not resolved" = 6
+"X is declared with 1 type argument(s) but 0 written here" = 6
 "X converts AccessDenied to RetrievalError through X, which the engine has not resolved" = 5
 "X converts MutationError to Error through X, which the engine has not resolved" = 5
 "X is a receiver the engine does not model" = 5
 "X converts E to RetrievalError through X, which the engine has not resolved" = 4
 "X converts F to MutationError through X, which the engine has not resolved" = 3
 "X converts RequestError to RetrievalError through X, which the engine has not resolved" = 3
-"X does not dereference" = 3
 "path qualifiers std, collections are dropped by name" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "path qualifiers sync are dropped by name" = 3
@@ -117,9 +127,10 @@ total = 3306
 "X converts F to IndexError through X, which the engine has not resolved" = 1
 "X converts StateError to Error through X, which the engine has not resolved" = 1
 "X dereferences without a field to assign through" = 1
+"X does not dereference" = 1
+"X is declared with 2 type argument(s) but 0 written here" = 1
 "X on X is ambiguous between <S as TryStreamExt>::map_err and <T as TryFutureExt>::map_err" = 1
 "X on X is ambiguous between <Vec<T> as Extend>::extend and <Vec<T> as Extend>::extend" = 1
-"no X impl reaches X" = 1
 "path qualifiers iter are dropped by name" = 1
 "path qualifiers std, fmt are dropped by name" = 1
 "path qualifiers std, iter are dropped by name" = 1

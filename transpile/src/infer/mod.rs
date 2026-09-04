@@ -3,6 +3,7 @@
 mod context;
 #[cfg(test)]
 mod context_tests;
+mod patterns;
 mod scope;
 
 pub use context::TypeContext;

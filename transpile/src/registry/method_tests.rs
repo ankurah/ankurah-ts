@@ -680,3 +680,47 @@ fn a_nested_undecidable_bound_is_not_swallowed() {
     );
     assert_eq!(found.obligations[0].reason, Undecided::NoDeclaration);
 }
+
+// ── Supertraits and turbofish through a bound ─────────────────────────
+
+#[test]
+fn a_supertrait_method_keeps_the_arguments_the_bound_gave_it() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub trait Super<A> { fn get(&self) -> A; }\n\
+         pub trait Sub<B>: Super<B> { fn tag(&self) -> u8; }",
+    )]);
+    let sub = c.reg.module_type(c.module("lib.rs"), "Sub").unwrap();
+    let bound = crate::ty::TraitRef {
+        id: sub,
+        args: vec![Ty::Prim(Prim::U8)],
+        bindings: Vec::new(),
+    };
+    let in_scope = [("T".to_string(), bound)];
+    let probe = crate::registry::Probe::new(&c.reg, c.module("lib.rs")).with_bounds(&in_scope);
+    let found = probe
+        .resolve_method(&Ty::Param("T".into()), "get")
+        .expect("Super::get through Sub");
+    assert_eq!(
+        found.ret,
+        Ty::Prim(Prim::U8),
+        "`T: Sub<u8>` makes `Super`'s `A` a u8; returning a loose `A` \
+         left every supertrait method untyped"
+    );
+}
+
+#[test]
+fn a_turbofish_binds_through_a_bound_dispatched_call() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub trait Source { fn fetch<B>(&self) -> B; }",
+    )]);
+    let source = c.reg.module_type(c.module("lib.rs"), "Source").unwrap();
+    let bound = crate::ty::TraitRef { id: source, args: Vec::new(), bindings: Vec::new() };
+    let in_scope = [("T".to_string(), bound)];
+    let probe = crate::registry::Probe::new(&c.reg, c.module("lib.rs")).with_bounds(&in_scope);
+    let found = probe
+        .resolve_method_with(&Ty::Param("T".into()), "fetch", &[Ty::Prim(Prim::U16)])
+        .expect("Source::fetch");
+    assert_eq!(found.ret, Ty::Prim(Prim::U16));
+}

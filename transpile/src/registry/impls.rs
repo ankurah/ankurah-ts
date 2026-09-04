@@ -169,6 +169,11 @@ pub struct ImplTable {
     by_trait: HashMap<TypeId, Vec<ImplId>>,
     /// Impls written for one of their own parameters.
     blanket: Vec<ImplId>,
+    /// The blanket impls that offer each method name, filled in once every
+    /// trait has its declarations. A blanket impl matches *every* receiver, so
+    /// without this each method call in the corpus unified against all of them
+    /// — and the surface declares hundreds.
+    blanket_by_method: HashMap<String, Vec<ImplId>>,
 }
 
 impl ImplTable {
@@ -210,6 +215,25 @@ impl ImplTable {
 
     pub fn blanket(&self) -> &[ImplId] {
         &self.blanket
+    }
+
+    /// The blanket impls that could answer to this method name.
+    ///
+    /// Before the index is built — during the passes that resolve
+    /// declarations — every blanket is a candidate, because a trait whose
+    /// methods are not yet known cannot say what it offers.
+    pub fn blanket_offering(&self, name: &str) -> &[ImplId] {
+        if self.blanket_by_method.is_empty() {
+            return &self.blanket;
+        }
+        self.blanket_by_method
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub(super) fn set_blanket_index(&mut self, index: HashMap<String, Vec<ImplId>>) {
+        self.blanket_by_method = index;
     }
 
     pub fn of_trait(&self, trait_id: TypeId) -> &[ImplId] {

@@ -656,6 +656,34 @@ addressed by the step that found it.
   the read-only half of `Vec<u8>` translates and every call that would grow or
   shrink one is reported. Choosing a byte-buffer type is a runtime decision
   (`packages/base`), not a transpiler one.
+- **`core` and `alloc` are modelled as the modules they really have, not as
+  aliases of the whole of `std`.** Every declaration is written under
+  `std_surface/std/`, because that is where the stubs live; the other two roots
+  are built from a table of the modules each crate genuinely holds, with
+  `core::sync` and `alloc::sync` assembled item by item because their contents
+  differ from `std::sync`'s. A `core::` or `alloc::` module the table does not
+  list resolves to nothing, which is what Rust does — adding one is a line in
+  `ROOT_REEXPORTS`.
+- **A method's `where` clause is checked only once its parts are closed.**
+  `fn collect<B: FromIterator<Self::Item>>` written with no turbofish leaves `B`
+  open, and `fn get<Q>(&self, k: &Q) where K: Borrow<Q>` leaves the `Q` inside
+  the bound open; rustc decides both from the argument and the expected type,
+  which is step 4. Until then a bound still naming an unfilled parameter is
+  skipped rather than failed — failing it deleted `HashMap::get` and
+  `Iterator::collect` outright — and a bound the substitution closed is decided
+  normally.
+- **A derive proves what rustc's derive proves and no more.**
+  `#[derive(Clone)] struct W<T>` registers `impl<T: Clone> Clone for W<T>`, so a
+  `W<NotClone>` is not `Clone`. rustc's rule is per type *parameter*, not per
+  field, and it is deliberately stricter than a field-wise analysis would be:
+  the engine follows rustc rather than being cleverer than it.
+- **A type's arguments are compared all the way down against the oracle, but
+  each name only by its leaf.** rust-analyzer and the declared surface render
+  module paths differently and there is no mapping between the two spellings, so
+  `Vec<u8>` and `alloc::vec::Vec<u8>` compare equal while `Vec<u8>` and
+  `Vec<String>` do not. rust-analyzer's allocator parameter (`Global`) and its
+  lifetimes are dropped from the comparison: the surface models neither, and the
+  README says so.
 - **Raw pointers are not modelled.** `*const T` and `*mut T` stop
   `resolve_type`, so a signature that names one is left out of the method table
   — `Weak::as_ptr` and `Arc::as_ptr` are the corpus's only uses, both immediately

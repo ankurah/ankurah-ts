@@ -236,7 +236,7 @@ impl TypeRegistry {
         // thing tried and applies only inside the surface: a crate's own module
         // never reaches it, so nothing ankurah writes can resolve this way.
         if here && self.modules().get(module).is_system {
-            return self.surface_item(ns, name);
+            return self.surface_item(ns, name, module);
         }
         Ok(None)
     }

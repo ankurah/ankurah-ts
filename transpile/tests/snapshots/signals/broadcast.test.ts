@@ -42,27 +42,40 @@ describe('broadcast unit tests', () => {
 
   test('test_channel_sender_subscriber', () => {
     const sender = Broadcast.new();
-    const [tx, rx] = tokio.mpsc.unboundedChannel();
-    const _sub = sender.reference().listen(tx);
-    sender.send([]);
-    const _t0 = rx.tryRecv();
     try {
-      if (!(_t0.isOk())) throw new Error('assertion failed');
-      sender.send([]);
-      const _t1 = rx.tryRecv();
+      const [tx, rx] = tokio.mpsc.unboundedChannel();
+      const _t0 = sender.reference();
       try {
-        if (!(_t1.isOk())) throw new Error('assertion failed');
-        const _t2 = rx.tryRecv();
+        const _sub = _t0.listen(tx);
         try {
-          if (!(_t2.isErr())) throw new Error('assertion failed');
+          sender.send([]);
+          const _t1 = rx.tryRecv();
+          try {
+            if (!(_t1.isOk())) throw new Error('assertion failed');
+            sender.send([]);
+            const _t2 = rx.tryRecv();
+            try {
+              if (!(_t2.isOk())) throw new Error('assertion failed');
+              const _t3 = rx.tryRecv();
+              try {
+                if (!(_t3.isErr())) throw new Error('assertion failed');
+              } finally {
+                _t3.drop();
+              }
+            } finally {
+              _t2.drop();
+            }
+          } finally {
+            _t1.drop();
+          }
         } finally {
-          _t2.drop();
+          _sub.drop();
         }
       } finally {
-        _t1.drop();
+        _t0.drop();
       }
     } finally {
-      _t0.drop();
+      sender.drop();
     }
   });
 

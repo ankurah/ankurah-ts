@@ -992,7 +992,11 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Call(call) => {
                 let func = self.expr(&call.func);
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
-                self.translate_call(&func, &args, syn::spanned::Spanned::span(call))
+                let path = match &*call.func {
+                    syn::Expr::Path(path) => Some(&path.path),
+                    _ => None,
+                };
+                self.translate_call(&func, &args, syn::spanned::Spanned::span(call), path)
             }
 
             syn::Expr::Binary(bin) => {
@@ -1771,14 +1775,20 @@ impl<'a> BodyTranslator<'a> {
     // constructor heuristic) stay here. Type-specific translations
     // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
 
-    fn translate_call(&self, func: &str, args: &[String], span: proc_macro2::Span) -> String {
+    fn translate_call(
+        &self,
+        func: &str,
+        args: &[String],
+        span: proc_macro2::Span,
+        callee: Option<&syn::Path>,
+    ) -> String {
         // 0. Resolve inline module qualifiers (e.g., stack.track → track)
         // Resolve inline module qualifiers (e.g., stack.track → track).
         // Import generation is handled by codegen.rs scanning the translated bodies.
         for mod_name in &self.inline_module_names {
             let prefix = format!("{}.", mod_name);
             if let Some(stripped) = func.strip_prefix(&prefix) {
-                return self.translate_call(stripped, args, span);
+                return self.translate_call(stripped, args, span, callee);
             }
         }
 
@@ -1812,8 +1822,15 @@ impl<'a> BodyTranslator<'a> {
         }
 
         // 2. Native type static calls (Vec::new, HashMap::new, Arc::clone, etc.)
-        if let Some(result) = native_types::translate_static_call(func, args) {
-            return result;
+        //
+        // The table is keyed by the written name, so it is only consulted where
+        // that name does not belong to a type this crate declared. A crate's own
+        // `Vec` is its own class, and `Vec::new()` on it is `Vec.new()`, not a
+        // JavaScript array literal.
+        if !self.names_crate_type(callee) {
+            if let Some(result) = native_types::translate_static_call(func, args) {
+                return result;
+            }
         }
 
         // 3. Serde/bincode crate calls
@@ -1928,6 +1945,32 @@ impl<'a> BodyTranslator<'a> {
 
         // 10. Default: plain function call
         format!("{}({})", func, args.join(", "))
+    }
+
+    /// Does the type part of this callee path name a type this crate declared?
+    ///
+    /// `Vec::new` in ankurah is std's `Vec` unless ankurah declares one of its
+    /// own; the name tables downstream cannot tell the difference, so the
+    /// registry is asked before they are consulted.
+    fn names_crate_type(&self, callee: Option<&syn::Path>) -> bool {
+        let (Some(path), Some(tc)) = (callee, &self.types) else {
+            return false;
+        };
+        if path.segments.len() < 2 {
+            return false;
+        }
+        let owner: Vec<String> = path
+            .segments
+            .iter()
+            .take(path.segments.len() - 1)
+            .map(|s| s.ident.to_string())
+            .collect();
+        let tc = tc.borrow();
+        matches!(
+            tc.registry.lookup_type(tc.module, &owner),
+            Ok(Some(crate::registry::Def::Type(id)))
+                if !id.is_foreign() && !tc.registry.is_system(id)
+        )
     }
 
     // ── Path translation ────────────────────────────────────────────

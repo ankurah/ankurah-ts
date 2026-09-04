@@ -65,7 +65,16 @@ fn named(reg: &TypeRegistry, ty: &Ty) -> String {
     match ty {
         Ty::Named { id, args } => {
             let name = reg.name_of(*id);
-            let mapped = map_type_name(&name).to_string();
+            // The name table renders std's and a foreign crate's types; a
+            // crate's own declaration keeps the name it was declared with. A
+            // `struct String` in ankurah is a class called `String`, not
+            // TypeScript's `string`, and mapping it by leaf name silently made
+            // it one.
+            let mapped = if id.is_foreign() || reg.is_system(*id) {
+                map_type_name(&name).to_string()
+            } else {
+                name
+            };
             if args.is_empty() {
                 return mapped;
             }

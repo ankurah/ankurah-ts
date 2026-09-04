@@ -5,6 +5,8 @@
 //! to the visibility the declaration was written with, so two modules can each
 //! declare a `Ref` and a crate type can never displace a system type.
 
+mod assoc;
+mod bounds;
 mod build;
 mod describe;
 #[cfg(test)]
@@ -240,6 +242,37 @@ impl TypeRegistry {
         self.shapes = crate::name_map::system_shapes::SystemShapes::resolve(self);
     }
 
+    /// File every blanket impl under the method names it can answer to.
+    ///
+    /// A blanket impl is written for one of its own parameters, so it matches
+    /// every receiver and every method call had to unify against all of them.
+    /// The names come from the impl's own methods and, where it inherits a
+    /// default body, from the trait's declarations — which is why this runs
+    /// after both are resolved.
+    pub(super) fn index_blankets(&mut self) {
+        let mut index: HashMap<String, Vec<impls::ImplId>> = HashMap::new();
+        for &id in self.impls.blanket() {
+            let def = self.impls.get(id);
+            let mut names: Vec<String> = def.methods.keys().cloned().collect();
+            if let Some(tr) = &def.trait_ref {
+                if let Some(declared) = self.traits.get(&tr.id) {
+                    names.extend(declared.methods.keys().cloned());
+                    for supertrait in &declared.supertraits {
+                        if let Some(sup) = self.traits.get(&supertrait.id) {
+                            names.extend(sup.methods.keys().cloned());
+                        }
+                    }
+                }
+            }
+            names.sort();
+            names.dedup();
+            for name in names {
+                index.entry(name).or_default().push(id);
+            }
+        }
+        self.impls.set_blanket_index(index);
+    }
+
     pub fn shapes(&self) -> &crate::name_map::system_shapes::SystemShapes {
         &self.shapes
     }
@@ -408,13 +441,32 @@ impl TypeRegistry {
     }
 
     /// What a bare name written inside the surface stands for.
-    pub(super) fn surface_item(&self, ns: Ns, name: &str) -> Result<Option<Def>, lookup::LookupError> {
-        match self
+    ///
+    /// A stub's own crate answers first. `serde::de::Deserializer` and
+    /// `serde_wasm_bindgen::Deserializer` are two different declarations of one
+    /// leaf name, and a bare `Deserializer` written inside `extern/serde.rs`
+    /// means serde's, exactly as it does in Rust. Only where the writer's own
+    /// crate has no declaration does the rest of the surface answer, and two
+    /// answers there are a stub that has to say which.
+    pub(super) fn surface_item(
+        &self,
+        ns: Ns,
+        name: &str,
+        from: ModuleId,
+    ) -> Result<Option<Def>, lookup::LookupError> {
+        let found = self
             .surface_names
             .get(&(ns, name.to_string()))
             .map(|found| found.as_slice())
-            .unwrap_or(&[])
-        {
+            .unwrap_or(&[]);
+        let own_crate = self.surface_crate_of(from);
+        let same_crate: Vec<Def> = found
+            .iter()
+            .filter(|def| self.def_crate(**def) == own_crate)
+            .copied()
+            .collect();
+        let candidates: &[Def] = if same_crate.is_empty() { found } else { &same_crate };
+        match candidates {
             [] => Ok(None),
             [only] => Ok(Some(*only)),
             many => Err(lookup::LookupError {
@@ -426,6 +478,26 @@ impl TypeRegistry {
                 ),
             }),
         }
+    }
+
+    /// The surface crate a module belongs to — the first segment of its path in
+    /// the system tree, which is the crate the stub file was read under.
+    fn surface_crate_of(&self, module: ModuleId) -> Option<String> {
+        self.modules.get(module).path.first().cloned()
+    }
+
+    /// The surface crate a declaration belongs to, where it is one the surface
+    /// declared at all.
+    fn def_crate(&self, def: Def) -> Option<String> {
+        let module = match def {
+            Def::Type(id) => self.def(id)?.module,
+            Def::Alias(id) => self.alias(id)?.module,
+            // A value — a `const`, a function — and a module record no module
+            // of their own, so neither can be preferred by crate and every
+            // candidate stands.
+            Def::Value(_) | Def::Module(_) => return None,
+        };
+        self.surface_crate_of(module)
     }
 
     /// The id standing for a type nothing declares, created on first sight.

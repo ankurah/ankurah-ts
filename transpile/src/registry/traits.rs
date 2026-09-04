@@ -63,26 +63,54 @@ impl TypeRegistry {
     /// Returns the trait the declaration was found on together with the method,
     /// because the two differ whenever a supertrait supplies it.
     pub fn trait_method(&self, trait_id: TypeId, name: &str) -> Option<(TypeId, &TraitMethod)> {
-        self.trait_method_within(trait_id, name, &mut Vec::new())
+        let found = self.trait_method_of(
+            &TraitRef {
+                id: trait_id,
+                args: Vec::new(),
+                bindings: Vec::new(),
+            },
+            name,
+        )?;
+        Some((found.0.id, found.1))
+    }
+
+    /// The same, keeping the *instantiated* trait the method was declared on.
+    ///
+    /// `trait Sub<B>: Super<B>` reached through `T: Sub<u8>` declares `get` on
+    /// `Super<u8>`, not on a `Super<A>` whose `A` nobody bound. Returning only
+    /// the trait's id threw the arguments away, and every method a supertrait
+    /// supplied came back with its own parameters still loose.
+    pub fn trait_method_of(&self, of: &TraitRef, name: &str) -> Option<(TraitRef, &TraitMethod)> {
+        self.trait_method_within(of, name, &mut Vec::new())
     }
 
     fn trait_method_within(
         &self,
-        trait_id: TypeId,
+        of: &TraitRef,
         name: &str,
         seen: &mut Vec<TypeId>,
-    ) -> Option<(TypeId, &TraitMethod)> {
-        if seen.contains(&trait_id) {
+    ) -> Option<(TraitRef, &TraitMethod)> {
+        if seen.contains(&of.id) {
             return None;
         }
-        seen.push(trait_id);
-        let def = self.trait_def(trait_id)?;
+        seen.push(of.id);
+        let def = self.trait_def(of.id)?;
         if let Some(method) = def.methods.get(name) {
-            return Some((trait_id, method));
+            return Some((of.clone(), method));
         }
-        // Cloned out of the borrow so the recursive call can borrow `self` again.
-        let supers: Vec<TypeId> = def.supertraits.iter().map(|t| t.id).collect();
-        for supertrait in supers {
+        // The supertraits are written in terms of this trait's parameters, so
+        // they are instantiated with what stood at them before the search goes
+        // on. Cloned out of the borrow so the recursive call can borrow again.
+        let mut subst = crate::ty::bind_params(&def.generics, &of.args);
+        for (assoc, ty) in &of.bindings {
+            subst.insert(assoc.clone(), ty.clone());
+        }
+        let supers: Vec<TraitRef> = def
+            .supertraits
+            .iter()
+            .map(|t| t.substitute(&subst))
+            .collect();
+        for supertrait in &supers {
             if let Some(found) = self.trait_method_within(supertrait, name, seen) {
                 return Some(found);
             }
