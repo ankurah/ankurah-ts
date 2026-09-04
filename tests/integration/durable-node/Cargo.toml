@@ -1,0 +1,39 @@
+# The durable Rust node that the TypeScript integration harness talks to.
+#
+# This crate stands alone: it declares its own `[workspace]` so that Cargo does not
+# try to enrol it in the ankurah workspace next door. Every ankurah dependency is a
+# path dependency into the read-only support checkout at ../ankurah-ts-support
+# (a sibling of the ankurah-ts repository root, per port/port-runbook.md).
+[package]
+name    = "ankurah-ts-durable-node"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ankurah-ts-durable-node"
+path = "src/main.rs"
+
+[dependencies]
+ankurah                  = { path = "../../../../ankurah-ts-support/ankurah", version = "=0.7.21" }
+ankurah-websocket-server = { path = "../../../../ankurah-ts-support/connectors/websocket-server", version = "=0.7.21" }
+ankurah-storage-sled     = { path = "../../../../ankurah-ts-support/storage/sled", version = "=0.7.21" }
+example-model            = { path = "../../../../ankurah-ts-support/examples/model" }
+anyhow                   = "1.0"
+# Same axum the websocket server is built on: this binary owns the listener and mounts the
+# server's own route handler on it, so both sides must agree on axum's types.
+axum                     = "0.8.3"
+tokio                    = { version = "1.38", features = ["rt-multi-thread", "macros", "signal", "net"] }
+tracing                  = "0.1"
+tracing-subscriber       = "0.3"
+
+# Stand alone rather than joining the ankurah workspace next door.
+[workspace]
+
+# Mirrors ankurah-ts-support/Cargo.toml so that a shared CARGO_TARGET_DIR (see
+# tests/integration/support/durable-node.ts) reuses the support tree's artifacts
+# instead of rebuilding every dependency under a different profile fingerprint.
+[profile.dev]
+opt-level       = 0
+debug           = true
+split-debuginfo = "unpacked"

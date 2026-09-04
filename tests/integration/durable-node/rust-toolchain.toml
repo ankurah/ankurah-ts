@@ -1,0 +1,5 @@
+# Copied from ankurah-ts-support/rust-toolchain.toml. The ankurah crates this binary
+# links against are built with nightly; pinning the same channel here keeps the two
+# builds sharing one set of artifacts.
+[toolchain]
+channel = "nightly"
