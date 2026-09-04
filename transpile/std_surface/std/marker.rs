@@ -43,6 +43,15 @@ impl<T: ?Sized> Debug for PhantomData<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() }
 }
 
+/// `Unsize` is how `[T; N]` reaches `[T]` and how `&T` reaches `&dyn Trait`:
+/// a coercion, not a `Deref` step, which the oracle records as
+/// `Pointer(Unsize)`. Unstable in real std, and declared here rather than in
+/// `std/slice.rs` because `std::marker` is its module. The slice impl is in
+/// `std/slice.rs`, next to the type it concerns.
+pub trait Unsize<T: ?Sized> {}
+
+impl<T: Debug> Unsize<dyn Debug> for T {}
+
 /// `Tuple` is the bound `Fn`/`FnMut`/`FnOnce` place on their `Args` parameter.
 /// Unstable in real std; declared because without it `FnOnce<u32>` resolves.
 pub trait Tuple {}

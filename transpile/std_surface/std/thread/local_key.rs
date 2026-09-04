@@ -33,5 +33,5 @@ impl<T: 'static> Debug for LocalKey<T> { fn fmt(&self, f: &mut Formatter<'_>) ->
 pub struct AccessError;
 
 impl Debug for AccessError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for AccessError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for AccessError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for AccessError {}

@@ -40,7 +40,7 @@ impl<T: ?Sized> Deref for Arc<T> {
 
 impl<T: ?Sized> Clone for Arc<T> { fn clone(&self) -> Arc<T> { todo!() } }
 impl<T: ?Sized + Debug> Debug for Arc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<T: ?Sized + Display> Display for Arc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<T: ?Sized + std::fmt::Display> std::fmt::Display for Arc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<T: Default> Default for Arc<T> { fn default() -> Arc<T> { todo!() } }
 impl<T: ?Sized + PartialEq<T>> PartialEq for Arc<T> { fn eq(&self, other: &Arc<T>) -> bool { todo!() } }
 impl<T: ?Sized + Eq> Eq for Arc<T> {}

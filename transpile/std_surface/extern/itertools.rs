@@ -14,7 +14,7 @@ pub trait Itertools: Iterator {
     fn sorted_by_key<K: Ord, F: FnMut(&Self::Item) -> K>(self, f: F) -> std::vec::IntoIter<Self::Item> where Self: Sized;
     fn unique(self) -> Unique<Self> where Self: Sized, Self::Item: Clone + Eq + Hash;
     fn dedup(self) -> Dedup<Self> where Self: Sized, Self::Item: PartialEq<Self::Item>;
-    fn join(&mut self, sep: &str) -> String where Self::Item: Display;
+    fn join(&mut self, sep: &str) -> String where Self::Item: std::fmt::Display;
     fn collect_vec(self) -> Vec<Self::Item> where Self: Sized;
     fn chunks(self, size: usize) -> IntoChunks<Self> where Self: Sized;
     fn tuple_windows<T: HomogeneousTuple>(self) -> TupleWindows<Self, T> where Self: Sized + Iterator<Item = <T as HomogeneousTuple>::Item>, <T as HomogeneousTuple>::Item: Clone;
@@ -30,7 +30,7 @@ pub struct IntoChunks<I>;
 pub struct TupleWindows<I, T>;
 
 impl<I: Iterator> Debug for ExactlyOneError<I> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<I: Iterator> Display for ExactlyOneError<I> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<I: Iterator> std::fmt::Display for ExactlyOneError<I> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<I: Iterator> Iterator for Unique<I> where <I as Iterator>::Item: Clone + Eq + Hash {
     type Item = <I as Iterator>::Item;
     fn next(&mut self) -> Option<<I as Iterator>::Item> { todo!() }

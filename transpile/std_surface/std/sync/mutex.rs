@@ -44,7 +44,7 @@ impl<'a, T: ?Sized> Drop for MutexGuard<'a, T> {
 }
 
 impl<'a, T: ?Sized + Debug> Debug for MutexGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<'a, T: ?Sized + Display> Display for MutexGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<'a, T: ?Sized + std::fmt::Display> std::fmt::Display for MutexGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 
 pub struct PoisonError<T>;
 
@@ -55,7 +55,7 @@ impl<T> PoisonError<T> {
 }
 
 impl<T> Debug for PoisonError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<T> Display for PoisonError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<T> std::fmt::Display for PoisonError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<T> std::error::Error for PoisonError<T> {}
 
 pub enum TryLockError<T> {
@@ -64,5 +64,5 @@ pub enum TryLockError<T> {
 }
 
 impl<T> Debug for TryLockError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<T> Display for TryLockError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<T> std::fmt::Display for TryLockError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<T> std::error::Error for TryLockError<T> {}

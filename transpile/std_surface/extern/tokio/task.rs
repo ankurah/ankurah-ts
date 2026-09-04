@@ -29,5 +29,5 @@ impl<T> Future for JoinHandle<T> {
 pub struct JoinError;
 
 impl Debug for JoinError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for JoinError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for JoinError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for JoinError {}

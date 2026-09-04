@@ -129,6 +129,14 @@ modules declare an `Iter`. A `Debug` or `Display` signature returns
 `Error` — the most overloaded name in the surface, declared by eighteen
 modules.
 
+`Display` is the trap worth naming, because the collision is real in std and not
+an artefact of this surface: `std::fmt::Display` is the trait, and
+`std::path::Display` is the struct `Path::display()` returns. Every bound, `dyn`
+type and `impl` head outside `std/path.rs` writes `std::fmt::Display` in full.
+Adding one type to this surface can make an already-declared name ambiguous
+everywhere else, so a new file is not finished until the names it introduces
+have been checked against the rest.
+
 Declaration sites stay bare: `pub struct Iter<'a, T>;`, the self type in
 `impl Debug for DecodeError`, and an enum's variant names are where a name is
 *introduced*, and qualifying them would say something different.
@@ -170,6 +178,7 @@ The file path *is* the module path.
 | file | module |
 | --- | --- |
 | `std/vec.rs` | `std::vec` |
+| `std/char.rs` | `std::char` |
 | `std/collections/hash_map.rs` | `std::collections::hash_map` |
 | `std/sync/mutex.rs` | `std::sync` — see below |
 | `extern/tokio/sync.rs` | `tokio::sync` |
@@ -184,10 +193,49 @@ std's own module layout does not match its file layout:
   really is `std::sync::atomic`, and its `Ordering` is not `std::cmp::Ordering`.
 - `std/tuple.rs` mirrors `core/src/tuple.rs`: the trait impls on tuples belong
   to no module and are attached to the tuple types themselves.
-- `std/primitive.rs` and `std/num.rs` hold inherent impls on primitives
-  (`impl u64 { .. }`, `impl str { .. }`, `impl<T> [T] { .. }`). Those blocks are
-  not writable outside `core` and belong to no module; the loader attaches them
-  to the primitive type itself, not to a module path.
+- `std/primitive.rs` holds inherent and trait impls on primitives
+  (`impl u64 { .. }`, `impl bool { .. }`). Those blocks are not writable outside
+  `core` and belong to no module; the loader attaches them to the primitive type
+  itself, not to a module path. It holds no named types at all, which is why it
+  is the one file the loader is allowed to read outside its own module.
+
+### `core::` and `alloc::` mean the standard libraries
+
+The loader treats a `core::` or `alloc::` path as reaching the same declaration
+`std::` reaches, because that is what Rust does: `core` and `alloc` are the
+libraries `std` re-exports, and ankurah writes `core::time::Duration` for the
+type `std::time::Duration` names. A crate refers to *itself* as `crate::`,
+never as `core::`, so a crate whose package name happens to be `core` — as
+ankurah's is — is not shadowed by this and its own types resolve through its
+own module tree.
+
+### Impl blocks may live anywhere; named types may not
+
+**A primitive impl block attaches structurally, so its file does not matter. A
+named type takes its module from its file's path, so its file is the only thing
+that says where it lives.** A file that holds both forces the loader to choose
+one module mapping for the whole file, and whichever it chooses is wrong for
+half the contents.
+
+That is what went wrong with `std/num.rs` and `std/primitive.rs` in their first
+form. Both held primitive impl blocks, so the loader mapped them to `std`; the
+named types they also held then landed at `std::ParseIntError` and
+`std::primitive::ToLowercase`, and every qualified reference in ankurah's source
+— which writes `std::num::ParseIntError` — missed them. The fix was to separate
+the two kinds:
+
+| file | holds | module |
+| --- | --- | --- |
+| `std/primitive.rs` | every `impl bool`/`impl char`/`impl u64`/... block and their trait impls, and no named type | none; attaches structurally |
+| `std/num.rs` | `ParseIntError`, `ParseFloatError`, `TryFromIntError`, the `NonZero` types | `std::num` |
+| `std/char.rs` | `ToLowercase`, `ToUppercase`, `ParseCharError`, `CharTryFromError` | `std::char` |
+
+`std/str.rs` and `std/slice.rs` still hold a primitive impl block (`impl str`,
+`impl<T> [T]`) alongside named types, and that is correct and should be left
+alone: every named type in them — `Chars`, `Pattern`, `Utf8Error`, `Iter`,
+`SliceIndex` — really does belong to `std::str` or `std::slice`, which is what
+those files' paths say. The rule is not "never mix"; it is "a named type's file
+path must be its module".
 
 An `extern/<crate>.rs` or `extern/<crate>/<module>.rs` file declares that
 crate's surface, rooted at the crate name.
@@ -270,14 +318,22 @@ deliberate simplification from an oversight.
 9. **Operator impls on primitives are partial.** `std/ops.rs` writes out the
    (trait, width) pairs the corpus uses plus their obvious neighbours, not all
    8 traits x 12 primitives. A missing pair is a diagnostic, not a wrong answer.
-10. **Tuple impls stop at arity 6.** std generates `Clone`, `Copy`,
+10. **`std::array::IntoIter` drops its const parameter.** std writes
+    `IntoIter<T, const N: usize>`; this writes `IntoIter<T>`. The length carries
+    nothing the engine reads — the `Item` is `T` at every length — and it was
+    the second of two places where a const generic flowed from an impl's
+    parameter list into a struct argument, which the loader cannot represent.
+    (The first, `impl Pattern for [char; N]`, was removed instead, because it
+    was unused.) `[T; N]` as a *self type* is untouched, so `impl<T, const N:
+    usize> IntoIterator for [T; N]` still says what std says.
+11. **Tuple impls stop at arity 6.** std generates `Clone`, `Copy`,
     `PartialEq`/`Eq`, `PartialOrd`/`Ord`, `Hash`, `Default` and `Debug` for
     arities 1 through 12; `std/tuple.rs` writes 0 through 6. A 7-tuple is a
     diagnostic, not a wrong answer.
-11. **`sha2` returns a plain `Output`.** Real `sha2` returns
+12. **`sha2` returns a plain `Output`.** Real `sha2` returns
     `GenericArray<u8, U32>` through `typenum`. Every corpus use immediately
     slices or copies the bytes.
-12. **`SliceIndex` is declared `unsafe` but its unsafety is not tracked.** The
+13. **`SliceIndex` is declared `unsafe` but its unsafety is not tracked.** The
     keyword is written because it is part of the declaration; the engine has no
     notion of trait unsafety today.
 

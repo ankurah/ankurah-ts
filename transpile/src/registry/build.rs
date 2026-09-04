@@ -551,7 +551,6 @@ fn resolve_trait(
                 method.name.clone(),
                 TraitMethod {
                     sig,
-                    has_default: method.has_default_body,
                 },
             );
         }

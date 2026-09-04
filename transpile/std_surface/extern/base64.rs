@@ -57,7 +57,7 @@ pub enum DecodeError {
 }
 
 impl Debug for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Clone for DecodeError { fn clone(&self) -> base64::DecodeError { todo!() } }
 impl PartialEq for DecodeError { fn eq(&self, other: &base64::DecodeError) -> bool { todo!() } }
 impl std::error::Error for DecodeError {}
@@ -68,5 +68,5 @@ pub enum DecodeSliceError {
 }
 
 impl Debug for DecodeSliceError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for DecodeSliceError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for DecodeSliceError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for DecodeSliceError {}

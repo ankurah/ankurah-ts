@@ -77,5 +77,5 @@ impl Clone for SystemTime { fn clone(&self) -> SystemTime { todo!() } }
 impl Copy for SystemTime {}
 impl Debug for SystemTime { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Debug for SystemTimeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for SystemTimeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for SystemTimeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for SystemTimeError {}

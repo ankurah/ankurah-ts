@@ -1,10 +1,16 @@
 //! Macro translation — Rust macros → TS expressions
 
+use crate::body::BodyTranslator;
 use crate::name_map;
-use crate::body;
 
-/// Translate a macro invocation to TS
-pub fn translate_macro(mac: &syn::Macro) -> String {
+/// Translate a macro invocation to TS.
+///
+/// The arguments are Rust expressions written in the body the macro sits in, so
+/// they are translated through *that* body's translator: a fresh one knows
+/// nothing of the closure parameters and inferred types around it, and emitted
+/// `${[...].map(..)}` — a spread of a name it could not see — where the source
+/// had a closure parameter.
+pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
     let name = mac.path.segments.last()
         .map(|s| s.ident.to_string())
         .unwrap_or_default();
@@ -13,31 +19,31 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
         "vec" => {
             // vec![a, b, c] → parse elements via syn
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
-                let translated: Vec<String> = args.iter().map(|e| body::translate_expr(e)).collect();
+                let translated: Vec<String> = args.iter().map(|e| t.expr_value(e)).collect();
                 format!("[{}]", translated.join(", "))
             } else {
                 format!("[{}]", mac.tokens)
             }
         }
-        "format" => translate_format_from_tokens(&mac.tokens),
-        "println" | "eprintln" => format!("console.log({})", translate_format_from_tokens(&mac.tokens)),
+        "format" => translate_format_from_tokens(&mac.tokens, t),
+        "println" | "eprintln" => format!("console.log({})", translate_format_from_tokens(&mac.tokens, t)),
         "dbg" => format!("console.log({})", mac.tokens),
         "write" | "writeln" => {
             // write!(f, "...", args) → parse tokens, skip formatter, format the rest
-            translate_write_from_tokens(&mac.tokens)
+            translate_write_from_tokens(&mac.tokens, t)
         }
-        "panic" | "unreachable" => format!("throw new Error({})", translate_format_from_tokens(&mac.tokens)),
+        "panic" | "unreachable" => format!("throw new Error({})", translate_format_from_tokens(&mac.tokens, t)),
         // The condition is Rust, so it is translated as Rust. Printing the
         // token stream put the source back out verbatim — `event_ids . contains
         // (& 7)` — which is neither TypeScript nor what the assertion meant.
         "assert" | "debug_assert" => match parse_exprs_from_tokens(&mac.tokens) {
             Ok(args) if !args.is_empty() => {
-                let condition = body::translate_expr(&args[0]);
+                let condition = t.expr_value(&args[0]);
                 // `assert!(c, "..", x)` carries its own message; without one the
                 // failure says only that the assertion failed, as Rust's does.
                 let message = if args.len() > 1 {
                     let tail = args[1..].iter().map(|e| quote::quote!(#e));
-                    translate_format_from_tokens(&quote::quote!(#(#tail),*))
+                    translate_format_from_tokens(&quote::quote!(#(#tail),*), t)
                 } else {
                     "'assertion failed'".to_string()
                 };
@@ -48,7 +54,7 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
         "assert_eq" => {
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 if args.len() >= 2 {
-                    format!("expect({}).toEqual({})", body::translate_expr(&args[0]), body::translate_expr(&args[1]))
+                    format!("expect({}).toEqual({})", t.expr_value(&args[0]), t.expr_value(&args[1]))
                 } else {
                     format!("/* assert_eq!({}) */", mac.tokens)
                 }
@@ -59,7 +65,7 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
         "assert_ne" => {
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 if args.len() >= 2 {
-                    format!("expect({}).not.toEqual({})", body::translate_expr(&args[0]), body::translate_expr(&args[1]))
+                    format!("expect({}).not.toEqual({})", t.expr_value(&args[0]), t.expr_value(&args[1]))
                 } else {
                     format!("/* assert_ne!({}) */", mac.tokens)
                 }
@@ -75,9 +81,9 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
 
 /// Translate format!("...", args) to template literal
 /// Parses the macro tokens properly using syn to handle complex expressions
-pub fn translate_format_macro(tokens: &str) -> String {
+pub fn translate_format_macro(tokens: &str, t: &BodyTranslator) -> String {
     // Try to parse using syn's macro token parsing
-    if let Ok(parsed) = parse_format_args(tokens) {
+    if let Ok(parsed) = parse_format_args(tokens, t) {
         return parsed;
     }
 
@@ -86,7 +92,7 @@ pub fn translate_format_macro(tokens: &str) -> String {
 }
 
 /// Parse format!("fmt", arg1, arg2) into a template literal
-fn parse_format_args(tokens: &str) -> Result<String, ()> {
+fn parse_format_args(tokens: &str, t: &BodyTranslator) -> Result<String, ()> {
     let tokens = tokens.trim();
 
     // Extract the format string (first quoted string)
@@ -118,7 +124,7 @@ fn parse_format_args(tokens: &str) -> Result<String, ()> {
     let args: Vec<String> = if rest.is_empty() {
         Vec::new()
     } else {
-        parse_comma_separated_exprs(rest)
+        parse_comma_separated_exprs(rest, t)
     };
 
     // Build template literal
@@ -171,7 +177,7 @@ fn parse_format_args(tokens: &str) -> Result<String, ()> {
 
 /// Parse comma-separated expressions, respecting nesting
 /// This handles cases like: `self.0.iter().map(|id| id.to_string()).join(",")`
-fn parse_comma_separated_exprs(input: &str) -> Vec<String> {
+fn parse_comma_separated_exprs(input: &str, t: &BodyTranslator) -> Vec<String> {
     // Try to parse as syn expressions using a helper wrapper
     let wrapped = format!("fn _args_() {{ let _x_ = ({},); }}", input);
     if let Ok(file) = syn::parse_file(&wrapped) {
@@ -180,7 +186,7 @@ fn parse_comma_separated_exprs(input: &str) -> Vec<String> {
                 if let Some(init) = &local.init {
                     if let syn::Expr::Tuple(tuple) = &*init.expr {
                         return tuple.elems.iter()
-                            .map(|e| crate::body::translate_expr(e))
+                            .map(|e| t.expr_value(e))
                             .collect();
                     }
                 }
@@ -242,7 +248,7 @@ fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error
 }
 
 /// Parse format!("fmt", args...) directly from TokenStream
-fn translate_format_from_tokens(tokens: &TokenStream) -> String {
+fn translate_format_from_tokens(tokens: &TokenStream, t: &BodyTranslator) -> String {
     struct FormatArgs { fmt: LitStr, args: Vec<Expr> }
     impl Parse for FormatArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -259,19 +265,19 @@ fn translate_format_from_tokens(tokens: &TokenStream) -> String {
     match syn::parse2::<FormatArgs>(tokens.clone()) {
         Ok(parsed) => {
             let translated_args: Vec<String> = parsed.args.iter()
-                .map(|e| body::translate_expr(e))
+                .map(|e| t.expr_value(e))
                 .collect();
             build_template_literal(&parsed.fmt.value(), &translated_args)
         }
         Err(_) => {
             // Fallback to string-based parsing
-            translate_format_macro(&tokens.to_string())
+            translate_format_macro(&tokens.to_string(), t)
         }
     }
 }
 
 /// Parse write!(f, "fmt", args...) directly from TokenStream
-fn translate_write_from_tokens(tokens: &TokenStream) -> String {
+fn translate_write_from_tokens(tokens: &TokenStream, t: &BodyTranslator) -> String {
     struct WriteArgs { _formatter: Expr, fmt: LitStr, args: Vec<Expr> }
     impl Parse for WriteArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -290,7 +296,7 @@ fn translate_write_from_tokens(tokens: &TokenStream) -> String {
     match syn::parse2::<WriteArgs>(tokens.clone()) {
         Ok(parsed) => {
             let translated_args: Vec<String> = parsed.args.iter()
-                .map(|e| body::translate_expr(e))
+                .map(|e| t.expr_value(e))
                 .collect();
             build_template_literal(&parsed.fmt.value(), &translated_args)
         }
@@ -298,7 +304,7 @@ fn translate_write_from_tokens(tokens: &TokenStream) -> String {
             // Fallback
             let s = tokens.to_string();
             let without_f = s.trim_start_matches("f ,").trim_start_matches("f,").trim();
-            translate_format_macro(without_f)
+            translate_format_macro(without_f, t)
         }
     }
 }

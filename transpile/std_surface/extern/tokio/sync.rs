@@ -10,14 +10,18 @@ pub struct Notify;
 impl Notify {
     pub fn new() -> Notify { todo!() }
     /// Returns a named future, not `()`, and the name is load-bearing.
-    /// Creating a `Notified` captures the current `notify_waiters` generation,
-    /// so a later `notify_waiters` wakes it; it does *not* yet join the
-    /// `notify_one` queue and does *not* consume a stored permit. Both of those
-    /// happen when the future is first polled, or earlier if the caller pins it
-    /// and calls `enable()`. That is why
-    /// `let n = notify.notified(); do_thing(); n.await;` behaves differently
-    /// from `notify.notified().await`, and why collapsing this to an
-    /// `async fn` returning `()` would type the difference away.
+    ///
+    /// Creating a `Notified` records the current `notify_waiters` generation.
+    /// It joins the `notify_one` queue — and consumes a stored permit if one is
+    /// waiting — only at its first poll, or when `enable()` is called. So in
+    /// `let n = notify.notified(); do_thing(); n.await;` the future cannot miss
+    /// a `notify_waiters` issued during `do_thing`, because the generation was
+    /// recorded before it ran; but it *can* miss a `notify_one` issued then,
+    /// unless `enable()` was called first. That gap is the documented reason
+    /// `enable()` exists.
+    ///
+    /// Collapsing this to an `async fn` returning `()` would type the whole
+    /// distinction away.
     pub fn notified(&self) -> Notified<'_> { todo!() }
     pub fn notify_one(&self) { todo!() }
     pub fn notify_last(&self) { todo!() }
@@ -33,7 +37,9 @@ impl<'a> Future for Notified<'a> {
 
 impl<'a> Notified<'a> {
     /// Joins the `notify_one` queue now instead of at first poll, consuming a
-    /// stored permit if one is waiting. Returns whether it took one.
+    /// stored permit if one is waiting; returns whether it took one. This is
+    /// how a caller closes the window described on `notified` above, between
+    /// creating the future and first polling it.
     pub fn enable(self: Pin<&mut Notified<'a>>) -> bool { todo!() }
 }
 
@@ -110,7 +116,7 @@ impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> { fn drop(&mut self) { todo
 pub struct TryLockError;
 
 impl Debug for TryLockError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for TryLockError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for TryLockError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for TryLockError {}
 
 pub mod oneshot {
@@ -144,10 +150,10 @@ pub mod oneshot {
         }
 
         impl Debug for RecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl Display for RecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl std::fmt::Display for RecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl std::error::Error for RecvError {}
         impl Debug for TryRecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl Display for TryRecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl std::fmt::Display for TryRecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl std::error::Error for TryRecvError {}
     }
 }
@@ -200,7 +206,7 @@ pub mod mpsc {
         }
 
         impl<T> Debug for SendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl<T> Display for SendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl<T> std::fmt::Display for SendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl<T> std::error::Error for SendError<T> {}
         impl<T> Debug for TrySendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl Debug for TryRecvError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }

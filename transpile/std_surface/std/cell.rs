@@ -45,7 +45,7 @@ impl<'a, T: ?Sized> Deref for Ref<'a, T> {
 
 impl<'a, T: ?Sized> Drop for Ref<'a, T> { fn drop(&mut self) { todo!() } }
 impl<'a, T: ?Sized + Debug> Debug for Ref<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<'a, T: ?Sized + Display> Display for Ref<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<'a, T: ?Sized + std::fmt::Display> std::fmt::Display for Ref<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 
 pub struct RefMut<'a, T: ?Sized>;
 
@@ -69,10 +69,10 @@ pub struct BorrowError;
 pub struct BorrowMutError;
 
 impl Debug for BorrowError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for BorrowError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for BorrowError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for BorrowError {}
 impl Debug for BorrowMutError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for BorrowMutError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for BorrowMutError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for BorrowMutError {}
 
 pub struct Cell<T: ?Sized>;

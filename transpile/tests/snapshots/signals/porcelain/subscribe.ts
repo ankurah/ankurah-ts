@@ -3,11 +3,11 @@ import { Struct } from '@ankurah/base';
 import { ListenerGuard } from '../broadcast';
 
 export class SubscriptionGuard extends Struct {
-  Listenerguard: Any;
+  _listenerguard: Any;
 
-  constructor(Listenerguard: Any) {
+  constructor(_listenerguard: Any) {
     super();
-    this.Listenerguard = Listenerguard;
+    this._listenerguard = _listenerguard;
   }
 
   static new(lguard: ListenerGuard): SubscriptionGuard {

@@ -125,7 +125,7 @@ pub mod types {
     }
 
     impl Debug for Type { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-    impl Display for Type { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+    impl std::fmt::Display for Type { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 
     pub trait ToSql {
         fn to_sql(&self) -> Result<ToSqlOutput<'_>, super::Error>;
@@ -147,7 +147,7 @@ pub mod types {
     }
 
     impl Debug for FromSqlError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-    impl Display for FromSqlError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+    impl std::fmt::Display for FromSqlError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
     impl std::error::Error for FromSqlError {}
 
     impl ToSql for Value { fn to_sql(&self) -> Result<ToSqlOutput<'_>, super::Error> { todo!() } }
@@ -188,7 +188,7 @@ pub enum Error {
 }
 
 impl Debug for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for Error {}
 impl PartialEq for Error { fn eq(&self, other: &Error) -> bool { todo!() } }
 
@@ -196,5 +196,5 @@ pub mod ffi {
     pub struct Error;
 
     impl Debug for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-    impl Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+    impl std::fmt::Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 }

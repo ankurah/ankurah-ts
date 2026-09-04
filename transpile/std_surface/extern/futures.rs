@@ -343,7 +343,7 @@ pub mod channel {
         }
 
         impl Debug for Canceled { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl Display for Canceled { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl std::fmt::Display for Canceled { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl std::error::Error for Canceled {}
     }
 
@@ -383,9 +383,9 @@ pub mod channel {
         impl<T> Clone for Sender<T> { fn clone(&self) -> Sender<T> { todo!() } }
 
         impl<T> Debug for TrySendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl<T> Display for TrySendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl<T> std::fmt::Display for TrySendError<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl Debug for SendError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-        impl Display for SendError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+        impl std::fmt::Display for SendError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
         impl std::error::Error for SendError {}
     }
 }

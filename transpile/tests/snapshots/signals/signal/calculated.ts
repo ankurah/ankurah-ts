@@ -8,12 +8,12 @@ import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 
 class SubscriptionEntry extends Struct {
-  Guard: ListenerGuard;
+  _guard: ListenerGuard;
   markedForRemoval: boolean;
 
-  constructor(Guard: ListenerGuard, markedForRemoval: boolean) {
+  constructor(_guard: ListenerGuard, markedForRemoval: boolean) {
     super();
-    this.Guard = Guard;
+    this._guard = _guard;
     this.markedForRemoval = markedForRemoval;
   }
 }
@@ -70,7 +70,12 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 
   listen(listener: Listener): ListenerGuard {
-    return ListenerGuard.new(this._0.value.broadcast.reference().listen(listener));
+    const _t0 = this._0.value.broadcast.reference();
+    try {
+      return ListenerGuard.new(_t0.listen(listener));
+    } finally {
+      _t0.drop();
+    }
   }
 
   broadcastId(): BroadcastId {
@@ -83,23 +88,21 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
     const subscription = this.listen(Arc.new((_) => {
       const current = roValue.with((opt) => opt.asRef().clone());
       listener_1(current);
-      current.drop();
     }));
-    const _ret = SubscriptionGuard.new(subscription);
-    roValue.drop();
-    listener.drop();
-    return _ret;
+    return SubscriptionGuard.new(subscription);
   }
 }
 
 function trigger<T>(inner: Arc<Inner<T>>): void {
   (() => {
     let entries = inner.value.entries.write();
-    for (const entry of entries.value.values()) {
-      entry.markedForRemoval = true;
+    try {
+      for (const entry of entries.value.values()) {
+        entry.markedForRemoval = true;
+      }
+    } finally {
+      entries.drop();
     }
-    entries.drop();
-
   })()
   CurrentObserver.set(inner.clone());
   const newValue = (inner.value.compute)();
@@ -107,10 +110,12 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
   CurrentObserver.remove(inner);
   (() => {
     let entries = inner.value.entries.write();
-    { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
-    entries.drop();
+    try {
+      { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
+    } finally {
+      entries.drop();
+    }
   })()
   inner.value.broadcast.send([]);
-  newValue.drop();
 }
 

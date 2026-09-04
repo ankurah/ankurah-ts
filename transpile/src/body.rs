@@ -94,10 +94,28 @@ pub struct BodyTranslator<'a> {
     /// How many temporaries this body has taken, so that one `if let` nested in
     /// another does not read both scrutinees into the same name.
     temporaries: std::cell::Cell<usize>,
-    /// Per block, the shadows it emitted under a fresh identifier: the name Rust
-    /// wrote and the name TypeScript got. Drop insertion reads it, because a
-    /// value has to be dropped under the name it was declared with.
-    shadows: std::cell::RefCell<Vec<Vec<(String, String)>>>,
+    /// What the enclosing function returns, resolved. `?` reads it to say
+    /// whether the error it propagates needs a conversion, and the `Result`
+    /// lowering reads it to know it is inside a function that returns one.
+    pub fn_return: Option<crate::ty::Ty>,
+    /// The locals the statement now being translated binds and owes a release
+    /// for. The block reads it to decide what its `finally` says.
+    pending: std::cell::RefCell<Vec<crate::ownership::Owned>>,
+    /// Declarations lifted out of the statement now being translated, in order.
+    /// A temporary and a `?` both produce one: a line that has to stand before
+    /// the statement that needs it.
+    prelude: std::cell::RefCell<Vec<crate::ownership::Hoist>>,
+    /// What the block now being translated decided about each of its locals,
+    /// for the statement now being translated.
+    stmt_dispositions:
+        std::cell::RefCell<std::collections::HashMap<String, crate::ownership::Disposition>>,
+    /// The locals whose release is behind a drop flag, by the name Rust wrote,
+    /// and the flag's identifier. Nested blocks read it: a move inside a branch
+    /// sets the flag the enclosing block's `finally` tests.
+    flags: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    /// How many temporaries and flags this body has taken, so two of them never
+    /// share a name.
+    hoisted: std::cell::Cell<usize>,
 }
 
 impl<'a> BodyTranslator<'a> {
@@ -108,7 +126,12 @@ impl<'a> BodyTranslator<'a> {
             inline_module_names: vec![],
             threaded: std::cell::RefCell::new(Vec::new()),
             temporaries: std::cell::Cell::new(0),
-            shadows: std::cell::RefCell::new(Vec::new()),
+            fn_return: None,
+            pending: Default::default(),
+            prelude: Default::default(),
+            stmt_dispositions: Default::default(),
+            flags: Default::default(),
+            hoisted: std::cell::Cell::new(0),
         }
     }
 
@@ -119,7 +142,12 @@ impl<'a> BodyTranslator<'a> {
             inline_module_names: vec![],
             threaded: std::cell::RefCell::new(Vec::new()),
             temporaries: std::cell::Cell::new(0),
-            shadows: std::cell::RefCell::new(Vec::new()),
+            fn_return: None,
+            pending: Default::default(),
+            prelude: Default::default(),
+            stmt_dispositions: Default::default(),
+            flags: Default::default(),
+            hoisted: std::cell::Cell::new(0),
         }
     }
 
@@ -241,14 +269,13 @@ impl<'a> BodyTranslator<'a> {
         );
     }
 
-    /// Is this expression a `LockResult`? The port's lock methods hand back the
-    /// guard, so the `Ok` the Rust source writes around one has nothing to test.
-    pub fn is_lock_result_expr(&self, expr: &syn::Expr) -> bool {
+    /// Did this expression come from a lock call? The port's `lock()`, `read()`
+    /// and `write()` hand back the guard itself, so the `Ok` the Rust source
+    /// writes around one has nothing to test and the `unwrap` nothing to do.
+    pub fn is_lock_call(&self, expr: &syn::Expr) -> bool {
         let Some(tc) = &self.types else { return false };
         let tc = tc.borrow();
-        tc.resolve_expr(expr)
-            .map(|ty| tc.is_lock_result(&ty))
-            .unwrap_or(false)
+        tc.is_lock_call(expr)
     }
 
     /// The type of the value a `match` or an `if let` takes apart. `None` means
@@ -331,6 +358,55 @@ impl<'a> BodyTranslator<'a> {
 
     // ── Block translation with ownership tracking ───────────────────
 
+    /// A function's own body.
+    ///
+    /// Rust drops a by-value parameter when the function returns, so the body
+    /// owns its parameters the way it owns its locals — released in the same
+    /// `finally`, after everything the body itself declared, and not at all
+    /// where the body hands one on.
+    pub fn translate_fn_block(
+        &self,
+        block: &syn::Block,
+        params: &[(String, crate::ty::Ty)],
+    ) -> String {
+        self.push_block();
+        let body = self.translate_block_stmts(block);
+        let owned = self.owned_params(block, params);
+        self.pop_scope();
+        let mut out = body;
+        for param in owned.iter().rev() {
+            out = ownership::wrap(&out, param);
+        }
+        out
+    }
+
+    /// Which by-value parameters the function still owns when it returns.
+    fn owned_params(
+        &self,
+        block: &syn::Block,
+        params: &[(String, crate::ty::Ty)],
+    ) -> Vec<ownership::Owned> {
+        let Some(tc) = &self.types else {
+            return Vec::new();
+        };
+        let scan = ownership::Scan::new(self);
+        let moved = scan.block(&block.stmts);
+        params
+            .iter()
+            .filter(|(name, _)| !moved.iter().any(|site| site.name == *name))
+            .filter_map(|(name, ty)| {
+                let drops = ownership::drops_of(&tc.borrow().probe(), ty);
+                drops.is_droppable().then(|| ownership::Owned {
+                    name: name.clone(),
+                    source: None,
+                    drops,
+                    flag: None,
+                    statement_scoped: false,
+                })
+            })
+            .collect()
+    }
+
     pub fn translate_block(&self, block: &syn::Block) -> String {
         // A Rust block is a scope: a `let` inside it shadows what is outside and
         // stops shadowing at the closing brace, and TypeScript's `const` in a
@@ -341,55 +417,192 @@ impl<'a> BodyTranslator<'a> {
         out
     }
 
+    /// A block's statements, with the releases the block owes written into it.
+    ///
+    /// Every value the block still owns when it ends is released in a
+    /// `finally`, so that a `return`, a `?`, a `break` and a thrown fatal all
+    /// leave through it — which is what Rust's drop glue does and what a run of
+    /// drops at the end of the block did not. The `try` opens immediately after
+    /// each declaration rather than at the top of the block: a `const` declared
+    /// inside a `try` is not in scope in its `finally`, and opening one `try`
+    /// per declaration also gets reverse declaration order for free, since the
+    /// innermost `finally` runs first.
     fn translate_block_stmts(&self, block: &syn::Block) -> String {
-        let mut out = String::new();
         let stmts = &block.stmts;
+        let dispositions = self.analyse_moves(stmts);
+        let ordinals = std::cell::RefCell::new(std::collections::HashMap::new());
+        self.emit_from(stmts, 0, &dispositions, &ordinals)
+    }
 
-        // Collect local bindings for drop insertion (with type inference from init)
-        let mut locals: Vec<(String, String)> = Vec::new();
-        for stmt in stmts {
-            if let syn::Stmt::Local(local) = stmt {
-                let init_expr = local.init.as_ref().map(|i| &*i.expr);
-                ownership::collect_local_bindings(&local.pat, init_expr, &mut locals);
+    /// Statements `i..` of a block, with everything after an owning
+    /// declaration nested inside that declaration's `try`.
+    fn emit_from(
+        &self,
+        stmts: &[syn::Stmt],
+        i: usize,
+        dispositions: &ownership::Dispositions,
+        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
+    ) -> String {
+        let Some(stmt) = stmts.get(i) else {
+            return String::new();
+        };
+        let is_tail = i + 1 == stmts.len() && matches!(stmt, syn::Stmt::Expr(_, None));
+
+        // What this statement's own `let` should do with each name it binds,
+        // read before it is translated because `local()` acts on it.
+        self.set_stmt_dispositions(stmt, dispositions, ordinals);
+
+        // A move written directly by this statement sets its flag first: after
+        // it would be dead code behind a `return`, and the flag only ever
+        // decides what the `finally` releases.
+        let mut out = self.flag_sets(stmt);
+
+        let previous_prelude = std::mem::take(&mut *self.prelude.borrow_mut());
+        let previous_pending = std::mem::take(&mut *self.pending.borrow_mut());
+        let text = if is_tail {
+            let syn::Stmt::Expr(expr, None) = stmt else {
+                unreachable!("the tail was just matched")
+            };
+            format!("{}\n", control_flow::translate_expr_in_return_position(expr, self))
+        } else {
+            self.stmt(stmt)
+        };
+        let prelude = std::mem::replace(&mut *self.prelude.borrow_mut(), previous_prelude);
+        let owned = std::mem::replace(&mut *self.pending.borrow_mut(), previous_pending);
+
+        let rest = self.emit_from(stmts, i + 1, dispositions, ordinals);
+        // A drop flag is only readable while the local it stands for is in
+        // scope. Taking it off again keeps a later block that reuses the name
+        // from setting a flag nothing tests.
+        for local in &owned {
+            if let Some(source) = &local.source {
+                self.flags.borrow_mut().remove(source);
             }
         }
 
-        // Only track variables that are the implicit return value —
-        // those should NOT be dropped (they're moved to the caller).
-        // Everything else drops at end of scope (idempotent for moved values).
-        let mut returned_vars = std::collections::HashSet::new();
-        if let Some(syn::Stmt::Expr(expr, None)) = stmts.last() {
-            ownership::collect_direct_vars(expr, &mut returned_vars);
-        }
-
-        // Every `let` in this block is translated before the drops are written,
-        // because a `let` that shadows another is emitted under a fresh
-        // identifier and that is the name its value has to be dropped under.
-        // Reading the names off the patterns instead dropped the outer `staged`
-        // twice and the inner `staged_1` never.
-        self.shadows.borrow_mut().push(Vec::new());
-        let last = stmts.len().saturating_sub(1);
-        for stmt in stmts.iter().take(last) {
-            out.push_str(&self.stmt(stmt));
-        }
-        let renamed = self.shadows.borrow_mut().pop().unwrap_or_default();
-        let locals = rename_shadows(locals, &renamed);
-        let drops = ownership::generate_drops(&locals, &returned_vars);
-
-        if let Some(stmt) = stmts.last() {
-            if let syn::Stmt::Expr(expr, None) = stmt {
-                // Implicit return — drops go before return
-                out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self, &drops));
-                out.push('\n');
-            } else {
-                out.push_str(&self.stmt(stmt));
-                // Drops after last statement
-                if !drops.is_empty() {
-                    out.push_str(&drops);
+        // The declaration a temporary was lifted into stands before the
+        // statement that uses it; the local a `let` binds is the statement
+        // itself. Both open a `try` over everything that follows, so the
+        // releases happen in reverse declaration order.
+        let mut inner = text;
+        // Releasing a guard at the end of its statement is what keeps a lock
+        // from being held for the rest of the block. Where the statement *is*
+        // the rest of the block, the `finally` two lines below says the same
+        // thing, so only one of them is written.
+        if !rest.trim().is_empty() {
+            for hoist in prelude.iter().rev() {
+                if let Some(temp) = &hoist.owned {
+                    inner.push_str(&temp.statement_release());
                 }
             }
         }
+        let mut tail = rest;
+        for local in owned.iter().rev() {
+            tail = ownership::wrap(&tail, local);
+        }
+        inner.push_str(&tail);
+
+        for hoist in prelude.iter().rev() {
+            let wrapped = match &hoist.owned {
+                Some(temp) => ownership::wrap(&inner, temp),
+                None => inner,
+            };
+            inner = format!("{}{}", hoist.declaration, wrapped);
+        }
+        out.push_str(&inner);
         out
+    }
+
+    /// Which of this block's locals were handed to somebody else before it
+    /// ended, and where. Everything the block owes turns on it.
+    fn analyse_moves(&self, stmts: &[syn::Stmt]) -> ownership::Dispositions {
+        let scan = ownership::Scan::new(self);
+        let mut declarations: Vec<(usize, Vec<String>)> = Vec::new();
+        let mut sites = Vec::new();
+        for (index, stmt) in stmts.iter().enumerate() {
+            for site in scan.block(std::slice::from_ref(stmt)) {
+                sites.push((index, site));
+            }
+            if let syn::Stmt::Local(local) = stmt {
+                declarations.push((index, bound_names(&local.pat)));
+            }
+        }
+        let dispositions = ownership::Dispositions::build(&declarations, sites);
+        for capture in &dispositions.captures {
+            self.fallback(
+                capture.span,
+                format!(
+                    "the closure takes ownership of `{}`; nothing releases what the closure \
+                     itself owns",
+                    capture.name
+                ),
+            );
+        }
+        for site in &dispositions.unwritable {
+            self.fallback(
+                site.span,
+                format!(
+                    "`{}` is moved where no drop flag can be written, so it is left unreleased",
+                    site.name
+                ),
+            );
+        }
+        dispositions
+    }
+
+    /// Publish, for the statement about to be translated, what its block
+    /// decided about each name it binds.
+    fn set_stmt_dispositions(
+        &self,
+        stmt: &syn::Stmt,
+        dispositions: &ownership::Dispositions,
+        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
+    ) {
+        let mut current = self.stmt_dispositions.borrow_mut();
+        current.clear();
+        let syn::Stmt::Local(local) = stmt else { return };
+        for name in bound_names(&local.pat) {
+            let mut seen = ordinals.borrow_mut();
+            let ordinal = seen.entry(name.clone()).or_insert(0);
+            *ordinal += 1;
+            current.insert(name.clone(), dispositions.of(&name, *ordinal));
+        }
+    }
+
+    /// `_moved_x = true;` for each flagged local this statement hands away
+    /// itself. A move written inside a nested block belongs to that block,
+    /// which writes the same line as one of its own statements.
+    fn flag_sets(&self, stmt: &syn::Stmt) -> String {
+        if self.flags.borrow().is_empty() {
+            return String::new();
+        }
+        let scan = ownership::Scan::new(self);
+        let mut out = String::new();
+        let mut written: Vec<String> = Vec::new();
+        for site in scan.shallow(stmt) {
+            let Some(flag) = self.flags.borrow().get(&site.name).cloned() else {
+                continue;
+            };
+            if written.contains(&flag) {
+                continue;
+            }
+            written.push(flag.clone());
+            out.push_str(&format!("{} = true;\n", flag));
+        }
+        out
+    }
+
+    /// The flag assignments an expression owes, for a position that is not a
+    /// statement — a match arm's body, which the arm renders as a block.
+    pub fn flag_sets_for(&self, expr: &syn::Expr) -> String {
+        self.flag_sets(&syn::Stmt::Expr(expr.clone(), None))
+    }
+
+    /// Take a name nothing else will use.
+    fn fresh_hoist(&self, prefix: &str) -> String {
+        let n = self.hoisted.get();
+        self.hoisted.set(n + 1);
+        format!("{}{}", prefix, n)
     }
 
     // ── Statement translation ───────────────────────────────────────
@@ -404,11 +617,20 @@ impl<'a> BodyTranslator<'a> {
                     if let syn::Expr::Try(try_expr) = expr {
                         // Special case: write!(f, ...)?; in Display impls — emit string append
                         if is_write_macro(&try_expr.expr) {
-                            let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap());
+                            let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap(), self);
                             return format!("_result += {};\n", fmt_str);
                         }
-                        let inner = self.expr(&try_expr.expr);
-                        return format!("const _r = {};\nif (_r.isErr()) return _r as any;\n", inner);
+                        // A `?` whose value nobody binds. Rust drops the `Ok`
+                        // payload at the end of the statement, and the wrapper
+                        // with it; `wrapper.drop()` cascades into both, which
+                        // is why the wrapper is not simply abandoned here.
+                        let lowered = self.lower_try(try_expr);
+                        return match &lowered.wrapper {
+                            Some(wrapper) => {
+                                format!("{}{}.drop();\n", lowered.declaration, wrapper)
+                            }
+                            None => format!("{}{};\n", lowered.declaration, lowered.value),
+                        };
                     }
                 }
                 let ts = self.expr(expr);
@@ -427,7 +649,7 @@ impl<'a> BodyTranslator<'a> {
             }
             syn::Stmt::Item(_) => String::new(),
             syn::Stmt::Macro(macro_stmt) => {
-                let ts = macros::translate_macro(&macro_stmt.mac);
+                let ts = macros::translate_macro(&macro_stmt.mac, self);
                 if macro_stmt.semi_token.is_some() {
                     format!("{};\n", ts)
                 } else {
@@ -440,86 +662,136 @@ impl<'a> BodyTranslator<'a> {
     fn local(&self, local: &syn::Local) -> String {
         let pat = Self::pat_static(&local.pat);
 
-        if let Some(init) = &local.init {
-            // `let x = expr?` — check the Result, propagate the error, then bind.
-            // The binding is made here as it is for any other `let`: the name is
-            // in scope for everything after this statement, and skipping it left
-            // every later use of `x` untyped.
-            if let syn::Expr::Try(try_expr) = &*init.expr {
-                let inner = self.expr(&try_expr.expr);
-                let ty = self.resolve_local(local);
-                self.bind_pattern_here(&local.pat, ty.as_ref());
-                let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
-                // The temporary holding the `Result` is named after the binding
-                // where the binding is one name. A pattern that takes the value
-                // apart is not a name — `let (cost, events) = f()?` was emitted
-                // as `const _r_[cost, events] = ..`, which is not an identifier —
-                // so those take a fresh one.
-                let temp = match &local.pat {
-                    syn::Pat::Ident(_) => format!("_r_{}", pat),
-                    _ => self.fresh_result_temp(),
-                };
-                return format!(
-                    "const {} = {};\nif ({}.isErr()) return {} as any;\n{} {} = {}.unwrap();\n",
-                    temp, inner, temp, temp, keyword, pat, temp
+        let Some(init) = &local.init else {
+            return format!("let {};\n", pat);
+        };
+
+        // Read before the initialiser is translated. An initialiser that is a
+        // block of its own — `let sub = { let c = c.clone(); f(c) }` — runs the
+        // whole block machinery again and leaves its own statement's answers
+        // behind, so asking afterwards asked about the wrong statement and
+        // dropped a local the outer block had already handed away.
+        let disposition = self
+            .stmt_dispositions
+            .borrow()
+            .get(&pat)
+            .copied()
+            .unwrap_or(ownership::Disposition::Kept);
+
+        // Rust allows `let x = x.method()` to shadow; JavaScript refuses a
+        // second declaration of the same name in the same block. This has to
+        // be asked before the binding is made.
+        let already_in_scope = self.redeclares_here(&pat);
+
+        // The initialiser is translated before the binding exists, because
+        // it is written in the scope the `let` is shadowing:
+        // `let stack = stack.borrow_mut()` borrows the *outer* `stack`, and
+        // binding first would resolve that receiver to the guard the line is
+        // about to introduce and reach through it.
+        let ty = self.resolve_local(local);
+
+        let expr = self.expr_value(&init.expr);
+
+        // Only now does the name mean the new value. A `let` may take one
+        // apart — `let (a, b) = ...`, `let Foo { x } = ...` — so every name
+        // the pattern writes is bound, each typed from its own position.
+        if self.types.is_some() {
+            self.bind_pattern_here(&local.pat, ty.as_ref());
+        }
+
+        if let Some((_tok, _diverge)) = &init.diverge {
+            return format!("/* let-else */ const {} = {};\n", pat, expr);
+        }
+
+        // A name the enclosing block-as-expression already threaded in as a
+        // parameter is already this value; declaring it again would shadow
+        // what was threaded.
+        if self.threaded.borrow().iter().any(|n| *n == pat) {
+            let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
+                ident.ident.to_string()
+            } else {
+                pat.clone()
+            };
+            if references_var(&init.expr, &rust_name) {
+                return String::new();
+            }
+        }
+        let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
+        // A Rust shadow introduces a *new* variable. Assigning to the old
+        // one instead changed a value other code — a closure that captured
+        // it, a caller that owns it — can still see. JavaScript will not
+        // declare the same name twice here, so the shadow is emitted under a
+        // fresh identifier and every later use of the name follows it.
+        let emitted = if already_in_scope {
+            self.freshen(&pat)
+        } else {
+            pat.clone()
+        };
+        let flag = self.claim_local(&pat, &emitted, ty.as_ref(), &local.pat, disposition);
+        format!("{}{} {} = {};\n", flag, keyword, emitted, expr)
+    }
+
+    /// Record what the block owes this `let`, and declare its drop flag where
+    /// the local is handed away on some paths and not others.
+    ///
+    /// Only a plain name is claimed. A `let (a, b) = ..` or a `let Foo { x } =
+    /// ..` takes a value apart, and releasing the parts is not the same as
+    /// releasing the whole; that is the partial-move case, reported rather than
+    /// guessed at.
+    fn claim_local(
+        &self,
+        name: &str,
+        emitted: &str,
+        ty: Option<&crate::ty::Ty>,
+        pat: &syn::Pat,
+        disposition: ownership::Disposition,
+    ) -> String {
+        let Some(ty) = ty else { return String::new() };
+        let Some(tc) = &self.types else { return String::new() };
+        let drops = ownership::drops_of(&tc.borrow().probe(), ty);
+        if !drops.is_droppable() {
+            if drops == ownership::Drops::Unknown {
+                self.fallback(
+                    syn::spanned::Spanned::span(pat),
+                    format!(
+                        "`{}` has a type the engine cannot say owns anything, so nothing \
+                         releases it",
+                        name
+                    ),
                 );
             }
-
-            // Rust allows `let x = x.method()` to shadow; JavaScript refuses a
-            // second declaration of the same name in the same block. This has to
-            // be asked before the binding is made.
-            let already_in_scope = self.redeclares_here(&pat);
-
-            // The initialiser is translated before the binding exists, because
-            // it is written in the scope the `let` is shadowing:
-            // `let stack = stack.borrow_mut()` borrows the *outer* `stack`, and
-            // binding first would resolve that receiver to the guard the line is
-            // about to introduce and reach through it.
-            let ty = self.resolve_local(local);
-
-            let expr = self.expr(&init.expr);
-
-            // Only now does the name mean the new value. A `let` may take one
-            // apart — `let (a, b) = ...`, `let Foo { x } = ...` — so every name
-            // the pattern writes is bound, each typed from its own position.
-            if self.types.is_some() {
-                self.bind_pattern_here(&local.pat, ty.as_ref());
-            }
-
-            if let Some((_tok, _diverge)) = &init.diverge {
-                return format!("/* let-else */ const {} = {};\n", pat, expr);
-            }
-
-            // A name the enclosing block-as-expression already threaded in as a
-            // parameter is already this value; declaring it again would shadow
-            // what was threaded.
-            if self.threaded.borrow().iter().any(|n| *n == pat) {
-                let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
-                    ident.ident.to_string()
-                } else {
-                    pat.clone()
-                };
-                if references_var(&init.expr, &rust_name) {
-                    return String::new();
-                }
-            }
-            let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
-            // A Rust shadow introduces a *new* variable. Assigning to the old
-            // one instead changed a value other code — a closure that captured
-            // it, a caller that owns it — can still see. JavaScript will not
-            // declare the same name twice here, so the shadow is emitted under a
-            // fresh identifier and every later use of the name follows it.
-            if already_in_scope {
-                let fresh = self.freshen(&pat);
-                if let Some(frame) = self.shadows.borrow_mut().last_mut() {
-                    frame.push((pat.clone(), fresh.clone()));
-                }
-                return format!("{} {} = {};\n", keyword, fresh, expr);
-            }
-            format!("{} {} = {};\n", keyword, pat, expr)
-        } else {
-            format!("let {};\n", pat)
+            return String::new();
         }
+        if !matches!(strip_binding(pat), syn::Pat::Ident(_)) {
+            self.fallback(
+                syn::spanned::Spanned::span(pat),
+                "this `let` takes a droppable value apart, and the parts are released \
+                 separately in Rust; nothing releases them here",
+            );
+            return String::new();
+        }
+        let flag = match disposition {
+            // Somebody else owns it by the time the block ends.
+            ownership::Disposition::Moved | ownership::Disposition::Unsure => return String::new(),
+            ownership::Disposition::Kept => None,
+            ownership::Disposition::Flagged => {
+                let flag = self.fresh_hoist("_moved");
+                self.flags.borrow_mut().insert(name.to_string(), flag.clone());
+                Some(flag)
+            }
+        };
+        let declaration = match &flag {
+            Some(flag) => format!("let {} = false;\n", flag),
+            None => String::new(),
+        };
+        self.pending.borrow_mut().push(ownership::Owned {
+            name: emitted.to_string(),
+            source: Some(name.to_string()),
+            drops,
+            flag,
+            statement_scoped: false,
+        });
+        declaration
     }
 
     // ── Pattern translation (static — no self_type needed) ──────────
@@ -601,6 +873,7 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::MethodCall(call) => {
                 let receiver = self.expr(&call.receiver);
+                let receiver = self.hoist_receiver(call, receiver);
                 let rust_method = call.method.to_string();
                 let ts_method = name_map::map_fn_name(&rust_method);
 
@@ -629,12 +902,18 @@ impl<'a> BodyTranslator<'a> {
                 // In TS, only Result has a real .unwrap(). All other types
                 // (guards, Option/nullable, etc.) treat it as identity.
                 if matches!(rust_method.as_str(), "unwrap" | "expect") {
+                    // A `Result` the port really builds is unwrapped; a lock
+                    // call's `LockResult` was never built, because the port's
+                    // `lock()` hands back the guard. Everything else — a guard,
+                    // a nullable — has no `unwrap` of its own and the call
+                    // writes nothing.
                     let receiver_ty = self.resolve_expr_type(&call.receiver);
                     let instead = format!("`{}` is treated as the identity", rust_method);
                     let is_result = self
                         .or_fallback(receiver_ty, &instead)
                         .and_then(|ty| self.types.as_ref().map(|tc| tc.borrow().is_result(&ty)))
-                        .unwrap_or(false);
+                        .unwrap_or(false)
+                        && !self.is_lock_call(&call.receiver);
                     if !is_result {
                         // The call still resolved — `unwrap` on a `LockResult`
                         // is `Result::unwrap` and hands back the guard — so it
@@ -644,11 +923,23 @@ impl<'a> BodyTranslator<'a> {
                         return receiver.to_string();
                     }
                 }
-                if rust_method == "unwrap_or" && args.len() == 1 {
-                    return format!("{} ?? {}", receiver, args[0]);
-                }
-                if rust_method == "unwrap_or_else" && args.len() == 1 {
-                    return format!("{} ?? ({})()", receiver, args[0]);
+                // `??` reads a *value* for null, and a `Result` is an object:
+                // `r ?? d` always takes `r`, whatever it holds. Only the
+                // nullable the port maps `Option` to can be written that way;
+                // a `Result` calls the runtime's own method, which consumes the
+                // receiver as Rust's does.
+                if matches!(rust_method.as_str(), "unwrap_or" | "unwrap_or_else") && args.len() == 1
+                {
+                    let nullable = self
+                        .resolve_expr_type(&call.receiver)
+                        .ok()
+                        .is_some_and(|ty| self.is_nullable(&ty));
+                    if nullable {
+                        return match rust_method.as_str() {
+                            "unwrap_or" => format!("{} ?? {}", receiver, args[0]),
+                            _ => format!("{} ?? ({})()", receiver, args[0]),
+                        };
+                    }
                 }
 
                 // ── the resolved call ──
@@ -743,19 +1034,32 @@ impl<'a> BodyTranslator<'a> {
                         }
                     }
                     syn::UnOp::Neg(_) => format!("-{}", e),
-                    syn::UnOp::Deref(_) => e,
+                    // `*guard` reads what the container holds, which the port
+                    // writes as a field on the guard. Emitting the guard itself
+                    // handed the guard where the value was wanted, and a guard
+                    // the statement produced was never released — the lock
+                    // stayed held for the life of the program.
+                    syn::UnOp::Deref(_) => {
+                        let written = self.hoist_produced(&unary.expr, e);
+                        match &self.types {
+                            Some(tc) => {
+                                let accessor = tc.borrow().deref_accessor_of(&unary.expr);
+                                match accessor {
+                                    Ok(accessor) => format!("{}.{}", written, accessor),
+                                    // Not every `*` reaches through a wrapper:
+                                    // `*x` on a `&T` is the `T`, and emission
+                                    // erases the reference.
+                                    Err(_) => written,
+                                }
+                            }
+                            None => written,
+                        }
+                    }
                     _ => format!("/* unknown unary op */ {}", e),
                 }
             }
 
-            syn::Expr::If(if_expr) => {
-                // Try ternary for simple if/else value expressions
-                if let Some(ternary) = self.try_ternary(if_expr) {
-                    ternary
-                } else {
-                    control_flow::translate_if(if_expr, self)
-                }
-            }
+            syn::Expr::If(if_expr) => control_flow::translate_if(if_expr, self),
 
             syn::Expr::Block(block) => {
                 if block.block.stmts.len() == 1 {
@@ -816,7 +1120,7 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Return(ret) => {
                 if let Some(expr) = &ret.expr {
-                    format!("return {}", self.expr(expr))
+                    format!("return {}", self.expr_value(expr))
                 } else {
                     "return".to_string()
                 }
@@ -836,10 +1140,17 @@ impl<'a> BodyTranslator<'a> {
                         format!("({}) => {{\n{}}}", params.join(", "), indent(&body))
                     }
                     _ => {
-                        let body = self.expr(&closure.body);
+                        // A guard lifted out of the body belongs inside the
+                        // arrow function: its declaration names the closure's
+                        // own parameters, which do not exist outside.
+                        let (body, lifted) =
+                            self.with_own_hoists(|| self.expr_value(&closure.body));
                         // If body starts with { or if/for/while, wrap in braces
                         // (arrow function expression body can't start with these)
-                        if body.starts_with("if ") || body.starts_with("for ") || body.starts_with("while ") || body.starts_with('{') {
+                        if !lifted.is_empty() {
+                            let inner = Self::arrow_body(&body, &lifted);
+                            format!("({}) => {{\n{}}}", params.join(", "), indent(&inner))
+                        } else if body.starts_with("if ") || body.starts_with("for ") || body.starts_with("while ") || body.starts_with('{') {
                             format!("({}) => {{\n  {}\n}}", params.join(", "), body)
                         } else {
                             format!("({}) => {}", params.join(", "), body)
@@ -960,13 +1271,15 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Try(try_expr) => {
                 // Special case: write!(f, ...)? in expression position — just the format string
                 if is_write_macro(&try_expr.expr) {
-                    let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap());
+                    let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap(), self);
                     return fmt_str;
                 }
-                // expr? in expression position — use .unwrap() (caller handles Result propagation)
-                // For statement-level ?, see translate_local which emits the full check pattern.
-                let inner = self.expr(&try_expr.expr);
-                format!("{}.unwrap()", inner)
+                let lowered = self.lower_try(try_expr);
+                self.prelude.borrow_mut().push(ownership::Hoist {
+                    declaration: lowered.declaration,
+                    owned: None,
+                });
+                lowered.value
             }
             syn::Expr::Await(await_expr) => format!("await {}", self.expr(&await_expr.base)),
 
@@ -980,7 +1293,7 @@ impl<'a> BodyTranslator<'a> {
                 format!("{} as {}", self.expr(&cast.expr), name_map::map_type(&cast.ty))
             }
 
-            syn::Expr::Macro(mac) => macros::translate_macro(&mac.mac),
+            syn::Expr::Macro(mac) => macros::translate_macro(&mac.mac, self),
 
             syn::Expr::Unsafe(unsafe_block) => {
                 let body = self.translate_block(&unsafe_block.block).trim().to_string();
@@ -1006,6 +1319,203 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// An expression whose *value* the surrounding code needs.
+    ///
+    /// An `if` is a value in Rust and a statement in TypeScript, and the two
+    /// need different code: as a statement it is an `if`, as a value it is a
+    /// ternary where both branches are expressions and an immediately-called
+    /// arrow function where they are not. Emitting the statement form in value
+    /// position wrote a block where an expression had to stand, which does not
+    /// parse.
+    pub fn expr_value(&self, expr: &syn::Expr) -> String {
+        let syn::Expr::If(if_expr) = expr else {
+            return self.expr(expr);
+        };
+        if let Some(ternary) = self.try_ternary(if_expr) {
+            return ternary;
+        }
+        let body = control_flow::translate_expr_in_return_position(expr, self);
+        format!("(() => {{\n{}}})()", indent(&format!("{}\n", body)))
+    }
+
+    /// `e?` — take the value out, or leave with the error.
+    ///
+    /// The test and the early exit are statements, so they are lifted into the
+    /// prelude and the expression becomes the name they left behind. That is
+    /// what makes `f(g()?)` work: `g()` is asked once, its error leaves the
+    /// function, and `f` is called with the value.
+    ///
+    /// The `Ok` wrapper is consumed by the `unwrap` that follows, and the `Err`
+    /// wrapper by the `unwrapErr` that rebuilds it, so neither is left for the
+    /// leak registry to find.
+    fn lower_try(&self, try_expr: &syn::ExprTry) -> Lowered {
+        let inner = self.expr(&try_expr.expr);
+        let span = syn::spanned::Spanned::span(try_expr);
+        let ty = self.resolve_expr_type(&try_expr.expr).ok();
+        let temp = self.fresh_hoist("_r");
+
+        // `?` on an `Option<T>` leaves with `None`, which this port writes as
+        // null. The engine names the type; a receiver it could not name is a
+        // `Result`, which is what all but a handful of `?` in the corpus are.
+        let is_option = ty.as_ref().is_some_and(|ty| self.is_nullable(ty));
+        if is_option {
+            return Lowered {
+                declaration: format!(
+                    "const {} = {};\nif ({} == null) return null;\n",
+                    temp, inner, temp
+                ),
+                value: temp,
+                wrapper: None,
+            };
+        }
+
+        if ty.is_none() {
+            self.fallback(
+                span,
+                "`?` is lowered as a `Result` without the engine having named what it tests",
+            );
+        } else {
+            self.report_try_conversion(ty.as_ref(), span);
+        }
+        Lowered {
+            declaration: format!(
+                "const {} = {};\nif ({}.isErr()) return Result.Err({}.unwrapErr());\n",
+                temp, inner, temp, temp
+            ),
+            value: format!("{}.unwrap()", temp),
+            wrapper: Some(temp),
+        }
+    }
+
+    /// Is this the `Option<T>` the port writes as `T | null`?
+    fn is_nullable(&self, ty: &crate::ty::Ty) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let Some(id) = ty.peel_refs().id() else {
+            return false;
+        };
+        matches!(
+            tc.borrow().registry.shapes().form(id),
+            Some(crate::name_map::system_shapes::Form::Nullable)
+        )
+    }
+
+    /// Say so when `?` crosses two different error types.
+    ///
+    /// Rust calls `From` there, and the engine does not yet say which `From`.
+    /// The emitted code hands the error on unchanged, which is right wherever
+    /// the two types agree and wrong wherever they do not — so every site where
+    /// they differ is reported rather than silently mistranslated.
+    fn report_try_conversion(&self, ty: Option<&crate::ty::Ty>, span: proc_macro2::Span) {
+        let (Some(ty), Some(returns)) = (ty, self.fn_return.as_ref()) else {
+            return;
+        };
+        let error_of = |ty: &crate::ty::Ty| match ty.peel_refs() {
+            crate::ty::Ty::Named { args, .. } if args.len() == 2 => Some(args[1].clone()),
+            _ => None,
+        };
+        let (Some(from), Some(to)) = (error_of(ty), error_of(returns)) else {
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let Some(tc) = &self.types else { return };
+        let tc = tc.borrow();
+        self.fallback(
+            span,
+            format!(
+                "`?` converts {} to {} through `From`, which the engine has not resolved; \
+                 the error is handed on unconverted",
+                name_map::map_ty(tc.registry, &from),
+                name_map::map_ty(tc.registry, &to),
+            ),
+        );
+    }
+
+    /// Translate something with a statement scope of its own.
+    ///
+    /// A closure body and a match arm become functions in TypeScript, and a
+    /// declaration lifted out of one of them cannot stand outside it: the
+    /// closure's parameter is not in scope there. So the lifted declarations
+    /// come back with the text instead of escaping to the enclosing statement.
+    pub fn with_own_hoists<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<ownership::Hoist>) {
+        let saved = std::mem::take(&mut *self.prelude.borrow_mut());
+        let result = f();
+        let lifted = std::mem::replace(&mut *self.prelude.borrow_mut(), saved);
+        (result, lifted)
+    }
+
+    /// The body of an arrow function that produces `value`, with everything
+    /// lifted out of it declared and released inside.
+    pub fn arrow_body(value: &str, hoists: &[ownership::Hoist]) -> String {
+        let mut inner = format!("return {};\n", value);
+        for hoist in hoists.iter().rev() {
+            let wrapped = match &hoist.owned {
+                Some(owned) => ownership::wrap(&inner, owned),
+                None => inner,
+            };
+            inner = format!("{}{}", hoist.declaration, wrapped);
+        }
+        inner
+    }
+
+    /// Lift a receiver the statement produced and nothing binds.
+    ///
+    /// `self.inner.read().unwrap().len()` produces a guard: Rust drops it at
+    /// the end of the statement, and the emitted TypeScript would otherwise
+    /// hold the lock for the life of the program. A receiver that is a *place*
+    /// — a name, a field, an index — produces nothing and is left alone, and so
+    /// is one the callee takes by value, because the callee owns it from there.
+    ///
+    /// Only the values `@ankurah/base` hands back as owning objects are lifted.
+    /// A `Vec` or a `HashMap` receiver is a plain JavaScript array or `Map` by
+    /// the time it is written, and the native translations rewrite what the
+    /// call produces, so a release written against the Rust type would not be
+    /// releasing the Rust value.
+    fn hoist_receiver(&self, call: &syn::ExprMethodCall, written: String) -> String {
+        if <Self as ownership::moves::Consumes>::consumes_receiver(self, call) {
+            return written;
+        }
+        self.hoist_produced(&call.receiver, written)
+    }
+
+    /// The same, for any expression the statement produced and nothing binds.
+    fn hoist_produced(&self, expr: &syn::Expr, written: String) -> String {
+        if is_place(expr) {
+            return written;
+        }
+        let Some(tc) = &self.types else { return written };
+        let drops = {
+            let tc = tc.borrow();
+            let Ok(ty) = tc.resolve_expr(expr) else {
+                return written;
+            };
+            ownership::drops_of(&tc.probe(), &ty)
+        };
+        if !matches!(drops, ownership::Drops::Guard | ownership::Drops::Own) {
+            return written;
+        }
+        self.hoist_temporary(written, drops)
+    }
+
+    /// Give a value produced inside an expression a name and a release.
+    ///
+    /// Returns the name to write in place of the expression.
+    fn hoist_temporary(&self, written: String, drops: ownership::Drops) -> String {
+        let name = self.fresh_hoist("_t");
+        self.prelude.borrow_mut().push(ownership::Hoist {
+            declaration: format!("const {} = {};\n", name, written),
+            owned: Some(ownership::Owned {
+                name: name.clone(),
+                source: None,
+                drops,
+                flag: None,
+                statement_scoped: true,
+            }),
+        });
+        name
+    }
+
     /// A name for a value the emitted code has to hold on to.
     ///
     /// A pattern match tests its subject and then takes it apart, and the
@@ -1021,13 +1531,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// A name for the `Result` a `?` produced, where the binding it feeds is a
-    /// pattern rather than a name.
-    fn fresh_result_temp(&self) -> String {
-        let n = self.temporaries.get();
-        self.temporaries.set(n + 1);
-        format!("_r_{}", n)
-    }
 
     /// `while let PAT = e { body }` as a loop that tests each turn.
     ///
@@ -1175,10 +1678,36 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Block(block) => single_block_expr(&block.block)?,
             _ => return None,
         };
+        // A branch that hands a flagged local away needs a statement to set the
+        // flag in, and a ternary branch is not one. The `if` form is.
+        if !self.flag_sets_for(then_val).is_empty() || !self.flag_sets_for(else_val).is_empty() {
+            return None;
+        }
+        // The branches are written out to find out whether they fit; a branch
+        // that lifts a declaration out of itself does not, because the
+        // declaration would run whichever branch was taken. The attempt takes
+        // its diagnostics back with it, so the abandoned form is not counted.
+        let mark = self.mark();
         let cond = self.expr(&if_expr.cond);
-        let then_ts = self.expr(then_val);
-        let else_ts = self.expr(else_val);
+        let (then_ts, then_lifted) = self.with_own_hoists(|| self.expr_value(then_val));
+        let (else_ts, else_lifted) = self.with_own_hoists(|| self.expr_value(else_val));
+        if !then_lifted.is_empty() || !else_lifted.is_empty() {
+            self.rewind(mark);
+            return None;
+        }
         Some(format!("{} ? {} : {}", cond, then_ts, else_ts))
+    }
+
+    /// Where the diagnostics record stands, for a form the translator may
+    /// abandon.
+    fn mark(&self) -> usize {
+        self.types.as_ref().map(|tc| tc.borrow().sink.mark()).unwrap_or(0)
+    }
+
+    fn rewind(&self, mark: usize) {
+        if let Some(tc) = &self.types {
+            tc.borrow().sink.rewind(mark);
+        }
     }
 
     // ── Method call translation ─────────────────────────────────────
@@ -1261,6 +1790,24 @@ impl<'a> BodyTranslator<'a> {
             "Some" if args.len() == 1 => return args[0].clone(),
             "Some" => return args.join(", "),
             "None" => return "null".to_string(),
+            // `drop(x)` takes x by value and runs its glue there and then. The
+            // move analysis has already taken x off the block's list — it is an
+            // argument passed by value like any other — so this releases it
+            // once, where the source says.
+            "drop" | "mem.drop" | "mem::drop" if args.len() == 1 => {
+                return format!("{}.drop()", args[0]);
+            }
+            // `forget` is the one thing this model cannot express: it hands a
+            // value to nobody and cancels its drop. Emitting the release would
+            // run glue Rust suppressed, and emitting nothing leaks.
+            "mem.forget" | "mem::forget" | "forget" if args.len() == 1 => {
+                self.fallback(
+                    span,
+                    "`mem::forget` suppresses drop glue, which the emitted ownership model \
+                     has no way to say; the value is left to the leak registry",
+                );
+                return format!("/* mem::forget */ void {}", args[0]);
+            }
             _ => {}
         }
 
@@ -1389,12 +1936,19 @@ impl<'a> BodyTranslator<'a> {
     /// dropped so that `std::sync::Arc::new` becomes `Arc.new`, which is a
     /// guess about what the remaining segments mean; it is recorded as one.
     fn path_expr(&self, path: &syn::Path) -> String {
-        let dropped: Vec<String> = path
-            .segments
-            .iter()
-            .map(|seg| seg.ident.to_string())
-            .filter(|name| STD_QUALIFIERS.contains(&name.as_str()))
-            .collect();
+        // A path of one segment is a name — a local, a parameter, a free
+        // function — and never a module qualifier. Filtering it as one deleted
+        // every local called `ops`, `iter` or `fmt`: `ops.iter()` came out as
+        // `[...]`, a spread of nothing.
+        let dropped: Vec<String> = if path.segments.len() == 1 {
+            Vec::new()
+        } else {
+            path.segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .filter(|name| STD_QUALIFIERS.contains(&name.as_str()))
+                .collect()
+        };
         if !dropped.is_empty() {
             self.fallback(
                 syn::spanned::Spanned::span(path),
@@ -1428,6 +1982,7 @@ impl<'a> BodyTranslator<'a> {
     }
 
     fn path_static(path: &syn::Path) -> String {
+        let single = path.segments.len() == 1;
         let segments: Vec<String> = path.segments.iter().map(|seg| {
             let name = seg.ident.to_string();
             match name.as_str() {
@@ -1450,9 +2005,10 @@ impl<'a> BodyTranslator<'a> {
             }
         }).collect();
 
-        // Strip std/core/alloc module prefixes, keep type+method
+        // Strip std/core/alloc module prefixes, keep type+method. A lone
+        // segment is a name, not a qualifier: a local called `ops` is `ops`.
         let segments: Vec<String> = segments.into_iter()
-            .filter(|s| !STD_QUALIFIERS.contains(&s.as_str()))
+            .filter(|s| single || !STD_QUALIFIERS.contains(&s.as_str()))
             .collect();
         let joined = segments.join(".");
         match joined.as_str() {
@@ -1461,6 +2017,111 @@ impl<'a> BodyTranslator<'a> {
             }
             _ => joined,
         }
+    }
+}
+
+/// Does this method call take its receiver by value?
+///
+/// The move analysis asks; the impl table answers. `Result::unwrap`,
+/// `Option::take` and the `into_*` family all take `self`, and a receiver they
+/// took is not the block's to release any more.
+impl ownership::moves::Consumes for BodyTranslator<'_> {
+    fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        // Asking is not translating. The resolution files the questions it
+        // deferred, and this asks the same call several times — once per
+        // statement scan, once per flag scan — so the record is wound back to
+        // where it stood. The translation of the call reports them once.
+        let mark = tc.sink.mark();
+        let found = tc.resolve_method_call_with(
+            &call.receiver,
+            &call.method.to_string(),
+            call.turbofish.as_ref(),
+        );
+        tc.sink.rewind(mark);
+        let Ok(found) = found else {
+            // `.await` on a named future and `Result::unwrap` on a receiver the
+            // engine could not type are the two that matter, and both are worth
+            // reading off the name rather than losing: taking a receiver that
+            // was not taken leaks, and leaving one that was taken double-drops.
+            return matches!(
+                call.method.to_string().as_str(),
+                "unwrap" | "expect" | "unwrap_err" | "expect_err" | "unwrap_or" | "unwrap_or_else"
+                    | "unwrap_or_default" | "into" | "into_inner" | "into_iter" | "take"
+                    | "ok" | "err" | "map_err" | "and_then" | "or_else"
+            ) || call.method.to_string().starts_with("into_");
+        };
+        matches!(
+            tc.registry.method_self_kind(&found),
+            Some(crate::types::SelfKind::Value)
+        )
+    }
+}
+
+/// The names a `let` pattern introduces, in the TypeScript spelling.
+fn bound_names(pat: &syn::Pat) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_bound(pat, &mut out);
+    out
+}
+
+fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
+    match pat {
+        syn::Pat::Ident(ident) => {
+            out.push(name_map::escape_reserved(&name_map::to_camel_case(
+                &ident.ident.to_string(),
+            )));
+            if let Some((_, sub)) = &ident.subpat {
+                collect_bound(sub, out);
+            }
+        }
+        syn::Pat::Tuple(t) => t.elems.iter().for_each(|p| collect_bound(p, out)),
+        syn::Pat::TupleStruct(t) => t.elems.iter().for_each(|p| collect_bound(p, out)),
+        syn::Pat::Slice(s) => s.elems.iter().for_each(|p| collect_bound(p, out)),
+        syn::Pat::Struct(s) => s.fields.iter().for_each(|f| collect_bound(&f.pat, out)),
+        syn::Pat::Reference(r) => collect_bound(&r.pat, out),
+        syn::Pat::Type(t) => collect_bound(&t.pat, out),
+        syn::Pat::Paren(p) => collect_bound(&p.pat, out),
+        syn::Pat::Or(or) => or.cases.iter().for_each(|p| collect_bound(p, out)),
+        _ => {}
+    }
+}
+
+/// What `e?` became: the statements that test it, the expression that stands in
+/// its place, and the `Result` wrapper — which a statement-position `?` has to
+/// release, because nothing downstream consumes it.
+struct Lowered {
+    declaration: String,
+    value: String,
+    wrapper: Option<String>,
+}
+
+/// Does this expression name storage that already exists, rather than produce
+/// a value? Rust drops what a statement produced and nothing else, so only the
+/// second kind needs a release written for it.
+fn is_place(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Path(_) | syn::Expr::Field(_) | syn::Expr::Index(_) => true,
+        syn::Expr::Unary(u) => matches!(u.op, syn::UnOp::Deref(_)) && is_place(&u.expr),
+        syn::Expr::Reference(r) => is_place(&r.expr),
+        syn::Expr::Paren(p) => is_place(&p.expr),
+        syn::Expr::Group(g) => is_place(&g.expr),
+        // `x?` hands back what was inside a Result the lowering already
+        // consumed; `x.await` takes the future by value. Neither leaves a value
+        // behind for the statement to release.
+        syn::Expr::Try(t) => is_place(&t.expr),
+        _ => false,
+    }
+}
+
+/// Look through the wrappers a binding can be written behind — `let mut x`,
+/// `let x: T`, `let (x)` — to whatever it really binds.
+fn strip_binding(pat: &syn::Pat) -> &syn::Pat {
+    match pat {
+        syn::Pat::Type(t) => strip_binding(&t.pat),
+        syn::Pat::Paren(p) => strip_binding(&p.pat),
+        other => other,
     }
 }
 
@@ -1586,40 +2247,4 @@ fn translate_binop(op: &syn::BinOp) -> &'static str {
         syn::BinOp::ShrAssign(_) => ">>=",
         _ => "/* unknown op */",
     }
-}
-
-/// Point each declared local at the identifier it was actually emitted under.
-///
-/// `locals` is in declaration order and names what Rust wrote, so two `let`s
-/// that shadow each other appear twice under one name. `renamed` holds, in the
-/// same order, the fresh identifier each shadow was given; the first appearance
-/// of a name keeps it and each later one takes the next fresh identifier for
-/// that name.
-fn rename_shadows(
-    locals: Vec<(String, String)>,
-    renamed: &[(String, String)],
-) -> Vec<(String, String)> {
-    if renamed.is_empty() {
-        return locals;
-    }
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    locals
-        .into_iter()
-        .map(|(name, ty)| {
-            let count = seen.entry(name.clone()).or_insert(0);
-            *count += 1;
-            if *count == 1 {
-                return (name, ty);
-            }
-            let nth = *count - 1;
-            match renamed
-                .iter()
-                .filter(|(rust, _)| *rust == name)
-                .nth(nth - 1)
-            {
-                Some((_, emitted)) => (emitted.clone(), ty),
-                None => (name, ty),
-            }
-        })
-        .collect()
 }

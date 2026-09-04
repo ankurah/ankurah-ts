@@ -28,7 +28,7 @@ impl<T: ?Sized> Deref for Rc<T> {
 
 impl<T: ?Sized> Clone for Rc<T> { fn clone(&self) -> Rc<T> { todo!() } }
 impl<T: ?Sized + Debug> Debug for Rc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<T: ?Sized + Display> Display for Rc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<T: ?Sized + std::fmt::Display> std::fmt::Display for Rc<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<T: Default> Default for Rc<T> { fn default() -> Rc<T> { todo!() } }
 impl<T: ?Sized + PartialEq<T>> PartialEq for Rc<T> { fn eq(&self, other: &Rc<T>) -> bool { todo!() } }
 impl<T: ?Sized + Eq> Eq for Rc<T> {}

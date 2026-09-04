@@ -17,12 +17,12 @@ export class Header extends Struct {
   }
 
   static parseTwice(raw: string): Result<[Header, Header], ParseError> {
-    const _r_first = Header.parse(raw);
-    if (_r_first.isErr()) return _r_first as any;
-    const first = _r_first.unwrap();
-    const _r_second = Header.parse(raw);
-    if (_r_second.isErr()) return _r_second as any;
-    const second = _r_second.unwrap();
+    const _r0 = Header.parse(raw);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const first = _r0.unwrap();
+    const _r1 = Header.parse(raw);
+    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+    const second = _r1.unwrap();
     return Result.Ok([first, second]);
   }
 }

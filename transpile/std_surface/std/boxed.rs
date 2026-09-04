@@ -26,7 +26,7 @@ impl<T: ?Sized> DerefMut for Box<T> {
 
 impl<T: Clone> Clone for Box<T> { fn clone(&self) -> Box<T> { todo!() } }
 impl<T: ?Sized + Debug> Debug for Box<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<T: ?Sized + Display> Display for Box<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<T: ?Sized + std::fmt::Display> std::fmt::Display for Box<T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<T: Default> Default for Box<T> { fn default() -> Box<T> { todo!() } }
 impl<T: ?Sized + PartialEq<T>> PartialEq for Box<T> { fn eq(&self, other: &Box<T>) -> bool { todo!() } }
 impl<T: ?Sized + Eq> Eq for Box<T> {}

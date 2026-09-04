@@ -35,9 +35,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
     CurrentObserver.track(this.source);
     return this.source.with((input) => {
       const output = (this.transform)(input);
-      const _ret = f(output);
-      output.drop();
-      return _ret;
+      return f(output);
     });
   }
 
@@ -59,11 +57,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
         listener_1(transform(input));
       });
     }));
-    const _ret = SubscriptionGuard.new(subscription);
-    transform.drop();
-    source.drop();
-    listener.drop();
-    return _ret;
+    return SubscriptionGuard.new(subscription);
   }
 }
 

@@ -14,7 +14,12 @@ export class Counter extends Struct {
   }
 
   labelLen(): number {
-    return this._0.value.label.lock().value.length;
+    const _t0 = this._0.value.label.lock();
+    try {
+      return _t0.value.length;
+    } finally {
+      _t0.drop();
+    }
   }
 
   setLabel(label: string): void {

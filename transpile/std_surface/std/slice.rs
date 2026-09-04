@@ -253,8 +253,8 @@ pub unsafe fn from_raw_parts_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T]
 // Arrays: `[T; N]` is not `[T]`, and `for x in [a, b]` reaches this impl.
 impl<T, const N: usize> IntoIterator for [T; N] {
     type Item = T;
-    type IntoIter = std::array::IntoIter<T, N>;
-    fn into_iter(self) -> std::array::IntoIter<T, N> { todo!() }
+    type IntoIter = std::array::IntoIter<T>;
+    fn into_iter(self) -> std::array::IntoIter<T> { todo!() }
 }
 
 impl<'a, T, const N: usize> IntoIterator for &'a [T; N] {
@@ -272,12 +272,10 @@ impl<T, const N: usize> AsRef<[T]> for [T; N] {
     fn as_ref(&self) -> &[T] { todo!() }
 }
 
-/// `[T; N]` reaches slice methods by an unsize coercion, not by `Deref` — the
-/// oracle keeps the two apart (`Pointer(Unsize)` versus
-/// `Deref(Some(OverloadedDeref(..)))`), so declaring a `Deref` here would teach
-/// the engine a relation rustc does not have. `Unsize` is unstable in real std;
-/// it is written out because the engine's deref chain needs the fact.
-pub trait Unsize<T: ?Sized> {}
-
-impl<T, const N: usize> Unsize<[T]> for [T; N] {}
-impl<T: Debug> Unsize<dyn Debug> for T {}
+// `[T; N]` reaches slice methods by an unsize coercion, not by `Deref` — the
+// oracle keeps the two apart (`Pointer(Unsize)` versus
+// `Deref(Some(OverloadedDeref(..)))`), so declaring a `Deref` here would teach
+// the engine a relation rustc does not have. The `Unsize` trait itself is
+// `std::marker::Unsize` and lives in `std/marker.rs`; only the two impls that
+// concern slices are here.
+impl<T, const N: usize> std::marker::Unsize<[T]> for [T; N] {}

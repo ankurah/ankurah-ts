@@ -231,6 +231,13 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
             base_imports.push(ty);
         }
     }
+    // The cascade, which the ownership emission calls to release a plain
+    // JavaScript value that owns what is inside it — an array of entities, a
+    // map of them. It is a function rather than a type, so it is looked for by
+    // the call the emitter writes.
+    if all_type_refs.contains("dropOwned(") && !base_imports.contains(&"dropOwned") {
+        base_imports.push("dropOwned");
+    }
     if !base_imports.is_empty() {
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n", base_imports.join(", ")));
     }
@@ -471,9 +478,22 @@ pub fn generate_test_ts_with_imports(
     let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
         "RefCell", "Ref", "RefMut", "ThreadLocal", "Struct", "Enum", "Drop"];
-    let base_imports: Vec<&&str> = base_runtime_types.iter()
+    let mut base_imports: Vec<&&str> = base_runtime_types.iter()
         .filter(|t| test_refs.contains(**t) && !available_types.contains(**t))
         .collect();
+    // The cascade the ownership emission calls to release a plain JavaScript
+    // value that owns what is inside it. It is a function, so `collect_type_refs`
+    // (which reads PascalCase names) does not see it.
+    let cascade = "dropOwned";
+    let all_bodies: String = file
+        .test_functions
+        .iter()
+        .filter_map(|f| f.body_ts.as_deref())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if all_bodies.contains("dropOwned(") {
+        base_imports.push(&cascade);
+    }
     if !base_imports.is_empty() {
         let mut sorted = base_imports;
         sorted.sort();

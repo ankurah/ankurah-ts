@@ -47,7 +47,7 @@ impl DerefMut for String {
 impl Clone for String { fn clone(&self) -> String { todo!() } }
 impl Default for String { fn default() -> String { todo!() } }
 impl Debug for String { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for String { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for String { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl PartialEq for String { fn eq(&self, other: &String) -> bool { todo!() } }
 impl Eq for String {}
 impl PartialEq<str> for String { fn eq(&self, other: &str) -> bool { todo!() } }
@@ -68,7 +68,7 @@ pub trait ToString {
     fn to_string(&self) -> String;
 }
 
-impl<T: Display + ?Sized> ToString for T {
+impl<T: std::fmt::Display + ?Sized> ToString for T {
     fn to_string(&self) -> String { todo!() }
 }
 
@@ -80,7 +80,7 @@ impl FromUtf8Error {
 }
 
 impl Debug for FromUtf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for FromUtf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for FromUtf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for FromUtf8Error {}
 
 pub struct Drain<'a>;

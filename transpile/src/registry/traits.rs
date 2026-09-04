@@ -14,8 +14,6 @@ use crate::ty::{TraitRef, TypeId};
 #[derive(Debug, Clone)]
 pub struct TraitMethod {
     pub sig: MethodSig,
-    /// True when the trait wrote a body, so an impl need not.
-    pub has_default: bool,
 }
 
 /// A trait, keyed in the registry by the same `TypeId` its name resolves to.

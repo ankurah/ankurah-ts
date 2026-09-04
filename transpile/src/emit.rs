@@ -63,6 +63,8 @@ pub fn emit_struct(
         out.push_str("  }\n");
     }
 
+    emit_owned_fields(out, &real_fields);
+
     // Methods
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
@@ -265,6 +267,32 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
 
 // ── Method emitters ─────────────────────────────────────────────────────
 
+/// Say what this type owns, where saying nothing would be wrong.
+///
+/// The drop cascade walks a value's own properties, and a field holding `&T`
+/// looks exactly like a field holding `T`. Rust's drop of a borrow releases
+/// nothing — `struct Ref<'a, T>(&'a Broadcast<T>)` does not release the
+/// broadcast — so a type with a reference field lists what it really owns and
+/// the cascade steps over the rest. Without this, dropping the borrow dropped
+/// the borrowed value, and its real owner's drop was then a double drop.
+fn emit_owned_fields(out: &mut String, fields: &[&FieldInfo]) {
+    let borrows = |f: &&FieldInfo| matches!(f.ty, Some(crate::ty::Ty::Ref { .. }));
+    if !fields.iter().any(borrows) {
+        return;
+    }
+    let owned: Vec<String> = fields
+        .iter()
+        .filter(|f| !borrows(f))
+        .filter_map(|f| f.name.as_ref().map(|n| format!("this.{}", n)))
+        .collect();
+    out.push_str(&format!(
+        "\n  // A `&T` field is a borrow: dropping this releases the borrow and \
+         nothing\n  // else, so the cascade must not walk it.\n  \
+         protected override ownedFields(): unknown[] {{\n    return [{}];\n  }}\n",
+        owned.join(", ")
+    ));
+}
+
 fn emit_inherent_methods(
     out: &mut String,
     self_type: &str,
@@ -304,6 +332,8 @@ fn emit_trait_methods(
                 (method.ts_name.clone(), None)
             };
             let ts_name = disambiguate_trait_method(&base_ts_name, trait_name, type_args, plain_name);
+            // `Drop` declares `onDrop` protected, so the override has to say so.
+            let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
             if emitted.insert(ts_name.clone()) {
                 let m = FnInfo {
                     name: method.name.clone(),
@@ -327,7 +357,7 @@ fn emit_trait_methods(
                     body_ts: method.body_ts.clone(),
                 };
                 out.push('\n');
-                emit_method(out, &m, self_type);
+                emit_method_with(out, &m, self_type, modifiers);
             }
         }
     }
@@ -564,6 +594,12 @@ fn emit_struct_bincode(
 }
 
 fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
+    emit_method_with(out, method, self_type, "")
+}
+
+/// The same, with the modifiers TypeScript needs in front of the name — which
+/// today is only `protected override` on the `onDrop` an `impl Drop` becomes.
+fn emit_method_with(out: &mut String, method: &FnInfo, self_type: &str, modifiers: &str) {
     let static_kw = if method.is_static { "static " } else { "" };
     let async_kw = if method.is_async { "async " } else { "" };
     let generics = if method.is_static {
@@ -603,8 +639,8 @@ fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
         "    throw new Error('TODO');\n".to_string()
     };
 
-    out.push_str(&format!("  {}{}{}{}({}): {} {{\n{}  }}\n",
-        static_kw, async_kw, method.ts_name, generics, params, ret, body));
+    out.push_str(&format!("  {}{}{}{}{}({}): {} {{\n{}  }}\n",
+        modifiers, static_kw, async_kw, method.ts_name, generics, params, ret, body));
 }
 
 /// Indent body lines by 4 spaces (2 for class, 2 for method body)
@@ -870,6 +906,11 @@ fn merge_class_type_params_for_static(method_generics: &str, self_type: &str) ->
 
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {
     match (trait_name, rust_method_name) {
+        // `impl Drop for T` is the type's own cleanup, and `AkObject.drop()` is
+        // the template that calls it: mark, unregister, run this, then drop the
+        // fields. Overriding `drop()` instead would put the cleanup after the
+        // cascade, which is the wrong order and hands the body dead fields.
+        ("Drop", "drop") => Some(("onDrop", Some("void"))),
         ("Display", "fmt") => Some(("toString", Some("string"))),
         ("Debug", "fmt") => None,
         ("Default", "default") => Some(("default", None)),

@@ -9,14 +9,14 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   source: Upstream;
   transform: Transform;
   cached: Arc<RwLock<Output | null>>;
-  Subscription: ListenerGuard;
+  _subscription: ListenerGuard;
 
-  constructor(source: Upstream, transform: Transform, cached: Arc<RwLock<Output | null>>, Subscription: ListenerGuard) {
+  constructor(source: Upstream, transform: Transform, cached: Arc<RwLock<Output | null>>, _subscription: ListenerGuard) {
     super();
     this.source = source;
     this.transform = transform;
     this.cached = cached;
-    this.Subscription = Subscription;
+    this._subscription = _subscription;
   }
 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
@@ -25,31 +25,34 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
     const subscription = source.listen(Arc.new((_) => {
       cachedRef.value.write().value = null;
     }));
-    const _ret = new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
-    cachedRef.drop();
-    return _ret;
+    return new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
   }
 
   withCached<R>(f: (arg0: Output) => R): R {
     (() => {
       const guard = this.cached.value.read();
-      {
-        const _v = guard;
-        if (_v != null) {
-          const value = _v;
-          return f(value);
+      try {
+        {
+          const _v = guard.value;
+          if (_v != null) {
+            const value = _v;
+            return f(value);
+          }
         }
+      } finally {
+        guard.drop();
       }
     })()
     let guard = this.cached.value.write();
-    if (guard.value == null) {
-      const output = this.source.with((input) => (this.transform)(input));
-      guard.value = output;
-      output.drop();
+    try {
+      if (guard.value == null) {
+        const output = this.source.with((input) => (this.transform)(input));
+        guard.value = output;
+      }
+      return f(guard.value.asRef());
+    } finally {
+      guard.drop();
     }
-    const _ret = f(guard.value.asRef());
-    guard.drop();
-    return _ret;
   }
 
   clone(): Memo<Upstream, Input, Output, Transform> {
@@ -87,14 +90,8 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
       const output = source.with((input) => transform(input));
       cached.value.write().value = output.clone();
       listener_1(output);
-      output.drop();
     }));
-    const _ret = SubscriptionGuard.new(subscription);
-    cached.drop();
-    transform.drop();
-    source.drop();
-    listener.drop();
-    return _ret;
+    return SubscriptionGuard.new(subscription);
   }
 }
 

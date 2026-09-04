@@ -10,7 +10,6 @@ mod codegen;
 mod config;
 mod control_flow;
 mod diag;
-mod drop_analysis;
 mod emit;
 mod extract;
 mod imports;
@@ -37,13 +36,6 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Analyze which types transitively contain Drop types
-    DropAnalysis {
-        /// Path to Rust source directory
-        #[arg()]
-        path: PathBuf,
-    },
-
     /// Generate TypeScript skeleton from a Rust source file
     Skeleton {
         /// Path to a Rust source file
@@ -96,9 +88,6 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::DropAnalysis { path } => {
-            drop_analysis::analyze(&path)?;
-        }
         Command::Skeleton { file, crate_path } => {
             let sink = diag::DiagSink::new();
             let mut parsed = vec![registry::ExtractedFile {
@@ -682,9 +671,31 @@ fn translate_fn_body(
             }
         }
 
+        // What this function returns, so that `?` can say whether the error it
+        // hands on needs a `From` conversion Rust would have called.
+        let returns = func
+            .rust_return
+            .as_ref()
+            .and_then(|written| tc.resolve_written_type(written).ok());
+
+        // Rust drops a by-value parameter at the end of the function body, so
+        // the body's block owns it exactly as it owns its own locals. A `&self`
+        // or `&T` parameter is a borrow and owns nothing.
+        let owned_params: Vec<(String, ty::Ty)> = func
+            .params
+            .iter()
+            .filter(|p| !p.is_self)
+            .filter(|p| !matches!(p.rust_ty, Some(syn::Type::Reference(_))))
+            .filter_map(|p| {
+                let syn_ty = p.rust_ty.as_ref()?;
+                Some((p.name.clone(), tc.resolve_written_type(syn_ty).ok()?))
+            })
+            .collect();
+
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
         translator.inline_module_names = inline_module_names.to_vec();
-        func.body_ts = Some(translator.translate_block(block));
+        translator.fn_return = returns;
+        func.body_ts = Some(translator.translate_fn_block(block, &owned_params));
         translator.pop_scope();
         // Fallbacks taken on translation paths that carry no sink of their own.
         diag::pending::drain(sink);

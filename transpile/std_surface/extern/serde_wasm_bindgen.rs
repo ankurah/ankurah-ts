@@ -46,7 +46,7 @@ impl serde::Serializer for &Serializer {
     fn serialize_tuple(self, len: usize) -> Result<SerializeTuple, Error> { todo!() }
     fn serialize_map(self, len: Option<usize>) -> Result<SerializeMap, Error> { todo!() }
     fn serialize_struct(self, name: &'static str, len: usize) -> Result<SerializeStruct, Error> { todo!() }
-    fn collect_str<T: ?Sized + Display>(self, value: &T) -> Result<JsValue, Error> { todo!() }
+    fn collect_str<T: ?Sized + std::fmt::Display>(self, value: &T) -> Result<JsValue, Error> { todo!() }
 }
 
 pub struct SerializeSeq;
@@ -83,21 +83,21 @@ pub struct Error;
 impl Error {
     /// The inherent constructor is `new`, not `custom`. `custom` reaches this
     /// type only through the two serde `Error` traits below.
-    pub fn new<T: Display>(msg: T) -> Error { todo!() }
+    pub fn new<T: std::fmt::Display>(msg: T) -> Error { todo!() }
 }
 
 impl From<JsValue> for Error { fn from(value: JsValue) -> Error { todo!() } }
 
 impl serde::ser::Error for Error {
-    fn custom<T: Display>(msg: T) -> Error { todo!() }
+    fn custom<T: std::fmt::Display>(msg: T) -> Error { todo!() }
 }
 
 impl serde::de::Error for Error {
-    fn custom<T: Display>(msg: T) -> Error { todo!() }
+    fn custom<T: std::fmt::Display>(msg: T) -> Error { todo!() }
     fn invalid_length(len: usize, exp: &dyn serde::de::Expected) -> Error { todo!() }
 }
 
 impl Debug for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for Error {}
 impl From<Error> for JsValue { fn from(e: Error) -> JsValue { todo!() } }

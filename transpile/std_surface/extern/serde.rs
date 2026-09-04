@@ -46,7 +46,7 @@ pub trait Serializer: Sized {
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error>;
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error>;
     fn serialize_struct(self, name: &'static str, len: usize) -> Result<Self::SerializeStruct, Self::Error>;
-    fn collect_str<T: ?Sized + Display>(self, value: &T) -> Result<Self::Ok, Self::Error>;
+    fn collect_str<T: ?Sized + std::fmt::Display>(self, value: &T) -> Result<Self::Ok, Self::Error>;
 }
 
 pub trait Deserializer<'de>: Sized {
@@ -69,7 +69,7 @@ pub trait Deserializer<'de>: Sized {
 
 pub mod ser {
     pub trait Error: Sized + std::error::Error {
-        fn custom<T: Display>(msg: T) -> Self;
+        fn custom<T: std::fmt::Display>(msg: T) -> Self;
     }
 
     pub trait SerializeSeq {
@@ -104,7 +104,7 @@ pub mod ser {
 
 pub mod de {
     pub trait Error: Sized + std::error::Error {
-        fn custom<T: Display>(msg: T) -> Self;
+        fn custom<T: std::fmt::Display>(msg: T) -> Self;
         fn invalid_length(len: usize, exp: &dyn Expected) -> Self;
     }
 

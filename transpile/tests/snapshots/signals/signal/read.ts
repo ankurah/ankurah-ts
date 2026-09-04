@@ -52,7 +52,12 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   }
 
   listen(listener: Listener): ListenerGuard {
-    return ListenerGuard.new(this.broadcast.reference().listen(new NotifyOnly(Arc.new(() => listener([])))));
+    const _t0 = this.broadcast.reference();
+    try {
+      return ListenerGuard.new(_t0.listen(new NotifyOnly(Arc.new(() => listener([])))));
+    } finally {
+      _t0.drop();
+    }
   }
 
   broadcastId(): BroadcastId {
@@ -76,12 +81,8 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
     const sigLguard = this.listen(Arc.new((_) => {
       const currentValue = roValue.value();
       listener_1(currentValue);
-      currentValue.drop();
     }));
-    const _ret = SubscriptionGuard.new(sigLguard);
-    roValue.drop();
-    listener.drop();
-    return _ret;
+    return SubscriptionGuard.new(sigLguard);
   }
 }
 

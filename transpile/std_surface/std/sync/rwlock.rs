@@ -33,7 +33,7 @@ impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
 }
 
 impl<'a, T: ?Sized + Debug> Debug for RwLockReadGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<'a, T: ?Sized + Display> Display for RwLockReadGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<'a, T: ?Sized + std::fmt::Display> std::fmt::Display for RwLockReadGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 
 pub struct RwLockWriteGuard<'a, T: ?Sized>;
 
@@ -51,4 +51,4 @@ impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
 }
 
 impl<'a, T: ?Sized + Debug> Debug for RwLockWriteGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<'a, T: ?Sized + Display> Display for RwLockWriteGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<'a, T: ?Sized + std::fmt::Display> std::fmt::Display for RwLockWriteGuard<'a, T> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }

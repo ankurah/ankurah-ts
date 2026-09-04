@@ -507,13 +507,6 @@ impl<'a> TypeContext<'a> {
     // ── Calls ──────────────────────────────────────────────────────────
 
     /// Which function `receiver.name(..)` calls, and what it hands back.
-    pub fn resolve_method_call(
-        &self,
-        receiver: &syn::Expr,
-        method: &str,
-    ) -> Result<MethodResolution, Diag> {
-        self.resolve_method_call_with(receiver, method, None)
-    }
 
     /// The same, with the type arguments a turbofish wrote. `collect::<Vec<_>>()`
     /// says what the call produces where nothing else does.
@@ -1175,6 +1168,52 @@ impl<'a> TypeContext<'a> {
         args.get(1)
             .and_then(|e| e.id())
             .is_some_and(|id| self.is_system(id, "std::sync::PoisonError"))
+    }
+
+    /// The std functions whose port version hands back the guard itself.
+    ///
+    /// Rust wraps a guard in a `LockResult` because another thread can poison
+    /// a lock; there are no other threads here, so `@ankurah/base` returns the
+    /// guard and the `unwrap` the source writes has nothing left to do. This is
+    /// a fact about *these functions*, not about the type: keying it on
+    /// `Result<_, PoisonError<_>>` also swallowed the `unwrap` on any other
+    /// `Result` that happened to carry a `PoisonError`.
+    const LOCK_CALLS: [(&'static str, &'static str); 8] = [
+        ("std::sync::Mutex", "lock"),
+        ("std::sync::Mutex", "try_lock"),
+        ("std::sync::RwLock", "read"),
+        ("std::sync::RwLock", "write"),
+        ("std::sync::RwLock", "try_read"),
+        ("std::sync::RwLock", "try_write"),
+        ("std::sync::Mutex", "get_mut"),
+        ("std::sync::RwLock", "get_mut"),
+    ];
+
+    /// Did this expression come from one of those calls?
+    pub fn is_lock_call(&self, expr: &syn::Expr) -> bool {
+        let syn::Expr::MethodCall(call) = expr else {
+            return false;
+        };
+        let method = call.method.to_string();
+        if !Self::LOCK_CALLS.iter().any(|(_, name)| *name == method) {
+            return false;
+        }
+        // Asking is not translating: the resolution files the questions it
+        // deferred, and the call is translated separately.
+        let mark = self.sink.mark();
+        let found =
+            self.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref());
+        self.sink.rewind(mark);
+        let Ok(found) = found else { return false };
+        let Some(impl_id) = found.callee.impl_id() else {
+            return false;
+        };
+        let Some(owner) = self.registry.impl_def(impl_id).self_ty.peel_refs().id() else {
+            return false;
+        };
+        Self::LOCK_CALLS
+            .iter()
+            .any(|(path, name)| *name == method && self.is_system(owner, path))
     }
 
     /// The types a callee's closure parameter takes.

@@ -65,17 +65,17 @@ pub trait FromStr: Sized {
 }
 
 impl FromStr for bool { type Err = ParseBoolError; fn from_str(s: &str) -> Result<bool, ParseBoolError> { todo!() } }
-impl FromStr for char { type Err = ParseCharError; fn from_str(s: &str) -> Result<char, ParseCharError> { todo!() } }
-impl FromStr for u8 { type Err = ParseIntError; fn from_str(s: &str) -> Result<u8, ParseIntError> { todo!() } }
-impl FromStr for u16 { type Err = ParseIntError; fn from_str(s: &str) -> Result<u16, ParseIntError> { todo!() } }
-impl FromStr for u32 { type Err = ParseIntError; fn from_str(s: &str) -> Result<u32, ParseIntError> { todo!() } }
-impl FromStr for u64 { type Err = ParseIntError; fn from_str(s: &str) -> Result<u64, ParseIntError> { todo!() } }
-impl FromStr for usize { type Err = ParseIntError; fn from_str(s: &str) -> Result<usize, ParseIntError> { todo!() } }
-impl FromStr for i16 { type Err = ParseIntError; fn from_str(s: &str) -> Result<i16, ParseIntError> { todo!() } }
-impl FromStr for i32 { type Err = ParseIntError; fn from_str(s: &str) -> Result<i32, ParseIntError> { todo!() } }
-impl FromStr for i64 { type Err = ParseIntError; fn from_str(s: &str) -> Result<i64, ParseIntError> { todo!() } }
-impl FromStr for f32 { type Err = ParseFloatError; fn from_str(s: &str) -> Result<f32, ParseFloatError> { todo!() } }
-impl FromStr for f64 { type Err = ParseFloatError; fn from_str(s: &str) -> Result<f64, ParseFloatError> { todo!() } }
+impl FromStr for char { type Err = std::char::ParseCharError; fn from_str(s: &str) -> Result<char, std::char::ParseCharError> { todo!() } }
+impl FromStr for u8 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<u8, std::num::ParseIntError> { todo!() } }
+impl FromStr for u16 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<u16, std::num::ParseIntError> { todo!() } }
+impl FromStr for u32 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<u32, std::num::ParseIntError> { todo!() } }
+impl FromStr for u64 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<u64, std::num::ParseIntError> { todo!() } }
+impl FromStr for usize { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<usize, std::num::ParseIntError> { todo!() } }
+impl FromStr for i16 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<i16, std::num::ParseIntError> { todo!() } }
+impl FromStr for i32 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<i32, std::num::ParseIntError> { todo!() } }
+impl FromStr for i64 { type Err = std::num::ParseIntError; fn from_str(s: &str) -> Result<i64, std::num::ParseIntError> { todo!() } }
+impl FromStr for f32 { type Err = std::num::ParseFloatError; fn from_str(s: &str) -> Result<f32, std::num::ParseFloatError> { todo!() } }
+impl FromStr for f64 { type Err = std::num::ParseFloatError; fn from_str(s: &str) -> Result<f64, std::num::ParseFloatError> { todo!() } }
 impl FromStr for String { type Err = Infallible; fn from_str(s: &str) -> Result<String, Infallible> { todo!() } }
 
 pub trait Pattern: Sized {
@@ -236,6 +236,9 @@ pub struct RSplitN<'a, P>;
 pub struct SplitTerminator<'a, P>;
 pub struct Matches<'a, P>;
 pub struct Utf8Error;
+/// `"maybe".parse::<bool>()` yields this. Referenced by `impl FromStr for bool`
+/// above and previously never declared, which dropped that impl's signature.
+pub struct ParseBoolError;
 
 impl<'a> Iterator for Chars<'a> { type Item = char; fn next(&mut self) -> Option<char> { todo!() } }
 impl<'a> DoubleEndedIterator for Chars<'a> { fn next_back(&mut self) -> Option<char> { todo!() } }
@@ -255,7 +258,7 @@ impl<'a, P: Pattern> Iterator for SplitTerminator<'a, P> { type Item = &'a str; 
 impl<'a, P: Pattern> Iterator for Matches<'a, P> { type Item = &'a str; fn next(&mut self) -> Option<&'a str> { todo!() } }
 
 impl Debug for str { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for str { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for str { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl PartialEq for str { fn eq(&self, other: &str) -> bool { todo!() } }
 impl Eq for str {}
 impl PartialOrd for str { fn partial_cmp(&self, other: &str) -> Option<std::cmp::Ordering> { todo!() } }
@@ -263,6 +266,13 @@ impl Ord for str { fn cmp(&self, other: &str) -> std::cmp::Ordering { todo!() } 
 
 pub fn from_utf8(v: &[u8]) -> Result<&str, Utf8Error> { todo!() }
 
+impl Debug for ParseBoolError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for ParseBoolError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl Clone for ParseBoolError { fn clone(&self) -> ParseBoolError { todo!() } }
+impl PartialEq for ParseBoolError { fn eq(&self, other: &ParseBoolError) -> bool { todo!() } }
+impl Eq for ParseBoolError {}
+impl std::error::Error for ParseBoolError {}
+
 impl Debug for Utf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Utf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Utf8Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for Utf8Error {}

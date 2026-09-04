@@ -53,7 +53,12 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   }
 
   listen(listener: Listener): ListenerGuard {
-    return ListenerGuard.new(this.broadcast.reference().listen(listener));
+    const _t0 = this.broadcast.reference();
+    try {
+      return ListenerGuard.new(_t0.listen(listener));
+    } finally {
+      _t0.drop();
+    }
   }
 
   broadcastId(): BroadcastId {
@@ -66,12 +71,8 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
     const subscription = this.listen(Arc.new((_) => {
       const currentValue = roValue.value();
       listener_1(currentValue);
-      currentValue.drop();
     }));
-    const _ret = SubscriptionGuard.new(subscription);
-    roValue.drop();
-    listener.drop();
-    return _ret;
+    return SubscriptionGuard.new(subscription);
   }
 
   clone(): Mut<T> {

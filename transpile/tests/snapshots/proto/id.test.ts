@@ -10,7 +10,6 @@ describe('id unit tests', () => {
     const json = JSON.stringify(id);
     expect(json).toEqual('"AQIDBAUGBwgJCgsMDQ4PEA"');
     expect(id).toEqual(JSON.parse(json));
-    id.drop();
   });
 
   test('test_entity_id_bincode_serialization', () => {
@@ -18,7 +17,6 @@ describe('id unit tests', () => {
     const bytes = (() => { const _w = new BincodeWriter(); id.encode(_w); return _w.finish(); })();
     expect(bytes).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     expect(id).toEqual((() => { const _r = new BincodeReader(bytes); return /* TODO: need type */ _r; })());
-    id.drop();
   });
 
 });

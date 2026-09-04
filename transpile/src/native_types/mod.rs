@@ -69,7 +69,14 @@ pub fn translate_method(
     // takes the same table. (Emission still writes the projection's own name
     // where the *type* is written; this is only about calls.)
     if matches!(receiver_ty, Ty::Assoc { .. }) {
-        return translate_untyped(receiver, rust_method, args);
+        return MethodTranslation::Refused {
+            message: format!(
+                "the receiver of `{}` is a projection the impl table could not settle, so the \
+                 call is written from its name alone",
+                rust_method
+            ),
+            fallback: Box::new(translate_untyped(receiver, rust_method, args)),
+        };
     }
 
     // The shape a value takes in JavaScript decides which module knows how to

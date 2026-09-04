@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result } from '@ankurah/base';
+import { Struct, Result, dropOwned } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -32,7 +32,12 @@ export class Event extends Struct {
   }
 
   toString(): string {
-    return `Event(${this.id().toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations].map(([backend, ops]) => `${backend} => ${[...].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    const _t0 = this.id();
+    try {
+      return `Event(${_t0.toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations.deref()].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    } finally {
+      _t0.drop();
+    }
   }
 
   clone(): Event {
@@ -68,7 +73,11 @@ export class EventFragment extends Struct {
   }
 
   static from(attested: Attested<Event>): EventFragment {
-    return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
+    try {
+      return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
+    } finally {
+      attested.drop();
+    }
   }
 
   toString(): string {
@@ -111,11 +120,15 @@ export class StateFragment extends Struct {
   }
 
   static from(attested: Attested<EntityState>): StateFragment {
-    return new StateFragment(attested.payload.state, attested.attestations);
+    try {
+      return new StateFragment(attested.payload.state, attested.attestations);
+    } finally {
+      attested.drop();
+    }
   }
 
   toString(): string {
-    return `StateFragment(state ${this.state} attestations: ${this.attestations.length})`;
+    return `StateFragment(state ${this.state} attestations: ${this.attestations.deref().length})`;
   }
 
   equals(other: StateFragment): boolean {
@@ -149,7 +162,7 @@ export class OperationSet extends Struct {
   }
 
   toString(): string {
-    return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
   deref(): Map<string, Operation[]> {
@@ -270,7 +283,7 @@ export class State extends Struct {
   }
 
   toString(): string {
-    return `State(${this.head} buffers ${[...this.stateBuffers].map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
+    return `State(${this.head} buffers ${[...this.stateBuffers.deref()].map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
   }
 
   equals(other: State): boolean {

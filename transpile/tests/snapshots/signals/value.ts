@@ -15,23 +15,30 @@ export class ValueCell<T extends Clone> extends Struct {
 
   set(value: T): void {
     let current = this._0.value.write();
-    current.value = value;
-    current.drop();
+    try {
+      current.value = value;
+    } finally {
+      current.drop();
+    }
   }
 
   with<R>(f: (arg0: T) => R): R {
     const guard = this._0.value.read();
-    const _ret = f(guard);
-    guard.drop();
-    return _ret;
+    try {
+      return f(guard.value);
+    } finally {
+      guard.drop();
+    }
   }
 
   setWith<R>(value: T, f: (arg0: T) => R): R {
     let current = this._0.value.write();
-    current.value = value;
-    const _ret = f(current);
-    current.drop();
-    return _ret;
+    try {
+      current.value = value;
+      return f(current.value);
+    } finally {
+      current.drop();
+    }
   }
 
   readvalue(): ReadValueCell<T> {
@@ -39,7 +46,12 @@ export class ValueCell<T extends Clone> extends Struct {
   }
 
   value(): T {
-    return this._0.value.read().value.clone();
+    const _t0 = this._0.value.read();
+    try {
+      return _t0.value.clone();
+    } finally {
+      _t0.drop();
+    }
   }
 
   clone(): ValueCell<T> {
@@ -57,13 +69,20 @@ export class ReadValueCell<T extends Clone> extends Struct {
 
   with<R>(f: (arg0: T) => R): R {
     const guard = this._0.value.read();
-    const _ret = f(guard);
-    guard.drop();
-    return _ret;
+    try {
+      return f(guard.value);
+    } finally {
+      guard.drop();
+    }
   }
 
   value(): T {
-    return this._0.value.read().value.clone();
+    const _t0 = this._0.value.read();
+    try {
+      return _t0.value.clone();
+    } finally {
+      _t0.drop();
+    }
   }
 
   clone(): ReadValueCell<T> {

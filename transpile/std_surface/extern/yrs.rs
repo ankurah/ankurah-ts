@@ -187,7 +187,7 @@ impl Update {
 pub struct UpdateError;
 
 impl Debug for UpdateError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for UpdateError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for UpdateError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for UpdateError {}
 
 pub mod updates {
@@ -224,5 +224,5 @@ pub mod updates {
 pub struct EncodingError;
 
 impl Debug for EncodingError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for EncodingError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for EncodingError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for EncodingError {}

@@ -1137,3 +1137,23 @@ fn the_emission_policy_is_keyed_on_identity_not_on_a_leaf_name() {
     // Nothing the shape table names has gone missing from the surface.
     assert!(c.reg.shapes().unresolved.is_empty(), "{:?}", c.reg.shapes().unresolved);
 }
+
+// ── Where the surface's own declarations live ─────────────────────────
+
+#[test]
+fn a_named_type_takes_its_module_from_its_file() {
+    let c = Fixture::build(&[("lib.rs", "")]);
+    assert!(
+        c.reg.system_type("std::num::ParseIntError").is_some(),
+        "`std/num.rs` declares it, so it lives at `std::num`"
+    );
+    assert!(
+        c.reg.system_type("std::ParseIntError").is_none(),
+        "and not at the crate root, which is where it landed while `std/num.rs` \
+         was read as a drawer of primitive impls"
+    );
+    assert!(c.reg.system_type("std::num::NonZeroUsize").is_some());
+    // `std/primitive.rs` is still read in `std`, and now holds no named type at
+    // all, so nothing is reachable at the wrong path through it.
+    assert!(c.reg.system_type("std::char::ToLowercase").is_some());
+}

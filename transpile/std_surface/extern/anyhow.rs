@@ -10,17 +10,17 @@ pub struct Error;
 
 impl Error {
     pub fn new<E: std::error::Error + Send + Sync + 'static>(error: E) -> Error { todo!() }
-    pub fn msg<M: Display + Debug + Send + Sync + 'static>(message: M) -> Error { todo!() }
-    pub fn context<C: Display + Send + Sync + 'static>(self, context: C) -> Error { todo!() }
+    pub fn msg<M: std::fmt::Display + Debug + Send + Sync + 'static>(message: M) -> Error { todo!() }
+    pub fn context<C: std::fmt::Display + Send + Sync + 'static>(self, context: C) -> Error { todo!() }
     pub fn chain(&self) -> Chain<'_> { todo!() }
     pub fn root_cause(&self) -> &(dyn std::error::Error + 'static) { todo!() }
-    pub fn is<E: Display + Debug + Send + Sync + 'static>(&self) -> bool { todo!() }
-    pub fn downcast<E: Display + Debug + Send + Sync + 'static>(self) -> Result<E, Error> { todo!() }
-    pub fn downcast_ref<E: Display + Debug + Send + Sync + 'static>(&self) -> Option<&E> { todo!() }
+    pub fn is<E: std::fmt::Display + Debug + Send + Sync + 'static>(&self) -> bool { todo!() }
+    pub fn downcast<E: std::fmt::Display + Debug + Send + Sync + 'static>(self) -> Result<E, Error> { todo!() }
+    pub fn downcast_ref<E: std::fmt::Display + Debug + Send + Sync + 'static>(&self) -> Option<&E> { todo!() }
 }
 
 impl Debug for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 
 impl Deref for Error {
     type Target = dyn std::error::Error + Send + Sync + 'static;
@@ -37,8 +37,8 @@ impl<'a> Iterator for Chain<'a> {
 }
 
 pub trait Context<T, E> {
-    fn context<C: Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error>;
-    fn with_context<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error>;
+    fn context<C: std::fmt::Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error>;
+    fn with_context<C: std::fmt::Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error>;
 }
 
 /// anyhow bounds `Context for Result<T, E>` on its own sealed `ext::StdError`,
@@ -51,13 +51,13 @@ impl<E: std::error::Error + Send + Sync + 'static> StdError for E {}
 impl StdError for Error {}
 
 impl<T, E: StdError + Send + Sync + 'static> Context<T, E> for std::result::Result<T, E> {
-    fn context<C: Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error> { todo!() }
-    fn with_context<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error> { todo!() }
+    fn context<C: std::fmt::Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error> { todo!() }
+    fn with_context<C: std::fmt::Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error> { todo!() }
 }
 
 impl<T> Context<T, Infallible> for Option<T> {
-    fn context<C: Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error> { todo!() }
-    fn with_context<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error> { todo!() }
+    fn context<C: std::fmt::Display + Send + Sync + 'static>(self, context: C) -> Result<T, Error> { todo!() }
+    fn with_context<C: std::fmt::Display + Send + Sync + 'static, F: FnOnce() -> C>(self, f: F) -> Result<T, Error> { todo!() }
 }
 
 impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {

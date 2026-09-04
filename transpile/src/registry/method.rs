@@ -13,6 +13,7 @@
 use super::impls::{head_of, Bound, Head, ImplId};
 use super::{ModuleId, Ns, TypeRegistry};
 use crate::ty::subst::Subst;
+use crate::types::SelfKind;
 use crate::ty::{bind_params, TraitRef, Ty, TypeId};
 
 /// How far a chain of `Deref`s is followed before the engine calls it a cycle.
@@ -159,6 +160,9 @@ pub enum Undecided {
 pub struct MethodResolution {
     /// The dereferences taken from the written receiver, in order.
     pub steps: Vec<DerefStep>,
+    /// The borrow taken of the receiver before the call. Emission erases it —
+    /// a JavaScript method call takes no borrow — and the tests assert it,
+    /// because it is what says which step of Rust's probe was taken.
     pub autoref: AutoRef,
     pub callee: Callee,
     /// The impl's parameters, bound to what stood at their positions.
@@ -346,6 +350,10 @@ impl<'a> Probe<'a> {
     // ── Method resolution ──────────────────────────────────────────────
 
     /// Which function `receiver.name(..)` calls.
+    ///
+    /// Only the tests reach it: translation always has a turbofish to pass,
+    /// even when it is empty, and goes through `resolve_method_with`.
+    #[cfg(test)]
     pub fn resolve_method(&self, receiver: &Ty, name: &str) -> Result<MethodResolution, MethodError> {
         self.resolve_method_with(receiver, name, &[])
     }
@@ -438,32 +446,54 @@ impl<'a> Probe<'a> {
                 extension.push(declared);
             }
         }
-        self.exactly_one(candidate, extension)
+        self.exactly_one(candidate, self.nameable(extension))
     }
 
-    fn exactly_one(&self, candidate: &Ty, mut picks: Vec<Pick>) -> Result<Option<Pick>, MethodError> {
+    /// The extension candidates whose trait the calling module can name.
+    ///
+    /// Rust needs the trait in scope for the method to exist at all, and that
+    /// is a filter, not a tie-break: the std surface declares reflexive
+    /// blankets — `impl<T: ?Sized> BorrowMut<T> for T`, and the same for
+    /// `Borrow` and `AsRef` — which answer to `borrow_mut` on *every* receiver
+    /// at depth 0. Keeping them made `guard.borrow_mut()` on a
+    /// `RwLockReadGuard<RefCell<T>>` resolve to the blanket instead of
+    /// `RefCell::borrow_mut` one deref later, and the `.value` accessor the
+    /// guard needs was never written.
+    ///
+    /// Where the filter would leave nothing, the unfiltered list stands. A gap
+    /// in the `use` map would otherwise silently delete the only method there
+    /// is; `out_of_scope` on the resolution reports the sole survivor instead.
+    fn nameable(&self, picks: Vec<Pick>) -> Vec<Pick> {
+        let in_scope: Vec<Pick> = picks
+            .iter()
+            .filter(|p| self.trait_in_scope(&p.callee))
+            .cloned()
+            .collect();
+        if in_scope.is_empty() {
+            picks
+        } else {
+            in_scope
+        }
+    }
+
+    fn exactly_one(&self, candidate: &Ty, picks: Vec<Pick>) -> Result<Option<Pick>, MethodError> {
+        // One function reachable by two routes is one answer, not a clash. The
+        // same trait method arrives twice wherever a supertrait and a subtrait
+        // both offer it, and counting the copies reported `Iterator::find` as
+        // ambiguous with itself.
+        let mut picks = picks.into_iter().fold(Vec::new(), |mut kept: Vec<Pick>, pick| {
+            if !kept.iter().any(|p| p.callee == pick.callee) {
+                kept.push(pick);
+            }
+            kept
+        });
         match picks.len() {
             0 => Ok(None),
             1 => Ok(Some(picks.remove(0))),
-            _ => {
-                // Rust settles this with the trait's visibility: a trait whose
-                // name the module cannot see contributes no method. The engine
-                // applies that only here, where it changes the answer, so that a
-                // gap in the import map cannot silently lose a method that has
-                // no competition.
-                let in_scope: Vec<Pick> = picks
-                    .iter()
-                    .filter(|p| self.trait_in_scope(&p.callee))
-                    .cloned()
-                    .collect();
-                if in_scope.len() == 1 {
-                    return Ok(Some(in_scope.into_iter().next().unwrap()));
-                }
-                Err(MethodError::Ambiguous {
-                    at: candidate.clone(),
-                    candidates: picks.into_iter().map(|p| p.callee).collect(),
-                })
-            }
+            _ => Err(MethodError::Ambiguous {
+                at: candidate.clone(),
+                candidates: picks.into_iter().map(|p| p.callee).collect(),
+            }),
         }
     }
 
@@ -1200,6 +1230,31 @@ impl TypeRegistry {
     /// keeps working.
     pub fn deref_trait(&self) -> Option<TypeId> {
         self.system_type(super::DEREF_PATH)
+    }
+
+    /// How a resolved call takes its receiver.
+    ///
+    /// The ownership emission turns on it: a method declared `self` takes the
+    /// receiver with it, so the scope that held the receiver no longer owns it
+    /// and must not release it.
+    pub fn method_self_kind(&self, found: &MethodResolution) -> Option<SelfKind> {
+        match &found.callee {
+            Callee::Inherent(id, name)
+            | Callee::TraitImpl(id, name)
+            | Callee::Blanket(id, name) => {
+                let def = self.impl_def(*id);
+                if let Some(sig) = def.methods.get(name) {
+                    return sig.self_kind;
+                }
+                // An impl that inherited the trait's default body has no
+                // signature of its own; the trait's declaration is the answer.
+                let trait_id = def.trait_ref.as_ref()?.id;
+                self.trait_method(trait_id, name)?.1.sig.self_kind
+            }
+            Callee::TraitObject(trait_id, name) => {
+                self.trait_method(*trait_id, name)?.1.sig.self_kind
+            }
+        }
     }
 }
 

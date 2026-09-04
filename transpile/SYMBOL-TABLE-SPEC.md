@@ -333,12 +333,25 @@ Resolution order as implemented (step 2). Rust has two tiers and so does this:
      after the chain is exhausted is a diagnostic naming every receiver tried.
 
 Trait visibility. Rust admits an extension method only when its trait is in
-scope. The engine applies that as a tie-break, not as a filter: where two
-candidates compete it decides between them, and where one candidate stands alone
-it is taken and reported ("resolved through trait `T`, which is not in scope
-here"). Filtering instead would make the answer depend on the `use` map being
-complete, and a gap there would delete a method silently rather than show up in
-the diagnostics count.
+scope, and the engine applies that as a **filter** on the extension tier: a
+candidate whose trait the calling module cannot name is dropped before the step
+is counted. Where the filter would leave nothing, the unfiltered list stands and
+the sole survivor is taken and reported ("resolved through trait `T`, which is
+not in scope here"), so a gap in the `use` map shows up in the diagnostics count
+rather than deleting a method silently.
+
+Ruling changed 2026-09-03 (it was a tie-break until then). The declared std
+surface has reflexive blanket impls — `impl<T: ?Sized> BorrowMut<T> for T`, and
+the same for `Borrow` and `AsRef` — which answer to `borrow_mut` on *every*
+receiver at depth 0. As a tie-break they had no competition there and won, so
+`guard.borrow_mut()` on a `RwLockReadGuard<RefCell<T>>` resolved to the blanket
+instead of `RefCell::borrow_mut` one deref later, and the `.value` accessor the
+guard needs was never written. Filtering them out at depth 0 lets the chain
+continue to the receiver Rust actually reaches.
+
+Duplicates are not a clash. One function reachable by two routes — a supertrait
+and a subtrait both offering it — is deduped by callee identity before the
+count, which was reporting `Iterator::find` as ambiguous with itself.
 
 Bounds. An impl whose `where` clause definitely fails is not a candidate. One
 the engine cannot decide — `F: Fn(T)` before the closures step, a trait with no
@@ -655,6 +668,32 @@ addressed by the step that found it.
   `let subscribers = { let listeners = ..; listeners.values()..collect() };`
   leaves `subscribers` untyped, and it is the second uncovered oracle site
   (`<[T]>::split_last`).
+- **Ownership emission: what the model deliberately does not cover.** The
+  releases the emitter writes are described in `port/ownership.md`; these are the
+  places it knows it is not faithful, each reported at the site.
+  - **A closure that takes ownership of a local owns it from there, and nothing
+    releases what the closure itself owns.** The drop cascade cannot see into a
+    JavaScript closure, so a value captured by one is not released at all. The
+    capture site is reported; the fix needs a runtime notion of a closure that
+    owns things.
+  - **A `let` that takes a droppable value apart** — `let (a, b) = pair()` —
+    releases neither part. Rust drops the parts separately, which needs a
+    per-field release the emitter does not write.
+  - **A local whose type the engine could not name is not released.** The
+    release is only as good as the type, and one written against a guess would
+    release a value somebody else owns.
+  - **`?` across two error types hands the error on unconverted.** Rust calls
+    `From` there; resolving which `From` is step 5.
+  - **`mem::forget` cannot be said at all**: the emitted value has no way to
+    cancel its own drop glue, so it is left for the leak registry.
+  - **A non-guard temporary is released at the end of its block, not at the end
+    of its statement.** A guard's second drop is a deliberate no-op, so a guard
+    is released at both; anything else would be a double drop, and holding it to
+    the end of the block releases it exactly once and never late enough to
+    matter.
+  - **A discarded expression statement's value is not released.** `map.insert(k,
+    v)` returns the displaced value in Rust and the `Map` itself in TypeScript,
+    so a release written against the Rust type would release the wrong thing.
 - **An or-pattern whose alternatives read their names from different places has
   no test the translator can write.** `if let (Expr::Path(p), Expr::Literal(l)) |
   (Expr::Literal(l), Expr::Path(p)) = ..` binds the same two names from opposite

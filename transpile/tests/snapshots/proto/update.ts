@@ -177,12 +177,12 @@ export class UpdateContent extends Enum<UpdateContentV> {
     return this.match({
       EventOnly: (v) => {
         const events = v._0;
-        return [null, events];
+        return [null, events] as any;
       },
       StateAndEvent: (v) => {
         const state = v._0;
         const events = v._1;
-        return [state, events];
+        return [state, events] as any;
       },
     });
   }

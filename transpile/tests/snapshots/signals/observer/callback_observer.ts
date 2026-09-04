@@ -30,48 +30,59 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   clear(): void {
-    this._0.value.entries.write().value.clear();
+    const _t0 = this._0.value.entries.write();
+    try {
+      _t0.value.clear();
+    } finally {
+      _t0.drop();
+    }
   }
 
   markAllForRemoval(): void {
     let entries = this._0.value.entries.write();
-    for (const entry of entries.value.values()) {
-      entry.markedForRemoval = true;
+    try {
+      for (const entry of entries.value.values()) {
+        entry.markedForRemoval = true;
+      }
+    } finally {
+      entries.drop();
     }
-    entries.drop();
-
   }
 
   sweepMarkedListeners(): void {
     let entries = this._0.value.entries.write();
-    { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
-    entries.drop();
+    try {
+      { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
+    } finally {
+      entries.drop();
+    }
   }
 
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
     let entries = this._0.value.entries.write();
-    {
-      const _v = entries.value.get(broadcastId);
-      if (_v != null) {
-        const entry = _v;
-        entry.markedForRemoval = false;
-        return;
-      }
-    }
-    const weak = new WeakCallbackObserver(this._0.downgrade());
-    entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
+    try {
       {
-        const _v1 = weak.upgrade();
-        if (_v1 != null) {
-          const observer = _v1;
-          observer.trigger();
+        const _v = entries.value.get(broadcastId);
+        if (_v != null) {
+          const entry = _v;
+          entry.markedForRemoval = false;
+          return;
         }
       }
-    })), false));
-    weak.drop();
-    entries.drop();
-    broadcastId.drop();
+      const weak = new WeakCallbackObserver(this._0.downgrade());
+      entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
+        {
+          const _v1 = weak.upgrade();
+          if (_v1 != null) {
+            const observer = _v1;
+            observer.trigger();
+          }
+        }
+      })), false));
+    } finally {
+      entries.drop();
+    }
   }
 
   observerId(): number {
@@ -88,12 +99,12 @@ export class CallbackObserver extends Struct implements Observer {
 }
 
 class SubscriptionEntry extends Struct {
-  Guard: ListenerGuard;
+  _guard: ListenerGuard;
   markedForRemoval: boolean;
 
-  constructor(Guard: ListenerGuard, markedForRemoval: boolean) {
+  constructor(_guard: ListenerGuard, markedForRemoval: boolean) {
     super();
-    this.Guard = Guard;
+    this._guard = _guard;
     this.markedForRemoval = markedForRemoval;
   }
 }

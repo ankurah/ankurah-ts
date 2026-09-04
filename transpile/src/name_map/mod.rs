@@ -13,7 +13,12 @@ pub use emit_ty::map_ty;
 
 /// Convert snake_case to camelCase
 pub fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
+    // A leading underscore is Rust's "deliberately unused", not a word break:
+    // `_sub1` is one name, and folding the underscore away made it `Sub1`,
+    // which reads as a type.
+    let leading = s.len() - s.trim_start_matches('_').len();
+    let (underscores, s) = s.split_at(leading);
+    let mut result = String::from(underscores);
     let mut capitalize_next = false;
 
     for (i, c) in s.chars().enumerate() {

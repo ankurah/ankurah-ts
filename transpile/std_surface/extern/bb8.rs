@@ -87,7 +87,7 @@ pub enum RunError<E> {
 }
 
 impl<E: Debug> Debug for RunError<E> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl<E: std::error::Error + 'static> Display for RunError<E> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl<E: std::error::Error + 'static> std::fmt::Display for RunError<E> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl<E: std::error::Error + 'static> std::error::Error for RunError<E> {}
 impl<E: std::error::Error> From<E> for RunError<E> { fn from(error: E) -> RunError<E> { todo!() } }
 

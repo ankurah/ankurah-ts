@@ -113,7 +113,7 @@ pub mod error {
     }
 
     impl<R: RuleType> Debug for Error<R> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-    impl<R: RuleType> Display for Error<R> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+    impl<R: RuleType> std::fmt::Display for Error<R> { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
     impl<R: RuleType> std::error::Error for Error<R> {}
 
     pub enum ErrorVariant<R> {

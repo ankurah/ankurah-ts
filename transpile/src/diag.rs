@@ -96,6 +96,22 @@ impl DiagSink {
         self.diags.borrow().len()
     }
 
+    /// Where the record stands now, so a translation the emitter tries and then
+    /// abandons can take its diagnostics back with it.
+    ///
+    /// The translator sometimes has to write a form out before it can tell
+    /// whether the form fits — a ternary whose branch turns out to need a
+    /// statement. The attempt is not a fallback anybody took, and counting it
+    /// would make the coverage metric report the emitter's search rather than
+    /// the engine's gaps.
+    pub fn mark(&self) -> usize {
+        self.len()
+    }
+
+    pub fn rewind(&self, mark: usize) {
+        self.diags.borrow_mut().truncate(mark);
+    }
+
     /// How many diagnostics are about the crate being transpiled, and how many
     /// about the declared std surface.
     ///

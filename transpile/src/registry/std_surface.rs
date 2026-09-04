@@ -49,7 +49,13 @@ const REVIEW_SPLITS: [(&str, &str); 8] = [
 /// `impl u64 { .. }`, `impl str { .. }`, `impl<T> [T] { .. }`. The impls attach
 /// to the primitive itself; the module they are read in only has to be able to
 /// name the types their signatures mention, so they are read in `std`.
-const PRIMITIVE_IMPLS: [&str; 2] = ["std/primitive.rs", "std/num.rs"];
+///
+/// `std/num.rs` is not one of them any more: it declares `ParseIntError` and
+/// the `NonZero` family, which live at `std::num` and were reachable as
+/// `std::ParseIntError` for as long as the file was read in `std`. Its impl
+/// blocks moved to `std/primitive.rs`, which now holds impls and no types at
+/// all.
+const PRIMITIVE_IMPLS: [&str; 1] = ["std/primitive.rs"];
 
 /// The crate a `core::` or `alloc::` path reaches. Both re-export into `std`,
 /// and ankurah writes `core::time::Duration` for `std::time::Duration`.

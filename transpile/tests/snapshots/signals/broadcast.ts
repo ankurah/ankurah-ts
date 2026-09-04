@@ -46,9 +46,11 @@ export class Broadcast<T extends Clone = void> extends Struct {
   send(value: T): void {
     const subscribers = (() => {
       const listeners = this._0.value.listeners.read();
-      const _ret = [...listeners.value.values()];
-      listeners.drop();
-      return _ret;
+      try {
+        return [...listeners.value.values()];
+      } finally {
+        listeners.drop();
+      }
     })();
     {
       const _v = subscribers.splitLast();
@@ -85,7 +87,12 @@ export class Broadcast<T extends Clone = void> extends Struct {
   }
 
   toString(): Result {
-    return f.debugStruct('Broadcast').field('listeners', this._0.value.listeners.read().value.size).finish();
+    const _t0 = this._0.value.listeners.read();
+    try {
+      return f.debugStruct('Broadcast').field('listeners', _t0.value.size).finish();
+    } finally {
+      _t0.drop();
+    }
   }
 
   static default<T>(): Broadcast<T> {
@@ -116,10 +123,22 @@ export class Ref<T> extends Struct {
     this._0 = _0;
   }
 
+  // A `&T` field is a borrow: dropping this releases the borrow and nothing
+  // else, so the cascade must not walk it.
+  protected override ownedFields(): unknown[] {
+    return [];
+  }
+
   listen<L>(listener: L): ListenerGuard<T> {
     const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
-    this._0._0.value.listeners.write().value.set(id, listener.intoBroadcastListener());
-    return new ListenerGuard(this._0._0.downgrade(), id);
+    const _t0 = this._0._0.value.listeners.write();
+    try {
+      _t0.value.set(id, listener.intoBroadcastListener());
+      _t0.drop();
+      return new ListenerGuard(this._0._0.downgrade(), id);
+    } finally {
+      _t0.drop();
+    }
   }
 
   broadcastId(): BroadcastId {
@@ -141,12 +160,17 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
     return new BroadcastId(this.inner.asPtr() as number);
   }
 
-  drop(): void {
+  protected override onDrop(): void {
     {
       const _v = this.inner.upgrade();
       if (_v != null) {
         const inner = _v;
-        inner.value.listeners.write().value.delete(this.id);
+        const _t0 = inner.value.listeners.write();
+        try {
+          _t0.value.delete(this.id);
+        } finally {
+          _t0.drop();
+        }
       }
     }
   }

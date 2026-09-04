@@ -22,7 +22,7 @@ impl Ulid {
 impl Clone for Ulid { fn clone(&self) -> Ulid { todo!() } }
 impl Copy for Ulid {}
 impl Debug for Ulid { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Ulid { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Ulid { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Default for Ulid { fn default() -> Ulid { todo!() } }
 impl PartialEq for Ulid { fn eq(&self, other: &Ulid) -> bool { todo!() } }
 impl Eq for Ulid {}
@@ -41,5 +41,5 @@ pub enum DecodeError {
 }
 
 impl Debug for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for DecodeError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for DecodeError {}

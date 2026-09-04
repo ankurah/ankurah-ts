@@ -177,10 +177,18 @@ fn reaching_through_a_refcell_guard_emits_the_accessor() {
     ]);
 
     let body = c.translated_method("stack.rs", "last");
+    // The borrow guard is a value the statement produced and nothing binds, so
+    // the ownership emission gives it a name and releases it; Rust drops it at
+    // the end of the same statement.
     assert_eq!(
         body.trim(),
-        "return this.entries.borrow().value.at(-1);",
-        "the guard's accessor and the Vec translation both fire"
+        "const _t0 = this.entries.borrow();\n\
+         try {\n  \
+           return _t0.value.at(-1);\n\
+         } finally {\n  \
+           _t0.drop();\n\
+         }",
+        "the guard's accessor and the Vec translation both fire, and the guard is released"
     );
 
     // Both `Ref`s are still in the registry, each its own type.

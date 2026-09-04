@@ -1,6 +1,6 @@
 //! `std::error`
 
-pub trait Error: Debug + Display {
+pub trait Error: Debug + std::fmt::Display {
     fn source(&self) -> Option<&(dyn Error + 'static)>;
     fn description(&self) -> &str;
     fn cause(&self) -> Option<&dyn Error>;

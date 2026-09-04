@@ -45,7 +45,7 @@ impl Value {
 
 impl Clone for Value { fn clone(&self) -> Value { todo!() } }
 impl Debug for Value { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Value { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Value { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Default for Value { fn default() -> Value { todo!() } }
 impl PartialEq for Value { fn eq(&self, other: &Value) -> bool { todo!() } }
 impl FromStr for Value { type Err = Error; fn from_str(s: &str) -> Result<Value, Error> { todo!() } }
@@ -79,7 +79,7 @@ impl Number {
 
 impl Clone for Number { fn clone(&self) -> Number { todo!() } }
 impl Debug for Number { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Number { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Number { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl PartialEq for Number { fn eq(&self, other: &Number) -> bool { todo!() } }
 impl From<i64> for Number { fn from(n: i64) -> Number { todo!() } }
 impl From<u64> for Number { fn from(n: u64) -> Number { todo!() } }
@@ -126,5 +126,5 @@ impl Error {
 }
 
 impl Debug for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Error { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for Error {}

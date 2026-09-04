@@ -13,7 +13,7 @@ impl NulError {
 }
 
 impl Debug for NulError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for NulError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for NulError { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Clone for NulError { fn clone(&self) -> NulError { todo!() } }
 impl PartialEq for NulError { fn eq(&self, other: &NulError) -> bool { todo!() } }
 impl Eq for NulError {}

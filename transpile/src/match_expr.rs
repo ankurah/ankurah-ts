@@ -231,7 +231,11 @@ fn translate_enum_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTr
             let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
             let body = t.expr(&arm.body);
             drop(_bindings);
-            out.push_str(&render_arm(&variant, &fields, &body));
+            // An arm is an arrow function, so a local this arm hands away sets
+            // its drop flag here — the same line the enclosing block would have
+            // written had the arm been a statement of it.
+            let flags = t.flag_sets_for(&arm.body);
+            out.push_str(&render_arm(&variant, &fields, &body, &flags));
         }
     }
 
@@ -279,13 +283,18 @@ fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)>)> {
 /// handed. They used to be substituted into the rendered TypeScript by walking
 /// its characters, which could not tell a binding from the same word inside a
 /// string literal or a comment, and knew nothing of a name shadowed further in.
-fn render_arm(variant: &str, fields: &[(String, String)], body: &str) -> String {
+fn render_arm(
+    variant: &str,
+    fields: &[(String, String)],
+    body: &str,
+    flags: &str,
+) -> String {
     if fields.is_empty() {
-        return format!("  {}: () => {},\n", variant, as_arm_value(body, ""));
+        return format!("  {}: () => {},\n", variant, as_arm_value(body, flags));
     }
     // The arm's parameter must not collide with a name the pattern binds.
     let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
-    let mut bindings = String::new();
+    let mut bindings = String::from(flags);
     for (local, accessor) in fields {
         if local == "_" {
             continue;
@@ -306,18 +315,21 @@ fn as_arm_value(body: &str, bindings: &str) -> String {
         || body.starts_with("throw ")
         || body.starts_with('{')
         || body.contains(";\n");
+    // A tuple literal confuses TypeScript's inference across arms: `match`
+    // takes its result type from the first arm it reads, and `[null, events]`
+    // makes every later arm an error against it.
+    let value = if body.starts_with('[') {
+        format!("{} as any", body)
+    } else {
+        body.to_string()
+    };
     if bindings.is_empty() && !statements {
-        // A tuple literal confuses TypeScript's inference across arms.
-        return if body.starts_with('[') {
-            format!("{} as any", body)
-        } else {
-            body.to_string()
-        };
+        return value;
     }
     let tail = if statements {
         body.to_string()
     } else {
-        format!("return {};", body)
+        format!("return {};", value)
     };
     // The arm sits two spaces in, so its block's contents sit at four and the
     // closing brace lines up with the arm.

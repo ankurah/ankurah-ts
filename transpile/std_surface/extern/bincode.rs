@@ -26,5 +26,5 @@ pub enum ErrorKind {
 }
 
 impl Debug for ErrorKind { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for ErrorKind { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for ErrorKind { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl std::error::Error for ErrorKind {}

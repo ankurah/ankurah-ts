@@ -33,7 +33,7 @@ pub trait AsMut<T: ?Sized> {
 pub enum Infallible {}
 
 impl Debug for Infallible { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
-impl Display for Infallible { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
+impl std::fmt::Display for Infallible { fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { todo!() } }
 impl Clone for Infallible { fn clone(&self) -> Infallible { todo!() } }
 impl PartialEq for Infallible { fn eq(&self, other: &Infallible) -> bool { todo!() } }
 impl Eq for Infallible {}
@@ -102,13 +102,13 @@ impl From<i32> for f64 { fn from(value: i32) -> f64 { todo!() } }
 impl From<f32> for f64 { fn from(value: f32) -> f64 { todo!() } }
 impl From<bool> for i32 { fn from(value: bool) -> i32 { todo!() } }
 impl From<bool> for i64 { fn from(value: bool) -> i64 { todo!() } }
-impl TryFrom<u64> for u32 { type Error = TryFromIntError; fn try_from(value: u64) -> Result<u32, TryFromIntError> { todo!() } }
-impl TryFrom<u64> for usize { type Error = TryFromIntError; fn try_from(value: u64) -> Result<usize, TryFromIntError> { todo!() } }
-impl TryFrom<usize> for u32 { type Error = TryFromIntError; fn try_from(value: usize) -> Result<u32, TryFromIntError> { todo!() } }
-impl TryFrom<i64> for i32 { type Error = TryFromIntError; fn try_from(value: i64) -> Result<i32, TryFromIntError> { todo!() } }
-impl TryFrom<i64> for u64 { type Error = TryFromIntError; fn try_from(value: i64) -> Result<u64, TryFromIntError> { todo!() } }
-impl TryFrom<i64> for usize { type Error = TryFromIntError; fn try_from(value: i64) -> Result<usize, TryFromIntError> { todo!() } }
-impl TryFrom<usize> for i64 { type Error = TryFromIntError; fn try_from(value: usize) -> Result<i64, TryFromIntError> { todo!() } }
+impl TryFrom<u64> for u32 { type Error = std::num::TryFromIntError; fn try_from(value: u64) -> Result<u32, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<u64> for usize { type Error = std::num::TryFromIntError; fn try_from(value: u64) -> Result<usize, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<usize> for u32 { type Error = std::num::TryFromIntError; fn try_from(value: usize) -> Result<u32, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<i64> for i32 { type Error = std::num::TryFromIntError; fn try_from(value: i64) -> Result<i32, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<i64> for u64 { type Error = std::num::TryFromIntError; fn try_from(value: i64) -> Result<u64, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<i64> for usize { type Error = std::num::TryFromIntError; fn try_from(value: i64) -> Result<usize, std::num::TryFromIntError> { todo!() } }
+impl TryFrom<usize> for i64 { type Error = std::num::TryFromIntError; fn try_from(value: usize) -> Result<i64, std::num::TryFromIntError> { todo!() } }
 
 impl AsRef<str> for str { fn as_ref(&self) -> &str { todo!() } }
 impl AsRef<[u8]> for str { fn as_ref(&self) -> &[u8] { todo!() } }

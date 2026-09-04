@@ -22,11 +22,18 @@ export class ReactiveGraphObserver extends Struct implements Observer {
 
   observe(signal: Signal): void {
     const id = signal.broadcastId();
-    const map = this.bridges.lock();
-    const bridge = map.value.entry(id).orInsertWith(() => BridgeSource.new(id, signal)).clone();
-    bridge.value.track();
-    bridge.drop();
-
+    {
+      const _v = this.bridges.lock();
+      if (true) {
+        const map = _v;
+        const bridge = map.value.entry(id).orInsertWith(() => BridgeSource.new(id, signal)).clone();
+        try {
+          bridge.value.track();
+        } finally {
+          bridge.drop();
+        }
+      }
+    }
   }
 
   observerId(): number {
@@ -41,13 +48,13 @@ export class ReactiveGraphObserver extends Struct implements Observer {
 class BridgeSource extends Struct {
   broadcastId: BroadcastId;
   trigger: ArcRwSignal<void>;
-  Guard: ListenerGuard;
+  _guard: ListenerGuard;
 
-  constructor(broadcastId: BroadcastId, trigger: ArcRwSignal<void>, Guard: ListenerGuard) {
+  constructor(broadcastId: BroadcastId, trigger: ArcRwSignal<void>, _guard: ListenerGuard) {
     super();
     this.broadcastId = broadcastId;
     this.trigger = trigger;
-    this.Guard = Guard;
+    this._guard = _guard;
   }
 
   static new(broadcastId: BroadcastId, signal: Signal): Arc<BridgeSource> {
@@ -56,9 +63,7 @@ class BridgeSource extends Struct {
     const guard = signal.listen(Arc.new((_) => {
       triggerClone.notify();
     }));
-    const _ret = Arc.new(new BridgeSource(broadcastId, trigger, guard));
-    triggerClone.drop();
-    return _ret;
+    return Arc.new(new BridgeSource(broadcastId, trigger, guard));
   }
 
   track(): void {
