@@ -571,10 +571,18 @@ fn an_unwrap_or_default_is_released_when_it_is_not_chosen() {
         "pub fn f(o: Option<Owned>) -> u32 { let d = Owned { n: 9 }; look(&o.unwrap_or(d)) }",
         "f",
     );
-    assert!(ts.contains("?? _d0"), "the default is still the fallback:\n{}", ts);
+    assert!(ts.contains("?? _d1"), "the default is still the fallback:\n{}", ts);
     assert!(
-        ts.contains("!== _d0") && ts.contains("_d0.drop();"),
+        ts.contains("!== _d1") && ts.contains("_d1.drop();"),
         "and it is released on the path that did not take it:\n{}",
+        ts
+    );
+    let receiver = ts.find("const _o0 = o;").expect("the receiver is named first");
+    let default = ts.find("const _d1 = d;").expect("the default is built second");
+    assert!(
+        receiver < default,
+        "Rust evaluates the receiver before the argument, so the emitted code has to \
+         run the two side effects in that order:\n{}",
         ts
     );
 }
@@ -829,4 +837,467 @@ fn a_while_let_binding_is_released_each_turn() {
     let loop_at = ts.find("for (;;)").expect("the loop");
     let release = ts.find("v.drop();").expect("the binding is released");
     assert!(release > loop_at, "inside the loop, not after it:\n{}", ts);
+}
+
+
+// ── Where a condition's temporaries live ──────────────────────────────
+
+#[test]
+fn a_condition_that_reads_a_field_off_a_guard_still_releases_the_guard() {
+    let ts = body(
+        "pub struct Boxed { pub cell: Mutex<Owned> }\n\
+         pub fn f(b: &Boxed) -> u32 { if b.cell.lock().unwrap().n > 0 { 1 } else { 2 } }",
+        "f",
+    );
+    assert!(ts.contains("const _t0 = b.cell.lock();"), "the guard is lifted:\n{}", ts);
+    let released = ts.find("_t0.drop()").expect("the guard is released");
+    let branch = ts.find("if (_c1)").expect("the test stands on its own");
+    assert!(
+        released < branch,
+        "the lock is released before the branch is taken, even though the condition \
+         only read a field off it:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn each_condition_of_a_chain_takes_and_releases_its_own_temporary() {
+    let ts = body(
+        "pub fn make() -> Owned { Owned { n: 1 } }\n\
+         pub fn f() -> u32 { if make().n > 0 { 1 } else if make().n == 2 { 2 } else { 3 } }",
+        "f",
+    );
+    assert_eq!(ts.matches("= make();").count(), 2, "one temporary per condition:\n{}", ts);
+    assert_eq!(ts.matches(".drop();").count(), 2, "and each of them is released:\n{}", ts);
+    assert!(
+        ts.contains("} else {\n  let _c3;"),
+        "the second condition's statements stand inside the `else` that reaches them, \
+         not between the `else` and its `if`:\n{}",
+        ts
+    );
+}
+
+// ── Matches the runtime has no match of its own for ───────────────────
+
+#[test]
+fn a_literal_pattern_arm_that_hands_a_local_away_sets_its_flag() {
+    let ts = body(
+        "pub fn f(hand_it_on: bool) -> u32 { \
+           let a = Owned { n: 1 }; \
+           match hand_it_on { true => take(a), false => look(&a) } \
+         }",
+        "f",
+    );
+    let tested = ts.find("if (handItOn === true)").expect("the arm tests the literal");
+    let flagged = ts.find("_moved0 = true;").expect("the arm sets the flag");
+    let handed = ts.find("return take(a);").expect("the arm hands the local away");
+    assert!(tested < flagged && flagged < handed, "{}", ts);
+    assert!(
+        ts.contains("if (!_moved0) a.drop();"),
+        "and the `finally` reads it, so the arm that kept the local is the only one \
+         that releases it:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_match_guard_reads_what_its_pattern_bound_and_releases_its_own_temporary() {
+    let ts = body(
+        "pub fn make() -> Owned { Owned { n: 1 } }\n\
+         pub fn f(v: u32) -> u32 { match v { 0 => 0, k if make().n > k => 1, _ => 2 } }",
+        "f",
+    );
+    let bound = ts.find("const k = v;").expect("the pattern's name is declared");
+    let guard = ts.find("_t0.n > k").expect("the guard reads it");
+    assert!(
+        bound < guard,
+        "the binding stands above the guard that reads it, or reading it throws:\n{}",
+        ts
+    );
+    assert!(ts.contains("_t0.drop();"), "the guard's temporary is released:\n{}", ts);
+    assert!(
+        !ts.contains("if (true &&"),
+        "each arm tests its own pattern rather than a literal `true`:\n{}",
+        ts
+    );
+    assert!(ts.contains("if (v === 0)"), "{}", ts);
+}
+
+#[test]
+fn an_arm_whose_guard_failed_hands_the_subject_to_the_arm_below_it() {
+    let returning = body(
+        "pub fn make() -> Owned { Owned { n: 1 } }\n\
+         pub fn f(v: u32) -> u32 { match v { k if make().n > k => 1, _ => 2 } }",
+        "f",
+    );
+    assert!(
+        returning.starts_with("_match"),
+        "the arms are tried in turn inside a block of their own:\n{}",
+        returning
+    );
+    let guarded = returning.find("if (_c1)").expect("the guarded arm");
+    let below = returning.find("return 2;").expect("the arm below it");
+    assert!(
+        guarded < below,
+        "the arm below stands after the guarded one rather than inside it, which is what \
+         lets a guard that failed fall through to it:\n{}",
+        returning
+    );
+    assert!(
+        !returning.contains("break "),
+        "an arm that returns has made that jump itself:\n{}",
+        returning
+    );
+
+    let statement = body(
+        "pub fn make() -> Owned { Owned { n: 1 } }\n\
+         pub fn f(v: u32) -> u32 { let mut out = 0; \
+           match v { k if make().n > k => { out = 1; }, _ => { out = 2; } } out }",
+        "f",
+    );
+    let label = statement
+        .lines()
+        .find(|line| line.contains(": {"))
+        .expect("a labelled block")
+        .trim()
+        .trim_end_matches(": {")
+        .to_string();
+    assert_eq!(
+        statement.matches(&format!("break {};", label)).count(),
+        2,
+        "an arm that ran leaves the block, so the arms below it are not tried:\n{}",
+        statement
+    );
+}
+
+
+// ── Assignment through a wrapper ──────────────────────────────────────
+
+#[test]
+fn a_deref_assignment_names_and_releases_the_guard_it_wrote_through() {
+    let ts = body(
+        "impl Held { pub fn f(&self) { *self.cell.lock().unwrap() = 5; } }",
+        "f",
+    );
+    assert!(ts.contains("const _t0 = this.cell.lock();"), "the guard is named:\n{}", ts);
+    assert!(ts.contains("_t0.value = 5;"), "and written through:\n{}", ts);
+    assert!(
+        ts.contains("} finally {\n  _t0.drop();"),
+        "and released, or the mutex stays locked for the life of the program:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_deref_assignment_leaves_the_old_value_to_the_guards_own_store() {
+    let ts = body(
+        "pub struct Boxed { pub cell: Mutex<Owned> }\n\
+         impl Boxed { pub fn f(&self) { *self.cell.lock().unwrap() = Owned { n: 2 }; } }",
+        "f",
+    );
+    assert!(ts.contains("_t0.value = new Owned(2);"), "{}", ts);
+    assert!(
+        !ts.contains("_t0.value.drop()"),
+        "the runtime's setter drops what the container held, and a release written here \
+         as well drops that value twice:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_compound_deref_assignment_releases_its_guard_too() {
+    let ts = body(
+        "impl Held { pub fn f(&self) { *self.cell.lock().unwrap() += 1; } }",
+        "f",
+    );
+    assert!(ts.contains("_t0.value += 1;"), "{}", ts);
+    assert_eq!(ts.matches("_t0.drop();").count(), 1, "{}", ts);
+}
+
+// ── What a consuming match reads ──────────────────────────────────────
+
+#[test]
+fn a_consuming_match_takes_its_subject_out_of_the_struct_that_held_it() {
+    let ts = body(
+        "pub struct Holder { pub choice: Choice }\n\
+         pub fn f(h: Holder) -> u32 { \
+           match h.choice { Choice::One(o) => take(o), Choice::Two(o) => take(o) } }",
+        "f",
+    );
+    assert!(
+        ts.contains("h.takeField('choice').intoMatch("),
+        "`intoMatch` leaves the enum moved, so it has to come out of the struct first or \
+         the struct's own cascade releases what the arm was given:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_borrowing_match_reads_the_field_where_it_stands() {
+    let ts = body(
+        "pub struct Holder { pub choice: Choice }\n\
+         pub fn f(h: &Holder) -> u32 { \
+           match &h.choice { Choice::One(o) => look(o), Choice::Two(o) => look(o) } }",
+        "f",
+    );
+    assert!(ts.contains("h.choice.match("), "{}", ts);
+    assert!(!ts.contains("takeField"), "nothing was taken from anybody:\n{}", ts);
+}
+
+// ── Values a statement built and threw away ───────────────────────────
+
+#[test]
+fn a_constructed_value_a_statement_threw_away_is_released() {
+    let ts = body("pub fn f() { Owned { n: 4 }; }", "f");
+    assert_eq!(ts.trim(), "new Owned(4).drop();", "{}", ts);
+}
+
+#[test]
+fn a_sequence_the_expression_built_is_lifted_and_released_as_a_cascade() {
+    let ts = body("pub fn f() -> u32 { look(&vec![Owned { n: 3 }][0]) }", "f");
+    assert!(ts.contains("const _t0 = [new Owned(3)];"), "the array is named:\n{}", ts);
+    assert!(
+        ts.contains("dropOwned(_t0);"),
+        "and released through the cascade, which is the only thing that reaches inside a \
+         plain array:\n{}",
+        ts
+    );
+}
+
+// ── Loop labels ───────────────────────────────────────────────────────
+
+#[test]
+fn a_labelled_loop_keeps_its_label_and_the_break_that_names_it() {
+    let ts = body(
+        "pub fn f(rows: Vec<Vec<u32>>) -> u32 { \
+           let mut total = 0; \
+           'outer: for row in &rows { for v in row { if *v == 0 { break 'outer; } total += *v; } } \
+           total }",
+        "f",
+    );
+    assert!(ts.contains("outer: for (const row of rows)"), "{}", ts);
+    assert!(
+        ts.contains("break outer;"),
+        "a bare `break` leaves the inner loop, which is a different program:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_labelled_loop_over_an_owned_sequence_labels_the_loop_inside_its_cleanup() {
+    let ts = body(
+        "pub fn f(rows: Vec<Vec<Owned>>) -> u32 { \
+           let mut total = 0; \
+           'outer: for row in rows { for v in row { if v.n == 0 { continue 'outer; } total += v.n; } } \
+           total }",
+        "f",
+    );
+    assert!(ts.contains("outer: while (_at3 < _seq2.length)"), "{}", ts);
+    assert!(ts.contains("continue outer;"), "{}", ts);
+    assert!(
+        ts.contains("dropOwned(_seq2.slice(_at3));"),
+        "and the elements the jump skipped are still released:\n{}",
+        ts
+    );
+}
+
+// ── Short circuits ────────────────────────────────────────────────────
+
+#[test]
+fn an_operand_a_short_circuit_may_skip_takes_its_temporary_inside_itself() {
+    let ts = body(
+        "pub fn f(h: &Held, go: bool) -> bool { go && *h.cell.lock().unwrap() == 0 }",
+        "f",
+    );
+    let short = ts.find("go &&").expect("the short circuit stands");
+    let lock = ts.find("h.cell.lock()").expect("the lock is taken");
+    assert!(
+        short < lock,
+        "the lock is taken only where the left operand allowed the right one to run:\n{}",
+        ts
+    );
+    assert!(ts.contains("_t0.drop();"), "and released:\n{}", ts);
+}
+
+#[test]
+fn a_short_circuit_over_operands_that_take_nothing_is_left_alone() {
+    let ts = body("pub fn f(a: bool, b: bool) -> bool { a && b }", "f");
+    assert_eq!(ts.trim(), "return a && b;", "{}", ts);
+}
+
+// ── while let ─────────────────────────────────────────────────────────
+
+#[test]
+fn a_while_let_releases_the_value_the_turn_read_and_did_not_match() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn next_choice(n: u32) -> Choice {{ Choice::One(Owned {{ n }}) }}\n\
+             pub fn f(n: u32) -> u32 {{ let mut t = 0; \
+               while let Choice::One(v) = next_choice(n) {{ t += v.n; }} t }}\n",
+            PRELUDE
+        ),
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(
+        ts.contains("if (!(_v.is('One'))) {\n    _v.drop();\n    break;"),
+        "the turn that did not match releases what it read:\n{}",
+        ts
+    );
+    assert!(
+        fixture
+            .messages()
+            .iter()
+            .any(|m| m.contains("is not marked moved")),
+        "and the turn that did match says the enum the payload came out of is not marked \
+         moved: {:?}",
+        fixture.messages()
+    );
+}
+
+#[test]
+fn a_while_let_over_a_nullable_owns_nothing_extra() {
+    let ts = body(
+        "pub fn f() -> u32 { let mut t = 0; while let Some(v) = maybe(true) { t += v.n; } t }",
+        "f",
+    );
+    assert!(
+        ts.contains("if (!(_v != null)) {\n    break;"),
+        "`Option<T>` is `T | null` here, so the turn that did not match read a null and \
+         there is nothing to release:\n{}",
+        ts
+    );
+    assert!(ts.contains("v.drop();"), "and the binding is released each turn:\n{}", ts);
+}
+
+// ── A receiver a closure took ─────────────────────────────────────────
+
+#[test]
+fn a_move_closure_over_an_owned_receiver_owns_the_receiver() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}impl Owned {{ pub fn callback(self) -> impl Fn() -> u32 {{ move || look(&self) }} }}\n",
+            PRELUDE
+        ),
+    )]);
+    let ts = fixture.translated_method("lib.rs", "callback");
+    assert!(
+        ts.contains("new OwnedClosure([this], () => look(this))"),
+        "a plain arrow function has no field the cascade could reach the receiver through, \
+         so nothing could ever release it:\n{}",
+        ts
+    );
+}
+
+#[test]
+fn a_move_closure_over_a_borrowed_receiver_owns_nothing() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}impl Owned {{ pub fn peek(&self) -> impl Fn() -> u32 + '_ {{ move || look(self) }} }}\n",
+            PRELUDE
+        ),
+    )]);
+    let ts = fixture.translated_method("lib.rs", "peek");
+    assert!(!ts.contains("OwnedClosure"), "a `&self` method lends its receiver:\n{}", ts);
+}
+
+// ── Guards on the runtime's own match forms ───────────────────────────
+
+#[test]
+fn a_guarded_option_match_is_tried_arm_by_arm() {
+    let ts = body(
+        "pub fn f(o: Option<u32>) -> u32 { match o { Some(v) if v > 2 => v, Some(_) => 1, None => 0 } }",
+        "f",
+    );
+    assert!(ts.starts_with("_match"), "the arms are tried in turn:\n{}", ts);
+    let guarded = ts.find("if (v > 2)").expect("the guard is tested");
+    let below = ts.find("return 1;").expect("the arm below it");
+    assert!(guarded < below, "and a guard that failed falls through:\n{}", ts);
+}
+
+#[test]
+fn a_guarded_borrowing_enum_match_is_tried_arm_by_arm() {
+    let ts = body(
+        "pub fn f(c: &Choice) -> u32 { \
+           match c { Choice::One(o) if o.n > 2 => 9, Choice::One(o) => look(o), Choice::Two(o) => look(o) } }",
+        "f",
+    );
+    assert!(
+        ts.matches("c.is('One')").count() == 2,
+        "both arms naming `One` are written, which one key in a `.match({{}})` cannot \
+         carry:\n{}",
+        ts
+    );
+    assert!(ts.contains("if (o.n > 2)"), "{}", ts);
+}
+
+#[test]
+fn a_guard_the_runtimes_match_cannot_carry_is_reported() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn f(c: Choice) -> u32 {{ \
+               match c {{ Choice::One(o) if o.n > 2 => take(o), Choice::One(o) => take(o), \
+                          Choice::Two(o) => take(o) }} }}\n",
+            PRELUDE
+        ),
+    )]);
+    let _ = fixture.translated_method("lib.rs", "f");
+    let said = fixture.messages();
+    assert!(
+        said.iter().any(|m| m.contains("a failed guard cannot fall out of")),
+        "a guarded consuming match has no form here and says so: {:?}",
+        said
+    );
+    assert!(
+        said.iter().any(|m| m.contains("a second arm names `One`")),
+        "and so does a second arm naming a variant already written: {:?}",
+        said
+    );
+}
+
+#[test]
+fn a_guarded_result_match_is_reported() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn f(r: Result<Owned, Oops>) -> u32 {{ \
+               match r {{ Ok(v) if v.n > 2 => take(v), Ok(v) => take(v), Err(_) => 0 }} }}\n",
+            PRELUDE
+        ),
+    )]);
+    let _ = fixture.translated_method("lib.rs", "f");
+    assert!(
+        fixture
+            .messages()
+            .iter()
+            .any(|m| m.contains("takes the wrapper apart")),
+        "{:?}",
+        fixture.messages()
+    );
+}
+
+// ── A macro that is a block's value ───────────────────────────────────
+
+#[test]
+fn a_brace_delimited_macro_written_last_is_the_blocks_value() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "use tokio::sync::mpsc::Receiver;\n\
+         pub async fn race(mut left: Receiver<u32>, mut right: Receiver<u32>) -> u32 {\n\
+             tokio::select! {\n\
+                 _a = left.recv() => 1,\n\
+                 _b = right.recv() => 2,\n\
+             }\n\
+         }\n",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "race");
+    assert!(
+        ts.contains("return await (async () =>"),
+        "`syn` parses a brace-delimited macro at the end of a block as `Stmt::Macro`, and \
+         the tail path used to walk past it and throw the value away:\n{}",
+        ts
+    );
 }

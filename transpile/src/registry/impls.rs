@@ -28,6 +28,13 @@ pub struct Bound {
 #[derive(Debug, Clone)]
 pub struct ImplDef {
     pub id: ImplId,
+    /// The module the `impl` block is written in.
+    ///
+    /// Emission asks it: an impl the corpus wrote for a type with no class of
+    /// its own becomes a module-level function, and an impl the declared std
+    /// surface wrote is the runtime's own and is translated by the native-type
+    /// table instead.
+    pub module: super::ModuleId,
     /// The parameters the impl declares. These, and only these, are the
     /// unknowns when `self_ty` is matched against a receiver.
     pub generics: Vec<String>,

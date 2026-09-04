@@ -9,3 +9,15 @@ export interface WaitResult {
   result(): Output | null;
 }
 
+export function Bool_result(self: boolean): Output | null {
+  if (self) {
+    return [];
+  } else {
+    return null;
+  }
+}
+
+export function Option_result<T>(self: T | null): Output | null {
+  return self;
+}
+

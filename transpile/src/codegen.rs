@@ -22,6 +22,13 @@ pub fn generate_ts_with_imports_configured(
     for s in &file.structs { local_types.insert(s.name.clone()); }
     for e in &file.enums { local_types.insert(e.name.clone()); }
     for t in &file.traits { local_types.insert(t.name.clone()); }
+    // A module-level function this file declares for one of its own impls is
+    // not imported into itself.
+    if let Some(module) = reg.modules().lookup_file(&file.path) {
+        for f in crate::emit_impls::free_functions(reg, module, file) {
+            local_types.insert(f.name);
+        }
+    }
 
     // Collect all referenced types — including from function/method bodies
     let mut referenced: HashSet<String> = HashSet::new();
@@ -54,6 +61,26 @@ pub fn generate_ts_with_imports_configured(
     for imp in &file.impls {
         if let Some(trait_name) = imp.trait_name() {
             referenced.insert(trait_name);
+        }
+    }
+
+    // A call to an impl emitted as a module-level function names it in
+    // camelCase, which the type scan above skips on purpose, so those names are
+    // matched whole against the ones the run emitted.
+    let free_names: HashSet<String> = type_to_file
+        .keys()
+        .filter(|name| name.chars().next().is_some_and(|c| c.is_lowercase()))
+        .cloned()
+        .collect();
+    if !free_names.is_empty() {
+        let bodies = file
+            .impls
+            .iter()
+            .flat_map(|imp| imp.methods.iter())
+            .chain(file.functions.iter())
+            .filter_map(|f| f.body_ts.as_deref());
+        for body in bodies {
+            imports::collect_named_refs(body, &free_names, &mut referenced);
         }
     }
 
@@ -368,7 +395,22 @@ fn generate_declarations(
     let impl_traits: Vec<(Option<String>, Vec<String>)> =
         file.impls.iter().map(|i| (i.trait_name(), i.trait_type_args())).collect();
 
+    // An impl whose self type has no emitted class contributes module-level
+    // functions instead of methods, and its methods must not also be hung on a
+    // class named after its target — there is none.
+    let free: Vec<crate::emit_impls::FreeFn> = match reg.modules().lookup_file(&file.path) {
+        Some(module) => crate::emit_impls::free_functions(reg, module, file),
+        None => Vec::new(),
+    };
+    let on_a_class = |imp: &ImplInfo| match reg.modules().lookup_file(&file.path) {
+        Some(module) => crate::emit_impls::impl_has_class(reg, module, imp),
+        None => true,
+    };
+
     for (imp, (trait_name, type_args)) in file.impls.iter().zip(&impl_traits) {
+        if !on_a_class(imp) {
+            continue;
+        }
         if let Some(trait_name) = trait_name {
             trait_impls.entry(imp.target_type.clone()).or_default().push((trait_name.as_str(), type_args.as_slice()));
             for method in &imp.methods {
@@ -430,6 +472,11 @@ fn generate_declarations(
         if has_decl { continue; }
         let export = if c.is_pub { "export " } else { "" };
         out.push_str(&format!("{}const {}: {} = undefined as any; // TODO\n\n", export, c.name, c.ty));
+    }
+
+    // The impls with no class of their own, as the functions they become.
+    for f in &free {
+        out.push_str(&f.text);
     }
 
     // Module-level declarations (thread_local, etc.)

@@ -23,7 +23,12 @@ export class Counter extends Struct {
   }
 
   setLabel(label: string): void {
-    this._0.value.label.lock().value = label;
+    const _t0 = this._0.value.label.lock();
+    try {
+      _t0.value = label;
+    } finally {
+      _t0.drop();
+    }
   }
 }
 

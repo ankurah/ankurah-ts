@@ -22,10 +22,11 @@ export function make(raw: string): Entity | null {
 }
 
 export function orFallback(raw: string): Entity {
-  const _d0 = new Entity('fallback'.toString());
-  const _u1 = make(raw) ?? _d0;
-  if (_u1 !== _d0) _d0.drop();
-  return _u1;
+  const _o0 = make(raw);
+  const _d1 = new Entity('fallback'.toString());
+  const _u2 = _o0 ?? _d1;
+  if (_u2 !== _d1) _d1.drop();
+  return _u2;
 }
 
 export function orElse(raw: string): Entity {

@@ -519,3 +519,204 @@ fn head_name(ty: &str) -> String {
     let name = ty.split(['<', ' ', ',']).next().unwrap_or(ty);
     name.rsplit("::").next().unwrap_or(name).to_string()
 }
+
+/// One closure the engine is expected to keep typing.
+///
+/// Pinned by span, like a method call: a line may hold two closures — `fold(0,
+/// |acc, x| ..)` inside a `map` — and matching by line alone let either one
+/// satisfy the pin.
+#[derive(Deserialize)]
+struct PinnedClosure {
+    file: String,
+    line: u32,
+    /// Absent for a site the whole-corpus pass recorded, which has no column.
+    #[serde(default)]
+    col: Option<u32>,
+}
+
+#[derive(Deserialize, Default)]
+struct PinnedClosures {
+    #[serde(default)]
+    closure: Vec<PinnedClosure>,
+}
+
+fn pinned_closures() -> Vec<PinnedClosure> {
+    let path = transpile_dir().join("tests/oracle/covered_closures.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let parsed: PinnedClosures = toml::from_str(&text)
+        .unwrap_or_else(|e| panic!("{} does not match the schema: {e}", path.display()));
+    parsed.closure
+}
+
+/// The crates the closure oracle draws its sites from, and where each one's
+/// source lives under the support checkout.
+const CLOSURE_CRATES: [(&str, &str); 3] = [
+    ("proto", "proto/src"),
+    ("signals", "signals/src"),
+    ("ankql", "ankql/src"),
+];
+
+/// The signatures the engine gave every closure in those crates, keyed by
+/// position. A closure the engine reached twice records twice; the first record
+/// is the one the translator used.
+fn engine_closures() -> BTreeMap<(String, u32, u32), common::ClosureRow> {
+    let mut out = BTreeMap::new();
+    for (name, dir) in CLOSURE_CRATES {
+        for row in common::run_closures(name, dir) {
+            out.entry((row.file.clone(), row.line, row.col)).or_insert(row);
+        }
+    }
+    out
+}
+
+/// The engine's closure signatures, against rust-analyzer's, on the sites both
+/// cover (spec 4.5, 6.3).
+///
+/// Two files hold the oracle's answers. `closure_types.json` came from a spike
+/// over signals and carries the closure's whole type — `impl Fn(T)` — with a
+/// column. `closure_returns.json` came from a whole-corpus pass and carries
+/// only the return, with no column, so a line holding two closures is compared
+/// against whichever of them the engine typed.
+///
+/// Every site in `covered_closures.toml` must still be typed. A site the engine
+/// does not type and is not pinned is a gap, printed rather than failed, which
+/// is the next step's work list.
+#[test]
+fn engine_matches_the_closure_oracle() {
+    let engine = engine_closures();
+    let pinned = pinned_closures();
+    let mut mismatches: Vec<String> = Vec::new();
+    let mut untyped: Vec<String> = Vec::new();
+    // The sites that were actually compared, printed so that pinning one is a
+    // matter of copying a line rather than of rerunning the reasoning.
+    let mut compared: Vec<String> = Vec::new();
+    let mut covered = 0usize;
+
+    // The closure's own type: how many arguments it takes and what they are.
+    for site in load::<ClosureType>("closure_types.json").sites {
+        let Some(row) = engine.get(&(site.file.clone(), site.line, site.col)) else {
+            untyped.push(format!("{}:{} (no signature recorded)", site.file, site.line));
+            continue;
+        };
+        let want = callable_inputs(&site.closure_type);
+        let got: Vec<Option<String>> = row.params.clone();
+        if got.iter().any(|p| p.is_none()) {
+            untyped.push(format!(
+                "{}:{} {} (a parameter the engine could not type)",
+                site.file, site.line, site.closure_type
+            ));
+            continue;
+        }
+        covered += 1;
+        compared.push(format!("{}\t{}\t{}", site.file, site.line, site.col));
+        let got: Vec<String> = got.into_iter().map(|p| head(&p.unwrap_or_default())).collect();
+        let want: Vec<String> = want.iter().map(|t| head(t)).collect();
+        if got != want {
+            mismatches.push(format!(
+                "{}:{}: parameters are ({}), rust-analyzer says ({})",
+                site.file,
+                site.line,
+                got.join(", "),
+                want.join(", ")
+            ));
+        }
+        compare_return(&site.file, site.line, &site.inferred_return, row, &mut mismatches);
+    }
+
+    // The return type alone, from the whole-corpus pass.
+    for site in load::<ClosureReturn>("closure_returns.json").sites {
+        let Some(row) = engine
+            .iter()
+            .find(|((file, line, _), _)| *file == site.file && *line == site.line)
+            .map(|(_, row)| row)
+        else {
+            untyped.push(format!("{}:{} (no signature recorded)", site.file, site.line));
+            continue;
+        };
+        if row.ret.is_none() {
+            untyped.push(format!(
+                "{}:{} -> {} (a return the engine could not type)",
+                site.file, site.line, site.return_type
+            ));
+            continue;
+        }
+        covered += 1;
+        compared.push(format!("{}\t{}\t-", site.file, site.line));
+        compare_return(&site.file, site.line, &site.return_type, row, &mut mismatches);
+    }
+
+    // A pin asserts what its oracle file asserts and no more. A site from the
+    // whole-corpus return pass carries no column and pins the return; a site
+    // from the spike carries one and pins the parameters as well.
+    for pin in &pinned {
+        let typed = engine.iter().any(|((file, line, col), row)| {
+            *file == pin.file
+                && *line == pin.line
+                && pin.col.map_or(true, |want| want == *col)
+                && row.ret.is_some()
+                && (pin.col.is_none() || row.params.iter().all(|p| p.is_some()))
+        });
+        if !typed {
+            mismatches.push(format!(
+                "{}:{}: pinned as typed, but the engine no longer types it",
+                pin.file, pin.line
+            ));
+        }
+    }
+
+    untyped.sort();
+    untyped.dedup();
+    compared.sort();
+    compared.dedup();
+    eprintln!("closure oracle: compared these sites:\n    {}", compared.join("\n    "));
+    eprintln!(
+        "closure oracle: {} of {} answers compared ({} pinned); the rest the engine \
+         does not type yet:\n    {}",
+        covered,
+        load::<ClosureType>("closure_types.json").sites.len()
+            + load::<ClosureReturn>("closure_returns.json").sites.len(),
+        pinned.len(),
+        untyped.join("\n    ")
+    );
+
+    assert!(
+        mismatches.is_empty(),
+        "the engine disagrees with rust-analyzer about {} closure(s):\n  {}",
+        mismatches.len(),
+        mismatches.join("\n  ")
+    );
+}
+
+fn compare_return(
+    file: &str,
+    line: u32,
+    want: &str,
+    row: &common::ClosureRow,
+    mismatches: &mut Vec<String>,
+) {
+    let Some(got) = &row.ret else { return };
+    // rust-analyzer writes the unit type as `()`; so does the engine.
+    if head(got) != head(want) {
+        mismatches.push(format!(
+            "{}:{}: return is `{}`, rust-analyzer says `{}`",
+            file, line, got, want
+        ));
+    }
+}
+
+/// The argument types inside a written callable: `impl Fn(T)` gives `["T"]`,
+/// `impl Fn(())` gives `["()"]`, and `impl Fn()` gives nothing.
+fn callable_inputs(written: &str) -> Vec<String> {
+    let Some(open) = written.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = written.rfind(')') else {
+        return Vec::new();
+    };
+    let inside = written[open + 1..close].trim();
+    if inside.is_empty() {
+        return Vec::new();
+    }
+    split_arguments(inside)
+}

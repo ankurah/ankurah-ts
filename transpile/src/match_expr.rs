@@ -8,8 +8,11 @@ use crate::body::{translate_pat, indent, BodyTranslator};
 
 /// Translate a match expression in return position (adds return to each arm)
 pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let scrutinee = t.expr(&match_expr.expr);
+    let scrutinee = scrutinee_of(match_expr, t);
 
+    if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Returning) {
+        return written;
+    }
     if is_option_match(&match_expr.arms) {
         return translate_option_match_returning(&scrutinee, match_expr, t);
     }
@@ -23,6 +26,20 @@ pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator
         );
     }
     translate_value_match(&scrutinee, match_expr, t, Position::Returning)
+}
+
+/// The subject, written for what the arms are about to do to it.
+///
+/// A consuming match takes the subject apart and leaves it moved, so where the
+/// subject is a field of something the block still owns, the field has to come
+/// *out* of its struct: `holder.choice.intoMatch(..)` hands the payload to an
+/// arm and then lets `holder`'s own cascade release the enum the arm has
+/// already taken, which the runtime reports as a use after move.
+fn scrutinee_of(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    match t.match_takes(match_expr) {
+        crate::ownership::scrutinee::Takes::Payload => t.moved_value(&match_expr.expr),
+        crate::ownership::scrutinee::Takes::Nothing => t.expr(&match_expr.expr),
+    }
 }
 
 /// Whether each arm produces the enclosing function's value or just runs.
@@ -87,8 +104,11 @@ fn translate_option_match_returning(scrutinee: &str, match_expr: &syn::ExprMatch
 
 /// Translate a match expression
 pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let scrutinee = t.expr(&match_expr.expr);
+    let scrutinee = scrutinee_of(match_expr, t);
 
+    if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Statement) {
+        return written;
+    }
     if is_option_match(&match_expr.arms) {
         return translate_option_match(&scrutinee, match_expr, t);
     }
@@ -100,6 +120,52 @@ pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> Strin
     }
 
     translate_value_match(&scrutinee, match_expr, t, Position::Statement)
+}
+
+/// A match with a guard, written the one way a guard can be written.
+///
+/// The runtime's `match` and `intoMatch` dispatch on the variant alone: an arm
+/// whose guard failed has nowhere to fall through to, and two arms naming one
+/// variant collide on one key, which JavaScript resolves by keeping the last.
+/// So a guarded match that only *reads* its subject is written as the if-chain
+/// below instead, which tries the arms in turn — the tests `pattern_test`
+/// writes for a nullable, for an enum variant and for a literal are the same
+/// borrowing reads either way.
+///
+/// Two shapes have no such form and are reported rather than guessed at. A
+/// guarded `Result` arm reads its payload with `unwrap()`, which takes the
+/// wrapper apart, so the arm below it would be reading a value that is already
+/// gone. A guarded match that hands its payload over needs `intoMatch` to mark
+/// the subject moved, and `intoMatch` runs its arm inside a function a
+/// fall-through cannot leave.
+fn guarded(
+    scrutinee: &str,
+    match_expr: &syn::ExprMatch,
+    t: &BodyTranslator,
+    position: Position,
+) -> Option<String> {
+    if !match_expr.arms.iter().any(|arm| arm.guard.is_some()) {
+        return None;
+    }
+    if is_result_match(&match_expr.arms) {
+        t.report_match_gap(
+            match_expr,
+            "an arm of this `Result` match has a guard, and reading the payload to test it \
+             takes the wrapper apart, so the arm below it cannot be tried; the guard is \
+             dropped and its arm runs unconditionally",
+        );
+        return None;
+    }
+    if t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload {
+        t.report_match_gap(
+            match_expr,
+            "an arm of this `match` has a guard and the match hands its payload to the arms, \
+             which needs `intoMatch` to mark the subject moved — and an arm of `intoMatch` is \
+             a function a failed guard cannot fall out of; the guard is dropped",
+        );
+        return None;
+    }
+    Some(translate_value_match(scrutinee, match_expr, t, position))
 }
 
 /// A `match` on something the runtime has no `match` of its own for — a number,
@@ -115,31 +181,142 @@ fn translate_value_match(
     position: Position,
 ) -> String {
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
-    let (subject, mut out) = subject_of(scrutinee, t);
-    for (i, arm) in match_expr.arms.iter().enumerate() {
-        let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
-        let (test, bind) = t.pattern_test(&subject, &arm.pat);
-        let (body, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
-        let guard = arm
-            .guard
-            .as_ref()
-            .map(|(_, g)| format!(" && {}", t.expr(g)))
-            .unwrap_or_default();
-        drop(_bindings);
-        let body = crate::ownership::hoisted(&format!("{}\n", body), &lifted);
-        let block = indent(&format!("{}{}", bind, body));
-        let catch_all = test == "true" && guard.is_empty();
+    let (subject, declaration) = subject_of(scrutinee, t);
+    let arms: Vec<Arm> = match_expr
+        .arms
+        .iter()
+        .map(|arm| written_arm(arm, &subject, scrutinee_ty.as_ref(), t, position))
+        .collect();
+    // A guard reads the names its own pattern bound, and a guard that fails
+    // hands the subject to the arm below it. An `else if` chain carries only
+    // one of those two at a time, because an arm's bindings live inside the
+    // block its test opens, so a match with a guard is written the other way.
+    if arms.iter().any(|arm| arm.guard.is_some()) {
+        return format!("{}{}", declaration, tested_in_turn(&arms, t));
+    }
+    let mut out = declaration;
+    for (i, arm) in arms.iter().enumerate() {
+        let block = indent(&format!("{}{}{}", arm.flags, arm.bind, arm.body));
+        // Rust's match is exhaustive, so the last arm runs whenever nothing
+        // above it matched and its own test is redundant. Writing it as one
+        // more `else if` left the chain able to fall off its end and hand back
+        // `undefined`, which the function's return type does not admit:
+        // `match flag { true => .., false => .. }` needs no `_` arm in Rust and
+        // had no `else` here.
+        let catch_all = arm.test == "true" || i + 1 == arms.len();
         let head = match (i, catch_all) {
             // An arm that matches everything and stands first is the whole
             // match; there is nothing left to test.
             (0, true) => String::new(),
-            (0, false) => format!("if ({}{}) ", test, guard),
+            (0, false) => format!("if ({}) ", arm.test),
             (_, true) => " else ".to_string(),
-            (_, false) => format!(" else if ({}{}) ", test, guard),
+            (_, false) => format!(" else if ({}) ", arm.test),
         };
         out.push_str(&format!("{}{{\n{}}}", head, block));
     }
     out
+}
+
+/// One arm of a value match, written out in the pieces the two forms below
+/// arrange differently.
+struct Arm {
+    /// What asks whether the subject matches this arm's pattern, and `"true"`
+    /// where the pattern matches anything.
+    test: String,
+    /// The declarations the names this pattern binds need. A guard reads them,
+    /// so they stand above it.
+    bind: String,
+    /// What runs before the guard is tested: the guard's own temporaries
+    /// declared, and released again once the test has read them.
+    before: String,
+    /// The guard's value, where the arm has a guard.
+    guard: Option<String>,
+    /// The drop flags a local this arm hands away needs set.
+    flags: String,
+    /// The arm's body, with what it lifted out of itself declared inside it.
+    body: String,
+}
+
+/// Write one arm out.
+fn written_arm(
+    arm: &syn::Arm,
+    subject: &str,
+    scrutinee_ty: Option<&crate::ty::Ty>,
+    t: &BodyTranslator,
+    position: Position,
+) -> Arm {
+    let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
+    let (test, bind) = t.pattern_test(subject, &arm.pat);
+    // A guard is its own temporary scope: Rust releases what the guard took to
+    // make its test before the arm's body runs and before the next arm is
+    // tried, exactly as it does for the condition of an `if`.
+    let (before, guard) = match &arm.guard {
+        Some((_, guard)) => {
+            let (written, lifted) = t.with_own_hoists(|| t.expr(guard));
+            let (written, before) = t.settle_condition(written, &lifted);
+            (before, Some(written))
+        }
+        None => (String::new(), None),
+    };
+    let (body, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
+    drop(_bindings);
+    // A local this arm hands away sets its drop flag here — the same line the
+    // enclosing block would have written had the arm been a statement of it.
+    // Without it the `finally` released a value the arm had already given away.
+    let flags = t.flag_sets_for(&arm.body);
+    Arm {
+        test,
+        bind,
+        before,
+        guard,
+        flags,
+        body: crate::ownership::hoisted(&format!("{}\n", body), &lifted),
+    }
+}
+
+/// The arms of a guarded match, tried in turn inside a labelled block that the
+/// arm which matched leaves.
+///
+/// Each arm's bindings and its guard's temporaries stand inside the block its
+/// own test opens, which is what lets the guard read the one and release the
+/// other; leaving the block is what stops the arms below it from being tried.
+fn tested_in_turn(arms: &[Arm], t: &BodyTranslator) -> String {
+    let label = t.fresh_hoist("_match");
+    let mut inner = String::new();
+    for arm in arms {
+        // Leaving the block is what stops the arms below from being tried. A
+        // body that returns or throws has made that jump for itself.
+        let leaving = if leaves_the_arm(&arm.body) {
+            String::new()
+        } else {
+            format!("break {};\n", label)
+        };
+        let matched = match &arm.guard {
+            Some(guard) => format!(
+                "{}{}if ({}) {{\n{}}}\n",
+                arm.bind,
+                arm.before,
+                guard,
+                indent(&format!("{}{}{}", arm.flags, arm.body, leaving))
+            ),
+            None => format!("{}{}{}{}", arm.flags, arm.bind, arm.body, leaving),
+        };
+        // A pattern that matches anything still opens a block of its own: the
+        // names it binds belong to this arm and to no arm written after it.
+        if arm.test == "true" {
+            inner.push_str(&format!("{{\n{}}}\n", indent(&matched)));
+        } else {
+            inner.push_str(&format!("if ({}) {{\n{}}}\n", arm.test, indent(&matched)));
+        }
+    }
+    format!("{}: {{\n{}}}", label, indent(&inner))
+}
+
+/// Does this arm body leave the function by itself, so that nothing after it
+/// in the arm would run?
+fn leaves_the_arm(body: &str) -> bool {
+    let last = body.trim_end().lines().last().unwrap_or_default().trim_start();
+    last.starts_with("return ") || last.starts_with("return;") || last.starts_with("throw ")
 }
 
 /// A name the arms can test against, and the declaration that gives it one.
@@ -274,7 +451,11 @@ fn translate_result_match(
         }
     }
     let (Some(ok), Some(err)) = (ok, err) else {
-        t.report_match_gap(match_expr, "a `Result` match with no arm for one of the two variants");
+        t.report_match_gap(
+            match_expr,
+            "this `Result` match has no arm for one of the two variants; nothing is emitted \
+             for it and no arm runs",
+        );
         return format!("{}/* match {} */", declaration, subject);
     };
     format!(
@@ -374,6 +555,11 @@ fn translate_enum_match(
     };
     let mut out = format!("{}.{}({{\n", scrutinee, method);
 
+    // One key per variant. Two arms naming one variant — which Rust reads in
+    // order and this form cannot — used to emit the same key twice, and
+    // JavaScript keeps the last of those, so the arm the source wrote first
+    // never ran.
+    let mut written: Vec<String> = Vec::new();
     for arm in &match_expr.arms {
         // An `|` pattern writes one body for several variants; each gets its own
         // arm with the same body, bound through its own payload.
@@ -385,6 +571,18 @@ fn translate_enum_match(
             let Some((variant, fields)) = payload_of(case) else {
                 continue;
             };
+            if written.contains(&variant) {
+                t.report_match_gap(
+                    match_expr,
+                    format!(
+                        "a second arm names `{}`, and the runtime's match dispatches on the \
+                         variant alone, so only the first of them can run",
+                        variant
+                    ),
+                );
+                continue;
+            }
+            written.push(variant.clone());
             let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
             // Where the enum handed its payload over, the arm owns what the
             // pattern named and releases it however the arm is left.
@@ -421,7 +619,8 @@ fn translate_enum_match(
                 t.report_match_gap(
                     match_expr,
                     "an arm leaves early, and the arm is an arrow function whose `return` \
-                     leaves the arm rather than the function",
+                     leaves the arm rather than the function, so nobody sees the error it \
+                     left with",
                 );
             }
             // An arm is an arrow function, so a local this arm hands away sets

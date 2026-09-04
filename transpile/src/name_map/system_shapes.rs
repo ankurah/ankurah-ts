@@ -49,13 +49,16 @@ pub enum Form {
 
 /// Where the port keeps the value inside a wrapper. A type with no entry is not
 /// a wrapper, whatever it dereferences to in Rust.
-const ACCESSORS: [(&str, Accessor); 14] = [
+const ACCESSORS: [(&str, Accessor); 13] = [
     ("std::sync::Arc", Accessor::Field("value")),
     // tokio's guards are the same shape as std's: the value sits in `.value`.
     ("tokio::sync::MutexGuard", Accessor::Field("value")),
     ("tokio::sync::RwLockReadGuard", Accessor::Field("value")),
     ("tokio::sync::RwLockWriteGuard", Accessor::Field("value")),
-    ("tokio::sync::watch::Ref", Accessor::Field("value")),
+    // `tokio::sync::watch::Ref` was here. The browser target provides no watch
+    // channel, so `std_surface/extern/tokio/sync.rs` no longer declares the
+    // module, and a row naming a type the surface does not declare is itself
+    // reported.
     ("std::rc::Rc", Accessor::Field("value")),
     ("std::sync::MutexGuard", Accessor::Field("value")),
     ("std::sync::RwLockReadGuard", Accessor::Field("value")),
@@ -68,7 +71,7 @@ const ACCESSORS: [(&str, Accessor); 14] = [
 ];
 
 /// What each declared type is written as.
-const FORMS: [(&str, Form); 17] = [
+const FORMS: [(&str, Form); 18] = [
     ("std::vec::Vec", Form::VecOrBytes),
     ("std::option::Option", Form::Nullable),
     ("std::result::Result", Form::Result),
@@ -81,6 +84,10 @@ const FORMS: [(&str, Form); 17] = [
     ("std::rc::Rc", Form::Rc),
     ("std::string::String", Form::Str),
     ("std::boxed::Box", Form::Transparent),
+    // A `Duration` crosses as a number of milliseconds. It is `Copy` and holds
+    // nothing, and the port's `sleep` and `timeout` take milliseconds, so the
+    // runtime exports no `Duration` class for a signature to name.
+    ("std::time::Duration", Form::Number),
     // Atomics are plain values in single-threaded JavaScript.
     ("std::sync::atomic::AtomicUsize", Form::Number),
     ("std::sync::atomic::AtomicU32", Form::Number),
@@ -169,7 +176,12 @@ const NO_GLUE: [&str; 6] = [
 /// tokio pair carry an `Async` prefix. Emitting them by leaf name handed a
 /// `tokio::sync::Mutex<T>` to the std `Mutex<T>` class, whose `lock()` is not
 /// async and whose guard is a different object.
-const RUNTIME_NAMES: [(&str, &str); 17] = [
+///
+/// The channel types keep their module in the name. `@ankurah/base` exports
+/// `oneshot` and `mpsc` as namespaces, and both declare a `Receiver`, a
+/// `Sender` and a `TryRecvError`; a bare leaf name picks whichever the
+/// importing file happened to bring in, or nothing at all.
+const RUNTIME_NAMES: [(&str, &str); 21] = [
     ("tokio::sync::Mutex", "AsyncMutex"),
     ("tokio::sync::MutexGuard", "AsyncMutexGuard"),
     ("tokio::sync::RwLock", "AsyncRwLock"),
@@ -181,10 +193,14 @@ const RUNTIME_NAMES: [(&str, &str); 17] = [
     ("tokio::sync::oneshot::Sender", "oneshot.Sender"),
     ("tokio::sync::oneshot::Receiver", "oneshot.Receiver"),
     ("tokio::sync::oneshot::error::RecvError", "oneshot.RecvError"),
+    ("tokio::sync::oneshot::error::TryRecvError", "oneshot.TryRecvError"),
     ("tokio::sync::mpsc::Sender", "mpsc.Sender"),
     ("tokio::sync::mpsc::Receiver", "mpsc.Receiver"),
     ("tokio::sync::mpsc::UnboundedSender", "mpsc.UnboundedSender"),
     ("tokio::sync::mpsc::UnboundedReceiver", "mpsc.UnboundedReceiver"),
+    ("tokio::sync::mpsc::error::SendError", "mpsc.SendError"),
+    ("tokio::sync::mpsc::error::TrySendError", "mpsc.TrySendError"),
+    ("tokio::sync::mpsc::error::TryRecvError", "mpsc.TryRecvError"),
     ("tokio::task::JoinHandle", "JoinHandle"),
     ("tokio::task::JoinError", "JoinError"),
 ];
@@ -280,3 +296,73 @@ impl SystemShapes {
 
 /// The trait whose presence rules drop glue out entirely.
 const COPY_PATH: &str = "std::marker::Copy";
+
+#[cfg(test)]
+mod tests {
+    use crate::name_map::map_ty;
+    use crate::testing::Fixture;
+
+    /// The written type, as the emitter would spell it in a signature.
+    fn written(rust: &str) -> String {
+        let fixture = Fixture::build(&[("lib.rs", "pub struct Owned { pub n: u32 }\n")]);
+        let ty = fixture.ty("lib.rs", rust);
+        map_ty(&fixture.reg, &ty)
+    }
+
+    /// `@ankurah/base` exports `oneshot` and `mpsc` as namespaces, and both
+    /// declare a `TryRecvError`. Written by leaf name, a signature named a type
+    /// nothing in the file imports — and bun strips the name without complaint,
+    /// so the first thing to notice was a reader.
+    #[test]
+    fn a_channel_error_keeps_the_module_that_tells_the_two_channels_apart() {
+        assert_eq!(
+            written("tokio::sync::oneshot::error::TryRecvError"),
+            "oneshot.TryRecvError"
+        );
+        assert_eq!(
+            written("tokio::sync::oneshot::error::RecvError"),
+            "oneshot.RecvError"
+        );
+        assert_eq!(
+            written("tokio::sync::mpsc::error::TryRecvError"),
+            "mpsc.TryRecvError"
+        );
+        assert_eq!(
+            written("tokio::sync::mpsc::error::SendError<Owned>"),
+            "mpsc.SendError<Owned>"
+        );
+        assert_eq!(
+            written("tokio::sync::mpsc::error::TrySendError<Owned>"),
+            "mpsc.TrySendError<Owned>"
+        );
+    }
+
+    /// A `Duration` crosses as a number of milliseconds, which is what the
+    /// port's `sleep` and `timeout` take. There is no `Duration` class to name.
+    #[test]
+    fn a_duration_is_written_as_the_milliseconds_the_runtime_takes() {
+        assert_eq!(written("std::time::Duration"), "number");
+        assert_eq!(written("core::time::Duration"), "number");
+    }
+
+    /// The surface declares what tokio declares, minus the calls the browser
+    /// target cannot honour. A call to one of those has to stop resolving, so
+    /// that it is reported where it is written instead of emitting a call the
+    /// runtime has nothing behind.
+    #[test]
+    fn the_surface_declares_no_tokio_call_the_browser_target_cannot_honour() {
+        let fixture = Fixture::build(&[("lib.rs", "pub struct Owned { pub n: u32 }\n")]);
+        for path in [
+            "tokio::sync::watch::Sender",
+            "tokio::sync::watch::Receiver",
+            "tokio::sync::watch::Ref",
+        ] {
+            assert!(
+                fixture.reg.system_type(path).is_none(),
+                "`{}` is declared, so a watch channel resolves and emits a call the runtime \
+                 does not answer",
+                path
+            );
+        }
+    }
+}

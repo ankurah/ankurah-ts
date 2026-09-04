@@ -8,18 +8,27 @@
 //! `finally`, which is the reason it is a `finally` and not a run of statements
 //! at the end.
 //!
-//! Three questions decide what a block owes, and each has its own file here:
-//! `glue` says what a value of some type has to release, `moves` says which of
-//! the block's locals were handed to somebody else before it ended, and this
-//! file writes the result out.
+//! Two questions decide what a block owes, and each has its own file here:
+//! `glue` says what a value of some type has to release, and `moves` says which
+//! of the block's locals were handed to somebody else before it ended. The rest
+//! of the directory writes the answers out, one file per kind of thing that
+//! owns a value: `locals` for what a block's `let`s and parameters bind,
+//! `matching` for what a pattern's bindings own, `temporaries` for what an
+//! expression produced and nothing named, `statements` for what a statement
+//! releases at its end, and `places`, `closures` and `iteration` for the three
+//! shapes with rules of their own. `lowering` holds the state they all share.
 
 pub mod closures;
 pub mod glue;
-pub mod moves;
 pub mod iteration;
+pub mod locals;
 pub mod lowering;
+pub mod matching;
+pub mod moves;
 pub mod places;
 pub mod scrutinee;
+pub mod statements;
+pub mod temporaries;
 #[cfg(test)]
 mod tests;
 

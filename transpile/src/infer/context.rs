@@ -7,6 +7,7 @@
 
 use syn::spanned::Spanned;
 
+use super::expected;
 use super::scope::ScopeStack;
 use crate::diag::{Diag, DiagSink};
 use crate::name_map;
@@ -30,6 +31,17 @@ pub struct TypeContext<'a> {
     pub param_bounds: Vec<(String, TraitRef)>,
     /// What `Self` means in the enclosing impl.
     pub self_ty: Option<Ty>,
+    /// What the body being translated returns, so a tail expression and a
+    /// `return` know what type is wanted of them (spec 4.6).
+    pub ret_ty: Option<Ty>,
+    /// The parameters of the closure whose body is being typed right now,
+    /// innermost frame last.
+    ///
+    /// Asking a closure's tail for its type needs the closure's parameters
+    /// visible, and `resolve_expr` takes `&self` because it answers questions
+    /// rather than translating. This is that one scope, opened for the length
+    /// of the question and closed after it.
+    closure_params: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
     pub sink: &'a DiagSink,
 }
 
@@ -54,8 +66,138 @@ impl<'a> TypeContext<'a> {
             params,
             param_bounds: Vec::new(),
             self_ty,
+            ret_ty: None,
+            closure_params: std::cell::RefCell::new(Vec::new()),
             sink,
         }
+    }
+
+    /// Ask something with a closure's parameters in scope, then take them back
+    /// out again whatever the answer was.
+    pub(super) fn with_closure_params<T>(
+        &self,
+        params: &[(String, Option<Ty>)],
+        ask: impl FnOnce() -> T,
+    ) -> T {
+        self.closure_params.borrow_mut().push(params.to_vec());
+        let answer = ask();
+        self.closure_params.borrow_mut().pop();
+        answer
+    }
+
+    /// What a closure parameter opened by `with_closure_params` holds, and
+    /// whether the name is one of them at all.
+    fn closure_param(&self, name: &str) -> Option<Option<Ty>> {
+        self.closure_params
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .iter()
+                    .find(|(param, _)| param == name)
+                    .map(|(_, ty)| ty.clone())
+            })
+    }
+
+    /// The type of a block's tail expression, which is the block's own type.
+    pub fn block_tail_type(&self, block: &syn::Block) -> Result<Ty, Diag> {
+        self.resolve_block(block)
+    }
+
+    /// Is this the declared `Option`? Asked by identity, so a crate type that
+    /// happens to be called `Option` is its own type.
+    pub fn is_option(&self, ty: &Ty) -> bool {
+        ty.peel_refs()
+            .id()
+            .is_some_and(|id| self.is_system(id, "std::option::Option"))
+    }
+
+    /// What a `Result` or an `Option` carries, or the type itself where it
+    /// carries nothing.
+    ///
+    /// A deserialisation writes the value; the wrapper around it belongs to the
+    /// `?` or the `unwrap` that follows. So `let id: EntityId = ..` and `let
+    /// id: Result<EntityId, _> = ..` both name `EntityId` as the type that
+    /// reads itself out.
+    pub fn unwrapped_payload(&self, ty: &Ty) -> Ty {
+        self.try_payload(ty).unwrap_or_else(|| ty.clone())
+    }
+
+    /// A call's result with whatever the position wanted written into the parts
+    /// the call itself left open.
+    ///
+    /// `s.parse()`, `x.into()` and `it.collect()` all return one of their own
+    /// type parameters, and the call says nothing about which type that is —
+    /// `let id: EntityId = s.parse()` says it. Where the result holds no open
+    /// parameter there is nothing to close and the expectation is ignored: it
+    /// is a hint, never an override of a type the source settled.
+    fn close_with_expectation(&self, ret: Ty, expected: Option<&Ty>) -> Ty {
+        let Some(want) = expected else { return ret };
+        let open = open_params(&ret);
+        if open.is_empty() && !expected::has_infer(&ret) {
+            return ret;
+        }
+        let filled = expected::fill_infer(&ret, want);
+        let mut subst = Subst::new();
+        match unify(&open, &filled, want.peel_refs(), &mut subst) {
+            Ok(()) => filled.substitute(&subst),
+            // The expectation and the call disagree in shape. That is either a
+            // conversion the position performs or a gap in what the engine
+            // reads; either way the call's own answer stands.
+            Err(_) => filled,
+        }
+    }
+
+    /// The callable type a closure has: `impl Fn(A, B) -> R` with what the
+    /// signature settled, which is the type Rust gives a closure everywhere a
+    /// closure's type is asked for.
+    ///
+    /// A parameter or a result the engine could not settle is refused rather
+    /// than filled with a guess, because a wrong `Fn` bound would pick a wrong
+    /// impl at every call that takes this closure.
+    fn callable_type(
+        &self,
+        closure: &syn::ExprClosure,
+        sig: &super::closures::ClosureSig,
+    ) -> Result<Ty, Diag> {
+        let untyped = sig.untyped_params();
+        if !untyped.is_empty() {
+            return Err(self.refuse(
+                closure.span(),
+                format!(
+                    "this closure's parameter{} {} typed by nothing the engine can read: \
+                     neither an annotation on the closure nor the position it stands in says \
+                     what {} hold{}",
+                    if untyped.len() == 1 { " is" } else { "s are" },
+                    untyped
+                        .iter()
+                        .map(|n| format!("`{}`", n))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if untyped.len() == 1 { "it" } else { "they" },
+                    if untyped.len() == 1 { "s" } else { "" },
+                ),
+            ));
+        }
+        let Some(id) = self.registry.system_type("std::ops::Fn") else {
+            return Err(self.refuse(closure.span(), "`Fn` is not declared"));
+        };
+        let inputs: Vec<Ty> = sig.params.iter().filter_map(|(_, ty)| ty.clone()).collect();
+        Ok(Ty::ImplTrait {
+            bounds: vec![TraitRef {
+                id,
+                args: vec![if inputs.is_empty() {
+                    Ty::Unit
+                } else {
+                    Ty::Tuple(inputs)
+                }],
+                bindings: vec![(
+                    "Output".to_string(),
+                    sig.ret.clone().unwrap_or(Ty::Unit),
+                )],
+            }],
+        })
     }
 
     /// The impl table, asked from the module that wrote the call and with the
@@ -65,8 +207,15 @@ impl<'a> TypeContext<'a> {
     }
 
     /// The type a name has here, where the scope stack knows one.
+    ///
+    /// A closure parameter opened for the length of one question shadows the
+    /// stack, exactly as the closure's own scope would if this were a
+    /// translation rather than a question.
     pub fn lookup(&self, name: &str) -> Option<Ty> {
-        self.scopes.resolve(name).cloned()
+        match self.closure_param(name) {
+            Some(ty) => ty,
+            None => self.scopes.resolve(name).cloned(),
+        }
     }
 
     pub fn bind(&mut self, name: &str, ty: Ty) {
@@ -92,7 +241,7 @@ impl<'a> TypeContext<'a> {
     /// Is this name bound in scope at all, whether or not the engine could
     /// type what it holds?
     pub fn is_bound(&self, name: &str) -> bool {
-        self.scopes.is_bound(name)
+        self.closure_param(name).is_some() || self.scopes.is_bound(name)
     }
 
     /// Would a `let` of this name here be a redeclaration JavaScript refuses?
@@ -130,6 +279,22 @@ impl<'a> TypeContext<'a> {
 
     /// The type of an expression, or the reason the engine cannot say.
     pub fn resolve_expr(&self, expr: &syn::Expr) -> Result<Ty, Diag> {
+        self.resolve_expr_expecting(expr, None)
+    }
+
+    /// The same, where the position the expression stands in says what type it
+    /// has to be (spec 4.6).
+    ///
+    /// The expectation settles what the expression alone leaves open: the width
+    /// of an integer literal, the target of an `.into()` or a `.parse()`, the
+    /// parameters of a closure, and whether a sequence literal is a sequence of
+    /// bytes. It is a hint about this one position and travels no further than
+    /// the sub-expressions that inherit it directly.
+    pub fn resolve_expr_expecting(
+        &self,
+        expr: &syn::Expr,
+        expected: Option<&Ty>,
+    ) -> Result<Ty, Diag> {
         match expr {
             syn::Expr::Path(path) if path.path.is_ident("self") => self
                 .scopes
@@ -148,10 +313,12 @@ impl<'a> TypeContext<'a> {
             syn::Expr::MethodCall(call) => {
                 let method = call.method.to_string();
                 self.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref())
-                    .map(|found| found.ret)
+                    .map(|found| self.close_with_expectation(found.ret, expected))
             }
 
-            syn::Expr::Call(call) => self.resolve_call(call),
+            syn::Expr::Call(call) => self
+                .resolve_call(call)
+                .map(|ret| self.close_with_expectation(ret, expected)),
 
             syn::Expr::Struct(lit) => self.resolve_struct_literal(lit),
 
@@ -210,10 +377,39 @@ impl<'a> TypeContext<'a> {
                 self.refuse(expr.span(), "the range types in `std::ops` are not declared")
             }),
 
-            syn::Expr::Paren(p) => self.resolve_expr(&p.expr),
-            syn::Expr::Group(g) => self.resolve_expr(&g.expr),
+            syn::Expr::Paren(p) => self.resolve_expr_expecting(&p.expr, expected),
+            syn::Expr::Group(g) => self.resolve_expr_expecting(&g.expr, expected),
 
-            syn::Expr::Lit(lit) => self.literal_type(&lit.lit),
+            syn::Expr::Lit(lit) => self.literal_type(&lit.lit, expected),
+
+            // A closure has a type once its parameters and its result do: the
+            // callable Rust gives it. Saying so is what lets a `let` bind one,
+            // and what a later position reads the parameter types back out of.
+            syn::Expr::Closure(closure) => {
+                let sig = self.closure_signature(closure, expected);
+                self.callable_type(closure, &sig)
+            }
+
+            // Every element of an array literal has the sequence's element
+            // type, and it is that — not the first element's own default —
+            // that decides the widths written into the wire format.
+            syn::Expr::Array(array) => {
+                let elem_want = expected.and_then(|ty| expected::element_of(self.registry, ty));
+                let elem = match array.elems.first() {
+                    Some(first) => self.resolve_expr_expecting(first, elem_want.as_ref())?,
+                    None => elem_want.clone().ok_or_else(|| {
+                        self.refuse(
+                            expr.span(),
+                            "an empty array literal has no element type, and the position it \
+                             stands in does not say one",
+                        )
+                    })?,
+                };
+                Ok(Ty::Array {
+                    elem: Box::new(elem),
+                    len: crate::ty::ArrayLen::Lit(array.elems.len() as u64),
+                })
+            }
 
             syn::Expr::Binary(bin) => self.binary_type(bin),
 
@@ -230,10 +426,13 @@ impl<'a> TypeContext<'a> {
                 })
             }
 
-            syn::Expr::Repeat(repeat) => Ok(Ty::Array {
-                elem: Box::new(self.resolve_expr(&repeat.expr)?),
-                len: crate::ty::ArrayLen::Named("_".to_string()),
-            }),
+            syn::Expr::Repeat(repeat) => {
+                let elem_want = expected.and_then(|ty| expected::element_of(self.registry, ty));
+                Ok(Ty::Array {
+                    elem: Box::new(self.resolve_expr_expecting(&repeat.expr, elem_want.as_ref())?),
+                    len: crate::ty::ArrayLen::Named("_".to_string()),
+                })
+            }
 
             // Every arm of a `match` and both branches of an `if` have the same
             // type in Rust, so the first one that is not a divergence answers
@@ -241,29 +440,33 @@ impl<'a> TypeContext<'a> {
             syn::Expr::Match(m) => m
                 .arms
                 .iter()
-                .find_map(|arm| self.resolve_expr(&arm.body).ok().filter(|t| *t != Ty::Never))
+                .find_map(|arm| {
+                    self.resolve_expr_expecting(&arm.body, expected)
+                        .ok()
+                        .filter(|t| *t != Ty::Never)
+                })
                 .ok_or_else(|| {
                     self.refuse(expr.span(), "no arm of this match has a type the engine could read")
                 }),
 
             syn::Expr::If(if_expr) => {
-                let then = self.resolve_block(&if_expr.then_branch);
+                let then = self.resolve_block_expecting(&if_expr.then_branch, expected);
                 if let Ok(ty) = &then {
                     if *ty != Ty::Never {
                         return then;
                     }
                 }
                 match &if_expr.else_branch {
-                    Some((_, other)) => self.resolve_expr(other),
+                    Some((_, other)) => self.resolve_expr_expecting(other, expected),
                     // An `if` with no `else` is the unit type.
                     None => Ok(Ty::Unit),
                 }
             }
 
-            syn::Expr::Macro(mac) => self.macro_type(&mac.mac),
+            syn::Expr::Macro(mac) => self.macro_type(&mac.mac, expected),
 
             syn::Expr::Block(b) => match b.block.stmts.last() {
-                Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr(tail),
+                Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr_expecting(tail, expected),
                 _ => Err(self.refuse(
                     expr.span(),
                     "block has no tail expression to take a type from",
@@ -278,16 +481,24 @@ impl<'a> TypeContext<'a> {
     }
 
     fn resolve_block(&self, block: &syn::Block) -> Result<Ty, Diag> {
+        self.resolve_block_expecting(block, None)
+    }
+
+    fn resolve_block_expecting(
+        &self,
+        block: &syn::Block,
+        expected: Option<&Ty>,
+    ) -> Result<Ty, Diag> {
         match block.stmts.last() {
-            Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr(tail),
+            Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr_expecting(tail, expected),
             _ => Ok(Ty::Unit),
         }
     }
 
-    /// A literal's type. An integer or float written without a suffix takes
-    /// Rust's own default — `i32` and `f64` — which is what rustc gives it when
-    /// nothing else constrains it.
-    fn literal_type(&self, lit: &syn::Lit) -> Result<Ty, Diag> {
+    /// A literal's type. An integer or float written without a suffix takes the
+    /// width the position wants, and Rust's own default — `i32` and `f64` —
+    /// only where the position wants nothing.
+    fn literal_type(&self, lit: &syn::Lit, expected: Option<&Ty>) -> Result<Ty, Diag> {
         Ok(match lit {
             syn::Lit::Str(_) => Ty::Ref {
                 mutable: false,
@@ -302,11 +513,17 @@ impl<'a> TypeContext<'a> {
             syn::Lit::Bool(_) => Ty::Prim(Prim::Bool),
             syn::Lit::Int(int) => match Prim::from_rust_name(int.suffix()) {
                 Some(prim) => Ty::Prim(prim),
-                None => Ty::Prim(Prim::I32),
+                None => Ty::Prim(
+                    expected
+                        .and_then(expected::integer_width)
+                        .unwrap_or(Prim::I32),
+                ),
             },
             syn::Lit::Float(float) => match Prim::from_rust_name(float.suffix()) {
                 Some(prim) => Ty::Prim(prim),
-                None => Ty::Prim(Prim::F64),
+                None => {
+                    Ty::Prim(expected.and_then(expected::float_width).unwrap_or(Prim::F64))
+                }
             },
             other => {
                 return Err(self.refuse(
@@ -469,7 +686,7 @@ impl<'a> TypeContext<'a> {
     /// What a macro invocation produces (spec 4.10). The transpiler never
     /// expands one, so each supported macro's type is stated here and every
     /// other macro is refused at the invocation.
-    fn macro_type(&self, mac: &syn::Macro) -> Result<Ty, Diag> {
+    fn macro_type(&self, mac: &syn::Macro, expected: Option<&Ty>) -> Result<Ty, Diag> {
         let span = syn::spanned::Spanned::span(mac);
         let name = mac
             .path
@@ -478,6 +695,31 @@ impl<'a> TypeContext<'a> {
             .map(|s| s.ident.to_string())
             .unwrap_or_default();
         match name.as_str() {
+            // `vec![..]` is a `Vec` of whatever its elements are, and its
+            // elements are whatever the position wants: `vec![1, 2]` behind a
+            // `Vec<u8>` holds bytes, not the `i32`s a bare literal defaults to.
+            "vec" => {
+                let elem_want = expected.and_then(|ty| expected::element_of(self.registry, ty));
+                let id = self.registry.system_type("std::vec::Vec").ok_or_else(|| {
+                    self.refuse(span, "`vec!` yields a Vec, which is not declared")
+                })?;
+                let elems = crate::macros::vec_macro_elements(mac);
+                let elem = match (elems.first(), elem_want) {
+                    (Some(first), want) => self.resolve_expr_expecting(first, want.as_ref())?,
+                    (None, Some(want)) => want,
+                    (None, None) => {
+                        return Err(self.refuse(
+                            span,
+                            "an empty `vec![]` has no element type, and the position it stands \
+                             in does not say one",
+                        ))
+                    }
+                };
+                Ok(Ty::Named {
+                    id,
+                    args: vec![elem],
+                })
+            }
             "format" => self
                 .registry
                 .system_type("std::string::String")
@@ -632,14 +874,24 @@ impl<'a> TypeContext<'a> {
                 if let Some(ret) = self.assoc_fn_return(&ty, &name) {
                     return Ok(ret);
                 }
-                return Err(self.refuse(
-                    span,
-                    format!(
-                        "no associated function `{}` on `{}`",
-                        name,
-                        self.registry.describe(&ty)
-                    ),
-                ));
+                // `bincode::serialize` is a function in a module, and a module
+                // that nothing declares resolves as a foreign type — so a
+                // prefix with no declaration is not evidence that the last
+                // segment is an associated function. The value namespace is
+                // asked before the refusal is written.
+                let declared = ty
+                    .id()
+                    .is_some_and(|id| !id.is_foreign() && self.registry.def(id).is_some());
+                if declared {
+                    return Err(self.refuse(
+                        span,
+                        format!(
+                            "no associated function `{}` on `{}`",
+                            name,
+                            self.registry.describe(&ty)
+                        ),
+                    ));
+                }
             }
         }
 
@@ -742,8 +994,114 @@ impl<'a> TypeContext<'a> {
         inherent.or(if trait_count == 1 { from_trait } else { None })
     }
 
+    /// What an associated function's arguments are declared to be, with the
+    /// position it stands in used to close whatever the call leaves open.
+    ///
+    /// `Box::new(move |level| ..)` in a function returning `Box<dyn Fn(u32) ->
+    /// bool>` is the case that matters: `new` declares `fn new(x: T) -> Box<T>`
+    /// and says nothing about `T`; the return position does, and that is what
+    /// gives the closure its parameter type (spec 4.5, 4.6).
+    pub fn call_argument_types(
+        &self,
+        call: &syn::ExprCall,
+        expected: Option<&Ty>,
+    ) -> Vec<Option<Ty>> {
+        self.call_argument_types_of(call, expected).unwrap_or_default()
+    }
+
+    fn call_argument_types_of(
+        &self,
+        call: &syn::ExprCall,
+        expected: Option<&Ty>,
+    ) -> Option<Vec<Option<Ty>>> {
+        let syn::Expr::Path(path) = &*call.func else {
+            return None;
+        };
+        let name = path.path.segments.last()?.ident.to_string();
+        // `Box::new(..)` names `Box` with no arguments, and the impl is written
+        // for `Box<T>`; a bare `Box` does not resolve to a type at all. What
+        // the position wants is the `Box<T>` this call is making, so where the
+        // path names that constructor the expectation is the receiver the impl
+        // is matched against.
+        let owner = self
+            .expectation_as_owner(path, expected)
+            .or_else(|| self.type_of_prefix(path))?;
+        let (sig, mut subst) = self.static_method(&owner, &name)?;
+        // Whatever the position wants of the call binds the parameters the
+        // signature left open.
+        if let Some(want) = expected {
+            let open = open_params(&sig.ret.substitute(&subst));
+            let _ = unify(&open, &sig.ret.substitute(&subst), want.peel_refs(), &mut subst);
+        }
+        let probe = self.probe();
+        Some(
+            sig.params
+                .iter()
+                .map(|(_, ty)| {
+                    let filled = probe.normalize(&ty.substitute(&subst));
+                    (!expected::has_infer(&filled) && open_params(&filled).is_empty())
+                        .then_some(filled)
+                })
+                .collect(),
+        )
+    }
+
+    /// The type the position wants, where the path names its constructor.
+    ///
+    /// `Box::new` in a position wanting a `Box<dyn Fn(u32) -> bool>` names the
+    /// `Box` the call is building; a bare `Box` does not resolve to a type on
+    /// its own, and matching the impl needs the arguments the position knows.
+    fn expectation_as_owner(&self, path: &syn::ExprPath, expected: Option<&Ty>) -> Option<Ty> {
+        let want = expected?.peel_refs();
+        let id = want.id()?;
+        let mut prefix = path.path.segments.iter().rev();
+        prefix.next();
+        let named = prefix.next()?.ident.to_string();
+        (self.registry.name_of(id).rsplit("::").next() == Some(named.as_str()))
+            .then(|| want.clone())
+    }
+
+    /// The one static method of that name reachable on this type, and what
+    /// matching the impl bound its parameters to. Two answers is no answer.
+    fn static_method(&self, ty: &Ty, name: &str) -> Option<(crate::registry::MethodSig, Subst)> {
+        let mut found: Option<(crate::registry::MethodSig, Subst)> = None;
+        for id in self.registry.impls_for(ty) {
+            let def = self.registry.impl_def(id);
+            let Some(sig) = def.methods.get(name).filter(|sig| sig.is_static()) else {
+                continue;
+            };
+            let Some(subst) = def.match_self(ty) else {
+                continue;
+            };
+            if found.is_some() {
+                return None;
+            }
+            found = Some((sig.clone(), subst));
+        }
+        found
+    }
+
     /// `Foo { a, b }` builds a `Foo`, with its parameters read off the fields
     /// it was given.
+    /// What each field of the struct a literal builds is declared to hold.
+    ///
+    /// The declaration is what the field's initialiser has to produce, so
+    /// `Header { len: 1 }` writes the width `len` declares rather than the
+    /// `i32` a bare literal defaults to (spec 4.6).
+    pub fn struct_literal_field_types(&self, lit: &syn::ExprStruct) -> Vec<(String, Ty)> {
+        let Ok(Ty::Named { id, args }) = self.resolve_struct_literal(lit) else {
+            return Vec::new();
+        };
+        let Some(def) = self.registry.def(id) else {
+            return Vec::new();
+        };
+        let subst = crate::ty::bind_params(&def.type_params, &args);
+        def.fields
+            .iter()
+            .map(|(name, ty)| (name.clone(), ty.substitute(&subst)))
+            .collect()
+    }
+
     fn resolve_struct_literal(&self, lit: &syn::ExprStruct) -> Result<Ty, Diag> {
         let ty = syn::Type::Path(syn::TypePath {
             qself: lit.qself.clone(),
@@ -817,16 +1175,12 @@ impl<'a> TypeContext<'a> {
             // Locals and parameters are bound under their TypeScript name;
             // constants keep their Rust SCREAMING_CASE.
             let camel = name_map::to_camel_case(ident);
-            if let Some(ty) = self
-                .scopes
-                .resolve(&camel)
-                .or_else(|| self.scopes.resolve(ident))
-            {
-                return Ok(ty.clone());
+            if let Some(ty) = self.lookup(&camel).or_else(|| self.lookup(ident)) {
+                return Ok(ty);
             }
             // A name that is bound but has no type is a different failure from
             // a name nothing binds, and says where to look.
-            if self.scopes.is_bound(&camel) || self.scopes.is_bound(ident) {
+            if self.is_bound(&camel) || self.is_bound(ident) {
                 return Err(self.refuse(
                     path.span(),
                     format!("`{}` is bound here but the engine could not type it", written),
@@ -866,15 +1220,29 @@ impl<'a> TypeContext<'a> {
     /// The type of a `let` binding: its annotation if it has one, otherwise
     /// the type of what initialises it.
     pub fn resolve_local_type(&self, local: &syn::Local) -> Result<Ty, Diag> {
-        if let syn::Pat::Type(pat_type) = &local.pat {
-            return self.resolve_written_type(&pat_type.ty);
-        }
-        match &local.init {
-            Some(init) => self.resolve_expr(&init.expr),
-            None => Err(self.refuse(
+        let annotated = self.local_annotation(local);
+        match (annotated, &local.init) {
+            // A `let x: Vec<_> = ..` says most of the type and leaves a hole
+            // for the initialiser to close.
+            (Some(written), Some(init)) if expected::has_infer(&written) => {
+                let filled = self.resolve_expr_expecting(&init.expr, Some(&written))?;
+                Ok(expected::fill_infer(&written, &filled))
+            }
+            (Some(written), _) => Ok(written),
+            (None, Some(init)) => self.resolve_expr(&init.expr),
+            (None, None) => Err(self.refuse(
                 local.span(),
                 "binding has neither a type nor an initialiser",
             )),
+        }
+    }
+
+    /// The type a `let` writes for itself, which is what its initialiser is
+    /// expected to produce.
+    pub fn local_annotation(&self, local: &syn::Local) -> Option<Ty> {
+        match &local.pat {
+            syn::Pat::Type(pat_type) => self.resolve_written_type(&pat_type.ty).ok(),
+            _ => None,
         }
     }
 
@@ -973,8 +1341,36 @@ impl<'a> TypeContext<'a> {
         ("std::sync::RwLock", "get_mut"),
     ];
 
-    /// Did this expression come from one of those calls?
+    /// The free functions the port writes as something that is not the
+    /// `Result` Rust returns.
+    ///
+    /// `bincode::serialize` becomes a `BincodeWriter` whose `finish()` hands
+    /// back the bytes; `bincode::deserialize` becomes `T.decode(reader)`, which
+    /// hands back the `T`; `serde_json::to_string` becomes `JSON.stringify`,
+    /// which hands back the string. In each case there is no `Result` for the
+    /// `unwrap` the source writes to take apart. `serde_json::from_str` is
+    /// deliberately absent: the port's `T.fromJson` does return a `Result`,
+    /// because a malformed value is a real failure there.
+    const VALUE_NOT_RESULT: [&'static str; 3] = [
+        "bincode::serialize",
+        "bincode::deserialize",
+        "serde_json::to_string",
+    ];
+
+    /// Did this expression come from a call the port writes as the value
+    /// itself, so that the `unwrap` written after it has nothing to unwrap?
     pub fn is_lock_call(&self, expr: &syn::Expr) -> bool {
+        if let syn::Expr::Call(call) = expr {
+            if let syn::Expr::Path(path) = &*call.func {
+                let written: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                return Self::VALUE_NOT_RESULT.contains(&written.join("::").as_str());
+            }
+        }
         let syn::Expr::MethodCall(call) = expr else {
             return false;
         };
@@ -1035,6 +1431,41 @@ impl<'a> TypeContext<'a> {
 
 
 
+/// The type-parameter names still standing in a type.
+///
+/// A call whose result is one of them — `Into::into` returning its trait's `T`,
+/// `FromStr::from_str` returning `Self` — has left that part of its answer to
+/// the position it stands in, and these are the names the position gets to
+/// bind.
+fn open_params(ty: &Ty) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_params(ty, &mut names);
+    names
+}
+
+fn collect_params(ty: &Ty, out: &mut Vec<String>) {
+    match ty {
+        Ty::Param(name) => {
+            if !out.iter().any(|n| n == name) {
+                out.push(name.clone());
+            }
+        }
+        Ty::Named { args, .. } => args.iter().for_each(|a| collect_params(a, out)),
+        Ty::Tuple(elems) => elems.iter().for_each(|e| collect_params(e, out)),
+        Ty::Slice(inner) | Ty::Array { elem: inner, .. } | Ty::Ref { inner, .. } => {
+            collect_params(inner, out)
+        }
+        Ty::Assoc { base, .. } => collect_params(base, out),
+        Ty::ImplTrait { bounds } | Ty::Dyn { traits: bounds } => {
+            for bound in bounds {
+                bound.args.iter().for_each(|a| collect_params(a, out));
+                bound.bindings.iter().for_each(|(_, t)| collect_params(t, out));
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A primitive's own name, for the rare place a literal's type is asked for.
 #[allow(dead_code)]
 pub fn prim_name(p: Prim) -> String {
@@ -1072,7 +1503,7 @@ fn expr_form(expr: &syn::Expr) -> &'static str {
     }
 }
 
-pub(super) fn member_name(member: &syn::Member) -> String {
+pub fn member_name(member: &syn::Member) -> String {
     match member {
         syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
         syn::Member::Unnamed(idx) => format!("_{}", idx.index),

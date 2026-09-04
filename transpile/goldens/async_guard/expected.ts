@@ -28,20 +28,24 @@ export async function race(left: mpsc.Receiver<number>, right: mpsc.Receiver<num
   try {
     try {
       let winner = 0;
-      const _v = [
-        { tag: '_0', promise: left.recv() },
-        { tag: '_1', promise: right.recv() },
-      ];
-      try {
-        const _v1 = await select(_v);
-        if (_v1.tag === '_0') {
-          winner = 1;
-        } else if (_v1.tag === '_1') {
-          winner = 2;
+      await (async () => {
+        const _v = [
+          { tag: '_0', promise: left.recv() },
+          { tag: '_1', promise: right.recv() },
+        ];
+        try {
+          const _v1 = await select(_v);
+          if (_v1.tag === '_0') {
+            winner = 1;
+          } else if (_v1.tag === '_1') {
+            winner = 2;
+          } else {
+            throw new Error('select: the arbiter answered with a tag no arm wrote');
+          }
+        } finally {
+          for (const _v2 of _v) dropOwned(_v2.promise);
         }
-      } finally {
-        for (const _v2 of _v) dropOwned(_v2.promise);
-      }
+      })()
       return winner;
     } finally {
       right.drop();

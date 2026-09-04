@@ -85,6 +85,19 @@ pub fn collect_type_refs(ty: &str, refs: &mut HashSet<String>) {
     }
 }
 
+/// Every name in a body that is one of a known set.
+///
+/// A module-level function standing for an impl method is named in camelCase,
+/// which the type scan above deliberately skips, so a call to one is found by
+/// matching whole words against the functions the run emitted.
+pub fn collect_named_refs(text: &str, known: &HashSet<String>, refs: &mut HashSet<String>) {
+    for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if known.contains(word) {
+            refs.insert(word.to_string());
+        }
+    }
+}
+
 pub fn is_primitive_or_base_type(ty: &str) -> bool {
     matches!(ty, "string" | "boolean" | "number" | "void" | "never" | "unknown" | "bigint"
         | "Struct" | "Enum" | "Drop" | "Arc" | "Weak" | "Mutex" | "MutexGuard"

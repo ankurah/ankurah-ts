@@ -28,7 +28,8 @@ use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
 pub use build::{build_registry, resolve_bounds, ExtractedFile};
-pub use method::{FieldResolution, MethodResolution, Probe, Undecided};
+pub use impls::ImplId;
+pub use method::{Callee, FieldResolution, MethodResolution, Probe, Undecided};
 pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
 pub use resolve_type::{resolve_type, TypeEnv};
 pub use std_surface::Surface;

@@ -55,15 +55,30 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
 }
 
 fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position) -> String {
+    let (before, chain) = if_chain(if_expr, t, position);
+    format!("{}{}", before, chain)
+}
+
+/// The `if` itself, handed back apart from the statements its condition needs
+/// standing above it.
+///
+/// The two are separated so that an `else if` can put those statements inside a
+/// block of its own. Rust evaluates each condition in the chain only once the
+/// one above it has failed, and a condition that lifted a temporary is a run of
+/// statements rather than an expression — written between the `else` and the
+/// `if` it belongs to, that run is not a program at all.
+fn if_chain(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position) -> (String, String) {
     if let syn::Expr::Let(let_expr) = &*if_expr.cond {
-        return translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None, t, position);
+        let written =
+            translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None, t, position);
+        return (String::new(), written);
     }
 
     // Handle let-chains: if let Some(x) = expr && guard { ... }
     if let syn::Expr::Binary(bin) = &*if_expr.cond {
         if matches!(bin.op, syn::BinOp::And(_)) {
             if let syn::Expr::Let(let_expr) = &*bin.left {
-                return translate_if_let(
+                let written = translate_if_let(
                     let_expr,
                     &if_expr.then_branch,
                     &if_expr.else_branch,
@@ -71,6 +86,7 @@ fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position
                     t,
                     position,
                 );
+                return (String::new(), written);
             }
         }
     }
@@ -82,20 +98,39 @@ fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position
     let (cond, lifted) = t.with_own_hoists(|| t.expr(&if_expr.cond));
     let (cond, before) = t.settle_condition(cond, &lifted);
     let then_body = branch(&if_expr.then_branch, t, position);
+    let chain = format!(
+        "if ({}) {{\n{}}}{}",
+        cond,
+        indent(&then_body),
+        else_part(&if_expr.else_branch, t, position)
+    );
+    (before, chain)
+}
 
-    let else_part = if let Some((_, else_expr)) = &if_expr.else_branch {
-        match else_expr.as_ref() {
-            syn::Expr::If(else_if) => format!(" else {}", translate_if_at(else_if, t, position)),
-            syn::Expr::Block(block) => {
-                format!(" else {{\n{}}}", indent(&branch(&block.block, t, position)))
-            }
-            _ => format!(" else {{\n{}}}", indent(&t.expr(else_expr))),
-        }
-    } else {
-        String::new()
+/// What follows the `then` branch, from `else if` down to nothing at all.
+fn else_part(
+    else_branch: &Option<(syn::token::Else, Box<syn::Expr>)>,
+    t: &BodyTranslator,
+    position: Position,
+) -> String {
+    let Some((_, else_expr)) = else_branch else {
+        return String::new();
     };
-
-    format!("{}if ({}) {{\n{}}}{}", before, cond, indent(&then_body), else_part)
+    match else_expr.as_ref() {
+        syn::Expr::If(else_if) => {
+            let (before, chain) = if_chain(else_if, t, position);
+            if before.is_empty() {
+                return format!(" else {}", chain);
+            }
+            // This condition takes a temporary of its own, and the statements
+            // that take and release it run only on the path the `else` reaches.
+            format!(" else {{\n{}}}", indent(&format!("{}{}\n", before, chain)))
+        }
+        syn::Expr::Block(block) => {
+            format!(" else {{\n{}}}", indent(&branch(&block.block, t, position)))
+        }
+        _ => format!(" else {{\n{}}}", indent(&t.expr(else_expr))),
+    }
 }
 
 /// One branch of an `if`. In returning position its last expression becomes the
@@ -165,18 +200,7 @@ fn translate_if_let(
     let guard_str = guard.map(|g| t.expr(g)).unwrap_or_default();
     drop(bound);
 
-
-    let else_part = if let Some((_, else_expr)) = else_branch {
-        match else_expr.as_ref() {
-            syn::Expr::If(else_if) => format!(" else {}", translate_if_at(else_if, t, position)),
-            syn::Expr::Block(block) => {
-                format!(" else {{\n{}}}", indent(&branch(&block.block, t, position)))
-            }
-            _ => format!(" else {{\n{}}}", indent(&t.expr(else_expr))),
-        }
-    } else {
-        String::new()
-    };
+    let else_part = else_part(else_branch, t, position);
 
     let subject = t.fresh_temp();
     // `if let Ok(guard) = lock.lock()`. The port's `lock()` and `read()` hand
@@ -186,7 +210,7 @@ fn translate_if_let(
     // the `else` is the poisoned-lock arm, which this runtime cannot reach, and
     // deleting it silently changed what the source said.
     let (test, bind) = match ok_binding(&let_expr.pat) {
-        Some(var) if t.is_lock_call(&let_expr.expr) => {
+        Some(var) if t.writes_the_value_not_the_result(&let_expr.expr) => {
             ("true".to_string(), format!("const {} = {};\n", var, subject))
         }
         _ => t.pattern_test(&subject, &let_expr.pat),

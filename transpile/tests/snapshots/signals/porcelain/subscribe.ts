@@ -32,3 +32,17 @@ export interface GetAndDynSubscribe<T> {
 
 export type SubscribeListener = (arg0: T) => void;
 
+export function dynSubscribe<S extends Subscribe, T>(self: S, listener: (arg0: T) => void): SubscriptionGuard {
+  return Subscribe.subscribe(self, listener);
+}
+
+export function Sender_intoSubscribeListener<T>(self: Sender<T>): SubscribeListener<T> {
+  return (value) => {
+    const _ = self.send(value);
+  };
+}
+
+export function intoSubscribeListener<F extends (arg0: T) => void, T>(self: F): SubscribeListener<T> {
+  return self;
+}
+

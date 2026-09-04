@@ -11,6 +11,7 @@ mod config;
 mod control_flow;
 mod diag;
 mod emit;
+mod emit_impls;
 mod extract;
 mod imports;
 mod infer;
@@ -123,6 +124,9 @@ fn main() -> Result<()> {
             for row in trace::rows() {
                 println!("RESOLVED\t{}", row);
             }
+            for row in trace::closure_rows() {
+                println!("CLOSURE\t{}", row);
+            }
         }
         Command::Batch {
             src_dir,
@@ -212,7 +216,7 @@ fn batch_generate(
         }
 
         let features = config.map(|c| &c.features);
-        let rust_file = match extract::extract_with_features(rs_path, features) {
+        let mut rust_file = match extract::extract_with_features(rs_path, features) {
             Ok(f) => f,
             Err(e) => {
                 // A file the parser cannot read is a hole in the crate, not a
@@ -228,6 +232,11 @@ fn batch_generate(
                 continue;
             }
         };
+
+        // Extraction names the file by where it was read from; from here on it
+        // is named by its place in the crate, which is the key the module tree
+        // and the diagnostics use.
+        rust_file.path = rel_str.clone();
 
         // Register all types defined in this file. A hardcoded file's types
         // are not added here: its TypeScript is hand-written and reached
@@ -321,6 +330,20 @@ fn batch_generate(
         total_bodies
     );
     translate_all_bodies(&mut parsed_files, &registry, &sink);
+
+    // An impl with no class of its own is emitted as module-level functions
+    // (see `emit_impls`), and a module that calls one has to import it by name.
+    // The map is built once the registry exists, because which impls need it is
+    // a question about resolved self types.
+    for entry in parsed_files.iter().filter(|e| !e.declarations_only) {
+        let Some(module) = registry.modules().lookup_file(&entry.path) else {
+            continue;
+        };
+        let ts_module = rs_to_ts_module(&entry.path);
+        for f in emit_impls::free_functions(&registry, module, &entry.file) {
+            type_to_file.insert(f.name, ts_module.clone());
+        }
+    }
 
     // Phase 4: Generate TS with resolved imports
     let mut file_count = 0;
@@ -522,6 +545,7 @@ fn translate_module(
         translate_fn_body(
             func,
             "Self",
+            "this",
             None,
             &[],
             &[],
@@ -549,6 +573,12 @@ fn translate_module(
     for imp in &mut file.impls {
         let self_type = imp.target_type.clone();
         let self_ty = impl_self_ty(registry, module, imp, sink);
+        // An impl written for a type with no class of its own is emitted as
+        // module-level functions, and there `self` is an ordinary parameter.
+        let self_name = match &self_ty {
+            Some(ty) if !emit_impls::has_emitted_class(registry, ty) => "self",
+            _ => "this",
+        };
         // What the impl's own parameters are known to implement, so that a call
         // on one of them — `self.0.read().unwrap().clone()` under
         // `impl<T: Clone> ValueCell<T>` — reaches the trait's declaration.
@@ -564,6 +594,7 @@ fn translate_module(
             translate_fn_body(
                 method,
                 &self_type,
+                self_name,
                 self_ty.clone(),
                 &imp.type_params,
                 &bounds,
@@ -580,6 +611,7 @@ fn translate_module(
         translate_fn_body(
             func,
             "Self",
+            "this",
             None,
             &[],
             &[],
@@ -611,6 +643,7 @@ fn translate_module(
             translate_fn_body(
                 method,
                 &tr.name,
+                "this",
                 Some(self_ty.clone()),
                 &tr.type_params,
                 &bounds,
@@ -667,6 +700,10 @@ fn resolve_module_consts(
 fn translate_fn_body(
     func: &mut types::FnInfo,
     self_type: &str,
+    // The identifier Rust's `self` is emitted as: `this` for a method on an
+    // emitted class, and the function's first parameter for a method whose
+    // impl has no class of its own.
+    self_name: &'static str,
     self_ty: Option<ty::Ty>,
     impl_params: &[String],
     impl_bounds: &[(String, ty::TraitRef)],
@@ -753,11 +790,12 @@ fn translate_fn_body(
         // Leaving it out made every self-taking method a leak.
         if func.self_kind == Some(types::SelfKind::Value) {
             if let Some(ty) = self_ty.clone() {
-                owned_params.insert(0, ("this".to_string(), ty));
+                owned_params.insert(0, (self_name.to_string(), ty));
             }
         }
 
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
+        translator.self_name = self_name;
         translator.inline_module_names = inline_module_names.to_vec();
         translator.fn_return = returns;
         translator.owns_self = func.self_kind == Some(types::SelfKind::Value);

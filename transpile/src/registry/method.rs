@@ -929,6 +929,80 @@ impl TypeRegistry {
             }
         }
     }
+
+    /// What the resolved callee declares each argument to be, in order, with
+    /// the impl's parameters already bound to what stood at their positions.
+    ///
+    /// This is where a closure argument gets its parameter types (spec 4.5) and
+    /// where an `.into()` in argument position learns what it converts to
+    /// (spec 4.6): the argument's type is not in the argument, it is in the
+    /// signature the call resolved to.
+    pub fn method_param_types(&self, found: &MethodResolution) -> Vec<Ty> {
+        let sig = match &found.callee {
+            Callee::Inherent(id, name)
+            | Callee::TraitImpl(id, name)
+            | Callee::Blanket(id, name) => {
+                let def = self.impl_def(*id);
+                match def.methods.get(name) {
+                    Some(sig) => Some(sig.clone()),
+                    // An impl that inherited the trait's default body has no
+                    // signature of its own; the trait's declaration is it.
+                    None => def
+                        .trait_ref
+                        .as_ref()
+                        .and_then(|t| self.trait_method(t.id, name))
+                        .map(|(_, m)| m.sig.clone()),
+                }
+            }
+            Callee::TraitObject(trait_id, name) => self
+                .trait_method(*trait_id, name)
+                .map(|(_, m)| m.sig.clone()),
+        };
+        // `Iterator::map` declares `F: FnMut(Self::Item) -> B`, and a
+        // resolution against an impl binds that impl's parameters without ever
+        // naming `Self` — the receiver is what `Self` is, so it is put in here
+        // for the projections in the bound to settle against.
+        let mut subst = found.subst.clone();
+        subst
+            .entry("Self".to_string())
+            .or_insert_with(|| found.adjusted.peel_refs().clone());
+
+        sig.map(|sig| {
+            sig.params
+                .iter()
+                .map(|(_, ty)| with_bounds(&sig, &ty.substitute(&subst), &subst))
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+}
+
+/// A parameter whose type is one of the method's own type parameters, rewritten
+/// as the `impl Trait` it stands for.
+///
+/// `fn map<B, F: FnMut(Self::Item) -> B>(self, f: F)` says what `f` can do in
+/// the `where` clause, not in `f`'s type, and Rust treats that as identical to
+/// writing `f: impl FnMut(Self::Item) -> B`. A closure passed there takes its
+/// parameter types from the bound, so the bound has to travel with the
+/// parameter.
+fn with_bounds(sig: &super::MethodSig, ty: &Ty, subst: &Subst) -> Ty {
+    let Ty::Param(name) = ty else {
+        return ty.clone();
+    };
+    if !sig.type_params.iter().any(|p| p == name) {
+        return ty.clone();
+    }
+    let bounds: Vec<TraitRef> = sig
+        .bounds
+        .iter()
+        .filter(|b| matches!(&b.subject, Ty::Param(subject) if subject.as_str() == name.as_str()))
+        .map(|b| b.trait_ref.substitute(subst))
+        .collect();
+    if bounds.is_empty() {
+        ty.clone()
+    } else {
+        Ty::ImplTrait { bounds }
+    }
 }
 
 // ── Fields ─────────────────────────────────────────────────────────────

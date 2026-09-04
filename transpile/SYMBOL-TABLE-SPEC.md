@@ -430,6 +430,31 @@ callee's bound.
   A closure with no annotation and no expected type is a diagnostic.
 - Captured variables resolve through the enclosing scopes as today.
 
+As implemented (step 4). The three sources are read in Rust's own order: the
+annotation the closure writes for itself, the callable the position expects, and
+— for the result only — the body's own tail, typed with the parameters bound.
+
+Where the expected type names no callable, one blanket impl of the bound it does
+name is followed: `L: IntoBroadcastListener<T>` says nothing about calling `L`,
+and `impl<F: Fn(T)> IntoBroadcastListener<T> for F` says that a closure standing
+there is an `Fn(T)`. That is the reverse of the deferred obligation resolution
+files (4.2): the obligation asks whether `L` is an `Fn`, and a closure written
+at that argument is the answer. One hop, and only where exactly one blanket impl
+of the bound carries a callable bound of its own; two would be a choice, and
+nothing here makes one.
+
+A result is taken from the expected callable's `Output` only when that `Output`
+is settled. `Iterator::map` declares `F: FnMut(Self::Item) -> B` and leaves `B`
+to whatever the closure returns, so reading `B` off the bound would answer the
+question with the question. The same test applies to the body's own tail: a type
+still holding a parameter that belongs to somebody else's signature — the `U` of
+`TryInto::try_into` — is refused rather than handed on. A parameter the
+enclosing signature declared is a real type and stays.
+
+A parameter nothing typed is bound in the closure's scope without a type, so the
+body reads it as a name that exists rather than as a name nobody declared, and
+the gap is reported once at the closure instead of at every use inside it.
+
 ### 4.6 `?`, conversions, and expected types
 
 For: 75 or more `?` sites change the error type; 116 `.into()`/`.try_into()`
@@ -449,6 +474,25 @@ calls have no type without an expected type.
   `.into()` with no expected type is a diagnostic.
 - `Infer` from `Vec<_>` in a turbofish resolves by unifying with the iterator's
   `Item` projection.
+
+As implemented (step 4). An expectation is carried to one expression, matched by
+its span, and put back afterwards, so a sub-expression translated before its
+parent cannot take an answer meant for the parent. The positions that supply
+one: an annotated `let`, a function's return at the tail and at a `return`, an
+argument of a method call or of an associated function (through the callee's
+declared parameter types, with the callee's own parameters closed by what the
+position wants — which is how `Box::new(move |x| ..)` types its closure), a
+struct-literal field, the other operand of `assert_eq!`/`assert_ne!`, and the
+receiver of an `unwrap` or an `expect`, which wants the wrapper around what the
+call wants.
+
+What an expectation settles: the width of an integer or float literal written
+without a suffix; whether a sequence literal is a sequence of bytes, which
+decides `Uint8Array` against a JavaScript array; the `_` holes in a written
+type; which type reads itself out of a `serde_json::from_str` or a
+`bincode::deserialize` written without a turbofish; and a closure's parameters.
+A call whose result holds no open parameter is left alone: the expectation is a
+hint about a position, never an override of a type the source settled.
 
 ### 4.7 Operators
 
@@ -740,6 +784,38 @@ addressed by the step that found it.
   - **A field name that is also an `AkObject` member** — `label`, `drop`,
     `takeField` — shadows the runtime's own member. Renaming the field would
     change the wire protocol, so the collision is reported instead.
+- **A call that dispatches through a bound the engine cannot close is written
+  as the blanket impl's function.** `Ref::listen<L: IntoBroadcastListener<T>>`
+  calls `listener.into_broadcast_listener()`, and `L` is open: at run time the
+  listener may be a closure, an `Arc` holding one, a `BroadcastListener`, or a
+  `Sender`, and Rust picks the impl per instantiation where a single emitted
+  body cannot. The blanket impl is the one written, because it is the impl the
+  corpus's call sites overwhelmingly reach and the only one a closure can
+  satisfy; every such site reports which impls the emitted call cannot reach,
+  and TypeScript reports the same fact as a type error at the call. Six sites in
+  signals, four in core. Choosing differently — a run-time dispatcher over the
+  trait's impls — is a decision about what the port emits, not about what the
+  engine can work out, and it is open.
+- **Expectations propagate one level and stop.** A `let` annotation, a return
+  position, a call argument, a struct-literal field, the other operand of an
+  equality assertion and an `unwrap` receiver each hand the expression under
+  them a type to be. They do not reach further: `strings.into_iter().map(|s|
+  s.try_into()).collect::<Result<Vec<_>, _>>()` settles the closure's `U` from a
+  turbofish two calls downstream, which is inference across a chain rather than
+  one position, so the engine says it cannot tell rather than answering with
+  somebody else's open parameter. An enum variant's payload is not yet a
+  source of expectations either, which is why the closure inside
+  `BroadcastListener::Payload(Arc::new(move |value| ..))` stays untyped.
+- **An impl written for a reference to its own parameter is not emitted.**
+  `impl<T: Signal> Signal for &T` exists because `&T` is a distinct type in
+  Rust, and each of its methods forwards to the same method on the `T` inside.
+  Emission erases the reference, so the value already carries the method;
+  emitting the impl would write a function whose body calls itself.
+- **A trait's method reached through a bounded parameter is emitted as a call on
+  the value.** `T: Clone` and `T: Signal` dispatch through the trait's own
+  declaration, and the emitted class implements the interface, so the runtime
+  object has the method. Only where the impl the engine picked has no class of
+  its own does the call become a module-level function.
 - **An or-pattern whose alternatives read their names from different places has
   no test the translator can write.** `if let (Expr::Path(p), Expr::Literal(l)) |
   (Expr::Literal(l), Expr::Path(p)) = ..` binds the same two names from opposite
@@ -750,9 +826,10 @@ addressed by the step that found it.
 ## 8. Non-goals
 
 General Rust inference; lifetimes and borrow checking; coherence and
-specialization; const generics beyond array lengths; closures with no
-annotation and no expected type; trait objects beyond method dispatch on `dyn
-Trait`; typing expanded macro output of any kind.
+specialization; const generics beyond array lengths; closures with neither an
+annotation, an expected type, nor a callable bound to read one from; trait
+objects beyond method dispatch on `dyn Trait`; typing expanded macro output of
+any kind.
 
 ## 9. Questions put to Daniel, answered 2026-09-02
 

@@ -2,7 +2,7 @@
 import { Struct, Arc, OwnedClosure } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Subscribe, SubscriptionGuard, intoSubscribeListener } from '../porcelain/subscribe';
 import { Get, GetReadCell, Peek, Signal, With } from '../signal';
 import { Read } from './read';
 import { ReadValueCell, ValueCell } from '../value';
@@ -66,7 +66,7 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   }
 
   subscribe<F>(listener: F): SubscriptionGuard {
-    const listener_1 = listener.intoSubscribeListener();
+    const listener_1 = intoSubscribeListener(listener);
     const roValue = this.getReadcell();
     const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
       const currentValue = roValue.value();

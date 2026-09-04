@@ -308,7 +308,7 @@ pub(super) fn resolve_file(
         let id = reg.module_type(module, &s.name);
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
-            derived_impls(reg, id, &s.type_params, &s.derives, updates);
+            derived_impls(reg, module, id, &s.type_params, &s.derives, updates);
             updates.push(Update::Fields { id, fields });
         }
     }
@@ -324,7 +324,7 @@ pub(super) fn resolve_file(
             });
         }
         if let Some(id) = id {
-            derived_impls(reg, id, &e.type_params, &e.derives, updates);
+            derived_impls(reg, module, id, &e.type_params, &e.derives, updates);
             updates.push(Update::Variants { id, variants });
         }
     }
@@ -405,6 +405,7 @@ const DERIVED: [(&str, &str); 9] = [
 
 fn derived_impls(
     reg: &TypeRegistry,
+    module: ModuleId,
     id: TypeId,
     type_params: &[String],
     derives: &[String],
@@ -440,6 +441,7 @@ fn derived_impls(
             .collect();
         updates.push(Update::Impl(ImplDef {
             id: ImplId(0),
+            module,
             generics: type_params.to_vec(),
             bounds,
             self_ty: self_ty.clone(),
@@ -643,6 +645,7 @@ fn resolve_impl(
     Some(ImplDef {
         // Filled in when the table takes it.
         id: ImplId(0),
+        module,
         generics: imp.type_params.clone(),
         bounds,
         self_ty,

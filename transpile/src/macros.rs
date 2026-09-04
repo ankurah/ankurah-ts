@@ -1,6 +1,7 @@
 //! Macro translation — Rust macros → TS expressions
 
 use crate::body::{indent, BodyTranslator};
+use crate::control_flow;
 use crate::name_map;
 
 /// Translate a macro invocation to TS.
@@ -17,12 +18,19 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
 
     match name.as_str() {
         "vec" => {
-            // vec![a, b, c] → parse elements via syn
+            // A `Vec<u8>` is a `Uint8Array` in the port, so the position the
+            // literal stands in decides which of the two is written.
+            let want = t.expectation_at(syn::spanned::Spanned::span(mac));
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 let translated: Vec<String> =
                     args.iter().map(|e| t.moved_value(e)).collect();
-                format!("[{}]", translated.join(", "))
+                t.sequence_literal(translated, want.as_ref())
             } else {
+                t.fallback(
+                    syn::spanned::Spanned::span(mac),
+                    "the contents of this `vec!` are not expressions the engine could read, \
+                     so they are written through unchanged",
+                );
                 format!("[{}]", mac.tokens)
             }
         }
@@ -50,30 +58,24 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 };
                 format!("if (!({})) throw new Error({})", condition, message)
             }
-            _ => format!("/* {}!({}) */", name, mac.tokens),
+            _ => {
+                t.fallback(
+                    syn::spanned::Spanned::span(mac),
+                    format!(
+                        "the condition of this `{}!` is not an expression the engine could read, \
+                         so the assertion is emitted as a comment and never runs",
+                        name
+                    ),
+                );
+                format!("/* {}!({}) */", name, mac.tokens)
+            }
         },
-        "assert_eq" => {
-            if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
-                if args.len() >= 2 {
-                    format!("expect({}).toEqual({})", t.expr_value(&args[0]), t.expr_value(&args[1]))
-                } else {
-                    format!("/* assert_eq!({}) */", mac.tokens)
-                }
-            } else {
-                format!("/* assert_eq!({}) */", mac.tokens)
-            }
-        }
-        "assert_ne" => {
-            if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
-                if args.len() >= 2 {
-                    format!("expect({}).not.toEqual({})", t.expr_value(&args[0]), t.expr_value(&args[1]))
-                } else {
-                    format!("/* assert_ne!({}) */", mac.tokens)
-                }
-            } else {
-                format!("/* assert_ne!({}) */", mac.tokens)
-            }
-        }
+        // Rust compares two values of one type, so whichever side the engine
+        // can type says what the other one is. That is what writes
+        // `assert_eq!(bytes, [1, 2, 3])` as a `Uint8Array` on both sides
+        // instead of a `Uint8Array` against a JavaScript array.
+        "assert_eq" => compare(mac, t, "assert_eq", "expect({}).toEqual({})"),
+        "assert_ne" => compare(mac, t, "assert_ne", "expect({}).not.toEqual({})"),
         // A macro cannot be a function, so the arms stay with the emitter and
         // only the arbitration goes to the runtime.
         "select" => translate_select(&mac.tokens, t),
@@ -245,6 +247,83 @@ use syn::{Expr, LitStr, Token};
 use proc_macro2::TokenStream;
 
 /// Parse comma-separated expressions from a TokenStream
+/// The two sides of an equality assertion, each typed by the other.
+///
+/// Rust already knows the two are the same type; the engine has to be told
+/// which one, and it takes whichever side it can read on its own. The written
+/// form takes two placeholders, the left side then the right.
+fn compare(mac: &syn::Macro, t: &BodyTranslator, name: &str, written: &str) -> String {
+    let Ok(args) = parse_exprs_from_tokens(&mac.tokens) else {
+        t.fallback(
+            syn::spanned::Spanned::span(mac),
+            format!(
+                "the operands of this `{}!` are not expressions the engine could read, so the \
+                 assertion is emitted as a comment",
+                name
+            ),
+        );
+        return format!("/* {}!({}) */", name, mac.tokens);
+    };
+    if args.len() < 2 {
+        t.fallback(
+            syn::spanned::Spanned::span(mac),
+            format!(
+                "`{}!` is written with fewer than two operands, so there is nothing to \
+                 compare and the assertion is emitted as a comment",
+                name
+            ),
+        );
+        return format!("/* {}!({}) */", name, mac.tokens);
+    }
+    let left_ty = t.quietly(|| t.resolve_expr_type(&args[0])).ok();
+    let right_ty = t.quietly(|| t.resolve_expr_type(&args[1])).ok();
+    // An operand that builds a value builds it for the length of the assertion
+    // and no longer: Rust drops what a statement produced at the statement's
+    // end, and `assert_eq!(id, T::from_json(&s).unwrap())` produces one.
+    let left = operand(t, &args[0], right_ty.as_ref());
+    let right = operand(t, &args[1], left_ty.as_ref());
+    written.replacen("{}", &left, 1).replacen("{}", &right, 1)
+}
+
+/// One side of an equality assertion: translated with the other side's type
+/// wanted of it, and released at the end of the assertion where it built a
+/// value of its own.
+///
+/// Rust drops what a statement produced when the statement ends, and an
+/// assertion is a statement: `assert_eq!(id, T::from_json(&s).unwrap())` builds
+/// a second `T` that nothing else ever holds.
+fn operand(t: &BodyTranslator, expr: &Expr, want: Option<&crate::ty::Ty>) -> String {
+    t.expecting(expr, want, || {
+        let written = t.expr_value(expr);
+        if crate::body::is_place(expr) {
+            return written;
+        }
+        let Some(tc) = &t.types else { return written };
+        let Ok(ty) = t.quietly(|| t.resolve_expr_type(expr)) else {
+            return written;
+        };
+        let drops = crate::ownership::drops_of(&tc.borrow().probe(), &ty);
+        if drops.is_droppable() {
+            t.hoist_temporary(written, drops)
+        } else {
+            written
+        }
+    })
+}
+
+/// The elements a `vec![..]` holds, for the engine to type them.
+///
+/// `vec![a; n]` repeats one element, and `vec![a, b]` lists them; either way
+/// the first expression is the one whose type the whole `Vec` takes. Tokens
+/// that do not parse as expressions hand back nothing, and the caller says so
+/// rather than guessing.
+pub fn vec_macro_elements(mac: &syn::Macro) -> Vec<Expr> {
+    if let Ok(repeat) = syn::parse2::<syn::ExprRepeat>(mac.tokens.clone()) {
+        return vec![(*repeat.expr).clone()];
+    }
+    parse_exprs_from_tokens(&mac.tokens).unwrap_or_default()
+}
+
 fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error> {
     struct ExprList(Vec<Expr>);
     impl Parse for ExprList {
@@ -381,14 +460,53 @@ struct SelectArm {
 /// drop is the cancellation. So the branches are named once, raced once, and
 /// released in a `finally` whichever arm won and whether or not one of them
 /// threw. Erasing the macro to a comment ran none of the arms at all.
+///
+/// The winning arm's value is the select's value, and a macro is spliced into
+/// whatever position it was written in. So the arbitration goes inside an async
+/// arrow function called on the spot: the arm ends in a `return`, the call is
+/// an expression a `let` or an argument can hold, and the branch release stays
+/// in the `finally` the arrow function's `try` carries. Writing the arbitration
+/// as bare statements threw the winning arm's value away wherever the select
+/// stood, and did not parse at all where something bound it.
+///
+/// An arm that leaves what encloses the select — a `return`, a `break`, a
+/// `continue`, a `?` — keeps the statement form instead. Inside the arrow
+/// function that exit would land on the arrow function rather than on the
+/// function or the loop the source wrote it against; as statements it lands
+/// where Rust puts it. Such an arm can only stand where the select is a
+/// statement, and a statement's value is thrown away in Rust too, so nothing
+/// is lost by not producing one — but the select is reported all the same,
+/// because the two forms are not the same lowering.
 fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> String {
     let Some(arms) = parse_select(tokens) else {
         t.report_select_gap(tokens, "its arms are not `pattern = future => body`");
         return format!("/* select!({}) */", tokens);
     };
     if arms.is_empty() {
-        return "/* select! with no arms */".to_string();
+        t.report_select_gap(
+            tokens,
+            "it is written with no arms, so there is nothing to race and no arm to take a value \
+             from",
+        );
+        return "undefined /* select! with no arms */".to_string();
     }
+
+    // What every arm does when it wins decides which of the two forms carries
+    // the whole select, so it is settled before any arm is written.
+    let escape = arms.iter().find_map(|arm| arm_leaves_the_select(&arm.body));
+    if let Some(what) = escape {
+        t.report_select_gap(
+            tokens,
+            &format!(
+                "an arm {}, which an arrow function cannot carry — the exit would land on the \
+                 arrow function rather than where the source wrote it — so the arbitration is \
+                 written as statements and the select produces no value",
+                what
+            ),
+        );
+    }
+    let produces_value = escape.is_none();
+
     let branches = t.fresh_temp();
     let outcome = t.fresh_temp();
     let mut list = String::new();
@@ -404,7 +522,22 @@ fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> St
         let subject = format!("{}.value", outcome);
         let _bindings = t.enter_pattern(&arm.pat, None);
         let (test, bind) = t.pattern_test(&subject, &arm.pat);
-        let arm_ts = t.statements(&arm.body);
+        let arm_ts = if produces_value {
+            // A declaration lifted out of an arm cannot stand outside the arrow
+            // function, where the arm's own bindings are not in scope, so it
+            // comes back with the arm's text and is written inside it.
+            let (written, lifted) = t.with_own_hoists(|| match &arm.body {
+                // An arm written as a block already has the `if` above it for
+                // its braces, and its own last expression becomes the `return`
+                // through the block's tail. Asking for it in return position
+                // instead put a second pair of braces inside the first.
+                syn::Expr::Block(block) => t.translate_block(&block.block),
+                other => control_flow::translate_expr_in_return_position(other, t),
+            });
+            crate::ownership::hoisted(&written, &lifted)
+        } else {
+            t.statements(&arm.body)
+        };
         drop(_bindings);
         if test != "true" {
             t.report_select_gap(
@@ -422,16 +555,89 @@ fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> St
             indent(&format!("{}{}", bind, ensure_newline(&arm_ts)))
         ));
     }
+    // The arbiter answers with one of the tags it was handed, so the chain
+    // above covers every outcome — but only the code here knows that, and the
+    // arrow function has to produce a value on every path or the caller reads
+    // it as possibly undefined. The last branch says so in the one way a reader
+    // and a type checker both understand.
+    if produces_value {
+        body.push_str(
+            "} else {\n  throw new Error('select: the arbiter answered with a tag no arm wrote');\n",
+        );
+    }
     body.push_str("}\n");
     let held = t.fresh_temp();
-    format!(
+    let raced = format!(
         "const {branches} = [\n{list}];\ntry {{\n{body}}} finally {{\n  \
          for (const {held} of {branches}) dropOwned({held}.promise);\n}}",
         branches = branches,
         list = list,
         body = indent(&body),
         held = held,
-    )
+    );
+    if produces_value {
+        format!("await (async () => {{\n{}}})()", indent(&ensure_newline(&raced)))
+    } else {
+        raced
+    }
+}
+
+/// How an arm body leaves what encloses the select, where it does.
+///
+/// A `return` and a `?` leave the function; a `break` and a `continue` leave
+/// the loop around the select, unless the arm writes that loop itself. A
+/// closure or an async block written inside the arm keeps its own exits, so
+/// neither is looked into. The answer names the construct, because it goes
+/// into the diagnostic a reader has to act on.
+fn arm_leaves_the_select(body: &Expr) -> Option<&'static str> {
+    struct Exits {
+        found: Option<&'static str>,
+    }
+    impl syn::visit::Visit<'_> for Exits {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match expr {
+                Expr::Return(_) => self.found = self.found.or(Some("returns from the function")),
+                Expr::Try(_) => {
+                    self.found = self.found.or(Some("hands an error on with `?`"));
+                }
+                Expr::Break(_) => self.found = self.found.or(Some("breaks out of the loop")),
+                Expr::Continue(_) => {
+                    self.found = self.found.or(Some("continues the loop"));
+                }
+                // A loop written inside the arm catches its own `break` and
+                // `continue`; only a `return` or a `?` inside it reaches past
+                // the select.
+                Expr::ForLoop(_) | Expr::While(_) | Expr::Loop(_) => {
+                    let mut inner = Returns { found: None };
+                    syn::visit::visit_expr(&mut inner, expr);
+                    self.found = self.found.or(inner.found);
+                    return;
+                }
+                Expr::Closure(_) | Expr::Async(_) => return,
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+    }
+    struct Returns {
+        found: Option<&'static str>,
+    }
+    impl syn::visit::Visit<'_> for Returns {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match expr {
+                Expr::Return(_) => self.found = self.found.or(Some("returns from the function")),
+                Expr::Try(_) => {
+                    self.found = self.found.or(Some("hands an error on with `?`"));
+                }
+                Expr::Closure(_) | Expr::Async(_) => return,
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+    }
+    let mut exits = Exits { found: None };
+    syn::visit::Visit::visit_expr(&mut exits, body);
+    exits.found
 }
 
 /// The futures a `select!` waits on, for the move scan: each of them is taken
@@ -471,4 +677,122 @@ fn parse_select(tokens: &proc_macro2::TokenStream) -> Option<Vec<SelectArm>> {
 /// ends in one does not open a blank line inside the arm.
 fn ensure_newline(text: &str) -> String {
     format!("{}\n", text.trim_end())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    /// Two channels to race and a counter to write into, which is the smallest
+    /// crate a `select!` can be written against.
+    const PRELUDE: &str = "\
+use tokio::sync::mpsc;\n\
+";
+
+    fn body(rust: &str, method: &str) -> String {
+        let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", PRELUDE, rust))]);
+        fixture.translated_method("lib.rs", method)
+    }
+
+    fn diagnostics(rust: &str, method: &str) -> Vec<String> {
+        let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", PRELUDE, rust))]);
+        fixture.translated_method("lib.rs", method);
+        fixture.messages()
+    }
+
+    const BOUND: &str = "\
+pub async fn f(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) -> u32 {\n\
+    let value = tokio::select! {\n\
+        _ = left.recv() => 1,\n\
+        _ = right.recv() => 2,\n\
+    };\n\
+    value\n\
+}\n";
+
+    const BREAKS: &str = "\
+pub async fn f(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) -> u32 {\n\
+    let mut seen = 0u32;\n\
+    loop {\n\
+        tokio::select! {\n\
+            _ = left.recv() => { break; }\n\
+            _ = right.recv() => { seen += 1; }\n\
+        }\n\
+    }\n\
+    seen\n\
+}\n";
+
+    #[test]
+    fn a_select_that_something_binds_is_written_as_one_expression() {
+        let ts = body(BOUND, "f");
+        assert!(
+            ts.contains("const value = await (async () => {"),
+            "the select has to produce the value the `let` binds, and a run of statements \
+             cannot stand where an initialiser goes:\n{}",
+            ts
+        );
+        assert!(
+            ts.contains("return 1;") && ts.contains("return 2;"),
+            "each arm has to hand its value back out of the arrow function:\n{}",
+            ts
+        );
+    }
+
+    #[test]
+    fn every_branch_future_is_released_however_the_select_is_left() {
+        let ts = body(BOUND, "f");
+        let released = ts
+            .lines()
+            .find(|line| line.contains("dropOwned"))
+            .unwrap_or_else(|| panic!("no branch release in:\n{}", ts));
+        assert!(
+            released.contains(".promise"),
+            "the release is of the branch futures:\n{}",
+            ts
+        );
+        let raced = ts.find("await select(").unwrap_or_else(|| panic!("nothing races in:\n{}", ts));
+        let at = ts.find("dropOwned").unwrap();
+        assert!(
+            ts[raced..at].contains("} finally {"),
+            "the release has to be in the `finally` of the `try` the arms run in, so a losing \
+             branch is cancelled whether the select returned or threw:\n{}",
+            ts
+        );
+    }
+
+    #[test]
+    fn an_arm_that_breaks_the_loop_keeps_the_statement_form() {
+        let ts = body(BREAKS, "f");
+        assert!(
+            !ts.contains("async () =>"),
+            "a `break` inside an arrow function leaves the arrow function, not the loop the \
+             source wrote it against:\n{}",
+            ts
+        );
+        assert!(
+            ts.contains("break;"),
+            "the break has to reach the emitted loop:\n{}",
+            ts
+        );
+    }
+
+    #[test]
+    fn taking_the_statement_form_is_reported_rather_than_taken_in_silence() {
+        let said = diagnostics(BREAKS, "f");
+        assert!(
+            said.iter().any(|m| m.contains("`select!`") && m.contains("breaks out of the loop")),
+            "the two forms are not the same lowering, so choosing the one that produces no \
+             value has to be recorded: {:?}",
+            said
+        );
+    }
+
+    #[test]
+    fn a_select_that_produces_a_value_reports_nothing_of_its_own() {
+        let said = diagnostics(BOUND, "f");
+        assert!(
+            !said.iter().any(|m| m.contains("`select!` is lowered to the runtime's arbiter")),
+            "this select is carried whole, so nothing about its lowering is given up: {:?}",
+            said
+        );
+    }
 }

@@ -133,7 +133,7 @@ export class Ref<T> extends Struct {
     const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
     const _t0 = this._0._0.value.listeners.write();
     try {
-      _t0.value.set(id, listener.intoBroadcastListener());
+      _t0.value.set(id, intoBroadcastListener(listener));
     } finally {
       _t0.drop();
     }
@@ -204,5 +204,31 @@ export interface IntoBroadcastListener<T> {
 
 export interface TListenerGuard {
   broadcastId(): BroadcastId;
+}
+
+export function intoBroadcastListener<F extends (arg0: T) => void, T>(self: F): BroadcastListener<T> {
+  return new BroadcastListener('Payload', { _0: Arc.new(self) });
+}
+
+export function Arc_Fn1_intoBroadcastListener<T>(self: Arc<(arg0: T) => void>): BroadcastListener<T> {
+  try {
+    return new BroadcastListener('Payload', { _0: self });
+  } finally {
+    self.drop();
+  }
+}
+
+export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<() => void>): BroadcastListener<T> {
+  try {
+    return new BroadcastListener('NotifyOnly', { _0: self });
+  } finally {
+    self.drop();
+  }
+}
+
+export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListener<T> {
+  return new BroadcastListener('Payload', { _0: Arc.new((value) => {
+    const _ = self.send(value);
+  }) });
 }
 

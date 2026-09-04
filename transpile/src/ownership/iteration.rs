@@ -12,6 +12,8 @@
 
 use crate::registry::Probe;
 use crate::ty::Ty;
+use crate::body::{indent, BodyTranslator};
+use crate::ownership;
 
 /// How a `for` loop over this sequence has to be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,28 @@ pub enum Iterate {
     /// array — a `HashMap`, an iterator adapter — so there is no way to name
     /// the elements the loop did not reach. Reported.
     OwnedOpaque,
+}
+
+/// The label a Rust loop carries, ready to stand before the emitted loop.
+///
+/// Rust's `break 'outer` names the loop it leaves. Dropping the name emitted a
+/// bare `break`, which leaves the innermost loop instead — a different program,
+/// and one whose `finally` blocks still balance, so nothing downstream sees
+/// that the wrong elements were processed.
+pub fn label_of(label: &Option<syn::Label>) -> String {
+    match label {
+        Some(label) => format!("{}: ", label.name.ident),
+        None => String::new(),
+    }
+}
+
+/// The loop a `break 'outer` or a `continue 'outer` names, as the suffix that
+/// follows the keyword.
+pub fn target_of(label: &Option<syn::Lifetime>) -> String {
+    match label {
+        Some(lifetime) => format!(" {}", lifetime.ident),
+        None => String::new(),
+    }
 }
 
 /// Which form this loop needs, from the sequence's type and the item's.
@@ -62,11 +86,17 @@ fn is_array(probe: &Probe, ty: &Ty) -> bool {
 /// `at` is the index the next turn would read, so the `finally` releases
 /// exactly what `next()` never handed out — which is what dropping Rust's
 /// `IntoIter` does.
-pub fn owned_array_loop(sequence: &str, at: &str, binding: &str, body: &str) -> String {
+pub fn owned_array_loop(
+    sequence: &str,
+    at: &str,
+    binding: &str,
+    body: &str,
+    label: &str,
+) -> String {
     format!(
         "let {at} = 0;\n\
          try {{\n  \
-           while ({at} < {sequence}.length) {{\n    \
+           {label}while ({at} < {sequence}.length) {{\n    \
              const {binding} = {sequence}[{at}++];\n\
 {body}  \
            }}\n\
@@ -76,6 +106,63 @@ pub fn owned_array_loop(sequence: &str, at: &str, binding: &str, body: &str) -> 
         at = at,
         sequence = sequence,
         binding = binding,
+        label = label,
         body = crate::body::indent(&crate::body::indent(body)),
     )
+}
+
+impl<'a> BodyTranslator<'a> {
+    /// `for x in seq { .. }`, with what the loop owns released where Rust
+    /// releases it.
+    ///
+    /// Rust's `IntoIterator` takes the sequence by value, hands out one element
+    /// per turn and drops the rest when the loop stops — so the binding is
+    /// released at the end of each turn, and a `break` or a `return` releases
+    /// everything the loop never reached. A loop over `&seq` owns none of that,
+    /// and the item type is what tells the two apart.
+    pub(crate) fn for_loop(&self, for_loop: &syn::ExprForLoop) -> String {
+        use ownership::iteration::Iterate;
+        let pat = Self::pat_static(&for_loop.pat);
+        let sequence = self.expr(&for_loop.expr);
+        let item = self.iteration_item(&for_loop.expr);
+        let sequence_ty = self.quietly(|| self.resolve_expr_type(&for_loop.expr)).ok();
+        let form = match &self.types {
+            Some(tc) => ownership::iteration::iterate(
+                &tc.borrow().probe(),
+                sequence_ty.as_ref(),
+                item.as_ref(),
+            ),
+            None => Iterate::Borrowed,
+        };
+        let _bindings = self.enter_pattern(&for_loop.pat, item.as_ref());
+        let owned = match form {
+            Iterate::Borrowed => Vec::new(),
+            _ => self.claim_bindings(&crate::body::pattern_names(&for_loop.pat), &for_loop.body.stmts),
+        };
+        let body = self.translate_block(&for_loop.body);
+        drop(_bindings);
+        let body = self.wrap_bindings(&owned, body);
+        let label = ownership::iteration::label_of(&for_loop.label);
+        match form {
+            Iterate::Borrowed => {
+                format!("{}for (const {} of {}) {{\n{}}}", label, pat, sequence, indent(&body))
+            }
+            Iterate::OwnedArray => {
+                let held = self.fresh_hoist("_seq");
+                let at = self.fresh_hoist("_at");
+                let loop_ts =
+                    ownership::iteration::owned_array_loop(&held, &at, &pat, &body, &label);
+                format!("const {} = {};\n{}", held, sequence, loop_ts)
+            }
+            Iterate::OwnedOpaque => {
+                self.fallback(
+                    syn::spanned::Spanned::span(&for_loop.expr),
+                    "this loop takes the sequence by value, and the runtime does not write it \
+                     as an array; the elements a `break` or a `return` leaves behind are not \
+                     released",
+                );
+                format!("{}for (const {} of {}) {{\n{}}}", label, pat, sequence, indent(&body))
+            }
+        }
+    }
 }

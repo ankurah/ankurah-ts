@@ -2,7 +2,7 @@
 import { Struct, Arc, RwLock, OwnedClosure } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
-import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
+import { Subscribe, SubscriptionGuard, intoSubscribeListener } from '../porcelain/subscribe';
 import { Get, Peek, Signal, With } from '../signal';
 
 export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
@@ -23,7 +23,12 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
     const cached = Arc.new(new RwLock(null));
     const cachedRef = cached.clone();
     const subscription = source.listen(Arc.new(new OwnedClosure([cachedRef], (_) => {
-      cachedRef.value.write().value = null;
+      const _t0 = cachedRef.value.write();
+      try {
+        _t0.value = null;
+      } finally {
+        _t0.drop();
+      }
     })));
     return new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
   }
@@ -82,13 +87,18 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
-    const listener_1 = listener.intoSubscribeListener();
+    const listener_1 = intoSubscribeListener(listener);
     const source = this.source.clone();
     const transform = this.transform.clone();
     const cached = this.cached.clone();
     const subscription = this.source.listen(Arc.new(new OwnedClosure([cached, listener_1], (_) => {
       const output = source.with((input) => transform(input));
-      cached.value.write().value = output.clone();
+      const _t0 = cached.value.write();
+      try {
+        _t0.value = output.clone();
+      } finally {
+        _t0.drop();
+      }
       listener_1(output);
     })));
     return SubscriptionGuard.new(subscription);

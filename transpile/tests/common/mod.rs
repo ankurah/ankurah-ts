@@ -290,3 +290,55 @@ pub fn run_resolve(crate_name: &str, src_rel: &str) -> Vec<Resolved> {
         })
         .collect()
 }
+
+/// One row of `resolve`'s closure record: the signature the engine gave a
+/// closure written at that position.
+#[derive(Debug, Clone)]
+pub struct ClosureRow {
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+    /// One entry per parameter; `None` where the engine could not type it.
+    pub params: Vec<Option<String>>,
+    /// The return type, or `None` where the engine could not say.
+    pub ret: Option<String>,
+}
+
+/// Ask the engine what signature it gave every closure in a crate.
+pub fn run_closures(crate_name: &str, src_rel: &str) -> Vec<ClosureRow> {
+    let output = Command::new(transpile_bin())
+        .current_dir(transpile_dir())
+        .arg("resolve")
+        .arg(support_tree().join(src_rel))
+        .arg("--crate-name")
+        .arg(crate_name)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run the transpiler binary: {e}"));
+    assert!(
+        output.status.success(),
+        "resolve {crate_name} failed ({}):\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let prefix = format!("{}/", src_rel);
+    let unknown = |s: &str| (s != "?").then(|| s.to_string());
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("CLOSURE\t"))
+        .map(|row| {
+            let f: Vec<&str> = row.split('\t').collect();
+            assert!(f.len() >= 5, "malformed closure row: {row}");
+            ClosureRow {
+                file: format!("{prefix}{}", f[0]),
+                line: f[1].parse().unwrap_or(0),
+                col: f[2].parse().unwrap_or(0),
+                params: if f[3].is_empty() {
+                    Vec::new()
+                } else {
+                    f[3].split(';').map(unknown).collect()
+                },
+                ret: unknown(f[4]),
+            }
+        })
+        .collect()
+}

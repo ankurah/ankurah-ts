@@ -16,6 +16,7 @@ use crate::registry::{MethodResolution, TypeRegistry};
 thread_local! {
     static RECORDING: RefCell<bool> = const { RefCell::new(false) };
     static SITES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static CLOSURES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn start() {
@@ -75,7 +76,54 @@ pub fn record(
     SITES.with(|s| s.borrow_mut().push(row));
 }
 
+/// One closure, as a tab-separated row: `file, line, column, parameter types,
+/// return type`. The parameters are separated by `;`, and a parameter the
+/// engine could not type is written `?`.
+///
+/// For: rust-analyzer's answers include the type it gave each closure and the
+/// return it inferred (spec 6.3), and the engine's answer for the same site is
+/// only produced while the body around it is being translated.
+pub fn record_closure(
+    reg: &TypeRegistry,
+    file: &str,
+    span: proc_macro2::Span,
+    sig: &crate::infer::ClosureSig,
+) {
+    if !RECORDING.with(|r| *r.borrow()) {
+        return;
+    }
+    let start = span.start();
+    let params = sig
+        .params
+        .iter()
+        .map(|(_, ty)| match ty {
+            Some(ty) => reg.describe(ty),
+            None => "?".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let ret = match &sig.ret {
+        Some(ty) => reg.describe(ty),
+        None => "?".to_string(),
+    };
+    CLOSURES.with(|s| {
+        s.borrow_mut().push(format!(
+            "{}\t{}\t{}\t{}\t{}",
+            file,
+            start.line,
+            start.column + 1,
+            params,
+            ret
+        ))
+    });
+}
+
 /// Everything recorded so far, in the order the translator asked.
 pub fn rows() -> Vec<String> {
     SITES.with(|s| s.borrow().clone())
+}
+
+/// The closure signatures recorded so far, in the same order.
+pub fn closure_rows() -> Vec<String> {
+    CLOSURES.with(|s| s.borrow().clone())
 }

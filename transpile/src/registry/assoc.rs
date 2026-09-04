@@ -57,8 +57,37 @@ impl Probe<'_> {
                 elem: Box::new(self.normalize_within(elem, depth + 1)),
                 len: len.clone(),
             },
+            // A bound carries types too, and the one that matters most is
+            // `FnMut(Self::Item)`: the element type a closure's parameter takes
+            // is written inside the bound, and leaving it as a projection there
+            // handed the closure a type nothing resolves against.
+            Ty::ImplTrait { bounds } => Ty::ImplTrait {
+                bounds: self.normalize_bounds(bounds, depth),
+            },
+            Ty::Dyn { traits } => Ty::Dyn {
+                traits: self.normalize_bounds(traits, depth),
+            },
             other => other.clone(),
         }
+    }
+
+    fn normalize_bounds(&self, bounds: &[TraitRef], depth: usize) -> Vec<TraitRef> {
+        bounds
+            .iter()
+            .map(|bound| TraitRef {
+                id: bound.id,
+                args: bound
+                    .args
+                    .iter()
+                    .map(|a| self.normalize_within(a, depth + 1))
+                    .collect(),
+                bindings: bound
+                    .bindings
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.normalize_within(ty, depth + 1)))
+                    .collect(),
+            })
+            .collect()
     }
 
     /// The bound on a `dyn Trait` or a bounded parameter that declares this

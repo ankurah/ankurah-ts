@@ -57,7 +57,7 @@ export function remove(observer: Observer): void {
           }
         }
       }
-      /* TODO: retain */ stack_1.value.filter((o) => o.observerId() !== targetId);
+      /* TODO: retain */ stack_1.value.filter((o) => o.value.observerId() !== targetId);
     } finally {
       stack_1.drop();
     }

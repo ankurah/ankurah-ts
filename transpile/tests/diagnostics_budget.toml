@@ -14,119 +14,133 @@
 total = 66
 
 [proto]
-total = 152
+total = 136
 
 [proto.by_cause]
-"obligation deferred: X (the subject is still a type parameter)" = 44
-"X does not name a value here" = 23
-"no associated function X on X" = 15
+"obligation deferred: X (the subject is still a type parameter)" = 45
 "no field X on X" = 14
 "X is guessed to be a constructor from its capitalisation" = 11
 "method X resolved through trait X, which is not in scope here" = 11
+"X does not name a value here" = 10
+"this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 9
+"X is bound here but the engine could not type it" = 8
 "X is lowered as a X without the engine having named what it tests" = 7
 "X on X is ambiguous between <Vec<u8> as TryInto>::try_into and <T as TryInto>::try_into" = 6
-"X is bound here but the engine could not type it" = 4
 "X does not name a function here" = 3
 "no method X on X" = 3
 "X converts Error to Error through X, which the engine has not resolved" = 2
 "X converts F to DecodeError through X, which the engine has not resolved" = 2
-"X is written without saying which type reads itself out of the parsed value, so the parse stands alone" = 2
 "no declaration for type X" = 2
 "X converts unknown to DecodeError through X, which the engine has not resolved" = 1
 "X has a type the engine cannot say owns anything, so nothing releases it" = 1
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 3
+total = 4
 
 [ankql.by_cause]
 "X converts ParseError to Error through X, which the engine has not resolved" = 2
+"a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 1
 "no declaration for type X" = 1
 
 [signals]
-total = 264
+total = 259
 
 [signals.by_cause]
 "X is bound here but the engine could not type it" = 131
+"X does not name a function here" = 29
 "this closure takes X by value and the engine could not type it, so it is left out of what the closure owns" = 18
-"X does not name a function here" = 17
-"X does not name a value here" = 17
-"no associated function X on X" = 12
 "obligation deferred: X (the subject is still a type parameter)" = 11
 "X has a type the engine cannot say owns anything, so nothing releases it" = 9
 "X is guessed to be a constructor from its capitalisation" = 7
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 7
+"X here dispatches through a bound the engine cannot close, so the call is written as X, the blanket impl's function" = 6
 "path qualifiers std, sync, atomic are dropped by name" = 6
 "path qualifiers std, sync are dropped by name" = 5
 "this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 5
+"this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 5
 "this closure owns X, X and is written as an X, so it is invoked as X and released by whoever holds it" = 4
 "no method X on X" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
 "no declaration for type X" = 2
 "the callee is not a path, so nothing names what it calls" = 2
+"X does not name a value here" = 1
 "method X resolved through trait X, which is not in scope here" = 1
 "path qualifiers std are dropped by name" = 1
 
 [core]
-total = 3346
+total = 3307
 
 [core.by_cause]
-"X is bound here but the engine could not type it" = 1157
-"no method X on X" = 402
-"obligation deferred: X (the subject is still a type parameter)" = 295
-"X does not name a value here" = 240
-"no field X on X" = 212
-"X does not name a function here" = 154
-"no associated function X on X" = 146
-"method X resolved through trait X, which is not in scope here" = 102
+"X is bound here but the engine could not type it" = 1182
+"no method X on X" = 412
+"obligation deferred: X (the subject is still a type parameter)" = 337
+"X does not name a function here" = 295
+"no field X on X" = 218
+"method X resolved through trait X, which is not in scope here" = 101
 "no declaration for type X" = 87
-"X is lowered as a X without the engine having named what it tests" = 63
-"X has a type the engine cannot say owns anything, so nothing releases it" = 62
+"this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 67
+"X does not name a value here" = 59
+"X has a type the engine cannot say owns anything, so nothing releases it" = 52
+"X is lowered as a X without the engine having named what it tests" = 39
 "path qualifiers std are dropped by name" = 31
-"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 24
+"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 26
 "X is guessed to be a constructor from its capitalisation" = 22
 "X is emitted as a comment and is handed X, which nothing then releases" = 19
 "X outside an impl" = 19
-"X has no declared type" = 18
+"the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 19
 "X converts RetrievalError to Error through X, which the engine has not resolved" = 16
 "X converts RetrievalError to MutationError through X, which the engine has not resolved" = 16
 "no arm of this match has a type the engine could read" = 16
-"the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 16
-"X expressions are not typed yet" = 15
 "X is declared with 1 type argument(s) but 2 written here" = 15
 "path qualifiers std, sync are dropped by name" = 14
 "no X impl reaches X with the index written here" = 13
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 12
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 12
-"const generic argument is not modelled outside an array length" = 11
+"X expressions are not typed yet" = 11
 "no declaration for trait X" = 11
 "X converts E to Error through X, which the engine has not resolved" = 10
 "X converts F to RetrievalError through X, which the engine has not resolved" = 10
+"X has no declared type" = 10
+"no associated function X on X" = 8
 "path qualifiers std, sync, atomic are dropped by name" = 8
+"this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 8
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 7
 "X converts AccessDenied to Error through X, which the engine has not resolved" = 6
 "X converts AccessDenied to MutationError through X, which the engine has not resolved" = 6
+"X converts ErrorKind to MutationError through X, which the engine has not resolved" = 6
 "X is declared with 1 type argument(s) but 0 written here" = 6
+"this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 6
 "X converts AccessDenied to RetrievalError through X, which the engine has not resolved" = 5
 "X converts MutationError to Error through X, which the engine has not resolved" = 5
 "X is a receiver the engine does not model" = 5
-"this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 5
 "X converts E to RetrievalError through X, which the engine has not resolved" = 4
+"X converts Error to PropertyError through X, which the engine has not resolved" = 4
+"X here dispatches through a bound the engine cannot close, so the call is written as X, the blanket impl's function" = 4
+"X converts F to Error through X, which the engine has not resolved" = 3
 "X converts F to MutationError through X, which the engine has not resolved" = 3
+"X converts F to PropertyError through X, which the engine has not resolved" = 3
 "X is written without saying which type reads itself out of the parsed value, so the parse stands alone" = 3
 "path qualifiers std, collections are dropped by name" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "X converts ApplyError to RetrievalError through X, which the engine has not resolved" = 2
 "X converts E to SubscriptionError through X, which the engine has not resolved" = 2
-"X converts F to Error through X, which the engine has not resolved" = 2
+"X converts ErrorKind to RetrievalError through X, which the engine has not resolved" = 2
+"X converts ErrorKind to StateError through X, which the engine has not resolved" = 2
 "X converts MutationError to RetrievalError through X, which the engine has not resolved" = 2
 "X converts PropertyError to RetrievalError through X, which the engine has not resolved" = 2
 "X converts RequestError to RetrievalError through X, which the engine has not resolved" = 2
 "X converts StateError to MutationError through X, which the engine has not resolved" = 2
 "X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 2
+"X is written without saying which type reads itself out of the bytes, so the reader stands alone" = 2
 "X on X is ambiguous between <&str as TryInto>::try_into and <T as TryInto>::try_into" = 2
+"a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 2
+"an arm of this X match has a guard, and reading the payload to test it takes the wrapper apart, so the arm below it cannot be tried" = 2
+"an empty array literal has no element type, and the position it stands in does not say one" = 2
+"const generic argument is not modelled outside an array length" = 2
 "path qualifiers core are dropped by name" = 2
+"this operand takes a value of its own and leaves the function or awaits, so what it took is declared before the short circuit that decides whether the operand runs at all" = 2
 "X converts AccessDenied to RequestError through X, which the engine has not resolved" = 1
 "X converts E to MutationError through X, which the engine has not resolved" = 1
 "X converts Error to ParseError through X, which the engine has not resolved" = 1
@@ -136,11 +150,10 @@ total = 3346
 "X dereferences without a field to assign through" = 1
 "X does not dereference" = 1
 "X is declared with 2 type argument(s) but 0 written here" = 1
+"X is lowered to the runtime's arbiter, but an arm breaks out of the loop, which an arrow function cannot carry — the exit would land on the arrow function rather than where the source wrote it — so the arbitration is written as statements and the select produces no value" = 1
 "X on X is ambiguous between <S as TryStreamExt>::map_err and <T as TryFutureExt>::map_err" = 1
 "X on X is ambiguous between <Vec<T> as Extend>::extend and <Vec<T> as Extend>::extend" = 1
 "path qualifiers iter are dropped by name" = 1
 "path qualifiers std, fmt are dropped by name" = 1
 "path qualifiers std, iter are dropped by name" = 1
 "the alternatives of this pattern bind their names from different places, which the translator cannot write as one test" = 1
-"this closure owns X, X and is written as an X, so it is invoked as X and released by whoever holds it" = 1
-"this closure takes X by value and the engine could not type it, so it is left out of what the closure owns" = 1

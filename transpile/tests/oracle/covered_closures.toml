@@ -1,0 +1,60 @@
+# Closures the engine is expected to keep typing, against rust-analyzer's
+# answers in `closure_types.json` and `closure_returns.json`.
+#
+# This list may only grow. A site here the engine stops typing is a regression in
+# closure typing (spec 4.5), not a coverage gap, and the oracle test fails on it
+# rather than reporting one fewer typed closure. Adding a site is what happens
+# when a capability lands; removing one is a decision.
+#
+# `col` is written where the oracle record carries one. The whole-corpus return
+# pass recorded no column, so those sites are pinned by line, and a line holding
+# two closures is satisfied by whichever of them the engine typed.
+
+# rust-analyzer gave these closures a type and the engine gives the same one.
+
+[[closure]]
+file = "proto/src/clock.rs"
+line = 14
+
+[[closure]]
+file = "proto/src/clock.rs"
+line = 30
+
+[[closure]]
+file = "proto/src/clock.rs"
+line = 61
+
+[[closure]]
+file = "proto/src/data.rs"
+line = 37
+
+[[closure]]
+file = "proto/src/data.rs"
+line = 69
+
+[[closure]]
+file = "proto/src/id.rs"
+line = 25
+
+[[closure]]
+file = "proto/src/id.rs"
+line = 121
+
+[[closure]]
+file = "signals/src/reactive_graph.rs"
+line = 83
+
+[[closure]]
+file = "signals/src/broadcast.rs"
+line = 206
+col = 39
+
+[[closure]]
+file = "signals/src/broadcast.rs"
+line = 211
+col = 39
+
+[[closure]]
+file = "signals/src/broadcast.rs"
+line = 279
+col = 46

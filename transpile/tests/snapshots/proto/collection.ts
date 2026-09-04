@@ -57,3 +57,11 @@ export class CollectionId extends Struct {
   }
 }
 
+export function String_from(self: string, collectionId: CollectionId): Self {
+  try {
+    return collectionId._0;
+  } finally {
+    collectionId.drop();
+  }
+}
+

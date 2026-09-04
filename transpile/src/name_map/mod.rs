@@ -129,7 +129,9 @@ fn channel_module(path: &syn::Path) -> Option<&'static str> {
     match segments[segments.len() - 2].ident.to_string().as_str() {
         "oneshot" => Some("oneshot"),
         "mpsc" => Some("mpsc"),
-        "watch" => Some("watch"),
+        // `watch` is not here: the declared surface no longer offers it,
+        // because the browser target has nothing behind it, so nothing can name
+        // a type inside it for this to qualify.
         _ => None,
     }
 }

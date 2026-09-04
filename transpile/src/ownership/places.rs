@@ -12,6 +12,8 @@
 //! that has drop glue.
 
 use crate::ownership::Drops;
+use crate::body::BodyTranslator;
+use crate::ownership;
 
 /// The property read `takeField` replaces, or nothing where the read borrows.
 ///
@@ -89,5 +91,70 @@ pub fn borrows_only(reg: &crate::registry::TypeRegistry, ty: &crate::ty::Ty) -> 
                 && args.iter().all(|arg| borrows_only(reg, arg))
         }
         _ => false,
+    }
+}
+
+impl<'a> BodyTranslator<'a> {
+    /// Can this scope hand away what lives at this place?
+    ///
+    /// Only the owner can. A `&self` method lends its receiver, a local bound
+    /// to a `&T` lends what it points at, and Rust refuses a move out of
+    /// either — so a read there is a borrow, whatever the position looks like.
+    pub(crate) fn owns_place(&self, expr: &syn::Expr) -> bool {
+        match ownership::places::root_of(expr) {
+            syn::Expr::Path(path) if path.path.is_ident("self") => self.owns_self,
+            root @ syn::Expr::Path(_) => !matches!(
+                self.quietly(|| self.resolve_expr_type(root)),
+                Ok(crate::ty::Ty::Ref { .. })
+            ),
+            // A value the expression built is nobody else's, so taking it apart
+            // takes nothing from anybody.
+            _ => true,
+        }
+    }
+
+    /// An expression in a position that takes its value, rather than reading
+    /// through it: an argument, a struct field, a tuple element, a `break`.
+    ///
+    /// The one thing that changes here is a field read. `take(pair.one)` hands
+    /// `one` to the callee and leaves the rest of `pair` where it was, so the
+    /// field has to come *out* of the struct — otherwise the callee releases it
+    /// and `pair`'s own cascade releases it a second time.
+    pub fn moved_value(&self, expr: &syn::Expr) -> String {
+        self.partial_move(expr)
+            .unwrap_or_else(|| self.expr_value(expr))
+    }
+
+    /// `s.field` in a value position, as `s.takeField('field')` — or nothing
+    /// where the read is not a move.
+    pub(crate) fn partial_move(&self, expr: &syn::Expr) -> Option<String> {
+        let syn::Expr::Field(field) = expr else {
+            return None;
+        };
+        if !ownership::places::is_field_of_place(expr) {
+            return None;
+        }
+        if !self.owns_place(expr) {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let ty = self.quietly(|| self.resolve_expr_type(expr)).ok()?;
+        let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
+        let (receiver, member) = self.field_parts(field);
+        if drops == ownership::Drops::Cascade {
+            // `takeField` is `AkObject`'s, and a field the runtime writes as a
+            // plain array or `Map` is not one: the read hands the same object to
+            // two owners and the emitter has no way to say so.
+            self.fallback(
+                syn::spanned::Spanned::span(expr),
+                format!(
+                    "`{}` moves a field the runtime writes as a plain value; both the struct \
+                     and the new owner release it",
+                    member
+                ),
+            );
+            return None;
+        }
+        ownership::places::take_field(&receiver, &member, drops)
     }
 }

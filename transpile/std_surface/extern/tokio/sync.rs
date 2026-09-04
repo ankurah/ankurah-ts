@@ -4,6 +4,29 @@
 //! returns the guard directly rather than a `LockResult`. Keeping the two in
 //! separate modules with their real signatures is the whole reason the registry
 //! is not flat.
+//!
+//! ## What this file leaves undeclared on purpose
+//!
+//! `port/ownership.md` names the tokio surface the browser target does not
+//! provide, and asks the transpiler to refuse a call to one rather than write a
+//! call that resolves here and then finds nothing at the other end. A
+//! declaration is what makes such a call resolve, so these are left out and the
+//! call is reported where it is written:
+//!
+//! - **`Mutex::blocking_lock`, `RwLock::blocking_read`, `RwLock::blocking_write`.**
+//!   tokio declares `pub fn blocking_lock(&self) -> MutexGuard<'_, T>` and the
+//!   two `RwLock` equivalents. On one event loop a blocking lock is a deadlock
+//!   rather than a wait: nothing can release the lock while the caller holds
+//!   the loop.
+//! - **`pub mod watch`.** tokio's `watch::channel(init)` hands back a `Sender`
+//!   and a `Receiver` over a `Ref` borrow, with `changed()`, `borrow()`,
+//!   `SendError<T>` and `RecvError`. `@ankurah/base` has no watch channel and
+//!   nothing in the corpus asks for one.
+//!
+//! What is missing is the *reason* travelling with the refusal: the engine
+//! reports these as an undeclared name, which reads as "the surface is
+//! incomplete". Carrying the sentence above to the call site needs the
+//! resolver to know which absences are deliberate.
 
 pub struct Notify;
 
@@ -57,7 +80,7 @@ impl<T> Mutex<T> {
 
 impl<T: ?Sized> Mutex<T> {
     pub async fn lock(&self) -> MutexGuard<'_, T> { todo!() }
-    pub fn blocking_lock(&self) -> MutexGuard<'_, T> { todo!() }
+    // `blocking_lock` is left undeclared; see the note at the top of this file.
     pub fn try_lock(&self) -> Result<MutexGuard<'_, T>, TryLockError> { todo!() }
     pub fn get_mut(&mut self) -> &mut T { todo!() }
 }
@@ -88,8 +111,8 @@ impl<T> RwLock<T> {
 impl<T: ?Sized> RwLock<T> {
     pub async fn read(&self) -> RwLockReadGuard<'_, T> { todo!() }
     pub async fn write(&self) -> RwLockWriteGuard<'_, T> { todo!() }
-    pub fn blocking_read(&self) -> RwLockReadGuard<'_, T> { todo!() }
-    pub fn blocking_write(&self) -> RwLockWriteGuard<'_, T> { todo!() }
+    // `blocking_read` and `blocking_write` are left undeclared; see the note at
+    // the top of this file.
     pub fn try_read(&self) -> Result<RwLockReadGuard<'_, T>, TryLockError> { todo!() }
     pub fn try_write(&self) -> Result<RwLockWriteGuard<'_, T>, TryLockError> { todo!() }
     pub fn get_mut(&mut self) -> &mut T { todo!() }
@@ -213,31 +236,4 @@ pub mod mpsc {
     }
 }
 
-pub mod watch {
-    pub struct Sender<T>;
-    pub struct Receiver<T>;
-
-    pub fn channel<T>(init: T) -> (Sender<T>, Receiver<T>) { todo!() }
-
-    impl<T> Sender<T> {
-        pub fn send(&self, value: T) -> Result<(), SendError<T>> { todo!() }
-        pub fn borrow(&self) -> Ref<'_, T> { todo!() }
-    }
-
-    impl<T> Receiver<T> {
-        pub async fn changed(&mut self) -> Result<(), RecvError> { todo!() }
-        pub fn borrow(&self) -> Ref<'_, T> { todo!() }
-    }
-
-    pub struct Ref<'a, T>;
-    pub struct SendError<T>(pub T);
-    pub struct RecvError;
-
-    impl<T> Clone for Sender<T> { fn clone(&self) -> Sender<T> { todo!() } }
-    impl<T> Clone for Receiver<T> { fn clone(&self) -> Receiver<T> { todo!() } }
-
-    impl<'a, T> Deref for Ref<'a, T> {
-        type Target = T;
-        fn deref(&self) -> &T { todo!() }
-    }
-}
+// `pub mod watch` is left undeclared; see the note at the top of this file.
