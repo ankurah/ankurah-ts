@@ -1,6 +1,24 @@
-// TS-ONLY: ESLint plugin enforcing Rust ownership semantics
+// RETIRED 2026-09-02 — not registered by the plugin and never runs.
 //
 // Rule: ankurah/no-await-in-using-guard
+//
+// This rule only fired on `using` declarations, and `using` is retired: Hermes
+// refuses to run it, so the transpiler emits explicit `.drop()` calls and
+// try/finally blocks instead. With no `using` in the tree the rule reports
+// nothing, whatever the code does.
+//
+// The invariant underneath it — do not hold a lock guard across an await — is
+// already enforced twice over, and neither place is this one. Rust's
+// `MutexGuard` is `!Send`, so rustc rejects holding one across an await in the
+// source we transpile; and where ankurah does need to hold a lock across an
+// await it uses `tokio::sync::Mutex`, which maps to AsyncMutex and is built for
+// exactly that. See port/ownership.md and port/retractions-2026-09-02.md.
+//
+// The file is kept only so its removal is a staged deletion Daniel reads rather
+// than one that disappears inside another diff.
+//
+// Original description follows.
+//
 // Flag await expressions inside using blocks where the guard is
 // correctness-critical. An await means other code can interleave while
 // the guard is active.

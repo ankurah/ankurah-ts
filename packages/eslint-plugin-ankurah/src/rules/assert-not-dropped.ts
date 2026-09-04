@@ -10,7 +10,7 @@
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 import type { TSESTree } from '@typescript-eslint/utils';
 
-export const RULE_NAME = 'assert-not-disposed';
+export const RULE_NAME = 'assert-not-dropped';
 
 export const rule = ESLintUtils.RuleCreator(
   (name) => `https://github.com/nickthedick69/ankurah-ts/blob/main/specs/ownership/lint-rules.md#${name}`,
@@ -24,7 +24,7 @@ export const rule = ESLintUtils.RuleCreator(
         'This replaces Rust lifetime enforcement that prevents use-after-free.',
     },
     messages: {
-      missingAssertNotDisposed:
+      missingAssertNotDropped:
         'Public method "{{methodName}}" on Drop subclass must call this.assertNotDropped() ' +
         '(or this.#guard.assertNotDropped()) as its first statement. ' +
         'Without this check, use-after-drop bugs can occur silently. ' +
@@ -203,7 +203,7 @@ function checkClass(
     if (!body || body.body.length === 0) {
       context.report({
         node: member,
-        messageId: 'missingAssertNotDisposed',
+        messageId: 'missingAssertNotDropped',
         data: { methodName: getMethodName(member) },
       });
       continue;
@@ -213,7 +213,7 @@ function checkClass(
     if (!isAssertNotDroppedCall(firstStatement)) {
       context.report({
         node: member,
-        messageId: 'missingAssertNotDisposed',
+        messageId: 'missingAssertNotDropped',
         data: { methodName: getMethodName(member) },
       });
     }

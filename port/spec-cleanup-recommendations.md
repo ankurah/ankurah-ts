@@ -1,5 +1,16 @@
 # Spec Cleanup Recommendations
 
+> **HISTORICAL — recommendations made on 2026-03-14 about the archive, kept as a
+> record of what was decided about each archived file.** Its recommendations for
+> the live docs were written against the ownership spec of the day and are
+> superseded: it proposes documenting what `onDispose()` should do when it
+> throws, and lists nine lint rules under names (`require-using`,
+> `require-disposable`) that no longer exist. `AkObject.drop()` now runs
+> `onDrop()` inside a `try` and cascades in the `finally` regardless, and the
+> lint plugin is down to six rules after the retractions of 2026-09-02. Read the
+> archive assessments; do not act on the live-doc recommendations without
+> re-deriving them. Historical text follows unchanged.
+
 **Date**: 2026-03-14
 **Reviewer**: Spec Reviewer agent
 **Scope**: All files in `port/_archive/` (top-level, `memory-model/`, `_agent-work/`, `reviews/`) assessed against current docs in `port/`.

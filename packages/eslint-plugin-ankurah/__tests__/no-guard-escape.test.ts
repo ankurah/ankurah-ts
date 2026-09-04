@@ -12,25 +12,45 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('no-guard-escape', rule, {
   valid: [
-    // Using guard only within its block
+    // Guard used only within the block that drops it
     {
       code: `
         {
-          using guard = getGuard();
-          guard.doWork();
+          const guard = state.lock();
+          try {
+            guard.value.push(entry);
+          } finally {
+            guard.drop();
+          }
         }
       `,
     },
-    // Assignment to a variable in the same block (not outer)
+    // Reading a value out of the guard and keeping that is fine — the value is
+    // the container's, the guard is the block's.
+    {
+      code: `
+        let count;
+        {
+          const guard = state.lock();
+          try {
+            count = guard.value.length;
+          } finally {
+            guard.drop();
+          }
+        }
+      `,
+    },
+    // Assignment to a variable declared in the same block
     {
       code: `
         {
-          using guard = getGuard();
-          const result = guard.getValue();
+          const guard = cell.borrowMut();
+          let alias = guard;
+          alias.value = 1;
         }
       `,
     },
-    // No using declaration
+    // A plain value, not a guard
     {
       code: `
         let outer;
@@ -42,13 +62,37 @@ ruleTester.run('no-guard-escape', rule, {
     },
   ],
   invalid: [
-    // Guard reference assigned to outer-scope variable
+    // Lock guard assigned to an outer-scope variable
     {
       code: `
         let leaked;
         {
-          using guard = getGuard();
+          const guard = state.lock();
           leaked = guard;
+        }
+      `,
+      errors: [{ messageId: 'guardEscape' }],
+    },
+    // RefCell borrow guard assigned out
+    {
+      code: `
+        let leaked;
+        {
+          const guard = cell.borrow();
+          leaked = guard;
+        }
+      `,
+      errors: [{ messageId: 'guardEscape' }],
+    },
+    // An awaited AsyncMutex guard escapes the same way
+    {
+      code: `
+        async function f() {
+          let leaked;
+          {
+            const guard = await mutex.acquire();
+            leaked = guard;
+          }
         }
       `,
       errors: [{ messageId: 'guardEscape' }],

@@ -1,5 +1,13 @@
 # ankurah-ts Transpiler — Specification
 
+**Written 2026-02/03. Corrected 2026-09-02** where a later ruling repealed the
+premise a section rested on; each correction says what changed and is dated
+inline, and [retractions-2026-09-02.md](retractions-2026-09-02.md) lists them in
+one table. **How the transpiler decides what Rust type an expression has — the
+question most of the translation turns on — is specified separately and in
+detail in [../transpile/SYMBOL-TABLE-SPEC.md](../transpile/SYMBOL-TABLE-SPEC.md),
+which is newer than this file and wins where the two disagree.**
+
 ## Executive Summary
 
 A Rust binary that transpiles Rust source code into TypeScript. The pipeline:
@@ -14,10 +22,10 @@ The **transform layer** is where all translation rules are codified. `syn` handl
 
 **The transpiler does no diffing itself.** It writes files. `git diff` is the validation tool.
 
-**Phases:**
-1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. No function bodies. *(In progress — spike validated.)*
-2. **Body transpiler** — translate function bodies via AST-level pattern matching.
-3. **Production transpiler** — managed file whitelist, whole-crate batch processing.
+**Phases** (written when all three were ahead of us; as of 2026-09-02 the first two are built and the third is not):
+1. **Skeleton transpiler** — generate TS declarations (classes, interfaces, functions, imports, exports) from Rust. No function bodies. *(Built.)*
+2. **Body transpiler** — translate function bodies via AST-level pattern matching. *(Built, and the work in flight is the type resolution it depends on.)*
+3. **Production transpiler** — managed file whitelist, whole-crate batch processing. *(Whole-crate batch processing is built; the managed-file whitelist is not.)*
 
 **Dependencies:** `syn` (Rust parsing), `quote` (token stream), `proc-macro2` (span locations), `clap` (CLI), `walkdir` (file discovery), `anyhow` (errors), `toml` (config).
 
@@ -25,10 +33,20 @@ The **transform layer** is where all translation rules are codified. `syn` handl
 
 The transpiler is NOT a generic Rust→TS tool. It targets the specific ankurah-ts architecture. The transform layer must be aware of and implement:
 
+**Why no general tool exists to use instead (recorded 2026-09-02).** A survey of
+the prior art found nothing to adopt, and the reasons are structural rather than
+accidental: WebAssembly absorbed the demand for running Rust in a browser, so
+nobody needed a source translator; translation research flows the other way,
+into Rust rather than out of it; and the four problems that make the job hard —
+trait resolution, monomorphization, macro expansion, and drop timing — push any
+general tool into rustc's internals. Translating one known codebase is exactly
+what lets this transpiler decline all four: it can be told the traits ankurah
+uses, refuse to expand macros, and read drop timing off ankurah's own types.
+
 | Document | What it governs |
 |----------|----------------|
 | `packages/base/src/` | The ownership type hierarchy: `AkObject`, `Struct`, `Enum<V>`, `Drop`, `Arc<T>`, `Weak<T>`, `Borrow<T>`, `BorrowMut<T>`, `Mutex<T>`, `RefCell<T>`, `AsyncMutex`. These are the types the transpiler emits — not generic TS classes. |
-| `port/decisions.md` | Architectural decisions: bincode-only wire format, Yjs (not Yrs), error handling as throw, `defineModel()` for derive macros, bun workspaces, etc. |
+| `port/decisions.md` | Architectural decisions: bincode-only wire format, Yjs (not Yrs), `Result` as a returned value, `defineModel()` for derive macros, bun workspaces, etc. |
 | `port/ownership.md` | How Rust ownership (Drop, lifetimes, borrows, Arc, Mutex) maps to the TS types in `@ankurah/base`. |
 | `port/ownership/provided-types.md` | API reference for the provided ownership types. |
 | `port/translation-rules.md` | The full mechanical translation rule set: file naming, identifier naming, type mapping, enum patterns, error handling, async mapping, visibility, feature flags, exceptions (E1-E18). |
@@ -90,8 +108,18 @@ The transpiler routes each item through one or more transform modules based on s
 | `#[derive(Model)]` | Attribute on struct | `model_rewrite` — generates defineModel() call *(future)* |
 | `use yrs::*` | Use statement with configured crate | `provided_redirect` — rewrite imports to compat wrapper |
 | `impl Drop for T` | impl block with trait `Drop` | Default transform with `extends Drop` base class |
-| `#[cfg(feature = "wasm")]` | Attribute | Skip entirely |
+| `#[cfg(feature = "wasm")]` | Attribute | Skip entirely — but see the note below on `cfg` |
 | Everything else | — | Default transform |
+
+**On `cfg` (2026-09-02).** "Skip anything wasm-gated" is too blunt now that the
+browser is a primary target. The transpiler is moving to evaluate `cfg` as
+ankurah's wasm32 configuration — `target_arch = "wasm32"` plus the `singlethread`
+feature — so that the browser branch ankurah already maintains and tests is the
+branch the port follows. Today `cfg.rs` evaluates every non-feature predicate to
+false, which keeps each `not(target_arch = "wasm32")` branch and drops the
+wasm32 one: the opposite of the intent. What stays skipped either way are the
+`wasm-bindgen` and `JsValue` bridge modules, which convert Rust values into
+JavaScript ones and have nothing to say to a TypeScript port.
 
 ### Drop Analysis
 
@@ -102,7 +130,20 @@ The transpiler includes a **transitive Drop ownership analyzer** (`drop-analysis
 - 105 types that transitively contain Drop types
 - 332 pure value types (no transitive Drop)
 
-**Current approach:** All types extend AkObject (every Rust type gets disposal cascade and leak detection). The drop analysis is available as a **future optimization** — the transpiler could skip `using` declarations for the 332 value types that provably have no cleanup.
+**Current approach (corrected 2026-09-02):** every type that Rust would run drop
+glue for extends `AkObject` and is leak-tracked. The exception is not an
+optimization but a rule: a Rust `Copy` type cannot implement `Drop`, so it
+carries no drop glue at all — the emitter gives it no `drop()` method and no
+registry entry, whatever class shape it picks. The runtime tests for the absence
+of drop glue rather than for "is it a primitive", which is what makes re-storing
+a `Copy` value legal while re-storing an owned object the container already
+holds is fatal.
+
+The retracted sentence said the analysis could let the transpiler "skip `using`
+declarations" for the 332 value types. There are no `using` declarations to
+skip — Hermes refuses them — and skipping drop tracking for a type merely
+because nothing it contains implements `Drop` would lose the leak detection that
+makes a forgotten value visible.
 
 ---
 
@@ -178,7 +219,7 @@ class DeltaContent extends Enum<DeltaContentV> { ... }
 
 **Functions → Function declarations or method definitions.** Phase 1 bodies are `throw new Error('TODO')` stubs.
 
-**`impl Drop for T` → `class T extends Drop`** with `drop()` override stub.
+**`impl Drop for T` → `class T extends Drop`** with a `protected override onDrop()` stub. Corrected 2026-09-02: never an override of `drop()`, which is `AkObject`'s template — see `port/ownership.md`.
 
 ### 1.3 Name Mapping
 
@@ -223,12 +264,13 @@ Implemented in `name_map::map_type()`.
 | `Vec<T>` | `T[]` |
 | `Vec<u8>` / `&[u8]` | `Uint8Array` |
 | `Option<T>` | `T \| null` |
-| `Result<T, E>` | `T` (throws on error) |
+| `Result<T, E>` | `Result<T, E>` (a returned value; corrected 2026-09-02) |
 | `HashMap<K,V>` / `BTreeMap<K,V>` | `Map<K,V>` |
 | `HashSet<T>` / `BTreeSet<T>` | `Set<T>` |
 | `Arc<T>` | `Arc<T>` |
 | `Weak<T>` | `Weak<T>` |
-| `Mutex<T>` / `RwLock<T>` | `Mutex<T>` |
+| `Mutex<T>` | `Mutex<T>` |
+| `RwLock<T>` | `RwLock<T>` (its own type; corrected 2026-09-02) |
 | `RefCell<T>` | `RefCell<T>` |
 | `Box<dyn Trait>` | `Trait` |
 | `&T` (in fields) | `Borrow<T>` |
@@ -325,7 +367,17 @@ files = [
 reason = "E6: no syntactic correspondence between Pest grammar and recursive descent parser"
 ```
 
-Hardcoded files still participate in drift detection — the transpiler knows about them and flags when the Rust source changes. But it does not attempt to regenerate the TS.
+Hardcoded files still participate in drift detection — the transpiler knows about them and flags when the Rust source changes. But it does not attempt to regenerate the TS. It does read them for their declarations, so that the rest of the crate can resolve the types they define; it just does not emit them.
+
+**When a file may be provided instead of transpiled (recorded 2026-09-02).** The
+criterion is: **macros, out-of-family code, platform bindings, and files that
+are simply too awkward or too hard to get working correctly through the
+transpiler.** The last of those is deliberate and Daniel's own wording — an
+escape hatch that exists so that one stubborn file cannot hold up a crate — with
+the equally deliberate condition that provided files stay infrequent. Every one
+of them is a file the port maintains by hand forever, so each needs a reason
+written down next to it. A provided file is named `.provided.ts` and still obeys
+the ownership contract, because the cascade will walk whatever it hands back.
 
 ---
 
@@ -346,7 +398,7 @@ Maps `syn::Expr` variants to TS expression strings (or OXC AST nodes in future):
 | `Expr::Block { stmts }` | `{ stmts }` |
 | `Expr::Return { expr }` | `return expr;` |
 | `Expr::Await { base }` | `await base` |
-| `Expr::Try { expr }` | `expr` (unwrap — throws propagate) |
+| `Expr::Try { expr }` | check the `Result`: return the `Err` onward, drop the `Ok` wrapper. Corrected 2026-09-02; the old rule discarded the `Result` object, which leaks it |
 | `Expr::Closure { params, body }` | `(params) => body` |
 | `Expr::ForLoop { pat, expr, body }` | `for (const pat of expr) { body }` |
 
@@ -362,7 +414,20 @@ Macro translations:
 
 ### 2.2 Ownership in Generated Code
 
-The transpiler generates `using` for block-scoped AkObjects by default. The drop analysis can be used as an optimization to skip `using` for value types that provably have no cleanup (332 types identified). This optimization is deferred — correctness first.
+**Rewritten 2026-09-02.** The transpiler used to be specified as generating
+`using` declarations for block-scoped values. Hermes refuses to run `using`, so
+what it emits instead is explicit:
+
+- a value the block owns is dropped in a `finally`;
+- a guard temporary is dropped at the end of the statement that produced it, and
+  listed again in the enclosing `finally` — which is why a guard's second drop
+  is deliberately a no-op and every other second drop is fatal;
+- `impl Drop for T` becomes `protected override onDrop()`, never an override of
+  `drop()`;
+- a `Copy` type gets no drop glue at all.
+
+`port/ownership.md` is the contract in full, and it is what the emitted code is
+checked against at run time.
 
 ### 2.3 Validation
 
@@ -395,18 +460,34 @@ Files/methods listed in `[provided_impls]` or `[hardcode]` are preserved — the
 
 ## Project Structure
 
+**Corrected 2026-09-02.** The listing here named `skeleton.rs` and
+`attestation.rs`, neither of which was ever written. `transpile/src/` is the
+authoritative listing; these are the areas it is organised into:
+
 ```
 transpile/
 ├── Cargo.toml
-├── transpile.toml        # Configuration (paths, crate mapping, modules, provided impls)
+├── transpile.toml         # Configuration (paths, crate mapping, system types, provided impls)
+├── SYMBOL-TABLE-SPEC.md   # How types are resolved — the newer, deeper spec
 ├── src/
-│   ├── main.rs           # CLI entry point (clap)
-│   ├── skeleton.rs       # Phase 1: syn extraction + TS skeleton generation
-│   ├── name_map.rs       # Deterministic name mapping (snake→camel, type mapping)
-│   ├── drop_analysis.rs  # Transitive Drop ownership analysis
-│   ├── bincode_module.rs # Rewrite module: generate encode/decode from field layout
-│   ├── config.rs         # Read transpile.toml (TODO)
-│   └── attestation.rs    # Commit hash checking (TODO)
+│   ├── main.rs            # CLI entry point (clap): drop-analysis | skeleton | batch
+│   ├── extract.rs         # syn parse → signatures, items, bodies kept as syn::Block
+│   ├── registry/          # module tree, name resolution, type and member lookup
+│   ├── ty/                # the structural type representation and substitution
+│   ├── infer/             # expression typing: scopes and context
+│   ├── body.rs            # statement and expression translation
+│   ├── control_flow.rs    # if / else / if-let
+│   ├── match_expr.rs      # match arms
+│   ├── macros.rs          # targeted macro handling (never expansion)
+│   ├── name_map/          # deterministic naming and the TS shape of a type
+│   ├── native_types/      # per-type method translation (Arc, Vec, HashMap, ...)
+│   ├── bincode_module.rs  # encode/decode generated from the field layout
+│   ├── ownership.rs       # where drops go
+│   ├── drop_analysis.rs   # transitive Drop ownership analysis
+│   ├── cfg.rs             # cfg evaluation
+│   ├── config.rs          # read transpile.toml
+│   ├── diag.rs            # diagnostics — the transpiler refuses rather than guesses
+│   └── emit.rs, codegen.rs, imports.rs, types.rs
 ```
 
 ## Dependencies
@@ -426,22 +507,24 @@ Note: OXC dependencies (`oxc_ast`, `oxc_codegen`, etc.) are deferred. The spike 
 
 ## CLI
 
+**Corrected 2026-09-02.** The three commands below are the ones that exist. The
+`transpile --crate`, `transpile --all` and `attest --check` commands listed here
+before were never built; whole-crate work is what `batch` does, and attestation
+checking lives in `port/check-attestations.ts` on the TypeScript side.
+
 ```bash
 # Analyze transitive Drop ownership for a crate
 cargo run -- drop-analysis ../ankurah-ts-support/proto/src
 
-# Generate TS skeleton for a single file (stdout)
+# Generate TS for a single file (stdout)
 cargo run -- skeleton ../ankurah-ts-support/proto/src/data.rs --crate-path proto/src/data.rs
 
-# Transpile a whole crate (TODO)
-cargo run -- transpile --crate ankql
-
-# Transpile all crates (TODO)
-cargo run -- transpile --all
-
-# Check attestation hashes (TODO)
-cargo run -- attest --check [--crate <name>]
+# Transpile a whole crate into an output directory
+cargo run -- batch ../ankurah-ts-support/ankql/src <out-dir> --crate-name ankql
 ```
+
+`batch` prints a `DIAGNOSTICS crate=... total=... undeclared=...` line. Those
+counts are the coverage metric and are pinned by `transpile/tests/diagnostics_budget.toml`.
 
 ## Configuration
 
@@ -453,16 +536,19 @@ rust_source = "../ankurah-ts-support"
 ts_target = ".."  # ankurah-ts root (packages/ is under this)
 
 [crates]
+# Corrected 2026-09-02: this is the crate scope from port-runbook.md. The live
+# transpile.toml still maps ankurah-storage-postgres, ankurah-websocket-server
+# and the tokio ankurah-websocket-client, which are out of scope, and maps the
+# tokio websocket client where the browser one belongs. Bringing the file into
+# line with this list is a transpiler change, not a doc change.
 ankql = "ankql"
 "ankurah-proto" = "proto"
 "ankurah-signals" = "signals"
 "ankurah-core" = "core"
 "ankurah-storage-common" = "storage-common"
 "ankurah-storage-sqlite" = "storage-sqlite"
-"ankurah-storage-postgres" = "storage-postgres"
 "ankurah-storage-indexeddb-wasm" = "storage-indexeddb"
-"ankurah-websocket-client" = "connector-websocket"
-"ankurah-websocket-server" = "connector-websocket-server"
+"ankurah-websocket-client-wasm" = "connector-websocket"
 "ankurah-connector-local-process" = "connector-local"
 "ankurah" = "ankurah"
 

@@ -1,5 +1,14 @@
 # Rust Fixture Completeness Assessment
 
+> **HISTORICAL — a coverage assessment of 2026-03-14, superseded by the fixtures
+> themselves.** The counts here (15 bincode fixtures, 7 yrs) have since grown to
+> 24 bincode fixtures with per-item offset and length sidecars, 12 yrs V2
+> documents, 10 core LWW cases, 91 ankql parse cases and 26 planner cases, and
+> each fixture set now carries its own README on the `ts-port-support` branch.
+> The gaps this file identifies were the reason for that work. Read it as the
+> argument that produced the fixtures, not as their inventory. Historical text
+> follows unchanged.
+
 Date: 2026-03-14
 Branch: `ts-port-support`
 Worktree: `/Users/daniel/ak/ankurah-ts-support/`

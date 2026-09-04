@@ -1,8 +1,12 @@
 # Port Rules: ankurah (Rust) -> ankurah-ts (TypeScript)
 
-**Last updated**: 2026-02-10
+**Written**: 2026-02-10. **Corrected**: 2026-09-02, where a later ruling repealed
+the premise a rule rested on; each correction says what changed and is dated
+inline, and [retractions-2026-09-02.md](retractions-2026-09-02.md) lists them in
+one table.
 **Authoritative for**: All file-level, naming, structural, and annotation conventions in the TS port.
 **Mandate**: Zero freestyling. The TS port must mirror the Rust structure 1:1. Every exception requires an explicit rule citation.
+**Who applies these rules**: the transpiler in `transpile/`. They are written for a reader, but they are implemented in code, and a rule that the transpiler does not implement is a wish, not a rule.
 
 ---
 
@@ -63,23 +67,23 @@ For files that have NO Rust counterpart (e.g., React Native hooks, polyfill boot
 |------|-----------|-------|
 | `struct Foo { ... }` | `class Foo extends Struct { ... }` | All structs extend `Struct` from `@ankurah/base` |
 | `enum Foo { A, B(T) }` | `class Foo extends Enum<FooV> { ... }` | See Enum pattern below |
-| `impl Drop for T` | `class T extends Drop` | Override `drop()` for custom cleanup. Call `super.drop()`. |
+| `impl Drop for T` | `class T extends Drop` | Override `onDrop()`, never `drop()`. Corrected 2026-09-02: `drop()` is `AkObject`'s template and overriding it runs the cleanup after the fields are already gone. |
 | `trait Foo { ... }` | `interface Foo { ... }` | Unless it has default impls (see E7) |
 | `trait Foo` with default impls | `abstract class Foo` or mixin | See Exception E7 |
 | `impl Trait for Struct` | `class Struct implements Interface` | See Exception E4 |
 | `impl Struct { ... }` | Methods inside `class Struct { ... }` | See Exception E4 |
 | Generics `<T: Trait>` | Generics `<T extends Interface>` | Direct mapping |
-| `Result<T, E>` | Throw with typed `Error` subclass | Per decisions.md |
+| `Result<T, E>` | `Result<T, E>` | From `@ankurah/base`. A returned value, not a throw. Corrected 2026-09-02; see A8. |
 | `Option<T>` | `T \| null` | |
 | `Arc<T>` | `Arc<T>` | From `@ankurah/base`. Refcounted shared ownership. |
 | `Rc<T>` | `Arc<T>` | Same as Arc (no threading distinction in JS) |
 | `Weak<T>` | `Weak<T>` | From `@ankurah/base`. `upgrade()` returns `Arc<T> \| null`. |
-| `&T` (in struct fields) | `Borrow<T>` | From `@ankurah/base`. Non-owning, no-op dispose. |
-| `&mut T` (in struct fields) | `BorrowMut<T>` | From `@ankurah/base`. Non-owning mutable, no-op dispose. |
-| `Mutex<T>` | `Mutex<T>` | From `@ankurah/base`. `using guard = mutex.lock()`. |
-| `RwLock<T>` | `Mutex<T>` | Same as Mutex (no reader/writer distinction in JS) |
-| `tokio::sync::Mutex` | `AsyncMutex` | From `@ankurah/base`. Async serialization. |
-| `RefCell<T>` | `RefCell<T>` | From `@ankurah/base`. `borrow()` / `borrow_mut()`. |
+| `&T` (in struct fields) | `Borrow<T>` | From `@ankurah/base`. Non-owning: no `drop()` at all, and the cascade steps over it. |
+| `&mut T` (in struct fields) | `BorrowMut<T>` | From `@ankurah/base`. Non-owning mutable, same treatment. |
+| `Mutex<T>` | `Mutex<T>` | From `@ankurah/base`. `const guard = mutex.lock()`, dropped in a `finally`. Corrected 2026-09-02: was `using guard = ...`. |
+| `RwLock<T>` | `RwLock<T>` | Corrected 2026-09-02: its own type, not an alias for `Mutex`. `read()` and `write()` return distinct guards. |
+| `tokio::sync::Mutex<T>` | `AsyncMutex<T>` | From `@ankurah/base`. `acquire()` returns a guard; the lock survives an `await`. |
+| `RefCell<T>` | `RefCell<T>` | From `@ankurah/base`. `borrow()` / `borrowMut()`. Corrected 2026-09-02: the method is `borrowMut()`, per the `snake_case` → `camelCase` rule in A2. |
 | `Box<dyn Trait>` | Interface type directly | No boxing needed in TS |
 | `AtomicBool` | `boolean` | Single-threaded JS |
 | `AtomicU32` / `AtomicUsize` | `number` | Single-threaded JS |
@@ -150,23 +154,49 @@ if (content.is('StateSnapshot')) { const state = content.value.state; ... }
 | `#[derive(Clone)]` | Implement `clone()` method | For `Arc<T>`, use `arc.clone()`. For structs, implement field-by-field clone if needed. |
 | `#[derive(Debug)]` | `toString()` method | Add if useful for debugging |
 | `#[derive(PartialEq, Eq)]` | Custom `equals()` method | If equality comparison is needed |
-| `#[derive(Serialize, Deserialize)]` | Bincode codec functions | Per wire-format-interop.md |
-| `#[derive(Model)]` | Hand-written wrappers (Phase 1) | See Exception E1 |
+| `#[derive(Serialize, Deserialize)]` | Bincode codec methods generated from the field list | See "Derives are read, never expanded" below |
+| `#[derive(Model)]` | `defineModel()` | See Exception E1 |
 | `#[derive(Hash)]` | No direct equivalent | Use string keys for maps if needed |
+
+**Derives are read, never expanded.** The transpiler reads the derive attribute
+and the field list and generates the TypeScript from those. It never expands the
+macro and translates the expansion, and the reason is not just that expanded
+code drags Rust idioms along with it: **a serde derive expansion contains no
+wire-format information at all.** serde's generated code is format-agnostic — it
+calls into a `Serializer`, and which byte a variant index becomes lives in the
+bincode crate, never in the expansion. Twelve thousand lines of expanded proto
+code cannot tell you the wire format; the transpiler's bincode module reads it
+off the field list. The expansion would also carry `_serde::__private228`, which
+pins a serde patch version into the port, and `format_args!` survives expansion
+unexpanded anyway.
 
 ### A8. Error Handling
 
-- Rust `Result<T, E>` maps to TS functions that throw typed `Error` subclasses.
-- Mirror Rust error types 1:1 as TS Error subclasses: `MutationError`, `RetrievalError`, `StateError`, `PropertyError`, `DecodeError`, `SubscriptionError`.
-- Rust `anyhow::Error` maps to plain `Error` or a generic `AnkurahError`.
-- Rust `.unwrap()` / `.expect()` maps to TS assertions or direct access (errors propagate via throw).
-- Rust `?` operator maps to normal TS try/catch flow (errors propagate via throw).
+**Rewritten 2026-09-02.** The rule used to be "`Result` maps to throw". It does
+not: a Rust function that returns `Result<T, E>` returns a `Result<T, E>` value,
+and a throw means a panic.
+
+- Rust `Result<T, E>` maps to `Result<T, E>` from `@ankurah/base` — a returned value.
+- Mirror Rust error types 1:1 as TS classes: `MutationError`, `RetrievalError`, `StateError`, `PropertyError`, `DecodeError`, `SubscriptionError`. They are what goes in the `Err`.
+- Rust `anyhow::Error` maps to a generic error type in the `Err` position.
+- Rust `.unwrap()` / `.expect()` map to `Result.unwrap()` / `.expect()`, which consume the receiver and throw on an `Err` — because that is what panics in Rust.
+- Rust `?` maps to a check on the `Result`: return the `Err` onward, and drop the `Ok` wrapper you did not return. Discarding the `Result` object instead leaks it.
+- A throw in emitted code means the program did something Rust would panic on. A throw from the ownership runtime (`OwnershipFatal`) means the *emitter* did something Rust would not compile; a `catch` that handles a Rust error type must rethrow it unconditionally.
+
+**Current state**: the transpiled packages still throw where Rust returns a
+`Result`. That is a known defect awaiting the emission step, not a second
+sanctioned style.
 
 ### A9. Async Mapping
 
-- Rust `async fn foo() -> Result<T, E>` maps to TS `async foo(): Promise<T>` (throws on error).
-- Rust `tokio::spawn()` maps to TS `Promise` / microtask / `setTimeout` as appropriate.
-- Rust channels (`mpsc`, `oneshot`) map to TS event emitters, callbacks, or custom async patterns.
+**Rewritten 2026-09-02.** tokio's shapes have direct TypeScript equivalents, and
+the port uses them rather than inventing an async layer.
+
+- Rust `async fn foo() -> Result<T, E>` maps to TS `async foo(): Promise<Result<T, E>>`.
+- `tokio::spawn` maps to a `Promise`; a `JoinHandle` is a wrapper around it, and awaiting the handle awaits the promise.
+- `select!` maps to `Promise.race`, with the winning branch tagged so the arms stay distinguishable. **The one real difference**: `select!` drops — cancels — the losing futures, while a losing `Promise` keeps running. ankurah has a single `select!` site; check it for side effects in the losing branch rather than designing around the difference.
+- `Notify` and `oneshot` map to a promise plus its resolver; `mpsc` maps to an async queue.
+- `tokio::sync::Mutex` maps to `AsyncMutex` from `@ankurah/base`.
 
 ### A10. Test File Mapping
 
@@ -194,30 +224,37 @@ if (content.is('StateSnapshot')) { const state = content.value.state; ... }
 
 ### B1. Complete Mapping Table
 
+**Corrected 2026-09-02**: scope is decided by target environment, not by phase.
+Two rows flipped — the browser WebSocket client is in and the tokio one is out,
+and IndexedDB is in. See the crate scope table in
+[port-runbook.md](port-runbook.md), which is authoritative.
+
 | Rust Crate (Cargo.toml `name`) | Rust Path | TS Package | TS Path | Status |
 |-------------------------------|-----------|------------|---------|--------|
-| `ankurah-proto` | `proto/` | `@ankurah/proto` | `packages/proto/` | IN SCOPE Phase 1 |
-| `ankurah-core` | `core/` | `@ankurah/core` | `packages/core/` | IN SCOPE Phase 1 |
-| `ankurah-signals` | `signals/` | `@ankurah/signals` | `packages/signals/` | IN SCOPE Phase 1 |
-| `ankql` | `ankql/` | `@ankurah/ankql` | `packages/ankql/` | IN SCOPE Phase 1 |
-| `ankurah-storage-common` | `storage/common/` | `@ankurah/storage-common` | `packages/storage-common/` | IN SCOPE Phase 1 |
-| `ankurah-storage-sqlite` | `storage/sqlite/` | `@ankurah/storage-sqlite` | `packages/storage-sqlite/` | IN SCOPE Phase 1 |
-| `ankurah-websocket-client` | `connectors/websocket-client/` | `@ankurah/connector-websocket` | `packages/connector-websocket/` | IN SCOPE Phase 1 |
-| `ankurah-connector-local-process` | `connectors/local-process/` | `@ankurah/connector-local` | `packages/connector-local/` | IN SCOPE Phase 1 |
+| `ankurah-proto` | `proto/` | `@ankurah/proto` | `packages/proto/` | IN SCOPE |
+| `ankurah-core` | `core/` | `@ankurah/core` | `packages/core/` | IN SCOPE |
+| `ankurah-signals` | `signals/` | `@ankurah/signals` | `packages/signals/` | IN SCOPE |
+| `ankql` | `ankql/` | `@ankurah/ankql` | `packages/ankql/` | IN SCOPE |
+| `ankurah-storage-common` | `storage/common/` | `@ankurah/storage-common` | `packages/storage-common/` | IN SCOPE |
+| `ankurah-storage-sqlite` | `storage/sqlite/` | `@ankurah/storage-sqlite` | `packages/storage-sqlite/` | IN SCOPE; the rusqlite binding becomes a provided driver interface (E16) |
+| `ankurah-storage-indexeddb-wasm` | `storage/indexeddb-wasm/` | `@ankurah/storage-indexeddb` | `packages/storage-indexeddb/` | IN SCOPE — ankurah's browser storage path; `web-sys` resolves to the IndexedDB API |
+| `ankurah-websocket-client-wasm` | `connectors/websocket-client-wasm/` | `@ankurah/connector-websocket` | `packages/connector-websocket/` | IN SCOPE — the `web-sys` WebSocket client is the browser and React Native client (E17) |
+| `ankurah-connector-local-process` | `connectors/local-process/` | `@ankurah/connector-local` | `packages/connector-local/` | IN SCOPE |
+| `ankurah` | `ankurah/` | `@ankurah/ankurah` | `packages/ankurah/` | IN SCOPE — the facade crate |
 | `ankurah-derive` | `derive/` | NO TS EQUIVALENT | N/A | Exception E1: TS has no proc macros |
-| `ankurah` | `ankurah/` | NO DIRECT EQUIVALENT | N/A | Facade crate; re-exports handled by each package |
-| `ankurah-storage-postgres` | `storage/postgres/` | OUT OF SCOPE | N/A | Phase 1 exclusion |
-| `ankurah-storage-sled` | `storage/sled/` | OUT OF SCOPE | N/A | Phase 1 exclusion |
-| `ankurah-storage-indexeddb-wasm` | `storage/indexeddb-wasm/` | OUT OF SCOPE | N/A | Phase 1 exclusion (WASM-specific) |
-| `ankurah-websocket-server` | `connectors/websocket-server/` | OUT OF SCOPE | N/A | Phase 1 exclusion |
-| `ankurah-websocket-client-wasm` | `connectors/websocket-client-wasm/` | OUT OF SCOPE | N/A | Phase 1 exclusion (WASM-specific) |
+| `ankurah-websocket-client` | `connectors/websocket-client/` | OUT OF SCOPE | N/A | The tokio-tungstenite client; the browser client above replaces it |
+| `ankurah-storage-postgres` | `storage/postgres/` | OUT OF SCOPE | N/A | Server-side database; neither primary target can reach it |
+| `ankurah-storage-sled` | `storage/sled/` | OUT OF SCOPE | N/A | Rust-specific embedded DB |
+| `ankurah-websocket-server` | `connectors/websocket-server/` | OUT OF SCOPE | N/A | The Rust server stays the server |
 
 ### B2. Additional TS-Only Packages
 
 | TS Package | TS Path | Purpose | Annotation |
 |-----------|---------|---------|------------|
-| `@ankurah/react-native` | `packages/react-native/` | React Native hooks and bindings | TS-ONLY: React Native integration |
+| `@ankurah/base` | `packages/base/` | The hand-written ownership runtime every other package builds on | TS-ONLY: Rust ownership primitives (E11) |
+| `@ankurah/react` | `packages/react/` | React hooks and bindings (the package is named `react`, not `react-native`) | TS-ONLY: React integration (E15) |
 | `@ankurah/storage-memory` | `packages/storage-memory/` | In-memory storage for testing | TS-ONLY: test utility |
+| `@ankurah/eslint-plugin` | `packages/eslint-plugin-ankurah/` | Lint rules standing in for Rust's compile-time ownership checks | TS-ONLY |
 
 ---
 
@@ -260,6 +297,11 @@ This pattern applies at any nesting depth: `reactor/`, `selection/`, `util/`, `v
 
 ### C3. File Count Summary
 
+**Counted 2026-02-10 and not maintained since.** The Rust source has moved on and
+the crate scope changed on 2026-09-02, so read this as the shape of the mapping,
+not as today's numbers. The transpiler's own inventory (`transpile/tests/`) is
+what counts files now.
+
 | Crate | Rust Files (src/ + tests/) | TS Files (in scope) | Skipped (OOS/feature-gated) |
 |-------|---------------------------|--------------------|-----------------------------|
 | ankurah-proto | 17 | 15 | 2 (wasm.rs, postgres.rs) |
@@ -283,8 +325,9 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 ### E1: Derive Macro Crate Has No TS Equivalent
 
 - **Rust pattern**: `ankurah-derive` proc macro crate (23 files) generates View/Mutable/Model implementations at compile time via `#[derive(Model)]`.
-- **TS equivalent**: Hand-written model wrappers in Phase 1. Codegen CLI in future phases.
-- **Justification**: TypeScript has no compile-time proc macro system. Macro-generated code is written by hand in TS, matching the OUTPUT of the Rust macros, not the macro implementation itself.
+- **TS equivalent**: the `defineModel()` runtime, which produces the same View/Mutable/Input/Ops shapes from a schema written in TypeScript.
+- **Justification**: TypeScript has no compile-time proc macro system. The TS code matches the OUTPUT of the Rust macro, not the macro implementation itself.
+- **Citation note (2026-09-02)**: this is the rule to cite for the derive crate. Earlier text in the runbook cited E12, which is the file-with-submodules rule and has nothing to do with derives.
 
 ### E2: `mod.rs` / `lib.rs` -> `index.ts`
 
@@ -333,6 +376,7 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 - **Rust pattern**: Modules gated with `#[cfg(feature = "wasm")]` such as `proto/src/wasm.rs`, `core/src/model/tsify.rs`, `core/src/value/wasm.rs`, `signals/src/react.rs`, `signals/src/jsvalue.rs`.
 - **TS equivalent**: No TS file created.
 - **Justification**: These modules provide Rust-to-WASM bridging (wasm-bindgen, JsValue conversions). The TS port IS the native JS target, so these bridges are unnecessary.
+- **Not to be confused with (2026-09-02)**: a *crate* whose name ends in `-wasm`. `storage/indexeddb-wasm` and `connectors/websocket-client-wasm` are ankurah's browser implementations, and they are in scope — their `web-sys` calls are IndexedDB and WebSocket, which TypeScript has natively. This rule skips the modules that convert Rust values to and from `JsValue`, nothing more. The transpiler's `cfg` evaluation is being moved to ankurah's wasm32 configuration for the same reason: the browser branch ankurah already maintains and tests is the branch the port should follow.
 
 ### E10: Feature-Gated Database Modules Skipped
 
@@ -342,9 +386,15 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 
 ### E11: Drop Semantics -> @ankurah/base Drop + AkObject
 
+**Rewritten 2026-09-02.** The rule used to say the cascade runs through
+`[Symbol.dispose]()` and that `using` declarations trigger cleanup at block
+exit. Both are retired: Hermes refuses to run `using` declarations at all, so
+the mechanism is an explicit `.drop()` call that the transpiler emits.
+
 - **Rust pattern**: `impl Drop for T { fn drop(&mut self) { ... } }` for custom cleanup. Automatic drop cascade for all owned fields.
-- **TS equivalent**: `class T extends Drop` with `drop()` override for custom cleanup. All structs extend `Struct` (via `AkObject`) which provides automatic drop cascade via `[Symbol.dispose]()`. `using` declarations trigger cleanup at block exit.
-- **Justification**: JS has no deterministic destructors. `@ankurah/base` provides `AkObject` (auto-cascade), `Drop` (custom cleanup), `Arc` (refcounted ownership), `Borrow`/`BorrowMut` (non-owning, no cascade), matching Rust's ownership model as closely as possible.
+- **TS equivalent**: `class T extends Drop` with a `protected override onDrop()` for the custom cleanup. `AkObject.drop()` is the whole template and nothing overrides it: it refuses a second drop, leaves the leak registry, runs `onDrop()` while the fields are still alive, then drops what the value owns. A value the block owns is dropped in a `finally`; a guard temporary is dropped at the end of its statement and again in that `finally`, which is why a guard's second drop is deliberately a no-op.
+- **Justification**: JS has no deterministic destructors. `@ankurah/base` provides `AkObject` (the template and the cascade), `Drop` (the cleanup hook), `Arc`/`Weak` (refcounted ownership), the containers (`Mutex`, `RwLock`, `RefCell`, `AsyncMutex`), and `Borrow`/`BorrowMut` (non-owning, stepped over by the cascade), matching Rust's ownership model as closely as a running program can.
+- **Full contract**: [ownership.md](ownership.md).
 
 ### E12: File-With-Submodules -> Directory with index.ts
 
@@ -354,9 +404,10 @@ Every case where the TS port diverges from a literal 1:1 file/structure mapping 
 
 ### E13: Rust Macros -> TS Functions or Logger Calls
 
-- **Rust pattern**: `macro_rules! action_info { ... }` and similar logging/formatting macros in `core/src/util/mod.rs`.
-- **TS equivalent**: Regular functions or direct logger calls (e.g., `console.log`, structured logging library).
-- **Justification**: TypeScript has no compile-time macro system. Rust macros that generate code at compile time must be replaced with regular functions or inlined.
+- **Rust pattern**: `macro_rules! action_info { ... }` and similar logging and formatting macros in `core/src/util/mod.rs`; `#[error]` from thiserror; the `tracing` macros.
+- **TS equivalent**: a targeted translation per macro family — a provided logger module for the logging macros, and generated `toString()` bodies for thiserror's `#[error]` format strings. No macro is ever expanded and translated.
+- **Justification**: TypeScript has no compile-time macro system, and expanding the Rust macro would translate serde's or tracing's implementation instead of ankurah's code. See "Derives are read, never expanded" in A7 for why an expansion is also less informative than the source.
+- **Current state (2026-09-02)**: the transpiler emits `/* name!(...) */` comments for these — 14 error enums with 89 `#[error]` attributes, 83 tracing sites, 15 `action_*!`/`notice_info!` calls. Every `Display` impl and all logging are therefore silently missing from the transpiled output today. Closing this is the first macro work, not a licence to hand-write the output.
 
 ### E14: Rust-Only External Crate Integration Skipped
 
@@ -551,9 +602,9 @@ Or for integration tests:
 
 ### G6. Rust Source Hash Manifest (Drift Detection)
 
-A hash manifest file at `scripts/rust-source-hashes.json` tracks the SHA-256 hash of each Rust source file that has been ported. This enables automated drift detection: when a Rust file changes, the audit script flags the corresponding TS file as potentially needing an update.
+A hash manifest file at `port/.rust-source-hashes.json` tracks the SHA-256 hash of each Rust source file that has been ported. This enables automated drift detection: when a Rust file changes, the audit script flags the corresponding TS file as potentially needing an update.
 
-**Manifest format** (`scripts/rust-source-hashes.json`):
+**Manifest format** (`port/.rust-source-hashes.json`):
 ```json
 {
   "core/src/entity.rs": "a1b2c3d4e5f6...",
@@ -564,9 +615,9 @@ A hash manifest file at `scripts/rust-source-hashes.json` tracks the SHA-256 has
 Keys are Rust file paths relative to the Rust repo root (e.g. `proto/src/id.rs`, NOT `ankurah/proto/src/id.rs`). Values are full SHA-256 hex digests of the file contents.
 
 **Workflow:**
-1. **Bootstrap**: Run `bun run scripts/audit-port.ts --backpopulate` to scan all existing MIRRORS annotations and compute hashes of the current Rust files. This creates the initial manifest.
-2. **Audit**: The regular audit (`bun run scripts/audit-port.ts`) compares current Rust file hashes against the manifest and warns about any drift.
-3. **After porting changes**: Run `bun run scripts/audit-port.ts --update-manifest` to record the new Rust file hashes after reviewing/porting the changes.
+1. **Bootstrap**: Run `bun run port/audit-port.ts --backpopulate` to scan all existing MIRRORS annotations and compute hashes of the current Rust files. This creates the initial manifest.
+2. **Audit**: The regular audit (`bun run port/audit-port.ts`) compares current Rust file hashes against the manifest and warns about any drift.
+3. **After porting changes**: Run `bun run port/audit-port.ts --update-manifest` to record the new Rust file hashes after reviewing/porting the changes.
 
 **Rule**: When porting a Rust file change to TS, always update the manifest afterward so the drift detection stays current. The manifest file should be committed alongside the TS changes.
 
@@ -587,7 +638,7 @@ Use this checklist to verify port compliance:
 - [ ] Intra-package imports use relative paths
 - [ ] Test files are adjacent to source (`.test.ts`) or in `__tests__/`
 - [ ] Re-export chains in `index.ts` match Rust `lib.rs` / `mod.rs` re-exports
-- [ ] Hash manifest (`scripts/rust-source-hashes.json`) is updated after porting Rust changes
+- [ ] Hash manifest (`port/.rust-source-hashes.json`) is updated after porting Rust changes
 - [ ] Every Rust `pub fn` has a `// Rust: fn <name>` attestation in the TS file (G4)
 - [ ] No `as unknown as` without a `// Divergence:` justification on the same or preceding line
 - [ ] TS function body sizes are within reasonable range of Rust counterparts (audit script flags >50% shorter)

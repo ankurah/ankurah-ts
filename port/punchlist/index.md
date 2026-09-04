@@ -1,5 +1,17 @@
 # Port Punchlist v2 — Index
 
+> **Scope superseded 2026-09-02.** The crate list and the exclusion table below
+> predate the environment-based scope decision. `storage/indexeddb-wasm` and
+> `connectors/websocket-client-wasm` are in scope — they are ankurah's browser
+> implementations — and `storage/postgres`, `connectors/websocket-server` and the
+> tokio `connectors/websocket-client` are out. The exclusion row for
+> `connectors/websocket-client-wasm` says the opposite and is retracted. The
+> authoritative scope is the crate table in
+> [../port-runbook.md](../port-runbook.md). The per-crate punchlists linked below
+> are file-and-test inventories written during the hand-porting period; their
+> `DONE` marks mean a file existed, not that it is correct, and several of them
+> still describe the retired `using` / `Symbol.dispose` ownership model.
+
 **Source of truth**: `ankurah-ts-support/` (ts-port-support branch)
 
 **Statuses**:

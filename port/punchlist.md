@@ -4,6 +4,19 @@ Every in-scope Rust source file and its target TS path.
 
 **Rule**: Every TS file gets rewritten from its Rust source. Pure mechanical translation.
 
+> **Read the status column as history, and the scope as superseded (2026-09-02).**
+> `DONE` here means a hand-written TypeScript file existed when the row was
+> written. The port is produced by the transpiler now, so the question a row can
+> answer is "does a file exist at this path", not "is this file correct" — for
+> that, run `scripts/test-gate.sh` and read the transpiler's diagnostic budget.
+> The crate scope also changed: `storage/indexeddb-wasm` and
+> `connectors/websocket-client-wasm` are in scope, and `storage/postgres`,
+> `connectors/websocket-server` and the tokio `connectors/websocket-client` are
+> not, so the postgres and IndexedDB sections below have their dispositions the
+> wrong way round. The authoritative scope is the crate table in
+> [port-runbook.md](port-runbook.md). Nothing here has been deleted, because the
+> file-by-file mapping is still the right mapping.
+
 
 ## proto → @ankurah/proto
 

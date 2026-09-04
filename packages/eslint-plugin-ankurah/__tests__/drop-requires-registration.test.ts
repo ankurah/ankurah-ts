@@ -1,6 +1,6 @@
 // TS-ONLY: ESLint plugin enforcing Rust ownership semantics
 import { RuleTester } from '@typescript-eslint/rule-tester';
-import { rule } from '../src/rules/dispose-requires-registration';
+import { rule } from '../src/rules/drop-requires-registration';
 
 const ruleTester = new RuleTester({
   languageOptions: {
@@ -10,7 +10,7 @@ const ruleTester = new RuleTester({
   },
 });
 
-ruleTester.run('dispose-requires-registration', rule, {
+ruleTester.run('drop-requires-registration', rule, {
   valid: [
     // Class with drop() that extends Drop
     {
@@ -50,6 +50,44 @@ ruleTester.run('dispose-requires-registration', rule, {
         class RegularService {
           doWork() {
             return 42;
+          }
+        }
+      `,
+    },
+    // AkObject registers by hand — it is the bottom of the hierarchy and has no
+    // registering base to inherit from.
+    {
+      code: `
+        class AkObject {
+          constructor(label) {
+            leakRegistry.register(this, { label }, this);
+          }
+          drop() {
+            leakRegistry.unregister(this);
+          }
+        }
+      `,
+    },
+    // Arc registers by hand in a private constructor.
+    {
+      code: `
+        class Arc {
+          private constructor(inner) {
+            this.inner = inner;
+            leakRegistry.register(this, { label: 'Arc' }, this);
+          }
+          drop() {
+            leakRegistry.unregister(this);
+          }
+        }
+      `,
+    },
+    // Extending a registering base other than Drop.
+    {
+      code: `
+        class MySignal extends Struct {
+          drop() {
+            super.drop();
           }
         }
       `,

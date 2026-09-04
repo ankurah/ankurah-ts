@@ -1,6 +1,26 @@
-// TS-ONLY: ESLint plugin enforcing Rust ownership semantics
+// RETIRED 2026-09-02 — not registered by the plugin and never runs.
 //
 // Rule: ankurah/require-using-for-guards
+//
+// This rule demanded `using` declarations. Hermes refuses to run `using` at all
+// (facebook/hermes lib/Sema/SemanticResolver.cpp raises "using declarations are
+// not yet supported", pinned by test/Parser/using-declaration-error.js), and
+// Expo Go runs Hermes, so `using` is not the ownership model any more. The
+// transpiler emits explicit `.drop()` calls: a block-owned value is dropped in a
+// `finally`, a guard temporary at the end of its statement and again in the
+// enclosing `finally`. Every one of this rule's nine findings in packages/core
+// and packages/signals asked for code the target runtime rejects.
+//
+// Nothing survives a rewrite: whether the emitter placed the try/finally
+// correctly is a property of generated code that the emitter itself has to
+// guarantee, and the runtime reports a value nobody dropped through the leak
+// registry. See port/ownership.md and port/retractions-2026-09-02.md.
+//
+// The file is kept only so its removal is a staged deletion Daniel reads rather
+// than one that disappears inside another diff.
+//
+// Original description follows.
+//
 // Rust equivalent: Guard values are always dropped at scope exit.
 //
 // Methods returning a Drop guard type must be called with `using`,

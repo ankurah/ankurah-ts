@@ -1,6 +1,6 @@
 // TS-ONLY: ESLint plugin enforcing Rust ownership semantics
 import { RuleTester } from '@typescript-eslint/rule-tester';
-import { rule } from '../src/rules/assert-not-disposed';
+import { rule } from '../src/rules/assert-not-dropped';
 
 const ruleTester = new RuleTester({
   languageOptions: {
@@ -10,7 +10,7 @@ const ruleTester = new RuleTester({
   },
 });
 
-ruleTester.run('assert-not-disposed', rule, {
+ruleTester.run('assert-not-dropped', rule, {
   valid: [
     // Public method with assertNotDropped as first statement
     {
@@ -147,7 +147,7 @@ ruleTester.run('assert-not-disposed', rule, {
           }
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
     // Empty body method
     {
@@ -156,7 +156,7 @@ ruleTester.run('assert-not-disposed', rule, {
           doWork() {}
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
     // assertNotDropped is not the first statement
     {
@@ -169,7 +169,7 @@ ruleTester.run('assert-not-disposed', rule, {
           }
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
     // Multiple public methods, some missing
     {
@@ -184,7 +184,7 @@ ruleTester.run('assert-not-disposed', rule, {
           }
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
     // DropGuard class without guard check
     {
@@ -196,7 +196,7 @@ ruleTester.run('assert-not-disposed', rule, {
           }
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
     // Getter without assertNotDropped (getters are public API)
     {
@@ -207,7 +207,7 @@ ruleTester.run('assert-not-disposed', rule, {
           }
         }
       `,
-      errors: [{ messageId: 'missingAssertNotDisposed' }],
+      errors: [{ messageId: 'missingAssertNotDropped' }],
     },
   ],
 });

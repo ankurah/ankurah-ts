@@ -1,6 +1,31 @@
-// TS-ONLY: ESLint plugin enforcing Rust ownership semantics
+// RETIRED 2026-09-02 — not registered by the plugin and never runs.
 //
 // Rule: ankurah/dispose-owned-fields
+//
+// This rule told a Drop subclass to drop each of its owned fields by hand in
+// onDrop(). The runtime now does that itself: `AkObject.drop()` runs onDrop()
+// and then, in a `finally`, drops everything `ownedFields()` returns, which by
+// default is every own property. Dropping an own field in onDrop() as well
+// drops it twice, and a second drop is fatal — so the rule was asking for the
+// one thing the runtime refuses. Its three findings (packages/core
+// livequery.ts, packages/signals signal/index.ts) are all values the cascade
+// already releases.
+//
+// The inverse check — never drop an own field in onDrop() — is not worth
+// writing: dropping a field and then setting it to null is a legitimate way to
+// hand ownership away early, and telling the two apart needs the types. The
+// runtime reports the real double drop where it happens, by name.
+//
+// What does still need saying belongs in the spec, not a lint rule: a type that
+// keeps owned state in #private fields must override ownedFields(), because the
+// cascade cannot see private state. See port/ownership.md and
+// port/retractions-2026-09-02.md.
+//
+// The file is kept only so its removal is a staged deletion Daniel reads rather
+// than one that disappears inside another diff.
+//
+// Original description follows.
+//
 // Rust equivalent: Auto-Drop cascade through owned fields.
 //
 // If a class extends Drop and has fields typed as Drop (or with

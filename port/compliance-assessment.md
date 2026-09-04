@@ -1,5 +1,16 @@
 # Compliance Assessment: ankurah-ts vs Port Runbook + Ownership Spec
 
+> **HISTORICAL — a snapshot of 2026-03-14, kept as a record and not as a work list.**
+> It audits hand-written TypeScript against an ownership spec that has since been
+> replaced. Almost every noun in it has been retired: there is no `Disposable`
+> base class (the base is `AkObject`, and the cleanup hook is `onDrop()`), no
+> `[Symbol.dispose]` mechanism and no `using` declarations (Hermes refuses them),
+> and `RefCell` has had `borrow()` / `borrowMut()` for months. The packages it
+> audits are transpiler output now, so a finding here is a finding about the
+> emitter, and it must be re-derived against the current runtime before anyone
+> acts on it. The current contract is [ownership.md](ownership.md); the current
+> state is [RESUME.md](RESUME.md). Historical text follows unchanged.
+
 **Date**: 2026-03-14
 **Scope**: `packages/core/src/` and `packages/signals/src/`
 **Documents audited against**: port-runbook.md, ownership.md, ownership/provided-types.md, translation-rules.md

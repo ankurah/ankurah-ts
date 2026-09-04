@@ -13,16 +13,23 @@ Read `/port/port-runbook.md` first. It contains orientation, workflows, current 
 - **Port fidelity**: TS code should read as close to the Rust source as possible. Zero freestyling.
 - **This is NOT a one-time port**: The Rust implementation continues to evolve. Port specs, translation rationale, and fixture infrastructure retain value indefinitely. Don't delete things just because the code is implemented.
 - **Wire protocol**: Match Rust bincode encoding exactly. No reimagining. No JSON alternative.
-- **Ownership**: Rust ownership patterns (Drop, Mutex, RefCell) map to provided TS types 1:1. See `port/ownership.md`.
+- **Ownership**: Rust ownership patterns (Drop, Mutex, RwLock, RefCell, Arc) map to provided TS types 1:1, and the runtime enforces them while the program runs. The mechanism is `.drop()`, not `using`. See `port/ownership.md`.
+- **The port is transpiled**: `transpile/` produces `packages/*/src`. Fix the transpiler, not its output. The exceptions are `packages/base/src` and `.provided.ts` files, which are written by hand.
 
 ## Validation
 
 ```bash
-npx tsc --noEmit                    # type-check
-bun test                             # all tests
-bun run port/audit-port.ts           # structural compliance
+scripts/test-gate.sh                 # tests + typecheck per package; fails on failures, errors and type errors
 npx eslint packages/                 # ownership compliance
+bun run port/audit-port.ts           # structural compliance
+cd transpile && cargo test           # the transpiler's own tests
 ```
+
+Use the gate rather than a bare `bun test`: bun abandons the rest of a test file
+at its first unhandled error and reports it separately, so "0 fail" can mean
+"stopped reading". A root `npx tsc --noEmit` that reports only parse errors
+inside `transpile/` is the masking bug fixed by excluding `transpile` from the
+root tsconfig — the number it gives you is not the number of type errors.
 
 ## Agent behavior
 

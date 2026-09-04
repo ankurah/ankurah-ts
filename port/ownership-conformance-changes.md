@@ -1,5 +1,14 @@
 # Ownership Conformance Changes
 
+> **HISTORICAL — a changelog of one 2026-03 pass, kept as a record.**
+> It describes bringing the hand-written TypeScript into line with the ownership
+> spec of the day: a `@ankurah/std` package, a `Disposable` base class, `onDispose()`,
+> `[Symbol.dispose]()` and `using` blocks. None of those survive. The runtime is
+> `@ankurah/base`, the base class is `AkObject` with an `onDrop()` hook, and a
+> block-owned value is dropped in a `finally`. Read this for what changed and
+> when, never for what the code should look like. The current contract is
+> [ownership.md](ownership.md). Historical text follows unchanged.
+
 Summary of changes to bring existing TS code into conformance with the finalized ownership spec (`port/ownership.md`, `port/ownership/provided-types.md`).
 
 ## Priority 1: New `@ankurah/std` package + updated provided types
