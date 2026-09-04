@@ -3,7 +3,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   Struct, Enum, Result, Drop, DropGuard, Arc, Borrow, BorrowMut,
   Mutex, RefCell, RwLock, AsyncMutex, ThreadLocal, disposeSymbol, clearFatalLatch,
-  OwnershipFatal, OwnedClosure, AnyhowError,
+  OwnershipFatal, OwnedClosure, AnyhowError, JsonError, HashMap, HashSet,
 } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
@@ -1467,6 +1467,18 @@ describe('Leak registry', () => {
         release: () => { new OwnedClosure([], () => {}, 'DroppedClosure').drop(); },
       },
       {
+        kind: 'HashMap', leaked: 'LeakedHashMap', dropped: 'DroppedHashMap',
+        abandon: () => { new HashMap(null, 'LeakedHashMap'); },
+        release: () => { new HashMap(null, 'DroppedHashMap').drop(); },
+      },
+      {
+        // A HashSet holds a HashMap and is collected with it, so the report
+        // that arrives is the map's under the set's label.
+        kind: 'HashSet', leaked: 'LeakedHashSet', dropped: 'DroppedHashSet',
+        abandon: () => { new HashSet(null, 'LeakedHashSet'); },
+        release: () => { new HashSet(null, 'DroppedHashSet').drop(); },
+      },
+      {
         kind: 'Arc', leaked: 'Arc<LeakedArcInner>', dropped: 'Arc<DroppedArcInner>',
         abandon: () => { Arc.new(new LeakedArcInner()); },
         release: () => { Arc.new(new DroppedArcInner()).drop(); },
@@ -1533,6 +1545,17 @@ describe('Leak registry', () => {
 
     expect(reports.some((r) => r.startsWith('BUG: LeakProbe was'))).toBe(true);
     expect(reports.filter((r) => r.startsWith('BUG: anyhow::Error was garbage collected')).length).toBe(1);
+  });
+
+  test('an abandoned serde_json error is reported and a dropped one is not', async () => {
+    const reports = await leakReportsDuring(() => {
+      new LeakProbe();
+      JsonError.custom('abandoned');
+      JsonError.custom('released').drop();
+    });
+
+    expect(reports.some((r) => r.startsWith('BUG: LeakProbe was'))).toBe(true);
+    expect(reports.filter((r) => r.startsWith('BUG: serde_json::Error was garbage collected')).length).toBe(1);
   });
 
   test('a moved Result is not reported as a leak', async () => {
@@ -1721,6 +1744,43 @@ describe('OwnedClosure', () => {
     const closure = new OwnedClosure([captured], () => 1, 'Listener');
     closure.drop();
     expectFatal(() => closure.call(), 'BUG: Listener was used after being dropped');
+  });
+
+  test('$arity reports how many arguments the body declares', () => {
+    const none = new OwnedClosure([], () => {});
+    const one = new OwnedClosure<[number], void>([], (_n) => {});
+    const two = new OwnedClosure<[number, string], void>([], (_n, _s) => {});
+    expect(none.$arity).toBe(0);
+    expect(one.$arity).toBe(1);
+    expect(two.$arity).toBe(2);
+    none.drop();
+    one.drop();
+    two.drop();
+  });
+
+  test('$arity tells two impls apart the way the dispatcher does', () => {
+    // What the open-bound dispatcher writes when two impls differ only in the
+    // arity of the callable they are written for.
+    const listener = new OwnedClosure<[number], void>([], (_n) => {});
+    const arc = Arc.new(listener);
+    const value = arc.value;
+    expect(value instanceof OwnedClosure && value.$arity === 1).toBe(true);
+    expect(value instanceof OwnedClosure && value.$arity === 0).toBe(false);
+    arc.drop();
+  });
+
+  test('$arity borrows, and checks liveness like every other read', () => {
+    // It leaves the closure whole — but a dispatcher only ever asks a value it
+    // is about to call, so a dropped or moved one reaching it says the emitted
+    // scope let go too early.
+    const live = new OwnedClosure<[number], void>([], (_n) => {});
+    expect(live.$arity).toBe(1);
+    expect(live.$arity).toBe(1);
+    live.drop();
+    expectFatal(() => live.$arity, 'was used after being dropped');
+    const moved = new OwnedClosure<[number, number], void>([], (_a, _b) => {});
+    moved.callOnce(1, 2);
+    expectFatal(() => moved.$arity, 'was used after being moved');
   });
 
   test('a Vec of closures is released by the cascade of whatever holds it', () => {

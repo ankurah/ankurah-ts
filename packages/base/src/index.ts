@@ -7,6 +7,16 @@ export { Result } from './result.ts';
 export { OwnedClosure } from './closure.ts';
 export { AnyhowError } from './anyhow.ts';
 export * as anyhow from './anyhow.ts';
+export { JsonError } from './serde_json.ts';
+export * as serde_json from './serde_json.ts';
+// `use tracing::info;` never reaches the flat name — the corpus writes the
+// macros path-qualified or imports the macro, and either way the emitter
+// spells the call `tracing.info(..)`. So the namespace is the only spelling.
+// The namespace is the whole surface: a host reaches the sink as
+// `tracing.setSink(..)` and the two types as `tracing.Level` / `tracing.Sink`.
+// A flat `setSink` would say nothing about what it is a sink for, next to the
+// package's other host hooks (`setOnFatal`, `setOnDiagnostic`).
+export * as tracing from './log.ts';
 export { Drop, DropGuard } from './std/drop.ts';
 export {
   disposeSymbol,
@@ -27,6 +37,7 @@ export { AsyncMutex, AsyncMutexGuard } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
+export { HashMap, HashSet, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
 
 // ── tokio ───────────────────────────────────────────────────────────────
 //

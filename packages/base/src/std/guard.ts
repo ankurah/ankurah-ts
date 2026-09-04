@@ -6,7 +6,7 @@
 // subclasses stay, because emitted code should read like the Rust source.
 
 import { Drop, type DropGuard } from './drop.ts';
-import { dropOwned, type Slot } from '../object.ts';
+import { dropOwned, isCopyLike, type Slot } from '../object.ts';
 import {
   assertNotPoisoned,
   fatalDoubleDrop,
@@ -30,16 +30,9 @@ export abstract class Guard extends Drop {
   }
 }
 
-// A Copy type in Rust cannot implement Drop, so re-storing one releases nothing
-// and is legal. The emitter gives Copy types no drop glue, whatever class shape
-// it picks for them, so that — not "is it a primitive" — is the test. Anything
-// with drop glue assigned over itself is one value with two owners, which
-// `*guard = *guard` will not compile to.
-function isCopyLike(value: unknown): boolean {
-  if (value === null) return true;
-  if (typeof value !== 'object' && typeof value !== 'function') return true;
-  return typeof (value as { drop?: unknown }).drop !== 'function';
-}
+// isCopyLike — "has this value no drop glue?" — lives beside the cascade in
+// object.ts, because every self-assignment check in the runtime asks it and the
+// cascade is what the answer is about.
 
 /**
  * A guard over a container's contents. It reads through the container's own slot

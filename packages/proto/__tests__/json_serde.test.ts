@@ -24,6 +24,7 @@ import {
   TransactionId,
   UpdateId,
 } from '../src/index';
+import { JsonError, Result } from '@ankurah/base';
 import { DecodeError } from '../src/error';
 import { ulidStringToBytes } from '../src/id.provided';
 
@@ -123,46 +124,61 @@ describe('json serialization — Clock', () => {
 });
 
 describe('json deserialization rejects what Rust rejects', () => {
+  // A rejected parse fails with a JsonError, because a Deserialize impl fails with the
+  // format's own error type: Rust writes `.map_err(serde::de::Error::custom)`, and
+  // custom keeps the rendered text of the id's DecodeError and nothing else. So these
+  // read the text rather than a kind. The error is a tracked value, and unwrapErr hands
+  // it over, so each one is dropped where Rust drops it at the end of the scope.
+
+  /** The message a rejected parse renders, with the error released. */
+  function rejection(parsed: Result<unknown, JsonError>): string {
+    expect(parsed.isErr()).toBe(true);
+    const error = parsed.unwrapErr();
+    const message = error.toString();
+    error.drop();
+    return message;
+  }
+
   test('a non-string is NotStringValue', () => {
     for (const value of [42, null, true, {}, ['a']]) {
-      const parsed = EntityId.fromJson(value);
-      expect(parsed.isErr()).toBe(true);
-      expect((parsed.unwrapErr() as DecodeError).kind).toBe('NotStringValue');
+      expect(rejection(EntityId.fromJson(value))).toBe('Not a string value');
     }
   });
 
   test('base64 of the wrong byte count is InvalidLength', () => {
     // Valid base64url; decodes to 15 bytes, not 16.
-    const parsed = EntityId.fromJson('AQIDBAUGBwgJCgsMDQ4P');
-    expect(parsed.isErr()).toBe(true);
-    expect((parsed.unwrapErr() as DecodeError).kind).toBe('InvalidLength');
+    expect(rejection(EntityId.fromJson('AQIDBAUGBwgJCgsMDQ4P'))).toBe('Invalid Length');
   });
 
   test('a symbol outside the base64url alphabet is InvalidBase64', () => {
     // Standard-alphabet '+' and '/', and padding, are all outside URL_SAFE_NO_PAD.
     for (const value of ['AQIDBAUGBwgJCgsMDQ4P+A', 'AQIDBAUGBwgJCgsMDQ4P/A', 'AQIDBAUGBwgJCgsMDQ4PEA==']) {
-      const parsed = EntityId.fromJson(value);
-      expect(parsed.isErr()).toBe(true);
-      expect((parsed.unwrapErr() as DecodeError).kind).toBe('InvalidBase64');
+      expect(rejection(EntityId.fromJson(value))).toStartWith('Invalid Base64');
     }
   });
 
   test('a string that is not 26 Crockford characters is InvalidUlid', () => {
     for (const value of ['01ARZ3NDEKTSV4RRFFQ69G5FA', '01ARZ3NDEKTSV4RRFFQ69G5FAU!']) {
-      const parsed = TransactionId.fromJson(value);
-      expect(parsed.isErr()).toBe(true);
-      expect((parsed.unwrapErr() as DecodeError).kind).toBe('InvalidUlid');
+      expect(rejection(TransactionId.fromJson(value))).toStartWith('Invalid ULID');
     }
   });
 
   test('a Clock element that fails carries the element error out', () => {
-    const parsed = Clock.fromJson(['AQIDBAUGBwgJCgsMDQ4PEA']);
-    expect(parsed.isErr()).toBe(true);
-    expect((parsed.unwrapErr() as DecodeError).kind).toBe('InvalidLength');
+    expect(rejection(Clock.fromJson(['AQIDBAUGBwgJCgsMDQ4PEA']))).toBe('Invalid Length');
+    expect(rejection(Clock.fromJson('AQIDBAUGBwgJCgsMDQ4PEA'))).toBe('Invalid Format');
+  });
 
-    const notAnArray = Clock.fromJson('AQIDBAUGBwgJCgsMDQ4PEA');
-    expect(notAnArray.isErr()).toBe(true);
-    expect((notAnArray.unwrapErr() as DecodeError).kind).toBe('InvalidFormat');
+  test('the DecodeError kind is still reachable off the serde path', () => {
+    // Rust's non-serde callers call `EntityId::from_base64` and match the DecodeError;
+    // only the Deserialize impl converts, so the kind is not lost, just not in the Result.
+    let caught: DecodeError | null = null;
+    try {
+      EntityId.fromBase64('AQIDBAUGBwgJCgsMDQ4P');
+    } catch (e) {
+      caught = e as DecodeError;
+    }
+    expect(caught).toBeInstanceOf(DecodeError);
+    expect((caught as DecodeError).kind).toBe('InvalidLength');
   });
 });
 

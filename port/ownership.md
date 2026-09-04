@@ -132,6 +132,17 @@ captures nothing droppable stays a plain function; there is nothing for the
 cascade to find, and wrapping it would only add a drop the emitter then has to
 place.
 
+`closure.$arity` is how many arguments the body declares. The open-bound
+dispatcher needs it: two impls can differ only in the arity of the callable they
+are written for — `Arc<dyn Fn(T)>` beside `Arc<dyn Fn()>` — and Rust picks
+between them by type, where the port has to ask the value. The function inside
+an `OwnedClosure` is `#private`, so nothing outside could ask without this. It
+borrows, and it checks liveness first like every other read here: a dispatcher
+only ever asks a value it is about to call, so a dropped closure reaching one
+says the emitted scope released it too early. It reports what `Function.length`
+reports — the parameters before the first default or rest parameter — and an
+emitted closure has neither, so for emitted code the two counts are one number.
+
 A `FnOnce` call is `closure.callOnce(...)` rather than `call`. It consumes the
 closure: the captures become the body's, so the closure stops owning them and is
 left moved, and a second call or a drop after one is fatal. The body closes over
@@ -153,6 +164,59 @@ and `toStringAlternate()` is `{:#}`, the whole chain joined with `": "`.
 counterparts do: what they hand back still belongs to the chain, and the caller
 must not drop it. `anyhow::Result<T>` needs nothing of its own — it is
 `Result<T, AnyhowError>`.
+
+**A JSON decode fails with a `JsonError`, which is `serde_json::Error`.** It is
+what an emitted `static fromJson(value)` returns an `Err` of, and it exists
+because a `Deserialize` impl fails with the *format's* error and every crate the
+port emits has to be able to name it — which is what rules out each crate's own
+decode error. It is a tracked value like `AnyhowError`, because
+`serde_json::Error` boxes its contents and so has drop glue: a caller that takes
+one out of a `Result` owns it and drops it. Nothing inside it has drop glue of
+its own. `JsonError.custom(message)` is `serde::de::Error::custom`, the
+conversion a hand-written decoder with a richer error of its own performs — it
+keeps the rendered text and nothing else, which is all Rust keeps.
+`JsonError.syntax(message, line?, column?)` is a failure with a place in the
+text. `toString()` is serde_json's `Display`: the message alone when there is no
+position, and `"<message> at line L column C"` when there is, which is how
+serde_json decides it — on the line alone. `JsonError.fromException(thrown)`
+wraps what `JSON.parse` threw and DELIBERATELY loses the position: serde_json
+knows the line and column because it drives the parse, and `JSON.parse` reports
+what the host chose to report, in text that differs between V8,
+JavaScriptCore and Hermes. `serde_json::Result<T>` needs nothing of its own — it
+is `Result<T, JsonError>`.
+
+**`HashMap<K, V>` and `HashSet<T>` are keyed by value, not by identity.** A
+JavaScript `Map` keys objects by identity and Rust keys them by `Hash` and `Eq`,
+so `HashMap<EntityId, Peer>` cannot be a `Map`: two `EntityId`s over the same
+bytes are one key in Rust and two in a `Map`. A key's `hash()` picks the bucket
+and its `equals()` decides which entry in that bucket is the one, so a key type
+is free to hash coarsely — a collision costs a comparison and nothing more. What
+may be a key is the family Rust's `Hash + Eq` covers: a primitive or `null`; a
+sequence (an array or a typed array, which is how the port spells a tuple and a
+`Vec<u8>`), hashed and compared element by element as Rust's
+`impl Hash for (A, B)` and `for [T]` do; or an object declaring `hash(): string`
+and `equals(other): boolean`, which is what `#[derive(Hash, PartialEq, Eq)]`
+emits. Anything else is refused by name — a plain throw, because the insert did
+not happen and nothing is corrupted — rather than falling back to identity,
+which is the bug these containers exist to prevent.
+
+The map owns its keys and its values, and dropping it releases both. Rust's
+`insert(k, v)` keeps the key it already has and drops the one it was handed, so
+`insert` returns the displaced *value* and releases the surplus *key*; `set(k, v)`
+is `insert` with the displaced value released too, which is what
+`map.insert(k, v);` as a statement means in Rust. `remove(&k)` hands the value
+to the caller and drops the stored key; `delete(k)` releases both and answers
+whether there was an entry, which is what `map.remove(&k);` as a statement
+means. `clear()` releases every key and value. `get`, `entries`, `keys`,
+`values` and iteration all borrow: what they hand out is still the container's.
+Each iterator is a snapshot, so a loop that deletes as it goes — which is what
+`retain` is emitted as — is safe. `get` returns `V | null`, because
+`HashMap::get` returns an `Option<&V>` and this port spells `Option<T>` as
+`T | null`; **an emitted `=== undefined` test against a map lookup is therefore
+wrong**, and so is `HashMap<K, Option<X>>` asking `remove` to tell an absent key
+from a stored `None` — ask `has` first. `HashSet<T>` is the same table with the
+value half unused: `insert(v)` answers whether the value was new and drops a
+duplicate, and `add`/`has`/`delete` are the names the emitter writes.
 
 ---
 
@@ -185,6 +249,7 @@ than the mechanism takes one.
 | Member | On | What it is |
 |---|---|---|
 | `$label` | `AkObject` (protected) | What diagnostics call this value. |
+| `$arity` | `OwnedClosure` | How many arguments the body declares. Borrows. |
 
 `$label` was `label` until a ported struct with a `label` field collided with it
 — which did not merely shadow it but failed to compile, since a public field
@@ -294,6 +359,12 @@ stack.
 | `move \|…\| { … }` with droppable captures | `OwnedClosure` | `new OwnedClosure(captures, fn)`, invoked with `.call(...)`; `.callOnce(...)` for `FnOnce`. |
 | `anyhow::Error` | `AnyhowError`, or `anyhow.Error` | Owns its chain. `from`, `msg`, `context`, `downcast_ref`, `root_cause`. |
 | `anyhow::Result<T>` | `Result<T, AnyhowError>` | No type of its own. |
+| `serde_json::Error` | `JsonError`, or `serde_json.Error` | Tracked, and owns nothing further. `custom`, `syntax`, `fromException`. |
+| `serde_json::Result<T>` | `Result<T, JsonError>` | No type of its own. |
+| `HashMap<K, V>` | `HashMap<K, V>` | Keyed by `hash()` and `equals()`, never by identity. Owns keys and values. |
+| `HashSet<T>` | `HashSet<T>` | The same table with no value half. |
+| `BTreeMap<K, V>` / `BTreeSet<T>` | — | Not provided. An ordered map iterates in `Ord` order and `HashMap` iterates in bucket order, so standing one in for the other changes what a traversal produces. |
+| `tracing::info!("…")` and its four siblings | `tracing.info(msg)`, … | One already-rendered string per call. |
 
 A container owns its contents: dropping a `Mutex<T>` drops the `T`, as in Rust.
 A guard does not own what it points at — it reads and writes through the
@@ -301,6 +372,28 @@ container's own storage, so `*guard = v` replaces what the container holds and
 drops what was there.
 
 ---
+
+## The tracing layer
+
+`tracing::trace!` and its four siblings become `tracing.trace(message)` and
+theirs — five functions, each taking one string, exported as a namespace from
+`@ankurah/base`. Nothing here is tracked and nothing here owns anything: a
+rendered message is a string.
+
+In Rust the macro builds an *event*, with a level, a target and a set of typed
+fields, and hands it to whatever subscriber is installed. None of that survives
+the crossing. The transpiler renders the format string at the call site and
+emits one already-rendered string, and a `tracing::warn!` that carries
+structured fields instead of a format string is refused by the transpiler rather
+than losing its fields quietly at this end.
+
+`tracing.setSink(sink)` replaces where the five write, so a host can forward its
+log and a test can capture it; `tracing.consoleSink` is the default and puts it
+back. Two things about that default differ from Rust deliberately. `trace` goes
+to `console.debug` and not `console.trace`, because `console.trace` prints a
+stack trace and `tracing::trace!` does not. And an event reaches the console
+with no subscriber installed, where in Rust it would be dropped — silence is the
+worse default in a port whose purpose is to be watched while it runs.
 
 ## The tokio layer
 

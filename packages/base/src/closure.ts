@@ -48,6 +48,34 @@ export class OwnedClosure<A extends unknown[] = unknown[], R = void> extends Dro
     this.#fn = fn;
   }
 
+  /**
+   * How many arguments the body declares.
+   *
+   * For the open-bound dispatcher, which tells `Arc<dyn Fn(T)>` from
+   * `Arc<dyn Fn()>` when two impls differ only in the arity of the callable
+   * they are written for. Rust picks between them by type; the port has to ask
+   * the value, and the function inside is `#private` so nothing outside could.
+   *
+   * `$`-namespaced because it is a convenience for the emitter and not part of
+   * the mechanism — nothing in the runtime reads it, and no Rust field name can
+   * collide with a `$` name.
+   *
+   * It reports what `Function.length` reports, which is the count of parameters
+   * before the first default or rest parameter. A closure the emitter wrote
+   * from a Rust signature has neither, so for emitted code the two counts are
+   * the same number.
+   *
+   * Borrows — it reads the arity and leaves the closure whole — but it checks
+   * liveness first, like every other read in the runtime. A dispatcher only
+   * ever asks a value it is about to call, so a dropped closure reaching one
+   * says the emitted scope released it too early, and that is worth a fatal
+   * rather than a quietly successful branch test.
+   */
+  get $arity(): number {
+    this.assertNotDropped();
+    return this.#fn.length;
+  }
+
   /** Invoke the closure. Calling a dropped one reads captures that are gone. */
   call(...args: A): R {
     this.assertNotDropped();

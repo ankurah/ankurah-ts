@@ -18,7 +18,7 @@
 // returns so `serde_json::from_str::<T>(&s).unwrap()` → `T.fromJson(JSON.parse(s)).unwrap()`.
 // `encode`/`decode` below stay the binary half and are untouched by any of this.
 
-import { Result, Struct } from '@ankurah/base';
+import { JsonError, Result, Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { DecodeError } from './error';
 
@@ -165,16 +165,21 @@ function ulidStringToBytes(str: string): Uint8Array {
  * the caller receives — and a sequence that fails on its tenth element leaves none
  * behind for the leak registry to collect.
  *
- * The port has no serde error type, so the `Err` keeps the `DecodeError` the id itself
- * produced: the value Rust passes to `serde::de::Error::custom`.
+ * The `Err` is a `JsonError`, because a `Deserialize` impl fails with the format's own
+ * error type. Rust writes `EntityId::from_base64(s).map_err(serde::de::Error::custom)`,
+ * and `custom` keeps the rendered text of the id's error and nothing else — so the
+ * `DecodeError` does not cross, and a caller that needs its kind calls `fromBase64`
+ * directly, as Rust's non-serde callers call `from_base64`.
+ *
+ * A `JsonError` is a tracked value: whoever takes one out of the `Result` owns it.
  */
-function deserialized<T>(build: () => T): Result<T, DecodeError> {
+function deserialized<T>(build: () => T): Result<T, JsonError> {
   try {
     return Result.Ok(build());
   } catch (e) {
     // Only a decode failure is an error value. Anything else — an ownership fatal above
     // all — says the emitted code is wrong, and must reach the caller as a throw.
-    if (e instanceof DecodeError) return Result.Err(e);
+    if (e instanceof DecodeError) return Result.Err(JsonError.custom(e.message));
     throw e;
   }
 }
@@ -230,6 +235,18 @@ export class EntityId extends Struct {
     return this.toBase64();
   }
 
+  // impl Ord for EntityId
+  //
+  // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
+  // stored here are that u128 big-endian — `Ulid::to_bytes` is `self.0.to_be_bytes()`
+  // — so comparing them in order, most significant first, is the same comparison.
+  compareTo(other: EntityId): number {
+    for (let i = 0; i < 16; i++) {
+      if (this.bytes[i] !== other.bytes[i]) return this.bytes[i] - other.bytes[i];
+    }
+    return 0;
+  }
+
   // impl PartialEq for EntityId
   equals(other: EntityId): boolean {
     for (let i = 0; i < 16; i++) {
@@ -255,7 +272,7 @@ export class EntityId extends Struct {
   }
 
   // impl<'de> Deserialize<'de> for EntityId (human-readable branch)
-  static fromJson(value: unknown): Result<EntityId, DecodeError> {
+  static fromJson(value: unknown): Result<EntityId, JsonError> {
     return deserialized(() => EntityId.fromBase64(jsonString(value)));
   }
 
@@ -356,7 +373,7 @@ export class EventId extends Struct {
   }
 
   // impl<'de> Deserialize<'de> for EventId (human-readable branch)
-  static fromJson(value: unknown): Result<EventId, DecodeError> {
+  static fromJson(value: unknown): Result<EventId, JsonError> {
     return deserialized(() => EventId.fromBase64(jsonString(value)));
   }
 
@@ -407,6 +424,18 @@ export class TransactionId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // impl Ord for TransactionId
+  //
+  // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
+  // stored here are that u128 big-endian — `Ulid::to_bytes` is `self.0.to_be_bytes()`
+  // — so comparing them in order, most significant first, is the same comparison.
+  compareTo(other: TransactionId): number {
+    for (let i = 0; i < 16; i++) {
+      if (this._0[i] !== other._0[i]) return this._0[i] - other._0[i];
+    }
+    return 0;
+  }
+
   equals(other: TransactionId): boolean {
     for (let i = 0; i < 16; i++) {
       if (this._0[i] !== other._0[i]) return false;
@@ -422,7 +451,7 @@ export class TransactionId extends Struct {
     return ulidBytesToString(this._0);
   }
 
-  static fromJson(value: unknown): Result<TransactionId, DecodeError> {
+  static fromJson(value: unknown): Result<TransactionId, JsonError> {
     return deserialized(() => TransactionId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 
@@ -462,6 +491,18 @@ export class RequestId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // impl Ord for RequestId
+  //
+  // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
+  // stored here are that u128 big-endian — `Ulid::to_bytes` is `self.0.to_be_bytes()`
+  // — so comparing them in order, most significant first, is the same comparison.
+  compareTo(other: RequestId): number {
+    for (let i = 0; i < 16; i++) {
+      if (this._0[i] !== other._0[i]) return this._0[i] - other._0[i];
+    }
+    return 0;
+  }
+
   equals(other: RequestId): boolean {
     for (let i = 0; i < 16; i++) {
       if (this._0[i] !== other._0[i]) return false;
@@ -477,7 +518,7 @@ export class RequestId extends Struct {
     return ulidBytesToString(this._0);
   }
 
-  static fromJson(value: unknown): Result<RequestId, DecodeError> {
+  static fromJson(value: unknown): Result<RequestId, JsonError> {
     return deserialized(() => RequestId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 
@@ -528,6 +569,18 @@ export class QueryId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // impl Ord for QueryId
+  //
+  // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
+  // stored here are that u128 big-endian — `Ulid::to_bytes` is `self.0.to_be_bytes()`
+  // — so comparing them in order, most significant first, is the same comparison.
+  compareTo(other: QueryId): number {
+    for (let i = 0; i < 16; i++) {
+      if (this._0[i] !== other._0[i]) return this._0[i] - other._0[i];
+    }
+    return 0;
+  }
+
   equals(other: QueryId): boolean {
     for (let i = 0; i < 16; i++) {
       if (this._0[i] !== other._0[i]) return false;
@@ -543,7 +596,7 @@ export class QueryId extends Struct {
     return ulidBytesToString(this._0);
   }
 
-  static fromJson(value: unknown): Result<QueryId, DecodeError> {
+  static fromJson(value: unknown): Result<QueryId, JsonError> {
     return deserialized(() => QueryId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 
@@ -583,6 +636,18 @@ export class UpdateId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // impl Ord for UpdateId
+  //
+  // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
+  // stored here are that u128 big-endian — `Ulid::to_bytes` is `self.0.to_be_bytes()`
+  // — so comparing them in order, most significant first, is the same comparison.
+  compareTo(other: UpdateId): number {
+    for (let i = 0; i < 16; i++) {
+      if (this._0[i] !== other._0[i]) return this._0[i] - other._0[i];
+    }
+    return 0;
+  }
+
   equals(other: UpdateId): boolean {
     for (let i = 0; i < 16; i++) {
       if (this._0[i] !== other._0[i]) return false;
@@ -598,7 +663,7 @@ export class UpdateId extends Struct {
     return ulidBytesToString(this._0);
   }
 
-  static fromJson(value: unknown): Result<UpdateId, DecodeError> {
+  static fromJson(value: unknown): Result<UpdateId, JsonError> {
     return deserialized(() => UpdateId.fromBytes(ulidStringToBytes(jsonString(value))));
   }
 

@@ -102,6 +102,22 @@ export function dropOwned(value: unknown): void {
   }
 }
 
+/**
+ * Does this value have no drop glue — is it, in Rust's terms, `Copy`?
+ *
+ * A `Copy` type cannot implement `Drop` in Rust, so re-storing one releases
+ * nothing and is legal. The emitter gives `Copy` types no `drop()`, whatever
+ * class shape it picks for them, so the absence of drop glue — not "is it a
+ * primitive" — is the test. It is what every self-assignment check asks:
+ * anything with drop glue stored over itself is one value with two owners,
+ * which `*guard = *guard` will not compile to.
+ */
+export function isCopyLike(value: unknown): boolean {
+  if (value === null) return true;
+  if (typeof value !== 'object' && typeof value !== 'function') return true;
+  return typeof (value as { drop?: unknown }).drop !== 'function';
+}
+
 export class AkObject {
   readonly #$label: string;
   #dropped = false;

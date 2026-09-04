@@ -1,7 +1,7 @@
 // PROVIDED: Hand-written Clock — complex binary search, iterator patterns, TryInto impls.
 // The transpiler never overwrites this file. Generated clock.ts re-exports this type.
 
-import { Result, Struct } from '@ankurah/base';
+import { JsonError, Result, Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { EventId, deserialized, jsonString } from './id.provided';
 import { DecodeError } from './error';
@@ -171,7 +171,7 @@ export class Clock extends Struct {
     return this._0.map(id => id.toJSON());
   }
 
-  static fromJson(value: unknown): Result<Clock, DecodeError> {
+  static fromJson(value: unknown): Result<Clock, JsonError> {
     return deserialized(() => {
       if (!Array.isArray(value)) throw DecodeError.invalidFormat();
       const ids: EventId[] = [];
