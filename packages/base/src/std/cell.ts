@@ -7,7 +7,9 @@
 //
 // See port/ownership.md and port/ownership/provided-types.md for API spec.
 
-import { Drop } from './drop.ts';
+import { DropGuard } from './drop.ts';
+import { ReadGuard, WriteGuard, dropContainer } from './guard.ts';
+import type { Slot } from '../object.ts';
 
 // ── BorrowState ──────────────────────────────────────────────────────────
 
@@ -19,18 +21,18 @@ type BorrowState =
 // ── RefCell<T> ───────────────────────────────────────────────────────────
 //
 // 1:1 equivalent of Rust's std::cell::RefCell<T>. Runtime borrow checking —
-// panics on double mutable borrow, just like Rust.
-//
-// Returns Ref<T> / RefMut<T> Drop guards (used with `using`).
+// a conflicting borrow panics, just as it does in Rust.
 //
 // Usage:
 //   const cell = new RefCell(value);
-//   { using guard = cell.borrowMut(); guard.value.field = 42; }
-//   // borrow released on dispose
+//   const guard = cell.borrowMut();
+//   guard.value.field = 42;
+//   guard.drop(); // borrow released
 
 export class RefCell<T> {
-  readonly #value: T;
+  #value: T;
   #state: BorrowState = { kind: 'not_borrowed' };
+  readonly #guard: DropGuard;
   readonly #onMutRelease: (() => void) | undefined;
   readonly #label: string;
 
@@ -43,38 +45,41 @@ export class RefCell<T> {
     this.#value = value;
     this.#onMutRelease = options?.onMutRelease;
     this.#label = options?.label ?? 'RefCell';
+    this.#guard = new DropGuard(this, this.#label);
+  }
+
+  #slot(): Slot<T> {
+    return {
+      get: () => this.#value,
+      set: (v) => { this.#value = v; },
+    };
   }
 
   /**
-   * Shared read-only borrow. Returns a Ref<T> Drop guard.
-   * Throws if a mutable borrow is active.
-   * Multiple shared borrows can be active simultaneously.
+   * Shared read-only borrow. Throws if a mutable borrow is active — a borrow
+   * conflict panics in Rust too. Multiple shared borrows can be live at once.
    */
   borrow(): Ref<T> {
+    this.#guard.assertNotDropped();
     if (this.#state.kind === 'mut_borrowed') {
       throw new Error(`${this.#label} already mutably borrowed — cannot take shared borrow`);
     }
-    if (this.#state.kind === 'shared') {
-      this.#state = { kind: 'shared', count: this.#state.count + 1 };
-    } else {
-      this.#state = { kind: 'shared', count: 1 };
-    }
-    return new Ref<T>(this.#value, () => {
+    this.#state = {
+      kind: 'shared',
+      count: this.#state.kind === 'shared' ? this.#state.count + 1 : 1,
+    };
+    return new Ref<T>(this.#slot(), () => {
       if (this.#state.kind === 'shared') {
-        if (this.#state.count <= 1) {
-          this.#state = { kind: 'not_borrowed' };
-        } else {
-          this.#state = { kind: 'shared', count: this.#state.count - 1 };
-        }
+        this.#state = this.#state.count <= 1
+          ? { kind: 'not_borrowed' }
+          : { kind: 'shared', count: this.#state.count - 1 };
       }
     }, this.#label);
   }
 
-  /**
-   * Exclusive mutable borrow. Returns a RefMut<T> Drop guard.
-   * Throws if any borrow (shared or mutable) is active.
-   */
+  /** Exclusive mutable borrow. Throws if any borrow is active. */
   borrowMut(): RefMut<T> {
+    this.#guard.assertNotDropped();
     if (this.#state.kind !== 'not_borrowed') {
       if (this.#state.kind === 'mut_borrowed') {
         throw new Error(`${this.#label} already mutably borrowed`);
@@ -82,68 +87,45 @@ export class RefCell<T> {
       throw new Error(`${this.#label} already shared-borrowed (count: ${this.#state.count})`);
     }
     this.#state = { kind: 'mut_borrowed' };
-    return new RefMut<T>(this.#value, () => {
+    return new RefMut<T>(this.#slot(), () => {
       this.#state = { kind: 'not_borrowed' };
       this.#onMutRelease?.();
     }, this.#label);
   }
-}
 
-// ── Ref<T> ───────────────────────────────────────────────────────────────
-
-/**
- * Shared read-only borrow guard for RefCell<T>.
- * Equivalent to Rust's std::cell::Ref<T>.
- */
-export class Ref<T> extends Drop {
-  readonly #value: T;
-  readonly #release: () => void;
-
-  /** @internal */
-  constructor(value: T, release: () => void, label: string) {
-    super();
-    this.#value = value;
-    this.#release = release;
-  }
-
-  get value(): T {
-    this.assertNotDropped();
-    return this.#value;
-  }
-
+  /**
+   * Dropping a RefCell<T> in Rust drops the T inside it. The value sits in a
+   * #private field the owning object's cascade cannot see, so the RefCell drops
+   * it. A live borrow means the emitted drop scope is wrong, and releasing the
+   * value under it would be the corruption Rust prevents.
+   */
   drop(): void {
-    this.#release();
+    dropContainer(
+      this,
+      this.#guard,
+      this.#label,
+      () => {
+        if (this.#state.kind === 'mut_borrowed') return 'RefMut';
+        if (this.#state.kind === 'shared') return 'Ref';
+        return null;
+      },
+      () => this.#value,
+    );
   }
 }
 
-// ── RefMut<T> ────────────────────────────────────────────────────────────
-
-/**
- * Exclusive mutable borrow guard for RefCell<T>.
- * Equivalent to Rust's std::cell::RefMut<T>.
- */
-export class RefMut<T> extends Drop {
-  #value: T;
-  readonly #release: () => void;
-
+/** Shared read-only borrow guard. Equivalent to Rust's std::cell::Ref<T>. */
+export class Ref<T> extends ReadGuard<T> {
   /** @internal */
-  constructor(value: T, release: () => void, label: string) {
-    super();
-    this.#value = value;
-    this.#release = release;
+  constructor(slot: Slot<T>, release: () => void, label: string) {
+    super(slot, release, `Ref on ${label}`);
   }
+}
 
-  get value(): T {
-    this.assertNotDropped();
-    return this.#value;
-  }
-
-  set value(v: T) {
-    this.assertNotDropped();
-    this.#value = v;
-  }
-
-  drop(): void {
-    this.#release();
+/** Exclusive mutable borrow guard. Equivalent to Rust's std::cell::RefMut<T>. */
+export class RefMut<T> extends WriteGuard<T> {
+  /** @internal */
+  constructor(slot: Slot<T>, release: () => void, label: string) {
+    super(slot, release, `RefMut on ${label}`);
   }
 }

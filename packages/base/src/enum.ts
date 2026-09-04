@@ -1,6 +1,6 @@
 // TS-ONLY: Base class for ported Rust enums
 import { AkObject } from './object.ts';
-import { disposeSymbol } from './drop_registry.ts';
+import { fatalNonExhaustiveMatch } from './drop_registry.ts';
 
 /**
  * V = variant map: { VariantName: DataType, ... }
@@ -15,66 +15,62 @@ import { disposeSymbol } from './drop_registry.ts';
  *     static StateSnapshot = (v: DeltaContentV['StateSnapshot']) => new DeltaContent('StateSnapshot', v);
  *     static EventBridge = (v: DeltaContentV['EventBridge']) => new DeltaContent('EventBridge', v);
  *   }
+ *
+ * The variant and its payload are held privately and reached through getters, so
+ * that reading either one goes through the same liveness check as everything
+ * else: a dropped or moved enum cannot be read behind the runtime's back. The
+ * getters keep property syntax, so emitted code still says `e.type` and `e.value`.
  */
 export class Enum<V extends Record<string, object> = Record<string, object>> extends AkObject {
-  readonly type: string & keyof V;
-  readonly value: V[keyof V];
+  readonly #type: string & keyof V;
+  readonly #value: V[keyof V];
 
   constructor(type: string & keyof V, value: V[keyof V]) {
     super();
-    this.type = type;
-    this.value = value;
+    this.#type = type;
+    this.#value = value;
   }
 
+  get type(): string & keyof V {
+    this.assertNotDropped();
+    return this.#type;
+  }
+
+  get value(): V[keyof V] {
+    this.assertNotDropped();
+    return this.#value;
+  }
+
+  /**
+   * Borrows: `match` reads the payload and leaves this enum whole, which is what
+   * the emitter needs where the Rust source matches on a reference. A consuming
+   * form, for `match self`, comes separately.
+   */
   match<R>(arms: { [K in keyof V]: (value: V[K]) => R }): R {
-    const arm = (arms as any)[this.type];
-    if (!arm) throw new Error(`Non-exhaustive match: missing arm for '${this.type}'`);
-    return arm(this.value);
+    this.assertNotDropped();
+    const arm = (arms as any)[this.#type];
+    if (!arm) fatalNonExhaustiveMatch(this.label, String(this.#type));
+    return arm(this.#value);
   }
 
   is<K extends keyof V>(variant: K): this is Enum<V> & { type: K; value: V[K] } {
-    return this.type === variant;
+    this.assertNotDropped();
+    return this.#type === variant;
   }
 
-  override drop(): void {
-    if (this.isDropped) return;
-    super.drop();
-    // Cascade disposal into the variant's value object
-    for (const key of Object.getOwnPropertyNames(this.value)) {
-      const field = (this.value as any)[key];
-      if (field == null) continue;
-      if (typeof field.drop === 'function') {
-        field.drop();
-      } else if (Array.isArray(field)) {
-        for (const item of field) {
-          if (item != null && typeof item.drop === 'function') {
-            item.drop();
-          } else if (Array.isArray(item)) {
-            for (const inner of item) {
-              if (inner != null && typeof inner.drop === 'function') {
-                inner.drop();
-              }
-            }
-          }
-        }
-      } else if (field instanceof Map) {
-        for (const mapVal of field.values()) {
-          if (mapVal == null) continue;
-          if (typeof mapVal.drop === 'function') {
-            mapVal.drop();
-          } else if (Array.isArray(mapVal)) {
-            for (const item of mapVal) {
-              if (item != null && typeof item.drop === 'function') {
-                item.drop();
-              }
-            }
-          }
-        }
-      }
-    }
+  // The payload is #private, so the cascade cannot see it by walking properties.
+  protected override ownedFields(): unknown[] {
+    return [...super.ownedFields(), this.#value];
   }
 
+  /**
+   * Deliberately does not assert liveness. Rendering a value is what a panic
+   * message and a debugger do, and both run precisely when something has gone
+   * wrong — so this reports the state rather than raising a second fault on top
+   * of the first.
+   */
   toString(): string {
-    return `${this.constructor.name}::${this.type}`;
+    const state = this.isMoved ? ' (moved)' : this.isDropped ? ' (dropped)' : '';
+    return `${this.constructor.name}::${this.#type}${state}`;
   }
 }

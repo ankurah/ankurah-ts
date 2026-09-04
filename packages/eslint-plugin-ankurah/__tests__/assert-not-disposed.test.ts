@@ -115,6 +115,27 @@ ruleTester.run('assert-not-disposed', rule, {
         }
       `,
     },
+    // Static methods are excluded — there is no instance to assert on
+    {
+      code: `
+        class MyService extends Drop {
+          static make() {
+            return new MyService();
+          }
+        }
+      `,
+    },
+    // ... including on a DropGuard-based class
+    {
+      code: `
+        class MyService {
+          guard: DropGuard;
+          static make() {
+            return new MyService();
+          }
+        }
+      `,
+    },
   ],
   invalid: [
     // Public method without assertNotDropped

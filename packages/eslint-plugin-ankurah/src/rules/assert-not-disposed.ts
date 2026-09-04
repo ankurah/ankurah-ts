@@ -96,6 +96,9 @@ function hasDropGuardField(node: TSESTree.ClassDeclaration | TSESTree.ClassExpre
 
 function isPublicMethod(member: TSESTree.ClassElement): member is TSESTree.MethodDefinition {
   if (member.type !== AST_NODE_TYPES.MethodDefinition) return false;
+  // A static has no instance to assert on — `this` is the class, which carries
+  // no drop state — so a static factory like `RwLock.new` cannot satisfy the rule.
+  if (member.static) return false;
   if (member.kind === 'get' || member.kind === 'set') return true; // getters/setters are public API
   if (member.kind === 'constructor') return false;
   if (member.accessibility === 'private' || member.accessibility === 'protected') return false;

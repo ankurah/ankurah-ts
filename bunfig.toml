@@ -1,0 +1,9 @@
+# Preload the ownership test hooks into every suite in the repo.
+#
+# A fatal ownership error latches the runtime so that a host which swallowed the
+# throw cannot keep running over corrupted ownership. That latch has to be reset
+# between tests, or the first fatal fails every test after it and the failure
+# lands nowhere near the bug. The preloaded module clears the latch before each
+# test and fails any test that raised a fatal and swallowed it.
+[test]
+preload = ["./packages/base/src/testing.ts"]

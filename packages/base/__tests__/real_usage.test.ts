@@ -1,6 +1,6 @@
 // TS-ONLY: Validate @ankurah/base types against real ankurah patterns
 import { describe, test, expect } from 'bun:test';
-import { Struct, Enum, Drop, Arc, Weak, Borrow, BorrowMut, Mutex, disposeSymbol } from '../src/index.ts';
+import { Struct, Enum, Drop, Arc, Mutex, disposeSymbol } from '../src/index.ts';
 
 // ══════════════════════════════════════════════════════════════════════
 // Mock types standing in for real ankurah types
@@ -33,8 +33,9 @@ class ReactorSubInner extends Drop {
     this.broadcast = new Broadcast();
   }
 
-  drop(): void {
-    // impl Drop — unsubscribe from reactor
+  // impl Drop — unsubscribe from the reactor. AkObject.drop() runs this before
+  // dropping the fields, so subscriptionId is still readable here.
+  protected override onDrop(): void {
     unsubscribedIds.push(this.subscriptionId);
   }
 }
@@ -235,9 +236,17 @@ describe('Entity (Struct + Arc + Mutex, no impl Drop)', () => {
     const e = Entity.create('e-3', 'albums');
     const inner = e.inner.value;
     const broadcast = inner.broadcast;
+
+    // Take the state out through a lock, then release the lock — an Entity
+    // dropped while a guard on its state is outstanding is a fatal bug.
+    const guard = inner.state.lock();
+    const state = guard.value;
+    guard.drop();
+
     e[disposeSymbol]();
     expect(inner.isDropped).toBe(true);
     expect(broadcast.isDropped).toBe(true);
+    expect(state.isDropped).toBe(true); // the cascade reached through the Mutex
   });
 });
 
@@ -399,6 +408,9 @@ describe('ProtoEvent (plain data Struct, no Drop)', () => {
 
     const evt2 = new ProtoEvent('posts', 'e-2', new Clock(['ev-1']));
     expect(evt2.isEntityCreate()).toBe(false);
+
+    evt[disposeSymbol](); // cascades into its Clock and OperationSet
+    evt2[disposeSymbol]();
   });
 
   test('cascade drops owned Struct fields', () => {
@@ -409,6 +421,7 @@ describe('ProtoEvent (plain data Struct, no Drop)', () => {
     evt[disposeSymbol]();
     expect(parent.isDropped).toBe(true);
     expect(evt.operations.isDropped).toBe(true);
+    ops.drop(); // ProtoEvent builds its own OperationSet, so this local is unowned
   });
 
   test('using block for scoped lifetime', () => {
@@ -429,6 +442,7 @@ describe('NodeMessage (proto Enum with methods)', () => {
 
     expect(msg.type).toBe('Request');
     expect(msg.toString()).toBe('Request: req-1');
+    msg[disposeSymbol](); // cascades into req
   });
 
   test('match over all variants', () => {
@@ -441,12 +455,14 @@ describe('NodeMessage (proto Enum with methods)', () => {
       UnsubscribeQuery: (v) => `unsub:${v.queryId}`,
     });
     expect(result).toBe('unsub:q-42');
+    msg[disposeSymbol]();
   });
 
   test('is() narrows variant', () => {
     const msg = NodeMessage.Response(new NodeResponse('req-99'));
     expect(msg.is('Response')).toBe(true);
     expect(msg.is('Request')).toBe(false);
+    msg[disposeSymbol](); // cascades into the NodeResponse
   });
 
   test('cascade drops struct variant data', () => {
@@ -464,8 +480,13 @@ describe('NodeMessage (proto Enum with methods)', () => {
   });
 
   test('Display impl via toString', () => {
-    expect(NodeMessage.Update('u-1').toString()).toBe('Update: u-1');
-    expect(NodeMessage.UpdateAck('a-1').toString()).toBe('UpdateAck: a-1');
+    const update = NodeMessage.Update('u-1');
+    expect(update.toString()).toBe('Update: u-1');
+    update[disposeSymbol]();
+
+    const ack = NodeMessage.UpdateAck('a-1');
+    expect(ack.toString()).toBe('UpdateAck: a-1');
+    ack[disposeSymbol]();
   });
 });
 
