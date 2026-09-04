@@ -1,7 +1,6 @@
 //! Control flow translation — if/else, if-let, return position handling
 
 use crate::body::{BodyTranslator, translate_pat, indent};
-use crate::name_map;
 use crate::match_expr;
 
 /// Translate an if expression (handles if-let patterns)
@@ -38,7 +37,13 @@ pub fn translate_if(if_expr: &syn::ExprIf, t: &BodyTranslator) -> String {
     format!("if ({}) {{\n{}}}{}", cond, indent(&then_body), else_part)
 }
 
-/// Translate `if let` pattern
+/// Translate `if let PAT = e { .. } else { .. }`.
+///
+/// The scrutinee is read once, into a temporary, and both the test and the
+/// binding are written against that. Writing the expression twice called it
+/// twice: `if let Some(ordering) = comparison.step().await?` stepped the
+/// comparison to make the test and stepped it again to bind the result, which
+/// is a different program from the one Rust was given.
 fn translate_if_let(
     let_expr: &syn::ExprLet,
     then_branch: &syn::Block,
@@ -52,8 +57,21 @@ fn translate_if_let(
     let scrutinee_ty = t.scrutinee_type(&let_expr.expr);
     let bound = t.enter_pattern(&let_expr.pat, scrutinee_ty.as_ref());
     let then_body = t.translate_block(then_branch);
-    let guard_str = guard.map(|g| format!(" && {}", t.expr(g))).unwrap_or_default();
+    let guard_str = guard.map(|g| t.expr(g)).unwrap_or_default();
     drop(bound);
+
+    // `if let Ok(guard) = lock.lock()`. The port's `lock()` and `read()` hand
+    // back the guard itself, so there is no `Ok` to test — the same emission
+    // fact as `.unwrap()` on a `LockResult` writing nothing. The engine typed
+    // the scrutinee as the `Result` Rust says it is; this is what the runtime
+    // makes of it.
+    if let syn::Pat::TupleStruct(ts) = &*let_expr.pat {
+        let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+        if name == "Ok" && t.is_lock_result_expr(&let_expr.expr) {
+            let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
+            return format!("const {} = {};\n{}", var, scrutinee, then_body);
+        }
+    }
 
     let else_part = if let Some((_, else_expr)) = else_branch {
         match else_expr.as_ref() {
@@ -68,69 +86,24 @@ fn translate_if_let(
         String::new()
     };
 
-    match &*let_expr.pat {
-        syn::Pat::TupleStruct(ts) => {
-            let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-            match name.as_str() {
-                "Some" => {
-                    let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
-                    if guard_str.is_empty() {
-                        format!("if ({} != null) {{\n  const {} = {};\n{}}}{}",
-                            scrutinee, var, scrutinee, indent(&then_body), else_part)
-                    } else {
-                        // Let-chain: bind the variable, then check the guard
-                        format!("if ({} != null) {{\n  const {} = {};\n  if ({}) {{\n{}\n  }}\n}}{}",
-                            scrutinee, var, scrutinee, guard_str.trim_start_matches(" && "),
-                            indent(&indent(&then_body)), else_part)
-                    }
-                }
-                // `if let Ok(v) = r` is a test, not an unwrapping: without it
-                // the branch runs whatever `r` turned out to be, and a fallible
-                // call becomes an unconditional one.
-                //
-                // The exception is the lock-guard shim: the port's `read()`
-                // yields the guard where Rust yields a `LockResult`, so the `Ok`
-                // the source writes has nothing to test and the binding is the
-                // guard itself (spec 4.4, deleted when the stubs land).
-                "Ok" | "Err" => {
-                    let var = ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string());
-                    if t.is_lock_guard_expr(&let_expr.expr) {
-                        return format!("const {} = {};\n{}", var, scrutinee, then_body);
-                    }
-                    let (test, take) = if name == "Ok" {
-                        ("isOk", "unwrap")
-                    } else {
-                        ("isErr", "unwrapErr")
-                    };
-                    format!(
-                        "if ({}.{}()) {{\n  const {} = {}.{}();\n{}}}{}",
-                        scrutinee, test, var, scrutinee, take, indent(&then_body), else_part
-                    )
-                }
-                _ => {
-                    let vars: Vec<String> = ts.elems.iter().map(translate_pat).collect();
-                    format!("if ({}.is('{}')) {{\n  const {{ {} }} = {}.value;\n{}}}{}",
-                        scrutinee, name, vars.join(", "), scrutinee, indent(&then_body), else_part)
-                }
-            }
-        }
-        syn::Pat::Struct(s) => {
-            let name = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-            let fields: Vec<String> = s.fields.iter().map(|f| {
-                match &f.member {
-                    syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                    syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                }
-            }).collect();
-            format!("if ({}.is('{}')) {{\n  const {{ {} }} = {}.value;\n{}}}{}",
-                scrutinee, name, fields.join(", "), scrutinee, indent(&then_body), else_part)
-        }
-        _ => {
-            let pat = translate_pat(&let_expr.pat);
-            format!("if (/* let {} = {} */) {{\n{}}}{}",
-                pat, scrutinee, indent(&then_body), else_part)
-        }
-    }
+    let subject = t.fresh_temp();
+    let (test, bind) = t.pattern_test(&subject, &let_expr.pat);
+    // A guard is written after the pattern's names, because it reads them.
+    let body = if guard_str.is_empty() {
+        format!("{}{}", bind, then_body)
+    } else {
+        format!("{}if ({}) {{\n{}}}\n", bind, guard_str, indent(&then_body))
+    };
+    // The temporary is scoped to the statement, so an `if let` beside another
+    // does not see the first one's subject.
+    format!(
+        "{{\n  const {} = {};\n  if ({}) {{\n{}  }}{}\n}}",
+        subject,
+        scrutinee,
+        test,
+        indent(&indent(&body)),
+        else_part
+    )
 }
 
 /// Translate expression in return position with pending drops

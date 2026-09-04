@@ -187,6 +187,20 @@ pub fn emit_enum(
     out.push_str("}\n\n");
 }
 
+/// What a caller sees an `async fn` return.
+///
+/// Every `async fn` returns a promise, including one that returns nothing:
+/// `async f(): void` is not TypeScript, `async f(): Promise<void>` is. The
+/// unit case used to be left alone, so every async method returning `()` was
+/// emitted with a type TypeScript rejects.
+fn async_return(is_async: bool, ret: &str) -> String {
+    if is_async {
+        format!("Promise<{}>", ret)
+    } else {
+        ret.to_string()
+    }
+}
+
 pub fn emit_trait(out: &mut String, t: &TraitInfo) {
     let export = if t.is_pub { "export " } else { "" };
     let keyword = if t.has_default_impls { "abstract class" } else { "interface" };
@@ -194,29 +208,35 @@ pub fn emit_trait(out: &mut String, t: &TraitInfo) {
     out.push_str(&format!("{}{} {}{} {{\n", export, keyword, t.name, t.generics));
 
     for method in &t.methods {
-        let async_kw = if method.is_async { "async " } else { "" };
         let params = format_params(&method.params);
+        let ret = async_return(method.is_async, &method.return_type);
         // A method the trait wrote a body for is emitted with it; one it only
         // declared stays abstract, so an implementor that omits it is a
         // TypeScript error rather than a runtime throw.
+        //
+        // `async` is how a body is written, not part of what a caller may pass
+        // or expect, and TypeScript rejects it on a declaration — on an
+        // `abstract` member and on an interface member alike. The promise in the
+        // return type is what the declaration has to say, and it says it.
         match (&method.body_ts, t.has_default_impls) {
             (Some(body), _) => {
+                let async_kw = if method.is_async { "async " } else { "" };
                 out.push_str(&format!(
                     "  {}{}({}): {} {{\n{}  }}\n",
                     async_kw,
                     method.ts_name,
                     params,
-                    method.return_type,
+                    ret,
                     indent_body(body)
                 ));
             }
             (None, true) => out.push_str(&format!(
-                "  abstract {}{}({}): {};\n",
-                async_kw, method.ts_name, params, method.return_type
+                "  abstract {}({}): {};\n",
+                method.ts_name, params, ret
             )),
             (None, false) => out.push_str(&format!(
-                "  {}{}({}): {};\n",
-                async_kw, method.ts_name, params, method.return_type
+                "  {}({}): {};\n",
+                method.ts_name, params, ret
             )),
         }
     }
@@ -228,11 +248,7 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
     let export = if f.is_pub { "export " } else { "" };
     let async_kw = if f.is_async { "async " } else { "" };
     let params = format_params(&f.params);
-    let ret = if f.is_async && f.return_type != "void" {
-        format!("Promise<{}>", f.return_type)
-    } else {
-        f.return_type.clone()
-    };
+    let ret = async_return(f.is_async, &f.return_type);
 
     let body = if let Some(body_ts) = &f.body_ts {
         body_ts.lines()
@@ -556,12 +572,10 @@ fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
         method.generics.clone()
     };
     let params = format_params_filtered(&method.params, self_type);
-    let ret = resolve_self_type(&method.return_type, self_type);
-    let ret = if method.is_async && ret != "void" {
-        format!("Promise<{}>", ret)
-    } else {
-        ret
-    };
+    let ret = async_return(
+        method.is_async,
+        &resolve_self_type(&method.return_type, self_type),
+    );
 
     let body = if let Some(body_ts) = &method.body_ts {
         let ts = body_ts.clone();

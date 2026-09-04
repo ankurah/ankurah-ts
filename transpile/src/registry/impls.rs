@@ -18,7 +18,7 @@ pub struct ImplId(pub u32);
 
 /// One `T: Trait` requirement, written inline on the impl's generics or in its
 /// `where` clause. The two mean the same thing and are kept together.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bound {
     pub subject: Ty,
     pub trait_ref: TraitRef,
@@ -61,6 +61,26 @@ impl ImplDef {
     /// Match one of this impl's written types against a concrete one.
     pub fn match_written(&self, pattern: &Ty, concrete: &Ty) -> Option<Subst> {
         self.match_pattern(pattern, concrete)
+    }
+
+    /// Match the trait this impl implements, argument by argument, against the
+    /// trait reference a bound requires: `impl<T> FromIterator<T> for Vec<T>`
+    /// against `FromIterator<Listener>` binds `T`.
+    pub fn match_written_args(&self, implemented: &TraitRef, want: &TraitRef) -> Option<Subst> {
+        if implemented.id != want.id || implemented.args.len() != want.args.len() {
+            return None;
+        }
+        let mut subst = Subst::new();
+        for (pattern, concrete) in implemented.args.iter().zip(&want.args) {
+            let found = self.match_pattern(pattern, concrete)?;
+            for (name, ty) in found {
+                if subst.get(&name).is_some_and(|existing| *existing != ty) {
+                    return None;
+                }
+                subst.insert(name, ty);
+            }
+        }
+        Some(subst)
     }
 
     /// Match one of this impl's written types against a concrete one, with the

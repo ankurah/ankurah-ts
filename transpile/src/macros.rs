@@ -27,10 +27,24 @@ pub fn translate_macro(mac: &syn::Macro) -> String {
             translate_write_from_tokens(&mac.tokens)
         }
         "panic" | "unreachable" => format!("throw new Error({})", translate_format_from_tokens(&mac.tokens)),
-        "assert" => {
-            let tokens = mac.tokens.to_string();
-            format!("if (!({})) throw new Error('assertion failed')", tokens)
-        }
+        // The condition is Rust, so it is translated as Rust. Printing the
+        // token stream put the source back out verbatim — `event_ids . contains
+        // (& 7)` — which is neither TypeScript nor what the assertion meant.
+        "assert" | "debug_assert" => match parse_exprs_from_tokens(&mac.tokens) {
+            Ok(args) if !args.is_empty() => {
+                let condition = body::translate_expr(&args[0]);
+                // `assert!(c, "..", x)` carries its own message; without one the
+                // failure says only that the assertion failed, as Rust's does.
+                let message = if args.len() > 1 {
+                    let tail = args[1..].iter().map(|e| quote::quote!(#e));
+                    translate_format_from_tokens(&quote::quote!(#(#tail),*))
+                } else {
+                    "'assertion failed'".to_string()
+                };
+                format!("if (!({})) throw new Error({})", condition, message)
+            }
+            _ => format!("/* {}!({}) */", name, mac.tokens),
+        },
         "assert_eq" => {
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 if args.len() >= 2 {

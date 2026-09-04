@@ -91,6 +91,13 @@ pub struct BodyTranslator<'a> {
     /// has nothing left to do, and re-declaring one would shadow the value that
     /// was threaded in.
     threaded: std::cell::RefCell<Vec<String>>,
+    /// How many temporaries this body has taken, so that one `if let` nested in
+    /// another does not read both scrutinees into the same name.
+    temporaries: std::cell::Cell<usize>,
+    /// Per block, the shadows it emitted under a fresh identifier: the name Rust
+    /// wrote and the name TypeScript got. Drop insertion reads it, because a
+    /// value has to be dropped under the name it was declared with.
+    shadows: std::cell::RefCell<Vec<Vec<(String, String)>>>,
 }
 
 impl<'a> BodyTranslator<'a> {
@@ -100,6 +107,8 @@ impl<'a> BodyTranslator<'a> {
             types: None,
             inline_module_names: vec![],
             threaded: std::cell::RefCell::new(Vec::new()),
+            temporaries: std::cell::Cell::new(0),
+            shadows: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -109,6 +118,8 @@ impl<'a> BodyTranslator<'a> {
             types: Some(std::cell::RefCell::new(tc)),
             inline_module_names: vec![],
             threaded: std::cell::RefCell::new(Vec::new()),
+            temporaries: std::cell::Cell::new(0),
+            shadows: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -209,13 +220,35 @@ impl<'a> BodyTranslator<'a> {
         tc.borrow().iteration_item(&ty)
     }
 
-    /// Is this expression one of the lock guards the port's runtime yields
-    /// where Rust yields a `LockResult`? The `Ok` written around it has nothing
-    /// to test.
-    pub fn is_lock_guard_expr(&self, expr: &syn::Expr) -> bool {
+    /// Note the function a call landed on, for the oracle comparison, without
+    /// translating it. A call the engine resolved and the runtime then writes as
+    /// nothing is still a resolution, and leaving it unrecorded made the engine
+    /// look as though it had no answer.
+    fn record_resolution(&self, call: &syn::ExprMethodCall, method: &str) {
+        let Some(tc) = &self.types else { return };
+        let tc = tc.borrow();
+        let Ok(found) =
+            tc.resolve_method_call_with(&call.receiver, method, call.turbofish.as_ref())
+        else {
+            return;
+        };
+        crate::trace::record(
+            tc.registry,
+            &tc.sink.file(),
+            syn::spanned::Spanned::span(&call.receiver),
+            method,
+            &found,
+        );
+    }
+
+    /// Is this expression a `LockResult`? The port's lock methods hand back the
+    /// guard, so the `Ok` the Rust source writes around one has nothing to test.
+    pub fn is_lock_result_expr(&self, expr: &syn::Expr) -> bool {
         let Some(tc) = &self.types else { return false };
         let tc = tc.borrow();
-        tc.resolve_expr(expr).map(|ty| tc.is_lock_guard(&ty)).unwrap_or(false)
+        tc.resolve_expr(expr)
+            .map(|ty| tc.is_lock_result(&ty))
+            .unwrap_or(false)
     }
 
     /// The type of the value a `match` or an `if let` takes apart. `None` means
@@ -329,30 +362,38 @@ impl<'a> BodyTranslator<'a> {
             ownership::collect_direct_vars(expr, &mut returned_vars);
         }
 
+        // Every `let` in this block is translated before the drops are written,
+        // because a `let` that shadows another is emitted under a fresh
+        // identifier and that is the name its value has to be dropped under.
+        // Reading the names off the patterns instead dropped the outer `staged`
+        // twice and the inner `staged_1` never.
+        self.shadows.borrow_mut().push(Vec::new());
+        let last = stmts.len().saturating_sub(1);
+        for stmt in stmts.iter().take(last) {
+            out.push_str(&self.stmt(stmt));
+        }
+        let renamed = self.shadows.borrow_mut().pop().unwrap_or_default();
+        let locals = rename_shadows(locals, &renamed);
         let drops = ownership::generate_drops(&locals, &returned_vars);
 
-        for (i, stmt) in stmts.iter().enumerate() {
-            let is_last = i == stmts.len() - 1;
-            if is_last {
-                if let syn::Stmt::Expr(expr, None) = stmt {
-                    // Implicit return — drops go before return
-                        out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self, &drops));
-                    out.push('\n');
-                } else {
-                    out.push_str(&self.stmt(stmt));
-                    // Drops after last statement
-                    if !drops.is_empty() {
-                        out.push_str(&drops);
-                    }
-                }
+        if let Some(stmt) = stmts.last() {
+            if let syn::Stmt::Expr(expr, None) = stmt {
+                // Implicit return — drops go before return
+                out.push_str(&control_flow::translate_expr_in_return_position_with(expr, self, &drops));
+                out.push('\n');
             } else {
                 out.push_str(&self.stmt(stmt));
+                // Drops after last statement
+                if !drops.is_empty() {
+                    out.push_str(&drops);
+                }
             }
         }
         out
     }
 
     // ── Statement translation ───────────────────────────────────────
+
 
     fn stmt(&self, stmt: &syn::Stmt) -> String {
         match stmt {
@@ -409,9 +450,18 @@ impl<'a> BodyTranslator<'a> {
                 let ty = self.resolve_local(local);
                 self.bind_pattern_here(&local.pat, ty.as_ref());
                 let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
+                // The temporary holding the `Result` is named after the binding
+                // where the binding is one name. A pattern that takes the value
+                // apart is not a name — `let (cost, events) = f()?` was emitted
+                // as `const _r_[cost, events] = ..`, which is not an identifier —
+                // so those take a fresh one.
+                let temp = match &local.pat {
+                    syn::Pat::Ident(_) => format!("_r_{}", pat),
+                    _ => self.fresh_result_temp(),
+                };
                 return format!(
-                    "const _r_{} = {};\nif (_r_{}.isErr()) return _r_{} as any;\n{} {} = _r_{}.unwrap();\n",
-                    pat, inner, pat, pat, keyword, pat, pat
+                    "const {} = {};\nif ({}.isErr()) return {} as any;\n{} {} = {}.unwrap();\n",
+                    temp, inner, temp, temp, keyword, pat, temp
                 );
             }
 
@@ -461,6 +511,9 @@ impl<'a> BodyTranslator<'a> {
             // fresh identifier and every later use of the name follows it.
             if already_in_scope {
                 let fresh = self.freshen(&pat);
+                if let Some(frame) = self.shadows.borrow_mut().last_mut() {
+                    frame.push((pat.clone(), fresh.clone()));
+                }
                 return format!("{} {} = {};\n", keyword, fresh, expr);
             }
             format!("{} {} = {};\n", keyword, pat, expr)
@@ -473,7 +526,9 @@ impl<'a> BodyTranslator<'a> {
 
     pub fn pat_static(pat: &syn::Pat) -> String {
         match pat {
-            syn::Pat::Ident(ident) => name_map::to_camel_case(&ident.ident.to_string()),
+            syn::Pat::Ident(ident) => {
+                name_map::escape_reserved(&name_map::to_camel_case(&ident.ident.to_string()))
+            }
             syn::Pat::Tuple(tuple) => {
                 let parts: Vec<String> = tuple.elems.iter().map(Self::pat_static).collect();
                 format!("[{}]", parts.join(", "))
@@ -581,6 +636,11 @@ impl<'a> BodyTranslator<'a> {
                         .and_then(|ty| self.types.as_ref().map(|tc| tc.borrow().is_result(&ty)))
                         .unwrap_or(false);
                     if !is_result {
+                        // The call still resolved — `unwrap` on a `LockResult`
+                        // is `Result::unwrap` and hands back the guard — so it
+                        // is recorded before the runtime's own answer is
+                        // written, which is nothing at all.
+                        self.record_resolution(call, &rust_method);
                         return receiver.to_string();
                     }
                 }
@@ -598,7 +658,11 @@ impl<'a> BodyTranslator<'a> {
                 // type the callee is actually written for, not by the method's
                 // name.
                 if let Some(tc) = &self.types {
-                    let found = tc.borrow().resolve_method_call(&call.receiver, &rust_method);
+                    let found = tc.borrow().resolve_method_call_with(
+                        &call.receiver,
+                        &rust_method,
+                        call.turbofish.as_ref(),
+                    );
                     let instead = format!("`{}` is dispatched by name", rust_method);
                     if let Some(found) = self.or_fallback(found, &instead) {
                         let mut recv = receiver.clone();
@@ -790,8 +854,7 @@ impl<'a> BodyTranslator<'a> {
                 let pat = Self::pat_static(&for_loop.pat);
                 let iter = self.expr(&for_loop.expr);
                 // The loop variable is whatever one turn of the sequence hands
-                // out; `iteration_item` says so for the collections the std
-                // surface will declare, and refuses for anything else.
+                // out, which is `IntoIterator::Item` for whatever is iterated.
                 let item = self.iteration_item(&for_loop.expr);
                 let _bindings = self.enter_pattern(&for_loop.pat, item.as_ref());
                 let body = self.translate_block(&for_loop.body);
@@ -943,6 +1006,29 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// A name for a value the emitted code has to hold on to.
+    ///
+    /// A pattern match tests its subject and then takes it apart, and the
+    /// subject has to be the *same* value both times: `if let Some(x) =
+    /// c.step().await?` that writes the call twice calls it twice.
+    pub fn fresh_temp(&self) -> String {
+        let n = self.temporaries.get();
+        self.temporaries.set(n + 1);
+        if n == 0 {
+            "_v".to_string()
+        } else {
+            format!("_v{}", n)
+        }
+    }
+
+    /// A name for the `Result` a `?` produced, where the binding it feeds is a
+    /// pattern rather than a name.
+    fn fresh_result_temp(&self) -> String {
+        let n = self.temporaries.get();
+        self.temporaries.set(n + 1);
+        format!("_r_{}", n)
+    }
+
     /// `while let PAT = e { body }` as a loop that tests each turn.
     ///
     /// The scrutinee is read once per turn into a temporary, tested against the
@@ -955,9 +1041,11 @@ impl<'a> BodyTranslator<'a> {
         let translated = self.translate_block(body);
         drop(_bindings);
 
-        let (test, bind) = self.pattern_test("_v", &let_expr.pat);
+        let subject = self.fresh_temp();
+        let (test, bind) = self.pattern_test(&subject, &let_expr.pat);
         format!(
-            "for (;;) {{\n  const _v = {};\n  if (!({})) break;\n{}{}}}",
+            "for (;;) {{\n  const {} = {};\n  if (!({})) break;\n{}{}}}",
+            subject,
             scrutinee,
             test,
             indent(&bind),
@@ -970,7 +1058,7 @@ impl<'a> BodyTranslator<'a> {
     ///
     /// `Some`/`None` test the nullable the port maps `Option` to, `Ok`/`Err` ask
     /// the `Result`, a variant asks the `Enum`, and a plain name always matches.
-    fn pattern_test(&self, subject: &str, pat: &syn::Pat) -> (String, String) {
+    pub(crate) fn pattern_test(&self, subject: &str, pat: &syn::Pat) -> (String, String) {
         match pat {
             syn::Pat::TupleStruct(ts) => {
                 let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
@@ -1014,6 +1102,49 @@ impl<'a> BodyTranslator<'a> {
                     format!("{}.is('{}')", subject, name),
                     format!("const {{ {} }} = {}.value;\n", fields.join(", "), subject),
                 )
+            }
+            // `(a, b)` tests each element against its own pattern and binds
+            // through all of them; the port writes a Rust tuple as an array.
+            syn::Pat::Tuple(tuple) => {
+                let mut tests = Vec::new();
+                let mut binds = String::new();
+                for (i, element) in tuple.elems.iter().enumerate() {
+                    let (test, bind) = self.pattern_test(&format!("{}[{}]", subject, i), element);
+                    if test != "true" {
+                        tests.push(format!("({})", test));
+                    }
+                    binds.push_str(&bind);
+                }
+                let test = if tests.is_empty() { "true".to_string() } else { tests.join(" && ") };
+                (test, binds)
+            }
+            // `A(x) | B(x)`. Rust makes every alternative bind the same names,
+            // so where they also read them out of the same place — which two
+            // variants of one enum do — the test is the disjunction and the
+            // binding is what they agree on. Where they do not, which name came
+            // from which alternative is a question this cannot answer, and it
+            // says so rather than binding one of them.
+            syn::Pat::Or(or) => {
+                let mut tests = Vec::new();
+                let mut binds: Vec<String> = Vec::new();
+                for case in &or.cases {
+                    let (test, bind) = self.pattern_test(subject, case);
+                    tests.push(format!("({})", test));
+                    binds.push(bind);
+                }
+                match binds.first() {
+                    Some(first) if binds.iter().all(|b| b == first) => {
+                        (tests.join(" || "), first.clone())
+                    }
+                    _ => {
+                        self.fallback(
+                            syn::spanned::Spanned::span(or),
+                            "the alternatives of this pattern bind their names from \
+                             different places, which the translator cannot write as one test",
+                        );
+                        ("true".to_string(), String::new())
+                    }
+                }
             }
             // A plain name binds whatever it was given, and always matches.
             syn::Pat::Ident(_) => {
@@ -1275,6 +1406,19 @@ impl<'a> BodyTranslator<'a> {
         // in one JavaScript scope.
         if path.segments.len() == 1 {
             let written = Self::path_static(path);
+            // A path of one lowercase segment names a local, a parameter or a
+            // free function — a binding, and JavaScript will not accept every
+            // Rust name in that position. `Type::new()` is not one: `new` there
+            // is a property, which may be a keyword, so the escape is confined
+            // to the single-segment case and to the names this function merely
+            // camel-cased. `self` becomes `this` and `None` becomes `null`,
+            // which are the keywords themselves and not names.
+            let ident = path.segments[0].ident.to_string();
+            let written = if written == name_map::to_camel_case(&ident) {
+                name_map::escape_reserved(&written)
+            } else {
+                written
+            };
             if let Some(emitted) = self.emitted_name(&written) {
                 return emitted;
             }
@@ -1442,4 +1586,40 @@ fn translate_binop(op: &syn::BinOp) -> &'static str {
         syn::BinOp::ShrAssign(_) => ">>=",
         _ => "/* unknown op */",
     }
+}
+
+/// Point each declared local at the identifier it was actually emitted under.
+///
+/// `locals` is in declaration order and names what Rust wrote, so two `let`s
+/// that shadow each other appear twice under one name. `renamed` holds, in the
+/// same order, the fresh identifier each shadow was given; the first appearance
+/// of a name keeps it and each later one takes the next fresh identifier for
+/// that name.
+fn rename_shadows(
+    locals: Vec<(String, String)>,
+    renamed: &[(String, String)],
+) -> Vec<(String, String)> {
+    if renamed.is_empty() {
+        return locals;
+    }
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    locals
+        .into_iter()
+        .map(|(name, ty)| {
+            let count = seen.entry(name.clone()).or_insert(0);
+            *count += 1;
+            if *count == 1 {
+                return (name, ty);
+            }
+            let nth = *count - 1;
+            match renamed
+                .iter()
+                .filter(|(rust, _)| *rust == name)
+                .nth(nth - 1)
+            {
+                Some((_, emitted)) => (emitted.clone(), ty),
+                None => (name, ty),
+            }
+        })
+        .collect()
 }

@@ -16,6 +16,13 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         // Map — apply function if non-null
         "map" if args.len() == 1 => format!("{} != null ? ({})({}!) : null", receiver, args[0], receiver),
 
+        // `Option<&T>::cloned` and `::copied` turn a borrow of the payload into
+        // an owned one. A JavaScript value is neither, so the nullable is
+        // already what they produce. (What `cloned` does to the payload itself
+        // — an `Arc` refcount, say — is the same question `iter().cloned()`
+        // raises and is answered the same way: it does not.)
+        "cloned" | "copied" if args.is_empty() => receiver.to_string(),
+
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)

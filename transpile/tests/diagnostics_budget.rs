@@ -118,10 +118,14 @@ fn field(line: &str, key: &str) -> Option<usize> {
 /// is one category however many identifiers it mentions. A listed diagnostic is
 /// `  file:line:col: cause; what the translator did instead`; the run's other
 /// output has no position in front of it and is skipped.
+///
+/// A diagnostic about the declared std surface is skipped too. It is a fact
+/// about `transpile/std_surface/`, the same in every crate's run, and counting
+/// it here would put a constant into each crate's coverage measure.
 fn cause_of(line: &str) -> Option<String> {
     let body = line.strip_prefix("  ")?;
     let (position, message) = body.split_once(": ")?;
-    if !is_position(position) {
+    if !is_position(position) || position.starts_with("std_surface/") {
         return None;
     }
     let message = message.split_once("; ").map(|(cause, _)| cause).unwrap_or(message);

@@ -51,16 +51,22 @@ export class CallbackObserver extends Struct implements Observer {
   observe(signal: Signal): void {
     const broadcastId = signal.broadcastId();
     let entries = this._0.value.entries.write();
-    if (entries.value.get(broadcastId) != null) {
-      const entry = entries.value.get(broadcastId);
-      entry.markedForRemoval = false;
-      return;
+    {
+      const _v = entries.value.get(broadcastId);
+      if (_v != null) {
+        const entry = _v;
+        entry.markedForRemoval = false;
+        return;
+      }
     }
     const weak = new WeakCallbackObserver(this._0.downgrade());
     entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
-      if (weak.upgrade() != null) {
-        const observer = weak.upgrade();
-        observer.trigger();
+      {
+        const _v1 = weak.upgrade();
+        if (_v1 != null) {
+          const observer = _v1;
+          observer.trigger();
+        }
       }
     })), false));
     weak.drop();

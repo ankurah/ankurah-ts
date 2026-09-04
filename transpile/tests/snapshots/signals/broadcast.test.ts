@@ -35,10 +35,10 @@ describe('broadcast unit tests', () => {
     const [tx, rx] = tokio.mpsc.unboundedChannel();
     const Sub = sender.reference().listen(tx);
     sender.send([]);
-    if (!(rx . try_recv () . is_ok ())) throw new Error('assertion failed');
+    if (!(rx.tryRecv().isOk())) throw new Error('assertion failed');
     sender.send([]);
-    if (!(rx . try_recv () . is_ok ())) throw new Error('assertion failed');
-    if (!(rx . try_recv () . is_err ())) throw new Error('assertion failed');
+    if (!(rx.tryRecv().isOk())) throw new Error('assertion failed');
+    if (!(rx.tryRecv().isErr())) throw new Error('assertion failed');
     Sub.drop();
     rx.drop();
     tx.drop();

@@ -8,6 +8,7 @@
 //! Only *declared system types* get a special shape. A crate type or a foreign
 //! type called `Vec` is its own type and is emitted and dispatched as itself.
 
+use super::system_shapes::Form;
 use crate::registry::TypeRegistry;
 use crate::ty::{Prim, TraitRef, Ty};
 
@@ -70,12 +71,7 @@ pub fn js_shape(reg: &TypeRegistry, ty: &Ty) -> JsShape {
             .iter()
             .find_map(|t| trait_shape(reg, t))
             .unwrap_or(JsShape::Plain),
-        Ty::Named { id, args } => {
-            if !reg.is_system(*id) {
-                return JsShape::Plain;
-            }
-            named_shape(&reg.name_of(*id), args)
-        }
+        Ty::Named { id, args } => named_shape(reg, *id, args),
     }
 }
 
@@ -97,30 +93,85 @@ fn prim_shape(p: Prim) -> JsShape {
     }
 }
 
-fn named_shape(name: &str, args: &[Ty]) -> JsShape {
-    match name {
+/// The shape a declared std type takes, looked up by the type's identity.
+///
+/// The lookup is never by leaf name: `std::collections::hash_map::Iter` and
+/// `std::slice::Iter` share one, `std::sync::atomic::Ordering` and
+/// `std::cmp::Ordering` share one, and a crate type called `Vec` is its own
+/// type. What each path becomes is `system_shapes`; how the arguments are read
+/// out of it is here.
+fn named_shape(reg: &TypeRegistry, id: crate::ty::TypeId, args: &[Ty]) -> JsShape {
+    let Some(form) = reg.shapes().form(id) else {
+        // Every iterator the port produces is a JavaScript array: `.iter()` and
+        // `.values()` spread into one, and the adaptors a chain builds up —
+        // `Cloned<Values<'_, K, V>>` — are written as operations on it. Which
+        // types those are is not a list: it is whatever the impl table says
+        // implements `Iterator`, and the element type is that impl's `Item`.
+        return iterator_shape(reg, id, args).unwrap_or(JsShape::Plain);
+    };
+    let arg = |n: usize| args.get(n).cloned();
+    match form {
         // `Vec<u8>` is a byte buffer; every other `Vec` is a JavaScript array.
-        "Vec" if args.len() == 1 => {
-            if matches!(args[0], Ty::Prim(Prim::U8)) {
-                JsShape::Bytes
-            } else {
-                JsShape::Array(args[0].clone())
-            }
-        }
-        "Option" if args.len() == 1 => JsShape::Nullable(args[0].clone()),
-        "Result" => JsShape::Result(args.to_vec()),
-        "HashMap" | "BTreeMap" if args.len() == 2 => JsShape::Map(args[0].clone(), args[1].clone()),
-        "HashSet" | "BTreeSet" if args.len() == 1 => JsShape::Set(args[0].clone()),
-        "Arc" | "Weak" | "Rc" => JsShape::Rc(name.to_string()),
-        "String" => JsShape::Str,
-        // Box is transparent: the value is whatever it holds.
-        "Box" if args.len() == 1 => JsShape::SameAs(args[0].clone()),
-        // Atomics are plain values in single-threaded JavaScript.
-        "AtomicUsize" | "AtomicU32" => JsShape::Number,
-        "AtomicBool" => JsShape::Boolean,
-        "Infallible" => JsShape::Never,
-        _ => JsShape::Plain,
+        Form::VecOrBytes => match arg(0) {
+            Some(Ty::Prim(Prim::U8)) => JsShape::Bytes,
+            Some(elem) => JsShape::Array(elem),
+            None => JsShape::Plain,
+        },
+        Form::Nullable => arg(0).map(JsShape::Nullable).unwrap_or(JsShape::Plain),
+        Form::Result => JsShape::Result(args.to_vec()),
+        Form::Map => match (arg(0), arg(1)) {
+            (Some(k), Some(v)) => JsShape::Map(k, v),
+            _ => JsShape::Plain,
+        },
+        Form::Set => arg(0).map(JsShape::Set).unwrap_or(JsShape::Plain),
+        Form::Rc => JsShape::Rc(reg.name_of(id)),
+        // `Box<T>` is transparent: the value is whatever it holds.
+        Form::Transparent => arg(0).map(JsShape::SameAs).unwrap_or(JsShape::Plain),
+        Form::Str => JsShape::Str,
+        Form::Number => JsShape::Number,
+        Form::Boolean => JsShape::Boolean,
+        Form::Never => JsShape::Never,
     }
+}
+
+/// `Array(Item)` for a type that implements `Iterator`, and nothing for one
+/// that does not.
+fn iterator_shape(reg: &TypeRegistry, id: crate::ty::TypeId, args: &[Ty]) -> Option<JsShape> {
+    // Only a declared type. A crate type that implements `Iterator` is emitted
+    // as its own class with its own methods, so writing a call on it as an array
+    // operation would be wrong — and asking the impl table about every crate
+    // type would be the shape query's whole cost.
+    if !reg.is_system(id) {
+        return None;
+    }
+    let iterator = reg.system_type("std::iter::Iterator")?;
+    let ty = Ty::Named {
+        id,
+        args: args.to_vec(),
+    };
+    // Asked from the crate root: which module the question comes from decides
+    // trait visibility for a *call*, and this is not one.
+    let probe = crate::registry::Probe::new(reg, reg.crate_root());
+    let projection = Ty::Assoc {
+        base: Box::new(ty),
+        trait_: Some(Box::new(TraitRef {
+            id: iterator,
+            args: Vec::new(),
+            bindings: Vec::new(),
+        })),
+        name: "Item".to_string(),
+    };
+    let item = probe.normalize(&projection);
+    if item != projection {
+        return Some(JsShape::Array(item));
+    }
+    // An adaptor whose element type is not settled yet is still an iterator, and
+    // still a JavaScript array. `Map<I, F>`'s `Item` is the closure's return
+    // type, which the closures step (spec 4.5) supplies; until then the element
+    // is unknown and the chain around it is not.
+    probe
+        .implements(&Ty::Named { id, args: args.to_vec() }, iterator)
+        .then(|| JsShape::Array(Ty::Infer))
 }
 
 /// The shape a trait bound implies for the value behind it. `None` when this

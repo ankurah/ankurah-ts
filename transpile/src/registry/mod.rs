@@ -16,7 +16,7 @@ pub mod method;
 mod method_tests;
 mod module;
 mod resolve_type;
-mod system;
+pub mod std_surface;
 mod traits;
 
 use std::cell::RefCell;
@@ -26,10 +26,21 @@ use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
 pub use build::{build_registry, resolve_bounds, ExtractedFile};
-pub use method::{AutoRef, Callee, FieldResolution, MethodResolution, Probe, Undecided};
+pub use method::{FieldResolution, MethodResolution, Probe, Undecided};
 pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
 pub use resolve_type::{resolve_type, TypeEnv};
-pub use system::SystemTypeDecl;
+pub use std_surface::Surface;
+
+
+/// The Rust path of the trait every dereference goes through. The engine names
+/// it structurally — the deref chain is not a list of types but a search of the
+/// impl table — so the path is written here rather than looked up by leaf name.
+pub const DEREF_PATH: &str = "std::ops::Deref";
+
+/// The Rust path of `Clone`. Every `#[derive(Clone)]` in the corpus registers an
+/// impl of it (spec 4.10), so that `guard.clone()` clones what the guard holds
+/// rather than the guard.
+pub const CLONE_PATH: &str = "std::clone::Clone";
 
 /// What a named type is.
 #[derive(Debug, Clone)]
@@ -64,6 +75,10 @@ pub struct MethodSig {
     pub receiver: Option<Ty>,
     /// Parameters the method declares on top of its impl's.
     pub type_params: Vec<String>,
+    /// What those parameters have to implement. `collect<B: FromIterator<Item>>`
+    /// is how a turbofish written as `collect::<Vec<_>>()` gets its element
+    /// type: the bound says which `FromIterator` impl `Vec<_>` has to be.
+    pub bounds: Vec<impls::Bound>,
 }
 
 impl MethodSig {
@@ -82,16 +97,12 @@ pub struct TypeDef {
     pub kind: TypeKind,
     /// Field name (in the TypeScript spelling emission uses) to field type.
     pub fields: Vec<(String, Ty)>,
-    /// How reaching through this type is written in TypeScript.
-    ///   `None`          — not a wrapper, read fields directly
-    ///   `Some("")`      — transparent (Box): unwrap the inner type, emit nothing
-    ///   `Some("value")` — a wrapper (Arc): emit `.value`, then the inner type
-    ///
-    /// Where the type dereferences *to* is an ordinary `Deref` impl in the impl
-    /// table; this is only how TypeScript writes the hop.
-    pub deref_field: Option<String>,
     /// Declared generic parameter names, in order.
     pub type_params: Vec<String>,
+    /// What a parameter falls back to where the use site leaves it unwritten:
+    /// `HashMap<K, V, S = RandomState>` is declared with three and always
+    /// written with two. Positional alongside `type_params`.
+    pub param_defaults: Vec<Option<Ty>>,
 }
 
 /// What `declare_type` needs. The crate's own structs and enums, the system
@@ -102,7 +113,6 @@ pub struct TypeDecl {
     pub name: String,
     pub kind: TypeKind,
     pub type_params: Vec<String>,
-    pub deref_field: Option<String>,
     pub vis: Vis,
 }
 
@@ -113,6 +123,9 @@ pub struct AliasDef {
     pub module: ModuleId,
     pub name: String,
     pub type_params: Vec<String>,
+    /// `type Result<T, E = Error> = ..` — the fallback for a parameter the use
+    /// site leaves unwritten, as written, resolved where the alias was declared.
+    pub param_defaults: Vec<Option<syn::Type>>,
     pub rust_ty: syn::Type,
 }
 
@@ -153,6 +166,12 @@ pub struct TypeRegistry {
     /// Declared system types by the full Rust path they are declared under, so
     /// `std::sync::Arc` reaches one and `std::io::Result` reaches none.
     system_by_path: HashMap<String, TypeId>,
+    /// Every leaf name the declared surface holds, with everything that answers
+    /// to it. The surface's files carry no `use` statements, so a stub names
+    /// `Formatter` and means whichever module declares one; two answers is an
+    /// ambiguity reported where the name was written. Only a module inside the
+    /// surface reaches this.
+    surface_names: HashMap<(Ns, String), Vec<Def>>,
     /// Every `impl` block, indexed by what it is written for.
     impls: impls::ImplTable,
     /// Every trait declaration, by the id its name resolves to.
@@ -160,6 +179,10 @@ pub struct TypeRegistry {
     foreign: RefCell<ForeignTypes>,
     /// Aliases part-way through expansion, so a cycle stops rather than recurses.
     expanding: RefCell<Vec<AliasId>>,
+    /// What each declared system type becomes in TypeScript, by identity.
+    /// Filled in once the surface is declared, because it is keyed on the ids
+    /// the surface's own paths resolved to.
+    shapes: crate::name_map::system_shapes::SystemShapes,
 }
 
 /// The id spaces are a partition of `u32`; running out of either is a bug in
@@ -201,11 +224,24 @@ impl TypeRegistry {
             modules: ModuleTree::new(),
             crate_names: vec![crate_name.to_string()],
             system_by_path: HashMap::new(),
+            surface_names: HashMap::new(),
             impls: impls::ImplTable::default(),
             traits: HashMap::new(),
             foreign: RefCell::new(ForeignTypes::default()),
             expanding: RefCell::new(Vec::new()),
+            shapes: Default::default(),
         }
+    }
+
+    /// Bind the emission policy to the ids the declared surface produced. Until
+    /// this runs no system type has a TypeScript shape, which is the truth
+    /// before the surface is in.
+    pub(super) fn resolve_shapes(&mut self) {
+        self.shapes = crate::name_map::system_shapes::SystemShapes::resolve(self);
+    }
+
+    pub fn shapes(&self) -> &crate::name_map::system_shapes::SystemShapes {
+        &self.shapes
     }
 
     pub fn crate_names(&self) -> &[String] {
@@ -256,7 +292,7 @@ impl TypeRegistry {
             name: decl.name,
             kind: decl.kind,
             fields: Vec::new(),
-            deref_field: decl.deref_field,
+            param_defaults: vec![None; decl.type_params.len()],
             type_params: decl.type_params,
         });
         Ok(id)
@@ -355,22 +391,41 @@ impl TypeRegistry {
             .unwrap_or(false)
     }
 
-    /// The name of a system type, or nothing if the id is not one.
-    pub fn system_name(&self, id: TypeId) -> Option<String> {
-        if self.is_system(id) {
-            Some(self.name_of(id))
-        } else {
-            None
-        }
-    }
-
     /// A declared system type by the full path it is declared under.
     pub fn system_type(&self, path: &str) -> Option<TypeId> {
         self.system_by_path.get(path).copied()
     }
 
-    fn record_system_path(&mut self, path: &str, id: TypeId) {
+    pub(super) fn record_system_path(&mut self, path: &str, id: TypeId) {
         self.system_by_path.insert(path.to_string(), id);
+    }
+
+    pub(super) fn record_surface_name(&mut self, ns: Ns, name: &str, def: Def) {
+        let found = self.surface_names.entry((ns, name.to_string())).or_default();
+        if !found.contains(&def) {
+            found.push(def);
+        }
+    }
+
+    /// What a bare name written inside the surface stands for.
+    pub(super) fn surface_item(&self, ns: Ns, name: &str) -> Result<Option<Def>, lookup::LookupError> {
+        match self
+            .surface_names
+            .get(&(ns, name.to_string()))
+            .map(|found| found.as_slice())
+            .unwrap_or(&[])
+        {
+            [] => Ok(None),
+            [only] => Ok(Some(*only)),
+            many => Err(lookup::LookupError {
+                message: format!(
+                    "`{}` is declared in {} places in the std surface; the stub that writes it \
+                     has to say which",
+                    name,
+                    many.len()
+                ),
+            }),
+        }
     }
 
     /// The id standing for a type nothing declares, created on first sight.
@@ -412,7 +467,6 @@ mod tests {
             name: name.to_string(),
             kind: TypeKind::Struct,
             type_params: Vec::new(),
-            deref_field: None,
             vis: Vis::Public,
         }
     }

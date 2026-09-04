@@ -6,43 +6,44 @@
 #     cd transpile && UPDATE_DIAGNOSTICS_BUDGET=1 cargo test --test diagnostics_budget
 
 [proto]
-total = 156
+total = 92
 
 [proto.by_cause]
-"no method X on X" = 53
-"no declaration for trait X" = 16
-"no associated function X on X" = 14
 "no field X on X" = 14
-"method X resolved through trait X, which is not in scope here" = 12
-"X is bound here but the engine could not type it" = 11
 "X is guessed to be a constructor from its capitalisation" = 11
-"no declaration for type X" = 11
-"X does not name a value here" = 9
+"no associated function X on X" = 11
+"obligation deferred: X (the trait has no declaration here)" = 11
+"method X resolved through trait X, which is not in scope here" = 10
+"obligation deferred: X (the subject is still a type parameter)" = 9
+"X on X is ambiguous between <Vec<u8> as TryInto>::try_into and <T as TryInto>::try_into" = 6
+"X does not name a value here" = 5
+"no declaration for type X" = 4
 "X does not name a function here" = 3
+"X is bound here but the engine could not type it" = 3
+"no method X on X" = 3
 "path qualifiers ops are dropped by name" = 2
 
 [ankql]
-total = 9
+total = 1
 
 [ankql.by_cause]
-"no declaration for type X" = 5
-"no declaration for trait X" = 4
+"no declaration for type X" = 1
 
 [signals]
-total = 327
+total = 203
 
 [signals.by_cause]
-"X is bound here but the engine could not type it" = 113
-"no method X on X" = 79
-"obligation deferred: X (the trait has no declaration here)" = 42
-"no associated function X on X" = 22
+"X is bound here but the engine could not type it" = 106
+"no associated function X on X" = 21
 "X does not name a value here" = 17
+"obligation deferred: X (the subject is still a type parameter)" = 11
 "X does not name a function here" = 10
-"no declaration for trait X" = 10
-"no declaration for type X" = 8
 "X is guessed to be a constructor from its capitalisation" = 7
+"obligation deferred: X (the trait has no declaration here)" = 6
 "path qualifiers std, sync, atomic are dropped by name" = 6
 "path qualifiers std, sync are dropped by name" = 5
+"no declaration for type X" = 3
+"no method X on X" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "the callee is not a path, so nothing names what it calls" = 2
 "method X resolved through trait X, which is not in scope here" = 1
@@ -50,41 +51,47 @@ total = 327
 "path qualifiers sync are dropped by name" = 1
 
 [core]
-total = 4293
+total = 2918
 
 [core.by_cause]
-"X is bound here but the engine could not type it" = 1334
-"no method X on X" = 1177
-"obligation deferred: X (the trait has no declaration here)" = 497
+"X is bound here but the engine could not type it" = 1012
+"no method X on X" = 390
+"obligation deferred: X (the subject is still a type parameter)" = 239
 "X does not name a value here" = 229
-"no associated function X on X" = 222
-"no field X on X" = 199
-"no declaration for type X" = 129
-"X does not name a function here" = 110
-"method X resolved through trait X, which is not in scope here" = 80
-"X is guessed to be an enum variant from its capitalisation" = 51
-"X expressions are not typed yet" = 49
-"no declaration for trait X" = 37
+"no field X on X" = 216
+"no associated function X on X" = 201
+"X does not name a function here" = 109
+"no declaration for type X" = 86
+"method X resolved through trait X, which is not in scope here" = 84
+"obligation deferred: X (the trait has no declaration here)" = 84
+"X is guessed to be an enum variant from its capitalisation" = 67
 "path qualifiers std are dropped by name" = 28
 "X is guessed to be a constructor from its capitalisation" = 22
-"obligation deferred: X (the subject is still a type parameter)" = 20
 "X has no declared type" = 18
 "no arm of this match has a type the engine could read" = 16
 "path qualifiers std, sync are dropped by name" = 14
+"X expressions are not typed yet" = 11
+"X on X is ambiguous between <T as StreamExt>::map and <T as FutureExt>::map" = 11
 "const generic argument is not modelled outside an array length" = 11
+"no declaration for trait X" = 11
 "path qualifiers collections are dropped by name" = 10
 "path qualifiers std, sync, atomic are dropped by name" = 8
+"no X impl reaches X with the index written here" = 7
 "X is a receiver the engine does not model" = 5
 "X does not dereference" = 3
-"X is declared with 2 type argument(s) but 1 written here" = 3
 "path qualifiers std, collections are dropped by name" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "path qualifiers sync are dropped by name" = 3
-"X is declared with 1 type argument(s) but 2 written here" = 2
-"X on X, which is neither a Result nor an Option" = 2
+"X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 2
+"X on X is ambiguous between <&str as TryInto>::try_into and <T as TryInto>::try_into" = 2
 "path qualifiers core are dropped by name" = 2
 "path qualifiers iter are dropped by name" = 2
 "X dereferences without a field to assign through" = 1
+"X on X is ambiguous between <S as TryStreamExt>::map_err and <T as TryFutureExt>::map_err" = 1
+"X on X is ambiguous between <Vec<T> as Extend>::extend and <Vec<T> as Extend>::extend" = 1
+"X on X is ambiguous between Iterator::find and Iterator::find" = 1
+"no X impl reaches X" = 1
 "path qualifiers ops are dropped by name" = 1
 "path qualifiers std, fmt are dropped by name" = 1
 "path qualifiers std, iter are dropped by name" = 1
+"the alternatives of this pattern bind their names from different places, which the translator cannot write as one test" = 1

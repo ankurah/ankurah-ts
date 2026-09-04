@@ -5,9 +5,12 @@ import { Signal } from '../signal';
 
 export function track<S extends Signal>(signal: S): void {
   OBSERVER_STACK.with((stack) => {
-    if (stack.borrow().value.at(-1) != null) {
-      const observer = stack.borrow().value.at(-1);
-      observer.observe(signal);
+    {
+      const _v = stack.borrow().value.at(-1);
+      if (_v != null) {
+        const observer = _v;
+        observer.value.observe(signal);
+      }
     }
   });
 }
@@ -28,12 +31,14 @@ export function remove(observer: Observer): void {
   const targetId = observer.observerId();
   OBSERVER_STACK.with((stack) => {
     let stack_1 = stack.borrowMut();
-    if (stack_1.value.at(-1) != null) {
-      const last = stack_1.value.at(-1);
-      if (last.observerId() === targetId) {
-        stack_1.value.pop();
-        return;
-
+    {
+      const _v = stack_1.value.at(-1);
+      if (_v != null) {
+        const last = _v;
+        if (last.value.observerId() === targetId) {
+          stack_1.value.pop();
+          return;
+        }
       }
     }
     /* TODO: retain */ stack_1.value.filter((o) => o.observerId() !== targetId);
@@ -43,7 +48,7 @@ export function remove(observer: Observer): void {
 }
 
 export function current(): Arc<Observer> | null {
-  return OBSERVER_STACK.with((stack) => [...stack.borrow().value.at(-1)]);
+  return OBSERVER_STACK.with((stack) => stack.borrow().value.at(-1));
 }
 
 const OBSERVER_STACK = new ThreadLocal<RefCell<Arc<Observer>[]>>(new RefCell([]));

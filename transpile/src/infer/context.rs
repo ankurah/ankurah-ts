@@ -136,7 +136,7 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::MethodCall(call) => {
                 let method = call.method.to_string();
-                self.resolve_method_call(&call.receiver, &method)
+                self.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref())
                     .map(|found| found.ret)
             }
 
@@ -195,6 +195,10 @@ impl<'a> TypeContext<'a> {
                 Ok(Ty::Tuple(elems))
             }
 
+            syn::Expr::Range(range) => self.range_type(range).ok_or_else(|| {
+                self.refuse(expr.span(), "the range types in `std::ops` are not declared")
+            }),
+
             syn::Expr::Paren(p) => self.resolve_expr(&p.expr),
             syn::Expr::Group(g) => self.resolve_expr(&g.expr),
 
@@ -204,12 +208,13 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::Index(idx) => {
                 let base = self.resolve_expr(&idx.expr)?;
-                // `v[1..]` slices; `v[1]` reads one element.
-                let ranged = matches!(&*idx.index, syn::Expr::Range(_));
-                self.index_result(&base, ranged).ok_or_else(|| {
+                self.index_result(&base, &idx.index).ok_or_else(|| {
                     self.refuse(
                         expr.span(),
-                        format!("`{}` is not indexed by the engine", self.registry.describe(&base)),
+                        format!(
+                            "no `Index` impl reaches `{}` with the index written here",
+                            self.registry.describe(&base)
+                        ),
                     )
                 })
             }
@@ -373,29 +378,81 @@ impl<'a> TypeContext<'a> {
         })
     }
 
-    /// What indexing hands back.
+    /// What `base[index]` hands back: `<base as Index<I>>::Output`, where `I` is
+    /// the type of the index expression.
     ///
-    /// These are `Index::Output` facts that belong in the declared std surface
-    /// (spec 4.4, step 3); until the stubs land, the sequences and maps the
-    /// corpus indexes are named here, and anything else is refused.
-    fn index_result(&self, base: &Ty, ranged: bool) -> Option<Ty> {
-        let element = match base.peel_refs() {
-            Ty::Slice(elem) | Ty::Array { elem, .. } => Some((**elem).clone()),
-            Ty::Named { id, args } => match self.registry.system_name(*id).as_deref() {
-                Some("Vec") => args.first().cloned(),
-                Some("String") if ranged => return Some(Ty::Str),
-                Some("HashMap") | Some("BTreeMap") if !ranged => args.get(1).cloned(),
-                _ => None,
-            },
-            Ty::Str if ranged => return Some(Ty::Str),
-            _ => None,
-        };
-        let element = element?;
-        if ranged {
-            Some(Ty::Slice(Box::new(element)))
-        } else {
-            Some(element)
+    /// The std surface declares the whole family — `Index<I> for Vec<T>` and
+    /// `for [T]` through `SliceIndex`, `Index<&Q> for HashMap<K, V>` through
+    /// `Borrow` — so which of them applies, and whether the answer is an element
+    /// or a slice, follows from the index's type rather than from a list of
+    /// container names.
+    #[cfg(test)]
+    pub fn index_of(&self, base: &Ty, index_src: &str) -> Option<Ty> {
+        let index: syn::Expr = syn::parse_str(index_src).expect("parses as an expression");
+        self.index_result(base, &index)
+    }
+
+    fn index_result(&self, base: &Ty, index: &syn::Expr) -> Option<Ty> {
+        let index_ty = self.index_type(index)?;
+        let trait_id = self.registry.system_type("std::ops::Index")?;
+        // `HashMap` is indexed by a borrowed key, and the deref chain is what
+        // walks a `Vec` down to the `[T]` its `Index` is written for.
+        for candidate in std::iter::once(base.clone())
+            .chain(self.probe().deref_chain(base).ok()?.into_iter().map(|s| s.to))
+        {
+            let found = self.project_with(
+                &candidate,
+                TraitRef {
+                    id: trait_id,
+                    args: vec![index_ty.clone()],
+                    bindings: Vec::new(),
+                },
+                "Output",
+            );
+            if found.is_some() {
+                return found;
+            }
         }
+        None
+    }
+
+    /// The type of the expression between the brackets.
+    ///
+    /// An unsuffixed integer literal is read as `usize` here. That is not a
+    /// guess about inference: `SliceIndex` is implemented for `usize` and for
+    /// ranges of `usize` and for nothing else numeric, so `usize` is the only
+    /// type such a literal can have in this position. Where the index is
+    /// anything else the ordinary rules answer, and a `HashMap` indexed by
+    /// `&key` goes through `Borrow` like any other lookup.
+    fn index_type(&self, index: &syn::Expr) -> Option<Ty> {
+        if is_unsuffixed_int(index) {
+            return Some(Ty::Prim(Prim::Usize));
+        }
+        if let syn::Expr::Range(range) = index {
+            return self.range_type(range);
+        }
+        self.resolve_expr(index).ok()
+    }
+
+    /// `a..b` is a `Range<A>`, `a..` a `RangeFrom<A>`, `..b` a `RangeTo<A>`,
+    /// `..` a `RangeFull` and `a..=b` a `RangeInclusive<A>`, each declared in
+    /// `std::ops`.
+    fn range_type(&self, range: &syn::ExprRange) -> Option<Ty> {
+        let closed = matches!(range.limits, syn::RangeLimits::Closed(_));
+        let end_ty = |e: &Option<Box<syn::Expr>>| e.as_deref().and_then(|e| self.index_type(e));
+        let (path, arg) = match (&range.start, &range.end) {
+            (Some(start), Some(_)) if closed => ("std::ops::RangeInclusive", self.index_type(start)),
+            (Some(start), Some(_)) => ("std::ops::Range", self.index_type(start)),
+            (Some(start), None) => ("std::ops::RangeFrom", self.index_type(start)),
+            (None, Some(_)) if closed => ("std::ops::RangeToInclusive", end_ty(&range.end)),
+            (None, Some(_)) => ("std::ops::RangeTo", end_ty(&range.end)),
+            (None, None) => ("std::ops::RangeFull", None),
+        };
+        let id = self.registry.system_type(path)?;
+        Some(Ty::Named {
+            id,
+            args: arg.into_iter().collect(),
+        })
     }
 
     /// What a macro invocation produces (spec 4.10). The transpiler never
@@ -434,10 +491,17 @@ impl<'a> TypeContext<'a> {
         let Ty::Named { id, args } = ty.peel_refs() else {
             return None;
         };
-        match self.registry.system_name(*id).as_deref() {
-            Some("Result") | Some("Option") => args.first().cloned(),
-            _ => None,
+        if self.is_system(*id, "std::result::Result") || self.is_system(*id, "std::option::Option") {
+            return args.first().cloned();
         }
+        None
+    }
+
+    /// Is this id the type declared at that std path? Asked by identity, so a
+    /// crate type called `Result` is its own type and `std::fmt::Result` — an
+    /// alias for something else entirely — is not this one either.
+    fn is_system(&self, id: crate::ty::TypeId, path: &str) -> bool {
+        self.registry.system_type(path) == Some(id)
     }
 
     // ── Calls ──────────────────────────────────────────────────────────
@@ -448,35 +512,36 @@ impl<'a> TypeContext<'a> {
         receiver: &syn::Expr,
         method: &str,
     ) -> Result<MethodResolution, Diag> {
+        self.resolve_method_call_with(receiver, method, None)
+    }
+
+    /// The same, with the type arguments a turbofish wrote. `collect::<Vec<_>>()`
+    /// says what the call produces where nothing else does.
+    pub fn resolve_method_call_with(
+        &self,
+        receiver: &syn::Expr,
+        method: &str,
+        turbofish: Option<&syn::AngleBracketedGenericArguments>,
+    ) -> Result<MethodResolution, Diag> {
         let receiver_ty = self.resolve_expr(receiver)?;
         let probe = self.probe();
 
-        // `unwrap` and `expect` on a lock guard. Rust's `RwLock::read` yields a
-        // `LockResult`, but the polyfill this port declares yields the guard
-        // itself, so the `unwrap` the source writes has nothing left to do and
-        // the value keeps its type. Decided before the impl table is asked,
-        // because asking it would reach through the guard and find the `unwrap`
-        // of whatever is inside — one step too many.
-        //
-        // Named one guard at a time rather than "anything with an accessor", so
-        // that giving crate types deref accessors cannot widen it. The
-        // std-surface step declares a Rust-faithful `LockResult` and deletes
-        // this shim.
-        if matches!(method, "unwrap" | "expect") && self.is_lock_guard(&receiver_ty) {
-            return Ok(MethodResolution {
-                steps: Vec::new(),
-                autoref: crate::registry::AutoRef::None,
-                callee: crate::registry::Callee::GuardShim,
-                subst: Subst::new(),
-                ret: receiver_ty.clone(),
-                adjusted: receiver_ty,
-                obligations: Vec::new(),
-                out_of_scope: None,
-            });
+        let mut explicit = Vec::new();
+        for arg in turbofish.iter().flat_map(|t| t.args.iter()) {
+            match arg {
+                syn::GenericArgument::Type(ty) => explicit.push(self.resolve_written_type(ty)?),
+                syn::GenericArgument::Lifetime(_) => {}
+                other => {
+                    return Err(self.refuse(
+                        syn::spanned::Spanned::span(other),
+                        "only type arguments are read from a turbofish",
+                    ))
+                }
+            }
         }
 
         let found = probe
-            .resolve_method(&receiver_ty, method)
+            .resolve_method_with(&receiver_ty, method, &explicit)
             .map_err(|err| self.refuse(receiver.span(), err.describe(self.registry, method)))?;
 
         // A resolution that rests on a question nobody answered is still an
@@ -959,24 +1024,13 @@ impl<'a> TypeContext<'a> {
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
         let last = segments.last()?.clone();
 
-        // `if let Ok(guard) = lock.lock()`. Rust's `Mutex::lock` yields a
-        // `LockResult`, but the polyfill this port declares yields the guard
-        // itself, so the `Ok` the source writes has nothing to take apart and
-        // the binding is the guard. The same transitional shim as the one on
-        // `unwrap` above, and it goes when the std surface declares a
-        // Rust-faithful `LockResult`.
-        if self.is_lock_guard(ty) && path.segments.last().is_some_and(|s| s.ident == "Ok") {
-            return Some(vec![("_0".to_string(), ty.clone())]);
-        }
-
         // `Some(x)`, `Ok(x)` and `Err(e)` destructure the two system types the
         // port writes as a nullable and as a Result; neither is declared as an
         // enum, so their payloads are named here.
-        if let Some(name) = self.registry.system_name(*id) {
-            let payload = match (name.as_str(), last.as_str()) {
-                ("Option", "Some") => args.first().cloned(),
-                ("Result", "Ok") => args.first().cloned(),
-                ("Result", "Err") => args.get(1).cloned(),
+        if self.is_system(*id, "std::option::Option") || self.is_system(*id, "std::result::Result") {
+            let payload = match last.as_str() {
+                "Some" | "Ok" => args.first().cloned(),
+                "Err" => args.get(1).cloned(),
                 _ => None,
             };
             return payload.map(|t| vec![("_0".to_string(), t)]);
@@ -1001,45 +1055,48 @@ impl<'a> TypeContext<'a> {
         )
     }
 
-    /// What one turn of a `for` loop hands out.
+    /// What one turn of a `for` loop hands out: `<T as IntoIterator>::Item`.
     ///
-    /// `for x in vec` hands out the element; `for x in &vec` hands out a
-    /// reference to it, which is `IntoIterator for &Vec<T>`. The borrow is kept
-    /// because the pattern the loop writes binds through it.
-    ///
-    /// These are `IntoIterator::Item` facts that belong in the declared std
-    /// surface (spec 4.4, step 3). Until the stubs land, the collections the
-    /// corpus iterates directly are named here; anything else is not typed, and
-    /// the loop variable is bound without a type rather than guessed at.
+    /// `for x in vec` hands out the element and `for x in &vec` a reference to
+    /// it, because `IntoIterator for Vec<T>` and `IntoIterator for &Vec<T>` are
+    /// two impls with two different `Item`s. Both are declared in the std
+    /// surface, so this is a projection through the impl table and not a list of
+    /// collections. A type with no `IntoIterator` impl in reach has no item
+    /// type, and the loop variable is bound without one rather than guessed at.
     pub fn iteration_item(&self, ty: &Ty) -> Option<Ty> {
-        if let Ty::Ref { mutable, inner } = ty {
-            let item = self.iteration_item(inner)?;
-            return Some(Ty::Ref {
-                mutable: *mutable,
-                inner: Box::new(item),
-            });
-        }
-        self.owned_iteration_item(ty)
+        self.project_through(ty, "std::iter::IntoIterator", "Item")
     }
 
-    fn owned_iteration_item(&self, ty: &Ty) -> Option<Ty> {
-        match ty.peel_refs() {
-            Ty::Slice(elem) | Ty::Array { elem, .. } => Some((**elem).clone()),
-            Ty::Named { id, args } => match self.registry.system_name(*id).as_deref() {
-                Some("Vec") | Some("HashSet") | Some("BTreeSet") => args.first().cloned(),
-                Some("HashMap") | Some("BTreeMap") if args.len() == 2 => {
-                    Some(Ty::Tuple(vec![args[0].clone(), args[1].clone()]))
-                }
-                // A `for x in opt` iterates the payload once, which the port
-                // writes as a null check; the binding's type is the payload.
-                Some("Option") => args.first().cloned(),
-                _ => None,
+    /// The type a projection `<ty as Trait>::name` normalises to, or nothing
+    /// when no impl in the table supplies it.
+    fn project_through(&self, ty: &Ty, trait_path: &str, name: &str) -> Option<Ty> {
+        let trait_id = self.registry.system_type(trait_path)?;
+        self.project_with(
+            ty,
+            TraitRef {
+                id: trait_id,
+                args: Vec::new(),
+                bindings: Vec::new(),
             },
-            _ => None,
-        }
+            name,
+        )
     }
 
-    /// The element type of a sequence, for a slice pattern.
+    fn project_with(&self, ty: &Ty, trait_ref: TraitRef, name: &str) -> Option<Ty> {
+        let projection = Ty::Assoc {
+            base: Box::new(ty.clone()),
+            trait_: Some(Box::new(trait_ref)),
+            name: name.to_string(),
+        };
+        let normalized = self.probe().normalize(&projection);
+        // A projection that did not normalise comes back as itself, which is the
+        // truth about it and not an answer the translator can use.
+        (normalized != projection).then_some(normalized)
+    }
+
+    /// The element type of a sequence, for a slice pattern. A slice pattern
+    /// matches through a reference, so the element is what iterating a
+    /// reference to the sequence hands out.
     fn element_of(&self, ty: &Ty) -> Option<Ty> {
         self.iteration_item(ty)
     }
@@ -1091,31 +1148,41 @@ impl<'a> TypeContext<'a> {
             .is_some()
     }
 
-    /// The guards whose Rust counterparts are reached through a `LockResult`.
-    pub fn is_lock_guard(&self, ty: &Ty) -> bool {
-        let Some(id) = ty.peel_refs().id() else {
-            return false;
-        };
-        matches!(
-            self.registry.system_name(id).as_deref(),
-            Some("MutexGuard" | "RwLockReadGuard" | "RwLockWriteGuard")
-        )
-    }
-
     /// Is this the `Result` the transpiler emits a real `unwrap` for?
+    ///
+    /// A `LockResult` is not, even though it is a `Result`: the port's
+    /// `Mutex::lock` and `RwLock::read` hand back the guard itself rather than a
+    /// `Result` around one, so the `unwrap` the Rust source writes has nothing
+    /// left to do by the time the TypeScript runs. That is an emission fact
+    /// about the runtime, not a claim about Rust — the engine typed the call as
+    /// `Result::unwrap` on a `LockResult<Guard>` and got the guard, which is
+    /// exactly what Rust says.
     pub fn is_result(&self, ty: &Ty) -> bool {
         // By identity, not by leaf name: a crate type called `Result` is its own
         // type and does not have the runtime `Result`'s `unwrap`.
-        ty.peel_refs()
-            .id()
-            .is_some_and(|id| self.registry.system_name(id).as_deref() == Some("Result"))
+        let ty = ty.peel_refs();
+        ty.id()
+            .is_some_and(|id| self.is_system(id, "std::result::Result"))
+            && !self.is_lock_result(ty)
+    }
+
+    /// `LockResult<G>` is `Result<G, PoisonError<G>>`, and its alias is expanded
+    /// by the time the engine sees it, so it is recognised by that error type.
+    pub fn is_lock_result(&self, ty: &Ty) -> bool {
+        let Ty::Named { args, .. } = ty.peel_refs() else {
+            return false;
+        };
+        args.get(1)
+            .and_then(|e| e.id())
+            .is_some_and(|id| self.is_system(id, "std::sync::PoisonError"))
     }
 
     /// The types a callee's closure parameter takes.
     ///
-    /// Step 2 still only knows `ThreadLocal<T>::with`; typing a closure from the
-    /// callee's `Fn` bound is the closures step, which reads the bound off the
-    /// resolved signature the impl table now supplies.
+    /// Step 2 still only knows `LocalKey<T>::with` — what `thread_local!`
+    /// declares, and what the port calls `ThreadLocal`; typing a closure from
+    /// the callee's `Fn` bound is the closures step, which reads the bound off
+    /// the resolved signature the impl table now supplies.
     pub fn resolve_closure_param_types(
         &self,
         receiver_expr: &syn::Expr,
@@ -1129,7 +1196,7 @@ impl<'a> TypeContext<'a> {
         let Ty::Named { id, args } = receiver_ty.peel_refs() else {
             return result;
         };
-        if self.registry.system_name(*id).as_deref() == Some("ThreadLocal")
+        if self.is_system(*id, "std::thread::LocalKey")
             && method == "with"
             && !args.is_empty()
         {
@@ -1237,4 +1304,19 @@ fn member_name(member: &syn::Member) -> String {
         syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
         syn::Member::Unnamed(idx) => format!("_{}", idx.index),
     }
+}
+
+/// Is this an integer literal written without a suffix?
+///
+/// Rust infers such a literal's type from where it stands. In index position it
+/// can only be a `usize`, because that and the ranges of it are what
+/// `SliceIndex` is implemented for; nothing else is being decided here.
+fn is_unsuffixed_int(expr: &syn::Expr) -> bool {
+    matches!(
+        expr,
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(int),
+            ..
+        }) if int.suffix().is_empty()
+    )
 }

@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-use crate::registry::{AutoRef, MethodResolution, TypeRegistry};
+use crate::registry::{MethodResolution, TypeRegistry};
 
 thread_local! {
     static RECORDING: RefCell<bool> = const { RefCell::new(false) };
@@ -36,11 +36,6 @@ pub fn record(
         return;
     }
     let start = span.start();
-    let borrow = match found.autoref {
-        AutoRef::None => "",
-        AutoRef::Shared => "&",
-        AutoRef::Mut => "&mut ",
-    };
     let receiver = match found.steps.first() {
         Some(step) => reg.describe(&step.from),
         None => reg.describe(found.receiver_type()),
@@ -51,21 +46,27 @@ pub fn record(
         .map(|(name, ty)| format!("{}={}", name, reg.describe(ty)))
         .collect();
     bound.sort();
+    // `|` between the two ends of a step and `;` between steps: a written Rust
+    // type contains neither, where `>` and `,` are both all over one, and
+    // splitting on those cut `MutexGuard<HashMap<K, V>>` into pieces.
     let steps = found
         .steps
         .iter()
-        .map(|s| format!("{}>{}", reg.describe(&s.from), reg.describe(&s.to)))
+        .map(|s| format!("{}|{}", reg.describe(&s.from), reg.describe(&s.to)))
         .collect::<Vec<_>>()
-        .join(",");
+        .join(";");
     let row = format!(
-        "{}\t{}\t{}\t{}\t{}\t{}{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         file,
         start.line,
         start.column + 1,
         method,
         receiver,
-        borrow,
-        reg.describe(found.receiver_type()),
+        // The receiver the callee actually sees, borrow included. Rebuilding it
+        // from the auto-ref alone dropped the borrow a method declared for
+        // itself — `DebugStruct::finish(&mut self)` reached from a `&mut
+        // DebugStruct` takes no auto-ref and is still called on a `&mut`.
+        reg.describe(&found.adjusted),
         reg.describe_callee(&found.callee),
         reg.describe(&found.ret),
         steps,

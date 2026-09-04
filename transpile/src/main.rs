@@ -84,6 +84,11 @@ enum Command {
         /// Crate name for MIRRORS annotation (e.g., "proto")
         #[arg(long)]
         crate_name: String,
+
+        /// Where the declared std and extern surface lives. Defaults to
+        /// `std_surface/` beside the transpiler's own crate.
+        #[arg(long)]
+        std_surface: Option<PathBuf>,
     },
 }
 
@@ -104,7 +109,8 @@ fn main() -> Result<()> {
                 file: extract::extract(&file)?,
                 declarations_only: false,
             }];
-            let registry = registry::build_registry(&mut parsed, &[], &[], &sink);
+            let mut surface = registry::Surface::default();
+            let registry = registry::build_registry(&mut parsed, &mut surface, &[], &sink);
             let crate_path = crate_path.unwrap_or_else(|| file.display().to_string());
             let ts = codegen::generate_ts(&registry, &parsed[0].file, &crate_path);
             print!("{}", ts);
@@ -121,7 +127,7 @@ fn main() -> Result<()> {
             };
             trace::start();
             let out = tempdir_for_resolve()?;
-            batch_generate(&src_dir, &out, &crate_name, config.as_ref())?;
+            batch_generate(&src_dir, &out, &crate_name, config.as_ref(), None)?;
             std::fs::remove_dir_all(&out).ok();
             // `batch` prints the files it writes; the rows are tagged so the
             // reader can tell them apart without silencing that.
@@ -133,6 +139,7 @@ fn main() -> Result<()> {
             src_dir,
             out_dir,
             crate_name,
+            std_surface,
         } => {
             // Load config if transpile.toml exists
             let config_path = PathBuf::from("transpile.toml");
@@ -141,7 +148,13 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            batch_generate(&src_dir, &out_dir, &crate_name, config.as_ref())?;
+            batch_generate(
+                &src_dir,
+                &out_dir,
+                &crate_name,
+                config.as_ref(),
+                std_surface.as_deref(),
+            )?;
         }
     }
 
@@ -166,6 +179,7 @@ fn batch_generate(
     out_dir: &Path,
     crate_name: &str,
     config: Option<&config::Config>,
+    std_surface_dir: Option<&Path>,
 ) -> Result<()> {
     std::fs::create_dir_all(out_dir)
         .with_context(|| format!("Failed to create output dir {}", out_dir.display()))?;
@@ -280,10 +294,20 @@ fn batch_generate(
         }
     }
 
-    // Phase 2: Build type registry from all extracted signatures + system types
-    let system_types = config.map(|c| c.system_types.as_slice()).unwrap_or(&[]);
+    // Phase 2: Build the registry from the declared std surface and everything
+    // this crate declares. The surface is parsed once per run and declared into
+    // each registry the run builds.
     let crate_names = crate_names_for(crate_name, config);
-    let registry = registry::build_registry(&mut parsed_files, system_types, &crate_names, &sink);
+    let surface_dir = registry::std_surface::default_dir(std_surface_dir);
+    let registry = registry::std_surface::with_cached(&surface_dir, |surface| {
+        if surface.is_empty() {
+            eprintln!(
+                "WARNING no std surface found at {}; every std type will be undeclared",
+                surface_dir.display()
+            );
+        }
+        registry::build_registry(&mut parsed_files, surface, &crate_names, &sink)
+    });
 
     // Phase 3: Translate all deferred bodies with type context
     let total_bodies: usize = parsed_files
@@ -382,11 +406,13 @@ fn batch_generate(
     sink.print_summary();
     // A line the diagnostics-budget test parses. Everything above it is for a
     // person reading a run; this is for the harness.
+    let (crate_diags, surface_diags) = sink.counts();
     eprintln!(
-        "DIAGNOSTICS crate={} total={} undeclared={}",
+        "DIAGNOSTICS crate={} total={} undeclared={} surface={}",
         crate_name,
-        sink.len(),
-        registry.undeclared_reported()
+        crate_diags,
+        registry.undeclared_reported(),
+        surface_diags
     );
     Ok(())
 }

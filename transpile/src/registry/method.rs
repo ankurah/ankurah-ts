@@ -115,11 +115,6 @@ pub enum Callee {
     /// A method on an impl written for one of its own parameters, such as
     /// `impl<T: Display> ToString for T`.
     Blanket(ImplId, String),
-    /// The lock-guard shim: the port's `RwLock::read` yields the guard where
-    /// Rust yields a `LockResult`, so the `unwrap` written on it has nothing to
-    /// do. Named here so the shim is visible in a resolution rather than hidden
-    /// in the translator (spec 4.4, deleted when the stubs land).
-    GuardShim,
 }
 
 impl Callee {
@@ -128,7 +123,7 @@ impl Callee {
             Callee::Inherent(id, _) | Callee::TraitImpl(id, _) | Callee::Blanket(id, _) => {
                 Some(*id)
             }
-            Callee::TraitObject(..) | Callee::GuardShim => None,
+            Callee::TraitObject(..) => None,
         }
     }
 }
@@ -257,9 +252,10 @@ impl<'a> Probe<'a> {
         let deref = self.reg.deref_trait()?;
         for &id in self.reg.impls().of_trait(deref) {
             let def = self.reg.impl_def(id);
-            let Some(subst) = def.match_self(ty) else {
+            let Some(mut subst) = def.match_self(ty) else {
                 continue;
             };
+            self.infer_from_bounds(def, &mut subst);
             // A conditional `impl<T: Bound> Deref for Wrapper<T>` does not
             // dereference a `Wrapper<NoBound>`, and one whose bound nobody can
             // decide does not dereference anything either: taking the step would
@@ -287,11 +283,13 @@ impl<'a> Probe<'a> {
 
     /// What has to be written to reach through one `Deref` step.
     ///
-    /// A declared system wrapper says so itself: `Some("value")` is a field,
-    /// `Some("")` means the wrapper is transparent and nothing is written.
-    /// Anything else went through a crate's own `impl Deref`, which the emitted
-    /// class carries as a `deref()` method — Rust inserts that call, and so must
-    /// the TypeScript, or the field behind the wrapper is read off the wrapper.
+    /// That a type dereferences at all is a Rust fact and comes from the impl
+    /// table; how the hop is *written* is a fact about the port's runtime and
+    /// comes from `name_map::system_shapes`, keyed by the type's identity. An
+    /// `Arc` keeps its value in `.value`, a `Box` is its value, and a crate's own
+    /// `impl Deref` is a function the emitted class carries — Rust inserts that
+    /// call, and so must the TypeScript, or the field behind the wrapper is read
+    /// off the wrapper.
     fn step_accessor(&self, ty: &Ty) -> Option<Accessor> {
         let Some(id) = ty.id() else {
             return Some(Accessor::Call("deref".to_string()));
@@ -299,9 +297,14 @@ impl<'a> Probe<'a> {
         if !self.reg.is_system(id) {
             return Some(Accessor::Call("deref".to_string()));
         }
-        match self.reg.def(id)?.deref_field.as_deref() {
-            None | Some("") => None,
-            Some(field) => Some(Accessor::Field(field.to_string())),
+        match self.reg.shapes().accessor(id) {
+            Some(crate::name_map::system_shapes::Accessor::Field(name)) => {
+                Some(Accessor::Field(name.to_string()))
+            }
+            Some(crate::name_map::system_shapes::Accessor::Transparent) => None,
+            // A declared std type the port does not wrap — a lock, an iterator
+            // adaptor — dereferences without anything being written for it.
+            None => None,
         }
     }
 
@@ -344,6 +347,20 @@ impl<'a> Probe<'a> {
 
     /// Which function `receiver.name(..)` calls.
     pub fn resolve_method(&self, receiver: &Ty, name: &str) -> Result<MethodResolution, MethodError> {
+        self.resolve_method_with(receiver, name, &[])
+    }
+
+    /// The same, with the type arguments a turbofish wrote.
+    ///
+    /// `collect::<Vec<_>>()` is the reason this exists: `Iterator::collect`
+    /// returns its own parameter `B`, so nothing about the receiver says what
+    /// the call produces and only the turbofish does.
+    pub fn resolve_method_with(
+        &self,
+        receiver: &Ty,
+        name: &str,
+        explicit: &[Ty],
+    ) -> Result<MethodResolution, MethodError> {
         let mut undecided = Vec::new();
         let steps = self.deref_chain_reporting(receiver, &mut undecided)?;
         let mut candidates: Vec<Ty> = vec![receiver.clone()];
@@ -351,7 +368,7 @@ impl<'a> Probe<'a> {
 
         for (depth, candidate) in candidates.iter().enumerate() {
             for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
-                let found = self.pick(candidate, autoref, name)?;
+                let found = self.pick(candidate, autoref, name, explicit)?;
                 let Some(pick) = found else { continue };
                 let ret = self.normalize(&pick.ret);
                 let mut obligations = undecided;
@@ -388,15 +405,21 @@ impl<'a> Probe<'a> {
     /// tier further would only ever hide a clash between two *different* traits,
     /// which is exactly the clash Rust reports. Two answers in a tier is an
     /// ambiguity; there is no first-match tie-break.
-    fn pick(&self, candidate: &Ty, autoref: AutoRef, name: &str) -> Result<Option<Pick>, MethodError> {
+    fn pick(
+        &self,
+        candidate: &Ty,
+        autoref: AutoRef,
+        name: &str,
+        explicit: &[Ty],
+    ) -> Result<Option<Pick>, MethodError> {
         let adjusted = autoref.apply(candidate);
 
-        let inherent = self.impl_picks(candidate, &adjusted, name, true);
+        let inherent = self.impl_picks(candidate, &adjusted, name, true, explicit);
         if let Some(pick) = self.exactly_one(candidate, inherent)? {
             return Ok(Some(pick));
         }
 
-        let mut extension = self.impl_picks(candidate, &adjusted, name, false);
+        let mut extension = self.impl_picks(candidate, &adjusted, name, false, explicit);
         // A `dyn Trait` receiver, and a generic parameter bounded by a trait,
         // dispatch through the trait's own declaration. A written
         // `impl Trait for dyn Trait` says the same thing more precisely, so
@@ -447,7 +470,7 @@ impl<'a> Probe<'a> {
     /// The trait a callee came through, when it came through one.
     fn trait_of(&self, callee: &Callee) -> Option<TypeId> {
         match callee {
-            Callee::Inherent(..) | Callee::GuardShim => None,
+            Callee::Inherent(..) => None,
             Callee::TraitObject(id, _) => Some(*id),
             Callee::TraitImpl(id, _) | Callee::Blanket(id, _) => {
                 self.reg.impl_def(*id).trait_ref.as_ref().map(|tr| tr.id)
@@ -522,7 +545,14 @@ impl<'a> Probe<'a> {
         picks
     }
 
-    fn impl_picks(&self, candidate: &Ty, adjusted: &Ty, name: &str, inherent: bool) -> Vec<Pick> {
+    fn impl_picks(
+        &self,
+        candidate: &Ty,
+        adjusted: &Ty,
+        name: &str,
+        inherent: bool,
+        explicit: &[Ty],
+    ) -> Vec<Pick> {
         let mut ids: Vec<ImplId> = Vec::new();
         for head in candidate_heads(candidate) {
             for id in self.reg.impls().for_head(&head) {
@@ -548,15 +578,18 @@ impl<'a> Probe<'a> {
             let Some(receiver) = self.method_receiver(def, name) else {
                 continue;
             };
-            let Some(subst) = def.match_written(&receiver, adjusted) else {
+            let Some(mut subst) = def.match_written(&receiver, adjusted) else {
                 continue;
             };
+            self.infer_from_bounds(def, &mut subst);
             let Some((sig, _owner)) = self.impl_method(def, name, &subst) else {
                 continue;
             };
             let Some(obligations) = self.bounds_hold(&def.bounds, &subst) else {
                 continue;
             };
+            let mut subst = subst;
+            self.bind_explicit(&sig, explicit, &mut subst);
             let ret = sig.ret.substitute(&subst);
             let callee = if inherent {
                 Callee::Inherent(id, name.to_string())
@@ -576,17 +609,20 @@ impl<'a> Probe<'a> {
     }
 
     /// The receiver type a method of this impl accepts, written in the impl's
-    /// own parameters. The impl's own signature already says `Self`; a default
-    /// the trait wrote says it in the trait's terms, so `Self` is filled in.
+    /// own parameters. The impl's own signature already says `Self`; one the
+    /// trait declared says it in the trait's terms, so `Self` is filled in.
+    ///
+    /// An impl supplies every method its trait declares, whether or not the
+    /// trait wrote a body: the corpus compiles, so an impl that writes none of
+    /// them has inherited every one. Requiring a written default here made
+    /// `values().cloned()` unresolvable, because `Iterator` declares `cloned`
+    /// and `impl Iterator for Values` writes only `next`.
     fn method_receiver(&self, def: &super::impls::ImplDef, name: &str) -> Option<Ty> {
         if let Some(sig) = def.methods.get(name) {
             return sig.receiver.clone();
         }
         let tr = def.trait_ref.as_ref()?;
-        let (_, method) = self.reg.trait_method(tr.id, name)?;
-        if !method.has_default {
-            return None;
-        }
+        let method = self.reg.trait_own_method(tr.id, name)?;
         let mut self_subst = Subst::new();
         self_subst.insert("Self".to_string(), def.self_ty.clone());
         method.sig.receiver.as_ref().map(|r| r.substitute(&self_subst))
@@ -605,11 +641,9 @@ impl<'a> Probe<'a> {
             return Some((sig.clone(), None));
         }
         let tr = def.trait_ref.as_ref()?;
-        let (owner, method) = self.reg.trait_method(tr.id, name)?;
-        if !method.has_default {
-            return None;
-        }
-        // The default body's signature speaks in the trait's parameters and in
+        let method = self.reg.trait_own_method(tr.id, name)?;
+        let owner = tr.id;
+        // The inherited signature speaks in the trait's parameters and in
         // `Self`; both are known here.
         let trait_def = self.reg.trait_def(tr.id)?;
         let mut trait_subst = bind_params(&trait_def.generics, &tr.args);
@@ -628,8 +662,80 @@ impl<'a> Probe<'a> {
             self_kind: method.sig.self_kind,
             receiver: method.sig.receiver.as_ref().map(|r| r.substitute(&trait_subst)),
             type_params: method.sig.type_params.clone(),
+            bounds: method
+                .sig
+                .bounds
+                .iter()
+                .map(|b| super::impls::Bound {
+                    subject: b.subject.substitute(&trait_subst),
+                    trait_ref: b.trait_ref.substitute(&trait_subst),
+                })
+                .collect(),
         };
         Some((sig, Some(owner)))
+    }
+
+    /// Bind the method's own parameters to the types a turbofish wrote.
+    ///
+    /// A turbofish may leave holes — `collect::<Vec<_>>()` says the shape and
+    /// not the element — and the method's own bound is what fills them:
+    /// `B: FromIterator<Self::Item>` with `B = Vec<_>` picks
+    /// `impl<T> FromIterator<T> for Vec<T>` and reads `T` off the item type. A
+    /// hole no bound can fill stays `Infer`, which is the truth about it.
+    fn bind_explicit(&self, sig: &super::MethodSig, explicit: &[Ty], subst: &mut Subst) {
+        for (param, written) in sig.type_params.iter().zip(explicit) {
+            let written = self.normalize(&written.substitute(subst));
+            let filled = if written.contains_infer() {
+                self.fill_holes(param, &written, sig, subst)
+            } else {
+                written
+            };
+            subst.insert(param.clone(), filled);
+        }
+    }
+
+    /// The type a partly-written turbofish argument stands for, found by asking
+    /// the impl table which impl of the bound's trait has that shape.
+    fn fill_holes(&self, param: &str, written: &Ty, sig: &super::MethodSig, subst: &Subst) -> Ty {
+        let head = head_of(written, &[]);
+        for bound in &sig.bounds {
+            if bound.subject != Ty::Param(param.to_string()) {
+                continue;
+            }
+            let want = self.normalize_trait_ref(&bound.trait_ref.substitute(subst));
+            for &id in self.reg.impls().of_trait(want.id) {
+                let def = self.reg.impl_def(id);
+                if head_of(&def.self_ty, &def.generics) != head {
+                    continue;
+                }
+                let Some(implemented) = def.trait_ref.as_ref() else {
+                    continue;
+                };
+                // The impl's own parameters are the unknowns: matching
+                // `FromIterator<T>` against `FromIterator<Listener>` binds `T`,
+                // and `Vec<T>` with that binding is the answer.
+                let Some(bound_subst) = def.match_written_args(implemented, &want) else {
+                    continue;
+                };
+                let candidate = def.self_ty.substitute(&bound_subst);
+                if !candidate.contains_infer() {
+                    return candidate;
+                }
+            }
+        }
+        written.clone()
+    }
+
+    fn normalize_trait_ref(&self, tr: &TraitRef) -> TraitRef {
+        TraitRef {
+            id: tr.id,
+            args: tr.args.iter().map(|a| self.normalize(a)).collect(),
+            bindings: tr
+                .bindings
+                .iter()
+                .map(|(n, t)| (n.clone(), self.normalize(t)))
+                .collect(),
+        }
     }
 
     // ── Bounds ─────────────────────────────────────────────────────────
@@ -659,11 +765,18 @@ impl<'a> Probe<'a> {
         if depth >= MAX_BOUND_DEPTH {
             return Holds::Undecided(Undecided::DepthLimit);
         }
-        // A trait nothing declares says nothing about the subject. `Send` and
-        // `Fn(T)` are the common ones; the std-surface step declares the second
-        // kind and the closure step decides them.
-        if self.reg.trait_def(trait_ref.id).is_none() {
+        // A trait nothing declares says nothing about the subject. `Fn(T)` is
+        // the common one; the closure step decides those.
+        let Some(declared) = self.reg.trait_def(trait_ref.id) else {
             return Holds::Undecided(Undecided::NoDeclaration);
+        };
+        // `Send`, `Sync`, `Unpin` and their kin are decided by rustc from the
+        // shape of the type, not from an impl anyone wrote, so there is nothing
+        // in the table to find. The corpus compiles, which means every
+        // auto-trait bound in it already holds; searching for an impl would
+        // only ever report an obligation that Rust had already discharged.
+        if declared.is_auto {
+            return Holds::Yes;
         }
         // A bound written on a parameter in scope is the proof: inside
         // `impl<SE: StorageEngine> Node<SE>`, `SE: StorageEngine` holds by
@@ -677,8 +790,12 @@ impl<'a> Probe<'a> {
                 return Holds::Yes;
             }
         }
-        // A parameter that is still open is not a type an impl can be found for.
-        if matches!(subject, Ty::Param(_) | Ty::Infer) || subject.has_open_param() {
+        // A subject that is *itself* still open is not a type an impl can be
+        // found for. One that merely holds an open argument can be: `impl<K, V>
+        // Iterator for Values<K, V>` proves `Values<usize, Listener<T>>:
+        // Iterator` whatever `T` turns out to be, and refusing to look made
+        // every iterator chain inside a generic impl an open question.
+        if matches!(subject, Ty::Param(_) | Ty::Infer | Ty::Assoc { .. }) {
             return Holds::Undecided(Undecided::OpenSubject);
         }
         // A trait object implements the traits it names, with the arguments it
@@ -691,15 +808,37 @@ impl<'a> Probe<'a> {
         let mut undecided: Option<Undecided> = None;
         for &id in self.reg.impls().of_trait(trait_ref.id) {
             let def = self.reg.impl_def(id);
-            let Some(subst) = def.match_self(subject) else {
+            let Some(mut subst) = def.match_self(subject) else {
                 continue;
             };
-            // The trait's own arguments have to agree too: `impl Marker<u16> for
-            // S` says nothing about `S: Marker<u8>`.
+            // The trait's own arguments have to agree: `impl Marker<u16> for S`
+            // says nothing about `S: Marker<u8>`. They are *matched* rather than
+            // compared, because an argument can be what fixes one of the impl's
+            // own parameters — `unsafe impl<T> SliceIndex<[T]> for usize` learns
+            // `T` from the `SliceIndex<[u8]>` the bound asked for.
             let Some(implemented) = def.trait_ref.as_ref() else {
                 continue;
             };
-            if &implemented.substitute(&subst) != trait_ref {
+            if implemented.id != trait_ref.id {
+                continue;
+            }
+            let Some(from_args) = def.match_written_args(implemented, trait_ref) else {
+                continue;
+            };
+            for (param, ty) in from_args {
+                subst.entry(param).or_insert(ty);
+            }
+            self.infer_from_bounds(def, &mut subst);
+            let implemented = implemented.substitute(&subst);
+            if implemented.args != trait_ref.args {
+                continue;
+            }
+            // An associated binding in a bound — the `Item = &T` in
+            // `I: Iterator<Item = &'a T>` — is a constraint on what the impl
+            // supplies, not another argument to the trait. Comparing it as one
+            // made every such bound fail, and with it every iterator adaptor
+            // whose own impl carries one.
+            if !self.bindings_agree(&implemented, trait_ref, def, &subst) {
                 continue;
             }
             let mut all = true;
@@ -729,8 +868,116 @@ impl<'a> Probe<'a> {
         }
         match undecided {
             Some(reason) => Holds::Undecided(reason),
+            // Nothing in the table implements it. An open argument in the
+            // subject leaves that a question only where some impl of the trait
+            // is written for the same head, so that the argument could be why
+            // the match failed. `HashMap<K, V, S>: Iterator` is `No` however
+            // open `K` is, because no impl of `Iterator` is for a `HashMap`.
+            None if subject.has_open_param() && self.head_is_implemented(subject, trait_ref) => {
+                Holds::Undecided(Undecided::OpenSubject)
+            }
             None => Holds::No,
         }
+    }
+
+    /// Could an impl of this trait ever be for a subject of this shape?
+    fn head_is_implemented(&self, subject: &Ty, trait_ref: &TraitRef) -> bool {
+        let head = head_of(subject, &[]);
+        self.reg.impls().of_trait(trait_ref.id).iter().any(|&id| {
+            let def = self.reg.impl_def(id);
+            def.is_blanket() || head_of(&def.self_ty, &def.generics) == head
+        })
+    }
+
+    /// Is there an impl of this trait for this type, whatever its arguments?
+    ///
+    /// Weaker than `holds`, which compares the trait's arguments too. This is
+    /// the question "is it an iterator at all", asked where the answer decides
+    /// only how the value is written and not what it holds.
+    pub fn implements(&self, ty: &Ty, trait_id: TypeId) -> bool {
+        self.reg.impls().of_trait(trait_id).iter().any(|&id| {
+            let def = self.reg.impl_def(id);
+            !def.is_blanket()
+                && def
+                    .match_self(ty)
+                    .is_some_and(|subst| self.bounds_hold(&def.bounds, &subst).is_some())
+        })
+    }
+
+    /// Bind the impl parameters that only its own bounds mention.
+    ///
+    /// `impl<'a, T: Clone, I: Iterator<Item = &'a T>> Iterator for Cloned<I>`
+    /// says `type Item = T`, and matching the self type against
+    /// `Cloned<Values<'_, K, V>>` binds `I` and nothing else. `T` is fixed by
+    /// the bound: `Values`'s own `Iterator::Item` is `&V`, and matching that
+    /// against `&'a T` gives `T = V`. Without this the adaptor's `Item` came
+    /// back as a loose parameter, which is not an answer.
+    fn infer_from_bounds(&self, def: &super::impls::ImplDef, subst: &mut Subst) {
+        for bound in &def.bounds {
+            if bound.trait_ref.bindings.is_empty() {
+                continue;
+            }
+            let subject = bound.subject.substitute(subst);
+            // A subject still open at its root has no impl to read an
+            // associated type off. One that merely carries an open argument
+            // does: `Values<usize, L<T>>` has an `Iterator::Item` of `&L<T>`
+            // whatever `T` is.
+            if matches!(subject, Ty::Param(_) | Ty::Infer | Ty::Assoc { .. }) {
+                continue;
+            }
+            let asked = TraitRef {
+                id: bound.trait_ref.id,
+                args: bound.trait_ref.args.iter().map(|a| a.substitute(subst)).collect(),
+                bindings: Vec::new(),
+            };
+            for (name, wanted) in &bound.trait_ref.bindings {
+                let Some(actual) = self.project(&subject, Some(&asked), name) else {
+                    continue;
+                };
+                // What the impl supplies can itself be a projection —
+                // `Skip<I>`'s `Item` is `<I as Iterator>::Item` — and a
+                // projection matches nothing until it is read through.
+                let actual = self.normalize(&actual);
+                let Some(found) = def.match_written(&wanted.substitute(subst), &actual) else {
+                    continue;
+                };
+                for (param, ty) in found {
+                    subst.entry(param).or_insert(ty);
+                }
+            }
+        }
+    }
+
+    /// Does this impl supply the associated types the bound names?
+    ///
+    /// The bound may leave a binding open — `Item = &'a T` where `T` is one of
+    /// the *bound's* own parameters — so the two sides are matched rather than
+    /// compared, and an impl that supplies nothing for a named binding does not
+    /// answer the bound.
+    fn bindings_agree(
+        &self,
+        implemented: &TraitRef,
+        required: &TraitRef,
+        def: &super::impls::ImplDef,
+        subst: &Subst,
+    ) -> bool {
+        let _ = implemented;
+        for (name, wanted) in &required.bindings {
+            let Some(supplied) = def.assoc_types.get(name) else {
+                return false;
+            };
+            let supplied = self.normalize(&supplied.substitute(subst));
+            if supplied == *wanted {
+                continue;
+            }
+            // The wanted side can still hold parameters of whatever wrote the
+            // bound; a match on those is agreement.
+            if wanted.has_open_param() {
+                continue;
+            }
+            return false;
+        }
+        true
     }
 
     // ── Associated types ───────────────────────────────────────────────
@@ -832,17 +1079,43 @@ impl<'a> Probe<'a> {
             let Some(assoc) = def.assoc_types.get(name) else {
                 continue;
             };
-            let Some(subst) = def.match_self(base) else {
+            let Some(mut subst) = def.match_self(base) else {
                 continue;
             };
             if let Some(tr) = trait_ {
-                // The projection names the trait *with its arguments*:
-                // `<S as Carrier<u8>>::Item` is not what `impl Carrier<u16> for S`
-                // supplies.
+                // The projection names the trait *with its arguments*, and those
+                // arguments can be what fixes the impl's own parameters:
+                // `impl<T, I: SliceIndex<[T]>> Index<I> for Vec<T>` learns `I`
+                // from the `Index<usize>` the site asked for. Comparing the two
+                // for equality instead left `I` open and the impl unusable.
+                let Some(implemented) = def.trait_ref.as_ref() else {
+                    continue;
+                };
+                let Some(from_args) = def.match_written_args(implemented, tr) else {
+                    continue;
+                };
+                for (param, ty) in from_args {
+                    subst.entry(param).or_insert(ty);
+                }
+            }
+            self.infer_from_bounds(def, &mut subst);
+            // `impl<I: Iterator> IntoIterator for I` matches every base there
+            // is, and supplies `Item = <I as Iterator>::Item`. Without its bound
+            // checked, a `Vec<u8>` had two answers for `IntoIterator::Item` —
+            // the real `u8` and that unnormalisable projection — and two
+            // different answers is no answer.
+            match self.bounds_hold(&def.bounds, &subst) {
+                Some(deferred) if deferred.is_empty() => {}
+                _ => continue,
+            }
+            if let Some(tr) = trait_ {
+                // `<S as Carrier<u8>>::Item` is still not what
+                // `impl Carrier<u16> for S` supplies: the arguments have to
+                // agree once everything the match learned is filled in.
                 let Some(impl_trait) = def.trait_ref.as_ref() else {
                     continue;
                 };
-                if &impl_trait.substitute(&subst) != tr {
+                if impl_trait.substitute(&subst).args != tr.args {
                     continue;
                 }
             }
@@ -893,6 +1166,20 @@ enum Holds {
 impl Ty {
     /// Does any type parameter survive inside this type? A bound on such a type
     /// cannot be looked up, because there is no type yet to look it up for.
+    /// Does a hole a turbofish left — `Vec<_>` — appear anywhere in this type?
+    pub fn contains_infer(&self) -> bool {
+        match self {
+            Ty::Infer => true,
+            Ty::Named { args, .. } | Ty::Tuple(args) => args.iter().any(|a| a.contains_infer()),
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
+                inner.contains_infer()
+            }
+            Ty::Assoc { base, .. } => base.contains_infer(),
+            Ty::Param(_) | Ty::Dyn { .. } | Ty::ImplTrait { .. } => false,
+            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never => false,
+        }
+    }
+
     pub fn has_open_param(&self) -> bool {
         match self {
             Ty::Param(_) | Ty::Infer => true,
@@ -912,7 +1199,7 @@ impl TypeRegistry {
     /// types; the std-surface step replaces the declaration with a stub and this
     /// keeps working.
     pub fn deref_trait(&self) -> Option<TypeId> {
-        self.system_type("std::ops::Deref")
+        self.system_type(super::DEREF_PATH)
     }
 }
 

@@ -311,13 +311,7 @@ fn engine_matches_oracle() {
             .map(|s| (head(&s.from), head(&s.to)))
             .collect();
         let matched = engine.iter().any(|r| {
-            r.file == site.file
-                && r.line == site.line
-                && r.steps
-                    .iter()
-                    .map(|(from, to)| (head(from), head(to)))
-                    .collect::<Vec<_>>()
-                    == expected
+            r.file == site.file && r.line == site.line && adjustment_chain(r) == expected
         });
         if matched {
             deref_covered += 1;
@@ -357,6 +351,26 @@ fn engine_matches_oracle() {
         covered >= pinned.len(),
         "every pinned site has to be covered"
     );
+}
+
+/// The engine's whole adjustment chain at one site, in rust-analyzer's terms.
+///
+/// rust-analyzer writes the auto-ref as one more step — `HashMap` to `&mut
+/// HashMap` — where the engine keeps the dereferences and the borrow apart.
+/// They are the same chain, so the borrow is put back on the end before the two
+/// are compared.
+fn adjustment_chain(row: &common::Resolved) -> Vec<(String, String)> {
+    let mut chain: Vec<(String, String)> =
+        row.steps.iter().map(|(from, to)| (head(from), head(to))).collect();
+    let last = chain
+        .last()
+        .map(|(_, to)| to.clone())
+        .unwrap_or_else(|| head(&row.receiver));
+    let (borrow, adjusted) = shape(&row.adjusted);
+    if !borrow.is_empty() {
+        chain.push((last, adjusted));
+    }
+    chain
 }
 
 /// `HashMap<K, V, S, A>::len` gives `len`.

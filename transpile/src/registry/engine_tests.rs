@@ -284,11 +284,14 @@ fn a_name_and_the_path_it_was_imported_from_intern_as_one_undeclared_type() {
         "lib.rs",
         "use ankurah_proto::{self as proto, Attested};\npub struct S;",
     )]);
+    // The declared surface has reported its own gaps by now; this counts what
+    // the fixture's own Rust adds to that.
+    let before = c.reg.undeclared_reported();
     let bare = c.ty("lib.rs", "Attested");
     let qualified = c.ty("lib.rs", "proto::Attested");
     assert_eq!(bare, qualified, "one type, however it is written");
     assert!(bare.id().unwrap().is_foreign());
-    assert_eq!(c.reg.undeclared_reported(), 1);
+    assert_eq!(c.reg.undeclared_reported(), before + 1);
 }
 
 #[test]
@@ -444,16 +447,19 @@ fn a_std_path_does_not_collapse_onto_a_system_type_by_its_last_segment() {
     let real = c.ty("lib.rs", "Result<u8, S>");
     assert_eq!(real.id(), Some(c.system_id("std::result::Result")));
 
-    // `std::fmt::Result` is a different type and is not declared.
+    // `std::fmt::Result` is a different declaration in a different module: an
+    // alias for `Result<(), fmt::Error>`, which is what it expands to. The two
+    // used to collapse onto each other because a std path was matched on its
+    // last segment alone.
     let fmt = c.ty("lib.rs", "std::fmt::Result");
-    assert!(fmt.id().unwrap().is_foreign());
-    assert!(
-        c.messages()
-            .iter()
-            .any(|m| m == "no declaration for type `std::fmt::Result`"),
-        "{:?}",
-        c.messages()
+    assert_eq!(
+        fmt,
+        c.system(
+            "std::result::Result",
+            vec![Ty::Unit, c.system("std::fmt::Error", vec![])]
+        )
     );
+    assert_ne!(fmt, real, "and it is not the two-parameter `Result`");
 
     // And the right path with the wrong number of arguments is refused too.
     let err = c
@@ -470,16 +476,20 @@ fn a_std_path_does_not_collapse_onto_a_system_type_by_its_last_segment() {
 /// a type path through it used to loop until the stack ran out.
 #[test]
 fn an_import_that_names_no_module_cannot_carry_a_type_path() {
+    // `use anyhow::anyhow` binds a *function*, so a type path written through
+    // that name means the crate and not the function — otherwise resolving
+    // `anyhow::Result` follows the import back into itself and never stops.
     let c = Fixture::build(&[("node.rs", "use anyhow::anyhow;\npub struct Node;")]);
     let ty = c.ty("node.rs", "anyhow::Result<()>");
-    assert!(ty.id().unwrap().is_foreign());
-    assert!(
-        c.messages()
-            .iter()
-            .any(|m| m == "no declaration for type `anyhow::Result`"),
-        "{:?}",
-        c.messages()
+    assert_eq!(
+        ty,
+        c.system(
+            "std::result::Result",
+            vec![Ty::Unit, c.system("anyhow::Error", vec![])]
+        ),
+        "the crate's own `Result` alias, reached past the imported function"
     );
+    assert!(c.messages().is_empty(), "{:?}", c.messages());
 }
 
 // ── Aliases ───────────────────────────────────────────────────────────
@@ -609,7 +619,24 @@ fn a_method_return_type_is_substituted_through_the_receiver() {
     let c = Fixture::build(&[("lib.rs", "")]);
     let lock = c.system(RWLOCK, vec![Ty::Prim(Prim::U8)]);
     let found = c.probe("lib.rs").resolve_method(&lock, "write").expect("declared");
-    assert_eq!(found.ret, c.system(GUARD, vec![Ty::Prim(Prim::U8)]));
+    // `write` yields a `LockResult<RwLockWriteGuard<'_, T>>`, so the guard is
+    // one `Result::unwrap` further on.
+    let guard = c.system(GUARD, vec![Ty::Prim(Prim::U8)]);
+    assert_eq!(
+        found.ret,
+        c.system(
+            "std::result::Result",
+            vec![
+                guard.clone(),
+                c.system("std::sync::PoisonError", vec![guard.clone()])
+            ]
+        )
+    );
+    let unwrapped = c
+        .probe("lib.rs")
+        .resolve_method(&found.ret, "unwrap")
+        .expect("Result::unwrap");
+    assert_eq!(unwrapped.ret, guard);
 }
 
 /// The impl block writes its own name for the receiver's argument. Two impls
@@ -643,21 +670,32 @@ fn an_impl_whose_target_does_not_resolve_is_reported() {
         "pub trait Listen<T> { fn listen(self); }\nimpl<F: Fn(u8)> Listen<u8> for F { fn listen(self) {} }",
     )]);
     // The impl table holds it as what it is: an impl written for a parameter,
-    // which applies to whatever the receiver turns out to be.
-    let blanket = c.reg.impls().blanket();
-    assert_eq!(blanket.len(), 1, "{:?}", c.messages());
-    let def = c.reg.impl_def(blanket[0]);
-    assert_eq!(def.self_ty, Ty::Param("F".into()));
-    assert!(def.methods.contains_key("listen"));
+    // which applies to whatever the receiver turns out to be. The std surface
+    // contributes blanket impls of its own, so this asks for the one written
+    // for the crate's trait.
+    let listen = c.reg.module_type(c.module("lib.rs"), "Listen").unwrap();
+    let mine: Vec<_> = c
+        .reg
+        .impls()
+        .blanket()
+        .iter()
+        .map(|id| c.reg.impl_def(*id))
+        .filter(|def| def.trait_ref.as_ref().is_some_and(|t| t.id == listen))
+        .collect();
+    assert_eq!(mine.len(), 1, "{:?}", c.messages());
+    assert_eq!(mine[0].self_ty, Ty::Param("F".into()));
+    assert!(mine[0].methods.contains_key("listen"));
 }
 
 #[test]
 fn an_undeclared_type_gets_one_identity_and_one_diagnostic() {
-    let c = Fixture::build(&[("id.rs", "use ulid::Ulid;\npub struct EntityId(Ulid);")]);
+    // A crate the declared surface says nothing about. (`ulid` used to serve
+    // here and is declared now, which is the point of the surface.)
+    let c = Fixture::build(&[("id.rs", "use nowhere::Ulid;\npub struct EntityId(Ulid);")]);
     let before = c.sink.len();
 
     let a = c.ty("id.rs", "Ulid");
-    let b = c.ty("id.rs", "ulid::Ulid");
+    let b = c.ty("id.rs", "nowhere::Ulid");
     assert_eq!(a, b, "the bare name and the written path are the same type");
     assert!(a.id().unwrap().is_foreign());
     assert!(
@@ -675,7 +713,7 @@ fn an_undeclared_type_gets_one_identity_and_one_diagnostic() {
     assert!(
         c.messages()
             .iter()
-            .any(|m| m == "no declaration for type `ulid::Ulid`"),
+            .any(|m| m == "no declaration for type `nowhere::Ulid`"),
         "{:?}",
         c.messages()
     );
@@ -754,4 +792,348 @@ fn a_crate_result_is_not_the_runtime_result() {
         "std::result::Result",
         vec![Ty::Prim(Prim::U8), Ty::Prim(Prim::U8)]
     )));
+}
+
+// ── The declared std surface (spec 4.4, step 3) ───────────────────────
+//
+// Every std type the engine knows comes from a signature-only Rust stub under
+// `transpile/std_surface/`, parsed by the extractor that reads ankurah's own
+// source. These tests ask the questions that used to be answered by a table of
+// strings in `transpile.toml`.
+
+#[test]
+fn a_stub_type_is_declared_under_its_real_path_and_the_prelude_rule_holds() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let module = c.module("lib.rs");
+
+    // `Arc` is `std::sync::Arc` — the module its file says, not the file's name.
+    let by_path = c.reg.lookup_type(module, &["std".into(), "sync".into(), "Arc".into()]);
+    assert_eq!(by_path, Ok(Some(Def::Type(c.system_id(ARC)))));
+    // And `core::sync::Arc` names the same one, because `core` re-exports into
+    // `std` and ankurah writes both.
+    assert_eq!(
+        c.reg.lookup_type(module, &["core".into(), "sync".into(), "Arc".into()]),
+        by_path
+    );
+
+    // A bare `Arc` is not in Rust's prelude and is not in scope without an
+    // import; a bare `Vec` is in both.
+    assert_eq!(c.reg.lookup_type(module, &["Arc".into()]), Ok(None));
+    assert_eq!(
+        c.reg.lookup_type(module, &["Vec".into()]),
+        Ok(Some(Def::Type(c.system_id(VEC))))
+    );
+
+    // `HashMap` is declared in `std::collections::hash_map` and re-exported by
+    // `std::collections`, exactly as std does it, and both paths reach it.
+    assert_eq!(
+        c.reg.lookup_type(module, &["std".into(), "collections".into(), "HashMap".into()]),
+        c.reg.lookup_type(
+            module,
+            &["std".into(), "collections".into(), "hash_map".into(), "HashMap".into()]
+        )
+    );
+}
+
+#[test]
+fn an_extern_crate_is_a_root_of_its_own() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let std_mutex = c.system_id("std::sync::Mutex");
+    let tokio_mutex = c.system_id("tokio::sync::Mutex");
+    assert_ne!(
+        std_mutex, tokio_mutex,
+        "`tokio::sync::Mutex` locks asynchronously and yields the guard itself; \
+         they are two types and the registry is not flat"
+    );
+    // Reached by writing the crate's name, which is Rust's extern prelude.
+    assert_eq!(
+        c.reg.lookup_type(c.module("lib.rs"), &["tokio".into(), "sync".into(), "Mutex".into()]),
+        Ok(Some(Def::Type(tokio_mutex)))
+    );
+    // And the two `lock`s hand back different things.
+    let probe = c.probe("lib.rs");
+    let std_lock = probe
+        .resolve_method(&c.system("std::sync::Mutex", vec![Ty::Prim(Prim::U8)]), "lock")
+        .expect("std::sync::Mutex::lock");
+    let tokio_lock = probe
+        .resolve_method(&c.system("tokio::sync::Mutex", vec![Ty::Prim(Prim::U8)]), "lock")
+        .expect("tokio::sync::Mutex::lock");
+    assert_ne!(std_lock.ret, tokio_lock.ret);
+}
+
+#[test]
+fn a_stub_that_does_not_parse_names_the_file_it_is_in() {
+    let dir = std::env::temp_dir().join(format!("std-surface-broken-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("std")).expect("scratch directory");
+    std::fs::write(dir.join("std/vec.rs"), "pub struct Vec<T>;").expect("a stub that parses");
+    std::fs::write(dir.join("std/broken.rs"), "pub struct {").expect("a stub that does not");
+
+    let sink = crate::diag::DiagSink::new();
+    let mut surface = crate::registry::Surface::load(&dir);
+    let mut reg = crate::registry::TypeRegistry::new("testcrate");
+    crate::registry::std_surface::declare(&mut reg, &mut surface, &sink);
+
+    let messages: Vec<String> = sink.sorted().into_iter().map(|d| d.message).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("std/broken.rs") && m.contains("could not be read")),
+        "{:?}",
+        messages
+    );
+    // The file that does parse is still declared: one broken stub is one gap,
+    // not a surface that failed to load.
+    assert!(reg.system_type("std::vec::Vec").is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lock_and_unwrap_reach_the_guard_through_lock_result() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let probe = c.probe("lib.rs");
+    let mutex = c.system("std::sync::Mutex", vec![Ty::Prim(Prim::U8)]);
+    let guard = c.system("std::sync::MutexGuard", vec![Ty::Prim(Prim::U8)]);
+
+    // Rust's `Mutex::lock` yields `LockResult<MutexGuard<'_, T>>`, and the alias
+    // is expanded to the `Result` it is.
+    let lock = probe.resolve_method(&mutex, "lock").expect("Mutex::lock");
+    assert_eq!(
+        lock.ret,
+        c.system(
+            "std::result::Result",
+            vec![guard.clone(), c.system("std::sync::PoisonError", vec![guard.clone()])]
+        )
+    );
+    // The `unwrap` the source writes is `Result::unwrap`, resolved through the
+    // impl table like any other call. There is no shim.
+    let unwrapped = probe.resolve_method(&lock.ret, "unwrap").expect("Result::unwrap");
+    assert_eq!(unwrapped.ret, guard);
+}
+
+#[test]
+fn an_iterator_chain_types_through_the_adaptors_and_collect() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let probe = c.probe("lib.rs");
+    let vec = c.system(VEC, vec![Ty::Prim(Prim::U8)]);
+
+    // `v.iter()` is `<[T]>::iter` through the `Vec`'s `Deref`, and each adaptor
+    // is a struct whose own `Iterator` impl says what it hands out.
+    let iter = probe.resolve_method(&vec, "iter").expect("<[T]>::iter");
+    let skipped = probe.resolve_method(&iter.ret, "skip").expect("Iterator::skip");
+    assert_eq!(c.reg.name_of(skipped.ret.id().expect("named")), "Skip");
+    let cloned = probe.resolve_method(&skipped.ret, "cloned").expect("Iterator::cloned");
+    assert_eq!(c.reg.name_of(cloned.ret.id().expect("named")), "Cloned");
+    // `Cloned<Skip<Iter<'_, u8>>>::Item` is `u8`: `Iter`'s is `&u8`, `Skip`
+    // passes it through, and `Cloned`'s own bound fixes the element.
+    assert_eq!(
+        c.context("lib.rs", None).iteration_item(&cloned.ret),
+        Some(Ty::Prim(Prim::U8))
+    );
+
+    // `collect` returns its own parameter, so only the turbofish says what the
+    // chain produces — and `Vec<_>`'s hole is filled from `FromIterator`.
+    let target = Ty::Named {
+        id: c.system_id(VEC),
+        args: vec![Ty::Infer],
+    };
+    let collected = probe
+        .resolve_method_with(&cloned.ret, "collect", &[target])
+        .expect("Iterator::collect");
+    assert_eq!(collected.ret, vec);
+}
+
+#[test]
+fn iterating_a_collection_goes_through_into_iterator() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let cx = c.context("lib.rs", None);
+    let vec = c.system(VEC, vec![Ty::Prim(Prim::U8)]);
+
+    // `for x in v` hands out the element and `for x in &v` a reference to it,
+    // because those are two `IntoIterator` impls with two different `Item`s.
+    assert_eq!(cx.iteration_item(&vec), Some(Ty::Prim(Prim::U8)));
+    assert_eq!(
+        cx.iteration_item(&Ty::Ref { mutable: false, inner: Box::new(vec) }),
+        Some(Ty::Ref { mutable: false, inner: Box::new(Ty::Prim(Prim::U8)) })
+    );
+    // A map hands out a pair, and an `Option` its payload.
+    let map = c.system(HASHMAP, vec![Ty::Prim(Prim::U32), Ty::Prim(Prim::Bool)]);
+    assert_eq!(
+        cx.iteration_item(&map),
+        Some(Ty::Tuple(vec![Ty::Prim(Prim::U32), Ty::Prim(Prim::Bool)]))
+    );
+    assert_eq!(
+        cx.iteration_item(&c.system(OPTION, vec![Ty::Prim(Prim::U8)])),
+        Some(Ty::Prim(Prim::U8))
+    );
+    // A type with no `IntoIterator` impl has no item type, and the loop
+    // variable is bound without one rather than guessed at.
+    assert_eq!(cx.iteration_item(&c.named("lib.rs", "S", vec![])), None);
+}
+
+#[test]
+fn a_map_is_looked_up_by_a_borrowed_key_through_borrow() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let string = c.system("std::string::String", vec![]);
+    let map = c.system(HASHMAP, vec![string, Ty::Prim(Prim::U8)]);
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&map, "get")
+        .expect("HashMap::get");
+    // `get<Q>(&self, k: &Q) -> Option<&V> where K: Borrow<Q>` — the generality
+    // is kept so that `map.get("key")` on a `String`-keyed map resolves, and
+    // what comes back is a borrow of the value.
+    assert_eq!(
+        found.ret,
+        c.system(
+            OPTION,
+            vec![Ty::Ref { mutable: false, inner: Box::new(Ty::Prim(Prim::U8)) }]
+        )
+    );
+    assert!(
+        c.reg.impls().all().any(|def| {
+            def.trait_ref.as_ref().is_some_and(|t| c.reg.name_of(t.id) == "Borrow")
+                && def.self_ty == c.system("std::string::String", vec![])
+        }),
+        "`String: Borrow<str>` is what discharges the bound"
+    );
+}
+
+#[test]
+fn to_string_resolves_through_the_to_string_blanket() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct S;\n\
+         impl std::fmt::Display for S {\n\
+           fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() }\n\
+         }",
+    )]);
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&c.named("lib.rs", "S", vec![]), "to_string")
+        .expect("`impl<T: Display> ToString for T`");
+    assert!(matches!(found.callee, crate::registry::method::Callee::Blanket(..)));
+    assert_eq!(found.ret, c.system("std::string::String", vec![]));
+}
+
+#[test]
+fn a_blanket_is_taken_only_where_its_bound_is_met_or_reported() {
+    // The mechanism `to_string` runs on, written out so the test does not
+    // depend on the surface being able to read its own `Display` bound.
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub trait Shown { fn shown(&self) -> u8; }\n\
+         pub trait Named { fn named(&self) -> u8; }\n\
+         impl<T: Named> Shown for T { fn shown(&self) -> u8 { 0 } }\n\
+         pub struct Yes;\n\
+         impl Named for Yes { fn named(&self) -> u8 { 0 } }\n\
+         pub struct No;",
+    )]);
+    let probe = c.probe("lib.rs");
+
+    let found = probe
+        .resolve_method(&c.named("lib.rs", "Yes", vec![]), "shown")
+        .expect("the bound is met");
+    assert!(matches!(found.callee, crate::registry::method::Callee::Blanket(..)));
+    assert!(found.obligations.is_empty(), "{:?}", found.obligations);
+
+    // With no `Named` impl the bound definitely fails, so the blanket is not a
+    // candidate at all and nothing answers.
+    assert!(probe
+        .resolve_method(&c.named("lib.rs", "No", vec![]), "shown")
+        .is_err());
+}
+
+#[test]
+fn a_bound_the_engine_cannot_read_is_not_a_bound_that_holds() {
+    // An impl whose requirement names something ambiguous or undeclared still
+    // has that requirement. Dropping it turned `impl<T: Display> ToString for T`
+    // into an impl of `ToString` for everything.
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub trait Shown { fn shown(&self) -> u8; }\n\
+         impl<T: nowhere::Named> Shown for T { fn shown(&self) -> u8 { 0 } }\n\
+         pub struct S;",
+    )]);
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&c.named("lib.rs", "S", vec![]), "shown")
+        .expect("the impl is still a candidate");
+    assert_eq!(found.obligations.len(), 1);
+    assert_eq!(found.obligations[0].reason, crate::registry::Undecided::NoDeclaration);
+}
+
+#[test]
+fn indexing_goes_through_index_output() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let cx = c.context("lib.rs", None);
+
+    // `v[0]` is `<Vec<T> as Index<usize>>::Output`, and `v[1..]` the slice its
+    // range index produces. Both come from the declared `Index` family rather
+    // than from a list of containers.
+    let vec = c.system(VEC, vec![Ty::Prim(Prim::U8)]);
+    assert_eq!(cx.index_of(&vec, "0"), Some(Ty::Prim(Prim::U8)));
+    assert_eq!(
+        cx.index_of(&vec, "1.."),
+        Some(Ty::Slice(Box::new(Ty::Prim(Prim::U8))))
+    );
+
+    // `Index<&Q> for HashMap<K, V>` hands back the value, not an `Option`.
+    let string = c.system("std::string::String", vec![]);
+    let map = c.system(HASHMAP, vec![string, Ty::Prim(Prim::U8)]);
+    assert_eq!(cx.index_of(&map, "\"k\""), Some(Ty::Prim(Prim::U8)));
+}
+
+#[test]
+fn an_auto_trait_bound_is_answered_by_its_declaration() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct S;\n\
+         pub trait Held { fn held(&self) -> u8; }\n\
+         impl<T: Send + Sync> Held for T { fn held(&self) -> u8 { 0 } }",
+    )]);
+    // rustc decides `Send` and `Sync` from a type's fields, so there is no impl
+    // in the table to find; the corpus compiles, which means every auto-trait
+    // bound in it already holds. Looking for an impl would report an obligation
+    // Rust had already discharged.
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&c.named("lib.rs", "S", vec![]), "held")
+        .expect("the blanket applies");
+    assert!(found.obligations.is_empty(), "{:?}", found.obligations);
+}
+
+#[test]
+fn the_emission_policy_is_keyed_on_identity_not_on_a_leaf_name() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Vec<T> { pub v: T }\npub struct S;",
+    )]);
+    use crate::name_map::shape::{js_shape, JsShape};
+
+    // The crate's own `Vec` is its own type and is emitted as itself.
+    let crate_vec = c.named("lib.rs", "Vec", vec![Ty::Prim(Prim::U8)]);
+    assert_eq!(js_shape(&c.reg, &crate_vec), JsShape::Plain);
+    // The declared one is a JavaScript array, and a `Vec<u8>` a byte buffer.
+    assert_eq!(
+        js_shape(&c.reg, &c.system(VEC, vec![Ty::Prim(Prim::U16)])),
+        JsShape::Array(Ty::Prim(Prim::U16))
+    );
+    assert_eq!(js_shape(&c.reg, &c.system(VEC, vec![Ty::Prim(Prim::U8)])), JsShape::Bytes);
+
+    // Reaching through a wrapper is written where the port's runtime says, and
+    // the accessor is looked up by the type's id.
+    let step = c
+        .probe("lib.rs")
+        .deref_once(&c.system(ARC, vec![Ty::Prim(Prim::U8)]))
+        .expect("Arc dereferences");
+    assert_eq!(step.accessor.map(|a| a.written()).as_deref(), Some("value"));
+    // A `Box` is transparent and a lock is not a wrapper at all.
+    assert!(c
+        .probe("lib.rs")
+        .deref_once(&c.system("std::boxed::Box", vec![Ty::Prim(Prim::U8)]))
+        .expect("Box dereferences")
+        .accessor
+        .is_none());
+
+    // Nothing the shape table names has gone missing from the surface.
+    assert!(c.reg.shapes().unresolved.is_empty(), "{:?}", c.reg.shapes().unresolved);
 }

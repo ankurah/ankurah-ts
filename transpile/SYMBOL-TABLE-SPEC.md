@@ -643,9 +643,24 @@ addressed by the step that found it.
   the read-only half of `Vec<u8>` translates and every call that would grow or
   shrink one is reported. Choosing a byte-buffer type is a runtime decision
   (`packages/base`), not a transpiler one.
-- **Drop insertion still names locals by their Rust name**, so a shadow emitted
-  under a fresh identifier is dropped under the old one. The ownership-emission
-  step owns `ownership::generate_drops`.
+- **Raw pointers are not modelled.** `*const T` and `*mut T` stop
+  `resolve_type`, so a signature that names one is left out of the method table
+  — `Weak::as_ptr` and `Arc::as_ptr` are the corpus's only uses, both immediately
+  cast to `usize` for an identity. One of the two oracle sites the engine does
+  not cover is `Weak::as_ptr` for this reason.
+- **A block's own `let`s are not in scope when the block is typed as an
+  expression.** `resolve_expr` on a `Expr::Block` reads its tail expression, and
+  the tail may name a local the same block introduced, which nothing has bound;
+  binding them needs `&mut self` where `resolve_expr` takes `&self`. This is why
+  `let subscribers = { let listeners = ..; listeners.values()..collect() };`
+  leaves `subscribers` untyped, and it is the second uncovered oracle site
+  (`<[T]>::split_last`).
+- **An or-pattern whose alternatives read their names from different places has
+  no test the translator can write.** `if let (Expr::Path(p), Expr::Literal(l)) |
+  (Expr::Literal(l), Expr::Path(p)) = ..` binds the same two names from opposite
+  positions, which needs a per-name conditional extraction. One site, in
+  `core/src/reactor/watcherset.rs`; the alternatives that agree — two variants of
+  one enum — are lowered.
 
 ## 8. Non-goals
 

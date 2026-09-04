@@ -78,7 +78,6 @@ impl TypeRegistry {
                 format!("<{} as {}>::{}", self.describe(&def.self_ty), trait_name, m)
             }
             Callee::TraitObject(id, m) => format!("{}::{}", self.name_of(*id), m),
-            Callee::GuardShim => "the lock-guard shim".to_string(),
         }
     }
 }

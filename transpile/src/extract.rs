@@ -35,8 +35,18 @@ pub fn extract_source(
         .with_context(|| format!("Failed to parse {}", path))?;
 
     let mut file = RustFile::empty(path.to_string());
+    extract_items(&syntax.items, features, &mut file);
+    Ok(file)
+}
 
-    for item in &syntax.items {
+/// Read one module's items into `file`. A file's top level and an inline
+/// `mod x { .. }` are the same thing to Rust, so they are read by the same walk.
+fn extract_items(
+    items: &[syn::Item],
+    features: Option<&crate::cfg::CfgFeatures>,
+    file: &mut RustFile,
+) {
+    for item in items {
         match item {
             syn::Item::Struct(s) => {
                 if is_skipped_cfg_with(&s.attrs, features) { continue; }
@@ -70,6 +80,7 @@ pub fn extract_source(
                     is_pub: is_public(&t.vis),
                     vis: visibility(&t.vis),
                     type_params: type_param_names(&t.generics),
+                    param_defaults: type_param_defaults(&t.generics),
                 });
             }
             syn::Item::Const(c) => {
@@ -97,44 +108,19 @@ pub fn extract_source(
                 }
                 // Extract inline modules as separate RustFile entries.
                 // These become sibling .ts files (e.g., context/stack.ts).
+                //
+                // An inline module reads exactly like a file, through the same
+                // walk: an `impl` or a `trait` written inside one is as real as
+                // one written at the top of a file, and reading only some of the
+                // item kinds dropped those declarations on the floor. The std
+                // surface's `pub mod` blocks — tokio's `oneshot` and `mpsc`,
+                // serde's `ser` and `de` — are nothing but impls and traits.
                 else if !is_skipped_cfg_with(&m.attrs, features) {
                     if let Some((_, items)) = &m.content {
                         let mod_name = m.ident.to_string();
                         let mut sub_file = RustFile::empty(String::new());
                         sub_file.vis = visibility(&m.vis);
-                        for item in items {
-                            match item {
-                                syn::Item::Fn(f) => {
-                                    if !is_skipped_cfg_with(&f.attrs, features) {
-                                        sub_file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block)));
-                                    }
-                                }
-                                syn::Item::Struct(s) => {
-                                    if !is_skipped_cfg_with(&s.attrs, features) {
-                                        sub_file.structs.push(extract_struct(s));
-                                    }
-                                }
-                                syn::Item::Enum(e) => {
-                                    if !is_skipped_cfg_with(&e.attrs, features) {
-                                        sub_file.enums.push(extract_enum(e));
-                                    }
-                                }
-                                syn::Item::Use(u) => {
-                                    sub_file.uses.push(extract_use(u));
-                                }
-                                syn::Item::Macro(mac) => {
-                                    let macro_name = mac.mac.path.segments.last()
-                                        .map(|s| s.ident.to_string()).unwrap_or_default();
-                                    if macro_name == "thread_local" {
-                                        if let Some((decl, name, ty, rust_ty)) = extract_thread_local(&mac.mac) {
-                                            sub_file.module_decls.push(decl);
-                                            sub_file.consts.push(ConstInfo { name, ty, rust_ty, is_pub: false, vis: VisInfo::Private });
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
+                        extract_items(items, features, &mut sub_file);
                         file.inline_modules.push((mod_name, sub_file));
                     }
                 }
@@ -153,8 +139,6 @@ pub fn extract_source(
             _ => {}
         }
     }
-
-    Ok(file)
 }
 
 fn is_public(vis: &Visibility) -> bool {
@@ -243,6 +227,7 @@ fn extract_struct(s: &syn::ItemStruct) -> StructInfo {
         fields: extract_fields(&s.fields),
         generics: extract_generics(&s.generics),
         type_params: type_param_names(&s.generics),
+        param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&s.attrs),
     }
 }
@@ -271,6 +256,7 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
         variants,
         generics: extract_generics(&e.generics),
         type_params: type_param_names(&e.generics),
+        param_defaults: type_param_defaults(&e.generics),
         derives: extract_derives(&e.attrs),
     }
 }
@@ -307,6 +293,7 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
         name: t.ident.to_string(),
         is_pub: is_public(&t.vis),
         vis: visibility(&t.vis),
+        is_auto: t.auto_token.is_some(),
         methods,
         has_default_impls,
         generics: extract_generics(&t.generics),
@@ -382,7 +369,7 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
             }
             FnArg::Typed(pat) => {
                 let name = if let syn::Pat::Ident(ident) = &*pat.pat {
-                    name_map::to_camel_case(&ident.ident.to_string())
+                    name_map::escape_reserved(&name_map::to_camel_case(&ident.ident.to_string()))
                 } else {
                     "arg".to_string()
                 };
@@ -594,6 +581,20 @@ fn type_param_names(generics: &syn::Generics) -> Vec<String> {
         .iter()
         .filter_map(|p| match p {
             syn::GenericParam::Type(t) => Some(t.ident.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What each parameter falls back to when a use site leaves it unwritten.
+/// `HashMap<K, V, S = RandomState>` is a three-parameter type that ankurah
+/// always writes with two.
+fn type_param_defaults(generics: &syn::Generics) -> Vec<Option<syn::Type>> {
+    generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            syn::GenericParam::Type(t) => Some(t.default.clone()),
             _ => None,
         })
         .collect()

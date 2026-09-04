@@ -7,18 +7,38 @@
 #
 # `result_differs` records a place where the port deliberately declares a
 # different signature from Rust's, so the two result types are not expected to
-# agree. Each one names the reason and the step that deletes it.
+# agree. There are none left: the declared std surface says what Rust says, and
+# `RwLock::read` yields the `LockResult` it really does.
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
-method = "read"
-result_differs = "the port's RwLock::read yields the guard; Rust yields a LockResult (spec 4.4, step 3)"
+method = "finish"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "field"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "debug_struct"
 
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 45
 method = "len"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "unwrap"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 45
+method = "read"
 
 [[site]]
 file = "signals/src/broadcast.rs"
@@ -28,5 +48,24 @@ method = "broadcast_id"
 [[site]]
 file = "signals/src/broadcast.rs"
 line = 99
+method = "unwrap"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 99
 method = "read"
-result_differs = "the port's RwLock::read yields the guard; Rust yields a LockResult (spec 4.4, step 3)"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 100
+method = "collect"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 100
+method = "cloned"
+
+[[site]]
+file = "signals/src/broadcast.rs"
+line = 100
+method = "values"

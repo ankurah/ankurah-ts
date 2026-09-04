@@ -96,6 +96,25 @@ impl DiagSink {
         self.diags.borrow().len()
     }
 
+    /// How many diagnostics are about the crate being transpiled, and how many
+    /// about the declared std surface.
+    ///
+    /// They are two different measures and must not be added up. The crate's
+    /// count is the coverage metric — how much of *this* crate the engine
+    /// cannot type — and it has to stay comparable from step to step. A gap in
+    /// a stub is a fact about `transpile/std_surface/`, true of every crate the
+    /// transpiler will ever read, and it is reported against the stub file that
+    /// has to change.
+    pub fn counts(&self) -> (usize, usize) {
+        let surface = self
+            .diags
+            .borrow()
+            .iter()
+            .filter(|d| is_surface(&d.file))
+            .count();
+        (self.len() - surface, surface)
+    }
+
     /// Every diagnostic, sorted by file and position.
     pub fn sorted(&self) -> Vec<Diag> {
         let mut out = self.diags.borrow().clone();
@@ -103,18 +122,35 @@ impl DiagSink {
         out
     }
 
-    /// Print the count and the list at the end of a run.
+    /// Print the count and the list at the end of a run, the crate's own
+    /// diagnostics apart from the declared surface's.
     pub fn print_summary(&self) {
         let diags = self.sorted();
+        let (crate_count, surface_count) = self.counts();
         if diags.is_empty() {
             eprintln!("\n0 diagnostics");
             return;
         }
-        eprintln!("\n{} diagnostics:", diags.len());
-        for d in &diags {
+        eprintln!("\n{} diagnostics in this crate:", crate_count);
+        for d in diags.iter().filter(|d| !is_surface(&d.file)) {
             eprintln!("  {}", d);
         }
+        if surface_count > 0 {
+            eprintln!(
+                "\n{} diagnostics in the declared std surface (the same for every crate):",
+                surface_count
+            );
+            for d in diags.iter().filter(|d| is_surface(&d.file)) {
+                eprintln!("  {}", d);
+            }
+        }
     }
+}
+
+/// Does this diagnostic name a stub rather than a file of the crate being
+/// transpiled?
+pub fn is_surface(file: &str) -> bool {
+    file.starts_with(concat!("std_surface", "/"))
 }
 
 /// Fallbacks taken where no sink is in reach.

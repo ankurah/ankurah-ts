@@ -8,7 +8,7 @@
 
 use super::method::{Callee, DerefKind, Undecided};
 use super::method::MethodError;
-use super::AutoRef;
+use super::method::AutoRef;
 use crate::testing::Fixture;
 use crate::ty::{Prim, Ty};
 
@@ -40,8 +40,20 @@ fn a_call_reaches_through_two_guard_layers() {
     assert_eq!(lock.steps.len(), 1);
     assert_eq!(lock.autoref, AutoRef::Shared);
 
+    // `lock()` hands back a `LockResult`, as Rust's does, and the `unwrap` the
+    // source writes is `Result::unwrap` on it. Nothing is reached through: a
+    // `Result` is not a wrapper the port writes an accessor for.
+    let guard = probe
+        .resolve_method(&lock.ret, "unwrap")
+        .expect("Result::unwrap on the LockResult");
+    assert!(guard.accessors().is_empty());
+    assert_eq!(
+        guard.ret,
+        c.system("std::sync::MutexGuard", vec![c.system(VEC, vec![Ty::Prim(Prim::U8)])])
+    );
+
     // And the guard it hands back reaches the `Vec` inside it.
-    let len = probe.resolve_method(&lock.ret, "len").expect("Vec::len");
+    let len = probe.resolve_method(&guard.ret, "len").expect("Vec::len");
     assert_eq!(len.accessors(), vec!["value"]);
     assert_eq!(len.ret, Ty::Prim(Prim::Usize));
 }
@@ -71,10 +83,10 @@ fn a_written_deref_impl_is_an_ordinary_step() {
 
 #[test]
 fn a_vec_reaches_the_slices_methods_and_an_array_is_unsized_first() {
-    let c = Fixture::build(&[(
-        "lib.rs",
-        "pub struct S;\nimpl [u8] { pub fn split_last(&self) -> u8 { 0 } }",
-    )]);
+    // `split_last` is declared once, on `[T]`, by the std surface; the fixture
+    // supplies nothing, because a second `impl [u8]` here would be the duplicate
+    // definition rustc calls E0592.
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
     let probe = c.probe("lib.rs");
 
     let vec = c.system(VEC, vec![Ty::Prim(Prim::U8)]);
@@ -98,10 +110,8 @@ fn a_vec_reaches_the_slices_methods_and_an_array_is_unsized_first() {
 
 #[test]
 fn a_string_dereferences_to_str() {
-    let c = Fixture::build(&[(
-        "lib.rs",
-        "pub struct S;\nimpl str { pub fn chars(&self) -> u8 { 0 } }",
-    )]);
+    // `chars` comes from the surface's own `impl str`, for the same reason.
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
     let string = c.system("std::string::String", vec![]);
     let borrowed = Ty::Ref {
         mutable: false,
@@ -225,12 +235,13 @@ fn a_trait_out_of_scope_loses_the_tie_break() {
 #[test]
 fn a_blanket_impl_answers_when_nothing_else_does() {
     // `impl<T: Display> ToString for T`, the shape behind `.to_string()` on a
-    // primitive. `Display` has no declaration here, so the bound cannot be
-    // decided and travels with the answer instead of being assumed.
+    // primitive. The bound here is on a trait nothing declares, so it cannot be
+    // decided and travels with the answer instead of being assumed. (`Display`
+    // itself is declared now, and a bound on it is decided.)
     let c = Fixture::build(&[(
         "lib.rs",
         "pub trait Show { fn show(&self) -> u8; }\n\
-         impl<T: std::fmt::Display> Show for T { fn show(&self) -> u8 { 0 } }",
+         impl<T: nowhere::Shown> Show for T { fn show(&self) -> u8 { 0 } }",
     )]);
     let found = c
         .probe("lib.rs")
@@ -492,7 +503,10 @@ fn a_map_behind_a_guard_answers_with_its_own_method() {
     let probe = c.probe("lib.rs");
     let held = probe.resolve_field(&broadcast, "_0").unwrap();
     let listeners = probe.resolve_field(&held.ty, "listeners").unwrap();
-    let guard = probe.resolve_method(&listeners.ty, "read").unwrap();
+    let read = probe.resolve_method(&listeners.ty, "read").unwrap();
+    let guard = probe
+        .resolve_method(&read.ret, "unwrap")
+        .expect("Result::unwrap on the LockResult `read` hands back");
     let len = probe.resolve_method(&guard.ret, "len").expect("HashMap::len");
     assert_eq!(len.accessors(), vec!["value"]);
     assert_eq!(len.ret, Ty::Prim(Prim::Usize));
@@ -635,7 +649,7 @@ fn an_undecidable_bound_travels_with_the_answer_rather_than_being_assumed() {
     let c = Fixture::build(&[(
         "lib.rs",
         "pub trait Show { fn show(&self) -> u8; }\n\
-         impl<T: std::fmt::Display> Show for T { fn show(&self) -> u8 { 0 } }",
+         impl<T: nowhere::Shown> Show for T { fn show(&self) -> u8 { 0 } }",
     )]);
     let found = c
         .probe("lib.rs")
@@ -653,7 +667,7 @@ fn a_nested_undecidable_bound_is_not_swallowed() {
         "lib.rs",
         "pub struct S;\n\
          pub trait Outer {}\n\
-         impl<T: std::fmt::Display> Outer for T {}\n\
+         impl<T: nowhere::Shown> Outer for T {}\n\
          pub trait Show { fn show(&self) -> u8; }\n\
          impl<T: Outer> Show for T { fn show(&self) -> u8 { 0 } }",
     )]);

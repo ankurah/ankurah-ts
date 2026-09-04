@@ -7,7 +7,7 @@
 use crate::diag::{Diag, DiagSink};
 use crate::extract;
 use crate::registry::{
-    build_registry, resolve_type, ExtractedFile, ModuleId, SystemTypeDecl, TypeEnv, TypeRegistry,
+    build_registry, resolve_type, std_surface, ExtractedFile, ModuleId, TypeEnv, TypeRegistry,
 };
 use crate::ty::{Ty, TypeId};
 
@@ -17,13 +17,11 @@ pub struct Fixture {
     pub files: Vec<ExtractedFile>,
 }
 
-/// The system types the shipped configuration declares. Tests run against the
-/// real table, so that a change to it shows up here rather than only in a
-/// corpus diff.
-pub fn system_decls() -> Vec<SystemTypeDecl> {
-    crate::config::Config::load(std::path::Path::new("transpile.toml"))
-        .map(|c| c.system_types)
-        .unwrap_or_default()
+/// The std surface the transpiler ships, loaded the way `batch` loads it. Tests
+/// run against the real declarations, so a change to a stub shows up here rather
+/// than only in a corpus diff.
+fn surface_dir() -> std::path::PathBuf {
+    std_surface::default_dir(None)
 }
 
 impl Fixture {
@@ -41,12 +39,9 @@ impl Fixture {
                 declarations_only: false,
             })
             .collect();
-        let reg = build_registry(
-            &mut parsed,
-            &system_decls(),
-            &[crate_name.to_string()],
-            &sink,
-        );
+        let reg = std_surface::with_cached(&surface_dir(), |surface| {
+            build_registry(&mut parsed, surface, &[crate_name.to_string()], &sink)
+        });
         Fixture {
             reg,
             sink,
@@ -99,11 +94,22 @@ impl Fixture {
         Ty::Named { id, args }
     }
 
-    pub fn system(&self, path: &str, args: Vec<Ty>) -> Ty {
-        Ty::Named {
-            id: self.system_id(path),
-            args,
+    /// A declared system type with the arguments a use site would write.
+    ///
+    /// Whatever the declaration defaults is filled in, so `system("…HashMap",
+    /// [K, V])` is the same type a written `HashMap<K, V>` resolves to — three
+    /// parameters, the third `RandomState`.
+    pub fn system(&self, path: &str, mut args: Vec<Ty>) -> Ty {
+        let id = self.system_id(path);
+        if let Some(def) = self.reg.def(id) {
+            for default in def.param_defaults.iter().skip(args.len()) {
+                match default {
+                    Some(ty) => args.push(ty.clone()),
+                    None => break,
+                }
+            }
         }
+        Ty::Named { id, args }
     }
 
     pub fn system_id(&self, path: &str) -> TypeId {
@@ -130,8 +136,33 @@ impl Fixture {
         )
     }
 
+    /// What the engine could not work out about *this fixture's* Rust.
+    ///
+    /// The declared std surface is loaded into every fixture and reports its own
+    /// gaps; those are the same in every test and would drown out the one thing
+    /// a test is asking about, so they are kept apart.
     pub fn messages(&self) -> Vec<String> {
-        self.sink.sorted().into_iter().map(|d| d.message).collect()
+        self.sink
+            .sorted()
+            .into_iter()
+            .filter(|d| !crate::diag::is_surface(&d.file))
+            .map(|d| d.message)
+            .collect()
+    }
+
+    /// What the engine could not work out about the declared surface itself.
+    pub fn surface_messages(&self) -> Vec<String> {
+        self.sink
+            .sorted()
+            .into_iter()
+            .filter(|d| crate::diag::is_surface(&d.file))
+            .map(|d| d.message)
+            .collect()
+    }
+
+    /// How many diagnostics this fixture's own Rust produced.
+    pub fn crate_diags(&self) -> usize {
+        self.sink.counts().0
     }
 
     /// Translate every body in `file` and hand back the TypeScript of one

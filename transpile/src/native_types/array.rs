@@ -52,7 +52,14 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "iter" | "into_iter" => format!("[...{}]", receiver),
         "values" => format!("[...{}]", receiver),
 
-        _ => return MethodTranslation::Passthrough,
+        // Everything else an iterator declares is an array operation, and the
+        // table for those is shared with the untyped path rather than copied:
+        // a `Cloned<Values<'_, K, V>>` is a JavaScript array, so `collect` and
+        // `cloned` mean on it what they mean on any other one.
+        _ => match super::iterator::translate(receiver, method, args) {
+            Some(result) => result,
+            None => return MethodTranslation::Passthrough,
+        },
     };
     MethodTranslation::Expr(result)
 }

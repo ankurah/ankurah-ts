@@ -14,10 +14,6 @@ pub struct Config {
     pub hardcode_files: Vec<String>,
     /// Types from other crates that need explicit import mapping
     pub cross_crate_types: HashMap<String, String>,
-    /// System types (Arc, RwLock, etc.) — foundational runtime types whose shapes
-    /// are declared here so the transpiler can resolve through them.
-    /// Distinct from provided_impls (subject-code types hand-ported in *.provided.ts).
-    pub system_types: Vec<crate::registry::SystemTypeDecl>,
     /// Feature flags for conditional compilation (#[cfg(feature = "...")]).
     pub features: crate::cfg::CfgFeatures,
 }
@@ -90,8 +86,6 @@ impl Config {
 
         let cross_crate_types = parse_string_map(table.get("cross_crate_types"));
 
-        let system_types = parse_system_types(table.get("system_types"));
-
         Ok(Config {
             paths,
             crates,
@@ -100,7 +94,6 @@ impl Config {
             provided_impls,
             hardcode_files,
             cross_crate_types,
-            system_types,
             features,
         })
     }
@@ -182,73 +175,6 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
     map
 }
 
-/// Parse the `[system_types]` section into declarations for the reserved
-/// system module. Every signature is written as Rust and parsed by syn, which
-/// is the shape the std-surface step needs when these entries become
-/// signature-only Rust stub files:
-///   [system_types.Arc]
-///   path = "std::sync::Arc"
-///   deref_field = "value"
-///   type_params = ["T"]
-///   methods = { clone = "fn clone(&self) -> Arc<T>" }
-fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::registry::SystemTypeDecl> {
-    use crate::registry::SystemTypeDecl;
-
-    let mut types = Vec::new();
-    let table = match value.and_then(|v| v.as_table()) {
-        Some(t) => t,
-        None => return types,
-    };
-
-    for (name, entry) in table {
-        let entry = match entry.as_table() {
-            Some(t) => t,
-            None => continue,
-        };
-
-        // The full Rust path a written type has to use to reach this type.
-        // Without it a std path would match on its last segment alone, which is
-        // how `std::fmt::Result` used to become `Result<T, E>`.
-        let path = entry
-            .get("path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| name.clone());
-
-        let deref_field = entry.get("deref_field")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let deref_target = entry.get("deref_target")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let type_params: Vec<String> = entry.get("type_params")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-
-        let mut methods = Vec::new();
-        if let Some(methods_table) = entry.get("methods").and_then(|v| v.as_table()) {
-            for (method_name, signature) in methods_table {
-                if let Some(source) = signature.as_str() {
-                    methods.push((method_name.clone(), source.to_string()));
-                }
-            }
-        }
-
-        types.push(SystemTypeDecl {
-            name: name.clone(),
-            path,
-            type_params,
-            deref_field,
-            deref_target,
-            methods,
-        });
-    }
-
-    types
-}
 
 #[cfg(test)]
 mod tests {
@@ -271,31 +197,5 @@ mod tests {
         assert!(config.is_hardcoded("ankql/src/parser.rs"));
         assert!(config.is_hardcoded("ankql/src/ast.rs"));
         assert!(config.is_excluded_file("proto/src/postgres.rs"));
-
-        // System types
-        assert!(!config.system_types.is_empty(), "system_types should be loaded from config");
-        let arc = config.system_types.iter().find(|t| t.name == "Arc");
-        assert!(arc.is_some(), "Arc should be in system_types");
-        let arc = arc.unwrap();
-        assert_eq!(arc.path, "std::sync::Arc", "every system type declares its Rust path");
-        assert_eq!(arc.deref_field, Some("value".to_string()));
-        assert_eq!(arc.type_params, vec!["T".to_string()]);
-        assert!(arc.methods.iter().any(|(m, _)| m == "clone"));
-        assert!(arc.methods.iter().any(|(m, _)| m == "downgrade"));
-
-        let rwlock = config.system_types.iter().find(|t| t.name == "RwLock");
-        assert!(rwlock.is_some(), "RwLock should be in system_types");
-        let rwlock = rwlock.unwrap();
-        let write = rwlock.methods.iter().find(|(m, _)| m == "write");
-        assert_eq!(
-            write.map(|(_, sig)| sig.as_str()),
-            Some("fn write(&self) -> RwLockWriteGuard<T>"),
-            "a declared method is a whole Rust signature, receiver included"
-        );
-
-        // `Vec<T>` dereferences to `[T]`, which is not one of its type
-        // arguments and so has to be written out.
-        let vec = config.system_types.iter().find(|t| t.name == "Vec").unwrap();
-        assert_eq!(vec.deref_target.as_deref(), Some("[T]"));
     }
 }

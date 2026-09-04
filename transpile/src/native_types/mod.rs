@@ -9,7 +9,7 @@ mod arc;
 pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
 mod conversion; // into/from/as_ref — type-erased identity transforms
-mod iterator; // Iterator trait methods on arrays
+pub(crate) mod iterator; // Iterator trait methods on arrays
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
@@ -61,6 +61,16 @@ pub fn translate_method(
 
     // unwrap/expect is handled in body.rs before dispatch reaches here.
     // Result.unwrap() passes through to Passthrough (handled by Result's class method).
+
+    // A projection the impl table could not answer — `<impl IntoIterator as
+    // IntoIterator>::IntoIter` before the closures step types it — names no
+    // type, so nothing is known about how a call on it is written. That is the
+    // same position as a call whose receiver did not resolve at all, and it
+    // takes the same table. (Emission still writes the projection's own name
+    // where the *type* is written; this is only about calls.)
+    if matches!(receiver_ty, Ty::Assoc { .. }) {
+        return translate_untyped(receiver, rust_method, args);
+    }
 
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.

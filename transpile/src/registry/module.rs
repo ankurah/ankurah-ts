@@ -179,6 +179,28 @@ impl ModuleTree {
         module
     }
 
+    /// The module a written path names under `root`, creating the chain to it.
+    /// This is how the std surface's `std::collections::hash_map` is built.
+    pub fn module_for_path(&mut self, root: ModuleId, path: &[String]) -> ModuleId {
+        let mut module = root;
+        for segment in path {
+            module = self.child(module, segment);
+        }
+        module
+    }
+
+    /// Bind `name` in `parent` to a module that already exists, the way `core`
+    /// and `alloc` name the same items `std` does.
+    pub fn alias_child(&mut self, parent: ModuleId, name: &str, target: ModuleId) {
+        self.get_mut(parent).children.insert(name.to_string(), target);
+    }
+
+    /// The crates the surface declares: the children of the system root, which
+    /// is where a path leaving the crate is looked up.
+    pub fn system_crates(&self) -> &BTreeMap<String, ModuleId> {
+        &self.get(self.system_root).children
+    }
+
     /// The module a source file declares, if the tree already has it.
     pub fn lookup_file(&self, rel_path: &str) -> Option<ModuleId> {
         let mut module = self.crate_root;

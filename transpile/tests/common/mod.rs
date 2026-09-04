@@ -244,7 +244,7 @@ pub struct Resolved {
     pub adjusted: String,
     pub callee: String,
     pub result: String,
-    /// `from>to` for each dereference taken, in order.
+    /// `from|to` for each dereference taken, in order, separated by `;`.
     pub steps: Vec<(String, String)>,
 }
 
@@ -281,9 +281,9 @@ pub fn run_resolve(crate_name: &str, src_rel: &str) -> Vec<Resolved> {
                 callee: f[6].to_string(),
                 result: f[7].to_string(),
                 steps: f[8]
-                    .split(',')
+                    .split(';')
                     .filter(|s| !s.is_empty())
-                    .filter_map(|s| s.split_once('>'))
+                    .filter_map(|s| s.split_once('|'))
                     .map(|(a, b)| (a.to_string(), b.to_string()))
                     .collect(),
             }

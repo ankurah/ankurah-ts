@@ -13,49 +13,52 @@ use super::module::{Def, ModuleId, Ns, Vis};
 use super::TypeRegistry;
 use crate::ty::TypeId;
 
-/// Path roots that leave the crate for the standard library.
-const STD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
-
-/// What Rust's standard prelude puts in scope without a `use`. Every other
-/// system type needs an import or a qualified path, exactly as in Rust.
-pub const PRELUDE: [&str; 30] = [
-    "Option",
-    "Some",
-    "None",
-    "Result",
-    "Ok",
-    "Err",
-    "Vec",
-    "String",
-    "Box",
-    "ToString",
-    "ToOwned",
-    "Clone",
-    "Copy",
-    "Default",
-    "Drop",
-    "Fn",
-    "FnMut",
-    "FnOnce",
-    "Iterator",
-    "IntoIterator",
-    "Into",
-    "From",
-    "TryInto",
-    "TryFrom",
-    "AsRef",
-    "AsMut",
-    "PartialEq",
-    "Eq",
-    "PartialOrd",
-    "Ord",
+/// What Rust's standard prelude puts in scope without a `use`, and the module
+/// each name comes from. Every other declared type needs an import or a
+/// qualified path, exactly as in Rust.
+///
+/// The set is explicit rather than read off the surface: it is Rust's list, not
+/// a consequence of which files the surface happens to declare, and a name that
+/// stops being declared should fail here rather than silently leave the prelude.
+pub const PRELUDE: [(&str, &str); 33] = [
+    ("Option", "std::option"),
+    ("Result", "std::result"),
+    ("Vec", "std::vec"),
+    ("String", "std::string"),
+    ("ToString", "std::string"),
+    ("Box", "std::boxed"),
+    ("ToOwned", "std::borrow"),
+    ("Clone", "std::clone"),
+    ("Copy", "std::marker"),
+    ("Send", "std::marker"),
+    ("Sized", "std::marker"),
+    ("Sync", "std::marker"),
+    ("Unpin", "std::marker"),
+    ("Default", "std::default"),
+    ("Drop", "std::ops"),
+    ("Fn", "std::ops"),
+    ("FnMut", "std::ops"),
+    ("FnOnce", "std::ops"),
+    ("Iterator", "std::iter"),
+    ("IntoIterator", "std::iter"),
+    ("DoubleEndedIterator", "std::iter"),
+    ("ExactSizeIterator", "std::iter"),
+    ("Extend", "std::iter"),
+    ("FromIterator", "std::iter"),
+    ("Into", "std::convert"),
+    ("From", "std::convert"),
+    ("TryInto", "std::convert"),
+    ("TryFrom", "std::convert"),
+    ("AsRef", "std::convert"),
+    ("AsMut", "std::convert"),
+    ("PartialEq", "std::cmp"),
+    ("Eq", "std::cmp"),
+    ("PartialOrd", "std::cmp"),
 ];
 
-/// Marker traits that carry no shape. They are named constantly in bounds and
-/// nothing about them is worth a "no declaration" diagnostic.
-pub const MARKER_TRAITS: [&str; 8] = [
-    "Send", "Sync", "Sized", "Unpin", "Copy", "Fn", "FnMut", "FnOnce",
-];
+/// `Ord` is in the prelude too, and shares its name with nothing; it is listed
+/// separately only because the array above is already at its declared length.
+pub const PRELUDE_ORD: (&str, &str) = ("Ord", "std::cmp");
 
 /// Why a name could not be resolved to one declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,13 +127,6 @@ impl TypeRegistry {
             return self.resolve_item(module, ns, head, walk);
         }
 
-        // A path into the standard library must name a system type the config
-        // declares, whole. Matching on the last segment alone is what let
-        // `std::fmt::Result` and `std::io::Result` both become the two-parameter
-        // `Result`; the std-surface step replaces this with real stub modules.
-        if STD_ROOTS.contains(&head.as_str()) {
-            return Ok(self.system_type(&segments.join("::")).map(Def::Type));
-        }
         if head == "crate" || self.names_this_crate(head) {
             return self.resolve_path(self.crate_root(), ns, rest, walk);
         }
@@ -227,12 +223,43 @@ impl TypeRegistry {
         }
 
         // Finally the prelude, and only where the name was written.
-        if here && ns == Ns::Type && PRELUDE.contains(&name) {
-            if let Some(item) = self.modules().get(self.system_root()).item(Ns::Type, name) {
-                return Ok(Some(item.def));
+        if here && ns == Ns::Type {
+            if let Some(def) = self.prelude_item(name) {
+                return Ok(Some(def));
             }
         }
+
+        // A stub in the declared surface writes every name as a leaf — the
+        // surface has no `use` statements — so a name its own module does not
+        // declare is looked for across the whole surface. `std/sync/mutex.rs`
+        // says `Formatter` and means `std::fmt::Formatter`. This is the last
+        // thing tried and applies only inside the surface: a crate's own module
+        // never reaches it, so nothing ankurah writes can resolve this way.
+        if here && self.modules().get(module).is_system {
+            return self.surface_item(ns, name);
+        }
         Ok(None)
+    }
+
+    /// What a prelude name stands for: the declaration in the module Rust
+    /// exports it from. Nothing is found by leaf name across the surface, so a
+    /// `Result` in the prelude is `std::result::Result` and never
+    /// `std::fmt::Result`.
+    fn prelude_item(&self, name: &str) -> Option<Def> {
+        let module_path = PRELUDE
+            .iter()
+            .chain(std::iter::once(&PRELUDE_ORD))
+            .find(|(prelude_name, _)| *prelude_name == name)
+            .map(|(_, module)| *module)?;
+        let segments: Vec<String> = module_path.split("::").map(|s| s.to_string()).collect();
+        let mut module = self.system_root();
+        for segment in segments {
+            module = self.modules().get(module).children.get(&segment).copied()?;
+        }
+        self.modules()
+            .get(module)
+            .item(Ns::Type, name)
+            .map(|item| item.def)
     }
 
     /// The module a single written segment names, from `module`.
@@ -258,7 +285,12 @@ impl TypeRegistry {
                 return Some(target);
             }
         }
-        None
+        // Rust's extern prelude: a path may start with the name of a crate the
+        // build depends on. The declared surface is that set of crates — `std`,
+        // `tokio`, `serde_json` — and each is a root of its own, which is what
+        // keeps `tokio::sync::Mutex` and `std::sync::Mutex` two types. A crate's
+        // own module of the same name is found above and wins, as in Rust.
+        self.modules().system_crates().get(name).copied()
     }
 
     /// The module a whole written path names, for `use foo::bar::*`.
@@ -271,10 +303,6 @@ impl TypeRegistry {
         let Some((head, rest)) = segments.split_first() else {
             return Some(module);
         };
-        // The system module is flat, so no std path names a module in it.
-        if STD_ROOTS.contains(&head.as_str()) {
-            return None;
-        }
         if head == "crate" || self.names_this_crate(head) {
             return self.resolve_module_path(self.crate_root(), rest, walk);
         }

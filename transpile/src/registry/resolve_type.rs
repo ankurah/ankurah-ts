@@ -7,7 +7,6 @@
 
 use syn::spanned::Spanned;
 
-use super::lookup::MARKER_TRAITS;
 use super::module::{Def, ModuleId};
 use super::TypeRegistry;
 use crate::diag::{Diag, DiagSink};
@@ -213,7 +212,7 @@ fn resolve_named(
     match env.reg.lookup_type(env.module, segments) {
         Err(err) => return Err(env.refuse(span, err.message)),
         Ok(Some(Def::Type(id))) => {
-            check_argument_count(id, &args, env, span, segments)?;
+            let args = fill_defaults(id, args, env, span, segments)?;
             return Ok(Ty::Named { id, args });
         }
         Ok(Some(Def::Alias(id))) => return expand_alias(id, args, env, span),
@@ -252,47 +251,61 @@ fn undeclared(
             format!("cannot name `{}`: {}", canonical.join("::"), e),
         )
     })?;
-    let leaf = canonical.last().map(|s| s.as_str()).unwrap_or_default();
-    let is_marker = position == Position::Trait && MARKER_TRAITS.contains(&leaf);
-    if !is_marker {
-        let what = if position == Position::Trait {
-            "trait"
-        } else {
-            "type"
-        };
-        env.sink.report_once(
-            span,
-            format!("no declaration for {} `{}`", what, canonical.join("::")),
-        );
-        env.reg.mark_reported(id);
-    }
+    let what = if position == Position::Trait {
+        "trait"
+    } else {
+        "type"
+    };
+    env.sink.report_once(
+        span,
+        format!("no declaration for {} `{}`", what, canonical.join("::")),
+    );
+    env.reg.mark_reported(id);
     Ok(id)
 }
 
-/// A declared system type is only the type the path names when it takes the
-/// arguments the path supplies. `std::fmt::Result` is not `Result<T, E>`.
-fn check_argument_count(
+/// Fill in the arguments the use site left unwritten, and refuse a path that
+/// writes a number the declaration cannot take.
+///
+/// `HashMap<K, V, S = RandomState>` is declared with three parameters and
+/// ankurah always writes two, so the third is filled in from the declaration —
+/// which is what makes `impl<T, S: BuildHasher> Iterable<T> for HashSet<T, S>`
+/// in the corpus unify against a written `HashSet<String>`. A path that supplies
+/// too many, or too few with no default to fall back on, is not the type it
+/// names: `std::fmt::Result` is not `Result<T, E>`.
+fn fill_defaults(
     id: TypeId,
-    args: &[Ty],
+    mut args: Vec<Ty>,
     env: &TypeEnv,
     span: proc_macro2::Span,
     segments: &[String],
-) -> Result<(), Diag> {
+) -> Result<Vec<Ty>, Diag> {
     if !env.reg.is_system(id) {
-        return Ok(());
+        return Ok(args);
     }
     let Some(def) = env.reg.def(id) else {
-        return Ok(());
+        return Ok(args);
     };
-    if def.type_params.len() == args.len() {
-        return Ok(());
+    let declared = def.type_params.len();
+    if args.len() == declared {
+        return Ok(args);
+    }
+    if args.len() < declared {
+        // A default is written in the declaring type's own parameters, and
+        // std's are all closed (`RandomState`), so nothing has to be
+        // substituted into them here.
+        let missing: Vec<Option<Ty>> = def.param_defaults[args.len()..].to_vec();
+        if missing.iter().all(|d| d.is_some()) {
+            args.extend(missing.into_iter().map(|d| d.unwrap()));
+            return Ok(args);
+        }
     }
     Err(env.refuse(
         span,
         format!(
             "`{}` is declared with {} type argument(s) but {} written here",
             segments.join("::"),
-            def.type_params.len(),
+            declared,
             args.len()
         ),
     ))
@@ -302,13 +315,21 @@ fn check_argument_count(
 /// written at the use site. A cycle stops with a diagnostic.
 fn expand_alias(
     id: super::AliasId,
-    args: Vec<Ty>,
+    mut args: Vec<Ty>,
     env: &TypeEnv,
     span: proc_macro2::Span,
 ) -> Result<Ty, Diag> {
     let Some(alias) = env.reg.alias(id) else {
         return Err(env.refuse(span, "type alias is missing its declaration"));
     };
+    // `type Result<T, E = Error> = ..` written as `Result<()>` fills `E` in from
+    // the alias's own declaration. Without it the expansion carried `E` out as a
+    // loose parameter, and `anyhow::Result<()>` had an error type of nothing.
+    for default in alias.param_defaults.iter().skip(args.len()) {
+        let Some(rust_ty) = default else { break };
+        let inner = TypeEnv::new(env.reg, alias.module, env.sink).with_params(&alias.type_params);
+        args.push(resolve_type(rust_ty, &inner)?);
+    }
     let expanded = env.reg.expanding_alias(id, || {
         let inner = TypeEnv::new(env.reg, alias.module, env.sink).with_params(&alias.type_params);
         resolve_type(&alias.rust_ty, &inner)

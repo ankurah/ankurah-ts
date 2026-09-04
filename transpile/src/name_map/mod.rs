@@ -7,6 +7,7 @@
 
 mod emit_ty;
 pub mod shape;
+pub mod system_shapes;
 
 pub use emit_ty::map_ty;
 
@@ -31,6 +32,30 @@ pub fn to_camel_case(s: &str) -> String {
     }
 
     result
+}
+
+/// The words JavaScript will not accept as a variable, parameter or function
+/// name. A Rust identifier can be any of them — `let new = Self::from_entity(..)`
+/// is ordinary Rust and `const new = ..` is a syntax error — so a name that
+/// lands in one of these positions is written with a trailing underscore.
+///
+/// Property names are not in this position: `obj.default` and a method called
+/// `delete` are legal JavaScript, so nothing renames a field or a method.
+const RESERVED: [&str; 42] = [
+    "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function",
+    "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "package",
+    "private", "protected", "public", "return", "static", "super", "switch", "this", "throw",
+    "true", "typeof", "var", "void",
+];
+
+/// The identifier a bound name is written under.
+pub fn escape_reserved(name: &str) -> String {
+    if RESERVED.contains(&name) {
+        format!("{}_", name)
+    } else {
+        name.to_string()
+    }
 }
 
 /// Static name overrides for special Rust → TS function names

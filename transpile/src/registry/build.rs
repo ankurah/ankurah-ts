@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use super::impls::{Bound, ImplDef, ImplId};
 use super::module::{ModuleId, UseBinding, Vis};
 use super::traits::{TraitDef, TraitMethod};
+use super::std_surface::Surface;
 use super::{
-    resolve_type, AliasDef, MethodSig, SystemTypeDecl, TypeDecl, TypeEnv, TypeKind, TypeRegistry,
-    ValueDef, VariantDef,
+    resolve_type, AliasDef, MethodSig, TypeDecl, TypeEnv, TypeKind, TypeRegistry, ValueDef,
+    VariantDef, CLONE_PATH,
 };
 use crate::diag::DiagSink;
 use crate::ty::{Ty, TypeId};
@@ -30,7 +31,7 @@ pub struct ExtractedFile {
 
 /// What pass two learned, applied to the registry once pass two is done
 /// borrowing it.
-enum Update {
+pub(super) enum Update {
     Fields {
         id: TypeId,
         fields: Vec<(String, Ty)>,
@@ -38,6 +39,10 @@ enum Update {
     Variants {
         id: TypeId,
         variants: Vec<VariantDef>,
+    },
+    ParamDefaults {
+        id: TypeId,
+        defaults: Vec<Option<Ty>>,
     },
     Impl(ImplDef),
     Trait(TraitDef),
@@ -78,7 +83,7 @@ fn vis_of(vis: VisInfo, module: ModuleId, reg: &TypeRegistry, sink: &DiagSink) -
 
 pub fn build_registry(
     files: &mut [ExtractedFile],
-    system: &[SystemTypeDecl],
+    surface: &mut Surface,
     crate_names: &[String],
     sink: &DiagSink,
 ) -> TypeRegistry {
@@ -88,13 +93,37 @@ pub fn build_registry(
         reg.add_crate_name(name);
     }
 
-    super::system::declare_system_types(&mut reg, system, sink);
+    super::std_surface::declare(&mut reg, surface, sink);
+    reg.resolve_shapes();
+    // A path the emission policy names that the surface no longer declares
+    // would silently emit a plain class where the port has a wrapper.
+    for path in &reg.shapes().unresolved {
+        sink.push(crate::diag::Diag {
+            file: format!("{}/", super::std_surface::DIR_NAME),
+            line: 0,
+            col: 0,
+            message: format!(
+                "the TypeScript shape table names `{}`, which the declared surface does not \
+                 declare",
+                path
+            ),
+        });
+    }
 
     for entry in files.iter() {
         let module = reg.modules_mut().module_for_file(&entry.path);
         sink.set_file(&entry.path);
         declare_file(&mut reg, module, &entry.file, sink);
     }
+
+    let mut defaults = Vec::new();
+    for entry in files.iter() {
+        sink.set_file(&entry.path);
+        if let Some(module) = reg.modules().lookup_file(&entry.path) {
+            resolve_param_defaults(&reg, module, &entry.file, sink, &mut defaults);
+        }
+    }
+    apply(&mut reg, defaults);
 
     let mut updates = Vec::new();
     for entry in files.iter_mut() {
@@ -104,7 +133,13 @@ pub fn build_registry(
         };
         resolve_file(&reg, module, &mut entry.file, sink, &mut updates);
     }
+    apply(&mut reg, updates);
 
+    reg
+}
+
+/// Write what pass two learned into the registry.
+pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
     for update in updates {
         match update {
             Update::Fields { id, fields } => {
@@ -115,6 +150,11 @@ pub fn build_registry(
             Update::Variants { id, variants } => {
                 if let Some(def) = reg.def_mut(id) {
                     def.kind = TypeKind::Enum { variants };
+                }
+            }
+            Update::ParamDefaults { id, defaults } => {
+                if let Some(def) = reg.def_mut(id) {
+                    def.param_defaults = defaults;
                 }
             }
             Update::Impl(def) => {
@@ -128,12 +168,10 @@ pub fn build_registry(
             }
         }
     }
-
-    reg
 }
 
 /// Pass one: the module's imports and everything it declares, in both namespaces.
-fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &RustFile, sink: &DiagSink) {
+pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &RustFile, sink: &DiagSink) {
     let bindings: Vec<UseBinding> = file
         .uses
         .iter()
@@ -193,6 +231,7 @@ fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &RustFile, sink:
             module,
             name: a.name.clone(),
             type_params: a.type_params.clone(),
+            param_defaults: a.param_defaults.clone(),
             rust_ty: a.rust_ty.clone(),
         };
         reg.declare_alias(module, def, vis);
@@ -241,7 +280,6 @@ fn declare(
         name: name.clone(),
         kind,
         type_params,
-        deref_field: None,
         vis,
     };
     if let Err(err) = reg.declare_type(module, decl) {
@@ -255,7 +293,7 @@ fn declare(
 }
 
 /// Pass two: every written type, resolved in the module that wrote it.
-fn resolve_file(
+pub(super) fn resolve_file(
     reg: &TypeRegistry,
     module: ModuleId,
     file: &mut RustFile,
@@ -266,11 +304,7 @@ fn resolve_file(
         let id = reg.module_type(module, &s.name);
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
-            if s.derives.iter().any(|d| d == "Clone") {
-                if let Some(def) = derived_clone(reg, id, &s.type_params) {
-                    updates.push(Update::Impl(def));
-                }
-            }
+            derived_impls(reg, id, &s.type_params, &s.derives, updates);
             updates.push(Update::Fields { id, fields });
         }
     }
@@ -286,11 +320,7 @@ fn resolve_file(
             });
         }
         if let Some(id) = id {
-            if e.derives.iter().any(|d| d == "Clone") {
-                if let Some(def) = derived_clone(reg, id, &e.type_params) {
-                    updates.push(Update::Impl(def));
-                }
-            }
+            derived_impls(reg, id, &e.type_params, &e.derives, updates);
             updates.push(Update::Variants { id, variants });
         }
     }
@@ -344,50 +374,123 @@ fn resolve_file(
     }
 }
 
-/// `#[derive(Clone)]` written out as the impl it stands for.
+/// The impls a `#[derive(..)]` stands for.
 ///
-/// This is the first of the derive hooks the spec calls for (4.10, step 7), and
-/// it is here now because the engine used to answer `.clone()` by assuming
-/// every receiver was cloneable. With the impl registered, `node.clone()`
-/// resolves on `Node` and `guard.clone()` reaches through the guard to what it
-/// holds, which is what Rust does.
-fn derived_clone(
+/// A derive is a written fact about the type, and the engine needs it as one:
+/// `HashMap::entry` is declared `where K: Eq + Hash`, so a key whose `Eq` and
+/// `Hash` nobody registered makes every `entry` call unresolvable, and
+/// `guard.clone()` used to clone the guard rather than what it holds. The impl
+/// is registered with no methods of its own; the trait's own declarations
+/// supply the signatures, which is what a derive does.
+///
+/// This is the first of the derive hooks the spec calls for (4.10, step 7),
+/// narrowed to the derives whose absence stops resolution. `Serialize`,
+/// `Deserialize` and `thiserror::Error` produce code as well as impls and are
+/// that step's business.
+const DERIVED: [(&str, &str); 9] = [
+    ("Clone", CLONE_PATH),
+    ("Copy", "std::marker::Copy"),
+    ("PartialEq", "std::cmp::PartialEq"),
+    ("Eq", "std::cmp::Eq"),
+    ("PartialOrd", "std::cmp::PartialOrd"),
+    ("Ord", "std::cmp::Ord"),
+    ("Hash", "std::hash::Hash"),
+    ("Default", "std::default::Default"),
+    ("Debug", "std::fmt::Debug"),
+];
+
+fn derived_impls(
     reg: &TypeRegistry,
     id: TypeId,
     type_params: &[String],
-) -> Option<ImplDef> {
-    let clone = reg.system_type(super::system::CLONE_PATH)?;
+    derives: &[String],
+    updates: &mut Vec<Update>,
+) {
     let self_ty = Ty::Named {
         id,
         args: type_params.iter().map(|p| Ty::Param(p.clone())).collect(),
     };
-    let mut methods = HashMap::new();
-    methods.insert(
-        "clone".to_string(),
-        MethodSig {
-            params: Vec::new(),
-            ret: self_ty.clone(),
-            self_kind: Some(crate::types::SelfKind::Ref),
-            receiver: Some(Ty::Ref {
-                mutable: false,
-                inner: Box::new(self_ty.clone()),
+    for (derive, path) in DERIVED {
+        if !derives.iter().any(|d| d == derive) {
+            continue;
+        }
+        let Some(trait_id) = reg.system_type(path) else {
+            continue;
+        };
+        updates.push(Update::Impl(ImplDef {
+            id: ImplId(0),
+            generics: type_params.to_vec(),
+            bounds: Vec::new(),
+            self_ty: self_ty.clone(),
+            trait_ref: Some(crate::ty::TraitRef {
+                id: trait_id,
+                args: Vec::new(),
+                bindings: Vec::new(),
             }),
-            type_params: Vec::new(),
-        },
-    );
-    Some(ImplDef {
-        id: ImplId(0),
-        generics: type_params.to_vec(),
-        bounds: Vec::new(),
-        self_ty,
-        trait_ref: Some(crate::ty::TraitRef {
-            id: clone,
-            args: Vec::new(),
-            bindings: Vec::new(),
-        }),
-        assoc_types: HashMap::new(),
-        methods,
-    })
+            assoc_types: HashMap::new(),
+            methods: HashMap::new(),
+        }));
+    }
+}
+
+/// Pass one and a half: `HashMap<K, V, S = RandomState>` — what a parameter the
+/// use site leaves unwritten falls back to.
+///
+/// It runs between the two main passes because pass two *reads* these: a written
+/// `HashMap<String, u8>` is completed from them, and completing it after every
+/// other written type had already been resolved would be too late for all of
+/// them. Resolving a default needs only the declarations, which pass one has.
+pub(super) fn resolve_param_defaults(
+    reg: &TypeRegistry,
+    module: ModuleId,
+    file: &RustFile,
+    sink: &DiagSink,
+    updates: &mut Vec<Update>,
+) {
+    for s in &file.structs {
+        if let Some(id) = reg.module_type(module, &s.name) {
+            push_param_defaults(reg, module, id, &s.type_params, &s.param_defaults, sink, updates);
+        }
+    }
+    for e in &file.enums {
+        if let Some(id) = reg.module_type(module, &e.name) {
+            push_param_defaults(reg, module, id, &e.type_params, &e.param_defaults, sink, updates);
+        }
+    }
+    for (name, sub_file) in &file.inline_modules {
+        if let Some(child) = reg.modules().get(module).children.get(name).copied() {
+            resolve_param_defaults(reg, child, sub_file, sink, updates);
+        }
+    }
+}
+
+fn push_param_defaults(
+    reg: &TypeRegistry,
+    module: ModuleId,
+    id: TypeId,
+    params: &[String],
+    written: &[Option<syn::Type>],
+    sink: &DiagSink,
+    updates: &mut Vec<Update>,
+) {
+    if written.iter().all(|d| d.is_none()) {
+        return;
+    }
+    let env = TypeEnv::new(reg, module, sink).with_params(params);
+    let mut defaults = Vec::new();
+    for default in written {
+        match default {
+            None => defaults.push(None),
+            Some(rust_ty) => match resolve_type(rust_ty, &env) {
+                Ok(ty) => defaults.push(Some(ty)),
+                Err(diag) => {
+                    sink.push(diag);
+                    defaults.push(None);
+                }
+            },
+        }
+    }
+    updates.push(Update::ParamDefaults { id, defaults });
 }
 
 fn resolve_fields(
@@ -460,6 +563,7 @@ fn resolve_trait(
         supertraits,
         assoc_types: t.assoc_types.clone(),
         methods,
+        is_auto: t.is_auto,
     })
 }
 
@@ -572,12 +676,39 @@ fn push_bound(
     let syn::TypeParamBound::Trait(t) = bound else {
         return;
     };
+    // `T: ?Sized` lifts the implicit `Sized` requirement; it does not add one.
+    // Reading it as a requirement made `impl<T: ?Sized> Deref for Arc<T>` — the
+    // shape half the std surface is written in — demand a proof of the opposite
+    // of what it says.
+    if matches!(t.modifier, syn::TraitBoundModifier::Maybe(_)) {
+        return;
+    }
     match super::resolve_type::trait_ref(t, env) {
         Ok(trait_ref) => out.push(Bound {
             subject: subject.clone(),
             trait_ref,
         }),
-        Err(diag) => sink.push(diag),
+        Err(diag) => {
+            sink.push(diag);
+            // A bound the engine could not read is still a bound. Dropping it
+            // turned `impl<T: Display> ToString for T` into an impl with no
+            // requirement at all, which then answered `to_string` on every type
+            // there is. Standing it up against the written name — which nothing
+            // declares, as far as this run could tell — makes it an obligation
+            // nobody could decide, reported at each call.
+            let segments: Vec<String> = t.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            let canonical = env.reg.canonical_path(env.module, &segments);
+            if let Ok(id) = env.reg.foreign(&canonical) {
+                out.push(Bound {
+                    subject: subject.clone(),
+                    trait_ref: crate::ty::TraitRef {
+                        id,
+                        args: Vec::new(),
+                        bindings: Vec::new(),
+                    },
+                });
+            }
+        }
     }
 }
 
@@ -658,6 +789,7 @@ fn method_sig(
         self_kind: method.self_kind,
         receiver,
         type_params: method.type_params.clone(),
+        bounds: resolve_bounds(&method.syn_generics, &env, sink),
     })
 }
 

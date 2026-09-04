@@ -33,6 +33,11 @@ pub struct TraitDef {
     /// when the trait declares that name, which is what this answers.
     pub assoc_types: Vec<String>,
     pub methods: HashMap<String, TraitMethod>,
+    /// `auto trait Send {}`. Rust works these out from a type's fields rather
+    /// than from an impl, so there is nothing in the impl table to find and a
+    /// bound on one is proved by the declaration alone. The corpus compiles
+    /// under rustc, so every auto-trait bound it writes already holds.
+    pub is_auto: bool,
 }
 
 impl TypeRegistry {
@@ -42,6 +47,16 @@ impl TypeRegistry {
 
     pub(super) fn insert_trait(&mut self, def: TraitDef) {
         self.traits.insert(def.id, def);
+    }
+
+    /// A method this trait itself declares, ignoring its supertraits.
+    ///
+    /// An `impl ExactSizeIterator for Values` supplies `ExactSizeIterator`'s
+    /// methods and no others: `Iterator::cloned` is supplied by the `Iterator`
+    /// impl, and letting the subtrait's impl offer it too made every such call
+    /// ambiguous between two impls of one method.
+    pub fn trait_own_method(&self, trait_id: TypeId, name: &str) -> Option<&TraitMethod> {
+        self.trait_def(trait_id)?.methods.get(name)
     }
 
     /// A trait's own method declaration, then its supertraits', innermost

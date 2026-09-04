@@ -33,9 +33,12 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   withCached<R>(f: (arg0: Output) => R): R {
     (() => {
       const guard = this.cached.value.read();
-      if (guard != null) {
-        const value = guard;
-        return f(value);
+      {
+        const _v = guard;
+        if (_v != null) {
+          const value = _v;
+          return f(value);
+        }
       }
     })()
     let guard = this.cached.value.write();

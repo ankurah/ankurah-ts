@@ -39,7 +39,7 @@ fn expect_on_an_option_yields_the_value_type() {
 }
 
 #[test]
-fn unwrap_on_a_lock_guard_keeps_the_guard() {
+fn read_unwrap_types_to_the_guard_through_lock_result() {
     let c = Fixture::build(&[(
         "lib.rs",
         "use std::sync::RwLock;\npub struct S { pub cell: RwLock<Option<u32>> }",
@@ -48,14 +48,28 @@ fn unwrap_on_a_lock_guard_keeps_the_guard() {
     let mut cx = c.context("lib.rs", Some(self_ty));
     cx.push_fn(vec![]);
 
-    // `RwLock::read` yields a `LockResult` in Rust and the guard itself in the
-    // polyfill, so the `unwrap` the source writes must not reach through the
-    // guard and unwrap the `Option` inside it.
+    // `RwLock::read` yields a `LockResult<RwLockReadGuard<'_, T>>`, which is
+    // what the std surface declares, so `read().unwrap()` is `Result::unwrap`
+    // and hands back the guard. There is no shim: the engine walks the same
+    // impls Rust does. (The port's `RwLock.read()` yields the guard directly;
+    // that is an emission fact, and the `.unwrap()` written on a `LockResult`
+    // receiver emits nothing.)
     let guard = c.system(
         "std::sync::RwLockReadGuard",
         vec![c.system(OPTION, vec![Ty::Prim(Prim::U32)])],
     );
-    assert_eq!(cx.resolve_expr(&expr("self.cell.read()")).unwrap(), guard);
+    let lock_result = c.system(
+        "std::result::Result",
+        vec![
+            guard.clone(),
+            c.system("std::sync::PoisonError", vec![guard.clone()]),
+        ],
+    );
+    assert_eq!(
+        cx.resolve_expr(&expr("self.cell.read()")).unwrap(),
+        lock_result,
+        "the alias `LockResult<Guard>` expands to the Result it is"
+    );
     assert_eq!(
         cx.resolve_expr(&expr("self.cell.read().unwrap()")).unwrap(),
         guard

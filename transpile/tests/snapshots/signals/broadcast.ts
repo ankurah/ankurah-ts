@@ -50,13 +50,26 @@ export class Broadcast<T extends Clone = void> extends Struct {
       listeners.drop();
       return _ret;
     })();
-    if (subscribers.splitLast() != null) {
-      const [last, rest] = subscribers.splitLast();
-      for (const callback of rest) {
-        return callback.match({
+    {
+      const _v = subscribers.splitLast();
+      if (_v != null) {
+        const [last, rest] = _v;
+        for (const callback of rest) {
+          return callback.match({
+            Payload: (v) => {
+              const callback = v._0;
+              return callback(value.clone());
+            },
+            NotifyOnly: (v) => {
+              const callback = v._0;
+              return callback();
+            },
+          });
+        }
+        return last.match({
           Payload: (v) => {
             const callback = v._0;
-            return callback(value.clone());
+            return callback(value);
           },
           NotifyOnly: (v) => {
             const callback = v._0;
@@ -64,16 +77,6 @@ export class Broadcast<T extends Clone = void> extends Struct {
           },
         });
       }
-      return last.match({
-        Payload: (v) => {
-          const callback = v._0;
-          return callback(value);
-        },
-        NotifyOnly: (v) => {
-          const callback = v._0;
-          return callback();
-        },
-      });
     }
   }
 
@@ -139,9 +142,12 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   }
 
   drop(): void {
-    if (this.inner.upgrade() != null) {
-      const inner = this.inner.upgrade();
-      inner.value.listeners.write().value.delete(this.id);
+    {
+      const _v = this.inner.upgrade();
+      if (_v != null) {
+        const inner = _v;
+        inner.value.listeners.write().value.delete(this.id);
+      }
     }
   }
 }

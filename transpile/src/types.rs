@@ -72,6 +72,9 @@ pub struct StructInfo {
     pub generics: String,
     /// Generic parameter names in declaration order, from syn.
     pub type_params: Vec<String>,
+    /// `HashMap<K, V, S = RandomState>` — what a parameter falls back to when
+    /// the use site leaves it unwritten, positionally alongside `type_params`.
+    pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
 }
 
@@ -95,6 +98,7 @@ pub struct EnumInfo {
     pub variants: Vec<VariantInfo>,
     pub generics: String,
     pub type_params: Vec<String>,
+    pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
 }
 
@@ -111,6 +115,10 @@ pub struct TraitInfo {
     pub name: String,
     pub is_pub: bool,
     pub vis: VisInfo,
+    /// `auto trait Send {}` — Rust decides these structurally, for every type
+    /// that qualifies, with no impl written anywhere. Nothing can look one up
+    /// in the impl table, so a bound on one is answered by the declaration.
+    pub is_auto: bool,
     pub methods: Vec<FnInfo>,
     pub has_default_impls: bool,
     pub generics: String,
@@ -338,6 +346,9 @@ pub struct TypeAliasInfo {
     pub vis: VisInfo,
     /// Generic parameter names the alias declares.
     pub type_params: Vec<String>,
+    /// `type Result<T, E = Error> = ..` — what a parameter the use site leaves
+    /// unwritten falls back to, positionally alongside `type_params`.
+    pub param_defaults: Vec<Option<syn::Type>>,
 }
 
 #[derive(Debug, Clone)]
