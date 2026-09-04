@@ -4,7 +4,7 @@
 //! after the cascade and hand the body dead fields.
 
 pub struct Subscription {
-    pub label: String,
+    pub name: String,
     pub live: bool,
 }
 

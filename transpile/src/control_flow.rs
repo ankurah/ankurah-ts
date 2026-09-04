@@ -41,7 +41,9 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
         // A loop is a statement and its value is `()`.
         syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => t.expr(expr),
         _ => {
-            let ts = t.expr(expr);
+            // A block's last expression is its value, so a field read here
+            // hands the field to whoever asked for the block.
+            let ts = t.moved_value(expr);
             // throw/panic is already a terminator — don't prefix with return
             if ts.starts_with("throw ") {
                 format!("{};", ts)
@@ -73,7 +75,12 @@ fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position
         }
     }
 
-    let cond = t.expr(&if_expr.cond);
+    // A condition is its own temporary scope in Rust: what it produced is
+    // dropped before the body runs. Leaving the temporaries where the statement
+    // machinery put them held a lock for the whole body, so a body that dropped
+    // the container it locked hit the outstanding-guard fatal.
+    let (cond, lifted) = t.with_own_hoists(|| t.expr(&if_expr.cond));
+    let (cond, before) = t.settle_condition(cond, &lifted);
     let then_body = branch(&if_expr.then_branch, t, position);
 
     let else_part = if let Some((_, else_expr)) = &if_expr.else_branch {
@@ -88,7 +95,7 @@ fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position
         String::new()
     };
 
-    format!("if ({}) {{\n{}}}{}", cond, indent(&then_body), else_part)
+    format!("{}if ({}) {{\n{}}}{}", before, cond, indent(&then_body), else_part)
 }
 
 /// One branch of an `if`. In returning position its last expression becomes the
@@ -99,7 +106,21 @@ fn branch(block: &syn::Block, t: &BodyTranslator, position: Position) -> String 
         Position::Returning => {
             if let (1, Some(syn::Stmt::Expr(expr, None))) = (block.stmts.len(), block.stmts.last())
             {
-                return translate_expr_in_return_position(expr, t);
+                // A one-expression branch is not written through the block
+                // machinery, so it sets its own drop flags and keeps whatever it
+                // lifted out of itself. Without the flags a branch that hands a
+                // local away in tail position left the flag false and the
+                // `finally` released a value somebody else owned; without the
+                // hoists the declaration stood outside the branch that needed
+                // it and ran on the path that did not.
+                let flags = t.flag_sets_for(expr);
+                let (body, lifted) =
+                    t.with_own_hoists(|| translate_expr_in_return_position(expr, t));
+                return format!(
+                    "{}{}",
+                    flags,
+                    crate::ownership::hoisted(&format!("{}\n", body), &lifted)
+                );
             }
             t.translate_block(block)
         }
@@ -137,7 +158,10 @@ fn translate_if_let(
     // and for the guard expression written after it.
     let scrutinee_ty = t.scrutinee_type(&let_expr.expr);
     let bound = t.enter_pattern(&let_expr.pat, scrutinee_ty.as_ref());
-    let then_body = branch(then_branch, t, position);
+    // Where the pattern took a value out of the scrutinee, the branch owns it
+    // and releases it however the branch is left.
+    let owned = t.claim_bindings(&crate::body::pattern_names(&let_expr.pat), &then_branch.stmts);
+    let then_body = t.wrap_bindings(&owned, branch(then_branch, t, position));
     let guard_str = guard.map(|g| t.expr(g)).unwrap_or_default();
     drop(bound);
 

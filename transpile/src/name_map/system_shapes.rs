@@ -49,8 +49,13 @@ pub enum Form {
 
 /// Where the port keeps the value inside a wrapper. A type with no entry is not
 /// a wrapper, whatever it dereferences to in Rust.
-const ACCESSORS: [(&str, Accessor); 10] = [
+const ACCESSORS: [(&str, Accessor); 14] = [
     ("std::sync::Arc", Accessor::Field("value")),
+    // tokio's guards are the same shape as std's: the value sits in `.value`.
+    ("tokio::sync::MutexGuard", Accessor::Field("value")),
+    ("tokio::sync::RwLockReadGuard", Accessor::Field("value")),
+    ("tokio::sync::RwLockWriteGuard", Accessor::Field("value")),
+    ("tokio::sync::watch::Ref", Accessor::Field("value")),
     ("std::rc::Rc", Accessor::Field("value")),
     ("std::sync::MutexGuard", Accessor::Field("value")),
     ("std::sync::RwLockReadGuard", Accessor::Field("value")),
@@ -98,10 +103,6 @@ pub enum Glue {
     /// deliberate no-op, which is what lets a hoisted temporary be released at
     /// the end of its statement and listed in the enclosing `finally` as well.
     Guard,
-    /// A plain JavaScript value — an array, a `Map`, a `T | null` — that owns
-    /// whatever is inside it. It has no `drop()` of its own, so the cascade
-    /// walks it: `dropOwned(v)`.
-    Cascade,
     /// Nothing to release: a number, a string, an atomic, a `Duration`.
     None,
 }
@@ -110,10 +111,30 @@ pub enum Glue {
 ///
 /// Everything the std surface declares and this table does not name is a plain
 /// value in TypeScript. The ones that own something — `Vec<T>`, `HashMap<K, V>`,
-/// `Option<T>` — are read from their arguments instead (`Glue::Cascade`), which
-/// is why they are not here.
-const OWN_DROP: [(&str, Glue); 12] = [
+/// `Option<T>` — are read from their arguments instead: the emitter reads their
+/// arguments and answers `Drops::Cascade` itself, which is why they are not
+/// here.
+const OWN_DROP: [(&str, Glue); 26] = [
     ("std::sync::Arc", Glue::Object),
+    // tokio's own containers, guards and named futures. Each is an object in
+    // `@ankurah/base` with a `drop()` of its own, and a `Notified`, a
+    // `oneshot::Receiver` and a `JoinHandle` are futures with exactly one
+    // consumer: whatever takes one takes it for good, and dropping one is what
+    // cancels it.
+    ("tokio::sync::Mutex", Glue::Object),
+    ("tokio::sync::RwLock", Glue::Object),
+    ("tokio::sync::Notify", Glue::Object),
+    ("tokio::sync::Notified", Glue::Object),
+    ("tokio::sync::MutexGuard", Glue::Guard),
+    ("tokio::sync::RwLockReadGuard", Glue::Guard),
+    ("tokio::sync::RwLockWriteGuard", Glue::Guard),
+    ("tokio::sync::oneshot::Sender", Glue::Object),
+    ("tokio::sync::oneshot::Receiver", Glue::Object),
+    ("tokio::sync::mpsc::Sender", Glue::Object),
+    ("tokio::sync::mpsc::Receiver", Glue::Object),
+    ("tokio::sync::mpsc::UnboundedSender", Glue::Object),
+    ("tokio::sync::mpsc::UnboundedReceiver", Glue::Object),
+    ("tokio::task::JoinHandle", Glue::Object),
     ("std::rc::Rc", Glue::Object),
     ("std::sync::Weak", Glue::Object),
     ("std::rc::Weak", Glue::Object),
@@ -141,12 +162,40 @@ const NO_GLUE: [&str; 6] = [
     "std::convert::Infallible",
 ];
 
+/// What `@ankurah/base` calls a declared std type, where its own leaf name is
+/// not what the runtime exports.
+///
+/// tokio's `Mutex` and `RwLock` are not std's, and the port has both, so the
+/// tokio pair carry an `Async` prefix. Emitting them by leaf name handed a
+/// `tokio::sync::Mutex<T>` to the std `Mutex<T>` class, whose `lock()` is not
+/// async and whose guard is a different object.
+const RUNTIME_NAMES: [(&str, &str); 17] = [
+    ("tokio::sync::Mutex", "AsyncMutex"),
+    ("tokio::sync::MutexGuard", "AsyncMutexGuard"),
+    ("tokio::sync::RwLock", "AsyncRwLock"),
+    ("tokio::sync::RwLockReadGuard", "AsyncRwLockReadGuard"),
+    ("tokio::sync::RwLockWriteGuard", "AsyncRwLockWriteGuard"),
+    ("tokio::sync::Notify", "Notify"),
+    ("tokio::sync::Notified", "Notified"),
+    ("tokio::sync::TryLockError", "TryLockError"),
+    ("tokio::sync::oneshot::Sender", "oneshot.Sender"),
+    ("tokio::sync::oneshot::Receiver", "oneshot.Receiver"),
+    ("tokio::sync::oneshot::error::RecvError", "oneshot.RecvError"),
+    ("tokio::sync::mpsc::Sender", "mpsc.Sender"),
+    ("tokio::sync::mpsc::Receiver", "mpsc.Receiver"),
+    ("tokio::sync::mpsc::UnboundedSender", "mpsc.UnboundedSender"),
+    ("tokio::sync::mpsc::UnboundedReceiver", "mpsc.UnboundedReceiver"),
+    ("tokio::task::JoinHandle", "JoinHandle"),
+    ("tokio::task::JoinError", "JoinError"),
+];
+
 /// The resolved policy: the same tables, keyed by identity.
 #[derive(Debug, Default)]
 pub struct SystemShapes {
     accessors: HashMap<TypeId, Accessor>,
     forms: HashMap<TypeId, Form>,
     glue: HashMap<TypeId, Glue>,
+    names: HashMap<TypeId, &'static str>,
     copy: Option<TypeId>,
     /// The paths no declaration answered to, so a surface that stops declaring
     /// `std::sync::Arc` says so instead of quietly emitting a plain class.
@@ -189,8 +238,22 @@ impl SystemShapes {
                 shapes.glue.insert(id, Glue::None);
             }
         }
+        for (path, name) in RUNTIME_NAMES {
+            match reg.system_type(path) {
+                Some(id) => {
+                    shapes.names.insert(id, name);
+                }
+                None => shapes.unresolved.push(path),
+            }
+        }
         shapes.copy = reg.system_type(COPY_PATH);
         shapes
+    }
+
+    /// What the runtime exports this declared type as, where that is not its
+    /// own leaf name.
+    pub fn runtime_name(&self, id: TypeId) -> Option<&'static str> {
+        self.names.get(&id).copied()
     }
 
     pub fn accessor(&self, id: TypeId) -> Option<Accessor> {

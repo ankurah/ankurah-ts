@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
-import { Struct, Arc } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -68,10 +68,10 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   subscribe<F>(listener: F): SubscriptionGuard {
     const listener_1 = listener.intoSubscribeListener();
     const roValue = this.getReadcell();
-    const subscription = this.listen(Arc.new((_) => {
+    const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
       const currentValue = roValue.value();
       listener_1(currentValue);
-    }));
+    })));
     return SubscriptionGuard.new(subscription);
   }
 

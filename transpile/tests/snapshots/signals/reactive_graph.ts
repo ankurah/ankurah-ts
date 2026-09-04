@@ -26,11 +26,15 @@ export class ReactiveGraphObserver extends Struct implements Observer {
       const _v = this.bridges.lock();
       if (true) {
         const map = _v;
-        const bridge = map.value.entry(id).orInsertWith(() => BridgeSource.new(id, signal)).clone();
         try {
-          bridge.value.track();
+          const bridge = map.value.entry(id).orInsertWith(() => BridgeSource.new(id, signal)).clone();
+          try {
+            bridge.value.track();
+          } finally {
+            bridge.drop();
+          }
         } finally {
-          bridge.drop();
+          map.drop();
         }
       }
     }

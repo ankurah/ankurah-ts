@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Arc } from '@ankurah/base';
 import { BroadcastId, TListenerGuard } from './broadcast';
 
 export class ListenerGuard extends Struct {

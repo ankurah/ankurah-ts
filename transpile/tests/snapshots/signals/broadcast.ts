@@ -134,11 +134,10 @@ export class Ref<T> extends Struct {
     const _t0 = this._0._0.value.listeners.write();
     try {
       _t0.value.set(id, listener.intoBroadcastListener());
-      _t0.drop();
-      return new ListenerGuard(this._0._0.downgrade(), id);
     } finally {
       _t0.drop();
     }
+    return new ListenerGuard(this._0._0.downgrade(), id);
   }
 
   broadcastId(): BroadcastId {
@@ -165,11 +164,15 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
       const _v = this.inner.upgrade();
       if (_v != null) {
         const inner = _v;
-        const _t0 = inner.value.listeners.write();
         try {
-          _t0.value.delete(this.id);
+          const _t0 = inner.value.listeners.write();
+          try {
+            _t0.value.delete(this.id);
+          } finally {
+            _t0.drop();
+          }
         } finally {
-          _t0.drop();
+          inner.drop();
         }
       }
     }

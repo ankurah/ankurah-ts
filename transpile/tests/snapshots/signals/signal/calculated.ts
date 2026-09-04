@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs
-import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
@@ -85,10 +85,10 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   subscribe<F>(listener: F): SubscriptionGuard {
     const listener_1 = listener.intoSubscribeListener();
     const roValue = this._0.value.value.readvalue();
-    const subscription = this.listen(Arc.new((_) => {
+    const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
       const current = roValue.with((opt) => opt.asRef().clone());
       listener_1(current);
-    }));
+    })));
     return SubscriptionGuard.new(subscription);
   }
 }

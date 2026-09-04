@@ -19,6 +19,8 @@
 
 use std::collections::HashMap;
 
+use syn::parse::Parser;
+
 /// What the block should do with a local when it ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
@@ -66,6 +68,11 @@ pub struct Site {
 /// all do, and the impl table knows which.
 pub trait Consumes {
     fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool;
+
+    /// Whether a `match` hands its subject's payload to an arm. Rust moves the
+    /// subject there, and the emitted `intoMatch` leaves it moved, so the block
+    /// that declared it must not release it as well.
+    fn consumes_scrutinee(&self, m: &syn::ExprMatch) -> bool;
 }
 
 pub struct Scan<'c> {
@@ -88,8 +95,22 @@ impl<'c> Scan<'c> {
     /// Every move written in `stmts`, in source order.
     pub fn block(&self, stmts: &[syn::Stmt]) -> Vec<Site> {
         let mut out = Vec::new();
-        for stmt in stmts {
-            self.stmt(stmt, Where::Straight, &mut out);
+        self.statements(stmts, Where::Straight, &mut out);
+        out
+    }
+
+    /// The same, with each site tagged by the statement that wrote it, so a
+    /// block can attribute a move to the declaration in scope where it stands.
+    pub fn block_indexed(&self, stmts: &[syn::Stmt]) -> Vec<(usize, Site)> {
+        let mut out = Vec::new();
+        let mut reachable = Where::Straight;
+        for (index, stmt) in stmts.iter().enumerate() {
+            let mut sites = Vec::new();
+            self.stmt(stmt, reachable, &mut sites);
+            out.extend(sites.into_iter().map(|site| (index, site)));
+            if reachable == Where::Straight && leaves_the_block(stmt) {
+                reachable = Where::Branch;
+            }
         }
         out
     }
@@ -98,10 +119,25 @@ impl<'c> Scan<'c> {
     /// it declares stops standing for the one outside it.
     fn nested_block(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
         self.shadowed.borrow_mut().push(Vec::new());
-        for stmt in stmts {
-            self.stmt(stmt, nested(at), out);
-        }
+        self.statements(stmts, nested(at), out);
         self.shadowed.borrow_mut().pop();
+    }
+
+    /// A run of statements, in source order.
+    ///
+    /// A move written straight-line is on every path *until something above it
+    /// can leave the block*. After a `return`, a `break`, a `continue` or a `?`,
+    /// the statements below it are conditional, and a move there needs the drop
+    /// flag a branch would get — otherwise the early exit leaves the value with
+    /// nothing to release it.
+    fn statements(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
+        let mut reachable = at;
+        for stmt in stmts {
+            self.stmt(stmt, reachable, out);
+            if reachable == Where::Straight && leaves_the_block(stmt) {
+                reachable = Where::Branch;
+            }
+        }
     }
 
     /// Is this name one a nested scope declared for itself?
@@ -147,7 +183,8 @@ impl<'c> Scan<'c> {
             // statement with a semicolon throws its value away instead.
             syn::Stmt::Expr(expr, None) => self.tail(expr, at, out),
             syn::Stmt::Expr(expr, Some(_)) => self.walk(expr, at, out),
-            syn::Stmt::Item(_) | syn::Stmt::Macro(_) => {}
+            syn::Stmt::Macro(mac) => self.macro_args(&mac.mac, at, out),
+            syn::Stmt::Item(_) => {}
         }
     }
 
@@ -311,6 +348,9 @@ impl<'c> Scan<'c> {
             }
 
             syn::Expr::Match(m) => {
+                if self.consumes.consumes_scrutinee(m) {
+                    self.moved(&m.expr, at, out);
+                }
                 self.walk(&m.expr, at, out);
                 for arm in &m.arms {
                     if let Some((_, guard)) = &arm.guard {
@@ -360,8 +400,68 @@ impl<'c> Scan<'c> {
                 }
             }
             syn::Expr::Repeat(r) => self.walk(&r.expr, at, out),
+
+            // A macro's arguments are Rust written in this body, and the
+            // supported ones each take theirs the way an ordinary call would:
+            // `vec![a, b]` by value, `format!`/`assert!`/`write!` by reference.
+            // Leaving them out of the scan let `Bag { items: vec![value] }`
+            // release `value` here and in the `Bag` that now held it.
+            syn::Expr::Macro(mac) => self.macro_args(&mac.mac, at, out),
+
             _ => {}
         }
+    }
+
+    /// The moves a supported macro's arguments write.
+    ///
+    /// An unsupported macro's tokens are not Rust the emitter reads, so nothing
+    /// is claimed about them; the translation of the macro is what reports it.
+    fn macro_args(&self, mac: &syn::Macro, at: Where, out: &mut Vec<Site>) {
+        let name = mac
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        // `select!` takes each arm's future by value and drops every one of
+        // them when it returns, so the block that named one must not release it
+        // as well.
+        if name == "select" {
+            for future in crate::macros::select_futures(&mac.tokens) {
+                self.moved(&future, at, out);
+                self.walk(&future, at, out);
+            }
+            return;
+        }
+        let by_value = match name.as_str() {
+            "vec" => true,
+            "format" | "println" | "eprintln" | "write" | "writeln" | "panic" | "unreachable"
+            | "assert" | "debug_assert" | "assert_eq" | "assert_ne" => false,
+            _ => return,
+        };
+        let parse = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        let Ok(args) = parse.parse2(mac.tokens.clone()) else {
+            return;
+        };
+        for arg in &args {
+            if by_value {
+                self.moved(arg, at, out);
+            }
+            self.walk(arg, at, out);
+        }
+    }
+
+    /// Every local this `move` closure names, which is everything it captured.
+    pub fn captures(&self, closure: &syn::ExprClosure) -> Vec<Site> {
+        let mut params = Vec::new();
+        for input in &closure.inputs {
+            collect_pattern_names(input, &mut params);
+        }
+        self.shadowed.borrow_mut().push(params);
+        let mut out = Vec::new();
+        self.mentions(&closure.body, &mut out);
+        self.shadowed.borrow_mut().pop();
+        out
     }
 
     /// Every local a `move` closure names, which is everything it captured.
@@ -410,7 +510,13 @@ fn local_name(path: &syn::ExprPath) -> Option<String> {
         return None;
     }
     let ident = path.path.segments[0].ident.to_string();
-    if matches!(ident.as_str(), "self" | "Self" | "None" | "true" | "false") {
+    // A method that takes `self` by value owns the receiver like any other
+    // by-value parameter, and `self` in a value position hands it on. It is
+    // written `this`, which is the name the release is emitted against.
+    if ident == "self" {
+        return Some("this".to_string());
+    }
+    if matches!(ident.as_str(), "Self" | "None" | "true" | "false") {
         return None;
     }
     // A unit enum variant and a constant are written like a local and are not
@@ -522,4 +628,57 @@ fn collect_pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
         syn::Pat::Or(or) => or.cases.iter().for_each(|p| collect_pattern_names(p, out)),
         _ => {}
     }
+}
+
+
+/// Can this statement leave the block it stands in, before the statements below
+/// it run?
+///
+/// A `return` and a `?` leave the function; a `break` and a `continue` leave the
+/// enclosing loop, which is only this block when the loop is not inside the
+/// statement itself. A closure's `return` leaves the closure and is not one.
+fn leaves_the_block(stmt: &syn::Stmt) -> bool {
+    struct Exits {
+        found: bool,
+    }
+    impl syn::visit::Visit<'_> for Exits {
+        fn visit_expr(&mut self, expr: &syn::Expr) {
+            match expr {
+                syn::Expr::Return(_) | syn::Expr::Try(_) => {
+                    self.found = true;
+                }
+                syn::Expr::Break(_) | syn::Expr::Continue(_) => {
+                    self.found = true;
+                }
+                // A loop written here catches its own `break` and `continue`;
+                // only a `return` or a `?` inside it reaches past this block.
+                syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => {
+                    let mut inner = Returns { found: false };
+                    syn::visit::visit_expr(&mut inner, expr);
+                    self.found |= inner.found;
+                    return;
+                }
+                // A closure's own exits belong to the closure.
+                syn::Expr::Closure(_) => return,
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+    }
+    struct Returns {
+        found: bool,
+    }
+    impl syn::visit::Visit<'_> for Returns {
+        fn visit_expr(&mut self, expr: &syn::Expr) {
+            match expr {
+                syn::Expr::Return(_) | syn::Expr::Try(_) => self.found = true,
+                syn::Expr::Closure(_) => return,
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+    }
+    let mut exits = Exits { found: false };
+    syn::visit::Visit::visit_stmt(&mut exits, stmt);
+    exits.found
 }

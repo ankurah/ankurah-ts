@@ -449,6 +449,59 @@ fn translate_all_bodies(
     }
 }
 
+/// The members every ported type inherits from `AkObject`.
+///
+/// A Rust field with one of these names becomes a class property that shadows
+/// the runtime's own member, and the ownership machinery then reads the field
+/// where it meant to read itself. `label` is the one that bites: it is a
+/// `protected get`, so the emitted constructor assigns through a getter with no
+/// setter and throws.
+const RUNTIME_MEMBERS: [&str; 9] = [
+    "label",
+    "drop",
+    "isDropped",
+    "isMoved",
+    "onDrop",
+    "ownedFields",
+    "takeField",
+    "assertNotDropped",
+    "markMoved",
+];
+
+/// Say so where a declared field's name is one the runtime already uses.
+fn report_member_collisions(file: &types::RustFile, sink: &diag::DiagSink) {
+    let mut say = |owner: &str, field: &Option<String>, at: &syn::Type| {
+        let Some(name) = field else { return };
+        if !RUNTIME_MEMBERS.contains(&name.as_str()) {
+            return;
+        }
+        let start = syn::spanned::Spanned::span(at).start();
+        sink.push(diag::Diag {
+            file: sink.file(),
+            line: start.line,
+            col: start.column + 1,
+            message: format!(
+                "`{}.{}` has the name of a member every ported type inherits from `AkObject`, \
+                 so the field shadows the runtime's own and the ownership checks read the \
+                 wrong one",
+                owner, name
+            ),
+        });
+    };
+    for s in &file.structs {
+        for f in &s.fields {
+            say(&s.name, &f.name, &f.rust_ty);
+        }
+    }
+    for e in &file.enums {
+        for v in &e.variants {
+            for f in &v.fields {
+                say(&e.name, &f.name, &f.rust_ty);
+            }
+        }
+    }
+}
+
 fn translate_module(
     file: &mut types::RustFile,
     registry: &registry::TypeRegistry,
@@ -461,6 +514,9 @@ fn translate_module(
         .map(|(name, _)| name.clone())
         .collect();
     let consts = resolve_module_consts(registry, module, &file.consts, sink);
+    report_member_collisions(file, sink);
+    // Read while the bodies are still ASTs: translation drops them below.
+    file.assigned_fields = emit::assigned_fields(file);
 
     for func in &mut file.functions {
         translate_fn_body(
@@ -681,7 +737,7 @@ fn translate_fn_body(
         // Rust drops a by-value parameter at the end of the function body, so
         // the body's block owns it exactly as it owns its own locals. A `&self`
         // or `&T` parameter is a borrow and owns nothing.
-        let owned_params: Vec<(String, ty::Ty)> = func
+        let mut owned_params: Vec<(String, ty::Ty)> = func
             .params
             .iter()
             .filter(|p| !p.is_self)
@@ -691,10 +747,20 @@ fn translate_fn_body(
                 Some((p.name.clone(), tc.resolve_written_type(syn_ty).ok()?))
             })
             .collect();
+        // `fn into_inner(self)` takes the receiver by value, so the body owns it
+        // like any other by-value parameter: the caller stops owning it at the
+        // call, and if the body does not hand it on, the body releases it.
+        // Leaving it out made every self-taking method a leak.
+        if func.self_kind == Some(types::SelfKind::Value) {
+            if let Some(ty) = self_ty.clone() {
+                owned_params.insert(0, ("this".to_string(), ty));
+            }
+        }
 
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
         translator.inline_module_names = inline_module_names.to_vec();
         translator.fn_return = returns;
+        translator.owns_self = func.self_kind == Some(types::SelfKind::Value);
         func.body_ts = Some(translator.translate_fn_block(block, &owned_params));
         translator.pop_scope();
         // Fallbacks taken on translation paths that carry no sink of their own.

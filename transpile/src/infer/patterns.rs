@@ -152,7 +152,7 @@ impl TypeContext<'_> {
 
     /// What the variant or struct a pattern names carries, with the matched
     /// value's own type arguments substituted in.
-    fn payload_of(&self, path: &syn::Path, ty: Option<&Ty>) -> Option<Vec<(String, Ty)>> {
+    pub fn payload_of(&self, path: &syn::Path, ty: Option<&Ty>) -> Option<Vec<(String, Ty)>> {
         let ty = ty?.peel_refs();
         let Ty::Named { id, args } = ty else {
             return None;

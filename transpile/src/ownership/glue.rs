@@ -40,11 +40,18 @@ impl Drops {
         matches!(self, Drops::Own | Drops::Guard | Drops::Cascade)
     }
 
-    /// The release, written against a name.
+    /// The release, written against a name, as a statement.
     pub fn release(self, name: &str) -> Option<String> {
+        self.release_expr(name).map(|call| format!("{};", call))
+    }
+
+    /// The same call without the semicolon, for the places a release has to
+    /// stand inside an expression — an explicit `drop(x)`, a value a statement
+    /// threw away.
+    pub fn release_expr(self, name: &str) -> Option<String> {
         match self {
-            Drops::Own | Drops::Guard => Some(format!("{}.drop();", name)),
-            Drops::Cascade => Some(format!("dropOwned({});", name)),
+            Drops::Own | Drops::Guard => Some(format!("{}.drop()", name)),
+            Drops::Cascade => Some(format!("dropOwned({})", name)),
             Drops::Nothing | Drops::Unknown => None,
         }
     }
@@ -105,7 +112,6 @@ fn named(probe: &Probe, id: TypeId, args: &[Ty], ty: &Ty) -> Drops {
             return match glue {
                 Glue::Object => Drops::Own,
                 Glue::Guard => Drops::Guard,
-                Glue::Cascade => Drops::Cascade,
                 Glue::None => Drops::Nothing,
             };
         }

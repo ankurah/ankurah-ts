@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/request.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum } from '@ankurah/base';
 import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';

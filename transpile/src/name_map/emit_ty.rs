@@ -70,7 +70,12 @@ fn named(reg: &TypeRegistry, ty: &Ty) -> String {
             // `struct String` in ankurah is a class called `String`, not
             // TypeScript's `string`, and mapping it by leaf name silently made
             // it one.
-            let mapped = if id.is_foreign() || reg.is_system(*id) {
+            // A declared type the runtime exports under a different name is
+            // written under that name; `tokio::sync::Mutex` is `AsyncMutex`,
+            // and the leaf name would have handed it to std's `Mutex`.
+            let mapped = if let Some(runtime) = reg.shapes().runtime_name(*id) {
+                runtime.to_string()
+            } else if id.is_foreign() || reg.is_system(*id) {
                 map_type_name(&name).to_string()
             } else {
                 name

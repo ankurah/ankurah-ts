@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/memo.rs
-import { Struct, Arc, RwLock, Ref } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -22,9 +22,9 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
     const cached = Arc.new(new RwLock(null));
     const cachedRef = cached.clone();
-    const subscription = source.listen(Arc.new((_) => {
+    const subscription = source.listen(Arc.new(new OwnedClosure([cachedRef], (_) => {
       cachedRef.value.write().value = null;
-    }));
+    })));
     return new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
   }
 
@@ -86,11 +86,11 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
     const source = this.source.clone();
     const transform = this.transform.clone();
     const cached = this.cached.clone();
-    const subscription = this.source.listen(Arc.new((_) => {
+    const subscription = this.source.listen(Arc.new(new OwnedClosure([cached, listener_1], (_) => {
       const output = source.with((input) => transform(input));
       cached.value.write().value = output.clone();
       listener_1(output);
-    }));
+    })));
     return SubscriptionGuard.new(subscription);
   }
 }

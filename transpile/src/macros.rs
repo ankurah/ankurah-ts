@@ -1,6 +1,6 @@
 //! Macro translation — Rust macros → TS expressions
 
-use crate::body::BodyTranslator;
+use crate::body::{indent, BodyTranslator};
 use crate::name_map;
 
 /// Translate a macro invocation to TS.
@@ -19,7 +19,8 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
         "vec" => {
             // vec![a, b, c] → parse elements via syn
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
-                let translated: Vec<String> = args.iter().map(|e| t.expr_value(e)).collect();
+                let translated: Vec<String> =
+                    args.iter().map(|e| t.moved_value(e)).collect();
                 format!("[{}]", translated.join(", "))
             } else {
                 format!("[{}]", mac.tokens)
@@ -73,9 +74,18 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 format!("/* assert_ne!({}) */", mac.tokens)
             }
         }
+        // A macro cannot be a function, so the arms stay with the emitter and
+        // only the arbitration goes to the runtime.
+        "select" => translate_select(&mac.tokens, t),
         "todo" => "throw new Error('TODO')".to_string(),
         "unimplemented" => "throw new Error('unimplemented')".to_string(),
-        _ => format!("/* {}!({}) */", name, mac.tokens),
+        // A macro nothing here expands is emitted as a comment, so whatever its
+        // arguments hand away goes nowhere. Where one of them is a value the
+        // block owns, that is a leak, and the site says so.
+        _ => {
+            t.report_unsupported_macro(mac, &name);
+            format!("/* {}!({}) */", name, mac.tokens)
+        }
     }
 }
 
@@ -186,6 +196,9 @@ fn parse_comma_separated_exprs(input: &str, t: &BodyTranslator) -> Vec<String> {
                 if let Some(init) = &local.init {
                     if let syn::Expr::Tuple(tuple) = &*init.expr {
                         return tuple.elems.iter()
+                            // A format argument is read through, not handed
+                            // over: `Display` takes `&self`, so `{}` on a field
+                            // is a borrow and not a partial move.
                             .map(|e| t.expr_value(e))
                             .collect();
                     }
@@ -351,4 +364,111 @@ fn build_template_literal(fmt_str: &str, args: &[String]) -> String {
     }
     result.push('`');
     result
+}
+
+
+/// One arm of a `select!`: what it waits for, and what it does when that arm wins.
+struct SelectArm {
+    pat: syn::Pat,
+    future: syn::Expr,
+    body: syn::Expr,
+}
+
+/// `tokio::select! { pat = fut => body, .. }` as the runtime's arbiter.
+///
+/// `select!` drops every branch when it returns — the winner and the losers
+/// alike — and for a `Notified`, a `oneshot::Receiver` or a `JoinHandle` that
+/// drop is the cancellation. So the branches are named once, raced once, and
+/// released in a `finally` whichever arm won and whether or not one of them
+/// threw. Erasing the macro to a comment ran none of the arms at all.
+fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> String {
+    let Some(arms) = parse_select(tokens) else {
+        t.report_select_gap(tokens, "its arms are not `pattern = future => body`");
+        return format!("/* select!({}) */", tokens);
+    };
+    if arms.is_empty() {
+        return "/* select! with no arms */".to_string();
+    }
+    let branches = t.fresh_temp();
+    let outcome = t.fresh_temp();
+    let mut list = String::new();
+    for (i, arm) in arms.iter().enumerate() {
+        list.push_str(&format!(
+            "  {{ tag: '_{}', promise: {} }},\n",
+            i,
+            t.expr(&arm.future)
+        ));
+    }
+    let mut body = format!("const {} = await select({});\n", outcome, branches);
+    for (i, arm) in arms.iter().enumerate() {
+        let subject = format!("{}.value", outcome);
+        let _bindings = t.enter_pattern(&arm.pat, None);
+        let (test, bind) = t.pattern_test(&subject, &arm.pat);
+        let arm_ts = t.statements(&arm.body);
+        drop(_bindings);
+        if test != "true" {
+            t.report_select_gap(
+                tokens,
+                "an arm's pattern can fail to match, and tokio then disables that branch and \
+                 keeps waiting; this lowering takes the arm anyway",
+            );
+        }
+        let head = if i == 0 { "if" } else { "} else if" };
+        body.push_str(&format!(
+            "{} ({}.tag === '_{}') {{\n{}",
+            head,
+            outcome,
+            i,
+            indent(&format!("{}{}", bind, ensure_newline(&arm_ts)))
+        ));
+    }
+    body.push_str("}\n");
+    let held = t.fresh_temp();
+    format!(
+        "const {branches} = [\n{list}];\ntry {{\n{body}}} finally {{\n  \
+         for (const {held} of {branches}) dropOwned({held}.promise);\n}}",
+        branches = branches,
+        list = list,
+        body = indent(&body),
+        held = held,
+    )
+}
+
+/// The futures a `select!` waits on, for the move scan: each of them is taken
+/// by value, and `select!` drops every one when it returns.
+pub fn select_futures(tokens: &proc_macro2::TokenStream) -> Vec<syn::Expr> {
+    parse_select(tokens)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|arm| arm.future)
+        .collect()
+}
+
+fn parse_select(tokens: &proc_macro2::TokenStream) -> Option<Vec<SelectArm>> {
+    let parser = |input: syn::parse::ParseStream| -> syn::Result<Vec<SelectArm>> {
+        let mut arms = Vec::new();
+        // `biased;` asks tokio for source order, which is what this lowering
+        // does either way.
+        if input.peek(syn::Ident) && input.peek2(syn::Token![;]) {
+            input.parse::<syn::Ident>()?;
+            input.parse::<syn::Token![;]>()?;
+        }
+        while !input.is_empty() {
+            let pat = syn::Pat::parse_multi_with_leading_vert(input)?;
+            input.parse::<syn::Token![=]>()?;
+            let future: syn::Expr = input.parse()?;
+            input.parse::<syn::Token![=>]>()?;
+            let body: syn::Expr = input.parse()?;
+            let _ = input.parse::<syn::Token![,]>();
+            arms.push(SelectArm { pat, future, body });
+        }
+        Ok(arms)
+    };
+    syn::parse::Parser::parse2(parser, tokens.clone()).ok()
+}
+
+/// The text with exactly one newline at its end, so a block body that already
+/// ends in one does not open a blank line inside the arm.
+fn ensure_newline(text: &str) -> String {
+    format!("{}\n", text.trim_end())
 }

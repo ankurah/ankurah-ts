@@ -64,6 +64,11 @@ impl<'a> TypeContext<'a> {
         Probe::new(self.registry, self.module).with_bounds(&self.param_bounds)
     }
 
+    /// The type a name has here, where the scope stack knows one.
+    pub fn lookup(&self, name: &str) -> Option<Ty> {
+        self.scopes.resolve(name).cloned()
+    }
+
     pub fn bind(&mut self, name: &str, ty: Ty) {
         self.scopes.bind(name.to_string(), ty);
     }
@@ -82,6 +87,12 @@ impl<'a> TypeContext<'a> {
 
     pub fn push_closure(&mut self, params: Vec<(String, Ty)>) {
         self.scopes.push_closure(params);
+    }
+
+    /// Is this name bound in scope at all, whether or not the engine could
+    /// type what it holds?
+    pub fn is_bound(&self, name: &str) -> bool {
+        self.scopes.is_bound(name)
     }
 
     /// Would a `let` of this name here be a redeclaration JavaScript refuses?

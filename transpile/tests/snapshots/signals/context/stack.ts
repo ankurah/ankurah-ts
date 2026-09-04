@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/context/stack
-import { Arc, RefCell, Ref, ThreadLocal } from '@ankurah/base';
+import { Arc, RefCell, ThreadLocal, dropOwned } from '@ankurah/base';
 import { Observer } from '../observer';
 import { Signal } from '../signal';
 
@@ -35,7 +35,7 @@ export function pop(): void {
   OBSERVER_STACK.with((stack) => {
     const _t0 = stack.borrowMut();
     try {
-      _t0.value.pop();
+      dropOwned(_t0.value.pop());
     } finally {
       _t0.drop();
     }
@@ -52,7 +52,7 @@ export function remove(observer: Observer): void {
         if (_v != null) {
           const last = _v;
           if (last.value.observerId() === targetId) {
-            stack_1.value.pop();
+            dropOwned(stack_1.value.pop());
             return;
           }
         }

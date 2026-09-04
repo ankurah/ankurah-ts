@@ -15,6 +15,7 @@ pub fn emit_struct(
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
     trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
     impl_bounds: Option<&HashMap<String, Vec<String>>>,
+    assigned: &HashSet<String>,
 ) {
     let export = if s.is_pub { "export " } else { "" };
     let traits = trait_impls.get(&s.name);
@@ -35,11 +36,14 @@ pub fn emit_struct(
     // Fields — Rust's "private" means module-private (same file), not class-private.
     // Since types within the same Rust module routinely access each other's fields,
     // we don't emit TS `private` — all fields are accessible (default public in TS classes).
-    // Public Rust fields are marked `readonly` for external consumers.
+    // A public Rust field is `readonly` for external consumers, unless one of
+    // this type's own methods writes it: `fn drop(&mut self)` and every other
+    // `&mut self` body assigns through the receiver, and TypeScript refuses
+    // that on a `readonly` property.
     for f in &s.fields {
         if is_phantom_field(reg, f) { continue; }
         if let Some(name) = &f.name {
-            if f.is_pub {
+            if f.is_pub && !assigned.contains(name.as_str()) {
                 out.push_str(&format!("  readonly {}: {};\n", name, f.ts_ty(reg)));
             } else {
                 out.push_str(&format!("  {}: {};\n", name, f.ts_ty(reg)));
@@ -63,7 +67,7 @@ pub fn emit_struct(
         out.push_str("  }\n");
     }
 
-    emit_owned_fields(out, &real_fields);
+    emit_owned_fields(out, reg, &real_fields);
 
     // Methods
     let mut emitted = HashSet::new();
@@ -267,6 +271,75 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
 
 // ── Method emitters ─────────────────────────────────────────────────────
 
+/// Every field name something in this file assigns.
+///
+/// Rust's `pub` means readable *and* writable by anyone holding a `&mut`, so a
+/// field that anything assigns cannot carry TypeScript's `readonly` — and the
+/// assignment may be in a free function or another type's method, not only in
+/// the type's own. The question is asked of the Rust, because `*guard = v`
+/// emits `guard.value = v` and would otherwise take `readonly` off every field
+/// in the crate that happens to be called `value`.
+pub fn assigned_fields(file: &crate::types::RustFile) -> HashSet<String> {
+    struct Assigned {
+        names: HashSet<String>,
+    }
+    impl Assigned {
+        fn record(&mut self, place: &syn::Expr) {
+            if let syn::Expr::Field(field) = place {
+                if let syn::Member::Named(ident) = &field.member {
+                    self.names
+                        .insert(crate::name_map::to_camel_case(&ident.to_string()));
+                }
+            }
+        }
+    }
+    impl syn::visit::Visit<'_> for Assigned {
+        fn visit_expr(&mut self, expr: &syn::Expr) {
+            match expr {
+                syn::Expr::Assign(assign) => self.record(&assign.left),
+                syn::Expr::Binary(bin) if is_assign_op(&bin.op) => self.record(&bin.left),
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+    }
+    let mut found = Assigned { names: HashSet::new() };
+    for imp in &file.impls {
+        for method in &imp.methods {
+            if let Some(block) = &method.body_ast {
+                syn::visit::Visit::visit_block(&mut found, block);
+            }
+        }
+    }
+    for f in file.functions.iter().chain(&file.test_functions) {
+        if let Some(block) = &f.body_ast {
+            syn::visit::Visit::visit_block(&mut found, block);
+        }
+    }
+    let mut names = found.names;
+    for (_, inner) in &file.inline_modules {
+        names.extend(assigned_fields(inner));
+    }
+    names
+}
+
+/// Is this the operator of an assignment — `=`'s compound cousins?
+fn is_assign_op(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::AddAssign(_)
+            | syn::BinOp::SubAssign(_)
+            | syn::BinOp::MulAssign(_)
+            | syn::BinOp::DivAssign(_)
+            | syn::BinOp::RemAssign(_)
+            | syn::BinOp::BitXorAssign(_)
+            | syn::BinOp::BitAndAssign(_)
+            | syn::BinOp::BitOrAssign(_)
+            | syn::BinOp::ShlAssign(_)
+            | syn::BinOp::ShrAssign(_)
+    )
+}
+
 /// Say what this type owns, where saying nothing would be wrong.
 ///
 /// The drop cascade walks a value's own properties, and a field holding `&T`
@@ -275,8 +348,15 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
 /// broadcast — so a type with a reference field lists what it really owns and
 /// the cascade steps over the rest. Without this, dropping the borrow dropped
 /// the borrowed value, and its real owner's drop was then a double drop.
-fn emit_owned_fields(out: &mut String, fields: &[&FieldInfo]) {
-    let borrows = |f: &&FieldInfo| matches!(f.ty, Some(crate::ty::Ty::Ref { .. }));
+///
+/// The question is asked of the whole field type, not of its outermost layer:
+/// a `Vec<&T>` is an array of borrows and a `HashMap<K, &V>` still owns its
+/// keys.
+fn emit_owned_fields(out: &mut String, reg: &crate::registry::TypeRegistry, fields: &[&FieldInfo]) {
+    let borrows = |f: &&FieldInfo| {
+        f.ty.as_ref()
+            .is_some_and(|ty| crate::ownership::places::borrows_only(reg, ty))
+    };
     if !fields.iter().any(borrows) {
         return;
     }

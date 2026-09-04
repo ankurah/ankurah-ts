@@ -2,12 +2,12 @@
 import { Struct, Drop } from '@ankurah/base';
 
 export class Subscription extends Drop {
-  readonly label: string;
-  readonly live: boolean;
+  readonly name: string;
+  live: boolean;
 
-  constructor(label: string, live: boolean) {
+  constructor(name: string, live: boolean) {
     super();
-    this.label = label;
+    this.name = name;
     this.live = live;
   }
 

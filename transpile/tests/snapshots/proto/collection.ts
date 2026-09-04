@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result } from '@ankurah/base';
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {

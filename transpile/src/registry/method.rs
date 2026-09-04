@@ -377,17 +377,53 @@ impl<'a> Probe<'a> {
         let mut candidates: Vec<Ty> = vec![receiver.clone()];
         candidates.extend(steps.iter().map(|s| s.to.clone()));
 
+        // Rust needs the trait in scope for the method to exist at all, so the
+        // whole deref chain is walked once with that filter on. Applying it a
+        // step at a time re-admitted the reflexive blankets — `impl<T: ?Sized>
+        // BorrowMut<T> for T` answers `borrow_mut` on every receiver at depth 0
+        // — and a `RwLockReadGuard<RefCell<T>>` then resolved to the blanket
+        // instead of `RefCell::borrow_mut` one deref later.
+        if let Some(found) =
+            self.walk_chain(&candidates, &steps, name, explicit, &undecided, true)?
+        {
+            return Ok(found);
+        }
+        // Nothing in scope answers anywhere along the chain. A gap in the `use`
+        // map must not silently delete the only method there is, so the
+        // unfiltered answer stands and `out_of_scope` reports it.
+        if let Some(found) =
+            self.walk_chain(&candidates, &steps, name, explicit, &undecided, false)?
+        {
+            return Ok(found);
+        }
+
+        Err(MethodError::NotFound {
+            receiver: receiver.clone(),
+            tried: candidates,
+        })
+    }
+
+    /// The first step of the deref chain that answers to `name`.
+    fn walk_chain(
+        &self,
+        candidates: &[Ty],
+        steps: &[DerefStep],
+        name: &str,
+        explicit: &[Ty],
+        undecided: &[Obligation],
+        in_scope_only: bool,
+    ) -> Result<Option<MethodResolution>, MethodError> {
         for (depth, candidate) in candidates.iter().enumerate() {
             for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
-                let found = self.pick(candidate, autoref, name, explicit)?;
+                let found = self.pick(candidate, autoref, name, explicit, in_scope_only)?;
                 let Some(pick) = found else { continue };
                 let ret = self.normalize(&pick.ret);
-                let mut obligations = undecided;
+                let mut obligations = undecided.to_vec();
                 obligations.extend(pick.obligations);
                 let out_of_scope = (!self.trait_in_scope(&pick.callee))
                     .then(|| self.trait_of(&pick.callee))
                     .flatten();
-                return Ok(MethodResolution {
+                return Ok(Some(MethodResolution {
                     steps: steps[..depth].to_vec(),
                     autoref,
                     callee: pick.callee,
@@ -396,14 +432,10 @@ impl<'a> Probe<'a> {
                     adjusted: autoref.apply(candidate),
                     obligations,
                     out_of_scope,
-                });
+                }));
             }
         }
-
-        Err(MethodError::NotFound {
-            receiver: receiver.clone(),
-            tried: candidates,
-        })
+        Ok(None)
     }
 
     /// The one method that answers at this receiver and borrow, or nothing.
@@ -422,6 +454,7 @@ impl<'a> Probe<'a> {
         autoref: AutoRef,
         name: &str,
         explicit: &[Ty],
+        in_scope_only: bool,
     ) -> Result<Option<Pick>, MethodError> {
         let adjusted = autoref.apply(candidate);
 
@@ -449,7 +482,7 @@ impl<'a> Probe<'a> {
                 extension.push(declared);
             }
         }
-        self.exactly_one(candidate, self.nameable(extension))
+        self.exactly_one(candidate, self.nameable(extension, in_scope_only))
     }
 
     /// The extension candidates whose trait the calling module can name.
@@ -463,16 +496,17 @@ impl<'a> Probe<'a> {
     /// `RefCell::borrow_mut` one deref later, and the `.value` accessor the
     /// guard needs was never written.
     ///
-    /// Where the filter would leave nothing, the unfiltered list stands. A gap
-    /// in the `use` map would otherwise silently delete the only method there
-    /// is; `out_of_scope` on the resolution reports the sole survivor instead.
-    fn nameable(&self, picks: Vec<Pick>) -> Vec<Pick> {
+    /// The filter runs over the whole deref chain first. Only when nothing in
+    /// scope answers anywhere is the unfiltered list allowed to stand — a gap
+    /// in the `use` map must not silently delete the only method there is, and
+    /// `out_of_scope` on the resolution reports the survivor instead.
+    fn nameable(&self, picks: Vec<Pick>, in_scope_only: bool) -> Vec<Pick> {
         let in_scope: Vec<Pick> = picks
             .iter()
             .filter(|p| self.trait_in_scope(&p.callee))
             .cloned()
             .collect();
-        if in_scope.is_empty() {
+        if in_scope.is_empty() && !in_scope_only {
             picks
         } else {
             in_scope

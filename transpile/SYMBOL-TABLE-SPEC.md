@@ -699,29 +699,47 @@ addressed by the step that found it.
 - **Ownership emission: what the model deliberately does not cover.** The
   releases the emitter writes are described in `port/ownership.md`; these are the
   places it knows it is not faithful, each reported at the site.
-  - **A closure that takes ownership of a local owns it from there, and nothing
-    releases what the closure itself owns.** The drop cascade cannot see into a
-    JavaScript closure, so a value captured by one is not released at all. The
-    capture site is reported; the fix needs a runtime notion of a closure that
-    owns things.
   - **A `let` that takes a droppable value apart** — `let (a, b) = pair()` —
     releases neither part. Rust drops the parts separately, which needs a
-    per-field release the emitter does not write.
+    per-field release the emitter does not write. A `let x = s.field` on a
+    struct is not this: that is `takeField`, and it is emitted.
   - **A local whose type the engine could not name is not released.** The
     release is only as good as the type, and one written against a guess would
-    release a value somebody else owns.
+    release a value somebody else owns. The same gap reaches a `move` closure:
+    a capture the engine could not type is left out of what the closure owns,
+    and the closure is reported rather than given an incomplete list silently.
+  - **A closure the emitter cannot see the call site of.** A `move` closure over
+    droppable values is an `OwnedClosure`, which is invoked as `.call(...)`; the
+    emitter rewrites the call sites it can see — a closure bound to a local —
+    and reports the ones it cannot, because the callee that receives the closure
+    still writes `f(x)`.
   - **`?` across two error types hands the error on unconverted.** Rust calls
     `From` there; resolving which `From` is step 5.
   - **`mem::forget` cannot be said at all**: the emitted value has no way to
     cancel its own drop glue, so it is left for the leak registry.
-  - **A non-guard temporary is released at the end of its block, not at the end
-    of its statement.** A guard's second drop is a deliberate no-op, so a guard
-    is released at both; anything else would be a double drop, and holding it to
-    the end of the block releases it exactly once and never late enough to
-    matter.
-  - **A discarded expression statement's value is not released.** `map.insert(k,
-    v)` returns the displaced value in Rust and the `Map` itself in TypeScript,
-    so a release written against the Rust type would release the wrong thing.
+  - **A discarded value whose runtime call is not the Rust call is not
+    released.** `map.insert(k, v)` returns the displaced value in Rust and the
+    `Map` itself in TypeScript, so releasing the statement's value would release
+    the map. Every other discarded value is released at the end of its
+    statement.
+  - **An awaited value whose `Future::Output` the engine could not project is
+    not released.** The engine hands back the future's own type there, and
+    releasing that would drop a value the await already moved.
+  - **A loop over an owned sequence the runtime does not write as an array does
+    not release what an early exit left behind.** Rust's `IntoIter` drops the
+    elements it never handed out; a `Vec` is an array and the emitter can name
+    them, and a `HashMap` or an adaptor is not and it cannot.
+  - **A macro the emitter does not expand releases nothing it was handed.** The
+    macro becomes a comment, so a value passed into one goes with it.
+  - **A `?` inside a match arm, where the match is a statement.** An arm is an
+    arrow function, so the early exit leaves the arm rather than the function.
+    Where the match is the enclosing function's value the arm's `Result` is what
+    the function returns, and that case is right.
+  - **A `select!` arm whose pattern can fail is taken anyway.** tokio disables
+    the branch and keeps waiting; this lowering has no form for that.
+  - **A field name that is also an `AkObject` member** — `label`, `drop`,
+    `takeField` — shadows the runtime's own member. Renaming the field would
+    change the wire protocol, so the collision is reported instead.
 - **An or-pattern whose alternatives read their names from different places has
   no test the translator can write.** `if let (Expr::Path(p), Expr::Literal(l)) |
   (Expr::Literal(l), Expr::Path(p)) = ..` binds the same two names from opposite

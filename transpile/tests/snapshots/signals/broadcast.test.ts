@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Broadcast } from './broadcast';
-import { Arc, Mutex } from '@ankurah/base';
+import { Arc, Mutex, OwnedClosure, tokio } from '@ankurah/base';
 import { Mut } from './signal/mutable';
 
 describe('broadcast unit tests', () => {
@@ -43,7 +43,7 @@ describe('broadcast unit tests', () => {
   test('test_channel_sender_subscriber', () => {
     const sender = Broadcast.new();
     try {
-      const [tx, rx] = tokio.mpsc.unboundedChannel();
+      const [tx, rx] = tokio.sync.mpsc.unbounded_channel();
       const _t0 = sender.reference();
       try {
         const _sub = _t0.listen(tx);
@@ -52,21 +52,21 @@ describe('broadcast unit tests', () => {
           const _t1 = rx.tryRecv();
           try {
             if (!(_t1.isOk())) throw new Error('assertion failed');
-            sender.send([]);
-            const _t2 = rx.tryRecv();
-            try {
-              if (!(_t2.isOk())) throw new Error('assertion failed');
-              const _t3 = rx.tryRecv();
-              try {
-                if (!(_t3.isErr())) throw new Error('assertion failed');
-              } finally {
-                _t3.drop();
-              }
-            } finally {
-              _t2.drop();
-            }
           } finally {
             _t1.drop();
+          }
+          sender.send([]);
+          const _t2 = rx.tryRecv();
+          try {
+            if (!(_t2.isOk())) throw new Error('assertion failed');
+          } finally {
+            _t2.drop();
+          }
+          const _t3 = rx.tryRecv();
+          try {
+            if (!(_t3.isErr())) throw new Error('assertion failed');
+          } finally {
+            _t3.drop();
           }
         } finally {
           _sub.drop();
@@ -98,7 +98,7 @@ describe('broadcast unit tests', () => {
       const counterClone = counter.clone();
       const _t0 = sender.reference();
       try {
-        const _sub = _t0.listen((_) => {
+        const _sub = _t0.listen(new OwnedClosure([senderClone], (_) => {
           counterClone.lock().value += 1;
           const _t1 = senderClone.reference();
           try {
@@ -111,7 +111,7 @@ describe('broadcast unit tests', () => {
           } finally {
             _t1.drop();
           }
-        });
+        }));
         try {
           sender.send([]);
           expect(counter.lock()).toEqual(1);

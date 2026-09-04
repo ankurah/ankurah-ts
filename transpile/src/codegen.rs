@@ -8,16 +8,6 @@ use crate::emit;
 use crate::imports;
 
 /// Generate TypeScript skeleton with resolved imports (used by batch command)
-pub fn generate_ts_with_imports(
-    reg: &TypeRegistry,
-    file: &RustFile,
-    rust_crate_path: &str,
-    type_to_file: &HashMap<String, String>,
-    current_module: &str,
-) -> String {
-    generate_ts_with_imports_configured(reg, file, rust_crate_path, type_to_file, current_module, None)
-}
-
 pub fn generate_ts_with_imports_configured(
     reg: &TypeRegistry,
     file: &RustFile,
@@ -146,11 +136,6 @@ pub fn generate_ts(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str) -
     generate_ts_inner(reg, file, rust_crate_path, None)
 }
 
-/// Generate with config awareness
-pub fn generate_ts_configured(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: &crate::config::Config) -> String {
-    generate_ts_inner(reg, file, rust_crate_path, Some(config))
-}
-
 fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: Option<&crate::config::Config>) -> String {
     let mut out = String::new();
 
@@ -196,6 +181,9 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
             base_imports.push("Drop");
         }
     }
+    // What the file will actually contain. The import list is read off it.
+    let emitted = generate_declarations(reg, file, &provided_set);
+
     // Auto-detect base types used in fields, return types, and method bodies
     let mut all_type_refs = String::new();
     for s in &file.structs {
@@ -224,10 +212,24 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     }
     let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-        "RefCell", "Ref", "RefMut", "ThreadLocal"];
+        "RefCell", "Ref", "RefMut", "ThreadLocal",
+        // The closure that owns its captures, and the tokio stand-ins the
+        // emitter now writes by identity rather than by leaf name.
+        "OwnedClosure",
+        "AsyncMutex", "AsyncMutexGuard",
+        "AsyncRwLock", "AsyncRwLockReadGuard", "AsyncRwLockWriteGuard",
+        "Notify", "Notified", "TryLockError",
+        "JoinHandle", "JoinError", "Elapsed",
+        "tokio", "oneshot", "mpsc", "select", "spawn", "spawn_local", "yield_now",
+        "sleep", "timeout"];
     for ty in &base_runtime_types {
-        // Don't import if the file defines its own type with the same name
-        if all_type_refs.contains(ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
+        // Read the emitted text, not the types the file mentions: a body that
+        // was generated and then not emitted used to pull in an import nothing
+        // in the file uses. Don't import if the file defines its own type with
+        // the same name. The match is on whole words: `Mutex` is a part of
+        // `AsyncMutex`, and matching on any substring imported std's `Mutex`
+        // for a file that only ever names tokio's.
+        if mentions(&emitted, ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
             base_imports.push(ty);
         }
     }
@@ -235,7 +237,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     // JavaScript value that owns what is inside it — an array of entities, a
     // map of them. It is a function rather than a type, so it is looked for by
     // the call the emitter writes.
-    if all_type_refs.contains("dropOwned(") && !base_imports.contains(&"dropOwned") {
+    if emitted.contains("dropOwned(") && !base_imports.contains(&"dropOwned") {
         base_imports.push("dropOwned");
     }
     if !base_imports.is_empty() {
@@ -339,6 +341,22 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
 
     out.push('\n');
 
+    out.push_str(&emitted);
+    out
+}
+
+/// Everything the file declares, as TypeScript.
+///
+/// This runs before the import list is built, because what the file imports is
+/// decided by what it emits: a body that was generated and then not emitted —
+/// an `impl Display` for a type another file declares — used to pull in an
+/// import nothing in the output names.
+fn generate_declarations(
+    reg: &TypeRegistry,
+    file: &RustFile,
+    provided_set: &HashSet<String>,
+) -> String {
+    let mut out = String::new();
     // Organize impl blocks
     let mut inherent_methods: HashMap<String, Vec<&FnInfo>> = HashMap::new();
     let mut trait_impls: HashMap<String, Vec<(&str, &[String])>> = HashMap::new();
@@ -386,7 +404,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         if provided_set.contains(&s.name) {
             continue;
         }
-        emit::emit_struct(&mut out, reg, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name));
+        emit::emit_struct(&mut out, reg, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name), &file.assigned_fields);
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) {
@@ -421,11 +439,6 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     }
 
     out
-}
-
-/// Generate test file content from extracted test functions
-pub fn generate_test_ts(file: &RustFile, rust_crate_path: &str) -> Option<String> {
-    generate_test_ts_with_imports(file, rust_crate_path, &HashMap::new(), ".")
 }
 
 pub fn generate_test_ts_with_imports(
@@ -477,20 +490,22 @@ pub fn generate_test_ts_with_imports(
     // Import base types (Arc, Mutex, RefCell, etc.)
     let base_runtime_types = ["Result", "Arc", "Weak", "Mutex", "MutexGuard",
         "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-        "RefCell", "Ref", "RefMut", "ThreadLocal", "Struct", "Enum", "Drop"];
-    let mut base_imports: Vec<&&str> = base_runtime_types.iter()
-        .filter(|t| test_refs.contains(**t) && !available_types.contains(**t))
-        .collect();
-    // The cascade the ownership emission calls to release a plain JavaScript
-    // value that owns what is inside it. It is a function, so `collect_type_refs`
-    // (which reads PascalCase names) does not see it.
-    let cascade = "dropOwned";
+        "RefCell", "Ref", "RefMut", "ThreadLocal", "Struct", "Enum", "Drop",
+        "OwnedClosure", "AsyncMutex", "AsyncRwLock", "Notify", "JoinHandle",
+        "tokio", "oneshot", "mpsc", "select", "spawn", "sleep", "timeout"];
     let all_bodies: String = file
         .test_functions
         .iter()
         .filter_map(|f| f.body_ts.as_deref())
         .collect::<Vec<_>>()
         .join(" ");
+    // Read the emitted bodies rather than the PascalCase names the type scan
+    // found: `dropOwned` is a function and `oneshot` a namespace, and neither is
+    // a type reference.
+    let mut base_imports: Vec<&&str> = base_runtime_types.iter()
+        .filter(|t| mentions(&all_bodies, t) && !available_types.contains(**t))
+        .collect();
+    let cascade = "dropOwned";
     if all_bodies.contains("dropOwned(") {
         base_imports.push(&cascade);
     }
@@ -669,4 +684,28 @@ fn relative_import_path(current_module: &str, target_module: &str) -> String {
     parts.push(target_file);
 
     parts.join("/")
+}
+
+/// Does this text name `word` as a word of its own?
+///
+/// The import scan reads emitted text rather than a symbol table, so a
+/// substring match imported `Mutex` for a file that only ever wrote
+/// `AsyncMutex`, and `Ref` for one that only wrote `RefCell`.
+fn mentions(text: &str, word: &str) -> bool {
+    let boundary = |c: char| !(c.is_alphanumeric() || c == '_' || c == '$');
+    let mut from = 0;
+    while let Some(at) = text[from..].find(word) {
+        let start = from + at;
+        let end = start + word.len();
+        // A member read is not a name the file has to import: `tokio.mpsc`
+        // needs `tokio`, and nothing else.
+        let previous = text[..start].chars().next_back();
+        let before = previous.is_none_or(boundary) && previous != Some('.');
+        let after = text[end..].chars().next().is_none_or(boundary);
+        if before && after {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }

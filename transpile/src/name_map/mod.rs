@@ -118,6 +118,22 @@ pub fn map_type_name(rust_name: &str) -> &str {
     }
 }
 
+/// The tokio channel module a written path goes through, where it goes through
+/// one. `tokio::sync::mpsc::Receiver` and a bare `mpsc::Receiver` both answer
+/// `mpsc`.
+fn channel_module(path: &syn::Path) -> Option<&'static str> {
+    let segments = &path.segments;
+    if segments.len() < 2 {
+        return None;
+    }
+    match segments[segments.len() - 2].ident.to_string().as_str() {
+        "oneshot" => Some("oneshot"),
+        "mpsc" => Some("mpsc"),
+        "watch" => Some("watch"),
+        _ => None,
+    }
+}
+
 /// Map a complex Rust type to TS type string
 pub fn map_type(ty: &syn::Type) -> String {
     match ty {
@@ -125,6 +141,15 @@ pub fn map_type(ty: &syn::Type) -> String {
             if let Some(segment) = type_path.path.segments.last() {
                 let name = segment.ident.to_string();
                 let mapped = map_type_name(&name);
+                // tokio's channel modules stay namespaces in the runtime, so
+                // `mpsc::Receiver<T>` is `mpsc.Receiver<T>`. The bare leaf name
+                // collides with the other channel's `Receiver` and with
+                // anything else called that.
+                let qualifier = channel_module(&type_path.path);
+                let mapped: &str = &match qualifier {
+                    Some(module) => format!("{}.{}", module, mapped),
+                    None => mapped.to_string(),
+                };
 
                 // Handle generic types
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {

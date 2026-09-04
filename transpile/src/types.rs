@@ -41,6 +41,11 @@ pub struct RustFile {
     /// Inline modules extracted as separate files.
     /// (module_name, RustFile) — emitted to parent_dir/module_name.ts
     pub inline_modules: Vec<(String, RustFile)>,
+    /// Every field name something in this file assigns. Rust's `pub` means
+    /// readable *and* writable, so a field anything writes cannot be emitted
+    /// `readonly`. Read off the source while the bodies are still ASTs, because
+    /// translation drops them once it has written the TypeScript.
+    pub assigned_fields: std::collections::HashSet<String>,
 }
 
 impl RustFile {
@@ -58,6 +63,7 @@ impl RustFile {
             consts: Vec::new(),
             test_functions: Vec::new(),
             module_decls: Vec::new(),
+            assigned_fields: std::collections::HashSet::new(),
             inline_modules: Vec::new(),
         }
     }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result, dropOwned } from '@ankurah/base';
+import { Struct } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -74,7 +74,7 @@ export class EventFragment extends Struct {
 
   static from(attested: Attested<Event>): EventFragment {
     try {
-      return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
+      return new EventFragment(attested.payload.takeField('operations'), attested.payload.takeField('parent'), attested.takeField('attestations'));
     } finally {
       attested.drop();
     }
@@ -121,7 +121,7 @@ export class StateFragment extends Struct {
 
   static from(attested: Attested<EntityState>): StateFragment {
     try {
-      return new StateFragment(attested.payload.state, attested.attestations);
+      return new StateFragment(attested.payload.takeField('state'), attested.takeField('attestations'));
     } finally {
       attested.drop();
     }

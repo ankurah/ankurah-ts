@@ -277,17 +277,6 @@ fn decode_expr(ts_type: &str) -> String {
     decode_expr_with(ts_type, "reader")
 }
 
-/// Inline encode — uses "w" as the writer variable name
-fn encode_inline(value: &str, ts_type: &str) -> String {
-    match ts_type {
-        "string" => format!("w.writeString({})", value),
-        "boolean" => format!("w.writeBool({})", value),
-        "number" => format!("w.writeU32({})", value),
-        "Uint8Array" => format!("w.writeByteVec({})", value),
-        _ => format!("{}.encode(w)", value),
-    }
-}
-
 /// Check if a type is a tuple like [A, B] (not an array like A[])
 fn is_tuple_type(t: &str) -> bool {
     t.starts_with('[') && t.ends_with(']') && t.contains(',') && !t.ends_with("[]")

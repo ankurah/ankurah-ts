@@ -13,12 +13,18 @@
 //! the block's locals were handed to somebody else before it ended, and this
 //! file writes the result out.
 
+pub mod closures;
 pub mod glue;
 pub mod moves;
+pub mod iteration;
+pub mod lowering;
+pub mod places;
+pub mod scrutinee;
 #[cfg(test)]
 mod tests;
 
 pub use glue::{drops_of, Drops};
+pub use lowering::Lowering;
 pub use moves::{Disposition, Dispositions, Scan};
 
 /// One value a block holds and owes a release for.
@@ -77,6 +83,25 @@ pub struct Hoist {
     /// What it owes a release for, where it owes one. A `?` wrapper is
     /// consumed by the `unwrap` that follows and owes nothing.
     pub owned: Option<Owned>,
+}
+
+/// `body`, with everything lifted out of it declared before it and released
+/// around it.
+///
+/// A hoist's declaration has to stand before the text that names it, and the
+/// value it declared has to be released however that text is left — which is
+/// the same `try`/`finally` a block writes for its own locals, scoped to
+/// whatever asked for the hoist.
+pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
+    let mut inner = body.to_string();
+    for hoist in hoists.iter().rev() {
+        let wrapped = match &hoist.owned {
+            Some(owned) => wrap(&inner, owned),
+            None => inner,
+        };
+        inner = format!("{}{}", hoist.declaration, wrapped);
+    }
+    inner
 }
 
 /// Wrap `body` so that `owned` is released however the block is left.

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/update.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum } from '@ankurah/base';
 import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { CollectionId } from './collection';
@@ -174,7 +174,7 @@ export type UpdateContentV = {
 export class UpdateContent extends Enum<UpdateContentV> {
 
   intoParts(): [StateFragment | null, EventFragment[] | null] {
-    return this.match({
+    return this.intoMatch({
       EventOnly: (v) => {
         const events = v._0;
         return [null, events] as any;

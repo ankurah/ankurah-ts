@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/peering.rs
-import { Struct, Result } from '@ankurah/base';
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
 import { EntityState } from './data';

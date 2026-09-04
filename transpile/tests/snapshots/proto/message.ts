@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/message.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AuthData } from './auth';
 import { EntityId } from './id';
