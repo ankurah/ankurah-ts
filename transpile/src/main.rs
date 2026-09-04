@@ -1,25 +1,29 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
 use clap::Parser;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 mod bincode_module;
 mod body;
+mod cfg;
 mod codegen;
 mod config;
 mod control_flow;
+mod diag;
 mod drop_analysis;
 mod emit;
 mod extract;
 mod imports;
+mod infer;
 mod macros;
 mod match_expr;
 mod name_map;
-mod ownership;
-mod resolve;
-mod cfg;
 mod native_types;
-mod type_context;
+mod ownership;
+mod registry;
+#[cfg(test)]
+mod testing;
+mod ty;
 mod types;
 
 #[derive(Parser)]
@@ -74,12 +78,25 @@ fn main() -> Result<()> {
             drop_analysis::analyze(&path)?;
         }
         Command::Skeleton { file, crate_path } => {
-            let rust_file = extract::extract(&file)?;
+            let sink = diag::DiagSink::new();
+            let mut parsed = vec![registry::ExtractedFile {
+                path: file
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                file: extract::extract(&file)?,
+                declarations_only: false,
+            }];
+            let registry = registry::build_registry(&mut parsed, &[], &[], &sink);
             let crate_path = crate_path.unwrap_or_else(|| file.display().to_string());
-            let ts = codegen::generate_ts(&rust_file, &crate_path);
+            let ts = codegen::generate_ts(&registry, &parsed[0].file, &crate_path);
             print!("{}", ts);
         }
-        Command::Batch { src_dir, out_dir, crate_name } => {
+        Command::Batch {
+            src_dir,
+            out_dir,
+            crate_name,
+        } => {
             // Load config if transpile.toml exists
             let config_path = PathBuf::from("transpile.toml");
             let config = if config_path.exists() {
@@ -94,13 +111,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Option<&config::Config>) -> Result<()> {
+fn batch_generate(
+    src_dir: &Path,
+    out_dir: &Path,
+    crate_name: &str,
+    config: Option<&config::Config>,
+) -> Result<()> {
     std::fs::create_dir_all(out_dir)
         .with_context(|| format!("Failed to create output dir {}", out_dir.display()))?;
 
+    let sink = diag::DiagSink::new();
+
     // Phase 1: Parse all files and build type→file map
-    let mut parsed_files: Vec<(String, types::RustFile)> = Vec::new();
-    let mut type_to_file: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut parsed_files: Vec<registry::ExtractedFile> = Vec::new();
+    let mut type_to_file: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     for entry in WalkDir::new(src_dir)
         .into_iter()
@@ -115,11 +140,21 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         if rel_str.contains("wasm") || rel_str.contains("uniffi") {
             continue;
         }
+        // An excluded file is cfg-gated for a platform the port does not build,
+        // so its types do not exist here at all. A hardcoded file is different:
+        // its TypeScript is hand-written, so nothing may be emitted for it, but
+        // the types it declares are part of the crate and other files resolve
+        // through them.
+        let mut declarations_only = false;
         if let Some(cfg) = config {
             let full_path = format!("{}/src/{}", crate_name, rel_str);
-            if cfg.is_excluded_file(&full_path) || cfg.is_hardcoded(&full_path) {
-                eprintln!("  SKIP {} (config)", rel_str);
+            if cfg.is_excluded_file(&full_path) {
+                eprintln!("  SKIP {} (excluded)", rel_str);
                 continue;
+            }
+            if cfg.is_hardcoded(&full_path) {
+                eprintln!("  DECLARATIONS ONLY {} (hardcoded)", rel_str);
+                declarations_only = true;
             }
         }
 
@@ -127,13 +162,32 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         let rust_file = match extract::extract_with_features(rs_path, features) {
             Ok(f) => f,
             Err(e) => {
+                // A file the parser cannot read is a hole in the crate, not a
+                // file to pass over quietly.
                 eprintln!("SKIP {}: {}", rel_str, e);
+                sink.set_file(&rel_str);
+                sink.push(diag::Diag {
+                    file: rel_str.clone(),
+                    line: 0,
+                    col: 0,
+                    message: format!("file could not be parsed: {:#}", e),
+                });
                 continue;
             }
         };
 
-        // Register all types defined in this file
+        // Register all types defined in this file. A hardcoded file's types
+        // are not added here: its TypeScript is hand-written and reached
+        // through [cross_crate_types], not through a generated import.
         let ts_module = rs_to_ts_module(&rel_str);
+        if declarations_only {
+            parsed_files.push(registry::ExtractedFile {
+                path: rel_str,
+                file: rust_file,
+                declarations_only,
+            });
+            continue;
+        }
         for s in &rust_file.structs {
             type_to_file.insert(s.name.clone(), ts_module.clone());
         }
@@ -146,13 +200,28 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         // Register inline module symbols (types go in type_to_file, functions tracked separately)
         for (mod_name, sub_file) in &rust_file.inline_modules {
             let sub_module = format!("{}/{}", ts_module.trim_end_matches("/index"), mod_name);
-            for s in &sub_file.structs { type_to_file.insert(s.name.clone(), sub_module.clone()); }
-            for e in &sub_file.enums { type_to_file.insert(e.name.clone(), sub_module.clone()); }
-            for t in &sub_file.traits { type_to_file.insert(t.name.clone(), sub_module.clone()); }
+            for s in &sub_file.structs {
+                type_to_file.insert(s.name.clone(), sub_module.clone());
+            }
+            for e in &sub_file.enums {
+                type_to_file.insert(e.name.clone(), sub_module.clone());
+            }
+            for t in &sub_file.traits {
+                type_to_file.insert(t.name.clone(), sub_module.clone());
+            }
         }
 
-        parsed_files.push((rel_str, rust_file));
+        parsed_files.push(registry::ExtractedFile {
+            path: rel_str,
+            file: rust_file,
+            declarations_only,
+        });
     }
+
+    // Batch walks the filesystem, so the file order depends on the directory
+    // listing. Sort it, so the registry and the diagnostics are the same on
+    // every machine.
+    parsed_files.sort_by(|a, b| a.path.cmp(&b.path));
 
     // Add cross-crate type mappings from config
     if let Some(cfg) = config {
@@ -163,21 +232,38 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
 
     // Phase 2: Build type registry from all extracted signatures + system types
     let system_types = config.map(|c| c.system_types.as_slice()).unwrap_or(&[]);
-    let registry = resolve::build_registry(&parsed_files, system_types);
+    let crate_names = crate_names_for(crate_name, config);
+    let registry = registry::build_registry(&mut parsed_files, system_types, &crate_names, &sink);
 
     // Phase 3: Translate all deferred bodies with type context
-    let total_bodies: usize = parsed_files.iter().map(|(_, f)| {
-        f.functions.iter().filter(|f| f.body_ast.is_some()).count()
-        + f.impls.iter().flat_map(|i| i.methods.iter()).filter(|m| m.body_ast.is_some()).count()
-        + f.test_functions.iter().filter(|f| f.body_ast.is_some()).count()
-    }).sum();
-    eprintln!("  Phase 3: translating {} bodies with registry", total_bodies);
-    translate_all_bodies(&mut parsed_files, &registry);
+    let total_bodies: usize = parsed_files
+        .iter()
+        .filter(|e| !e.declarations_only)
+        .map(|e| {
+            let f = &e.file;
+            f.functions.iter().filter(|f| f.body_ast.is_some()).count()
+                + f.impls
+                    .iter()
+                    .flat_map(|i| i.methods.iter())
+                    .filter(|m| m.body_ast.is_some())
+                    .count()
+                + f.test_functions
+                    .iter()
+                    .filter(|f| f.body_ast.is_some())
+                    .count()
+        })
+        .sum();
+    eprintln!(
+        "  Phase 3: translating {} bodies with registry",
+        total_bodies
+    );
+    translate_all_bodies(&mut parsed_files, &registry, &sink);
 
     // Phase 4: Generate TS with resolved imports
     let mut file_count = 0;
 
-    for (rel_str, rust_file) in &parsed_files {
+    for entry in parsed_files.iter().filter(|e| !e.declarations_only) {
+        let (rel_str, rust_file) = (&entry.path, &entry.file);
         let ts_relative = rs_to_ts_path(rel_str);
         let ts_path = out_dir.join(&ts_relative);
 
@@ -188,7 +274,13 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         let crate_path = format!("{}/src/{}", crate_name, rel_str);
         let current_module = rs_to_ts_module(rel_str);
         let ts = codegen::generate_ts_with_imports_configured(
-            rust_file, &crate_path, &type_to_file, &current_module, config);
+            &registry,
+            rust_file,
+            &crate_path,
+            &type_to_file,
+            &current_module,
+            config,
+        );
 
         std::fs::write(&ts_path, &ts)
             .with_context(|| format!("Failed to write {}", ts_path.display()))?;
@@ -201,9 +293,14 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
             let sub_module = format!("{}/{}", current_module.trim_end_matches("/index"), mod_name);
             let sub_crate_path = format!("{}/{}", crate_path.trim_end_matches(".rs"), mod_name);
             let sub_ts = codegen::generate_ts_with_imports_configured(
-                sub_file, &sub_crate_path, &type_to_file, &sub_module, config);
-            let sub_relative = format!("{}/{}.ts",
-                ts_relative.trim_end_matches(".ts"), mod_name);
+                &registry,
+                sub_file,
+                &sub_crate_path,
+                &type_to_file,
+                &sub_module,
+                config,
+            );
+            let sub_relative = format!("{}/{}.ts", ts_relative.trim_end_matches(".ts"), mod_name);
             let sub_path = out_dir.join(&sub_relative);
             if let Some(parent) = sub_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -215,7 +312,12 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
         }
 
         // Generate test file if there are test functions
-        if let Some(test_ts) = codegen::generate_test_ts_with_imports(rust_file, &crate_path, &type_to_file, &current_module) {
+        if let Some(test_ts) = codegen::generate_test_ts_with_imports(
+            rust_file,
+            &crate_path,
+            &type_to_file,
+            &current_module,
+        ) {
             let test_relative = ts_relative.replace(".ts", ".test.ts");
             let test_path = out_dir.join(&test_relative);
             std::fs::write(&test_path, &test_ts)
@@ -226,120 +328,225 @@ fn batch_generate(src_dir: &Path, out_dir: &Path, crate_name: &str, config: Opti
     }
 
     println!("\nGenerated {} files in {}", file_count, out_dir.display());
+    eprintln!("  {} types with no declaration", registry.undeclared_reported());
+    sink.print_summary();
+    // A line the diagnostics-budget test parses. Everything above it is for a
+    // person reading a run; this is for the harness.
+    eprintln!(
+        "DIAGNOSTICS crate={} total={} undeclared={}",
+        crate_name,
+        sink.len(),
+        registry.undeclared_reported()
+    );
     Ok(())
+}
+
+/// The names this crate answers to in a written path: the TypeScript package
+/// name the run was given, plus the Cargo and Rust spellings of the crate it
+/// maps to, so `ankurah_proto::id::EntityId` written inside proto resolves.
+fn crate_names_for(crate_name: &str, config: Option<&config::Config>) -> Vec<String> {
+    // The TypeScript package name is not a Rust crate name, and `core` is a
+    // real standard-library root: never let it capture `core::mem::swap`.
+    let mut names = Vec::new();
+    if !matches!(crate_name, "std" | "core" | "alloc") {
+        names.push(crate_name.to_string());
+    }
+    if let Some(cfg) = config {
+        for (cargo_name, package) in &cfg.crates {
+            if package == crate_name {
+                names.push(cargo_name.clone());
+                names.push(cargo_name.replace('-', "_"));
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        names.push(crate_name.to_string());
+    }
+    names
 }
 
 /// Phase 3: Translate all deferred function bodies with type registry context.
 /// This runs after all files are parsed and the registry is built, so every
 /// function body has access to the full crate's type information.
 fn translate_all_bodies(
-    files: &mut [(String, types::RustFile)],
-    registry: &resolve::TypeRegistry,
+    files: &mut [registry::ExtractedFile],
+    registry: &registry::TypeRegistry,
+    sink: &diag::DiagSink,
 ) {
-    for (path, file) in files.iter_mut() {
-        let module = path.trim_end_matches(".rs")
-            .replace("mod", "index")
-            .replace("lib", "index");
+    for entry in files.iter_mut().filter(|e| !e.declarations_only) {
+        sink.set_file(&entry.path);
+        let Some(module) = registry.modules().lookup_file(&entry.path) else {
+            continue;
+        };
+        translate_module(&mut entry.file, registry, module, sink);
+    }
+}
 
-        // Collect inline module names for this file
-        let inline_mod_names: Vec<String> = file.inline_modules.iter()
-            .map(|(name, _)| name.clone()).collect();
+fn translate_module(
+    file: &mut types::RustFile,
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    sink: &diag::DiagSink,
+) {
+    let inline_mod_names: Vec<String> = file
+        .inline_modules
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    let consts = resolve_module_consts(registry, module, &file.consts, sink);
 
-        // Collect file-level constants for type context
-        let file_consts: Vec<types::ConstInfo> = file.consts.iter()
-            .map(|c| types::ConstInfo { name: c.name.clone(), ty: c.ty.clone(), is_pub: c.is_pub })
-            .collect();
+    for func in &mut file.functions {
+        translate_fn_body(
+            func,
+            "Self",
+            None,
+            &[],
+            registry,
+            module,
+            &inline_mod_names,
+            &consts,
+            sink,
+        );
+    }
 
-        // Translate free functions
-        for func in &mut file.functions {
-            translate_fn_body_with_context(func, "Self", registry, &module, &inline_mod_names, &file_consts);
+    for (mod_name, sub_file) in &mut file.inline_modules {
+        let Some(child) = registry
+            .modules()
+            .get(module)
+            .children
+            .get(mod_name)
+            .copied()
+        else {
+            continue;
+        };
+        translate_module(sub_file, registry, child, sink);
+    }
+
+    for imp in &mut file.impls {
+        let self_type = imp.target_type.clone();
+        let self_ty = impl_self_ty(registry, module, imp, sink);
+        for method in &mut imp.methods {
+            translate_fn_body(
+                method,
+                &self_type,
+                self_ty.clone(),
+                &imp.type_params,
+                registry,
+                module,
+                &inline_mod_names,
+                &consts,
+                sink,
+            );
         }
+    }
 
-        // Translate inline module bodies (with their own consts)
-        for (mod_name, sub_file) in &mut file.inline_modules {
-            let sub_module = format!("{}/{}", module.trim_end_matches("/index"), mod_name);
-            let sub_consts: Vec<types::ConstInfo> = sub_file.consts.iter()
-                .map(|c| types::ConstInfo { name: c.name.clone(), ty: c.ty.clone(), is_pub: c.is_pub })
-                .collect();
-            for func in &mut sub_file.functions {
-                translate_fn_body_with_context(func, "Self", registry, &sub_module, &[], &sub_consts);
-            }
-            for imp in &mut sub_file.impls {
-                for method in &mut imp.methods {
-                    translate_fn_body_with_context(method, &imp.target_type, registry, &sub_module, &[], &sub_consts);
-                }
-            }
-        }
+    for func in &mut file.test_functions {
+        translate_fn_body(
+            func,
+            "Self",
+            None,
+            &[],
+            registry,
+            module,
+            &[],
+            &consts,
+            sink,
+        );
+    }
 
-        // Translate impl methods
-        for imp in &mut file.impls {
-            let self_type = imp.target_type.clone();
-            for method in &mut imp.methods {
-                translate_fn_body_with_context(method, &self_type, registry, &module, &inline_mod_names, &file_consts);
-            }
-        }
-
-        // Translate test functions
-        for func in &mut file.test_functions {
-            translate_fn_body_with_context(func, "Self", registry, &module, &[], &file_consts);
-        }
-
-        // Translate trait default methods
-        for tr in &mut file.traits {
-            for method in &mut tr.methods {
-                translate_fn_body(method, "Self", registry, &module);
-            }
+    for tr in &mut file.traits {
+        for method in &mut tr.methods {
+            translate_fn_body(method, "Self", None, &[], registry, module, &[], &[], sink);
         }
     }
 }
 
+/// The type an impl block is written for, which is what `self` means inside it.
+fn impl_self_ty(
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    imp: &types::ImplInfo,
+    sink: &diag::DiagSink,
+) -> Option<ty::Ty> {
+    if imp.target_type.is_empty() {
+        return None;
+    }
+    let syn_ty = imp.self_ty.as_ref()?;
+    let env = registry::TypeEnv::new(registry, module, sink).with_params(&imp.type_params);
+    match registry::resolve_type(syn_ty, &env) {
+        Ok(resolved) => Some(resolved),
+        Err(diag) => {
+            sink.push(diag);
+            None
+        }
+    }
+}
+
+fn resolve_module_consts(
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    consts: &[types::ConstInfo],
+    sink: &diag::DiagSink,
+) -> Vec<(String, ty::Ty)> {
+    let env = registry::TypeEnv::new(registry, module, sink);
+    let mut out = Vec::new();
+    for c in consts {
+        let Some(syn_ty) = &c.rust_ty else { continue };
+        match registry::resolve_type(syn_ty, &env) {
+            Ok(resolved) => out.push((c.name.clone(), resolved)),
+            Err(diag) => sink.push(diag),
+        }
+    }
+    out
+}
+
 /// Translate a single function's body_ast → body_ts with type-aware context.
+#[allow(clippy::too_many_arguments)]
 fn translate_fn_body(
     func: &mut types::FnInfo,
     self_type: &str,
-    registry: &resolve::TypeRegistry,
-    module: &str,
-) {
-    translate_fn_body_with_modules(func, self_type, registry, module, &[]);
-}
-
-fn translate_fn_body_with_modules(
-    func: &mut types::FnInfo,
-    self_type: &str,
-    registry: &resolve::TypeRegistry,
-    module: &str,
+    self_ty: Option<ty::Ty>,
+    impl_params: &[String],
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
     inline_module_names: &[String],
-) {
-    translate_fn_body_with_context(func, self_type, registry, module, inline_module_names, &[]);
-}
-
-fn translate_fn_body_with_context(
-    func: &mut types::FnInfo,
-    self_type: &str,
-    registry: &resolve::TypeRegistry,
-    module: &str,
-    inline_module_names: &[String],
-    file_consts: &[types::ConstInfo],
+    consts: &[(String, ty::Ty)],
+    sink: &diag::DiagSink,
 ) {
     if let Some(ref block) = func.body_ast {
-        let mut translator = body::BodyTranslator::with_registry(self_type, registry, module);
-        translator.inline_module_names = inline_module_names.to_vec();
+        let mut params = impl_params.to_vec();
+        params.extend(func.type_params.iter().cloned());
 
-        // Register module-level constant types
-        for c in file_consts {
-            let resolved = resolve::parse_type_string(&c.ty);
-            translator.bind_var(&c.name, resolved);
+        let mut tc = infer::TypeContext::new(registry, module, self_ty, params, sink);
+        for (name, ty) in consts {
+            tc.bind(name, ty.clone());
         }
 
-        // Push function scope with typed parameters
-        let typed_params: Vec<(String, resolve::ResolvedType)> = func.params.iter()
-            .filter(|p| !p.is_self && !p.ty.is_empty())
-            .map(|p| (p.name.clone(), resolve::parse_type_string(&p.ty)))
+        let typed_params: Vec<(String, ty::Ty)> = func
+            .params
+            .iter()
+            .filter(|p| !p.is_self)
+            .filter_map(|p| {
+                let syn_ty = p.rust_ty.as_ref()?;
+                match tc.resolve_written_type(syn_ty) {
+                    Ok(ty) => Some((p.name.clone(), ty)),
+                    Err(diag) => {
+                        sink.push(diag);
+                        None
+                    }
+                }
+            })
             .collect();
-        translator.push_fn_scope(typed_params);
+        tc.push_fn(typed_params);
 
+        let mut translator = body::BodyTranslator::with_context(self_type, tc);
+        translator.inline_module_names = inline_module_names.to_vec();
         func.body_ts = Some(translator.translate_block(block));
         translator.pop_scope();
+        // Fallbacks taken on translation paths that carry no sink of their own.
+        diag::pending::drain(sink);
     }
     if func.body_ts.is_some() {
         func.body_ast = None;

@@ -1,0 +1,457 @@
+{
+ "source": "inventory4.txt",
+ "sites": [
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "expr": "compress(bytes.as_ref(), words_out).iter().map(|&x",
+   "truncated": true,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "expr": "compress(bytes.as_ref(), words_out).iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<u8, Global>",
+     "to": "[u8]"
+    },
+    {
+     "from": "[u8]",
+     "to": "&[u8]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 49,
+   "expr": "bytes.as_ref().iter().map(|&x| format!(\"{:x?}\", x)",
+   "truncated": true,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 14,
+   "expr": "self.0.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 22,
+   "expr": "ids.sort()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&mut [EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 26,
+   "expr": "self.0.binary_search(id)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 30,
+   "expr": "self.0.binary_search(&id)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 47,
+   "expr": "self.0.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 70,
+   "expr": "clock.0.to_vec()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 134,
+   "expr": "event_ids.binary_search(&EventId::from_sql(member_",
+   "truncated": true,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 49,
+   "expr": "event_ids.binary_search(&event_id)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<EventId, Global>",
+     "to": "[EventId]"
+    },
+    {
+     "from": "[EventId]",
+     "to": "&[EventId]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 43,
+   "expr": "s.chars()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "&String",
+     "to": "String"
+    },
+    {
+     "from": "String",
+     "to": "str"
+    },
+    {
+     "from": "str",
+     "to": "&str"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 75,
+   "expr": "path.steps.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 86,
+   "expr": "exprs.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "&Vec<Expr, Global>",
+     "to": "Vec<Expr, Global>"
+    },
+    {
+     "from": "Vec<Expr, Global>",
+     "to": "[Expr]"
+    },
+    {
+     "from": "[Expr]",
+     "to": "&[Expr]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 122,
+   "expr": "s.chars()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "&String",
+     "to": "String"
+    },
+    {
+     "from": "String",
+     "to": "str"
+    },
+    {
+     "from": "str",
+     "to": "&str"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 69,
+   "expr": "self.steps.last()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 114,
+   "expr": "order_by.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "&Vec<OrderByItem, Global>",
+     "to": "Vec<OrderByItem, Global>"
+    },
+    {
+     "from": "Vec<OrderByItem, Global>",
+     "to": "[OrderByItem]"
+    },
+    {
+     "from": "[OrderByItem]",
+     "to": "&[OrderByItem]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 159,
+   "expr": "items .iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "&Vec<OrderByItem, Global>",
+     "to": "Vec<OrderByItem, Global>"
+    },
+    {
+     "from": "Vec<OrderByItem, Global>",
+     "to": "[OrderByItem]"
+    },
+    {
+     "from": "[OrderByItem]",
+     "to": "&[OrderByItem]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 184,
+   "expr": "columns.contains(&col)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 220,
+   "expr": "cols.contains(&col)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 229,
+   "expr": "cols.contains(&col)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<String, Global>",
+     "to": "[String]"
+    },
+    {
+     "from": "[String]",
+     "to": "&[String]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 99,
+   "expr": "op.as_str().to_uppercase().contains(\"NOT\")",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "String",
+     "to": "str"
+    },
+    {
+     "from": "str",
+     "to": "&str"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 320,
+   "expr": "inner_pairs .iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<Pair<'_, Rule>, Global>",
+     "to": "[Pair<'_, Rule>]"
+    },
+    {
+     "from": "[Pair<'_, Rule>]",
+     "to": "&[Pair<'_, Rule>]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 334,
+   "expr": "inner_pairs .iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<Pair<'_, Rule>, Global>",
+     "to": "[Pair<'_, Rule>]"
+    },
+    {
+     "from": "[Pair<'_, Rule>]",
+     "to": "&[Pair<'_, Rule>]"
+    }
+   ]
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 801,
+   "expr": "test_cases.iter()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Vec<&str, Global>",
+     "to": "[&str]"
+    },
+    {
+     "from": "[&str]",
+     "to": "&[&str]"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/reactive_graph.rs",
+   "line": 83,
+   "expr": "map.entry(id)",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "MutexGuard<'_, HashMap<BroadcastId, Arc<BridgeSource, Global>, RandomState, Global>>",
+     "to": "HashMap<BroadcastId, Arc<BridgeSource, Global>, RandomState, Global>"
+    },
+    {
+     "from": "HashMap<BroadcastId, Arc<BridgeSource, Global>, RandomState, Global>",
+     "to": "&mut HashMap<BroadcastId, Arc<BridgeSource, Global>, RandomState, Global>"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/reactive_graph.rs",
+   "line": 85,
+   "expr": "bridge.track()",
+   "truncated": false,
+   "steps": [
+    {
+     "from": "Arc<BridgeSource, Global>",
+     "to": "BridgeSource"
+    },
+    {
+     "from": "BridgeSource",
+     "to": "&BridgeSource"
+    }
+   ]
+  }
+ ]
+}

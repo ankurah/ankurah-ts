@@ -1,9 +1,16 @@
-# Preload the ownership test hooks into every suite in the repo.
+# Bun configuration for the repository root.
 #
+# Test discovery stops at packages/. Without this, a bare `bun test` also picks
+# up the .test.ts files under transpile/golden/ and transpile/tests/snapshots/,
+# which are recordings of generated TypeScript kept for diffing — they are not
+# tests of this repository and were never meant to run here.
+#
+# The preload puts the ownership test hooks into every suite in the repo.
 # A fatal ownership error latches the runtime so that a host which swallowed the
 # throw cannot keep running over corrupted ownership. That latch has to be reset
 # between tests, or the first fatal fails every test after it and the failure
 # lands nowhere near the bug. The preloaded module clears the latch before each
 # test and fails any test that raised a fatal and swallowed it.
 [test]
+root = "packages"
 preload = ["./packages/base/src/testing.ts"]

@@ -17,7 +17,7 @@ pub struct Config {
     /// System types (Arc, RwLock, etc.) — foundational runtime types whose shapes
     /// are declared here so the transpiler can resolve through them.
     /// Distinct from provided_impls (subject-code types hand-ported in *.provided.ts).
-    pub system_types: Vec<crate::resolve::TypeDef>,
+    pub system_types: Vec<crate::registry::SystemTypeDecl>,
     /// Feature flags for conditional compilation (#[cfg(feature = "...")]).
     pub features: crate::cfg::CfgFeatures,
 }
@@ -182,14 +182,17 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
     map
 }
 
-/// Parse [system_types] section from transpile.toml into TypeDefs.
-/// Each entry declares a system type's shape for the type registry:
+/// Parse the `[system_types]` section into declarations for the reserved
+/// system module. Method return types are written as Rust and parsed by syn,
+/// which is the shape the std-surface step needs when these entries become
+/// signature-only Rust stub files:
 ///   [system_types.Arc]
+///   path = "std::sync::Arc"
 ///   deref_field = "value"
 ///   type_params = ["T"]
 ///   methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
-fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::resolve::TypeDef> {
-    use crate::resolve::{TypeDef, TypeKind, MethodSig, parse_type_string};
+fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::registry::SystemTypeDecl> {
+    use crate::registry::SystemTypeDecl;
 
     let mut types = Vec::new();
     let table = match value.and_then(|v| v.as_table()) {
@@ -203,6 +206,15 @@ fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::resolve::TypeDe
             None => continue,
         };
 
+        // The full Rust path a written type has to use to reach this type.
+        // Without it a std path would match on its last segment alone, which is
+        // how `std::fmt::Result` used to become `Result<T, E>`.
+        let path = entry
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| name.clone());
+
         let deref_field = entry.get("deref_field")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
@@ -212,27 +224,16 @@ fn parse_system_types(value: Option<&toml::Value>) -> Vec<crate::resolve::TypeDe
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        let mut methods = HashMap::new();
+        let mut methods = Vec::new();
         if let Some(methods_table) = entry.get("methods").and_then(|v| v.as_table()) {
             for (method_name, ret_type_val) in methods_table {
                 if let Some(ret_str) = ret_type_val.as_str() {
-                    methods.insert(method_name.clone(), MethodSig {
-                        params: vec![],
-                        ret: parse_type_string(ret_str),
-                        is_static: false,
-                    });
+                    methods.push((method_name.clone(), ret_str.to_string()));
                 }
             }
         }
 
-        types.push(TypeDef {
-            name: name.clone(),
-            kind: TypeKind::Struct, // system types are struct-like for resolution purposes
-            fields: vec![],
-            methods,
-            deref_field,
-            type_params,
-        });
+        types.push(SystemTypeDecl { name: name.clone(), path, type_params, deref_field, methods });
     }
 
     types
@@ -265,17 +266,16 @@ mod tests {
         let arc = config.system_types.iter().find(|t| t.name == "Arc");
         assert!(arc.is_some(), "Arc should be in system_types");
         let arc = arc.unwrap();
+        assert_eq!(arc.path, "std::sync::Arc", "every system type declares its Rust path");
         assert_eq!(arc.deref_field, Some("value".to_string()));
         assert_eq!(arc.type_params, vec!["T".to_string()]);
-        assert!(arc.methods.contains_key("clone"));
-        assert!(arc.methods.contains_key("downgrade"));
+        assert!(arc.methods.iter().any(|(m, _)| m == "clone"));
+        assert!(arc.methods.iter().any(|(m, _)| m == "downgrade"));
 
         let rwlock = config.system_types.iter().find(|t| t.name == "RwLock");
         assert!(rwlock.is_some(), "RwLock should be in system_types");
         let rwlock = rwlock.unwrap();
-        assert!(rwlock.methods.contains_key("write"));
-        // Verify method return type was parsed correctly
-        let write_ret = &rwlock.methods.get("write").unwrap().ret;
-        assert!(matches!(write_ret, crate::resolve::ResolvedType::Named { name, .. } if name == "RwLockWriteGuard"));
+        let write = rwlock.methods.iter().find(|(m, _)| m == "write");
+        assert_eq!(write.map(|(_, ret)| ret.as_str()), Some("RwLockWriteGuard<T>"));
     }
 }

@@ -306,29 +306,37 @@ fn translate_enum_match(scrutinee: &str, arms: &[syn::Arm]) -> String {
     out
 }
 
-/// Replace standalone identifier occurrences (not part of longer identifiers or property access)
+/// Replace standalone identifier occurrences (not part of longer identifiers or property access).
+///
+/// Walks characters, not bytes: the text is translated TypeScript and can hold
+/// a string literal with any character in it. This is the textual substitution
+/// spec section 4.11 deletes once match arms bind their pattern variables
+/// through the scope stack; until then it must at least not cut a character in
+/// half.
 fn replace_identifier(text: &str, from: &str, to: &str) -> String {
     let mut result = String::with_capacity(text.len());
-    let mut i = 0;
     let bytes = text.as_bytes();
+    let mut chars = text.char_indices().peekable();
 
-    while i < bytes.len() {
-        if i + from.len() <= bytes.len() && &text[i..i + from.len()] == from {
+    while let Some((i, ch)) = chars.next() {
+        if text[i..].starts_with(from) {
+            let end = i + from.len();
             // Check that it's a standalone identifier (not part of a longer word)
             let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
-            let after_ok = i + from.len() >= bytes.len() || !is_ident_char(bytes[i + from.len()]);
+            let after_ok = end >= bytes.len() || !is_ident_char(bytes[end]);
             // Skip if preceded by '.' (property access) but NOT '...' (spread)
             let not_property = i == 0 || bytes[i - 1] != b'.'
                 || (i >= 3 && bytes[i-3] == b'.' && bytes[i-2] == b'.' && bytes[i-1] == b'.');
 
             if before_ok && after_ok && not_property {
                 result.push_str(to);
-                i += from.len();
+                while chars.peek().is_some_and(|(j, _)| *j < end) {
+                    chars.next();
+                }
                 continue;
             }
         }
-        result.push(bytes[i] as char);
-        i += 1;
+        result.push(ch);
     }
     result
 }

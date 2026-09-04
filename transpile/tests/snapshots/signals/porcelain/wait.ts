@@ -1,0 +1,11 @@
+// MIRRORS: ankurah/signals/src/porcelain/wait.rs
+
+export interface Wait<T> {
+  waitValue(targetValue: T): Promise<void>;
+  waitFor(predicate: F): Promise<Output>;
+}
+
+export interface WaitResult {
+  result(): Output | null;
+}
+

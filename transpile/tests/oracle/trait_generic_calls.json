@@ -1,0 +1,461 @@
+{
+ "source": "inventory4.txt",
+ "sites": [
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 42,
+   "callee": "Iterator::collect",
+   "expr": "bytes.chunks(seg_size).map(|c| c.iter().fold(0u8, "
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 42,
+   "callee": "Iterator::map",
+   "expr": "bytes.chunks(seg_size).map(|c| c.iter().fold(0u8, "
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "callee": "Iterator::collect",
+   "expr": "compress(bytes.as_ref(), words_out).iter().map(|&x"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "callee": "Iterator::map",
+   "expr": "compress(bytes.as_ref(), words_out).iter().map(|&x"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "callee": "AsRef::as_ref",
+   "expr": "bytes.as_ref()"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 49,
+   "callee": "Iterator::collect",
+   "expr": "bytes.as_ref().iter().map(|&x| format!(\"{:x?}\", x)"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 49,
+   "callee": "Iterator::map",
+   "expr": "bytes.as_ref().iter().map(|&x| format!(\"{:x?}\", x)"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 49,
+   "callee": "AsRef::as_ref",
+   "expr": "bytes.as_ref()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 10,
+   "callee": "Into::into",
+   "expr": "ids.into()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 14,
+   "callee": "Iterator::collect",
+   "expr": "self.0.iter().map(|id| id.to_base64()).collect()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 14,
+   "callee": "Iterator::map",
+   "expr": "self.0.iter().map(|id| id.to_base64())"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 21,
+   "callee": "Iterator::collect",
+   "expr": "strings.into_iter().map(|s| s.try_into()).collect:"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 21,
+   "callee": "Iterator::map",
+   "expr": "strings.into_iter().map(|s| s.try_into())"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 53,
+   "callee": "Iterator::collect",
+   "expr": "ids.into_iter().collect()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 65,
+   "callee": "Iterator::collect",
+   "expr": "ids.into_iter().collect()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 24,
+   "callee": "Engine::decode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.decode(input)"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 30,
+   "callee": "Engine::encode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.encode(self.0.to_"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 137,
+   "callee": "Serializer::is_human_readable",
+   "expr": "serializer.is_human_readable()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 139,
+   "callee": "Serializer::serialize_str",
+   "expr": "serializer.serialize_str(&self.to_base64())"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 150,
+   "callee": "Deserializer::is_human_readable",
+   "expr": "deserializer.is_human_readable()"
+  },
+  {
+   "file": "proto/src/auth.rs",
+   "line": 32,
+   "callee": "Iterator::collect",
+   "expr": "attestation.into_iter().collect()"
+  },
+  {
+   "file": "proto/src/auth.rs",
+   "line": 46,
+   "callee": "Clone::clone",
+   "expr": "self.payload.clone()"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 27,
+   "callee": "Engine::encode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.encode(self.0)"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 36,
+   "callee": "Engine::decode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.decode(input)"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 77,
+   "callee": "Serializer::is_human_readable",
+   "expr": "serializer.is_human_readable()"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 79,
+   "callee": "Serializer::serialize_str",
+   "expr": "serializer.serialize_str(&self.to_base64())"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 90,
+   "callee": "Deserializer::is_human_readable",
+   "expr": "deserializer.is_human_readable()"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 14,
+   "callee": "BufMut::writer",
+   "expr": "out.writer()"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 15,
+   "callee": "Write::write_all",
+   "expr": "enc.write_all(self.0.to_bytes().as_slice())"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 46,
+   "callee": "BufMut::writer",
+   "expr": "out.writer()"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 47,
+   "callee": "Write::write_all",
+   "expr": "enc.write_all(self.as_bytes())"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 125,
+   "callee": "FallibleIterator::count",
+   "expr": "array.dimensions().count()"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 41,
+   "callee": "JsCast::dyn_into",
+   "expr": "value.dyn_into()"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 78,
+   "callee": "JsCast::dyn_into",
+   "expr": "value.dyn_into()"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 102,
+   "callee": "JsCast::dyn_into",
+   "expr": "value.dyn_into()"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 126,
+   "callee": "JsCast::dyn_into",
+   "expr": "value.dyn_into()"
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 58,
+   "callee": "Engine::encode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.encode(ulid.to_by"
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 75,
+   "callee": "Iterator::enumerate",
+   "expr": "path.steps.iter().enumerate()"
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 86,
+   "callee": "Iterator::enumerate",
+   "expr": "exprs.iter().enumerate()"
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 140,
+   "callee": "Engine::encode",
+   "expr": "general_purpose::URL_SAFE_NO_PAD.encode(ulid.to_by"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 114,
+   "callee": "Iterator::enumerate",
+   "expr": "order_by.iter().enumerate()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 159,
+   "callee": "Iterator::collect",
+   "expr": "items .iter() .filter(|item| { // Use the property"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 159,
+   "callee": "Iterator::cloned",
+   "expr": "items .iter() .filter(|item| { // Use the property"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 159,
+   "callee": "Iterator::filter",
+   "expr": "items .iter() .filter(|item| { // Use the property"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 342,
+   "callee": "IntoIterator::into_iter",
+   "expr": "values.into_iter()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 346,
+   "callee": "Iterator::next",
+   "expr": "values_iter.next()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 389,
+   "callee": "Iterator::next",
+   "expr": "values.next()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 390,
+   "callee": "TryInto::try_into",
+   "expr": "value.try_into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 390,
+   "callee": "Into::into",
+   "expr": "e.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 439,
+   "callee": "Iterator::collect",
+   "expr": "null_columns.iter().map(|s| s.to_string()).collect"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 439,
+   "callee": "Iterator::map",
+   "expr": "null_columns.iter().map(|s| s.to_string())"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 599,
+   "callee": "Iterator::collect",
+   "expr": "vec.into_iter().map(|item| item.into()).collect()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 599,
+   "callee": "Iterator::map",
+   "expr": "vec.into_iter().map(|item| item.into())"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 599,
+   "callee": "Into::into",
+   "expr": "item.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 605,
+   "callee": "Iterator::collect",
+   "expr": "arr.into_iter().map(|item| item.into()).collect()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 605,
+   "callee": "Iterator::map",
+   "expr": "arr.into_iter().map(|item| item.into())"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 605,
+   "callee": "Into::into",
+   "expr": "item.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 611,
+   "callee": "Iterator::collect",
+   "expr": "slice.iter().map(|item| item.clone().into()).colle"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 611,
+   "callee": "Iterator::map",
+   "expr": "slice.iter().map(|item| item.clone().into())"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 611,
+   "callee": "Into::into",
+   "expr": "item.clone().into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 611,
+   "callee": "Clone::clone",
+   "expr": "item.clone()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "callee": "Iterator::collect",
+   "expr": "arr.iter().map(|item| item.clone().into()).collect"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "callee": "Iterator::map",
+   "expr": "arr.iter().map(|item| item.clone().into())"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "callee": "Into::into",
+   "expr": "item.clone().into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "callee": "Clone::clone",
+   "expr": "item.clone()"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 234,
+   "callee": "Iterator::collect",
+   "expr": "pair.into_inner().filter(|p| p.as_rule() == gramma"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 234,
+   "callee": "Iterator::map",
+   "expr": "pair.into_inner().filter(|p| p.as_rule() == gramma"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 234,
+   "callee": "Iterator::filter",
+   "expr": "pair.into_inner().filter(|p| p.as_rule() == gramma"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 280,
+   "callee": "Iterator::find",
+   "expr": "pair .into_inner() .find(|p| p.as_rule() == gramma"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 318,
+   "callee": "Iterator::collect",
+   "expr": "pair.into_inner().collect()"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 801,
+   "callee": "Iterator::enumerate",
+   "expr": "test_cases.iter().enumerate()"
+  },
+  {
+   "file": "signals/src/reactive_graph.rs",
+   "line": 80,
+   "callee": "Signal::broadcast_id",
+   "expr": "signal.broadcast_id()"
+  },
+  {
+   "file": "signals/src/reactive_graph.rs",
+   "line": 123,
+   "callee": "Signal::listen",
+   "expr": "signal.listen(Arc::new(move |_| { trigger_clone.no"
+  },
+  {
+   "file": "signals/src/signal.rs",
+   "line": 23,
+   "callee": "TListenerGuard::broadcast_id",
+   "expr": "self.0.broadcast_id()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 114,
+   "callee": "Into::into",
+   "expr": "value.clone().into()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 114,
+   "callee": "Clone::clone",
+   "expr": "value.clone()"
+  }
+ ]
+}

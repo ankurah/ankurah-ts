@@ -1,0 +1,161 @@
+{
+ "source": "spike-run3.txt",
+ "sites": [
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 9,
+   "expr": "f.debug_struct(\"Broadcast\").field(\"listeners\", &self.0.listeners.read(",
+   "truncated": true,
+   "receiver_type": "&mut DebugStruct<'_, '_>",
+   "receiver_type_adjusted": "&mut DebugStruct<'_, '_>",
+   "callee": "DebugStruct<'a, 'b>::finish",
+   "callee_kind": "inherent impl",
+   "result_type": "Result<(), Error>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 9,
+   "expr": "f.debug_struct(\"Broadcast\").field(\"listeners\", &self.0.listeners.read(",
+   "truncated": true,
+   "receiver_type": "DebugStruct<'_, '_>",
+   "receiver_type_adjusted": "&mut DebugStruct<'_, '_>",
+   "callee": "DebugStruct<'a, 'b>::field",
+   "callee_kind": "inherent impl",
+   "result_type": "&mut DebugStruct<'_, '_>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 9,
+   "expr": "f.debug_struct(\"Broadcast\")",
+   "receiver_type": "&mut Formatter<'_>",
+   "receiver_type_adjusted": "&mut Formatter<'_>",
+   "callee": "Formatter<'a>::debug_struct",
+   "callee_kind": "inherent impl",
+   "result_type": "DebugStruct<'_, '_>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 57,
+   "expr": "self.0.listeners.read().unwrap().len()",
+   "receiver_type": "RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "receiver_type_adjusted": "&HashMap<usize, BroadcastListener<T>, RandomState, Global>",
+   "callee": "HashMap<K, V, S, A>::len",
+   "callee_kind": "inherent impl",
+   "result_type": "usize"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 57,
+   "expr": "self.0.listeners.read().unwrap()",
+   "receiver_type": "Result<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>, PoisonError<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>>>",
+   "receiver_type_adjusted": "(none)",
+   "callee": "Result<T, E>::unwrap",
+   "callee_kind": "inherent impl",
+   "result_type": "RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 57,
+   "expr": "self.0.listeners.read()",
+   "receiver_type": "RwLock<HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "receiver_type_adjusted": "&RwLock<HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "callee": "RwLock<T>::read",
+   "callee_kind": "inherent impl",
+   "result_type": "Result<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>, PoisonError<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 71,
+   "col": 21,
+   "expr": "self.inner.as_ptr()",
+   "receiver_type": "Weak<Inner<T>, Global>",
+   "receiver_type_adjusted": "&Weak<Inner<T>, Global>",
+   "callee": "Weak<T, A>::as_ptr",
+   "callee_kind": "inherent impl",
+   "result_type": "*const Inner<T>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 76,
+   "col": 45,
+   "expr": "self.broadcast_id()",
+   "receiver_type": "&ListenerGuard<T>",
+   "receiver_type_adjusted": "&ListenerGuard<T>",
+   "callee": "ListenerGuard<T>::broadcast_id",
+   "callee_kind": "inherent impl",
+   "result_type": "BroadcastId"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 99,
+   "col": 29,
+   "expr": "self.0.listeners.read().unwrap()",
+   "receiver_type": "Result<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>, PoisonError<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>>>",
+   "receiver_type_adjusted": "(none)",
+   "callee": "Result<T, E>::unwrap",
+   "callee_kind": "inherent impl",
+   "result_type": "RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 99,
+   "col": 29,
+   "expr": "self.0.listeners.read()",
+   "receiver_type": "RwLock<HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "receiver_type_adjusted": "&RwLock<HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "callee": "RwLock<T>::read",
+   "callee_kind": "inherent impl",
+   "result_type": "Result<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>, PoisonError<RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 100,
+   "col": 13,
+   "expr": "listeners.values().cloned().collect::<Vec<_>>()",
+   "receiver_type": "Cloned<Values<'_, usize, BroadcastListener<T>>>",
+   "receiver_type_adjusted": "(none)",
+   "callee": "Iterator::collect",
+   "callee_kind": "trait method, defining trait",
+   "result_type": "Vec<BroadcastListener<T>, Global>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 100,
+   "col": 13,
+   "expr": "listeners.values().cloned()",
+   "receiver_type": "Values<'_, usize, BroadcastListener<T>>",
+   "receiver_type_adjusted": "(none)",
+   "callee": "Iterator::cloned",
+   "callee_kind": "trait method, defining trait",
+   "result_type": "Cloned<Values<'_, usize, BroadcastListener<T>>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 100,
+   "col": 13,
+   "expr": "listeners.values()",
+   "receiver_type": "RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+   "receiver_type_adjusted": "&HashMap<usize, BroadcastListener<T>, RandomState, Global>",
+   "callee": "HashMap<K, V, S, A>::values",
+   "callee_kind": "inherent impl",
+   "result_type": "Values<'_, usize, BroadcastListener<T>>"
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 105,
+   "col": 37,
+   "expr": "subscribers.split_last()",
+   "receiver_type": "Vec<BroadcastListener<T>, Global>",
+   "receiver_type_adjusted": "&[BroadcastListener<T>]",
+   "callee": "[T]::split_last",
+   "callee_kind": "inherent impl",
+   "result_type": "Option<(&BroadcastListener<T>, &[BroadcastListener<T>])>"
+  }
+ ]
+}

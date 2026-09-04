@@ -21,24 +21,20 @@ pub fn extract(path: &Path) -> Result<RustFile> {
 pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatures>) -> Result<RustFile> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
+    extract_source(&path.display().to_string(), &content, features)
+}
 
-    let syntax = syn::parse_file(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
+/// Extract from source text already in hand. Batch reads from disk; the engine's
+/// unit tests hand it a few lines of Rust directly.
+pub fn extract_source(
+    path: &str,
+    content: &str,
+    features: Option<&crate::cfg::CfgFeatures>,
+) -> Result<RustFile> {
+    let syntax = syn::parse_file(content)
+        .with_context(|| format!("Failed to parse {}", path))?;
 
-    let mut file = RustFile {
-        path: path.display().to_string(),
-        structs: Vec::new(),
-        enums: Vec::new(),
-        traits: Vec::new(),
-        functions: Vec::new(),
-        impls: Vec::new(),
-        uses: Vec::new(),
-        type_aliases: Vec::new(),
-        consts: Vec::new(),
-        test_functions: Vec::new(),
-        module_decls: Vec::new(),
-        inline_modules: Vec::new(),
-    };
+    let mut file = RustFile::empty(path.to_string());
 
     for item in &syntax.items {
         match item {
@@ -56,7 +52,7 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
             }
             syn::Item::Fn(f) => {
                 if is_skipped_cfg_with(&f.attrs, features) { continue; }
-                file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
+                file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block)));
             }
             syn::Item::Impl(i) => {
                 if is_skipped_cfg_with(&i.attrs, features) { continue; }
@@ -70,7 +66,10 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                 file.type_aliases.push(TypeAliasInfo {
                     name: t.ident.to_string(),
                     ty: name_map::map_type(&t.ty),
+                    rust_ty: (*t.ty).clone(),
                     is_pub: is_public(&t.vis),
+                    vis: visibility(&t.vis),
+                    type_params: type_param_names(&t.generics),
                 });
             }
             syn::Item::Const(c) => {
@@ -78,7 +77,9 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                 file.consts.push(ConstInfo {
                     name: c.ident.to_string(),
                     ty: name_map::map_type(&c.ty),
+                    rust_ty: Some((*c.ty).clone()),
                     is_pub: is_public(&c.vis),
+                    vis: visibility(&c.vis),
                 });
             }
             syn::Item::Mod(m) => {
@@ -88,7 +89,7 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                         for item in items {
                             if let syn::Item::Fn(f) = item {
                                 if is_test_fn(&f.attrs) {
-                                    file.test_functions.push(extract_fn_with_body(&f.sig, true, &f.attrs, Some(&f.block)));
+                                    file.test_functions.push(extract_fn_with_body(&f.sig, true, VisInfo::Private, &f.attrs, Some(&f.block)));
                                 }
                             }
                         }
@@ -99,25 +100,13 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                 else if !is_skipped_cfg_with(&m.attrs, features) {
                     if let Some((_, items)) = &m.content {
                         let mod_name = m.ident.to_string();
-                        let mut sub_file = RustFile {
-                            path: String::new(),
-                            structs: Vec::new(),
-                            enums: Vec::new(),
-                            traits: Vec::new(),
-                            functions: Vec::new(),
-                            impls: Vec::new(),
-                            uses: Vec::new(),
-                            type_aliases: Vec::new(),
-                            consts: Vec::new(),
-                            test_functions: Vec::new(),
-                            module_decls: Vec::new(),
-                            inline_modules: Vec::new(),
-                        };
+                        let mut sub_file = RustFile::empty(String::new());
+                        sub_file.vis = visibility(&m.vis);
                         for item in items {
                             match item {
                                 syn::Item::Fn(f) => {
                                     if !is_skipped_cfg_with(&f.attrs, features) {
-                                        sub_file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), &f.attrs, Some(&f.block)));
+                                        sub_file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block)));
                                     }
                                 }
                                 syn::Item::Struct(s) => {
@@ -137,9 +126,9 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                                     let macro_name = mac.mac.path.segments.last()
                                         .map(|s| s.ident.to_string()).unwrap_or_default();
                                     if macro_name == "thread_local" {
-                                        if let Some((decl, name, ty)) = extract_thread_local(&mac.mac) {
+                                        if let Some((decl, name, ty, rust_ty)) = extract_thread_local(&mac.mac) {
                                             sub_file.module_decls.push(decl);
-                                            sub_file.consts.push(ConstInfo { name, ty, is_pub: false });
+                                            sub_file.consts.push(ConstInfo { name, ty, rust_ty, is_pub: false, vis: VisInfo::Private });
                                         }
                                     }
                                 }
@@ -155,9 +144,9 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
                 let macro_name = mac.mac.path.segments.last()
                     .map(|s| s.ident.to_string()).unwrap_or_default();
                 if macro_name == "thread_local" {
-                    if let Some((decl, name, ty)) = extract_thread_local(&mac.mac) {
+                    if let Some((decl, name, ty, rust_ty)) = extract_thread_local(&mac.mac) {
                         file.module_decls.push(decl);
-                        file.consts.push(ConstInfo { name, ty, is_pub: false });
+                        file.consts.push(ConstInfo { name, ty, rust_ty, is_pub: false, vis: VisInfo::Private });
                     }
                 }
             }
@@ -170,6 +159,27 @@ pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatu
 
 fn is_public(vis: &Visibility) -> bool {
     matches!(vis, Visibility::Public(_))
+}
+
+/// Visibility as written. `pub(in path)` keeps its position so the registry can
+/// report it rather than widen it in silence.
+fn visibility(vis: &Visibility) -> VisInfo {
+    match vis {
+        Visibility::Public(_) => VisInfo::Public,
+        Visibility::Restricted(r) => {
+            let first = r.path.segments.first().map(|s| s.ident.to_string());
+            match first.as_deref() {
+                Some("self") => VisInfo::Private,
+                Some("super") => VisInfo::Super,
+                Some("crate") if r.path.segments.len() == 1 => VisInfo::Crate,
+                _ => {
+                    let start = syn::spanned::Spanned::span(&r.path).start();
+                    VisInfo::InPath { line: start.line, col: start.column + 1 }
+                }
+            }
+        }
+        Visibility::Inherited => VisInfo::Private,
+    }
 }
 
 fn is_skipped_cfg(attrs: &[syn::Attribute]) -> bool {
@@ -229,8 +239,10 @@ fn extract_struct(s: &syn::ItemStruct) -> StructInfo {
     StructInfo {
         name: s.ident.to_string(),
         is_pub: is_public(&s.vis),
+        vis: visibility(&s.vis),
         fields: extract_fields(&s.fields),
         generics: extract_generics(&s.generics),
+        type_params: type_param_names(&s.generics),
         derives: extract_derives(&s.attrs),
     }
 }
@@ -255,8 +267,10 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
     EnumInfo {
         name: e.ident.to_string(),
         is_pub: is_public(&e.vis),
+        vis: visibility(&e.vis),
         variants,
         generics: extract_generics(&e.generics),
+        type_params: type_param_names(&e.generics),
         derives: extract_derives(&e.attrs),
     }
 }
@@ -277,9 +291,11 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
     TraitInfo {
         name: t.ident.to_string(),
         is_pub: is_public(&t.vis),
+        vis: visibility(&t.vis),
         methods,
         has_default_impls,
         generics: extract_generics(&t.generics),
+        type_params: type_param_names(&t.generics),
     }
 }
 
@@ -287,7 +303,7 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
 /// Body translation happens in Phase 3 (with full type context), not during extraction.
 /// Extract thread_local! { static NAME: TYPE = INIT; } → const NAME = new ThreadLocal<TYPE>(INIT);
 /// Returns (decl_string, const_name, const_type) for structured tracking
-fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String)> {
+fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String, Option<syn::Type>)> {
     // Parse the macro body as a static item
     let tokens = mac.tokens.clone();
     // Try to parse as: static NAME: TYPE = EXPR;
@@ -297,14 +313,19 @@ fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String)> {
         let init = crate::body::translate_expr(&item.expr);
         let full_type = format!("ThreadLocal<{}>", ty);
         let decl = format!("const {} = new ThreadLocal<{}>({});", name, ty, init);
-        Some((decl, name, full_type))
+        // What `thread_local!` declares is a `std::thread::LocalKey<T>`; the
+        // port calls it `ThreadLocal`, and the system declaration carries both
+        // names. The engine is told the Rust one.
+        let rust_source = format!("std::thread::LocalKey<{}>", item.ty.to_token_stream());
+        let rust_ty = syn::parse_str::<syn::Type>(&rust_source).ok();
+        Some((decl, name, full_type, rust_ty))
     } else {
         None
     }
 }
 
-fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>) -> FnInfo {
-    let mut info = extract_fn(sig, is_pub, attrs);
+fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn::Attribute], body: Option<&syn::Block>) -> FnInfo {
+    let mut info = extract_fn_vis(sig, is_pub, vis, attrs);
     if let Some(block) = body {
         info.body_ast = Some(block.clone());
     }
@@ -316,10 +337,15 @@ fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attrib
 /// uses ImplInfo.target_type to create the ImplScope.
 fn extract_fn_with_body_and_self(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>, _self_type: &str) -> FnInfo {
     // self_type is no longer used during extraction — it's resolved from ImplInfo during Phase 3
-    extract_fn_with_body(sig, is_pub, attrs, body)
+    let vis = if is_pub { VisInfo::Public } else { VisInfo::Private };
+    extract_fn_with_body(sig, is_pub, vis, attrs, body)
 }
 
 fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> FnInfo {
+    extract_fn_vis(sig, is_pub, if is_pub { VisInfo::Public } else { VisInfo::Private }, attrs)
+}
+
+fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn::Attribute]) -> FnInfo {
     let rust_name = sig.ident.to_string();
     let ts_name = name_map::map_fn_name(&rust_name);
     let is_async = sig.asyncness.is_some();
@@ -340,6 +366,7 @@ fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> F
                 Some(ParamInfo {
                     name,
                     ty: name_map::map_type(&pat.ty),
+                    rust_ty: Some((*pat.ty).clone()),
                     is_self: false,
                     is_mut_self: false,
                 })
@@ -347,20 +374,23 @@ fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> F
         }
     }).collect();
 
-    let return_type = match &sig.output {
-        ReturnType::Default => "void".to_string(),
-        ReturnType::Type(_, ty) => name_map::map_type(ty),
+    let (return_type, rust_return) = match &sig.output {
+        ReturnType::Default => ("void".to_string(), None),
+        ReturnType::Type(_, ty) => (name_map::map_type(ty), Some((**ty).clone())),
     };
 
     FnInfo {
         name: rust_name,
         ts_name,
         is_pub,
+        vis,
         is_async,
         is_static,
         params,
         return_type,
+        rust_return,
         generics: extract_generics(&sig.generics),
+        type_params: type_param_names(&sig.generics),
         is_test: is_test_fn(attrs),
         body_ast: None,
         body_ts: None,
@@ -500,6 +530,8 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
 
     ImplInfo {
         target_type,
+        self_ty: Some((*i.self_ty).clone()),
+        type_params: type_param_names(&i.generics),
         trait_name,
         trait_type_args,
         methods,
@@ -508,9 +540,48 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
 }
 
 fn extract_use(u: &syn::ItemUse) -> UseInfo {
-    UseInfo {
-        path: use_tree_to_string(&u.tree),
-        is_pub: is_public(&u.vis),
+    let mut bindings = Vec::new();
+    collect_use_bindings(&u.tree, &mut Vec::new(), &mut bindings);
+    UseInfo { path: use_tree_to_string(&u.tree), vis: visibility(&u.vis), bindings }
+}
+
+/// Flatten a `use` tree into the names it binds. `use a::{b, c as d}` binds `b`
+/// to `a::b` and `d` to `a::c`; `use a::*` binds nothing under a name and is
+/// recorded as a glob over `a`.
+fn collect_use_bindings(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseBindingInfo>) {
+    match tree {
+        syn::UseTree::Path(p) => {
+            prefix.push(p.ident.to_string());
+            collect_use_bindings(&p.tree, prefix, out);
+            prefix.pop();
+        }
+        // `use a::b::{self}` binds `b` to `a::b`, not a name called "self".
+        syn::UseTree::Name(n) if n.ident == "self" => {
+            if let Some(parent) = prefix.last().cloned() {
+                out.push(UseBindingInfo { local: Some(parent), path: prefix.clone() });
+            }
+        }
+        syn::UseTree::Rename(r) if r.ident == "self" => {
+            out.push(UseBindingInfo { local: Some(r.rename.to_string()), path: prefix.clone() });
+        }
+        syn::UseTree::Name(n) => {
+            let mut path = prefix.clone();
+            path.push(n.ident.to_string());
+            out.push(UseBindingInfo { local: Some(n.ident.to_string()), path });
+        }
+        syn::UseTree::Rename(r) => {
+            let mut path = prefix.clone();
+            path.push(r.ident.to_string());
+            out.push(UseBindingInfo { local: Some(r.rename.to_string()), path });
+        }
+        syn::UseTree::Glob(_) => {
+            out.push(UseBindingInfo { local: None, path: prefix.clone() });
+        }
+        syn::UseTree::Group(g) => {
+            for item in &g.items {
+                collect_use_bindings(item, prefix, out);
+            }
+        }
     }
 }
 
@@ -532,21 +603,34 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
         Fields::Named(named) => named.named.iter().map(|f| {
             FieldInfo {
                 name: f.ident.as_ref().map(|i| name_map::to_camel_case(&i.to_string())),
-                ty: name_map::map_type(&f.ty),
-                rust_ty: f.ty.to_token_stream().to_string(),
+                rust_ty: f.ty.clone(),
+                ty: None,
                 is_pub: is_public(&f.vis),
             }
         }).collect(),
         Fields::Unnamed(unnamed) => unnamed.unnamed.iter().enumerate().map(|(i, f)| {
             FieldInfo {
                 name: Some(format!("_{}", i)),
-                ty: name_map::map_type(&f.ty),
-                rust_ty: String::new(),
+                rust_ty: f.ty.clone(),
+                ty: None,
                 is_pub: is_public(&f.vis),
             }
         }).collect(),
         Fields::Unit => Vec::new(),
     }
+}
+
+/// The generic parameter names a declaration introduces, in order. The engine
+/// needs these to tell a `T` in a written type from a type called `T`.
+fn type_param_names(generics: &syn::Generics) -> Vec<String> {
+    generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            syn::GenericParam::Type(t) => Some(t.ident.to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn extract_generics(generics: &syn::Generics) -> String {

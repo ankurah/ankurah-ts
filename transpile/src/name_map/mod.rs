@@ -1,4 +1,14 @@
-//! Deterministic name mapping: Rust identifiers → TypeScript identifiers
+//! Deterministic name mapping: Rust identifiers → TypeScript identifiers.
+//!
+//! This file converts what the source *wrote*. `emit_ty` converts what the
+//! engine *resolved*, and `shape` holds the one table both of those and the
+//! native-type translations read, so that what is emitted and what is
+//! dispatched on cannot drift apart.
+
+mod emit_ty;
+pub mod shape;
+
+pub use emit_ty::map_ty;
 
 /// Convert snake_case to camelCase
 pub fn to_camel_case(s: &str) -> String {
@@ -12,7 +22,11 @@ pub fn to_camel_case(s: &str) -> String {
             result.push(c.to_uppercase().next().unwrap());
             capitalize_next = false;
         } else {
-            result.push(if i == 0 { c.to_lowercase().next().unwrap() } else { c });
+            result.push(if i == 0 {
+                c.to_lowercase().next().unwrap()
+            } else {
+                c
+            });
         }
     }
 
@@ -59,7 +73,7 @@ pub fn map_type_name(rust_name: &str) -> &str {
         "AtomicBool" => "boolean",
         "AtomicU32" | "AtomicUsize" => "number",
         "Infallible" => "never",
-        "Rule" => "string",  // pest grammar::Rule → string in TS (no pest equivalent)
+        "Rule" => "string", // pest grammar::Rule → string in TS (no pest equivalent)
         _ => rust_name,
     }
 }
@@ -74,13 +88,17 @@ pub fn map_type(ty: &syn::Type) -> String {
 
                 // Handle generic types
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    let inner_types: Vec<String> = args.args.iter().filter_map(|arg| {
-                        if let syn::GenericArgument::Type(inner_ty) = arg {
-                            Some(map_type(inner_ty))
-                        } else {
-                            None
-                        }
-                    }).collect();
+                    let inner_types: Vec<String> = args
+                        .args
+                        .iter()
+                        .filter_map(|arg| {
+                            if let syn::GenericArgument::Type(inner_ty) = arg {
+                                Some(map_type(inner_ty))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
 
                     match name.as_str() {
                         "Vec" if inner_types.len() == 1 => {
@@ -110,7 +128,8 @@ pub fn map_type(ty: &syn::Type) -> String {
                             // Box<dyn Trait> → Trait, Box<T> → T
                             inner_types[0].clone()
                         }
-                        "Arc" | "Weak" | "Mutex" | "RwLock" | "RefCell" | "Borrow" | "BorrowMut" => {
+                        "Arc" | "Weak" | "Mutex" | "RwLock" | "RefCell" | "Borrow"
+                        | "BorrowMut" => {
                             // These stay as-is (from @ankurah/base)
                             format!("{}<{}>", mapped, inner_types.join(", "))
                         }
@@ -129,9 +148,7 @@ pub fn map_type(ty: &syn::Type) -> String {
             // &T → T, &[u8] → Uint8Array
             map_type(&type_ref.elem)
         }
-        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => {
-            "void".to_string()
-        }
+        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => "void".to_string(),
         syn::Type::Tuple(tuple) => {
             let types: Vec<String> = tuple.elems.iter().map(|t| map_type(t)).collect();
             format!("[{}]", types.join(", "))
@@ -189,9 +206,12 @@ fn map_trait_bound(trait_bound: &syn::TraitBound) -> Option<String> {
         // Fn(&T) -> R → (arg: T) => R
         "Fn" | "FnMut" | "FnOnce" => {
             if let syn::PathArguments::Parenthesized(args) = &seg.arguments {
-                let params: Vec<String> = args.inputs.iter().enumerate().map(|(i, ty)| {
-                    format!("arg{}: {}", i, map_type(ty))
-                }).collect();
+                let params: Vec<String> = args
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| format!("arg{}: {}", i, map_type(ty)))
+                    .collect();
                 let ret = match &args.output {
                     syn::ReturnType::Default => "void".to_string(),
                     syn::ReturnType::Type(_, ty) => map_type(ty),
@@ -246,7 +266,9 @@ fn is_u8_vec(ty: &syn::Type) -> bool {
         if let Some(segment) = type_path.path.segments.last() {
             if segment.ident == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(syn::Type::Path(inner))) = args.args.first() {
+                    if let Some(syn::GenericArgument::Type(syn::Type::Path(inner))) =
+                        args.args.first()
+                    {
                         if let Some(inner_seg) = inner.path.segments.last() {
                             return inner_seg.ident == "u8";
                         }

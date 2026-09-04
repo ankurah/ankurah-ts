@@ -1,7 +1,6 @@
 // Arc<T> / Weak<T> — reference-counted pointer translations
 
 use super::MethodTranslation;
-use crate::resolve::ResolvedType;
 
 /// Translate Arc/Rc static calls (e.g., Arc::clone(&x) → x.clone())
 pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
@@ -15,12 +14,8 @@ pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
 }
 
 /// Translate Arc/Weak method calls
-pub fn translate(receiver_ty: &ResolvedType, receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
-    let type_name = match receiver_ty {
-        ResolvedType::Named { name, .. } => name.as_str(),
-        _ => return MethodTranslation::Passthrough,
-    };
-
+pub fn translate(type_name: &str, receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
+    let _ = args;
     match (type_name, method) {
         // Arc::downgrade() → new Weak(arc)
         ("Arc", "downgrade") => MethodTranslation::Expr(format!("Weak.new({})", receiver)),

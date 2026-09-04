@@ -1,586 +1,596 @@
-# Symbol Table & Type Resolution Spec
-
-## Problem
-
-The transpiler translates Rust function bodies without type context. `BodyTranslator` has only `self_type: &str`. This causes incorrect output when translation depends on the type of an expression:
-
-- `self.inner.listeners` where `inner: Arc<Inner<T>>` — needs `.value` insertion between Arc and field access
-- `x.iter()` — Map needs `Array.from(x)`, Vec/Array needs `[...x]`
-- `Foo::Bar(val)` — is `Foo` an enum (variant constructor) or a struct (static method)?
-- `let guard = self.data.write()` — guard is `RwLockWriteGuard<T>`, field access through it needs `.value`
-- `static new(): Broadcast<T>` — static methods can't reference enclosing class type params in TS
-
-These are not edge cases. They block transpilation of the signals crate (~400 tsc errors) and will block every subsequent crate.
-
-## Architecture: Three-Phase Pipeline
-
-Currently the transpiler does: parse file → extract items + translate bodies → emit TS. Body translation happens eagerly during extraction, before other files in the crate are even parsed.
-
-The new pipeline separates extraction from body translation:
-
-```
-Phase 1: PARSE
-  For each .rs file in the crate:
-    syn::parse_file → syn::File
-    Extract signatures → StructInfo, EnumInfo, ImplInfo, FnInfo, etc.
-    Store raw syn::Block in FnInfo (clone, do NOT translate bodies yet)
-
-Phase 2: REGISTER
-  Build TypeRegistry from all extracted signatures:
-    - All struct fields (name → ResolvedType)
-    - All enum variants (name → VariantDef)
-    - All impl method signatures (params, return types)
-    - Provided types from config (Arc, RwLock, Result, etc.)
-    - Cross-crate type mappings from config
-
-Phase 3: TRANSLATE
-  For each file, for each function body:
-    Create ScopeStack seeded with [CrateScope, ModuleScope]
-    Push ImplScope (if in an impl block) with self_type resolved to field types
-    Push FnScope with param types
-    Translate body with scope context available
-    Push/pop BlockScopes for nested blocks during translation
-
-Phase 4: EMIT (existing codegen, unchanged)
-  For each file:
-    Generate TS with resolved imports from FnInfo.body_ts (now populated)
-```
-
-### Where Phase 3 is triggered
-
-A new function in `main.rs` iterates all `RustFile.impls[].methods[].body_ast` and `RustFile.functions[].body_ast`, translates them with the registry + scope, and populates `body_ts`. This happens between Phase 2 (register) and Phase 4 (emit/codegen). The codegen/emit layer is unchanged — it reads `body_ts` as before.
-
-## Data Structures
-
-All resolution-layer types live in a new `resolve.rs` module, separate from `types.rs` (which is the extraction layer).
-
-### ResolvedType
-
-Types are represented structurally, not as strings. This is the internal representation used for resolution during body translation. String representations continue to be used for TS emission.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-enum ResolvedType {
-    /// string, number, boolean, void, never, Uint8Array
-    Primitive(String),
-
-    /// User-defined, system, or external named type: EntityId, Arc<T>, Inner<T>
-    /// System types (Arc, RwLock, etc.) are Named — their behavior comes from
-    /// TypeDef metadata (deref_field, methods), not from the ResolvedType variant.
-    Named { name: String, args: Vec<ResolvedType> },
-
-    /// Generic type parameter (unresolved T, K, V)
-    Param(String),
-
-    /// T[] (Vec<T> maps here, since TS syntax is T[] not Vec<T>)
-    Array(Box<ResolvedType>),
-
-    /// [A, B]
-    Tuple(Vec<ResolvedType>),
-
-    /// (params) => ret
-    Fn { params: Vec<ResolvedType>, ret: Box<ResolvedType> },
-
-    /// T | null (Option<T> maps here at resolution time)
-    Nullable(Box<ResolvedType>),
-
-    /// Could not resolve
-    Unknown,
-}
-```
-
-8 variants. `Map<K,V>` and `Set<T>` are `Named` types with TypeDefs, not dedicated variants — having both `Named("Map", [K,V])` and a separate `Map(K,V)` variant would create a split where body translation has to check both paths.
-
-`Option<T>` resolves to `Nullable(T)` at parse time (matching the existing TS mapping where `Option<T>` → `T | null`). Option-specific methods (`.unwrap()`, `.is_some()`) are handled as special cases in `resolve_method`, not through the TypeRegistry, since there's no `Nullable` entry in the registry.
-
-`Result<T, E>` stays as `Named("Result", [T, E])` since it has a real TS class in `@ankurah/base`.
-
-`Box<T>` resolves to `T` directly (transparent — Box has no TS runtime representation).
-
-### Generic Parameter Substitution
-
-`ResolvedType` has a `substitute` method for replacing type parameters with concrete types. This is critical for method chain resolution — without it, `Mutex<Inner<T>>.lock()` would return `MutexGuard<T>` (unbound param) instead of `MutexGuard<Inner<T>>`.
-
-```rust
-impl ResolvedType {
-    /// Replace type parameters according to a substitution map.
-    /// Used when resolving method return types on generic types.
-    fn substitute(&self, subst: &HashMap<&str, &ResolvedType>) -> ResolvedType {
-        match self {
-            ResolvedType::Param(name) =>
-                subst.get(name.as_str()).map(|t| (*t).clone()).unwrap_or_else(|| self.clone()),
-            ResolvedType::Named { name, args } => ResolvedType::Named {
-                name: name.clone(),
-                args: args.iter().map(|a| a.substitute(subst)).collect(),
-            },
-            ResolvedType::Array(inner) =>
-                ResolvedType::Array(Box::new(inner.substitute(subst))),
-            ResolvedType::Nullable(inner) =>
-                ResolvedType::Nullable(Box::new(inner.substitute(subst))),
-            ResolvedType::Tuple(elems) =>
-                ResolvedType::Tuple(elems.iter().map(|e| e.substitute(subst)).collect()),
-            ResolvedType::Fn { params, ret } => ResolvedType::Fn {
-                params: params.iter().map(|p| p.substitute(subst)).collect(),
-                ret: Box::new(ret.substitute(subst)),
-            },
-            _ => self.clone(),
-        }
-    }
-}
-```
-
-### TypeDef
-
-Every type — user-defined structs, user-defined enums, AND provided system types — gets a TypeDef in the registry:
-
-```rust
-struct TypeDef {
-    name: String,
-    kind: TypeKind,
-    /// Fields accessible on instances of this type
-    fields: Vec<(String, ResolvedType)>,
-    /// Methods with return types (for chained type inference)
-    methods: HashMap<String, MethodSig>,
-    /// If accessing through this type requires an indirection in TS.
-    ///   None         → not a deref type, look up fields directly
-    ///   Some("")     → transparent deref (Box), unwrap to inner type, emit nothing
-    ///   Some("value") → deref wrapper (Arc), emit .value, then access inner type's fields
-    deref_field: Option<String>,
-    /// Generic type parameter names (e.g., ["T"] for Arc<T>, ["K", "V"] for HashMap<K,V>)
-    type_params: Vec<String>,
-}
-
-enum TypeKind {
-    Struct,
-    Enum { variants: Vec<VariantDef> },
-    Trait,
-}
-
-struct VariantDef {
-    name: String,
-    fields: Vec<(String, ResolvedType)>,
-}
-
-struct MethodSig {
-    params: Vec<(String, ResolvedType)>,
-    ret: ResolvedType,
-    is_static: bool,
-}
-```
-
-Method keys in TypeDef use **Rust names** (snake_case). The `name_map` module handles Rust→TS name conversion during emission, separately from type resolution.
-
-### TypeRegistry
-
-The crate-wide type registry. Populated during Phase 2 from both parsed Rust sources AND config-declared provided types.
-
-```rust
-struct TypeRegistry {
-    /// All known types: user-defined + provided + cross-crate
-    /// Keyed by Rust type name.
-    types: HashMap<String, TypeDef>,
-}
-
-impl TypeRegistry {
-    /// Look up a type definition by name
-    fn get(&self, name: &str) -> Option<&TypeDef>;
-
-    /// Is this name an enum?
-    fn is_enum(&self, name: &str) -> bool;
-
-    /// Is this a valid variant of the given enum?
-    fn is_variant(&self, type_name: &str, variant_name: &str) -> bool;
-
-    /// Resolve a field access on a typed expression.
-    /// Returns the field's type and the deref accessor to insert (if any).
-    ///
-    /// Algorithm:
-    ///   1. Look up type's TypeDef
-    ///   2. If field exists directly → return (field_type, None)
-    ///   3. If TypeDef has deref_field → unwrap inner type (with generic substitution),
-    ///      recurse from step 1, return (field_type, Some(accessor))
-    ///   4. If no deref_field → return None
-    ///
-    /// Deref does NOT trigger for fields/methods defined on the wrapper itself.
-    /// arc.clone() → clone is on Arc → no deref. arc.some_inner_field → deref.
-    fn resolve_field(&self, ty: &ResolvedType, field: &str) -> Option<(ResolvedType, Option<String>)>;
-
-    /// Resolve a method call on a typed expression.
-    /// Returns the method's return type (with generic params substituted).
-    ///
-    /// Algorithm:
-    ///   1. Look up type's TypeDef
-    ///   2. If method exists on TypeDef → return return_type (with generic substitution)
-    ///   3. If TypeDef has deref_field → unwrap inner type, recurse from step 1
-    ///   4. If no deref_field → return None
-    ///
-    /// Generic substitution: when RwLock declares type_params=["T"] and method
-    /// write returns "RwLockWriteGuard<T>", calling .write() on RwLock<Map<K,V>>
-    /// substitutes T→Map<K,V>, returning RwLockWriteGuard<Map<K,V>>.
-    fn resolve_method(&self, ty: &ResolvedType, method: &str) -> Option<ResolvedType>;
-}
-```
-
-### ScopeStack
-
-Variable bindings are tracked in a stack of scopes. Scopes are pushed on entry to impl/fn/block and popped on exit.
-
-```rust
-struct ScopeStack {
-    scopes: Vec<Scope>,
-}
-
-struct Scope {
-    kind: ScopeKind,
-    bindings: HashMap<String, ResolvedType>,
-}
-
-enum ScopeKind {
-    /// Crate-level: all types visible
-    Crate,
-    /// Per-file: use imports resolved
-    Module { use_imports: HashMap<String, String> },
-    /// Per impl block: self_type bound
-    Impl { self_type: ResolvedType },
-    /// Per function: params bound
-    Fn,
-    /// Per { } block: let-bindings
-    Block,
-    /// Closure: captures from enclosing scope
-    Closure,
-}
-
-impl ScopeStack {
-    /// Push a new scope
-    fn push(&mut self, scope: Scope);
-
-    /// Pop the innermost scope
-    fn pop(&mut self) -> Option<Scope>;
-
-    /// Resolve a variable name, walking from innermost to outermost scope.
-    /// Returns the first match (innermost scope wins — handles shadowing correctly,
-    /// including same-block shadowing via HashMap::insert overwrite).
-    fn resolve(&self, name: &str) -> Option<&ResolvedType>;
-
-    /// Find the nearest Impl scope's self_type
-    fn self_type(&self) -> Option<&ResolvedType>;
-
-    /// Bind a variable in the current (innermost) scope.
-    /// If the name already exists in this scope, it is overwritten (Rust shadowing).
-    fn bind(&mut self, name: String, ty: ResolvedType);
-
-    /// Bind a destructured pattern: let (a, b) = tuple_expr, let Foo { x, y } = foo_expr.
-    /// Recursively binds each sub-pattern to the corresponding field/element type.
-    fn bind_pattern(&mut self, pat: &syn::Pat, ty: &ResolvedType, registry: &TypeRegistry);
-
-    /// Resolve a type name through use-imports (for aliased type lookups).
-    /// Checks Module scope use_imports, returns canonical name.
-    fn resolve_type_name(&self, name: &str) -> Option<&str>;
-}
-```
-
-### BodyTranslator (extended)
-
-```rust
-pub struct BodyTranslator<'a> {
-    pub registry: &'a TypeRegistry,
-    pub scopes: ScopeStack,
-}
-```
-
-`self_type: &str` is removed. It becomes a binding in the ImplScope (`this → ResolvedType`). The old free functions (`translate_expr`, `translate_block`, `translate_pat`) are kept as compatibility shims that create a BodyTranslator with an empty registry and scopestack, ensuring no regression for code paths that haven't been updated yet (match_expr, control_flow, macros). These shims are removed once all callers are updated to thread `&BodyTranslator`.
-
-## System Types in Config
-
-System types are foundational runtime types (Arc, RwLock, Vec, etc.) whose shapes are
-declared in config so the transpiler can resolve through them. All have TS implementations
-in `@ankurah/base/std/`. These are distinct from `[provided_impls]`, which are subject-code
-types whose implementations are hand-ported in `*.provided.ts` files.
-
----
-
-System types (Arc, RwLock, Mutex, Result, Option, Box, etc.) are declared in `transpile.toml` and loaded into the TypeRegistry alongside parsed Rust types. They are not special-cased in body translation code.
-
-Method return types in the config are strings that are parsed into `ResolvedType` at config load time by a `parse_type_string` function. This parsing is syntactic (builds a tree from angle-bracket syntax) and does not require the TypeRegistry to exist yet.
-
-```
-parse_type_string grammar:
-  type := name ("<" type ("," type)* ">")?
-        | type "| null"
-        | type "[]"
-        | name
-
-  Bare single uppercase letter (T, K, V) → Param
-  Primitives (string, number, boolean, void, never, Uint8Array) → Primitive
-  Everything else → Named
-```
-
-```toml
-[system_types]
-
-[system_types.Arc]
-deref_field = "value"
-type_params = ["T"]
-methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
-
-[system_types.Weak]
-type_params = ["T"]
-methods = { upgrade = "Arc<T> | null", clone = "Weak<T>" }
-
-[system_types.Mutex]
-type_params = ["T"]
-methods = { lock = "MutexGuard<T>" }
-
-[system_types.MutexGuard]
-deref_field = "value"
-type_params = ["T"]
-
-[system_types.RwLock]
-type_params = ["T"]
-methods = { read = "RwLockReadGuard<T>", write = "RwLockWriteGuard<T>" }
-
-[system_types.RwLockReadGuard]
-deref_field = "value"
-type_params = ["T"]
-
-[system_types.RwLockWriteGuard]
-deref_field = "value"
-type_params = ["T"]
-
-[system_types.RefCell]
-type_params = ["T"]
-methods = { borrow = "Ref<T>", borrow_mut = "RefMut<T>" }
-
-[system_types.Ref]
-deref_field = "value"
-type_params = ["T"]
-
-[system_types.RefMut]
-deref_field = "value"
-type_params = ["T"]
-
-[system_types.Box]
-deref_field = ""  # transparent — unwrap to inner type, emit nothing
-type_params = ["T"]
-
-[system_types.Option]
-type_params = ["T"]
-# Option methods handled as special cases on Nullable, not through TypeDef
-# (Option<T> resolves to Nullable(T), which has no TypeDef entry)
-
-[system_types.Result]
-type_params = ["T", "E"]
-methods = { unwrap = "T", expect = "T", is_ok = "boolean", is_err = "boolean", map = "Result<U, E>", map_err = "Result<T, F>" }
-
-[system_types.Vec]
-type_params = ["T"]
-methods = { len = "number", push = "void", pop = "T | null", iter = "T[]", clone = "T[]" }
-
-[system_types.HashMap]
-type_params = ["K", "V"]
-methods = { get = "V | null", insert = "void", len = "number", iter = "Array<[K, V]>", contains_key = "boolean" }
-
-[system_types.BTreeMap]
-type_params = ["K", "V"]
-methods = { get = "V | null", insert = "void", len = "number", iter = "Array<[K, V]>", contains_key = "boolean" }
-
-[system_types.HashSet]
-type_params = ["T"]
-methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
-```
-
-Note: Method return type strings represent TS-side semantics (what the TS expression produces), not Rust-side types. E.g., `Vec.iter = "T[]"` because the TS translation of `.iter()` produces `T[]` (via spread), even though Rust's `.iter()` returns an iterator.
-
-Note: Primitive type method dispatch (`.len()` on strings, etc.) stays in `body.rs`'s existing `translate_method_call` heuristics. The registry handles types that need structural resolution (deref, enum detection, field lookup, method chaining).
-
-## Type Resolution During Body Translation
-
-### Field access: `self.inner.listeners`
-
-1. `self` → ScopeStack resolves to ImplScope self_type → `Named("Broadcast", [Param("T")])`
-2. Look up `Broadcast` in TypeRegistry → fields include `inner: Named("Arc", [Named("Inner", [Param("T")])])`
-3. `inner` is not a field on `Arc`'s TypeDef → check `deref_field` → `Some("value")`
-4. Emit `.value`, unwrap to `Named("Inner", [Param("T")])` (with generic substitution from Arc's type_params)
-5. Look up `Inner` in TypeRegistry → fields include `listeners: Named("RwLock", [Named("Map", [Primitive("number"), Named("BroadcastListener", [Param("T")])])])`
-6. Final TS: `this.inner.value.listeners`
-
-### Method call: `self.data.write().splice(...)`
-
-1. `self.data` → resolves to `Named("RwLock", [Named("Map", [...])])`
-2. `.write()` → look up `RwLock`'s TypeDef → method `write` returns `RwLockWriteGuard<T>`
-3. Generic substitution: RwLock's `T` = `Named("Map", [...])` → return `Named("RwLockWriteGuard", [Named("Map", [...])])`
-4. `.splice()` → look up `RwLockWriteGuard`'s TypeDef → `splice` not found → check `deref_field` → `Some("value")` → unwrap to `Named("Map", [...])` → emit `.value`
-5. Final TS: `this.data.write().value.splice(...)`
-
-### Method on wrapper: `self.inner.clone()`
-
-1. `self.inner` → `Named("Arc", [Named("Inner", [Param("T")])])`
-2. `.clone()` → look up `Arc`'s TypeDef → method `clone` exists on Arc → returns `Arc<T>` → no deref
-3. Final TS: `this.inner.clone()` (no `.value` inserted)
-
-### Enum detection: `Signal::Constant(v)`
-
-1. `Signal` → `registry.is_enum("Signal")` → true
-2. `Constant` → `registry.is_variant("Signal", "Constant")` → true
-3. Emit: `new Signal('Constant', { _0: v })` (variant constructor pattern)
-
-If `Signal` were a struct, `registry.is_enum` returns false → emit as static method call instead.
-
-### Let-binding inference: `let guard = self.data.write()`
-
-1. Translate RHS → resolve type as above → `Named("RwLockWriteGuard", [Named("Map", [...])])`
-2. `scopes.bind("guard", resolved_type)` in current BlockScope
-3. Subsequent `guard.field` access resolves through the binding
-
-### Nullable (Option) method resolution
-
-`Option<T>` resolves to `Nullable(inner_T)` at parse time. Method calls on nullable types are handled as special cases, not through the TypeRegistry:
-
-- `.unwrap()` / `.expect()` → strips Nullable, returns inner type
-- `.is_some()` / `.is_none()` → `Primitive("boolean")`
-- `.map(f)` → `Nullable(f's return type)` (if resolvable, else Unknown)
-
-### Tier 2 chains resolve incrementally
-
-Tier 2 resolution is per-expression-node. Chains of arbitrary length resolve as the expression tree is walked — each `Expr::MethodCall` resolves its receiver by recursing into `expr()`, which resolves the receiver's receiver, etc. So `self.data.write().unwrap().listeners` resolves step by step through the recursive call.
-
-## Type Inference Depth
-
-### Tier 1 — Direct (always infer):
-
-| Pattern | Inferred type |
+# Type Resolution Spec
+
+Rewritten 2026-09-02 against transpiler commit `f602831` and the corpus measurements
+taken that day. Supersedes the March 2026 version of this file, whose still-valid
+parts are folded into section 2.
+
+## 1. What this is for
+
+The transpiler emits TypeScript by walking the syn AST of ankurah's Rust source.
+Almost every translation decision depends on the Rust type of the expression at
+hand, and Rust does not write that type down at the use site:
+
+- `self.inner.listeners` where `inner: Arc<Inner<T>>` needs a `.value` between
+  `inner` and `listeners`, one per non-transparent deref step.
+- `x.iter()` translates one way for a `Vec`, another for a `HashMap`, a third for
+  a `RwLockReadGuard<HashMap<..>>`.
+- `listener.into_broadcast_listener()` on a closure resolves through a blanket
+  `impl<F: Fn(T)> IntoBroadcastListener<T> for F`; which impl is hit decides what
+  TypeScript is emitted.
+- `let v = x.values().cloned().collect::<Vec<_>>()` needs `Iterator::Item` at each
+  step to type `v`, and `v`'s type decides every later use of it.
+- `f()?` where `f` returns `Result<T, DecodeError>` inside a function returning
+  `Result<T, anyhow::Error>` goes through `From`; the emitted code has to call it.
+- Drop placement (see the ownership memo) needs to know which locals and
+  temporaries are guards or otherwise droppable, which is a type question.
+
+This engine exists to answer those questions for ankurah's code, and to refuse
+to answer rather than guess. It is deliberately not a general Rust type checker.
+It covers the constructs ankurah uses, measured in section 3, and any construct
+outside that set stops the run with a diagnostic naming the Rust location.
+
+Rulings this spec is bound by (Daniel, 2026-03 and 2026-09-02):
+
+- Built in-house, on stable Rust, on syn. No rustc, no rust-analyzer, no MIR in
+  the product. rust-analyzer's answers are used once as a test oracle (section 6)
+  and nowhere else.
+- No macro expansion. The engine supplies the types that the transpiler's
+  targeted macro handling needs (section 4.10); it never reads expanded code.
+- Fail loudly. A site the engine cannot type is an error, never a heuristic.
+- The registry is not flat: same-leaf-name types in different modules resolve
+  separately; a crate type can never evict a system type.
+- Types are structural values, never TypeScript strings, until emission.
+- Ownership of this spec is delegated to the supervising agent. Daniel's
+  acceptance criterion, in full: "I don't reeeeally care what goes into the
+  sausage, as long as it's tasty - that means typescript code works, implements
+  ankurah protocols and behaviors faithfully and correctly, and mostly
+  automatically as the upstream changes, with hopefully only occasional
+  intervention necessary. ... if the CI process doing the port occasionally
+  breaks because the upstream introduced some incompatible change, no big deal.
+  If it's suprise mystery slop, that's a very big deal."
+- `.provided.ts` is not reserved for macros and out-of-family code: "it's not
+  just macros and out-of-family code - there might also be files that are just
+  awkward or too hard to get working correctly with the transpiler. they should
+  be infrequent, but available as an option."
+- The runtime polyfills in `packages/base` are held to their Rust counterparts'
+  semantics: "The point of the polyfills is to act like their rust
+  counterparts... they must behave identically, or be replaced with some
+  equivalent that does". So `Mutex<T>`, `RwLock<T>` and `RefCell<T>` drop their
+  contents when they are dropped, and dropping one while a guard is outstanding
+  is a fatal error: that is impossible in Rust, so in the port it can only mean
+  the transpiler emitted the wrong scope.
+
+## 1a. Crate scope and target environments
+
+For: the engine is bounded to what ankurah's code does, and ankurah has crates
+whose backends do not exist in the environments the port targets. Daniel: "It
+makes no sense to port the postgres implementation to typescript for browser or
+RN/expo. maybe for node, but node isn't a primary target. bottom line,
+transpile things that are environment appropriate." The primary targets are the
+browser and React Native/Expo; node is not a primary target.
+
+| crate | disposition |
 |---|---|
-| `let x: T = ...` | Annotated T |
-| `let x = Type::new(...)` | Named("Type", [...]) |
-| `let x = Type { ... }` | Named("Type", [...]) (struct construction) |
-| `let x = Enum::Variant(...)` | Named("Enum", [...]) |
-| `let x = literal` | Primitive |
-| `let x = "foo".to_string()` | Primitive("string") |
-| `let x = vec![...]` | Array(element_type) |
-| `let x = expr.clone()` | Same type as expr |
-| `let x = some_fn(args)` | Return type from FnInfo (registry lookup) |
+| `proto`, `ankql`, `signals`, `core` | transpile; this is the corpus measured in section 3 |
+| `storage-common` | transpile: planner, predicates, bounds, sorting, no platform dependencies. It joins the corpus and the oracle |
+| `storage-sqlite` | transpile the SQL builder, value, error, and the engine module. The rusqlite binding in `connection.rs` becomes a provided file exposing a small driver interface, and rusqlite's types get stub declarations the way std does (4.4) |
+| `storage-indexeddb-wasm` | transpile, for the browser. The web-sys glue resolves through stub declarations (4.4) mapped to the IndexedDB API |
+| `websocket-client-wasm` | transpile. The web-sys `WebSocket` client is the browser and React Native client |
+| `connector-local-process`, `ankurah` (the facade crate) | transpile |
+| `storage-postgres`, `websocket-server` (axum), `websocket-client` (tokio-tungstenite), `sled`, `derive`, `tests-wasm`, `examples` | out of scope |
 
-### Tier 2 — Method return type lookup (infer via registry):
+The runbook's exclusion table has the websocket client backwards: it excludes
+`connectors/websocket-client-wasm` and keeps the tokio-tungstenite
+`websocket-client`, and `transpile.toml [crates]` maps the tokio crate for the
+same reason. The doc retraction step corrects both.
 
-| Pattern | Resolution |
-|---|---|
-| `let x = self.method()` | Look up method in ImplScope → return type |
-| `let x = obj.method()` | Resolve obj type, look up method in registry (with generic substitution) |
-| `let x = self.field` | Look up field type in registry |
-| `let x = self.data.write()` | Chain: resolve self.data → RwLock<T>, resolve .write() → RwLockWriteGuard<T> |
+cfg configuration: the transpiler evaluates `cfg` as ankurah's wasm32
+configuration, `target_arch = "wasm32"` plus the `singlethread` feature, so the
+browser code paths ankurah already maintains and tests are the source of truth
+for the port. Today `transpile.toml` declares only the feature, and `cfg.rs`
+evaluates every non-feature predicate to false, which keeps each
+`not(target_arch = "wasm32")` branch and drops the wasm32 one.
 
-### Tier 3 — Skip (fall back to Unknown):
+Target-environment breakout, Daniel's proposal: where a crate's backend differs
+by environment, one transpiled package holds all of the ankurah logic and one
+thin hand-written package per environment provides only the driver, named crate
+first and environment second: `storage-sqlite-expo` over expo-sqlite and
+`storage-sqlite-node` over better-sqlite3, "which I don't really care about, but
+those are both different sqlite backends". They are separate packages rather
+than provided files inside one package so that an application pulls in exactly
+one driver dependency. Both drivers have synchronous APIs, so the transpiled
+engine stays synchronous. sqlite is the only crate differentiated this way
+today; the existing `storage-expo-sqlite` and `storage-better-sqlite3` packages
+are renamed at the dispositions step, and node stays outside the primary CI
+gate.
 
-| Pattern | Why |
-|---|---|
-| Closure parameter types | Requires Hindley-Milner |
-| Generic method instantiation | Requires unification |
-| Chained iterator combinators | Requires generic propagation |
+A crate in scope can therefore have modules that are not transpiled at all:
+replaced by a provided file, as `connection.rs` is, or supplied by an
+environment package. The transpiler needs a per-crate notion of an externalized
+module, so that the `mod x;` declaration and any `pub use x::` re-export naming
+it are handled deliberately, the module not emitted and its name resolved to the
+replacement, rather than erroring on a module whose source it never read.
 
-When type is Unknown, the body translator falls back to current heuristic behavior (no regression).
+## 2. What exists today (commit f602831)
 
-## Static Method Generic Handling
+Measured by reading `transpile/src/resolve.rs` (1,094 lines), `type_context.rs`
+(284), `types.rs` (138), `name_map.rs`, `config.rs`, `transpile.toml`.
 
-When a static method in `impl<T> Foo<T>` references the impl's type param `T`, the emitted TS method needs its own generic param (since TS static methods can't access instance generics):
+### 2.1 Pipeline
 
-```rust
-// Rust
-impl<T> Foo<T> {
-    fn new(val: T) -> Self { ... }
-}
+The four-phase pipeline from the March spec is implemented in `main.rs`:
+parse and extract signatures (bodies stored as `syn::Block` in
+`FnInfo.body_ast`), build the registry, translate bodies with registry and scope,
+emit. `codegen.rs` and `emit.rs` consume `body_ts` strings.
 
-// TS (correct)
-static new<T>(val: T): Foo<T> { ... }
+### 2.2 Data structures that stay
+
+- `ResolvedType` (`resolve.rs:16`): `Primitive`, `Named{name,args}`, `Param`,
+  `Array`, `Tuple`, `Fn{params,ret}`, `Nullable`, `Unknown`, with `substitute`
+  (`:51`) for type-parameter substitution. Keep, and extend (section 4.1).
+- `TypeDef` (`:91`) with `TypeKind::{Struct, Enum{variants}, Trait}`,
+  `VariantDef`, `MethodSig{params, ret, is_static}`, `deref_field`, `type_params`.
+  Keep as the declared-shape record; the impl table (4.2) is added beside it.
+- `ScopeStack` (`:395`) with `Crate/Module/Impl/Fn/Block/Closure` scopes,
+  innermost-wins resolution and same-scope shadowing (`:465`, `:486`). Keep.
+- `TypeContext` (`type_context.rs:14`): registry plus scopes plus module name;
+  `resolve_expr` (`:80`) handles `self`, single-segment paths (camelCase and
+  Rust-name lookups), field access with one deref hop, method calls with one
+  deref hop, `&e`, `*e`, parens, and block tail. Keep the shape; replace the
+  internals per section 4.
+- Enum and variant detection through the registry (`resolve.rs:206-240`), used
+  by `body.rs` to tell `Foo::Bar(v)` from a static call. Keep.
+- Module-qualified registration: types are keyed both as `module::Name` and bare
+  `Name`, with an `ambiguous_bare` set (`resolve.rs:138-186`). Keep the idea; fix
+  the eviction rule (2.3, item 1).
+- System types declared in `transpile.toml [system_types]` with `deref_field`,
+  `type_params`, and method return types, parsed by `parse_type_string`
+  (`resolve.rs:519`). Kept for now; section 4.4 moves the std surface into declared Rust stubs.
+
+### 2.3 Defects and gaps in what exists
+
+1. **System types are evicted by same-named crate types.** `register_in_module`
+   (`resolve.rs:162-186`) treats a bare-name collision as ambiguity and deletes
+   the bare entry. `signals/src/broadcast.rs:50` defines `pub struct Ref<'a, T>`,
+   which deletes the system `Ref`; `deref_field` and `is_own_method` then do bare
+   lookups only (`:346`, `:362`) and never find it. Core will collide on `Context`,
+   `Node`, `Value`, `Error`. Rule violated: a crate type can never evict a system
+   type.
+2. **One deref hop, always into the first generic argument.** `resolve_field_impl`
+   (`:251-301`) and `resolve_method_impl` (`:313-343`) unwrap `args[0]` once; the
+   comment at `:272` says nested chains "lose the inner accessor". `Vec<T>` derefs
+   to `[T]`, `String` to `str`, neither of which is a generic argument of anything.
+3. **No impl table, no trait identity.** `build_registry` (`:601-682`) merges every
+   impl's methods into the target type's flat `methods: HashMap<String, MethodSig>`
+   and drops `trait_name`, `trait_type_args`, and `generic_bounds` (which
+   `ImplInfo` at `types.rs:108-118` already carries). Two traits with the same
+   method name overwrite each other; blanket impls and impls on foreign types are
+   invisible; `dyn Trait` receivers resolve to nothing.
+4. **Types round-trip through TypeScript strings.** `FieldInfo.ty` and
+   `ParamInfo.ty` are TS strings produced by `name_map::map_type`
+   (`name_map.rs:68`); `resolve_local_type` (`type_context.rs:183`) maps a
+   `syn::Type` to a TS string and re-parses it with `parse_type_string`
+   (`resolve.rs:519`), a bracket-splitting parser. `Vec<u8>` has already become
+   `Uint8Array`, `Option<T>` has become `T | null`, `HashMap` has become `Map`,
+   `u64` has become `bigint | number`, and `Box<T>` has become `T` before the
+   engine sees them. Every fact pays this tax; several cannot survive it (a
+   `Box<dyn Trait>` field is indistinguishable from a `Trait` field).
+5. **No associated types**, so no iterator adaptors: `ResolvedType` cannot
+   express `<I as Iterator>::Item`.
+6. **Closures**: `resolve_closure_param_types` (`type_context.rs:261-283`) handles
+   exactly `ThreadLocal<T>::with`; its comment says the general case is a TODO.
+   Closure return types are never inferred.
+7. **No `From`/`Into`/`TryFrom` table**, so `?` on a differing error type and
+   every `.into()` are untyped.
+8. **No operator overloading**: `PartialEq`, `PartialOrd`, `Add`, `Index`, `Neg`,
+   `Not` calls are not resolved.
+9. **`Unknown` is a silent fallback.** The March spec's "Tier 3: fall back to
+   current heuristic behaviour" is live in `body.rs` (PascalCase enum guess at
+   `body.rs:841`, `starts_with` checks on names, textual identifier substitution
+   in `match_expr.rs:310-334`). Under the fail-loud ruling every one of these is
+   a defect.
+10. **Tests**: `resolve.rs` has 14 unit tests on the registry, scope stack, and
+    `parse_type_string`; `type_context.rs` has none; nothing exercises the engine
+    against real corpus files.
+
+## 3. What the engine must cover, measured on the corpus
+
+Counts from the 2026-09-02 study, taken with rust-analyzer's inference as ground
+truth over `ankurah-ts-support @ e0bc2b76`, crates `proto`, `ankql`, `signals`,
+`core` (107 files, 29,078 expressions). The numbers size the work; the engine is
+bounded to these constructs and the idioms behind them.
+
+| construct | proto | ankql | signals | core | total |
+|---|---:|---:|---:|---:|---:|
+| method calls | 225 | 367 | 429 | 3,379 | 4,400 |
+| through an inherent impl | 134 | 260 | 223 | 1,861 | 2,478 |
+| through a concrete trait impl | 48 | 72 | 51 | 574 | 745 |
+| through a generic or blanket impl | 36 | 35 | 61 | 482 | 614 |
+| receiver not syntactically typed | 77 | 131 | 138 | 1,195 | 1,541 |
+| needing auto-deref | 63 | 177 | 116 | 927 | 1,283 |
+| needing a `Deref` impl (not `&`) | 11 | 14 | 57 | 257 | 339 |
+| needing two or more deref steps | 0 | 15 | 7 | 51 | 73 |
+| needing an unsize coercion (`Vec<T>` to `[T]`) | 0 | 1 | 0 | 53 | 54 |
+| on a `dyn Trait` receiver | 0 | 0 | 2 | 9 | 11 |
+| `?` expressions | 48 | 88 | 6 | 276 | 418 |
+| `?` changing the error type (lower bound) | 31 | 26 | 0 | 18 | 75 |
+| closures | 32 | 20 | 79 | 219 | 350 |
+| closures with a non-unit inferred return | 30 | 20 | 34 | 172 | 256 |
+| `.into()` / `.try_into()` | 24 | 18 | 3 | 71 | 116 |
+| overloaded binary operators | 14 | 28 | 14 | 258 | 314 |
+| overloaded index | 7 | 2 | 0 | 72 | 81 |
+| overloaded prefix operators | 3 | 34 | 21 | 293 | 351 |
+| `.await` | 0 | 0 | 2 | 201 | 203 |
+| `impl Trait` in argument position | 3 | 1 | 11 | 27 | 42 |
+
+Representative sites, each of which the engine must type:
+
+- Guard deref then map method: `signals/src/observer/callback_observer.rs:51`
+  `self.0.entries.write().expect(..)`, `RwLockWriteGuard<HashMap<..>>` to
+  `HashMap` to `&mut HashMap`.
+- Unsize deref: `proto/src/clock.rs:14` `self.0.iter()`, `Vec<EventId>` to
+  `[EventId]` to `&[EventId]`; `ankql/src/selection/sql.rs:43` `s.chars()`,
+  `&String` to `String` to `str` to `&str` (three steps, two mechanisms).
+- Iterator chain with turbofish: `signals/src/broadcast.rs:100`
+  `listeners.values().cloned().collect::<Vec<_>>()`, guard deref, `HashMap::values`,
+  `Iterator::cloned`, `Iterator::collect` driven by the turbofish.
+- Blanket impl on closures: `signals/src/broadcast.rs:149-153`
+  `impl<F: Fn(T)> IntoBroadcastListener<T> for F`, called at `broadcast.rs:106`.
+- Trait impl on `Arc`: `signals/src/signal/calculated.rs:137-167`
+  `impl Observer for Arc<Inner<T>>`.
+- `dyn` receiver: `core/src/context.rs:83` `self.0.node_id()` on
+  `&(dyn TContext + Send + Sync)`.
+- `?` through `From`: `proto/src/data.rs:69`, `DecodeError` into the enclosing
+  error type; `proto/src/id.rs:152` through serde's `Deserializer::Error`.
+- Closure return: `signals/src/reactive_graph.rs:83` `|| BridgeSource::new(id, signal)`
+  returning `Arc<BridgeSource>`.
+- Method on a primitive through a blanket impl: `ankql/src/selection/sql.rs:902`
+  `.to_string()` on `&i16` via `impl<T: Display> ToString for T`.
+
+## 4. Design
+
+Each capability states what it is for, the mechanism, and what happens when it
+cannot answer. Names are proposals; module boundaries follow section 5.
+
+### 4.1 Structural types end to end
+
+For: every later capability needs the real Rust type, and the string round trip
+(2.3 item 4) destroys it.
+
+- `resolve_type(&syn::Type, &TypeEnv) -> Result<Ty, Diag>` replaces
+  `map_type` followed by `parse_type_string` inside the engine. `map_type` stays
+  for emission only, and is fed `Ty`, not `syn::Type`.
+- `Ty` extends `ResolvedType` with: `Ref{mutable, inner}` (kept in the engine,
+  erased at emission), `Slice(inner)`, `Str`, `Unit`, `Never`,
+  `Dyn{traits}`, `Assoc{base, trait_, name}` (a projection such as
+  `<I as Iterator>::Item`, normalized by 4.4), `Infer` (a `_` in a turbofish or
+  annotation, resolved by 4.7). `Named` keeps `name` as a module-qualified path
+  plus a `TypeId`, never a bare string. `Option<T>` stays `Named` in the engine;
+  the `Nullable` mapping happens at emission.
+- `FieldInfo`, `ParamInfo`, `FnInfo.return_type`, `TypeAliasInfo`, `ConstInfo`
+  carry `syn::Type` (or the resolved `Ty`) in addition to the TS string, so the
+  registry is built from Rust types. `rust_ty: String` on `FieldInfo` goes away.
+- The registry is keyed by `TypeId` with a name index of module-qualified paths.
+  Bare-name lookup exists only for `use`-resolved and prelude names inside a
+  module scope; system types live in a reserved module that a crate type cannot
+  shadow (fixes 2.3 item 1).
+
+Cannot answer: a `syn::Type` the resolver does not model (a raw pointer, a
+function pointer with ABI, a const generic other than an array length) is a
+diagnostic at the type's span.
+
+### 4.2 Impl table and method resolution
+
+For: 1,359 of 4,400 method calls dispatch through a trait, 1,283 need
+auto-deref, and the right impl decides the emitted TypeScript.
+
+- `ImplDef { id, self_ty: Ty (with params), trait_: Option<TraitRef>,
+  generics: Vec<Param{name, bounds}>, where_: Vec<Bound>, assoc_types:
+  HashMap<String, Ty>, methods: HashMap<String, MethodSig> }` built from every
+  `impl` in the corpus (`ImplInfo` already carries `trait_name`,
+  `trait_type_args`, `generic_bounds`; extraction keeps `where` clauses and the
+  `syn::Type` of the target), plus the declared std surface (4.4).
+- `TraitDef { id, path, supertraits, assoc_types, methods with self-relative
+  signatures, blanket_impls }`.
+- Method lookup follows Rust's algorithm restricted to what the corpus needs:
+  1. Build the candidate receiver list by auto-deref: the receiver type, then
+     repeatedly its deref target (builtin for `Ref`, `Deref::Target` from the
+     impl table for everything else, unsize `Vec<T>` to `[T]` and `String` to
+     `str` at the end of the chain). Record each step as
+     `DerefStep { from, to, kind: Builtin | Overloaded(impl id) | Unsize }`.
+  2. At each candidate, try by-value, then `&`, then `&mut` auto-ref.
+  3. At each (candidate, autoref): inherent impls whose `self_ty` unifies (4.8),
+     then trait impls whose `self_ty` unifies and whose trait is in scope (a
+     `use`, the prelude, or a bound on a generic in scope), then blanket impls
+     whose bounds hold given known impls.
+  4. First step with exactly one match wins. Zero matches after the chain is
+     exhausted, or more than one match at a step, is a diagnostic. There is no
+     "first match" tie-break.
+- `dyn Trait` receivers resolve to the trait's method; the emitted call is a
+  normal TypeScript method call, and the emission layer needs only the trait
+  method signature.
+- Result: `MethodResolution { steps: Vec<DerefStep>, autoref, callee: Callee::{
+  Inherent(impl, method) | TraitImpl(impl, method) | TraitObject(trait, method)
+  | Blanket(impl, method) }, subst: Subst, ret: Ty }`. Emission derives the
+  `.value` accessors from `steps` (one per `Overloaded` step whose impl is a
+  non-transparent system type) and the TS method name from `callee`.
+
+### 4.3 Deref and coercion as chains
+
+For: 73 sites need two or more steps and 54 need the unsize step; one hop into
+`args[0]` (2.3 item 2) cannot represent `&String` to `str`.
+
+- `Deref::Target` is an ordinary impl-table fact: corpus `impl Deref for X`
+  blocks, plus declared targets for system types (`Arc<T>` to `T`, `Box<T>` to
+  `T` transparent, all guards to `T`, `Vec<T>` to `[T]`, `String` to `str`,
+  `Ref<T>`/`RefMut<T>` to `T`).
+- Field access uses the same chain: `resolve_field` walks candidates until a
+  type with that field is found, returning the steps for emission.
+- `*e` uses one explicit step; `&e` wraps in `Ref`; `Ref` is stripped by
+  auto-deref and by emission.
+
+### 4.4 Traits, associated types, and the declared std surface
+
+For: iterator chains, `collect`, `Deref::Target`, `IntoIterator::Item`, and
+every `impl Trait for T` the corpus relies on from std.
+
+- Projections `Assoc{base, trait_, name}` normalize by selecting the impl of
+  `trait_` for `base` (4.2 step 3) and reading its `assoc_types`. A projection
+  that does not normalize is a diagnostic.
+- The std surface ankurah uses is declared as Rust stub declarations shipped with
+  the transpiler (`transpile/std_surface/`, one file per std area: `iter`,
+  `collections`, `string`, `slice`, `option_result`, `convert`, `ops`, `sync`,
+  `cell`, `fmt`): signature-only `impl` and `trait` blocks written in ordinary
+  Rust, with real generics, bounds, and associated types, parsed by the same
+  syn-based extractor that reads ankurah's source. Std types therefore reach the
+  registry by the same path as crate types, are exercised by the same tests, and
+  fail the same way. Method bodies in a stub are placeholders (`{ todo!() }`, or
+  whatever parses) and are ignored; the signature is the declaration. What a std
+  item becomes in TypeScript stays where it is today, in `name_map` and the
+  per-type emission modules under `native_types/` (Daniel's March ruling: one
+  module per Rust type for both type and method conversion). TOML strings cannot
+  express bounds or projections, so the `[system_types]` table in
+  `transpile.toml` is retired when the stubs land (step 3).
+- The same mechanism carries the non-std surfaces the storage and connector
+  crates need (1a): rusqlite's types behind the sqlite driver interface, and the
+  web-sys types behind the IndexedDB and WebSocket glue, are stub declarations
+  too.
+- Coverage is by inventory: the corpus's std method calls are enumerated by the
+  test in 6.2, and any std method the surface does not declare is a failing
+  test, not a runtime guess. Adding a std method is a declared fact plus a
+  translation, both reviewed.
+
+### 4.5 Closures
+
+For: 256 closures with a non-unit return, and closure parameters typed by the
+callee's bound.
+
+- When a closure is an argument, the callee's resolved signature (4.2) gives the
+  parameter's type as a bound `F: Fn(A) -> R`, `FnMut`, `FnOnce`, or an `impl
+  Fn(..)` in argument position (the 42 `impl Trait` params). Unify (4.8) the
+  bound's `A` with any annotations on the closure, bind parameters in a
+  `Closure` scope, type the body, and unify the body's type with `R`.
+- A closure in `let` position with annotated parameters is typed from the body.
+  A closure with no annotation and no expected type is a diagnostic.
+- Captured variables resolve through the enclosing scopes as today.
+
+### 4.6 `?`, conversions, and expected types
+
+For: 75 or more `?` sites change the error type; 116 `.into()`/`.try_into()`
+calls have no type without an expected type.
+
+- `?` on `Result<T, E1>` inside a function returning `Result<_, E2>`: `T` if
+  `E1 == E2`; otherwise require exactly one `impl From<E1> for E2` in the impl
+  table (thiserror `#[from]` and `#[error]` attributes register these impls
+  through the derive hook, 4.10; `anyhow::Error` gets a declared blanket `From<E:
+  std::error::Error>`). Record the conversion on the expression so emission can
+  call the TypeScript `from`. `?` on `Option<T>` inside a function returning
+  `Option<_>` yields `T`. Anything else is a diagnostic.
+- `.into()`, `.try_into()`, `T::from(x)`, `x.parse()` and `collect()` use the
+  expected type: a `let` annotation, the parameter type at a call, the return
+  type at a tail or `return`, a struct field at a struct literal, or a
+  turbofish. Expected types propagate one level (bidirectional but shallow); an
+  `.into()` with no expected type is a diagnostic.
+- `Infer` from `Vec<_>` in a turbofish resolves by unifying with the iterator's
+  `Item` projection.
+
+### 4.7 Operators
+
+For: 746 operator uses resolve to trait impls; the emitted TypeScript differs
+for `equals` versus `===`, `compareTo` versus `<`, and `Index` on a `Map`.
+
+- Binary, unary, and index expressions resolve through the impl table
+  (`PartialEq`, `PartialOrd`, `Add`..`Rem`, `Neg`, `Not`, `Index`, `IndexMut`,
+  the `*Assign` family), with builtin rules for primitives. The result type is
+  the impl's `Output` projection. A missing impl is a diagnostic.
+
+### 4.8 Generics: substitution and unification
+
+- `substitute` stays. Add `unify(pattern: &Ty, concrete: &Ty, subst: &mut Subst)
+  -> Result<(), Mismatch>` used by impl selection, closures, and expected types.
+- Bounds on impl generics are checked by looking for impls (recursively, with a
+  depth limit that is a diagnostic when hit). No specialization, no negative
+  reasoning, no coherence checking: the corpus compiles under rustc, so exactly
+  one impl applies and the engine only has to find it.
+
+### 4.9 Scopes and names
+
+- `ScopeStack` stays. Module scope gains the file's `use` map resolved to
+  `TypeId`s and trait ids (so trait-method visibility in 4.2 step 3 is real),
+  the prelude, and `Self` in impl scope bound to the impl's `self_ty` with its
+  generics.
+- Constants and statics are bound at module scope with resolved types.
+- Match arms and `if let` bind pattern variables through `bind_pattern`
+  (already specified in March, still unimplemented for enum payloads); the
+  textual `replace_identifier` in `match_expr.rs` is deleted when this lands.
+
+### 4.10 Types for macros and derives
+
+For: the transpiler does not expand macros, so the engine must state what each
+supported macro produces and what each supported derive implements.
+
+- Invocations: `format!`, `write!`, `writeln!` yield `String` / `fmt::Result`;
+  `vec![..]` yields `Vec<T>` from its elements; `assert*!`, `panic!`, `todo!`,
+  `unreachable!`, `unimplemented!` yield `!`; `matches!` yields `bool`;
+  `thread_local!` binds a static of the declared type; tracing macros yield
+  unit. Any other macro is a diagnostic at the invocation (this is already the
+  no-expansion rule's failure mode).
+- Derives register impls: `Clone`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`,
+  `Hash`, `Default`, `Debug` (as `Display`-shaped `toString` at emission),
+  `Serialize`/`Deserialize` (an `encode`/`decode` pair, typed for the bincode
+  module), `thiserror::Error` with `#[error]` (a `Display` impl) and `#[from]`
+  (a `From` impl). `#[async_trait]` is an attribute the engine ignores: the
+  method is `async` in source and its return type is the written one.
+
+### 4.11 Failure policy
+
+- The engine returns `Result<Ty, Diag>` everywhere; `Unknown` is removed as a
+  value.
+- Every site in `body.rs`, `control_flow.rs`, `match_expr.rs`, `macros.rs`, and
+  `bincode_module.rs` that today falls back to a heuristic on `None` instead
+  reports the diagnostic and the run fails without writing output (the
+  diagnostics design from the item 1 proposal, kept as a patch beside the
+  handoff, describes the sink and the no-write rule).
+- The PascalCase enum guess, `starts_with` name checks, the std path-segment
+  filter in `body.rs`, and `replace_identifier` in `match_expr.rs` are deleted
+  as each capability above makes them unnecessary; none survives to the end.
+- Transitional policy, until the fail-loud step (section 7, step 9). The engine
+  never returns an unknown type; what stays transitional is the translator. A
+  site that still falls back keeps its fallback and records a `Diag` in a per-run
+  sink wherever it fires, so that each step's output stays comparable with the
+  step before it and a run does not fail on work that has not been done yet.
+  Every run prints the diagnostics count and the list. Step 9 makes the sink
+  fatal and deletes every fallback. Until it does, the diagnostics count per
+  crate is the coverage metric: the amount of that crate the engine cannot yet
+  type.
+
+## 5. Module layout (proposal)
+
+```
+transpile/src/
+  ty/            Ty, Subst, unify, substitute, display          (from resolve.rs)
+  registry/      TypeDef, TraitDef, ImplDef, TypeRegistry, name index
+  infer/         TypeContext, resolve_expr, method lookup, closures, expected types,
+                 ?/From, operators, macro/derive hooks
+  diag.rs        diagnostics sink (from the item 1 proposal)
+transpile/
+  std_surface/   Rust stub declarations, one file per std area (replaces [system_types])
 ```
 
-During body translation: when creating a FnScope for a static method, the impl's type params are added as the method's own generic params in the emitted signature. The scope still has access to the ImplScope for type lookups, but the emission layer adds `<T>` to the method signature.
+`resolve.rs` and `type_context.rs` are split into these; nothing in `emit.rs`
+or `codegen.rs` changes shape except that they receive `Ty` where they
+received strings.
 
-## Impl Trait Method Placement
+## 6. Tests and the oracle
 
-When building the TypeRegistry from `ImplInfo`:
-- `impl MyTrait for MyType` where `MyType` is defined in this crate → merge methods into `MyType`'s TypeDef
-- `impl ForeignTrait for MyType` → merge methods into `MyType`'s TypeDef
-- `impl MyTrait for ForeignType` → do NOT merge (can't add methods to String, Vec, etc.). These become standalone functions or static factory methods.
+### 6.1 Unit tests on minimal Rust inputs
 
-## Known Limitations
+Each capability in section 4 gets tests that parse a few lines of Rust with syn,
+build a registry, and assert the resolved `Ty`, the `MethodResolution` steps, or
+the diagnostic. These are the specification's executable form; no capability is
+done without them.
 
-These are acknowledged gaps that are either low-priority or require significantly more infrastructure:
+### 6.2 Corpus inventory tests
 
-1. **Trait method resolution order** — when two traits provide the same method name and both are in scope, Rust uses trait bounds to disambiguate. The transpiler picks the first match. Mitigated by the existing `name_map` handling of common traits (Display→toString, Iterator methods, etc.).
+A test walks the four corpus crates on the support branch and asserts that every
+method call, field access, `?`, closure, operator, and `.into()` resolves or
+produces a diagnostic the test expects. The list of expected diagnostics is
+checked in and must shrink, never grow, as capabilities land. This is also the
+inventory that keeps the std surface (4.4) honest.
 
-2. **`impl Trait` return types** — `fn foo() -> impl Iterator<Item=T>` doesn't expose the concrete type. Falls back to Unknown.
+### 6.3 rust-analyzer as a one-time oracle
 
-3. **Closure parameter types** — `|x| x.method()` — type of `x` requires Hindley-Milner inference. Falls back to Unknown.
+The 2026-09-02 study produced, for every method call, deref chain, closure, and
+`?` in the corpus, rust-analyzer's answer keyed by file and byte range
+(`ra-spike` under the session scratchpad; to be checked in under
+`transpile/tests/oracle/` as JSON). A test compares the engine's answers against
+it on the sites the oracle covers and fails on any mismatch. The oracle is data
+in the repo: nothing from rust-analyzer is a dependency, and the file is
+regenerated only deliberately with the out-of-tree nightly spike. Known gap: the
+spike typed 88% of expressions and left items under `#[async_trait]`,
+`wasm_bindgen`, and `uniffi::export` untyped; those sites are simply not in the
+oracle and are covered by 6.2 instead.
 
-4. **Match arm reference stripping** — `match &enum_val { Variant(x) => ... }` — `x` is `&T` in Rust but the pattern translator strips the reference. If x's type is inferred for downstream use, it should be T not &T. Low priority since TS has no references.
+### 6.4 Goldens and snapshots
 
-5. **Auto-ref/auto-deref in method dispatch** — `x.method()` in Rust might resolve to `(&x).method()` via a trait impl on `&T`. Not modeled.
+Two artifacts, kept apart because they answer to different readers:
 
-## Changes to Existing Code
+- Idiom goldens, a small hand-vetted set under `transpile/goldens/`, one per
+  construct: a guard deref, an iterator chain, a `?` through `From`, a match that
+  binds an enum payload, each a few lines of Rust beside the TypeScript it should
+  produce. This is Daniel's review surface for emission decisions, read as
+  documentation, and it changes only by a deliberate reviewed edit, never by a
+  capture command.
+- Corpus snapshots, auto-captured transpiler output for the in-scope crates under
+  `transpile/tests/snapshots/`, updated only by an explicit command, with the
+  diff read at each transpiler change. A difference is either an expected fix or
+  a regression, and the review says which.
 
-### NEW: resolve.rs
+The March `transpile/golden/` directory is captured output that nothing reads;
+it is retired when the goldens land.
 
-New module containing: `ResolvedType`, `TypeDef`, `TypeKind`, `VariantDef`, `MethodSig`, `TypeRegistry`, `ScopeStack`, `Scope`, `ScopeKind`, `parse_type_string`.
+Neither artifact checks behavior. The transpiled Rust unit tests and the support
+branch's bincode fixtures do that.
 
-### extract.rs
+## 7. Work remaining, in order
 
-- `extract_fn_with_body` stops calling `body::translate_block`. Stores `body_ast: Option<syn::Block>` (cloned/owned) instead of populating `body_ts`.
-- `extract_fn_with_body_and_self` is removed (self_type moves to scope).
+Each step is discussed before it starts and reviewed as its own diff. Steps 1 and
+2 are the substance; the rest are small once they exist. The test harness
+(section 6) is built alongside step 1 by a separate agent, so that step 2 onward
+has the goldens, the snapshots, and the oracle to land against.
 
-### types.rs
+1. **Structural types and the registry** (4.1, 4.9): `Ty`, `resolve_type` from
+   `syn::Type`, registry keyed by id with module-qualified names, reserved
+   system module, `use`-map in module scope. Deletes the string round trip and
+   fixes the `Ref` eviction. Unit tests.
+2. **Impl table and method resolution** (4.2, 4.3, 4.8): `ImplDef`, `TraitDef`,
+   extraction of trait identity, bounds and `where` clauses, `unify`, the
+   auto-deref/auto-ref chain, impl selection with blanket impls, `dyn`
+   receivers, `MethodResolution` with steps for emission. Unit tests plus the
+   corpus inventory test from 6.2 for method calls.
+3. **Std surface** (4.4): the Rust stub declarations for the traits and impls the
+   corpus uses, with associated types; iterator adaptors and `collect`; retire
+   `[system_types]`.
+4. **Closures and expected types** (4.5, 4.6): callee-bound closure typing,
+   shallow expected-type propagation, `Infer`.
+5. **`?` and conversions** (4.6): `From` lookup, `Option` `?`, `.into()` family,
+   recorded conversions for emission.
+6. **Operators** (4.7).
+7. **Macro and derive hooks** (4.10), including thiserror-derived `Display` and
+   `From` impls.
+8. **Crate scope and configuration** (1a): trim `[crates]` to the scope table,
+   set the wasm32 cfg configuration, teach the transpiler externalized modules,
+   and land the sqlite driver interface as a provided file. It comes before the
+   fail-loud step because widening the scope adds diagnostics, and those have to
+   be driven to zero before the sink can be made fatal.
+9. **Fail-loud wiring** (4.11): the diagnostics sink made fatal, removal of every
+   heuristic fallback, no-write on error.
+10. **Oracle and snapshot tests** (6.3, 6.4) checked in and green.
 
-- `FnInfo` gains `body_ast: Option<syn::Block>` alongside existing `body_ts: Option<String>`.
-- `body_ast` is populated during Phase 1 (extraction). `body_ts` is populated during Phase 3 (translation).
-- After Phase 3, `body_ast` can be dropped (set to None) to free memory.
+Acceptance for the engine as a whole: every expression the transpiler translates
+in proto, ankql, and signals resolves or produces an expected diagnostic; the
+oracle comparison has zero mismatches on covered sites; proto's output is
+unchanged where it was already correct.
 
-### body.rs
+## 8. Non-goals
 
-- `BodyTranslator` gains `registry: &TypeRegistry` and `scopes: ScopeStack`.
-- `self_type: &str` removed.
-- Field access (`Expr::Field`) resolves receiver type, checks `deref_field`, inserts accessor if needed.
-- Method calls (`Expr::MethodCall`) resolve receiver type for dispatch and deref suppression.
-- Let bindings (`Stmt::Local`) infer type from RHS and bind in current scope via `scopes.bind()` or `scopes.bind_pattern()`.
-- Enum variant detection uses `registry.is_enum()` + `registry.is_variant()` instead of PascalCase heuristic.
-- Free functions `translate_expr`, `translate_block`, `translate_pat` are kept as compatibility shims (create BodyTranslator with empty registry + scopestack). Removed once all callers are updated.
+General Rust inference; lifetimes and borrow checking; coherence and
+specialization; const generics beyond array lengths; closures with no
+annotation and no expected type; trait objects beyond method dispatch on `dyn
+Trait`; typing expanded macro output of any kind.
 
-### main.rs `batch_generate`
+## 9. Questions put to Daniel, answered 2026-09-02
 
-- Phase 1: parse + extract signatures (no body translation). Clone `syn::Block` into FnInfo.body_ast.
-- Phase 2 (new): build TypeRegistry from all StructInfo/EnumInfo/ImplInfo + config system_types.
-- Phase 3 (new): translate all bodies with registry + scope. Populate FnInfo.body_ts.
-- Phase 4 (existing codegen): generate TS with resolved imports from FnInfo.body_ts.
-
-### codegen.rs, emit.rs
-
-Unchanged. These consume `FnInfo.body_ts` which is still a String.
-
-### control_flow.rs, match_expr.rs
-
-These currently call `translate_expr` (standalone free function). They need to be updated to accept `&BodyTranslator` to access scope context. Can be done incrementally — the free function shims provide backward compatibility during the transition.
-
-Long-term: `match_expr.rs`'s string-level identifier replacement (`replace_identifier`) should be replaced with scope-based binding (push BlockScope per match arm, bind destructured variables).
-
-### name_map.rs
-
-- New function: `resolve_type(syn::Type, registry: &TypeRegistry) -> ResolvedType` — parallel to existing `map_type(syn::Type) -> String`. Note: takes registry (for named type lookup), not scope (scope is for variable names, not type names).
-- `map_type` continues to exist for emission.
-
-### config.rs
-
-- Parse `[system_types]` section from transpile.toml.
-- Use `parse_type_string` to convert method return type strings to `ResolvedType`.
-- Produce `Vec<TypeDef>` from config for seeding the TypeRegistry.
-
-## Validation Strategy
-
-### Before starting implementation
-
-Capture current transpiler output for proto and ankql as golden files. This is the regression baseline.
-
-### After implementation
-
-1. **Regression**: diff proto and ankql output against golden files. Any difference is a bug (the new pipeline should produce identical output for these crates, since the type-aware resolution falls back to Unknown → heuristic behavior for patterns that don't need it).
-
-2. **Signals**: run transpiler against signals crate, count tsc errors. The deref insertion + enum detection + method chain resolution should eliminate a specific, countable class of errors. Track error count reduction.
-
-3. **Enum detection**: verify no false positives from the heuristic/registry interaction. The registry check is gating: if in registry and is enum → variant constructor; if in registry and is struct → static method; if not in registry → fall back to current PascalCase heuristic.
+1. Integer widths. Daniel has no opinion beyond "as long as it works correctly in
+   terms of serialization and behavioral parity with ankurah (rust)". Decided:
+   `i64` and `u64` emit as `bigint`; the smaller integers and both floats emit as
+   `number`; `bigint | number` (`name_map.rs:57` today) is neither and goes away.
+   The engine keeps every integer as its own Rust type, and the bincode module
+   takes the wire width from that Rust type, never from the TypeScript type. That
+   is the width bug noted in the handoff: `bincode_module.rs:159` dispatches on
+   the TS string, so every `number` encodes as `writeU32`, `u8` and `i32` and
+   `f64` alike.
+2. The `[system_types]` TOML table versus code (4.4). Answered: Rust stub
+   declarations, parsed by the same extractor that reads ankurah's source.
+3. `Debug` derives. Answered: emit a debug string built from the field names. A
+   `{:?}` use is ordinary code, not a diagnostic.

@@ -1,0 +1,518 @@
+{
+ "source": "inventory4.txt",
+ "sites": [
+  {
+   "file": "proto/src/clock.rs",
+   "line": 61,
+   "from_error": "DecodeError",
+   "to_error": "<Vec<Vec<u8, Global>, Global> as TryInto<Clock>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "id_bytes.try_into().map_err(|_| DecodeError::Inval",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 121,
+   "from_error": "DecodeError",
+   "to_error": "<Vec<u8, Global> as TryInto<EntityId>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "self.try_into().map_err(|_| DecodeError::InvalidLe",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 152,
+   "from_error": "<D as Deserializer<'_>>::Error",
+   "to_error": "<D as Deserializer<'de>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "String::deserialize(deserializer)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 156,
+   "from_error": "<D as Deserializer<'_>>::Error",
+   "to_error": "<D as Deserializer<'de>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "<[u8; 16]>::deserialize(deserializer)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 69,
+   "from_error": "DecodeError",
+   "to_error": "<EventId as TryFrom<Vec<u8, Global>>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bytes.try_into().map_err(|_| DecodeError::InvalidL",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 92,
+   "from_error": "<D as Deserializer<'_>>::Error",
+   "to_error": "<D as Deserializer<'de>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "String::deserialize(deserializer)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 96,
+   "from_error": "<D as Deserializer<'_>>::Error",
+   "to_error": "<D as Deserializer<'de>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "<[u8; 32]>::deserialize(deserializer)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 15,
+   "from_error": "Error",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "enc.write_all(self.0.to_bytes().as_slice())?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 16,
+   "from_error": "Error",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "enc.finish()?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 32,
+   "from_error": "DecodeError",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "EntityId::from_base64(raw)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 47,
+   "from_error": "Error",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "enc.write_all(self.as_bytes())?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 48,
+   "from_error": "Error",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "enc.finish()?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 65,
+   "from_error": "Box<dyn Error + Send + Sync, Global",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "std::str::from_utf8(raw).map_err(|e| Box::new(e) a",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 87,
+   "from_error": "&str",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "self.len().try_into().map_err(|_| \"array too large",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 163,
+   "from_error": "DecodeError",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::serialize(self).map_err(|_| DecodeError::",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 183,
+   "from_error": "DecodeError",
+   "to_error": "Box<dyn Error + Send + Sync + 'static, Global",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::deserialize(raw).map_err(|_| DecodeError:",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 14,
+   "from_error": "DecodeError",
+   "to_error": "<EntityId as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.as_string().ok_or(DecodeError::NotStringValu",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 27,
+   "from_error": "DecodeError",
+   "to_error": "<EventId as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.as_string().ok_or(DecodeError::NotStringValu",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 41,
+   "from_error": "DecodeError",
+   "to_error": "<Clock as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.dyn_into().map_err(|_| DecodeError::InvalidF",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 46,
+   "from_error": "DecodeError",
+   "to_error": "<Clock as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "array.get(i).as_string().ok_or(DecodeError::NotStr",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 47,
+   "from_error": "DecodeError",
+   "to_error": "<Clock as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "EventId::from_base64(&id_str)?",
+   "truncated": false
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 78,
+   "from_error": "DecodeError",
+   "to_error": "<AttestationSet as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.dyn_into().map_err(|_| DecodeError::InvalidF",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 81,
+   "from_error": "DecodeError",
+   "to_error": "<AttestationSet as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::deserialize(&buffer).map_err(|_| DecodeEr",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 91,
+   "from_error": "DecodeError",
+   "to_error": "<JsValue as TryFrom<&AttestationSet>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::serialize(&val).map_err(|_| DecodeError::",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 102,
+   "from_error": "DecodeError",
+   "to_error": "<OperationSet as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.dyn_into().map_err(|_| DecodeError::InvalidF",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 105,
+   "from_error": "DecodeError",
+   "to_error": "<OperationSet as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::deserialize(&buffer).map_err(|_| DecodeEr",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 115,
+   "from_error": "DecodeError",
+   "to_error": "<JsValue as TryFrom<&OperationSet>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::serialize(&val).map_err(|_| DecodeError::",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 126,
+   "from_error": "DecodeError",
+   "to_error": "<StateBuffers as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.dyn_into().map_err(|_| DecodeError::InvalidF",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 129,
+   "from_error": "DecodeError",
+   "to_error": "<StateBuffers as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::deserialize(&buffer).map_err(|_| DecodeEr",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 139,
+   "from_error": "DecodeError",
+   "to_error": "<JsValue as TryFrom<&StateBuffers>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "bincode::serialize(&val).map_err(|_| DecodeError::",
+   "truncated": true
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 149,
+   "from_error": "DecodeError",
+   "to_error": "<CollectionId as TryFrom<JsValue>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "value.as_string().ok_or(DecodeError::NotStringValu",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/conversion.rs",
+   "line": 10,
+   "from_error": "ParseError",
+   "to_error": "<Predicate as TryFrom<&'a str>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parser::parse_selection(value)?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/conversion.rs",
+   "line": 15,
+   "from_error": "ParseError",
+   "to_error": "<Predicate as TryFrom<String>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parser::parse_selection(&value)?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 254,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 262,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 270,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 278,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 286,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 295,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, None)",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 304,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, Some(",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 311,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"user_id = ? AND status = ?\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 324,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"user_id = ?\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 339,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, Some(",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 348,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&selection.predicate, Some(",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 361,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&predicate, None)?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 374,
+   "from_error": "SqlGenerationError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "generate_selection_sql(&predicate, None)?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/selection/sql.rs",
+   "line": 381,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"user_id = ?\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 19,
+   "from_error": "<D as Deserializer<'_>>::Error",
+   "to_error": "<D as Deserializer<'de>>::Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "Vec::deserialize(deserializer)?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 638,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"status = 'active' ORDER BY name\")",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 657,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"true ORDER BY created_at DESC\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 676,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"status = 'active' LIMIT 10\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 692,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"user_id > 100 ORDER BY created_at",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 711,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"true LIMIT 100\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 720,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"true ORDER BY score\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 732,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"true ORDER BY name ASC, created_a",
+   "truncated": true
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 752,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"limit = 1\")?",
+   "truncated": false
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 762,
+   "from_error": "ParseError",
+   "to_error": "Error",
+   "conversion": "<Result<T, E> as Try>::branch",
+   "expr": "parse_selection(\"order = 2 ORDER BY name\")?",
+   "truncated": false
+  }
+ ]
+}

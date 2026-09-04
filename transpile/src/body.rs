@@ -92,7 +92,7 @@ pub struct BodyTranslator<'a> {
     /// Type context for comprehensive expression type resolution.
     /// Wraps ScopeStack + TypeRegistry. None for legacy codepaths
     /// (free function shims, match_expr, control_flow).
-    pub types: Option<std::cell::RefCell<crate::type_context::TypeContext<'a>>>,
+    pub types: Option<std::cell::RefCell<crate::infer::TypeContext<'a>>>,
     /// Inline module names for the current file — path qualifiers
     /// stripped during path resolution (symbols imported from separate .ts file).
     pub inline_module_names: Vec<String>,
@@ -103,8 +103,7 @@ impl<'a> BodyTranslator<'a> {
         Self { self_type, types: None, inline_module_names: vec![] }
     }
 
-    pub fn with_registry(self_type: &'a str, registry: &'a crate::resolve::TypeRegistry, module: &str) -> Self {
-        let tc = crate::type_context::TypeContext::new(registry, module, self_type);
+    pub fn with_context(self_type: &'a str, tc: crate::infer::TypeContext<'a>) -> Self {
         Self {
             self_type,
             types: Some(std::cell::RefCell::new(tc)),
@@ -112,22 +111,68 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// Resolve the type of an expression using the TypeContext.
-    fn resolve_expr_type(&self, expr: &syn::Expr) -> Option<crate::resolve::ResolvedType> {
-        self.types.as_ref()?.borrow().resolve_expr(expr)
+    /// Resolve the type of an expression, or say why not.
+    fn resolve_expr_type(&self, expr: &syn::Expr) -> Result<crate::ty::Ty, crate::diag::Diag> {
+        match &self.types {
+            Some(tc) => tc.borrow().resolve_expr(expr),
+            None => Err(crate::diag::Diag {
+                file: String::new(),
+                line: 0,
+                col: 0,
+                message: "no type context on this translation path".to_string(),
+            }),
+        }
+    }
+
+    /// The one place a retained fallback is recorded.
+    ///
+    /// The engine could not type this site, so the translator does what it did
+    /// before and this says what was given up. Every fallback that survives
+    /// into this step goes through here, which is what makes the diagnostics
+    /// count a coverage measure rather than a sample. The fail-loud step turns
+    /// these into errors and deletes the fallbacks.
+    fn fallback(&self, span: proc_macro2::Span, message: impl Into<String>) {
+        match &self.types {
+            Some(tc) => tc.borrow().sink.report(span, message),
+            // A translation path with no type context has no sink either; the
+            // fallback waits there until the caller that owns the file drains it.
+            None => crate::diag::pending::park(span, message.into()),
+        }
+    }
+
+    /// Take a resolved answer, or record the fallback taken instead of it.
+    fn or_fallback<T>(&self, result: Result<T, crate::diag::Diag>, instead: &str) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(diag) => {
+                let message = format!("{}; {}", diag.message, instead);
+                // A refusal raised where there is no type context carries no
+                // position; the sites on those paths report for themselves,
+                // with the span they do have.
+                if let Some(tc) = &self.types {
+                    tc.borrow().sink.push(crate::diag::Diag { message, ..diag });
+                }
+                None
+            }
+        }
     }
 
     /// Check if a name is bound in any active scope.
     fn is_in_scope(&self, name: &str) -> bool {
-        self.types.as_ref()
-            .map(|tc| tc.borrow().resolve_var(name).is_some())
-            .unwrap_or(false)
+        self.types.as_ref().map(|tc| tc.borrow().is_bound(name)).unwrap_or(false)
     }
 
     /// Bind a variable in the current TypeContext scope.
-    pub fn bind_var(&self, name: &str, ty: crate::resolve::ResolvedType) {
+    pub fn bind_var(&self, name: &str, ty: crate::ty::Ty) {
         if let Some(tc) = &self.types {
             tc.borrow_mut().bind(name, ty);
+        }
+    }
+
+    /// Bind a name whose type is not known, so that it still shadows.
+    fn bind_untyped(&self, name: &str) {
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().bind_untyped(name);
         }
     }
 
@@ -145,15 +190,8 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// Push a function scope with typed parameters.
-    pub fn push_fn_scope(&self, params: Vec<(String, crate::resolve::ResolvedType)>) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().push_fn(params);
-        }
-    }
-
     /// Push a closure scope with typed parameters.
-    pub fn push_closure_scope(&self, params: Vec<(String, crate::resolve::ResolvedType)>) {
+    pub fn push_closure_scope(&self, params: Vec<(String, crate::ty::Ty)>) {
         if let Some(tc) = &self.types {
             tc.borrow_mut().push_closure(params);
         }
@@ -271,8 +309,12 @@ impl<'a> BodyTranslator<'a> {
             // Register the local variable's type for downstream resolution.
             if let Some(tc) = &self.types {
                 let resolved = tc.borrow().resolve_local_type(local);
-                if let Some(ty) = resolved {
-                    tc.borrow_mut().bind(&pat, ty);
+                let instead = format!("local `{}` is left untyped", pat);
+                match self.or_fallback(resolved, &instead) {
+                    Some(ty) => tc.borrow_mut().bind(&pat, ty),
+                    // The name is still bound, so a later `let` of the same
+                    // name is still a shadow.
+                    None => tc.borrow_mut().bind_untyped(&pat),
                 }
             }
 
@@ -350,7 +392,7 @@ impl<'a> BodyTranslator<'a> {
     pub fn expr(&self, expr: &syn::Expr) -> String {
         match expr {
             syn::Expr::Lit(lit) => translate_lit(&lit.lit),
-            syn::Expr::Path(path) => Self::path_static(&path.path),
+            syn::Expr::Path(path) => self.path_expr(&path.path),
 
             syn::Expr::Field(field) => {
                 let base = self.expr(&field.base);
@@ -365,6 +407,9 @@ impl<'a> BodyTranslator<'a> {
                     if let Some((accessor, _field_ty)) = tc.borrow().field_deref(&field.base, &member) {
                         return format!("{}.{}.{}", base_str, accessor, member);
                     }
+                    let base_ty = tc.borrow().resolve_expr(&field.base);
+                    let instead = format!("`.{}` is emitted without a wrapper accessor", member);
+                    self.or_fallback(base_ty, &instead);
                 }
 
                 format!("{}.{}", base_str, member)
@@ -400,8 +445,11 @@ impl<'a> BodyTranslator<'a> {
                 // In TS, only Result has a real .unwrap(). All other types
                 // (guards, Option/nullable, etc.) treat it as identity.
                 if matches!(rust_method.as_str(), "unwrap" | "expect") {
-                    let is_result = self.resolve_expr_type(&call.receiver)
-                        .map(|ty| matches!(&ty, crate::resolve::ResolvedType::Named { name, .. } if name == "Result"))
+                    let receiver_ty = self.resolve_expr_type(&call.receiver);
+                    let instead = format!("`{}` is treated as the identity", rust_method);
+                    let is_result = self
+                        .or_fallback(receiver_ty, &instead)
+                        .and_then(|ty| self.types.as_ref().map(|tc| tc.borrow().is_result(&ty)))
                         .unwrap_or(false);
                     if !is_result {
                         return receiver.to_string();
@@ -420,9 +468,9 @@ impl<'a> BodyTranslator<'a> {
                     if let Some(accessor) = tc_ref.method_deref(&call.receiver, &rust_method) {
                         let deref_receiver = format!("{}.{}", receiver, accessor);
                         // Dispatch against inner type (after deref)
-                        if let Some(receiver_ty) = tc_ref.resolve_expr(&call.receiver) {
+                        if let Ok(receiver_ty) = tc_ref.resolve_expr(&call.receiver) {
                             if let Some(inner) = tc_ref.deref_inner_type(&receiver_ty) {
-                                match native_types::translate_method(&inner, &deref_receiver, &rust_method, &args) {
+                                match native_types::translate_method(tc_ref.registry, &inner, &deref_receiver, &rust_method, &args) {
                                     native_types::MethodTranslation::Expr(result) => return result,
                                     native_types::MethodTranslation::Passthrough => {}
                                 }
@@ -439,7 +487,7 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Call(call) => {
                 let func = self.expr(&call.func);
                 let args: Vec<String> = call.args.iter().map(|a| self.expr(a)).collect();
-                self.translate_call(&func, &args)
+                self.translate_call(&func, &args, syn::spanned::Spanned::span(call))
             }
 
             syn::Expr::Binary(bin) => {
@@ -452,11 +500,15 @@ impl<'a> BodyTranslator<'a> {
                             let right = self.expr(&bin.right);
                             // Deref compound-assign via TypeContext
                             if let Some(tc) = &self.types {
-                                if let Some(inner_ty) = tc.borrow().resolve_expr(&unary.expr) {
-                                    if let Some(accessor) = tc.borrow().deref_accessor(&inner_ty) {
-                                        return format!("{}.{} {} {}", inner, accessor, op, right);
-                                    }
+                                let accessor = tc.borrow().deref_accessor_of(&unary.expr);
+                                if let Some(accessor) = self.or_fallback(accessor, ASSUMED_ACCESSOR) {
+                                    return format!("{}.{} {} {}", inner, accessor, op, right);
                                 }
+                            } else {
+                                self.fallback(
+                                    syn::spanned::Spanned::span(&*unary.expr),
+                                    ASSUMED_ACCESSOR,
+                                );
                             }
                             // Syntactic *x always means deref-assign; .value is the semantic default
                             return format!("{}.value {} {}", inner, op, right);
@@ -500,7 +552,7 @@ impl<'a> BodyTranslator<'a> {
                 // Multi-statement block as expression → IIFE
                 // Detect shadowed variables: if a local in the block has the same name
                 // as a variable used in its init, thread it as an IIFE parameter
-                let mut shadow_params: Vec<(String, String)> = Vec::new();
+                let mut shadow_params: Vec<(String, String, Option<crate::ty::Ty>)> = Vec::new();
                 for stmt in &block.block.stmts {
                     if let syn::Stmt::Local(local) = stmt {
                         let pat_name = Self::pat_static(&local.pat);
@@ -508,9 +560,15 @@ impl<'a> BodyTranslator<'a> {
                             // Check if the init expression references pat_name as a
                             // standalone variable (not as a field name in a.b.c)
                             if references_var(&init.expr, &pat_name) {
-                                // This is a shadow pattern — pass as IIFE param
+                                // This is a shadow pattern — pass as IIFE param.
+                                // The parameter holds the value of the initialiser,
+                                // resolved out here, before the block's scope exists.
+                                let resolved = self.resolve_expr_type(&init.expr);
+                                let instead =
+                                    format!("IIFE parameter `{}` is left untyped", pat_name);
+                                let ty = self.or_fallback(resolved, &instead);
                                 let init_ts = self.expr(&init.expr);
-                                shadow_params.push((pat_name, init_ts));
+                                shadow_params.push((pat_name, init_ts, ty));
                             }
                         }
                     }
@@ -520,14 +578,17 @@ impl<'a> BodyTranslator<'a> {
                     // Push shadow names into scope so local() skips their declarations
                     // (they're already bound as IIFE params).
                     self.push_block();
-                    for (name, _) in &shadow_params {
-                        // Bind with Unknown type — the IIFE param is the value
-                        self.bind_var(name, crate::resolve::ResolvedType::Unknown);
+                    for (name, _, ty) in &shadow_params {
+                        match ty {
+                            Some(ty) => self.bind_var(name, ty.clone()),
+                            None => self.bind_untyped(name),
+                        }
                     }
                     let body = self.translate_block(&block.block);
                     self.pop_scope();
-                    let params: Vec<&str> = shadow_params.iter().map(|(n, _)| n.as_str()).collect();
-                    let args: Vec<&str> = shadow_params.iter().map(|(_, v)| v.as_str()).collect();
+                    let params: Vec<&str> =
+                        shadow_params.iter().map(|(n, _, _)| n.as_str()).collect();
+                    let args: Vec<&str> = shadow_params.iter().map(|(_, v, _)| v.as_str()).collect();
                     format!("(({}) => {{\n{}}})({})", params.join(", "), indent(&body), args.join(", "))
                 } else {
                     let body = self.translate_block(&block.block);
@@ -603,11 +664,15 @@ impl<'a> BodyTranslator<'a> {
                     if matches!(unary.op, syn::UnOp::Deref(_)) {
                         let inner = self.expr(&unary.expr);
                         if let Some(tc) = &self.types {
-                            if let Some(inner_ty) = tc.borrow().resolve_expr(&unary.expr) {
-                                if let Some(accessor) = tc.borrow().deref_accessor(&inner_ty) {
-                                    return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
-                                }
+                            let accessor = tc.borrow().deref_accessor_of(&unary.expr);
+                            if let Some(accessor) = self.or_fallback(accessor, ASSUMED_ACCESSOR) {
+                                return format!("{}.{} = {}", inner, accessor, self.expr(&assign.right));
                             }
+                        } else {
+                            self.fallback(
+                                syn::spanned::Spanned::span(&*unary.expr),
+                                ASSUMED_ACCESSOR,
+                            );
                         }
                         // Deref in Rust (*x = y) always means "assign through wrapper."
                         // All current wrapper types use .value — use it as the semantic default.
@@ -722,11 +787,16 @@ impl<'a> BodyTranslator<'a> {
     fn translate_method_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
         // Type-aware dispatch via TypeContext
         if let Some(receiver_expr) = receiver_expr {
-            if let Some(receiver_ty) = self.resolve_expr_type(receiver_expr) {
-                match native_types::translate_method(&receiver_ty, receiver, rust_method, args) {
-                    native_types::MethodTranslation::Expr(result) => return result,
-                    native_types::MethodTranslation::Passthrough => {
-                        return format!("{}.{}({})", receiver, ts_method, args.join(", "));
+            let resolved = self.resolve_expr_type(receiver_expr);
+            let instead = format!("`{}` is dispatched by name", rust_method);
+            if let Some(receiver_ty) = self.or_fallback(resolved, &instead) {
+                let registry = self.types.as_ref().map(|tc| tc.borrow().registry);
+                if let Some(registry) = registry {
+                    match native_types::translate_method(registry, &receiver_ty, receiver, rust_method, args) {
+                        native_types::MethodTranslation::Expr(result) => return result,
+                        native_types::MethodTranslation::Passthrough => {
+                            return format!("{}.{}({})", receiver, ts_method, args.join(", "));
+                        }
                     }
                 }
             }
@@ -747,14 +817,14 @@ impl<'a> BodyTranslator<'a> {
     // constructor heuristic) stay here. Type-specific translations
     // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
 
-    fn translate_call(&self, func: &str, args: &[String]) -> String {
+    fn translate_call(&self, func: &str, args: &[String], span: proc_macro2::Span) -> String {
         // 0. Resolve inline module qualifiers (e.g., stack.track → track)
         // Resolve inline module qualifiers (e.g., stack.track → track).
         // Import generation is handled by codegen.rs scanning the translated bodies.
         for mod_name in &self.inline_module_names {
             let prefix = format!("{}.", mod_name);
             if let Some(stripped) = func.strip_prefix(&prefix) {
-                return self.translate_call(stripped, args);
+                return self.translate_call(stripped, args, span);
             }
         }
 
@@ -838,10 +908,18 @@ impl<'a> BodyTranslator<'a> {
             let is_enum_variant = if let Some(tc) = &self.types {
                 tc.borrow().is_variant(type_name, variant)
             } else {
-                // Fallback: PascalCase heuristic (no type context available)
-                type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                // No type context on this path, so the shape of the name is
+                // all there is to go on.
+                let guess = type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                     && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                    && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise")
+                    && !matches!(type_name, "Math" | "JSON" | "Object" | "Array" | "console" | "Promise");
+                if guess {
+                    self.fallback(
+                        span,
+                        format!("`{}` is guessed to be an enum variant from its capitalisation", func),
+                    );
+                }
+                guess
             };
 
             if is_enum_variant {
@@ -863,6 +941,10 @@ impl<'a> BodyTranslator<'a> {
             && !func.contains('.')
             && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")
         {
+            self.fallback(
+                span,
+                format!("`{}` is guessed to be a constructor from its capitalisation", func),
+            );
             return format!("new {}({})", func, args.join(", "));
         }
 
@@ -870,7 +952,26 @@ impl<'a> BodyTranslator<'a> {
         format!("{}({})", func, args.join(", "))
     }
 
-    // ── Path translation (static) ───────────────────────────────────
+    // ── Path translation ────────────────────────────────────────────
+
+    /// A path in expression position. The standard-library qualifiers are
+    /// dropped so that `std::sync::Arc::new` becomes `Arc.new`, which is a
+    /// guess about what the remaining segments mean; it is recorded as one.
+    fn path_expr(&self, path: &syn::Path) -> String {
+        let dropped: Vec<String> = path
+            .segments
+            .iter()
+            .map(|seg| seg.ident.to_string())
+            .filter(|name| STD_QUALIFIERS.contains(&name.as_str()))
+            .collect();
+        if !dropped.is_empty() {
+            self.fallback(
+                syn::spanned::Spanned::span(path),
+                format!("path qualifiers {} are dropped by name", dropped.join(", ")),
+            );
+        }
+        Self::path_static(path)
+    }
 
     fn path_static(path: &syn::Path) -> String {
         let segments: Vec<String> = path.segments.iter().map(|seg| {
@@ -897,7 +998,7 @@ impl<'a> BodyTranslator<'a> {
 
         // Strip std/core/alloc module prefixes, keep type+method
         let segments: Vec<String> = segments.into_iter()
-            .filter(|s| !matches!(s.as_str(), "std" | "core" | "alloc" | "sync" | "collections" | "convert" | "fmt" | "ops" | "iter" | "atomic" | "marker"))
+            .filter(|s| !STD_QUALIFIERS.contains(&s.as_str()))
             .collect();
         let joined = segments.join(".");
         match joined.as_str() {
@@ -910,6 +1011,17 @@ impl<'a> BodyTranslator<'a> {
 }
 
 // ── Standalone helpers ──────────────────────────────────────────────────
+
+/// What `*x = y` falls back to when the engine cannot say what `x` wraps.
+const ASSUMED_ACCESSOR: &str = "the wrapper accessor is assumed to be `value`";
+
+/// Path segments dropped when a written path becomes a TypeScript expression.
+/// Resolving the path properly is the value-namespace work in the engine; this
+/// list is what stands in for it, and dropping any of them is recorded.
+const STD_QUALIFIERS: [&str; 11] = [
+    "std", "core", "alloc", "sync", "collections", "convert", "fmt", "ops", "iter", "atomic",
+    "marker",
+];
 
 fn is_mut_binding(pat: &syn::Pat) -> bool {
     if let syn::Pat::Ident(ident) = pat {

@@ -1,0 +1,945 @@
+{
+ "source": "inventory4.txt",
+ "sites": [
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 2,
+   "expr": "256"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 19,
+   "expr": "16"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 21,
+   "expr": "16"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 47,
+   "expr": "{ self.to_base64() }"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 47,
+   "expr": "self.to_base64()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 47,
+   "expr": "self"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "{ general_purpose::URL_SAFE_NO_PAD.encode(self.0.to_byt"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "general_purpose::URL_SAFE_NO_PAD.encode(self.0.to_bytes"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "general_purpose::URL_SAFE_NO_PAD"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "self.0.to_bytes()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "self.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 55,
+   "expr": "self"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "{ Self::from_base64(s).map_err(|e| JsValue::from_str(&e"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "Self::from_base64(s).map_err(|e| JsValue::from_str(&e.t"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "Self::from_base64(s)"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "Self::from_base64"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "s"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "|e| JsValue::from_str(&e.to_string())"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "JsValue::from_str(&e.to_string())"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "JsValue::from_str"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "&e.to_string()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "e.to_string()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 58,
+   "expr": "e"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "{ self.0 == other.0 }"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "self.0 == other.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "self.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "self"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "other.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 61,
+   "expr": "other"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "{ Self::from_base64(s).map_err(|e| e.into()) }"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "Self::from_base64(s).map_err(|e| e.into())"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "Self::from_base64(s)"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "Self::from_base64"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "s"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "|e| e.into()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "e.into()"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 70,
+   "expr": "e"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "{ self.0 == other.0 }"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "self.0 == other.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "self.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "self"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "other.0"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 74,
+   "expr": "other"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 9,
+   "expr": "32"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 41,
+   "expr": "32"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 42,
+   "expr": "32"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 62,
+   "expr": "32"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 63,
+   "expr": "32"
+  },
+  {
+   "file": "ankql/src/grammar.rs",
+   "line": 4,
+   "expr": "\"ankql.pest\""
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 602,
+   "expr": "N"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 605,
+   "expr": "N"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 614,
+   "expr": "N"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "expr": "N"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 16,
+   "expr": "r#\" export class JsValueMut<T = any> { free(): void; co"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "{ Self(Mut::new(SendWrapper::new(value))) }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "Self(Mut::new(SendWrapper::new(value)))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "Self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "Mut::new(SendWrapper::new(value))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "Mut::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "SendWrapper::new(value)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 40,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 43,
+   "expr": "{ let mut_val = Self::new(value); let read_val = mut_va"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 44,
+   "expr": "Self::new(value)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 44,
+   "expr": "Self::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 44,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 45,
+   "expr": "mut_val.read()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 45,
+   "expr": "mut_val"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 46,
+   "expr": "vec![wasm_bindgen::JsValue::from(mut_val), wasm_bindgen"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "{ self.0.set(SendWrapper::new(value)); }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "self.0.set(SendWrapper::new(value))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "SendWrapper::new(value)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 50,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 53,
+   "expr": "{ use crate::Get; self.0.get().take() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 55,
+   "expr": "self.0.get().take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 55,
+   "expr": "self.0.get()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 55,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 55,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 59,
+   "expr": "{ self.0.value().take() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 59,
+   "expr": "self.0.value().take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 59,
+   "expr": "self.0.value()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 59,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 59,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "{ JsValueRead(Arc::new(self.0.read())) }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "JsValueRead(Arc::new(self.0.read()))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "JsValueRead"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "Arc::new(self.0.read())"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "Arc::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "self.0.read()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 62,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 65,
+   "expr": "{ use crate::Subscribe; let listener = SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 67,
+   "expr": "SendWrapper::new(listener)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 67,
+   "expr": "SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 67,
+   "expr": "listener"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 68,
+   "expr": "self.0.subscribe(move |value: SendWrapper<JsValue>| { l"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 68,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 68,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 68,
+   "expr": "move |value: SendWrapper<JsValue>| { let _ = listener.c"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 68,
+   "expr": "{ let _ = listener.call1(&JsValue::NULL, &value.take())"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "listener.call1(&JsValue::NULL, &value.take())"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "listener"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "&JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "&value.take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "value.take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 69,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "JsValue::from(Box::into_raw(Box::new(guard)) as u32)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "JsValue::from"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "Box::into_raw(Box::new(guard)) as u32"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "Box::into_raw(Box::new(guard))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "Box::into_raw"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "Box::new(guard)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "Box::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 72,
+   "expr": "guard"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 76,
+   "expr": "{ self.get() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 76,
+   "expr": "self.get()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 76,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 79,
+   "expr": "{ self.set(value); }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 79,
+   "expr": "self.set(value)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 79,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 79,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "{ Get::<SendWrapper<JsValue>>::get(&*self.0).take() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "Get::<SendWrapper<JsValue>>::get(&*self.0).take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "Get::<SendWrapper<JsValue>>::get(&*self.0)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "Get::<SendWrapper<JsValue>>::get"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "&*self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "*self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 85,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "{ Peek::<SendWrapper<JsValue>>::peek(&*self.0).take() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "Peek::<SendWrapper<JsValue>>::peek(&*self.0).take()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "Peek::<SendWrapper<JsValue>>::peek(&*self.0)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "Peek::<SendWrapper<JsValue>>::peek"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "&*self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "*self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 88,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 91,
+   "expr": "{ let listener = SendWrapper::new(listener); let guard "
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 92,
+   "expr": "SendWrapper::new(listener)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 92,
+   "expr": "SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 92,
+   "expr": "listener"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "self.0.dyn_subscribe(Box::new(move |value: SendWrapper<"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "self.0"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "Box::new(move |value: SendWrapper<JsValue>| { let _ = l"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "Box::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "move |value: SendWrapper<JsValue>| { let _ = listener.c"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 93,
+   "expr": "{ let _ = listener.call1(&JsValue::NULL, &value); }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "listener.call1(&JsValue::NULL, &value)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "listener"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "&JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "&value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 94,
+   "expr": "value"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "JsValue::from(Box::into_raw(Box::new(guard)) as u32)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "JsValue::from"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "Box::into_raw(Box::new(guard)) as u32"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "Box::into_raw(Box::new(guard))"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "Box::into_raw"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "Box::new(guard)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "Box::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 96,
+   "expr": "guard"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 100,
+   "expr": "{ self.get() }"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 100,
+   "expr": "self.get()"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 100,
+   "expr": "self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 131,
+   "expr": "r#\" export class JsValueCalculated<T = any> { free(): v"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 150,
+   "expr": "{ let compute = SendWrapper::new(compute); Self(Calcula"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 151,
+   "expr": "SendWrapper::new(compute)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 151,
+   "expr": "SendWrapper::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 151,
+   "expr": "compute"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "Self(Calculated::new(move || { let result = compute.cal"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "Self"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "Calculated::new(move || { let result = compute.call0(&J"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "Calculated::new"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "move || { let result = compute.call0(&JsValue::NULL).un"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 152,
+   "expr": "{ let result = compute.call0(&JsValue::NULL).unwrap_or_"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "compute.call0(&JsValue::NULL).unwrap_or_else(|e| { let "
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "compute.call0(&JsValue::NULL)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "compute"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "&JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "JsValue::NULL"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "|e| { let msg = e.as_string().unwrap_or_else(|| { // Tr"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 153,
+   "expr": "{ let msg = e.as_string().unwrap_or_else(|| { // Try to"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 154,
+   "expr": "e.as_string().unwrap_or_else(|| { // Try to get the sta"
+  }
+ ]
+}

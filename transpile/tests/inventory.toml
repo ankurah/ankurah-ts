@@ -1,0 +1,162 @@
+# Corpus construct inventory, counted by transpile/tests/corpus_inventory.rs.
+# Generated: do not hand-edit. Refresh with:
+#     cd transpile && UPDATE_INVENTORY=1 cargo test --test corpus_inventory
+# Constructs inside macro invocations are not counted; macros are tallied by name.
+
+[proto]
+files = 17
+method_calls = 225
+field_accesses = 90
+closures = 32
+try_ops = 48
+awaits = 0
+into_calls = 24
+binary_ops = 19
+unary_ops = 3
+match_arms = 75
+if_lets = 1
+while_lets = 1
+trait_impls = 97
+generic_fns = 6
+
+[proto.macros]
+anyhow = 1
+assert_eq = 8
+format = 3
+panic = 2
+setup_scaffolding = 1
+to_sql_checked = 4
+vec = 4
+write = 62
+
+[ankql]
+files = 8
+method_calls = 367
+field_accesses = 35
+closures = 20
+try_ops = 88
+awaits = 0
+into_calls = 18
+binary_ops = 31
+unary_ops = 34
+match_arms = 161
+if_lets = 17
+while_lets = 1
+trait_impls = 23
+generic_fns = 6
+
+[ankql.macros]
+assert = 5
+assert_eq = 81
+format = 4
+matches = 2
+panic = 4
+parses_to = 11
+println = 8
+todo = 1
+unimplemented = 2
+unreachable = 1
+vec = 9
+write = 9
+
+[signals]
+files = 19
+method_calls = 466
+field_accesses = 211
+closures = 83
+try_ops = 6
+awaits = 2
+into_calls = 3
+binary_ops = 18
+unary_ops = 33
+match_arms = 18
+if_lets = 26
+while_lets = 0
+trait_impls = 70
+generic_fns = 33
+
+[signals.macros]
+assert = 3
+assert_eq = 25
+error = 1
+format = 3
+setup_scaffolding = 1
+thread_local = 1
+unreachable = 1
+vec = 1
+warn = 5
+write = 2
+
+[core]
+files = 67
+method_calls = 3432
+field_accesses = 1523
+closures = 222
+try_ops = 280
+awaits = 201
+into_calls = 71
+binary_ops = 315
+unary_ops = 300
+match_arms = 687
+if_lets = 145
+while_lets = 1
+trait_impls = 244
+generic_fns = 108
+
+[core.macros]
+action_error = 1
+action_info = 4
+anyhow = 23
+assert = 186
+assert_eq = 187
+custom_type = 1
+debug = 46
+error = 5
+format = 22
+hashmap = 2
+impl_provided_wrapper_types = 2
+info = 3
+into = 8
+json = 13
+macro_rules = 10
+matches = 5
+notice_info = 5
+panic = 20
+pn_value = 1
+select = 1
+selection = 2
+setup_scaffolding = 1
+stringify = 1
+unimplemented = 4
+unreachable = 1
+vec = 144
+warn = 23
+write = 39
+
+[storage-common]
+files = 8
+method_calls = 471
+field_accesses = 176
+closures = 51
+try_ops = 5
+awaits = 1
+into_calls = 5
+binary_ops = 61
+unary_ops = 40
+match_arms = 145
+if_lets = 36
+while_lets = 1
+trait_impls = 19
+generic_fns = 8
+
+[storage-common.macros]
+assert = 9
+assert_eq = 152
+macro_rules = 11
+matches = 12
+panic = 10
+pin = 1
+plan = 5
+selection = 14
+todo = 3
+vec = 77

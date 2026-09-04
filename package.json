@@ -10,6 +10,8 @@
     "build": "bun run --filter '*' build",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
+    "test:gate": "bash scripts/test-gate.sh",
+    "test:transpile": "cd transpile && cargo test",
     "audit": "bun run scripts/audit-port.ts",
     "lint": "eslint packages/"
   },

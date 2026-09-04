@@ -1,0 +1,317 @@
+{
+ "source": "inventory4.txt",
+ "sites": [
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 42,
+   "return_type": "u8",
+   "expr": "|c| c.iter().fold(0u8, |acc, &x| acc ^ x)"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 42,
+   "return_type": "u8",
+   "expr": "|acc, &x| acc ^ x"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 46,
+   "return_type": "String",
+   "expr": "|&x| WORDLIST[x as usize].to_string()"
+  },
+  {
+   "file": "proto/src/human_id.rs",
+   "line": 49,
+   "return_type": "String",
+   "expr": "|&x| format!(\"{:x?}\", x)"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 14,
+   "return_type": "String",
+   "expr": "|id| id.to_base64()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 21,
+   "return_type": "Result<EventId, DecodeError>",
+   "expr": "|s| s.try_into()"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 30,
+   "return_type": "usize",
+   "expr": "|i| i"
+  },
+  {
+   "file": "proto/src/clock.rs",
+   "line": 61,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidLength"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 25,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidLength"
+  },
+  {
+   "file": "proto/src/id.rs",
+   "line": 121,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidLength"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 37,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidLength"
+  },
+  {
+   "file": "proto/src/data.rs",
+   "line": 69,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidLength"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 65,
+   "return_type": "Box<dyn Error + Send + Sync, Global>",
+   "expr": "|e| Box::new(e) as Box<dyn Error + Sync + Send>"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 66,
+   "return_type": "Box<dyn Error + Send + Sync, Global>",
+   "expr": "|e| Box::new(e) as Box<dyn Error + Sync + Send>"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 87,
+   "return_type": "&str",
+   "expr": "|_| \"array too large\""
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 93,
+   "return_type": "Result<IsNull, Box<dyn Error + Send + Sync + 'static, Global>>",
+   "expr": "|e, w| match e.to_sql(member_type, w)? { IsNull::No => Ok(po"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 134,
+   "return_type": "usize",
+   "expr": "|i| i"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 163,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/postgres.rs",
+   "line": 183,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 41,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 49,
+   "return_type": "usize",
+   "expr": "|i| i"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 78,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 81,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 91,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 102,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 105,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 115,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 126,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 129,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "proto/src/wasm.rs",
+   "line": 139,
+   "return_type": "DecodeError",
+   "expr": "|_| DecodeError::InvalidFormat"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 158,
+   "return_type": "Vec<OrderByItem, Global>",
+   "expr": "|items| { items .iter() .filter(|item| { // Use the property"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 161,
+   "return_type": "bool",
+   "expr": "|item| { // Use the property name (last step) for column mat"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 170,
+   "return_type": "Option<Vec<OrderByItem, Global>>",
+   "expr": "|v| if v.is_empty() { None } else { Some(v) }"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 212,
+   "return_type": "Vec<String, Global>",
+   "expr": "|mut cols, pred| { match pred { Predicate::Comparison { left"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 390,
+   "return_type": "ParseError",
+   "expr": "|e| e.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 439,
+   "return_type": "String",
+   "expr": "|s| s.to_string()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 440,
+   "return_type": "ParseError",
+   "expr": "|_| ParseError::InvalidPredicate(\"SQL generation failed\".to_"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 599,
+   "return_type": "Expr",
+   "expr": "|item| item.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 605,
+   "return_type": "Expr",
+   "expr": "|item| item.into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 611,
+   "return_type": "Expr",
+   "expr": "|item| item.clone().into()"
+  },
+  {
+   "file": "ankql/src/ast.rs",
+   "line": 617,
+   "return_type": "Expr",
+   "expr": "|item| item.clone().into()"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 36,
+   "return_type": "ParseError",
+   "expr": "|e| ParseError::SyntaxError(format!(\"{}\", e))"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 234,
+   "return_type": "bool",
+   "expr": "|p| p.as_rule() == grammar::Rule::Identifier"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 234,
+   "return_type": "String",
+   "expr": "|p| p.as_str().trim().to_string()"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 264,
+   "return_type": "ParseError",
+   "expr": "|e| ParseError::InvalidPredicate(format!(\"Failed to parse nu"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 282,
+   "return_type": "bool",
+   "expr": "|p| p.as_rule() == grammar::Rule::Unsigned"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 286,
+   "return_type": "ParseError",
+   "expr": "|e| ParseError::InvalidPredicate(format!(\"Failed to parse li"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 322,
+   "return_type": "bool",
+   "expr": "|p| p.as_rule() == grammar::Rule::Identifier"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 336,
+   "return_type": "bool",
+   "expr": "|p| p.as_rule() == grammar::Rule::OrderDirection"
+  },
+  {
+   "file": "ankql/src/parser.rs",
+   "line": 337,
+   "return_type": "Result<OrderDirection, ParseError>",
+   "expr": "|p| match p.as_str().trim().to_uppercase().as_str() { \"ASC\" "
+  },
+  {
+   "file": "signals/src/reactive_graph.rs",
+   "line": 83,
+   "return_type": "Arc<BridgeSource, Global>",
+   "expr": "|| BridgeSource::new(id, signal)"
+  },
+  {
+   "file": "signals/src/jsvalue.rs",
+   "line": 114,
+   "return_type": "SendWrapper<JsValue>",
+   "expr": "|value: &T| SendWrapper::new(value.clone().into())"
+  }
+ ]
+}

@@ -5,17 +5,19 @@
 //! System types with proper TS implementations (Arc, RwLock, Result, etc.)
 //! don't need entries here — they pass through as-is.
 
-mod array;      // Vec<T> → T[]
-mod string;     // String/&str → string
-mod map;        // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
-mod set;        // HashSet<T>/BTreeSet<T> → Set<T>
-mod nullable;   // Option<T> → T | null
-mod number;     // AtomicUsize/AtomicU32 → number
-mod iterator;   // Iterator trait methods on arrays
+mod arc;
+mod array; // Vec<T> → T[]
 mod conversion; // into/from/as_ref — type-erased identity transforms
-mod arc;        // Arc<T>/Weak<T> — reference-counted pointer
+mod iterator; // Iterator trait methods on arrays
+mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
+mod nullable; // Option<T> → T | null
+mod number; // AtomicUsize/AtomicU32 → number
+mod set; // HashSet<T>/BTreeSet<T> → Set<T>
+mod string; // String/&str → string // Arc<T>/Weak<T> — reference-counted pointer
 
-use crate::resolve::ResolvedType;
+use crate::name_map::shape::{js_shape, JsShape};
+use crate::registry::TypeRegistry;
+use crate::ty::Ty;
 
 /// Translate a static/associated function call (e.g., Vec::new(), HashMap::new()).
 /// Returns Some(translation) if the call matches a native type constructor.
@@ -38,9 +40,9 @@ pub enum MethodTranslation {
 }
 
 /// Translate a method call based on the resolved receiver type.
-/// Returns Some(translation) if the type has a native mapping, None if unknown.
 pub fn translate_method(
-    receiver_ty: &ResolvedType,
+    reg: &TypeRegistry,
+    receiver_ty: &Ty,
     receiver: &str,
     rust_method: &str,
     args: &[String],
@@ -53,24 +55,18 @@ pub fn translate_method(
     // unwrap/expect is handled in body.rs before dispatch reaches here.
     // Result.unwrap() passes through to Passthrough (handled by Result's class method).
 
-    match receiver_ty {
-        ResolvedType::Array(_) => array::translate(receiver, rust_method, args),
-        ResolvedType::Nullable(_) => nullable::translate(receiver, rust_method, args),
-        ResolvedType::Named { name, .. } => {
-            match name.as_str() {
-                "Map" | "HashMap" | "BTreeMap" => map::translate(receiver, rust_method, args),
-                "Set" | "HashSet" | "BTreeSet" => set::translate(receiver, rust_method, args),
-                "Arc" | "Weak" | "Rc" => arc::translate(receiver_ty, receiver, rust_method, args),
-                _ => MethodTranslation::Passthrough,
-            }
-        }
-        ResolvedType::Primitive(p) => {
-            match p.as_str() {
-                "string" => string::translate(receiver, rust_method, args),
-                "number" => number::translate(receiver, rust_method, args),
-                _ => MethodTranslation::Passthrough,
-            }
-        }
+    // The shape a value takes in JavaScript decides which module knows how to
+    // translate a call on it — the same table emission writes the type from.
+    match js_shape(reg, receiver_ty) {
+        JsShape::Array(_) => array::translate(receiver, rust_method, args),
+        JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args),
+        JsShape::Map(_, _) => map::translate(receiver, rust_method, args),
+        JsShape::Set(_) => set::translate(receiver, rust_method, args),
+        JsShape::Rc(name) => arc::translate(&name, receiver, rust_method, args),
+        JsShape::Str => string::translate(receiver, rust_method, args),
+        JsShape::Number => number::translate(receiver, rust_method, args),
+        // `Box<T>` and `&T` are the value they hold.
+        JsShape::SameAs(inner) => translate_method(reg, &inner, receiver, rust_method, args),
         _ => MethodTranslation::Passthrough,
     }
 }
@@ -78,11 +74,7 @@ pub fn translate_method(
 /// Translate a method call when receiver type is unknown.
 /// Handles methods that are unambiguous regardless of type, plus common
 /// fallbacks for methods that are almost always the same translation.
-pub fn translate_untyped(
-    receiver: &str,
-    rust_method: &str,
-    args: &[String],
-) -> MethodTranslation {
+pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> MethodTranslation {
     // Type-erased conversions work without knowing the receiver type
     if let Some(result) = conversion::translate(receiver, rust_method, args) {
         return MethodTranslation::Expr(result);

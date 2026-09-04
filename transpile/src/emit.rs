@@ -2,12 +2,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::registry::TypeRegistry;
 use crate::types::*;
 
 // ── Top-level emitters ──────────────────────────────────────────────────
 
 pub fn emit_struct(
     out: &mut String,
+    reg: &TypeRegistry,
     s: &StructInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
@@ -35,22 +37,22 @@ pub fn emit_struct(
     // we don't emit TS `private` — all fields are accessible (default public in TS classes).
     // Public Rust fields are marked `readonly` for external consumers.
     for f in &s.fields {
-        if is_phantom_field(f) { continue; }
+        if is_phantom_field(reg, f) { continue; }
         if let Some(name) = &f.name {
             if f.is_pub {
-                out.push_str(&format!("  readonly {}: {};\n", name, f.ty));
+                out.push_str(&format!("  readonly {}: {};\n", name, f.ts_ty(reg)));
             } else {
-                out.push_str(&format!("  {}: {};\n", name, f.ty));
+                out.push_str(&format!("  {}: {};\n", name, f.ts_ty(reg)));
             }
         }
     }
 
     // Constructor with field assignments (skip PhantomData fields)
-    let real_fields: Vec<&FieldInfo> = s.fields.iter().filter(|f| !is_phantom_field(f)).collect();
+    let real_fields: Vec<&FieldInfo> = s.fields.iter().filter(|f| !is_phantom_field(reg, f)).collect();
     if !real_fields.is_empty() {
         out.push('\n');
         let params: Vec<String> = real_fields.iter()
-            .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ty)))
+            .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ts_ty(reg))))
             .collect();
         out.push_str(&format!("  constructor({}) {{\n    super();\n", params.join(", ")));
         for f in &real_fields {
@@ -65,13 +67,13 @@ pub fn emit_struct(
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
     emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
-    emit_derive_methods(out, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields);
+    emit_derive_methods(out, reg, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields);
 
     // Deref delegation for wrapper types (tuple structs with a single field)
     let has_deref = traits.map(|t| t.iter().any(|(n, _)| *n == "Deref")).unwrap_or(false);
     if has_deref && s.fields.len() == 1 {
         if let Some(field_name) = s.fields[0].name.as_deref() {
-            let inner_ty = &s.fields[0].ty;
+            let inner_ty = s.fields[0].ts_ty(reg);
             if inner_ty.ends_with("[]") {
                 out.push_str(&format!("\n  get length(): number {{\n    return this.{}.length;\n  }}\n", field_name));
                 out.push_str(&format!("\n  [Symbol.iterator](): Iterator<any> {{\n    return this.{}[Symbol.iterator]();\n  }}\n", field_name));
@@ -83,13 +85,14 @@ pub fn emit_struct(
             }
         }
     }
-    emit_struct_bincode(out, s, trait_impls);
+    emit_struct_bincode(out, reg, s, trait_impls);
 
     out.push_str("}\n\n");
 }
 
 pub fn emit_enum(
     out: &mut String,
+    reg: &TypeRegistry,
     e: &EnumInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     _trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
@@ -104,7 +107,7 @@ pub fn emit_enum(
             out.push_str(&format!("  {}: {{}};\n", v.name));
         } else {
             let fields: Vec<String> = v.fields.iter()
-                .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ty)))
+                .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ts_ty(reg))))
                 .collect();
             out.push_str(&format!("  {}: {{ {} }};\n", v.name, fields.join("; ")));
         }
@@ -123,8 +126,10 @@ pub fn emit_enum(
     // Enum-specific derive handling (clone needs variant-aware logic)
     if e.derives.iter().any(|d| d == "Clone") && emitted.insert("clone".to_string()) {
         // Clone via match — deep-clone each variant's fields
-        let has_complex_fields = e.variants.iter().any(|v| v.fields.iter().any(|f|
-            !is_primitive_ts_type(&f.ty) && f.ty != "Uint8Array"));
+        let has_complex_fields = e.variants.iter().any(|v| v.fields.iter().any(|f| {
+            let ty = f.ts_ty(reg);
+            !is_primitive_ts_type(&ty) && ty != "Uint8Array"
+        }));
         if has_complex_fields {
             out.push_str(&format!("\n  clone(): {} {{\n    return this.match({{\n", self_type));
             for v in &e.variants {
@@ -134,7 +139,7 @@ pub fn emit_enum(
                     let clone_fields: Vec<String> = v.fields.iter()
                         .filter_map(|f| {
                             let n = f.name.as_deref()?;
-                            let ty = f.ty.as_str();
+                            let ty = f.ts_ty(reg);
                             let base_ty = ty.trim_end_matches(" | null");
                             let nullable = ty.ends_with(" | null");
                             Some(if is_primitive_ts_type(base_ty) {
@@ -172,11 +177,11 @@ pub fn emit_enum(
     }
 
     // Handle remaining derives (PartialEq, Default, etc.) — pass empty fields for enums
-    emit_derive_methods(out, &e.name, &e.generics, &e.derives, &mut emitted, &[]);
+    emit_derive_methods(out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[]);
 
     if crate::bincode_module::has_serde_derive(&e.derives) {
         out.push('\n');
-        out.push_str(&crate::bincode_module::generate_enum_codec(e));
+        out.push_str(&crate::bincode_module::generate_enum_codec(reg, e));
     }
 
     out.push_str("}\n\n");
@@ -272,12 +277,15 @@ fn emit_trait_methods(
                     name: method.name.clone(),
                     ts_name,
                     is_pub: method.is_pub,
+                    vis: method.vis,
                     is_async: method.is_async,
                     is_static: method.is_static,
                     params: method.params.clone(),
                     return_type: ret_override.map(|s| s.to_string())
                         .unwrap_or_else(|| method.return_type.clone()),
+                    rust_return: method.rust_return.clone(),
                     generics: method.generics.clone(),
+                    type_params: method.type_params.clone(),
                     is_test: false,
                     body_ast: None,
                     body_ts: method.body_ts.clone(),
@@ -291,6 +299,7 @@ fn emit_trait_methods(
 
 fn emit_derive_methods(
     out: &mut String,
+    reg: &TypeRegistry,
     type_name: &str,
     generics: &str,
     derives: &[String],
@@ -318,8 +327,9 @@ fn emit_derive_methods(
                         Some(n) => n,
                         None => continue,
                     };
-                    let base_ty = f.ty.trim_end_matches(" | null");
-                    let is_nullable = f.ty.ends_with(" | null");
+                    let field_ty = f.ts_ty(reg);
+                    let base_ty = field_ty.trim_end_matches(" | null");
+                    let is_nullable = field_ty.ends_with(" | null");
 
                     if is_nullable {
                         out.push_str(&format!("    if (this.{} === null && other.{} === null) {{ /* both null, ok */ }}\n", n, n));
@@ -351,7 +361,7 @@ fn emit_derive_methods(
                         let clone_fields: Vec<String> = fields.iter()
                             .filter_map(|f| {
                                 let n = f.name.as_deref()?;
-                                let ty = f.ty.as_str();
+                                let ty = f.ts_ty(reg);
                                 let base_ty = ty.trim_end_matches(" | null");
                                 Some(if is_primitive_ts_type(base_ty) {
                                     format!("this.{}", n)
@@ -427,7 +437,7 @@ fn emit_derive_methods(
                     } else {
                         let default_fields: Vec<String> = fields.iter()
                             .filter_map(|f| {
-                                let ty = f.ty.as_str();
+                                let ty = f.ts_ty(reg);
                                 let base_ty = ty.trim_end_matches(" | null");
                                 Some(if ty.ends_with(" | null") {
                                     "null".to_string()
@@ -498,6 +508,7 @@ fn emit_field_eq(name: &str, ty: &str) -> String {
 
 fn emit_struct_bincode(
     out: &mut String,
+    reg: &TypeRegistry,
     s: &StructInfo,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
 ) {
@@ -509,9 +520,9 @@ fn emit_struct_bincode(
     if !has_custom_serde && crate::bincode_module::has_serde_derive(&s.derives) {
         out.push('\n');
         if s.fields.iter().all(|f| f.name.is_some()) {
-            out.push_str(&crate::bincode_module::generate_struct_codec(s));
+            out.push_str(&crate::bincode_module::generate_struct_codec(reg, s));
         } else {
-            out.push_str(&crate::bincode_module::generate_tuple_struct_codec(s));
+            out.push_str(&crate::bincode_module::generate_tuple_struct_codec(reg, s));
         }
     }
 }
@@ -681,8 +692,8 @@ fn is_rust_only_type(ty: &str) -> bool {
 }
 
 /// Check if a field should be skipped in TS emission (zero-sized Rust types)
-fn is_phantom_field(f: &FieldInfo) -> bool {
-    f.ty.contains("PhantomData")
+fn is_phantom_field(reg: &TypeRegistry, f: &FieldInfo) -> bool {
+    f.ts_ty(reg).contains("PhantomData")
 }
 
 fn is_skipped_trait(trait_name: &str) -> bool {

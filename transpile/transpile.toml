@@ -98,79 +98,135 @@ files = [
 Selection = "@ankurah/ankql"
 
 # ── System types ──────────────────────────────────────────────────────
-# Foundational runtime types from @ankurah/base/std/.
-# These are loaded into the TypeRegistry so the transpiler can resolve
-# field access, method chains, and deref insertion through them.
+# Foundational runtime types from @ankurah/base/std/. They are declared into
+# the registry's reserved system module, so a crate type with the same leaf
+# name shadows them exactly where Rust says it does and never displaces them.
 # Distinct from [provided_impls] (subject-code types in *.provided.ts).
+#
+# Every signature here is written as Rust and parsed by syn — the same door the
+# std-surface step uses once these entries become signature-only Rust stub
+# files. The signatures describe the polyfill in @ankurah/base, which is why
+# Mutex::lock yields the guard rather than a LockResult.
+#
+# Methods that return an iterator are absent: `slice::Iter` needs associated
+# types, which arrive with the std surface.
 
 [system_types.Arc]
+path = "std::sync::Arc"
 deref_field = "value"
 type_params = ["T"]
 methods = { clone = "Arc<T>", downgrade = "Weak<T>" }
 
 [system_types.Weak]
+path = "std::sync::Weak"
 type_params = ["T"]
-methods = { upgrade = "Arc<T> | null", clone = "Weak<T>" }
+methods = { upgrade = "Option<Arc<T>>", clone = "Weak<T>" }
 
 [system_types.Mutex]
+path = "std::sync::Mutex"
 type_params = ["T"]
 methods = { lock = "MutexGuard<T>" }
 
 [system_types.MutexGuard]
+path = "std::sync::MutexGuard"
 deref_field = "value"
 type_params = ["T"]
 
 [system_types.RwLock]
+path = "std::sync::RwLock"
 type_params = ["T"]
 methods = { read = "RwLockReadGuard<T>", write = "RwLockWriteGuard<T>" }
 
 [system_types.RwLockReadGuard]
+path = "std::sync::RwLockReadGuard"
 deref_field = "value"
 type_params = ["T"]
 
 [system_types.RwLockWriteGuard]
+path = "std::sync::RwLockWriteGuard"
 deref_field = "value"
 type_params = ["T"]
 
 [system_types.RefCell]
+path = "std::cell::RefCell"
 type_params = ["T"]
 methods = { borrow = "Ref<T>", borrow_mut = "RefMut<T>" }
 
 [system_types.Ref]
+path = "std::cell::Ref"
 deref_field = "value"
 type_params = ["T"]
 
 [system_types.RefMut]
+path = "std::cell::RefMut"
 deref_field = "value"
 type_params = ["T"]
 
 [system_types.Box]
+path = "std::boxed::Box"
 deref_field = ""  # transparent — unwrap to inner type, emit nothing
 type_params = ["T"]
 
+# Option and String are declared so that resolution can name them. Option's
+# methods replace the nullable special case the old registry hard-coded.
+[system_types.Option]
+path = "std::option::Option"
+type_params = ["T"]
+methods = { unwrap = "T", expect = "T", is_some = "bool", is_none = "bool" }
+
+[system_types.String]
+path = "std::string::String"
+
 [system_types.Result]
+path = "std::result::Result"
 type_params = ["T", "E"]
-methods = { unwrap = "T", expect = "T", is_ok = "boolean", is_err = "boolean" }
+methods = { unwrap = "T", expect = "T", is_ok = "bool", is_err = "bool" }
 
 [system_types.Vec]
+path = "std::vec::Vec"
 type_params = ["T"]
-methods = { len = "number", push = "void", pop = "T | null", iter = "T[]", clone = "T[]" }
+methods = { len = "usize", push = "()", pop = "Option<T>", clone = "Vec<T>" }
 
 [system_types.HashMap]
+path = "std::collections::HashMap"
 type_params = ["K", "V"]
-methods = { get = "V | null", insert = "void", len = "number", iter = "Tuple<K, V>[]", contains_key = "boolean" }
+methods = { get = "Option<&V>", insert = "Option<V>", len = "usize", contains_key = "bool" }
 
 [system_types.BTreeMap]
+path = "std::collections::BTreeMap"
 type_params = ["K", "V"]
-methods = { get = "V | null", insert = "void", len = "number", iter = "Tuple<K, V>[]", contains_key = "boolean" }
+methods = { get = "Option<&V>", insert = "Option<V>", len = "usize", contains_key = "bool" }
 
 [system_types.HashSet]
+path = "std::collections::HashSet"
 type_params = ["T"]
-methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
+methods = { insert = "bool", contains = "bool", len = "usize" }
 
 [system_types.BTreeSet]
+path = "std::collections::BTreeSet"
 type_params = ["T"]
-methods = { insert = "void", contains = "boolean", len = "number", iter = "T[]" }
+methods = { insert = "bool", contains = "bool", len = "usize" }
+
+# The port models `thread_local!` as a ThreadLocal<T> value; Rust's name for
+# what the macro declares is `std::thread::LocalKey`, and that is the path a
+# written type reaches it by.
+[system_types.ThreadLocal]
+path = "std::thread::LocalKey"
+type_params = ["T"]
+
+# Atomics are plain numbers in single-threaded JavaScript. Declared so that the
+# native-type translations recognise them by identity rather than by name.
+[system_types.AtomicUsize]
+path = "std::sync::atomic::AtomicUsize"
+
+[system_types.AtomicU32]
+path = "std::sync::atomic::AtomicU32"
+
+[system_types.AtomicBool]
+path = "std::sync::atomic::AtomicBool"
+
+[system_types.Infallible]
+path = "std::convert::Infallible"
 
 [managed_files]
 # Phase 3: files the transpiler owns (start empty, grow gradually)

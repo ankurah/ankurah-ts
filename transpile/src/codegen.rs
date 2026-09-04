@@ -2,28 +2,31 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::registry::TypeRegistry;
 use crate::types::*;
 use crate::emit;
 use crate::imports;
 
 /// Generate TypeScript skeleton with resolved imports (used by batch command)
 pub fn generate_ts_with_imports(
+    reg: &TypeRegistry,
     file: &RustFile,
     rust_crate_path: &str,
     type_to_file: &HashMap<String, String>,
     current_module: &str,
 ) -> String {
-    generate_ts_with_imports_configured(file, rust_crate_path, type_to_file, current_module, None)
+    generate_ts_with_imports_configured(reg, file, rust_crate_path, type_to_file, current_module, None)
 }
 
 pub fn generate_ts_with_imports_configured(
+    reg: &TypeRegistry,
     file: &RustFile,
     rust_crate_path: &str,
     type_to_file: &HashMap<String, String>,
     current_module: &str,
     config: Option<&crate::config::Config>,
 ) -> String {
-    let base = generate_ts_inner(file, rust_crate_path, config);
+    let base = generate_ts_inner(reg, file, rust_crate_path, config);
 
     let mut local_types: HashSet<String> = HashSet::new();
     for s in &file.structs { local_types.insert(s.name.clone()); }
@@ -33,11 +36,11 @@ pub fn generate_ts_with_imports_configured(
     // Collect all referenced types — including from function/method bodies
     let mut referenced: HashSet<String> = HashSet::new();
     for s in &file.structs {
-        for f in &s.fields { imports::collect_type_refs(&f.ty, &mut referenced); }
+        for f in &s.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); }
     }
     for e in &file.enums {
         for v in &e.variants {
-            for f in &v.fields { imports::collect_type_refs(&f.ty, &mut referenced); }
+            for f in &v.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); }
         }
     }
     for imp in &file.impls {
@@ -139,16 +142,16 @@ pub fn generate_ts_with_imports_configured(
 
 /// Generate TypeScript skeleton from extracted Rust file
 /// `config` is optional — when provided, skips types/methods listed in provided_impls
-pub fn generate_ts(file: &RustFile, rust_crate_path: &str) -> String {
-    generate_ts_inner(file, rust_crate_path, None)
+pub fn generate_ts(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str) -> String {
+    generate_ts_inner(reg, file, rust_crate_path, None)
 }
 
 /// Generate with config awareness
-pub fn generate_ts_configured(file: &RustFile, rust_crate_path: &str, config: &crate::config::Config) -> String {
-    generate_ts_inner(file, rust_crate_path, Some(config))
+pub fn generate_ts_configured(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: &crate::config::Config) -> String {
+    generate_ts_inner(reg, file, rust_crate_path, Some(config))
 }
 
-fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&crate::config::Config>) -> String {
+fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: Option<&crate::config::Config>) -> String {
     let mut out = String::new();
 
     // Line 1: MIRRORS annotation
@@ -199,11 +202,11 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     let mut all_type_refs = String::new();
     for s in &file.structs {
         if provided_set.contains(&s.name) { continue; }
-        for f in &s.fields { all_type_refs.push_str(&f.ty); all_type_refs.push(' '); }
+        for f in &s.fields { all_type_refs.push_str(&f.ts_ty(reg)); all_type_refs.push(' '); }
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) { continue; }
-        for v in &e.variants { for f in &v.fields { all_type_refs.push_str(&f.ty); all_type_refs.push(' '); } }
+        for v in &e.variants { for f in &v.fields { all_type_refs.push_str(&f.ts_ty(reg)); all_type_refs.push(' '); } }
     }
     for imp in &file.impls {
         if provided_set.contains(&imp.target_type) { continue; }
@@ -278,12 +281,12 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
     let mut referenced_types: HashSet<String> = HashSet::new();
     for s in &file.structs {
         if provided_set.contains(&s.name) { continue; }
-        for f in &s.fields { imports::collect_type_refs(&f.ty, &mut referenced_types); }
+        for f in &s.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced_types); }
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) { continue; }
         for v in &e.variants {
-            for f in &v.fields { imports::collect_type_refs(&f.ty, &mut referenced_types); }
+            for f in &v.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced_types); }
         }
     }
     // Also scan function/method signatures and bodies
@@ -371,13 +374,13 @@ fn generate_ts_inner(file: &RustFile, rust_crate_path: &str, config: Option<&cra
         if provided_set.contains(&s.name) {
             continue;
         }
-        emit::emit_struct(&mut out, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name));
+        emit::emit_struct(&mut out, reg, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name));
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) {
             continue;
         }
-        emit::emit_enum(&mut out, e, &inherent_methods, &trait_impls, &trait_methods);
+        emit::emit_enum(&mut out, reg, e, &inherent_methods, &trait_impls, &trait_methods);
     }
     for t in &file.traits {
         emit::emit_trait(&mut out, t);

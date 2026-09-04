@@ -7,8 +7,8 @@
 //! Custom serde impls (like EntityId's raw bytes) are detected and skipped —
 //! those types must provide their own encode/decode.
 
+use crate::registry::TypeRegistry;
 use crate::types::{StructInfo, EnumInfo};
-use crate::name_map;
 
 /// Check if a struct/enum has derive(Serialize, Deserialize)
 pub fn has_serde_derive(derives: &[String]) -> bool {
@@ -17,14 +17,14 @@ pub fn has_serde_derive(derives: &[String]) -> bool {
 }
 
 /// Generate encode/decode methods for a struct with named fields
-pub fn generate_struct_codec(info: &StructInfo) -> String {
+pub fn generate_struct_codec(reg: &TypeRegistry, info: &StructInfo) -> String {
     let mut out = String::new();
 
     // encode
     out.push_str("  encode(writer: BincodeWriter): void {\n");
     for field in &info.fields {
         if let Some(name) = &field.name {
-            out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", name), &field.ty)));
+            out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", name), &field.ts_ty(reg))));
         }
     }
     out.push_str("  }\n\n");
@@ -34,7 +34,7 @@ pub fn generate_struct_codec(info: &StructInfo) -> String {
     out.push_str(&format!("  static decode(reader: BincodeReader): {} {{\n", full_name));
     for field in &info.fields {
         if let Some(name) = &field.name {
-            out.push_str(&format!("    const {} = {};\n", name, decode_expr(&field.ty)));
+            out.push_str(&format!("    const {} = {};\n", name, decode_expr(&field.ts_ty(reg))));
         }
     }
     let field_names: Vec<&str> = info.fields.iter()
@@ -47,7 +47,7 @@ pub fn generate_struct_codec(info: &StructInfo) -> String {
 }
 
 /// Generate encode/decode methods for a tuple struct (e.g., Clock(Vec<EventId>))
-pub fn generate_tuple_struct_codec(info: &StructInfo) -> String {
+pub fn generate_tuple_struct_codec(reg: &TypeRegistry, info: &StructInfo) -> String {
     let mut out = String::new();
     let full_name = format!("{}{}", info.name, info.generics);
 
@@ -56,18 +56,18 @@ pub fn generate_tuple_struct_codec(info: &StructInfo) -> String {
         let field_name = field.name.as_deref().unwrap_or("_0");
 
         out.push_str("  encode(writer: BincodeWriter): void {\n");
-        out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", field_name), &field.ty)));
+        out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", field_name), &field.ts_ty(reg))));
         out.push_str("  }\n\n");
 
         out.push_str(&format!("  static decode(reader: BincodeReader): {} {{\n", full_name));
-        out.push_str(&format!("    const {} = {};\n", field_name, decode_expr(&field.ty)));
+        out.push_str(&format!("    const {} = {};\n", field_name, decode_expr(&field.ts_ty(reg))));
         out.push_str(&format!("    return new {}({});\n", info.name, field_name));
         out.push_str("  }\n");
     } else {
         out.push_str("  encode(writer: BincodeWriter): void {\n");
         for field in &info.fields {
             let name = field.name.as_deref().unwrap_or("_0");
-            out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", name), &field.ty)));
+            out.push_str(&format!("    {};\n", encode_expr(&format!("this.{}", name), &field.ts_ty(reg))));
         }
         out.push_str("  }\n\n");
 
@@ -75,7 +75,7 @@ pub fn generate_tuple_struct_codec(info: &StructInfo) -> String {
         let mut names = Vec::new();
         for field in &info.fields {
             let name = field.name.as_deref().unwrap_or("_0");
-            out.push_str(&format!("    const {} = {};\n", name, decode_expr(&field.ty)));
+            out.push_str(&format!("    const {} = {};\n", name, decode_expr(&field.ts_ty(reg))));
             names.push(name);
         }
         out.push_str(&format!("    return new {}({});\n", info.name, names.join(", ")));
@@ -86,7 +86,7 @@ pub fn generate_tuple_struct_codec(info: &StructInfo) -> String {
 }
 
 /// Generate encode/decode methods for an enum
-pub fn generate_enum_codec(info: &EnumInfo) -> String {
+pub fn generate_enum_codec(reg: &TypeRegistry, info: &EnumInfo) -> String {
     let mut out = String::new();
 
     // Find serde(other) variant if any
@@ -106,7 +106,7 @@ pub fn generate_enum_codec(info: &EnumInfo) -> String {
             out.push_str(&format!("        writer.writeVariant({});\n", i));
             for field in &variant.fields {
                 if let Some(name) = &field.name {
-                    out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ty)));
+                    out.push_str(&format!("        {};\n", encode_expr(&format!("v.{}", name), &field.ts_ty(reg))));
                 }
             }
             out.push_str("      },\n");
@@ -125,7 +125,7 @@ pub fn generate_enum_codec(info: &EnumInfo) -> String {
         out.push_str(&format!("      case {}: {{\n", i));
         for field in &variant.fields {
             if let Some(name) = &field.name {
-                out.push_str(&format!("        const {} = {};\n", name, decode_expr(&field.ty)));
+                out.push_str(&format!("        const {} = {};\n", name, decode_expr(&field.ts_ty(reg))));
             }
         }
         if variant.fields.is_empty() {

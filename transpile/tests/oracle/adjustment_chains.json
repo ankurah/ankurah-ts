@@ -1,0 +1,119 @@
+{
+ "source": "spike-run3.txt",
+ "sites": [
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 9,
+   "expr": "f.debug_struct(\"Broadcast\").field(\"listeners\", &self.0.liste",
+   "truncated": true,
+   "steps": [
+    {
+     "adjustment": "Deref(None)",
+     "from": "&mut DebugStruct<'_, '_>",
+     "to": "DebugStruct<'_, '_>"
+    },
+    {
+     "adjustment": "Borrow(Ref(Mut))",
+     "from": "DebugStruct<'_, '_>",
+     "to": "&mut DebugStruct<'_, '_>"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 9,
+   "expr": "f",
+   "steps": [
+    {
+     "adjustment": "Deref(None)",
+     "from": "&mut Formatter<'_>",
+     "to": "Formatter<'_>"
+    },
+    {
+     "adjustment": "Borrow(Ref(Mut))",
+     "from": "Formatter<'_>",
+     "to": "&mut Formatter<'_>"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 24,
+   "expr": "\"Broadcast\"",
+   "steps": [
+    {
+     "adjustment": "Deref(None)",
+     "from": "&'static str",
+     "to": "str"
+    },
+    {
+     "adjustment": "Borrow(Ref(Shared))",
+     "from": "str",
+     "to": "&str"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 43,
+   "expr": "\"listeners\"",
+   "steps": [
+    {
+     "adjustment": "Deref(None)",
+     "from": "&'static str",
+     "to": "str"
+    },
+    {
+     "adjustment": "Borrow(Ref(Shared))",
+     "from": "str",
+     "to": "&str"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 56,
+   "expr": "&self.0.listeners.read().unwrap().len()",
+   "steps": [
+    {
+     "adjustment": "Deref(None)",
+     "from": "&usize",
+     "to": "usize"
+    },
+    {
+     "adjustment": "Borrow(Ref(Shared))",
+     "from": "usize",
+     "to": "&usize"
+    },
+    {
+     "adjustment": "Pointer(Unsize)",
+     "from": "&usize",
+     "to": "&(dyn Debug + 'static)"
+    }
+   ]
+  },
+  {
+   "file": "signals/src/broadcast.rs",
+   "line": 45,
+   "col": 57,
+   "expr": "self.0.listeners.read().unwrap()",
+   "steps": [
+    {
+     "adjustment": "Deref(Some(OverloadedDeref(Shared)))",
+     "from": "RwLockReadGuard<'_, HashMap<usize, BroadcastListener<T>, RandomState, Global>>",
+     "to": "HashMap<usize, BroadcastListener<T>, RandomState, Global>"
+    },
+    {
+     "adjustment": "Borrow(Ref(Shared))",
+     "from": "HashMap<usize, BroadcastListener<T>, RandomState, Global>",
+     "to": "&HashMap<usize, BroadcastListener<T>, RandomState, Global>"
+    }
+   ]
+  }
+ ]
+}
