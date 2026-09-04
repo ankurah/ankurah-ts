@@ -103,19 +103,30 @@ export function dropOwned(value: unknown): void {
 }
 
 export class AkObject {
-  readonly #label: string;
+  readonly #$label: string;
   #dropped = false;
   #moved = false;
+  // Fields a partial move has taken out. Allocated on the first takeField(),
+  // because every AkObject pays for a field it declares and almost none of them
+  // are ever moved out of.
+  #movedFields: Set<string> | null = null;
 
   /** @param label — what to call this value in diagnostics. Defaults to the
    *  class name; a guard or a container field passes the site it stands for. */
   constructor(label?: string) {
-    this.#label = label ?? this.constructor.name;
-    leakRegistry.register(this, { label: this.#label, creationStack: creationStack() }, this);
+    this.#$label = label ?? this.constructor.name;
+    leakRegistry.register(this, { label: this.#$label, creationStack: creationStack() }, this);
   }
 
-  /** What diagnostics call this value. */
-  protected get label(): string { return this.#label; }
+  /**
+   * What diagnostics call this value.
+   *
+   * `$`-prefixed because it is a convenience, not part of the mechanism, and a
+   * Rust identifier cannot start with `$` — so no field a ported struct
+   * declares can ever shadow it. It was `label` until a `label` field in the
+   * corpus collided with it; the runtime gives way to the source.
+   */
+  protected get $label(): string { return this.#$label; }
 
   /** Released by its owner. */
   get isDropped(): boolean { return this.#dropped; }
@@ -141,8 +152,8 @@ export class AkObject {
    */
   drop(): void {
     assertNotPoisoned();
-    if (this.#moved) fatalUseAfterMove(this.#label);
-    if (this.#dropped) fatalDoubleDrop(this.#label);
+    if (this.#moved) fatalUseAfterMove(this.#$label);
+    if (this.#dropped) fatalDoubleDrop(this.#$label);
     this.#dropped = true;
     leakRegistry.unregister(this);
     try {
@@ -165,12 +176,48 @@ export class AkObject {
 
   /**
    * The values this object owns, which drop() releases after onDrop() has run.
-   * The default is every own property. A type that keeps its state in #private
-   * fields — Enum, the containers — overrides this to hand them over, since the
-   * cascade cannot see private state.
+   * The default is every own property, minus any a partial move has taken out.
+   * A type that keeps its state in #private fields — Enum, the containers,
+   * OwnedClosure — overrides this to hand them over, since the cascade cannot
+   * see private state.
    */
   protected ownedFields(): unknown[] {
-    return Object.getOwnPropertyNames(this).map((key) => (this as any)[key]);
+    const names = Object.getOwnPropertyNames(this);
+    const taken = this.#movedFields;
+    if (taken === null) return names.map((key) => (this as any)[key]);
+    // Filter by name before reading: a moved-out field has been replaced with a
+    // getter that reports use-after-move, and reading it here would fire it.
+    return names.filter((key) => !taken.has(key)).map((key) => (this as any)[key]);
+  }
+
+  /**
+   * Rust's partial move: `let x = s.field;` takes one field out of a struct and
+   * leaves the rest of it usable and droppable.
+   *
+   * This is the one member of AkObject the emitted code calls from outside the
+   * type, and it is public for that reason: a partial move happens in the scope
+   * that owns the struct, not inside it. The field's value becomes the caller's,
+   * the cascade stops releasing it, and reading it again is fatal — Rust would
+   * reject that read at compile time.
+   *
+   * The struct itself is not moved. Its remaining fields are still its own and
+   * its drop still runs, which is exactly what Rust does with the rest of a
+   * partially moved struct.
+   */
+  takeField<K extends string & keyof this>(name: K): this[K] {
+    this.assertNotDropped();
+    const taken = this.#movedFields ?? (this.#movedFields = new Set<string>());
+    if (taken.has(name)) fatalUseAfterMove(`${this.#$label}.${name}`);
+    const value = (this as any)[name];
+    taken.add(name);
+    // A data property cannot report its own use. Replacing it with a getter is
+    // what makes the read after the move fatal rather than silently undefined.
+    Object.defineProperty(this, name, {
+      configurable: true,
+      enumerable: true,
+      get: () => fatalUseAfterMove(`${this.#$label}.${name}`),
+    });
+    return value as this[K];
   }
 
   /** Symbol.dispose — delegates to drop() */
@@ -180,8 +227,8 @@ export class AkObject {
 
   protected assertNotDropped(): void {
     assertNotPoisoned();
-    if (this.#moved) fatalUseAfterMove(this.#label);
-    if (this.#dropped) fatalUseAfterDrop(this.#label);
+    if (this.#moved) fatalUseAfterMove(this.#$label);
+    if (this.#dropped) fatalUseAfterDrop(this.#$label);
   }
 
   /**

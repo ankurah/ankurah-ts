@@ -3,7 +3,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   Struct, Enum, Result, Drop, DropGuard, Arc, Borrow, BorrowMut,
   Mutex, RefCell, RwLock, AsyncMutex, ThreadLocal, disposeSymbol, clearFatalLatch,
-  OwnershipFatal,
+  OwnershipFatal, OwnedClosure, AnyhowError,
 } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
@@ -1396,6 +1396,7 @@ class LeakedArcInner extends Struct {}
 class DroppedArcInner extends Struct {}
 class LeakedWeakInner extends Struct {}
 class DroppedWeakInner extends Struct {}
+class MovedEnum extends Enum<{ V: { inner: Inner } }> {}
 
 describe('Leak registry', () => {
   test('every tracked class reports an abandoned instance and not a dropped one', async () => {
@@ -1461,6 +1462,11 @@ describe('Leak registry', () => {
         release: () => { new AsyncMutex(1, 'DroppedAsyncMutex').drop(); },
       },
       {
+        kind: 'OwnedClosure', leaked: 'LeakedClosure', dropped: 'DroppedClosure',
+        abandon: () => { new OwnedClosure([], () => {}, 'LeakedClosure'); },
+        release: () => { new OwnedClosure([], () => {}, 'DroppedClosure').drop(); },
+      },
+      {
         kind: 'Arc', leaked: 'Arc<LeakedArcInner>', dropped: 'Arc<DroppedArcInner>',
         abandon: () => { Arc.new(new LeakedArcInner()); },
         release: () => { Arc.new(new DroppedArcInner()).drop(); },
@@ -1493,6 +1499,40 @@ describe('Leak registry', () => {
       expect([c.kind, reported(c.leaked)]).toEqual([c.kind, true]);
       expect([c.kind, reported(c.dropped)]).toEqual([c.kind, false]);
     }
+  });
+
+  test('an enum consumed by intoMatch is not reported as a leak', async () => {
+    const reports = await leakReportsDuring(() => {
+      new LeakProbe();
+      const payload = new Inner();
+      const taken = new MovedEnum('V', { inner: payload }).intoMatch({ V: (v) => v.inner });
+      taken.drop();
+    });
+
+    expect(reports.some((r) => r.startsWith('BUG: LeakProbe was'))).toBe(true);
+    expect(reports.filter((r) => r.startsWith('BUG: MovedEnum'))).toEqual([]);
+  });
+
+  test('a closure consumed by callOnce is not reported as a leak', async () => {
+    const reports = await leakReportsDuring(() => {
+      new LeakProbe();
+      const captured = new Inner();
+      new OwnedClosure([captured], () => { captured.drop(); }, 'ConsumedClosure').callOnce();
+    });
+
+    expect(reports.some((r) => r.startsWith('BUG: LeakProbe was'))).toBe(true);
+    expect(reports.filter((r) => r.includes('ConsumedClosure'))).toEqual([]);
+  });
+
+  test('an abandoned anyhow error is reported and a dropped one is not', async () => {
+    const reports = await leakReportsDuring(() => {
+      new LeakProbe();
+      AnyhowError.msg('abandoned');
+      AnyhowError.msg('released').drop();
+    });
+
+    expect(reports.some((r) => r.startsWith('BUG: LeakProbe was'))).toBe(true);
+    expect(reports.filter((r) => r.startsWith('BUG: anyhow::Error was garbage collected')).length).toBe(1);
   });
 
   test('a moved Result is not reported as a leak', async () => {
@@ -1529,5 +1569,319 @@ describe('Private field limitation', () => {
     expect(exposed.dropCount).toBe(1); // cascade reached public field
     expect(secret.dropCount).toBe(0);  // cascade missed #private field
     secret.drop(); // a type keeping private state overrides ownedFields()
+  });
+});
+
+// ── Consuming match, partial moves, owned closures ──
+//
+// The three things the emitter needs beyond the borrowing forms above: a match
+// on a scrutinee taken by value, one field moved out of a struct, and a `move`
+// closure whose captures the cascade can actually see.
+
+describe('Consuming match', () => {
+  test('intoMatch hands the payload to the arm, which owns it from there', () => {
+    const inner = new Inner();
+    const value = TestEnum.WithData({ inner });
+    const arm = value.intoMatch({
+      Empty: () => 'empty',
+      WithData: (payload) => { payload.inner.drop(); return 'data'; },
+      WithPrimitive: () => 'primitive',
+    });
+    expect(arm).toBe('data');
+    expect(inner.dropCount).toBe(1);
+  });
+
+  test('the enum is moved, so it is never dropped and every later use is fatal', () => {
+    const value = TestEnum.WithPrimitive({ count: 3 });
+    const count = value.intoMatch({
+      Empty: () => 0,
+      WithData: () => 0,
+      WithPrimitive: (payload) => payload.count,
+    });
+    expect(count).toBe(3);
+    expectFatal(() => value.type, 'BUG: TestEnum was used after being moved');
+    expectFatal(() => value.drop(), 'BUG: TestEnum was used after being moved');
+  });
+
+  test('the cascade no longer holds a payload an arm took', () => {
+    // Proved from the other side: the arm keeps the payload, and nothing else
+    // releases it, so dropping it here is the only drop it gets.
+    const inner = new Inner();
+    const taken = TestEnum.WithData({ inner }).intoMatch({
+      Empty: () => null,
+      WithData: (payload) => payload.inner,
+      WithPrimitive: () => null,
+    });
+    expect(taken).toBe(inner);
+    expect(inner.dropCount).toBe(0);
+    taken?.drop();
+    expect(inner.dropCount).toBe(1);
+  });
+
+  test('an arm that throws releases the payload it was given', () => {
+    // Rust's unwind drops the arm's bindings, and after the move nobody else
+    // can.
+    const inner = new Inner();
+    const value = TestEnum.WithData({ inner });
+    expect(() => value.intoMatch({
+      Empty: () => 0,
+      WithPrimitive: () => 0,
+      WithData: () => { throw new Error('arm failed'); },
+    })).toThrow('arm failed');
+    expect(inner.dropCount).toBe(1);
+  });
+
+  test('a missing arm is fatal and leaves the enum whole', () => {
+    const value = TestEnum.Empty();
+    expectFatal(
+      () => (value as unknown as { intoMatch: (arms: object) => unknown }).intoMatch({
+        WithData: () => 0,
+        WithPrimitive: () => 0,
+      }),
+      "BUG: match on TestEnum has no arm for 'Empty'",
+    );
+    value.drop();
+  });
+
+  test('Result inherits it, alongside the self-taking methods that are the same move', () => {
+    const inner = new Inner();
+    const taken = Result.Ok<Inner, string>(inner).intoMatch({
+      Ok: (payload) => payload._0,
+      Err: () => null,
+    });
+    expect(taken).toBe(inner);
+    inner.drop();
+
+    const other = Result.Ok<number, string>(1);
+    expect(other.unwrap()).toBe(1);
+    expectFatal(() => other.isOk(), 'BUG: Result was used after being moved');
+  });
+});
+
+describe('Partial moves', () => {
+  class Pair extends Struct {
+    first: Inner;
+    second: Inner;
+    constructor() {
+      super();
+      this.first = new Inner();
+      this.second = new Inner();
+    }
+  }
+
+  test('takeField hands one field over and leaves the rest to the cascade', () => {
+    const pair = new Pair();
+    const first = pair.first;
+    const second = pair.second;
+    expect(pair.takeField('first')).toBe(first);
+
+    pair.drop();
+    expect(first.dropCount).toBe(0); // the caller's now
+    expect(second.dropCount).toBe(1);
+    first.drop();
+  });
+
+  test('reading a field after it was moved out is fatal', () => {
+    const pair = new Pair();
+    const taken = pair.takeField('first');
+    expectFatal(() => pair.first, 'BUG: Pair.first was used after being moved');
+    expectFatal(() => pair.takeField('first'), 'BUG: Pair.first was used after being moved');
+    pair.drop();
+    taken.drop();
+  });
+
+  test('the fields that were not taken still read and still drop', () => {
+    const pair = new Pair();
+    const taken = pair.takeField('first');
+    expect(pair.second).toBeInstanceOf(Inner);
+    const second = pair.second;
+    pair.drop();
+    expect(second.dropCount).toBe(1);
+    taken.drop();
+  });
+});
+
+describe('OwnedClosure', () => {
+  test('dropping the closure releases what it captured, exactly once', () => {
+    const captured = new Inner();
+    const closure = new OwnedClosure([captured], () => captured.dropCount);
+    expect(closure.call()).toBe(0);
+    closure.drop();
+    expect(captured.dropCount).toBe(1);
+  });
+
+  test('captures given as a record work the same way', () => {
+    const captured = new Inner();
+    new OwnedClosure({ captured }, () => captured.dropCount).drop();
+    expect(captured.dropCount).toBe(1);
+  });
+
+  test('calling a dropped closure is fatal', () => {
+    const captured = new Inner();
+    const closure = new OwnedClosure([captured], () => 1, 'Listener');
+    closure.drop();
+    expectFatal(() => closure.call(), 'BUG: Listener was used after being dropped');
+  });
+
+  test('a Vec of closures is released by the cascade of whatever holds it', () => {
+    class Broadcast extends Struct {
+      listeners: OwnedClosure<[number], void>[];
+      constructor(listeners: OwnedClosure<[number], void>[]) {
+        super();
+        this.listeners = listeners;
+      }
+    }
+    const first = new Inner();
+    const second = new Inner();
+    const seen: number[] = [];
+    const broadcast = new Broadcast([
+      new OwnedClosure<[number], void>([first], (n) => { seen.push(n); }),
+      new OwnedClosure<[number], void>([second], (n) => { seen.push(n * 2); }),
+    ]);
+
+    for (const listener of broadcast.listeners) listener.call(3);
+    expect(seen).toEqual([3, 6]);
+
+    broadcast.drop();
+    expect(first.dropCount).toBe(1);
+    expect(second.dropCount).toBe(1);
+  });
+});
+
+// ── Reserved member names ──
+
+describe('Reserved member names', () => {
+  test('a ported struct may declare a field called label', () => {
+    // The whole reason AkObject's diagnostic accessor is $label. While it was
+    // `label`, this class did not even compile: a public field cannot stand
+    // over a protected member of the base class.
+    class Labelled extends Struct {
+      label: string;
+      inner: Inner;
+      constructor(label: string) {
+        super();
+        this.label = label;
+        this.inner = new Inner();
+      }
+    }
+    const value = new Labelled('query-test');
+    expect(value.label).toBe('query-test');
+
+    const inner = value.inner;
+    value.drop();
+    expect(inner.dropCount).toBe(1); // and the cascade still reaches the rest
+  });
+
+  test('a label field does not become the name diagnostics use', () => {
+    class Labelled extends Struct {
+      label = 'not the diagnostic name';
+    }
+    const value = new Labelled();
+    value.drop();
+    expectFatal(() => value.drop(), 'BUG: Labelled was dropped twice');
+  });
+
+  test('$label still reports the diagnostic name to a subclass', () => {
+    class Named extends Struct {
+      label = 'a field of the ported struct';
+      diagnosticName(): string { return this.$label; }
+    }
+    const value = new Named();
+    expect(value.diagnosticName()).toBe('Named');
+    value.drop();
+  });
+});
+
+// ── FnOnce closures ──
+
+describe('OwnedClosure.callOnce', () => {
+  test('the body takes the captures, and the closure is consumed', () => {
+    const captured = new Inner();
+    const closure = new OwnedClosure([captured], () => { captured.drop(); return 'ran'; }, 'Once');
+    expect(closure.callOnce()).toBe('ran');
+    expect(captured.dropCount).toBe(1);
+    expectFatal(() => closure.callOnce(), 'BUG: Once was used after being moved');
+    expectFatal(() => closure.drop(), 'BUG: Once was used after being moved');
+  });
+
+  test('the closure stops owning what the body took', () => {
+    // `call` leaves the captures with the closure; `callOnce` hands them over,
+    // and the difference is which one releases them.
+    const forCall = new Inner();
+    const kept = new OwnedClosure([forCall], () => 1);
+    kept.call();
+    kept.drop();
+    expect(forCall.dropCount).toBe(1); // the closure released it
+
+    const forOnce = new Inner();
+    const consumed = new OwnedClosure([forOnce], () => { forOnce.drop(); return 1; });
+    consumed.callOnce();
+    expect(forOnce.dropCount).toBe(1); // the body released it, exactly once
+  });
+
+  test('a body that throws releases the captures it was given', () => {
+    const captured = new Inner();
+    const closure = new OwnedClosure([captured], (): number => { throw new Error('body failed'); });
+    expect(() => closure.callOnce()).toThrow('body failed');
+    expect(captured.dropCount).toBe(1);
+  });
+});
+
+// ── anyhow::Error ──
+
+describe('anyhow::Error', () => {
+  class IoError extends Error {}
+
+  test('from wraps any error value and renders its message', () => {
+    const error = AnyhowError.from(new IoError('disk is on fire'));
+    expect(error.toString()).toBe('disk is on fire');
+    error.drop();
+  });
+
+  test('from is the identity on an error that already is one', () => {
+    const already = AnyhowError.msg('already boxed');
+    expect(AnyhowError.from(already)).toBe(already);
+    already.drop();
+  });
+
+  test('msg builds an error that is only a message', () => {
+    const error = AnyhowError.msg('nothing underlies this');
+    expect(error.toString()).toBe('nothing underlies this');
+    expect(error.root_cause()).toBe(null);
+    error.drop();
+  });
+
+  test('context chains, and the two renderings are Display and its alternate', () => {
+    const cause = new IoError('connection reset');
+    const error = AnyhowError.from(cause).context('fetching the system root');
+    expect(error.toString()).toBe('fetching the system root');
+    expect(error.toStringAlternate()).toBe('fetching the system root: connection reset');
+    expect(error.root_cause()).toBe(cause);
+    error.drop();
+  });
+
+  test('context consumes the error it was given', () => {
+    const inner = AnyhowError.msg('inner');
+    const outer = inner.context('outer');
+    expectFatal(() => inner.root_cause(), 'BUG: anyhow::Error was used after being moved');
+    expectFatal(() => inner.drop(), 'BUG: anyhow::Error was used after being moved');
+    outer.drop();
+  });
+
+  test('downcast_ref finds the original error anywhere in the chain', () => {
+    const original = new IoError('io');
+    const error = AnyhowError.from(original).context('one').context('two');
+    expect(error.toStringAlternate()).toBe('two: one: io');
+    expect(error.downcast_ref(IoError)).toBe(original);
+    expect(error.downcast_ref(RangeError)).toBe(null);
+    error.drop();
+  });
+
+  test('the chain is owned, so dropping the error releases what it holds', () => {
+    const owned = new Inner();
+    const error = AnyhowError.from(owned).context('while doing the thing');
+    expect(owned.dropCount).toBe(0);
+    error.drop();
+    expect(owned.dropCount).toBe(1);
   });
 });

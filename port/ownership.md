@@ -93,7 +93,106 @@ throw. `Result`'s `self`-taking methods (`unwrap`, `expect`, `map`, `andThen`,
 `ok`, …) consume the receiver, exactly as Rust does; `isOk`/`isErr` borrow.
 `Option<T>` is `T | null`.
 
+**A `match` on a scrutinee taken by value becomes `intoMatch(arms)`.**
+`match(arms)` borrows — it reads the payload and leaves the enum whole, which is
+what a match on a reference needs, and it is what the emitter uses in borrow
+position. `intoMatch(arms)` is the by-value form: it hands the payload to the
+arm as the arm's own, marks the enum moved, and takes the payload out of
+`ownedFields()` so the cascade never reaches it. If the arm's body throws it
+drops the payload first, because Rust's unwind drops the arm's bindings and
+after the move nobody else can. The enum is moved rather than dropped, so the
+emitter emits no drop after one and every later use of the binding is fatal.
+`Result` inherits `intoMatch`; its self-taking methods are the same move written
+out for the two variants it has.
+
+**A partial move — `let x = s.field;` — becomes `s.takeField('field')`.** The
+field's value becomes the caller's, the cascade stops releasing it, and reading
+it again is fatal, because the read is what Rust would have rejected. The struct
+itself is *not* moved: its remaining fields are still its own and its drop still
+runs, which is what Rust does with the rest of a partially moved struct.
+`takeField` is the one member of `AkObject` that emitted code calls from outside
+the type, and it is public for that reason — a partial move happens in the scope
+that owns the struct, not inside it. Re-initialising a moved-out field, which
+Rust does allow, has no form here.
+
+**A `move` closure that captures values with drop glue becomes an
+`OwnedClosure`.** A Rust `move` closure owns what it captured and releases it
+when the closure is dropped — a listener holding an `Arc` keeps that `Arc` alive
+for exactly as long as the listener lives. A JS closure captures the same values
+and the cascade cannot see any of them: it walks own properties, and a capture
+is not a property. So the emitter writes
+`new OwnedClosure(captures, fn, label?)`, listing the captured values as an
+array or a record beside the body that closes over them, and from there they are
+ordinary owned fields: dropping the closure cascades into them, and a closure
+stored in a `Vec` is released by whatever drops the `Vec`. It is invoked as
+`closure.call(...args)` and not directly, because a callable object would let
+emitted code write `f(x)` and reach the body without passing the liveness check
+that is the whole point — calling a dropped closure is fatal. A closure that
+captures nothing droppable stays a plain function; there is nothing for the
+cascade to find, and wrapping it would only add a drop the emitter then has to
+place.
+
+A `FnOnce` call is `closure.callOnce(...)` rather than `call`. It consumes the
+closure: the captures become the body's, so the closure stops owning them and is
+left moved, and a second call or a drop after one is fatal. The body closes over
+the captures lexically either way — what `callOnce` changes is who releases
+them, and from there it is the body's job, exactly as it is in a Rust `FnOnce`
+whose captures become locals in it.
+
+**A Rust error boxed into `anyhow::Error` becomes an `AnyhowError`.** It is what
+the 29 `?` sites in core convert into, and it is a tracked value like anything
+else, because it owns the error values in its chain. `AnyhowError.from(e)` is
+Rust's blanket `impl<E: std::error::Error> From<E>` — the conversion `?`
+performs — and it is the identity on an error that already is one, the way `?`
+on an `anyhow::Error` does not box it twice. `AnyhowError.msg(text)` is
+`Error::msg`. `err.context(msg)` takes `self`, so it consumes the error it was
+called on and moves its chain into the one it returns; the emitter emits no drop
+after it. `toString()` is anyhow's `Display` — the outermost message —
+and `toStringAlternate()` is `{:#}`, the whole chain joined with `": "`.
+`downcast_ref(Ctor)` and `root_cause()` borrow, exactly as their Rust
+counterparts do: what they hand back still belongs to the chain, and the caller
+must not drop it. `anyhow::Result<T>` needs nothing of its own — it is
+`Result<T, AnyhowError>`.
+
 ---
+
+### Reserved member names
+
+The runtime lives on the same objects the port's data does, so its members and a
+Rust struct's fields share one namespace. Two rules keep them apart.
+
+**Contract members. An emitted class must never declare a field or method with
+one of these names.** They are the mechanism, not a convenience, and there is no
+way for the runtime to give them up. Shadowing one fails quietly or not at all: a
+class field declaration creates an own property that hides the prototype member,
+so the cascade, a liveness check or a match would run against the struct's data
+instead of the runtime's. The emitter renames a Rust field that collides.
+
+| Where | Names |
+|---|---|
+| Every ported type (`Struct`, `Enum`, `Drop`, anything extending `AkObject`) | `drop`, `onDrop`, `ownedFields`, `takeField`, `isDropped`, `isMoved`, and the protected helpers `assertNotDropped` and `markMoved` |
+| Enums, including `Result` | `match`, `intoMatch`, `type`, `value` |
+| `OwnedClosure` | `call`, `callOnce` |
+
+`[Symbol.dispose]` is not on the list: it is a computed symbol key, and no Rust
+identifier can produce one.
+
+**Convenience members are namespaced with `$`, so they can never collide.** A
+Rust identifier cannot start with `$`, so a `$` name is unreachable from a field
+name by construction. Anything the runtime offers that is a convenience rather
+than the mechanism takes one.
+
+| Member | On | What it is |
+|---|---|---|
+| `$label` | `AkObject` (protected) | What diagnostics call this value. |
+
+`$label` was `label` until a ported struct with a `label` field collided with it
+— which did not merely shadow it but failed to compile, since a public field
+cannot stand over a protected base member. The runtime moved, and any
+convenience member added later takes a `$` name for the same reason. Note that
+the `label` *parameters* the provided containers accept — `new Mutex(v, 'X')`,
+`oneshot.channel('peerRequest')`, `spawn(fut, 'retryLoop')` — are parameters and
+options keys, not members, and are not part of this.
 
 ## Fatal, panic, and the latch
 
@@ -190,6 +289,11 @@ stack.
 | `AtomicBool` / `AtomicU32` | `boolean` / `number` | Single-threaded JS. |
 | Lifetimes (`'a`) | runtime liveness checks | No compile-time lifetimes. |
 | `fn method(self)` (move) | consuming method + moved state | No move semantics in JS. |
+| `match value { … }` (by value) | `enum.intoMatch(arms)` | Arm owns the payload; the enum is left moved. `match()` borrows. |
+| `let x = s.field` (partial move) | `s.takeField('field')` | The rest of the struct stays usable and droppable. |
+| `move \|…\| { … }` with droppable captures | `OwnedClosure` | `new OwnedClosure(captures, fn)`, invoked with `.call(...)`; `.callOnce(...)` for `FnOnce`. |
+| `anyhow::Error` | `AnyhowError`, or `anyhow.Error` | Owns its chain. `from`, `msg`, `context`, `downcast_ref`, `root_cause`. |
+| `anyhow::Result<T>` | `Result<T, AnyhowError>` | No type of its own. |
 
 A container owns its contents: dropping a `Mutex<T>` drops the `T`, as in Rust.
 A guard does not own what it points at — it reads and writes through the
@@ -197,6 +301,183 @@ container's own storage, so `*guard = v` replaces what the container holds and
 drops what was there.
 
 ---
+
+## The tokio layer
+
+Ankurah's core is written against tokio, and the transpiler does not translate
+tokio: it is a Rust runtime, not part of the family of code the port carries
+over. `packages/base/src/tokio/` provides stand-ins that behave the way the
+tokio types behave, and the transpiler maps the crate onto them by identity —
+a path rewrite and nothing else.
+
+Two spellings reach the same objects. `tokio` mirrors the crate's module tree,
+for a path-qualified `tokio::sync::mpsc::channel(1024)`; the flat names are for
+`use tokio::sync::Notify;`, which is how the corpus almost always writes it.
+tokio's `Mutex` and `RwLock` carry an `Async` prefix in the flat spelling,
+because `std::sync::Mutex` and `std::sync::RwLock` are ported too and a bare
+name would be ambiguous; under `tokio.sync` they are spelled as tokio spells
+them, and both classes answer to tokio's method names as well as this runtime's.
+
+| Rust | TS | Notes |
+|------|-----|-------|
+| `tokio::spawn(fut)` | `spawn(fut)` | Also accepts an async function, which is called from a fresh turn — tokio does not poll a spawned future on the spawning thread. Returns a `JoinHandle`. |
+| `tokio::task::spawn_local` | `spawn_local` | The same thing here: one thread, so tokio's distinction has nothing to distinguish. |
+| `tokio::task::yield_now()` | `yield_now()` | A macrotask turn, so timers get their turn too. |
+| `tokio::task::JoinHandle<T>` | `JoinHandle<T>` | `abort()`, `is_finished()`; awaiting yields `Result<T, JoinError>`. Dropping it detaches the task. |
+| `tokio::task::JoinError` | `JoinError` | `is_cancelled()`, `is_panic()` borrow; `into_panic()` and `try_into_panic()` take `self` and move the payload out. |
+| `tokio::select! { … }` | `select([{ tag, promise }, …])` | Resolves to `{ tag, value }`. A macro cannot be a function, so the arm bodies stay with the emitter. |
+| `tokio::sync::Notify` | `Notify` | `notified()`, `notify_one()`, `notify_last()`, `notify_waiters()`. One permit, one broadcast generation. |
+| `tokio::sync::Notified<'_>` | `Notified` | Records the broadcast generation at construction and joins the queue at its first poll. `enable()` performs that poll. |
+| `tokio::sync::oneshot::channel()` | `oneshot.channel()` | Returns `[Sender, Receiver]`, in Rust's order. |
+| `oneshot::Sender::send(self, v)` | `sender.send(v)` | `Result<undefined, T>`. Takes `self`, so it moves the sender. |
+| `oneshot::Receiver<T>` | `oneshot.Receiver<T>` | Awaiting yields `Result<T, RecvError>`; also `try_recv()`, `close()`. |
+| `oneshot::error::{RecvError, TryRecvError}` | `oneshot.RecvError`, `oneshot.TryRecvError` | The `error` module is flattened into its parent. |
+| `tokio::sync::mpsc::channel(n)` | `mpsc.channel(n)` | Sending waits for capacity. A buffer of 0 panics, as in tokio. |
+| `mpsc::unbounded_channel()` | `mpsc.unbounded_channel()` | |
+| `mpsc::{Sender, Receiver, UnboundedSender, UnboundedReceiver}` | the same four names, flat | For `use tokio::sync::mpsc::Sender;`. These four hold the bare names, so oneshot's two ends keep the namespace form — `oneshot.Sender`, `oneshot.Receiver`. |
+| `Sender::{send, try_send, clone}` | the same names | A send that fails hands its value back to the caller. |
+| `Receiver::recv()` | `receiver.recv()` | `Promise<T \| null>`; `null` is Rust's `None` — every sender dropped and the buffer drained. |
+| `mpsc::error::{SendError, TrySendError, TryRecvError}` | `mpsc.SendError`, … | Flattened the same way. |
+| `tokio::sync::Mutex<T>` | `AsyncMutex<T>`, or `tokio.sync.Mutex` | `lock()` is tokio's name for this runtime's `acquire()` and is the same call; also `try_lock()`, `into_inner()`, `get_mut()`. |
+| `tokio::sync::RwLock<T>` | `AsyncRwLock<T>`, or `tokio.sync.RwLock` | `read()`/`write()` are async; `try_read()`/`try_write()` return a `Result`; also `into_inner()`, `get_mut()`. First-come-first-served, so a waiting writer cannot be starved. |
+| `tokio::sync::TryLockError` | `TryLockError` | |
+| `tokio::time::sleep(d)` | `sleep(ms)` | `Duration` is `Copy` and has no drop glue, so it crosses as a number of milliseconds. |
+| `tokio::time::timeout(d, fut)` | `timeout(ms, promise)` | `Result<T, Elapsed>`. |
+
+### Named futures have one consumer
+
+`Notified`, `oneshot::Receiver` and `JoinHandle` are structs with `impl Future`
+in Rust, not `async fn` calls, so the source can hold one, hand it to `select!`,
+and drop it. Each has exactly one owner, and the first thing that takes it takes
+it for good.
+
+**Awaiting one moves it.** `.await` takes a future by value, exactly as
+`Result`'s self-taking methods take a Result, so the emitter emits no drop for
+an awaited future and every later use of the binding — a second await, a
+`try_recv()`, a `drop()` — is a fatal use-after-move. Nothing is lost by not
+running the drop glue: a future only completes once its own cleanup has nothing
+left to do, because a `Notified` that completes has already left the waiter
+queue and a `oneshot::Receiver` that completes has already outlived its sender.
+
+**`select` takes a different claim.** It borrows each branch for the length of
+the race — enough to make a competing await fatal — and leaves ownership with
+the emitted scope. It takes the winner's output and nothing else.
+
+**Cancelling one is dropping it before it completes**, and each `onDrop()` does
+what tokio does there: a `Notified` leaves the waiter queue and hands any
+one-at-a-time notification it was given but never received on to the next
+waiter; a `oneshot::Receiver` closes the channel and releases a value in flight;
+a `JoinHandle` detaches its task and releases a result nobody took.
+
+**A `Notified` registers at its first poll, not at construction.** It records
+the broadcast generation when it is created — that is what makes
+`const n = notify.notified(); await doThing(); await n;` immune to a
+`notify_waiters()` during `doThing` — but it consumes a stored permit and joins
+the `notify_one` queue only when polled or `enable()`d. So a permit goes to the
+waiter that is polled first, not the one created first, and wake order among
+queued waiters is poll order.
+
+### A channel end owns nothing
+
+The queue belongs to the channel, so dropping one `Sender` out of five releases
+no messages; the receiving end releases what is still queued when it drops. A
+value nobody can receive any more is always released rather than stranded —
+handed back to the caller where `send` can do that, dropped where it cannot.
+
+**Dropping a `Notify` with a waiter queued on it, an `AsyncRwLock` under a
+guard, or calling `into_inner()`/`get_mut()` on a lock somebody holds, is
+fatal** — `fatalOutstandingGuard`, the same contract the other containers keep.
+Rust's borrow checker makes all of them impossible, so reaching one means the
+emitted scope is wrong. `into_inner()` moves the value to its caller and takes
+the container out of the leak registry without dropping it, so the emitter
+emits no drop after one.
+
+**Constructors take an optional TS-only `label`**, as `Mutex` and `RwLock`
+already do — `new Notify('systemReady')`, `oneshot.channel('peerRequest')`,
+`spawn(fut, 'retryLoop')` — so a leak report names the site rather than only the
+type.
+
+### Cancellation does not carry over
+
+`select!` drops the futures that lost, which cancels them: a `sleep` stops, a
+`recv` gives up its place in the queue, a spawned task stops at its next await
+point. Nothing cancels a Promise. A losing branch here runs to completion and
+everything it does on the way it still does. The same gap runs through
+`timeout`, which drops the future when the deadline wins, and `abort()`, which
+in tokio stops the task.
+
+What the layer does instead:
+
+- `select` transfers exactly one branch's output and releases everything that
+  arrives after the decision — which is what stops a losing lock guard from
+  holding its lock forever.
+- `timeout` releases a value that arrives after the deadline, so a late result
+  is not reported as a leak.
+- `abort()` resolves the handle with a cancelled `JoinError` at once and drops
+  whatever the task eventually produces. `is_finished()` therefore reports the
+  handle, not the task: it is true straight after `abort()` while the body is
+  still running.
+
+**What the emitter owes a select.** `select!` drops every branch future when it
+returns, winner and losers alike, and an unwind out of it drops them too — so
+the emitted scope drops all of them in a `finally`, not just the losers and not
+only on the path where the select returned a tag. For a `Notified`, a
+`oneshot::Receiver` or a `JoinHandle` that drop *is* the cancellation, and for a
+`Notified` it is also what hands its notification on to the next waiter. A
+losing `sleep`, `timeout` or spawned task cannot be cancelled at all.
+
+**Arbitration is deterministic.** Among branches that are ready at the select's
+first checkpoint, the earliest in the list wins; after that it is first past the
+post. tokio's unbiased `select!` picks a random polling order among ready
+branches, so a fixed order is one of its permitted outcomes — and it is exactly
+what `biased;` asks for.
+
+### A fatal inside a promise reaction
+
+An ownership fatal that surfaces in a task body, a losing select branch, or the
+release of a value that arrived after its deadline has no caller to be thrown
+to: a throw there becomes a rejection nobody is listening to. Every one of those
+sites routes through `reportAsyncFatal()`, which sets the poison latch and
+re-raises the error from a fresh host task, so the throw still reaches the host.
+Such a fatal is **never wrapped in a `JoinError`** — a `JoinError` is a Rust
+error value the emitted code is entitled to handle, and an ownership bug is not
+one — so a task that raises one leaves its handle unsettled.
+
+`hostTask()` is `queueMicrotask` where the host has one and `setTimeout(cb, 0)`
+where it does not; a Hermes build can have `FinalizationRegistry` without
+`queueMicrotask`, and a `ReferenceError` there would bury the very report it was
+called to deliver.
+
+Anything that is *not* an ownership bug and has no caller — a detached task that
+threw, a losing branch that failed after the select returned — goes to
+`setOnDiagnostic(handler)`, which does nothing by default. tokio's runtime drops
+a panic once the JoinHandle is gone, so silence is the faithful default; a host
+that wants to see them wires the handler up.
+
+### Durations
+
+`Duration` is `Copy`, so it crosses as a number of milliseconds:
+`Duration::from_millis(n)` is `n`, `Duration::from_secs(n)` is `n * 1000`. A
+host timer cannot hold an arbitrary `Duration` — `setTimeout` keeps its delay in
+a signed 32-bit field — so `sleep` and `timeout` chase a monotonic deadline in
+hops the host can hold, which also stops a wait from finishing early when the
+host coalesces a timer. Anything under a millisecond rounds up.
+
+### Deliberately not provided
+
+The emitter must reject these with a target-specific diagnostic rather than
+emitting a call that resolves against the stub and then fails at runtime:
+
+- **`tokio::sync::watch`** and **`tokio::time::interval`** — nothing in the
+  corpus uses either.
+- **`spawn_blocking`** — there is no thread pool in a browser, and running the
+  closure inline would block the event loop, which is the one thing the call
+  exists to avoid. The corpus uses it only in the native sqlite and sled
+  engines, which the browser build does not reach.
+- **`blocking_lock` / `blocking_read` / `blocking_write`** — a blocking lock on
+  a single-threaded event loop is a deadlock, not a wait.
+- **`tokio::net`** — the native websocket connectors, not the browser target.
+- **`#[tokio::test]`** — a test-harness attribute, not a runtime primitive.
 
 ## Inherent limitations
 

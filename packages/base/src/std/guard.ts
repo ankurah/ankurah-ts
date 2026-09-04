@@ -68,7 +68,7 @@ abstract class SlotGuard<T> extends Guard {
    */
   protected store(v: T): void {
     const replaced = this.#slot.get();
-    if (replaced === v && !isCopyLike(v)) fatalSelfAssignment(this.label);
+    if (replaced === v && !isCopyLike(v)) fatalSelfAssignment(this.$label);
     dropOwned(replaced);
     this.#slot.set(v);
   }

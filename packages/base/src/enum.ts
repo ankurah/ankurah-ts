@@ -1,5 +1,5 @@
 // TS-ONLY: Base class for ported Rust enums
-import { AkObject } from './object.ts';
+import { AkObject, dropOwned } from './object.ts';
 import { fatalNonExhaustiveMatch } from './drop_registry.ts';
 
 /**
@@ -24,6 +24,7 @@ import { fatalNonExhaustiveMatch } from './drop_registry.ts';
 export class Enum<V extends Record<string, object> = Record<string, object>> extends AkObject {
   readonly #type: string & keyof V;
   readonly #value: V[keyof V];
+  #payloadMoved = false;
 
   constructor(type: string & keyof V, value: V[keyof V]) {
     super();
@@ -49,8 +50,41 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
   match<R>(arms: { [K in keyof V]: (value: V[K]) => R }): R {
     this.assertNotDropped();
     const arm = (arms as any)[this.#type];
-    if (!arm) fatalNonExhaustiveMatch(this.label, String(this.#type));
+    if (!arm) fatalNonExhaustiveMatch(this.$label, String(this.#type));
     return arm(this.#value);
+  }
+
+  /**
+   * `match` on a scrutinee taken by value: the arm's bindings own the payload
+   * from here, and this enum is gone.
+   *
+   * Named for Rust's `into_` convention, which is what a by-value conversion is
+   * spelled with — `match self { … }` has no name of its own to borrow, and
+   * calling this one `matchOwned` or `consume` would say less about what the
+   * arm receives. It leaves this enum moved rather than dropped, exactly as
+   * `Result`'s self-taking methods do, so the emitter emits no drop after one
+   * and every later use is fatal.
+   *
+   * `Result` inherits this, and its `unwrap()` / `unwrapErr()` / `ok()` family
+   * are the same move written out for the two variants it has.
+   */
+  intoMatch<R>(arms: { [K in keyof V]: (value: V[K]) => R }): R {
+    this.assertNotDropped();
+    const arm = (arms as any)[this.#type];
+    if (!arm) fatalNonExhaustiveMatch(this.$label, String(this.#type));
+    const payload = this.#value;
+    // The payload belongs to the arm now, so the cascade must not reach it —
+    // and this enum, being moved, is never dropped and never a leak.
+    this.#payloadMoved = true;
+    this.markMoved();
+    try {
+      return arm(payload);
+    } catch (thrown) {
+      // Rust's unwind drops the bindings the arm was given, and nobody else can
+      // own them now.
+      dropOwned(payload);
+      throw thrown;
+    }
   }
 
   is<K extends keyof V>(variant: K): this is Enum<V> & { type: K; value: V[K] } {
@@ -58,8 +92,11 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
     return this.#type === variant;
   }
 
-  // The payload is #private, so the cascade cannot see it by walking properties.
+  // The payload is #private, so the cascade cannot see it by walking properties
+  // — unless intoMatch has already handed it to an arm, in which case it is no
+  // longer this enum's to release.
   protected override ownedFields(): unknown[] {
+    if (this.#payloadMoved) return super.ownedFields();
     return [...super.ownedFields(), this.#value];
   }
 

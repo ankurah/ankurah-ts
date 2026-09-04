@@ -78,6 +78,69 @@ export function clearFatalLatch(): void {
   poisoned = false;
 }
 
+// ── Reporting from a promise reaction ────────────────────────────────────
+
+const hasQueueMicrotask = typeof queueMicrotask === 'function';
+
+/**
+ * Run `cb` on a fresh host task, off whatever stack we are on now. A throw from
+ * there reaches the host's uncaught-error path; a throw from inside a promise
+ * reaction only becomes a rejection nobody is listening to.
+ *
+ * queueMicrotask is looked up rather than captured, because a test harness
+ * replaces the global to intercept the leak reports below; and it is
+ * feature-detected, because a Hermes build can have FinalizationRegistry
+ * without it, and a ReferenceError here would bury the very report it was
+ * called to deliver.
+ */
+export function hostTask(cb: () => void): void {
+  if (hasQueueMicrotask) {
+    queueMicrotask(cb);
+    return;
+  }
+  setTimeout(cb, 0);
+}
+
+/**
+ * Re-report a fatal that surfaced inside a promise reaction — a task body, a
+ * losing select branch, the release of a value that arrived after its deadline.
+ * Returning it as a rejection would let it be handled as a Rust error, and the
+ * async layer must never do that: the runtime has found something Rust would
+ * not have compiled.
+ *
+ * Returns false for anything that is not an ownership fatal, so the caller can
+ * go on handling an ordinary failure.
+ */
+export function reportAsyncFatal(thrown: unknown): boolean {
+  if (!(thrown instanceof OwnershipFatal)) return false;
+  poisoned = true;
+  hostTask(() => { throw thrown; });
+  return true;
+}
+
+// ── Diagnostics ──────────────────────────────────────────────────────────
+
+/** Where the runtime says something that is not an ownership bug. */
+export type DiagnosticHandler = (message: string, detail?: unknown) => void;
+
+let onDiagnostic: DiagnosticHandler = () => {};
+
+/**
+ * Where to send a report that is not an ownership bug — a detached task that
+ * failed, a losing select branch that threw. There is no caller to hand those
+ * to, and tokio's runtime drops them once the JoinHandle is gone, so the
+ * default here does nothing. A host that wants to see them wires this up:
+ * `setOnDiagnostic((message, detail) => console.error(message, detail))`.
+ */
+export function setOnDiagnostic(handler: DiagnosticHandler): void {
+  onDiagnostic = handler;
+}
+
+/** @internal — report through the host's diagnostic handler. */
+export function diagnostic(message: string, detail?: unknown): void {
+  onDiagnostic(message, detail);
+}
+
 // ── The conditions Rust rejects at compile time ──────────────────────────
 
 export function fatalDoubleDrop(label: string): never {
@@ -145,8 +208,9 @@ function reportLeak(info: LeakInfo): void {
     `Something owned it and never called drop().\n` +
     `Allocated at:\n${info.creationStack}`;
   // A FinalizationRegistry callback has no caller to throw to, so this one
-  // fatal is deferred to a microtask. Everything else throws where it happens.
-  queueMicrotask(() => fatal(message));
+  // fatal is deferred to a fresh host task. Everything else throws where it
+  // happens.
+  hostTask(() => fatal(message));
 }
 
 const finalizationRegistryAvailable = typeof FinalizationRegistry === 'function';

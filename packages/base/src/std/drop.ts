@@ -25,14 +25,14 @@ export abstract class Drop extends AkObject {
  */
 export class DropGuard {
   #dropped = false;
-  readonly #label: string;
+  readonly #$label: string;
 
   /** @param label — what to call the host in diagnostics; defaults to its class
    *  name. Containers pass the name of the field they stand for, so a leak
    *  report points at the site rather than at the type. */
   constructor(host: object, label?: string) {
-    this.#label = label ?? host.constructor.name;
-    leakRegistry.register(host, { label: this.#label, creationStack: creationStack() }, host);
+    this.#$label = label ?? host.constructor.name;
+    leakRegistry.register(host, { label: this.#$label, creationStack: creationStack() }, host);
   }
 
   markDropped(host: object): void {
@@ -46,7 +46,7 @@ export class DropGuard {
   // useless "DropGuard has already been dropped".
   assertNotDropped(): void {
     assertNotPoisoned();
-    if (this.#dropped) fatalUseAfterDrop(this.#label);
+    if (this.#dropped) fatalUseAfterDrop(this.#$label);
   }
 
   get isDropped(): boolean { return this.#dropped; }
