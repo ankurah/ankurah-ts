@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/ankql/src/grammar.rs (tests module)
 // Tests the hand-written parser output for cases that the pest grammar tests covered.
 // Divergence: Rust tests use parses_to! macro on pest token stream;
-// TS tests verify the parsed AST from the recursive descent parser [E6].
+// TS tests verify the parsed AST from the hand-written grammar matcher [E6].
 
 import { describe, test, expect } from 'bun:test';
 import { parseSelection } from './parser.ts';
@@ -68,7 +68,9 @@ describe('grammar (parser output equivalence)', () => {
 
   // Rust: fn test_boolean_expression()
   test('boolean expression: a.foo = b.foo AND a.bar > 1 OR b.bar > 1', () => {
-    // AND binds tighter than OR: OR(AND(a.foo = b.foo, a.bar > 1), b.bar > 1)
+    // Or(And(a.foo = b.foo, a.bar > 1), b.bar > 1) — not because AND binds tighter,
+    // which it does not, but because folding this text left to right lands there
+    // anyway. `a = 1 OR b = 2 AND c = 3` is where the two disagree.
     using selection = parseSelection('a.foo = b.foo AND a.bar > 1 OR b.bar > 1');
     expect(selection.predicate.is('Or')).toBe(true);
     if (selection.predicate.is('Or')) {
@@ -112,7 +114,7 @@ describe('grammar (parser output equivalence)', () => {
   test('LIMIT clause', () => {
     using selection = parseSelection('true LIMIT 10');
     expect(selection.predicate.is('True')).toBe(true);
-    expect(selection.limit).toBe(10);
+    expect(selection.limit).toBe(10n);
   });
 
   // Rust: fn test_order_by_and_limit()
@@ -122,7 +124,7 @@ describe('grammar (parser output equivalence)', () => {
     expect(selection.orderBy).not.toBeNull();
     expect(selection.orderBy!.length).toBe(1);
     assertOrderByItem(selection.orderBy![0], 'name', 'Asc');
-    expect(selection.limit).toBe(5);
+    expect(selection.limit).toBe(5n);
   });
 
   // Rust: fn test_order_by_multiple_items()

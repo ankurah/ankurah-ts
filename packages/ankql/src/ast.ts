@@ -4,7 +4,8 @@
 // Rust: fn deserialize (json_as_bytes) — SKIP: serde-specific
 
 import { Struct, Enum } from '@ankurah/base';
-import { ParseError } from './error.ts';
+import { ParseError, SqlGenerationError } from './error.ts';
+import { generateSelectionSql } from './selection/sql.ts';
 
 // ── Expr ──────────────────────────────────────────────────────────────
 
@@ -137,12 +138,14 @@ export class PathExpr extends Struct {
 export class Selection extends Struct {
   predicate: Predicate;
   orderBy: OrderByItem[] | null;
-  limit: number | null;
+  /** Rust: `Option<u64>` — a 64-bit count, so a bigint here. `LIMIT 0` is a real
+   *  limit of zero and is not the same thing as `null`. */
+  limit: bigint | null;
 
   constructor(
     predicate: Predicate,
     orderBy: OrderByItem[] | null = null,
-    limit: number | null = null,
+    limit: bigint | null = null,
   ) {
     super();
     this.predicate = predicate;
@@ -158,7 +161,7 @@ export class Selection extends Struct {
 
   // Rust: fn fmt
   override toString(): string {
-    let result = predicateToString(this.predicate);
+    let result = this.predicate.toString();
     if (this.orderBy) {
       result += ' ORDER BY ';
       result += this.orderBy
@@ -275,6 +278,20 @@ export class Predicate extends Enum<PredicateV> {
   static True(): Predicate { return new Predicate('True', {}); }
   static False(): Predicate { return new Predicate('False', {}); }
   static Placeholder(): Predicate { return new Predicate('Placeholder', {}); }
+
+  // Rust: fn fmt (Display for Predicate)
+  /** The predicate's SQL — or, when SQL generation refuses it, the refusal in the
+   *  SQL's place. Display swallows the error rather than propagating it, which is why
+   *  a selection holding a placeholder prints "SQL Error: ..." and is not valid SQL. */
+  override toString(): string {
+    try {
+      return generateSelectionSql(this);
+    } catch (e) {
+      const rendered = `SQL Error: ${e}`;
+      if (e instanceof SqlGenerationError) e.drop();
+      return rendered;
+    }
+  }
 
   // Rust: fn walk
   /** Recursively walk a predicate tree and accumulate results using a closure */
@@ -578,64 +595,5 @@ export function exprToPredicate(expr: Expr): Predicate {
   return result;
 }
 
-// ── Display helpers ──────────────────────────────────────────────────
-
-// Divergence: Rust Display impl for Predicate calls generate_selection_sql; TS uses a local
-// predicateToString to avoid circular imports between ast.ts and selection/sql.ts [E4]
-
-// Rust: fn fmt (Display for Predicate)
-/** A minimal predicate-to-string that does NOT depend on selection/sql to avoid circular imports. */
-function predicateToString(pred: Predicate): string {
-  return pred.match({
-    Comparison: (v) => {
-      const opStr = comparisonOpToStr(v.operator);
-      return `${exprToString(v.left)} ${opStr} ${exprToString(v.right)}`;
-    },
-    IsNull: (v) => `${exprToString(v.expr)} IS NULL`,
-    And: (v) => `${predicateToString(v.left)} AND ${predicateToString(v.right)}`,
-    Or: (v) => `(${predicateToString(v.left)} OR ${predicateToString(v.right)})`,
-    Not: (v) => `NOT (${predicateToString(v.predicate)})`,
-    True: () => 'TRUE',
-    False: () => 'FALSE',
-    Placeholder: () => '?',
-  });
-}
-
-function comparisonOpToStr(op: ComparisonOperator): string {
-  return op.match({
-    Equal: () => '=',
-    NotEqual: () => '<>',
-    GreaterThan: () => '>',
-    GreaterThanOrEqual: () => '>=',
-    LessThan: () => '<',
-    LessThanOrEqual: () => '<=',
-    In: () => 'IN',
-    Between: () => 'BETWEEN',
-  });
-}
-
-function exprToString(expr: Expr): string {
-  return expr.match({
-    Literal: (v) => literalToString(v.literal),
-    Path: (v) => v.path.steps.map((s) => `"${s}"`).join('.'),
-    Predicate: (v) => predicateToString(v.predicate),
-    InfixExpr: (v) => `${exprToString(v.left)} ${v.operator.type} ${exprToString(v.right)}`,
-    ExprList: (v) => `(${v.exprs.map(exprToString).join(', ')})`,
-    Placeholder: () => '?',
-  });
-}
-
-function literalToString(lit: Literal): string {
-  return lit.match({
-    I16: (v) => String(v.value),
-    I32: (v) => String(v.value),
-    I64: (v) => String(v.value),
-    F64: (v) => String(v.value),
-    Bool: (v) => v.value ? 'true' : 'false',
-    String: (v) => `'${v.value.replace(/'/g, "''")}'`,
-    EntityId: () => '<bytes>',
-    Object: () => '<bytes>',
-    Binary: () => '<bytes>',
-    Json: (v) => JSON.stringify(v.value),
-  });
-}
+// Rust: impl std::fmt::Display for Predicate — see Predicate.toString() above, which
+// calls generate_selection_sql the same way the Rust Display does.

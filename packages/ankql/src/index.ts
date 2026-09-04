@@ -2,9 +2,10 @@
 //
 // @ankurah/ankql -- AnkQL query language parser and predicate evaluator.
 //
-// Hand-written recursive descent parser (Exception E6: no Pest equivalent in TS).
-// Parses AnkQL query strings into AST nodes and evaluates predicates locally
-// for optimistic filtering.
+// Hand-written grammar matcher and AST builder (Exception E6: no Pest equivalent
+// in TS) — grammar.ts stands in for the pest derive, parser.ts is a port of
+// parser.rs. Parses AnkQL query strings into AST nodes and evaluates predicates
+// locally for optimistic filtering.
 //
 // Rust crate: ankql
 

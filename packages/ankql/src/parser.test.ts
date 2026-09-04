@@ -373,7 +373,7 @@ describe('parser', () => {
       using selection = parseSelection("status = 'active' LIMIT 10");
       assertCmpLit(selection.predicate, 'status', 'Equal', 'String', 'active');
       expect(selection.orderBy).toBeNull();
-      expect(selection.limit).toBe(10);
+      expect(selection.limit).toBe(10n);
     });
 
     // Rust: fn test_limit_only
@@ -381,7 +381,7 @@ describe('parser', () => {
       using selection = parseSelection('true LIMIT 100');
       expect(selection.predicate.is('True')).toBe(true);
       expect(selection.orderBy).toBeNull();
-      expect(selection.limit).toBe(100);
+      expect(selection.limit).toBe(100n);
     });
   });
 
@@ -392,7 +392,7 @@ describe('parser', () => {
       assertCmpLit(selection.predicate, 'user_id', 'GreaterThan', 'I32', 100);
       assertOrderBy(selection.orderBy, 0, 'created_at', 'Desc');
       expect(selection.orderBy!.length).toBe(1);
-      expect(selection.limit).toBe(5);
+      expect(selection.limit).toBe(5n);
     });
   });
 

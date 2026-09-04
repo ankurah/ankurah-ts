@@ -1,786 +1,49 @@
 // MIRRORS: ankurah/ankql/src/parser.rs
-// Hand-written recursive descent parser (E6: no Pest equivalent in TS).
 // Rust: fn print_tree — SKIP: test-only debug helper
 // Rust: fn debug_print_pairs — SKIP: test-only debug helper
+//
+// This file walks the pair tree grammar.ts produces and builds the AST, the same
+// way parser.rs walks pest's. The split matters for more than tidiness: it is the
+// line the fixtures pin. A `SyntaxError` means the grammar refused the text; every
+// other ParseError variant means the grammar accepted it and AST construction then
+// refused it. Keeping the grammar in grammar.ts and the AST construction here is
+// what keeps a port on the same side of that line as the Rust parser.
 
-import {
-  type Token,
-  type TokenType,
-  isWhitespace,
-  isDigit,
-  isIdentStart,
-  isIdentCont,
-} from './grammar.ts';
+import { type Pair, type Rule, parseSelectionRule } from './grammar.ts';
 import {
   Expr,
   Literal,
   Predicate,
   ComparisonOperator,
-  InfixOperator,
   OrderByItem,
   OrderDirection,
   PathExpr,
   Selection,
   exprToPredicate,
 } from './ast.ts';
-import {
-  ParseError,
-} from './error.ts';
+import { ParseError } from './error.ts';
 
-// ── Tokenizer / Lexer ────────────────────────────────────────────────
+const I32_MIN = -2147483648n;
+const I32_MAX = 2147483647n;
+const I64_MAX = 9223372036854775807n;
+const U64_MAX = 18446744073709551615n;
 
-class Lexer {
-  private input: string;
-  private pos: number;
-  private tokens: Token[];
+/**
+ * `Pairs` — pest's iterator over a rule's children. It is an iterator rather than an
+ * array on purpose: parse_expr hands it to create_logical_op, which pulls a further
+ * operator and operand out of it, and the loop in parse_expr then carries on from
+ * wherever create_logical_op left off. That shared cursor is how `a = 1 OR b = 2 AND
+ * c = 3` folds left to right.
+ */
+class Pairs {
+  private index = 0;
 
-  constructor(input: string) {
-    this.input = input;
-    this.pos = 0;
-    this.tokens = [];
-    this.tokenize();
-  }
+  constructor(private readonly pairs: readonly Pair[]) {}
 
-  private peek(): string {
-    return this.pos < this.input.length ? this.input[this.pos] : '';
-  }
-
-  private advance(): string {
-    return this.input[this.pos++];
-  }
-
-  private remaining(): string {
-    return this.input.slice(this.pos);
-  }
-
-  private skipWhitespace(): void {
-    while (this.pos < this.input.length && isWhitespace(this.input[this.pos])) {
-      this.pos++;
-    }
-  }
-
-  private peekAt(offset: number): string {
-    const idx = this.pos + offset;
-    return idx < this.input.length ? this.input[idx] : '';
-  }
-
-  /** Check if "ORDER BY" (case-insensitive) starts at position afterOrderPos */
-  private isOrderByAhead(afterOrderPos: number): boolean {
-    let p = afterOrderPos;
-    while (p < this.input.length && isWhitespace(this.input[p])) p++;
-    const rest = this.input.slice(p).toLowerCase();
-    if (rest.startsWith('by')) {
-      const afterBy = p + 2;
-      if (afterBy >= this.input.length || !isIdentCont(this.input[afterBy])) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /** Check if "LIMIT <digit>" starts at position afterLimitPos */
-  private isLimitAhead(afterLimitPos: number): boolean {
-    let p = afterLimitPos;
-    while (p < this.input.length && isWhitespace(this.input[p])) p++;
-    if (p < this.input.length && isDigit(this.input[p])) {
-      return true;
-    }
-    return false;
-  }
-
-  private tokenize(): void {
-    while (this.pos < this.input.length) {
-      this.skipWhitespace();
-      if (this.pos >= this.input.length) break;
-
-      const startPos = this.pos;
-      const ch = this.peek();
-
-      // Single-character tokens
-      if (ch === '(') { this.advance(); this.tokens.push({ type: 'LParen', value: '(', pos: startPos }); continue; }
-      if (ch === ')') { this.advance(); this.tokens.push({ type: 'RParen', value: ')', pos: startPos }); continue; }
-      if (ch === ',') { this.advance(); this.tokens.push({ type: 'Comma', value: ',', pos: startPos }); continue; }
-      if (ch === '?') { this.advance(); this.tokens.push({ type: 'Question', value: '?', pos: startPos }); continue; }
-      if (ch === '+') { this.advance(); this.tokens.push({ type: 'Add', value: '+', pos: startPos }); continue; }
-      if (ch === '*') { this.advance(); this.tokens.push({ type: 'Multiply', value: '*', pos: startPos }); continue; }
-      if (ch === '/') { this.advance(); this.tokens.push({ type: 'Divide', value: '/', pos: startPos }); continue; }
-
-      // Dot — must distinguish from decimal numbers. A dot is a path separator
-      // ONLY if the previous token is an Identifier and the next char is an ident-start.
-      // Decimal dots are handled by the number parser.
-      if (ch === '.') {
-        this.advance();
-        this.tokens.push({ type: 'Dot', value: '.', pos: startPos });
-        continue;
-      }
-
-      // Multi-char operators
-      if (ch === '=') {
-        this.advance();
-        this.tokens.push({ type: 'Eq', value: '=', pos: startPos });
-        continue;
-      }
-      if (ch === '!' && this.peekAt(1) === '=') {
-        this.advance(); this.advance();
-        this.tokens.push({ type: 'NotEq', value: '!=', pos: startPos });
-        continue;
-      }
-      if (ch === '<' && this.peekAt(1) === '>') {
-        this.advance(); this.advance();
-        this.tokens.push({ type: 'NotEq', value: '<>', pos: startPos });
-        continue;
-      }
-      if (ch === '<' && this.peekAt(1) === '=') {
-        this.advance(); this.advance();
-        this.tokens.push({ type: 'LtEq', value: '<=', pos: startPos });
-        continue;
-      }
-      if (ch === '<') {
-        this.advance();
-        this.tokens.push({ type: 'Lt', value: '<', pos: startPos });
-        continue;
-      }
-      if (ch === '>' && this.peekAt(1) === '=') {
-        this.advance(); this.advance();
-        this.tokens.push({ type: 'GtEq', value: '>=', pos: startPos });
-        continue;
-      }
-      if (ch === '>') {
-        this.advance();
-        this.tokens.push({ type: 'Gt', value: '>', pos: startPos });
-        continue;
-      }
-
-      // Subtraction operator vs negative number
-      if (ch === '-') {
-        const prevType = this.tokens.length > 0 ? this.tokens[this.tokens.length - 1].type : null;
-        const isAfterOperand =
-          prevType === 'Identifier' || prevType === 'Unsigned' || prevType === 'Integer' ||
-          prevType === 'Decimal' || prevType === 'Double' || prevType === 'String' ||
-          prevType === 'RParen' || prevType === 'True' || prevType === 'False' || prevType === 'Question';
-        if (isAfterOperand) {
-          this.advance();
-          this.tokens.push({ type: 'Subtract', value: '-', pos: startPos });
-          continue;
-        }
-        // Fall through to number parsing for negative numbers
-      }
-
-      // Single-quoted string
-      if (ch === "'") {
-        const str = this.readSingleQuotedString();
-        this.tokens.push({ type: 'String', value: str, pos: startPos });
-        continue;
-      }
-
-      // Double-quoted identifier
-      if (ch === '"') {
-        const ident = this.readDoubleQuotedIdentifier();
-        this.tokens.push({ type: 'Identifier', value: ident, pos: startPos });
-        continue;
-      }
-
-      // Number
-      if (isDigit(ch) || (ch === '-' && this.pos + 1 < this.input.length && isDigit(this.input[this.pos + 1]))) {
-        const { tokenType, value } = this.readNumber();
-        this.tokens.push({ type: tokenType, value, pos: startPos });
-        continue;
-      }
-
-      // Keywords and identifiers
-      if (isIdentStart(ch)) {
-        const word = this.readWord();
-        const lower = word.toLowerCase();
-        const afterWord = this.pos;
-
-        // Keywords — they are only keywords if NOT followed by ident-cont char
-        // (which readWord already guarantees by consuming all ident-cont chars)
-        if (lower === 'and') { this.tokens.push({ type: 'And', value: word, pos: startPos }); continue; }
-        if (lower === 'or') { this.tokens.push({ type: 'Or', value: word, pos: startPos }); continue; }
-        if (lower === 'not') { this.tokens.push({ type: 'Not', value: word, pos: startPos }); continue; }
-        if (lower === 'in') { this.tokens.push({ type: 'In', value: word, pos: startPos }); continue; }
-        if (lower === 'between') { this.tokens.push({ type: 'Between', value: word, pos: startPos }); continue; }
-        if (lower === 'is') { this.tokens.push({ type: 'Is', value: word, pos: startPos }); continue; }
-        if (lower === 'null') { this.tokens.push({ type: 'Null', value: word, pos: startPos }); continue; }
-        if (lower === 'true') { this.tokens.push({ type: 'True', value: word, pos: startPos }); continue; }
-        if (lower === 'false') { this.tokens.push({ type: 'False', value: word, pos: startPos }); continue; }
-        if (lower === 'asc') { this.tokens.push({ type: 'Asc', value: word, pos: startPos }); continue; }
-        if (lower === 'desc') { this.tokens.push({ type: 'Desc', value: word, pos: startPos }); continue; }
-
-        // ORDER BY (compound keyword)
-        if (lower === 'order' && this.isOrderByAhead(afterWord)) {
-          let p = afterWord;
-          while (p < this.input.length && isWhitespace(this.input[p])) p++;
-          p += 2; // skip "by"
-          this.pos = p;
-          this.tokens.push({ type: 'OrderBy', value: 'ORDER BY', pos: startPos });
-          continue;
-        }
-
-        // LIMIT keyword — only when followed by whitespace then digit
-        if (lower === 'limit' && this.isLimitAhead(afterWord)) {
-          this.tokens.push({ type: 'Limit', value: word, pos: startPos });
-          continue;
-        }
-
-        // Plain identifier
-        this.tokens.push({ type: 'Identifier', value: word, pos: startPos });
-        continue;
-      }
-
-      // Semicolon ends input
-      if (ch === ';') {
-        break;
-      }
-
-      throw new ParseError('SyntaxError', { _0: `Unexpected character '${ch}' at position ${this.pos}` });
-    }
-
-    this.tokens.push({ type: 'EOF', value: '', pos: this.pos });
-  }
-
-  private readSingleQuotedString(): string {
-    this.advance(); // consume opening '
-    let result = '';
-    while (this.pos < this.input.length) {
-      const ch = this.peek();
-      if (ch === "'") {
-        this.advance();
-        // Check for escaped quote ''
-        if (this.peek() === "'") {
-          result += "'";
-          this.advance();
-        } else {
-          return result;
-        }
-      } else {
-        result += ch;
-        this.advance();
-      }
-    }
-    throw new ParseError('SyntaxError', { _0: 'Unterminated string literal' });
-  }
-
-  private readDoubleQuotedIdentifier(): string {
-    this.advance(); // consume opening "
-    let result = '';
-    while (this.pos < this.input.length) {
-      const ch = this.peek();
-      if (ch === '"') {
-        this.advance();
-        return result;
-      }
-      result += ch;
-      this.advance();
-    }
-    throw new ParseError('SyntaxError', { _0: 'Unterminated double-quoted identifier' });
-  }
-
-  private readWord(): string {
-    let result = '';
-    while (this.pos < this.input.length && isIdentCont(this.input[this.pos])) {
-      result += this.input[this.pos];
-      this.pos++;
-    }
-    return result;
-  }
-
-  private readNumber(): { tokenType: TokenType; value: string } {
-    let result = '';
-
-    // Optional sign
-    if (this.peek() === '-' || this.peek() === '+') {
-      result += this.advance();
-    }
-
-    // Integer part
-    while (this.pos < this.input.length && isDigit(this.input[this.pos])) {
-      result += this.advance();
-    }
-
-    // Check for decimal point — only if followed by a digit
-    if (this.peek() === '.' && this.pos + 1 < this.input.length && isDigit(this.input[this.pos + 1])) {
-      result += this.advance(); // consume '.'
-      while (this.pos < this.input.length && isDigit(this.input[this.pos])) {
-        result += this.advance();
-      }
-
-      // Check for exponent
-      if (this.peek().toLowerCase() === 'e') {
-        result += this.advance();
-        if (this.peek() === '+' || this.peek() === '-') {
-          result += this.advance();
-        }
-        while (this.pos < this.input.length && isDigit(this.input[this.pos])) {
-          result += this.advance();
-        }
-        return { tokenType: 'Double', value: result };
-      }
-
-      return { tokenType: 'Decimal', value: result };
-    }
-
-    // Check for exponent without decimal point
-    if (this.peek().toLowerCase() === 'e') {
-      result += this.advance();
-      if (this.peek() === '+' || this.peek() === '-') {
-        result += this.advance();
-      }
-      while (this.pos < this.input.length && isDigit(this.input[this.pos])) {
-        result += this.advance();
-      }
-      return { tokenType: 'Double', value: result };
-    }
-
-    if (result.startsWith('-') || result.startsWith('+')) {
-      return { tokenType: 'Integer', value: result };
-    }
-    return { tokenType: 'Unsigned', value: result };
-  }
-
-  getTokens(): Token[] {
-    return this.tokens;
+  next(): Pair | undefined {
+    return this.index < this.pairs.length ? this.pairs[this.index++] : undefined;
   }
 }
-
-// ── Parser ───────────────────────────────────────────────────────────
-
-class Parser {
-  private tokens: Token[];
-  private pos: number;
-
-  constructor(tokens: Token[]) {
-    this.tokens = tokens;
-    this.pos = 0;
-  }
-
-  private peek(): Token {
-    return this.tokens[this.pos];
-  }
-
-  private advance(): Token {
-    const token = this.tokens[this.pos];
-    this.pos++;
-    return token;
-  }
-
-  private expect(type: TokenType): Token {
-    const token = this.peek();
-    if (token.type !== type) {
-      throw new ParseError('SyntaxError', {
-        _0: `Expected ${type}, got ${token.type} ('${token.value}') at position ${token.pos}`,
-      });
-    }
-    return this.advance();
-  }
-
-  private isAtEnd(): boolean {
-    return this.peek().type === 'EOF';
-  }
-
-  // Rust: fn parse_selection
-  /** Parse a full selection: predicate [ORDER BY ...] [LIMIT ...] */
-  parseSelection(): Selection {
-    if (this.isAtEnd()) {
-      return new Selection(Predicate.True());
-    }
-
-    const predicate = this.parseOr();
-
-    let orderBy: OrderByItem[] | null = null;
-    let limit: number | null = null;
-
-    try {
-      if (this.peek().type === 'OrderBy') {
-        this.advance();
-        orderBy = this.parseOrderByItems();
-      }
-
-      // Rust: fn parse_limit_clause
-      if (this.peek().type === 'Limit') {
-        this.advance();
-        const tok = this.expect('Unsigned');
-        limit = parseInt(tok.value, 10);
-      }
-
-      if (!this.isAtEnd()) {
-        throw new ParseError('SyntaxError', {
-          _0: `Unexpected token '${this.peek().value}' (${this.peek().type}) at position ${this.peek().pos}`,
-        });
-      }
-    } catch (e) {
-      // Clean up already-parsed predicate and orderBy on error
-      predicate.drop();
-      if (orderBy) {
-        for (const item of orderBy) item.drop();
-      }
-      throw e;
-    }
-
-    return new Selection(predicate, orderBy, limit);
-  }
-
-  // ── Precedence climbing ──
-
-  // Rust: fn parse_expr
-  /** OR — lowest precedence */
-  private parseOr(): Predicate {
-    let left = this.parseAnd();
-    while (this.peek().type === 'Or') {
-      this.advance();
-      const right = this.parseAnd();
-      left = Predicate.Or(left, right);
-    }
-    return left;
-  }
-
-  // Rust: fn create_logical_op
-  /** AND */
-  private parseAnd(): Predicate {
-    let left = this.parseNotOrComparison();
-    while (this.peek().type === 'And') {
-      this.advance();
-      const right = this.parseNotOrComparison();
-      left = Predicate.And(left, right);
-    }
-    return left;
-  }
-
-  /** NOT (unary prefix) or comparison */
-  private parseNotOrComparison(): Predicate {
-    if (this.peek().type === 'Not') {
-      this.advance();
-      if (this.peek().type !== 'LParen') {
-        // NOT without parens is not supported (matches Rust behavior)
-        throw new ParseError('SyntaxError', { _0: `Expected '(' after NOT at position ${this.peek().pos}` });
-      }
-      const inner = this.parseNotOrComparison();
-      return Predicate.Not(inner);
-    }
-    return this.parseComparison();
-  }
-
-  // Rust: fn create_comparison
-  /** Comparison: expr (op expr | IS [NOT] NULL)? */
-  private parseComparison(): Predicate {
-    const left = this.parseArithExpr();
-
-    // IS [NOT] NULL (postfix)
-    if (this.peek().type === 'Is') {
-      this.advance();
-      const hasNot = this.peek().type === 'Not';
-      if (hasNot) this.advance();
-      this.expect('Null');
-      const isNull = Predicate.IsNull(left);
-      return hasNot ? Predicate.Not(isNull) : isNull;
-    }
-
-    // Comparison operators
-    const opType = this.peek().type;
-    if (isComparisonOp(opType)) {
-      const op = this.advance();
-      const compOp = tokenToComparisonOp(op.type);
-      const right = this.parseArithExpr();
-      return Predicate.Comparison(left, compOp, right);
-    }
-
-    // No operator → convert expression to predicate
-    return exprToPredicate(left);
-  }
-
-  /** Arithmetic expressions (+, -, *, /) */
-  private parseArithExpr(): Expr {
-    let left = this.parsePrimaryExpr();
-
-    while (
-      this.peek().type === 'Add' ||
-      this.peek().type === 'Subtract' ||
-      this.peek().type === 'Multiply' ||
-      this.peek().type === 'Divide'
-    ) {
-      const op = this.advance();
-      const right = this.parsePrimaryExpr();
-      const infixOp = tokenToInfixOp(op.type);
-      left = Expr.InfixExpr(left, infixOp, right);
-    }
-
-    return left;
-  }
-
-  // Rust: fn parse_atomic_expr
-  /** Primary expressions (atoms) */
-  private parsePrimaryExpr(): Expr {
-    const tok = this.peek();
-
-    switch (tok.type) {
-      case 'Unsigned':
-      case 'Integer':
-        return this.parseNumber();
-      case 'Decimal':
-      case 'Double':
-        return this.parseFloat();
-      case 'String':
-        return this.parseStringLiteral();
-      case 'True':
-        this.advance();
-        return Expr.Literal(Literal.Bool(true));
-      case 'False':
-        this.advance();
-        return Expr.Literal(Literal.Bool(false));
-      case 'Question':
-        this.advance();
-        return Expr.Placeholder();
-      case 'Identifier':
-        return this.parsePathExpr();
-      case 'LParen':
-        return this.parseParenExpr();
-      default:
-        throw new ParseError('SyntaxError', {
-          _0: `Unexpected token '${tok.value}' (${tok.type}) at position ${tok.pos}`,
-        });
-    }
-  }
-
-  // Rust: fn parse_number
-  private parseNumber(): Expr {
-    const tok = this.advance();
-    const numStr = tok.value;
-
-    // Try BigInt for very large numbers, otherwise use regular number
-    try {
-      const num = Number(numStr);
-      if (!isFinite(num)) {
-        throw new ParseError('InvalidPredicate', { _0: `Failed to parse number: ${numStr}` });
-      }
-      // Check i32 range: -2147483648 to 2147483647
-      if (num > -(2 ** 31) && num < 2 ** 31 - 1) {
-        return Expr.Literal(Literal.I32(num));
-      }
-      // For large numbers, use BigInt
-      return Expr.Literal(Literal.I64(BigInt(numStr)));
-    } catch {
-      // If Number fails, try BigInt
-      return Expr.Literal(Literal.I64(BigInt(numStr)));
-    }
-  }
-
-  // Rust: fn parse_number (float branch)
-  private parseFloat(): Expr {
-    const tok = this.advance();
-    const num = parseFloat(tok.value);
-    return Expr.Literal(Literal.F64(num));
-  }
-
-  // Rust: fn parse_string_literal
-  private parseStringLiteral(): Expr {
-    const tok = this.advance();
-    return Expr.Literal(Literal.String(tok.value));
-  }
-
-  // Rust: fn parse_path_expr
-  private parsePathExpr(): Expr {
-    const steps: string[] = [];
-    const first = this.expect('Identifier');
-    steps.push(first.value);
-
-    while (this.peek().type === 'Dot') {
-      this.advance(); // consume '.'
-      // Next must be an identifier (but could also be a keyword used as field name)
-      const next = this.peek();
-      if (next.type === 'Identifier') {
-        steps.push(this.advance().value);
-      } else {
-        // Allow keywords as path steps after a dot
-        // (e.g., user.order, user.limit, etc.)
-        if (isKeywordTokenType(next.type)) {
-          steps.push(this.advance().value);
-        } else {
-          throw new ParseError('SyntaxError', {
-            _0: `Expected identifier after '.' at position ${next.pos}, got ${next.type}`,
-          });
-        }
-      }
-    }
-
-    return Expr.Path(new PathExpr(steps));
-  }
-
-  /**
-   * Parse parenthesized expression: either (predicate) or (expr, expr, ...) for IN rows.
-   */
-  private parseParenExpr(): Expr {
-    this.expect('LParen');
-
-    // Parse the content inside parentheses as a full predicate/expression
-    // First, try to parse the first atom
-    const firstAtom = this.parseArithExpr();
-
-    // Check for comma → Row/ExprList
-    if (this.peek().type === 'Comma') {
-      const items: Expr[] = [firstAtom];
-      while (this.peek().type === 'Comma') {
-        this.advance();
-        items.push(this.parseArithExpr());
-      }
-      this.expect('RParen');
-      return Expr.ExprList(items);
-    }
-
-    // Check for comparison/logical operators → this is a parenthesized predicate
-    if (isComparisonOp(this.peek().type) || this.peek().type === 'Is') {
-      const pred = this.finishPredicateFromExpr(firstAtom);
-      // Now check for AND/OR within the parens
-      const fullPred = this.finishLogicalChain(pred);
-      this.expect('RParen');
-      return Expr.Predicate(fullPred);
-    }
-
-    // Check for AND/OR → the first atom should be convertible to predicate
-    if (this.peek().type === 'And' || this.peek().type === 'Or') {
-      const firstPred = exprToPredicate(firstAtom);
-      const fullPred = this.finishLogicalChain(firstPred);
-      this.expect('RParen');
-      return Expr.Predicate(fullPred);
-    }
-
-    // Just a parenthesized expression
-    this.expect('RParen');
-    return firstAtom;
-  }
-
-  /** Given a left expression, parse the comparison operator and right side */
-  private finishPredicateFromExpr(left: Expr): Predicate {
-    if (this.peek().type === 'Is') {
-      this.advance();
-      const hasNot = this.peek().type === 'Not';
-      if (hasNot) this.advance();
-      this.expect('Null');
-      const isNull = Predicate.IsNull(left);
-      return hasNot ? Predicate.Not(isNull) : isNull;
-    }
-
-    if (isComparisonOp(this.peek().type)) {
-      const op = this.advance();
-      const compOp = tokenToComparisonOp(op.type);
-      const right = this.parseArithExpr();
-      return Predicate.Comparison(left, compOp, right);
-    }
-
-    return exprToPredicate(left);
-  }
-
-  /**
-   * Given an already-parsed predicate, continue parsing AND/OR chains
-   * within parentheses.
-   */
-  private finishLogicalChain(left: Predicate): Predicate {
-    let result = left;
-
-    while (this.peek().type === 'And' || this.peek().type === 'Or') {
-      const logicType = this.advance().type;
-
-      // Parse the right side (comparison or atom → predicate)
-      const rightAtom = this.parseArithExpr();
-      let rightPred: Predicate;
-
-      if (isComparisonOp(this.peek().type) || this.peek().type === 'Is') {
-        rightPred = this.finishPredicateFromExpr(rightAtom);
-      } else {
-        rightPred = exprToPredicate(rightAtom);
-      }
-
-      if (logicType === 'And') {
-        result = Predicate.And(result, rightPred);
-      } else {
-        result = Predicate.Or(result, rightPred);
-      }
-    }
-
-    return result;
-  }
-
-  // Rust: fn parse_order_by_clause
-  private parseOrderByItems(): OrderByItem[] {
-    const items: OrderByItem[] = [];
-    items.push(this.parseOrderByItem());
-    while (this.peek().type === 'Comma') {
-      this.advance();
-      items.push(this.parseOrderByItem());
-    }
-    return items;
-  }
-
-  // Rust: fn parse_order_by_item
-  private parseOrderByItem(): OrderByItem {
-    const tok = this.expect('Identifier');
-
-    if (this.peek().type === 'Dot') {
-      throw new ParseError('InvalidPredicate', { _0: 'Dotted identifiers are not supported in ORDER BY clauses' });
-    }
-
-    const path = PathExpr.simple(tok.value);
-
-    let direction: OrderDirection;
-    if (this.peek().type === 'Asc') {
-      this.advance();
-      direction = OrderDirection.Asc();
-    } else if (this.peek().type === 'Desc') {
-      this.advance();
-      direction = OrderDirection.Desc();
-    } else {
-      direction = OrderDirection.Asc();
-    }
-
-    return new OrderByItem(path, direction);
-  }
-}
-
-// ── Helper functions ─────────────────────────────────────────────────
-
-function isComparisonOp(type: TokenType): boolean {
-  return (
-    type === 'Eq' || type === 'NotEq' ||
-    type === 'Gt' || type === 'GtEq' ||
-    type === 'Lt' || type === 'LtEq' ||
-    type === 'In'
-  );
-}
-
-function isKeywordTokenType(type: TokenType): boolean {
-  return (
-    type === 'And' || type === 'Or' || type === 'Not' ||
-    type === 'In' || type === 'Between' || type === 'Is' ||
-    type === 'Null' || type === 'True' || type === 'False' ||
-    type === 'Asc' || type === 'Desc' || type === 'Limit'
-  );
-}
-
-function tokenToComparisonOp(type: TokenType): ComparisonOperator {
-  switch (type) {
-    case 'Eq': return ComparisonOperator.Equal();
-    case 'NotEq': return ComparisonOperator.NotEqual();
-    case 'Gt': return ComparisonOperator.GreaterThan();
-    case 'GtEq': return ComparisonOperator.GreaterThanOrEqual();
-    case 'Lt': return ComparisonOperator.LessThan();
-    case 'LtEq': return ComparisonOperator.LessThanOrEqual();
-    case 'In': return ComparisonOperator.In();
-    default:
-      throw new ParseError('SyntaxError', { _0: `'${type}' is not a comparison operator` });
-  }
-}
-
-function tokenToInfixOp(type: TokenType): InfixOperator {
-  switch (type) {
-    case 'Add': return InfixOperator.Add();
-    case 'Subtract': return InfixOperator.Subtract();
-    case 'Multiply': return InfixOperator.Multiply();
-    case 'Divide': return InfixOperator.Divide();
-    default:
-      throw new ParseError('SyntaxError', { _0: `'${type}' is not an infix operator` });
-  }
-}
-
-// ── Public API ───────────────────────────────────────────────────────
 
 // Rust: fn parse_selection
 /**
@@ -788,12 +51,384 @@ function tokenToInfixOp(type: TokenType): InfixOperator {
  * The selection includes a predicate and optional ORDER BY and LIMIT clauses.
  */
 export function parseSelection(input: string): Selection {
+  // TODO: Improve grammar to handle these cases more elegantly
   if (input.trim() === '') {
-    return new Selection(Predicate.True());
+    return new Selection(Predicate.True(), null, null);
   }
 
-  const lexer = new Lexer(input);
-  const tokens = lexer.getTokens();
-  const parser = new Parser(tokens);
-  return parser.parseSelection();
+  const parsed = parseSelectionRule(input);
+  if (!parsed.ok) throw new ParseError('SyntaxError', { _0: parsed.message });
+
+  let predicate: Predicate | null = null;
+  let orderBy: OrderByItem[] | null = null;
+  let limit: bigint | null = null;
+
+  try {
+    for (const pair of parsed.pairs) {
+      switch (pair.rule) {
+        case 'Expr':
+          predicate = parseExpr(pair);
+          break;
+        case 'OrderByClause':
+          orderBy = parseOrderByClause(pair);
+          break;
+        case 'LimitClause':
+          limit = parseLimitClause(pair);
+          break;
+        case 'EOI':
+          break; // End of input, ignore
+        default:
+          throw new ParseError('UnexpectedRule', { expected: 'Expr, OrderByClause, or LimitClause', got: pair.rule });
+      }
+    }
+  } catch (e) {
+    // Rust drops the half-built Selection here; TS has to say so.
+    predicate?.drop();
+    if (orderBy) for (const item of orderBy) item.drop();
+    throw e;
+  }
+
+  if (predicate === null) throw new ParseError('EmptyExpression', {});
+
+  return new Selection(predicate, orderBy, limit);
+}
+
+// Rust: fn parse_expr
+/** Parse a boolean expression, which can be a comparison, AND, or OR expression */
+function parseExpr(pair: Pair): Predicate {
+  if (pair.rule !== 'Expr') throw new Error('Expected Expr rule');
+  const pairs = new Pairs(pair.inner);
+
+  // Parse the first value
+  const first = pairs.next();
+  if (first === undefined) throw new ParseError('MissingOperand', { _0: 'first' });
+
+  // handle unary operators which have precedence over infix operators
+  if (first.rule === 'UnaryNot') {
+    const next = pairs.next();
+    if (next === undefined) throw new ParseError('EmptyExpression', {});
+    if (next.rule !== 'ExpressionInParentheses') {
+      // NOT only works over parentheses: `NOT (a = 1)` parses, `NOT a = 1` lands here.
+      throw new ParseError('UnexpectedRule', { expected: 'ExpressionInParentheses', got: next.rule });
+    }
+    const inner = next.inner[0];
+    if (inner === undefined) throw new ParseError('EmptyExpression', {});
+    // Returning here abandons whatever follows the parenthesised group, exactly as
+    // the Rust does.
+    return Predicate.Not(parseExpr(inner));
+  }
+
+  let result = parseAtomicExpr(first);
+
+  try {
+    // Handle postfix and infix operators
+    for (;;) {
+      const op = pairs.next();
+      if (op === undefined) break;
+
+      if (op.rule === 'IsNullPostfix') {
+        // Check if this is "IS NULL" or "IS NOT NULL" by examining the text
+        const isNot = op.text.toUpperCase().includes('NOT');
+
+        const isNull = Expr.Predicate(Predicate.IsNull(result));
+        result = isNot ? Expr.Predicate(Predicate.Not(exprToPredicate(isNull))) : isNull;
+        continue;
+      }
+
+      // infix operators DO have a right operand
+      const right = pairs.next();
+      if (right === undefined) throw new ParseError('MissingOperand', { _0: 'right' });
+
+      switch (op.rule) {
+        case 'Eq':
+        case 'GtEq':
+        case 'Gt':
+        case 'LtEq':
+        case 'Lt':
+        case 'NotEq':
+        case 'In':
+          result = createComparison(result, op.rule, right);
+          break;
+        case 'And':
+        case 'Or':
+          result = createLogicalOp(op.rule, result, right, pairs);
+          break;
+        default:
+          // Between and the four arithmetic operators are in the grammar but have no
+          // arm above, so every one of them is unreachable from query text.
+          throw new ParseError('UnexpectedRule', { expected: 'comparison operator, And, or Or', got: op.rule });
+      }
+    }
+  } catch (e) {
+    result.drop();
+    throw e;
+  }
+
+  return exprToPredicate(result);
+}
+
+// Rust: fn create_comparison
+/** Create a comparison predicate from a left expression and a right pair */
+function createComparison(left: Expr, op: Rule, right: Pair): Expr {
+  const rightExpr = parseAtomicExpr(right);
+  const operator = comparisonOperatorFor(op);
+  return Expr.Predicate(Predicate.Comparison(left, operator, rightExpr));
+}
+
+/** The `ComparisonOperator` a comparison rule names. There is deliberately no arm for
+ *  Between: the grammar has the rule and the AST has the variant, but nothing joins
+ *  them, so `a BETWEEN 1 AND 10` is refused. */
+function comparisonOperatorFor(op: Rule): ComparisonOperator {
+  switch (op) {
+    case 'Eq': return ComparisonOperator.Equal();
+    case 'GtEq': return ComparisonOperator.GreaterThanOrEqual();
+    case 'Gt': return ComparisonOperator.GreaterThan();
+    case 'LtEq': return ComparisonOperator.LessThanOrEqual();
+    case 'Lt': return ComparisonOperator.LessThan();
+    case 'NotEq': return ComparisonOperator.NotEqual();
+    case 'In': return ComparisonOperator.In();
+    default:
+      throw new ParseError('UnexpectedRule', { expected: 'comparison operator', got: op });
+  }
+}
+
+// Rust: fn create_logical_op
+/** Create a logical operation (AND/OR) from a left expression and a right pair */
+function createLogicalOp(op: Rule, left: Expr, right: Pair, rest: Pairs): Expr {
+  const leftPred = exprToPredicate(left);
+
+  let rightExpr: Expr | null = null;
+  let rightPred: Predicate;
+  try {
+    // Parse the right side, which might be part of a comparison
+    rightExpr = parseAtomicExpr(right);
+    // Pulling from `rest` here is what makes the fold left-associative: the operator
+    // and operand this consumes belong to the right operand, and parse_expr's loop
+    // resumes after them with the whole And/Or as its new left.
+    const nextOp = rest.next();
+    if (nextOp === undefined) {
+      rightPred = exprToPredicate(rightExpr);
+    } else {
+      switch (nextOp.rule) {
+        case 'Eq':
+        case 'GtEq':
+        case 'Gt':
+        case 'LtEq':
+        case 'Lt':
+        case 'NotEq':
+        case 'In': {
+          const nextRight = rest.next();
+          if (nextRight === undefined) throw new ParseError('MissingOperand', { _0: 'comparison right' });
+          const nextRightExpr = parseAtomicExpr(nextRight);
+          rightPred = Predicate.Comparison(rightExpr, comparisonOperatorFor(nextOp.rule), nextRightExpr);
+          break;
+        }
+        default:
+          throw new ParseError('UnexpectedRule', { expected: 'comparison operator', got: nextOp.rule });
+      }
+    }
+  } catch (e) {
+    // Rust drops both half-built operands here.
+    leftPred.drop();
+    rightExpr?.drop();
+    throw e;
+  }
+
+  return Expr.Predicate(op === 'And' ? Predicate.And(leftPred, rightPred) : Predicate.Or(leftPred, rightPred));
+}
+
+// Rust: fn parse_atomic_expr
+/** Parse an atomic expression, which can be a path, literal, or parenthesized expression */
+function parseAtomicExpr(pair: Pair): Expr {
+  switch (pair.rule) {
+    case 'PathExpr':
+      return parsePathExpr(pair);
+    case 'SingleQuotedString':
+      return parseStringLiteral(pair);
+    case 'True':
+      return Expr.Literal(Literal.Bool(true));
+    case 'False':
+      return Expr.Literal(Literal.Bool(false));
+    case 'Unsigned':
+      return parseNumber(pair);
+    case 'QuestionParameter':
+      return Expr.Placeholder();
+    case 'ExpressionInParentheses': {
+      const inner = pair.inner[0];
+      if (inner === undefined) throw new ParseError('EmptyExpression', {});
+      return Expr.Predicate(parseExpr(inner));
+    }
+    case 'Row': {
+      const exprs: Expr[] = [];
+      try {
+        for (const exprPair of pair.inner) {
+          if (exprPair.rule === 'Expr') {
+            // Only the first pair of each element is read, so anything the element
+            // says after its first atom is discarded.
+            const head = exprPair.inner[0];
+            if (head === undefined) throw new ParseError('EmptyExpression', {});
+            exprs.push(parseAtomicExpr(head));
+          } else {
+            exprs.push(parseAtomicExpr(exprPair));
+          }
+        }
+      } catch (e) {
+        for (const expr of exprs) expr.drop();
+        throw e;
+      }
+      return Expr.ExprList(exprs);
+    }
+    default:
+      // Integer, Decimal, Double and Null all reach the grammar and stop here, which
+      // is why negative, fractional and NULL literals cannot be written at all — and
+      // why Literal::F64 is unreachable from query text.
+      throw new ParseError('UnexpectedRule', { expected: 'atomic expression', got: pair.rule });
+  }
+}
+
+// Rust: fn parse_path_expr
+/** Parse a path expression (dot-separated identifiers like `name` or `licensing.territory`) */
+function parsePathExpr(pair: Pair): Expr {
+  if (pair.rule !== 'PathExpr') {
+    throw new ParseError('UnexpectedRule', { expected: 'PathExpr', got: pair.rule });
+  }
+
+  // A double-quoted identifier arrives with its quotes still on, and they are stored
+  // in the step verbatim.
+  const steps = pair.inner.filter((p) => p.rule === 'Identifier').map((p) => p.text.trim());
+
+  if (steps.length === 0) {
+    throw new ParseError('InvalidPredicate', { _0: 'Empty path expression' });
+  }
+
+  return Expr.Path(new PathExpr(steps));
+}
+
+// Rust: fn parse_string_literal
+/** Parse a string literal, removing the surrounding quotes */
+function parseStringLiteral(pair: Pair): Expr {
+  if (pair.rule !== 'SingleQuotedString') {
+    throw new ParseError('UnexpectedRule', { expected: 'SingleQuotedString', got: pair.rule });
+  }
+
+  const s = pair.text;
+  if (!s.startsWith("'") || !s.endsWith("'")) {
+    throw new ParseError('InvalidPredicate', { _0: 'String literal must be quoted' });
+  }
+
+  return Expr.Literal(Literal.String(s.slice(1, -1)));
+}
+
+// Rust: fn parse_number
+/** Parse a number literal */
+function parseNumber(pair: Pair): Expr {
+  if (pair.rule !== 'Unsigned') {
+    throw new ParseError('UnexpectedRule', { expected: 'Unsigned', got: pair.rule });
+  }
+
+  // Rust: `pair.as_str().trim().parse::<i64>()`. The rule matched digits, so the only
+  // way this fails is overflow, and the text is ParseIntError's own.
+  const num = BigInt(pair.text.trim());
+  if (num > I64_MAX) {
+    throw new ParseError('InvalidPredicate', { _0: 'Failed to parse number: number too large to fit in target type' });
+  }
+
+  // Strict inequalities, so i32::MAX itself falls through to I64 while i32::MAX - 1
+  // does not. The port must not "fix" this to <=.
+  if (num < I32_MAX && num > I32_MIN) {
+    return Expr.Literal(Literal.I32(Number(num)));
+  }
+
+  return Expr.Literal(Literal.I64(num));
+}
+
+// Rust: fn parse_limit_clause
+/** Parse a LIMIT clause */
+function parseLimitClause(pair: Pair): bigint {
+  if (pair.rule !== 'LimitClause') {
+    throw new ParseError('UnexpectedRule', { expected: 'LimitClause', got: pair.rule });
+  }
+
+  // Since LimitClause is compound atomic ($), we can access the inner Unsigned token directly
+  const unsigned = pair.inner.find((p) => p.rule === 'Unsigned');
+  if (unsigned === undefined) {
+    throw new ParseError('InvalidPredicate', { _0: 'Missing limit value' });
+  }
+
+  // Rust: `parse::<u64>()` — the field is a u64, which in TS is a bigint.
+  const limit = BigInt(unsigned.text.trim());
+  if (limit > U64_MAX) {
+    throw new ParseError('InvalidPredicate', { _0: 'Failed to parse limit: number too large to fit in target type' });
+  }
+
+  return limit;
+}
+
+// Rust: fn parse_order_by_clause
+function parseOrderByClause(pair: Pair): OrderByItem[] {
+  if (pair.rule !== 'OrderByClause') {
+    throw new ParseError('UnexpectedRule', { expected: 'OrderByClause', got: pair.rule });
+  }
+
+  const orderByItems: OrderByItem[] = [];
+
+  // Parse each OrderByItem in the clause
+  try {
+    for (const inner of pair.inner) {
+      if (inner.rule === 'OrderByItem') {
+        orderByItems.push(parseOrderByItem(inner));
+      }
+    }
+  } catch (e) {
+    for (const item of orderByItems) item.drop();
+    throw e;
+  }
+
+  if (orderByItems.length === 0) {
+    throw new ParseError('InvalidPredicate', { _0: 'Missing ORDER BY items' });
+  }
+
+  return orderByItems;
+}
+
+// Rust: fn parse_order_by_item
+function parseOrderByItem(pair: Pair): OrderByItem {
+  if (pair.rule !== 'OrderByItem') {
+    throw new ParseError('UnexpectedRule', { expected: 'OrderByItem', got: pair.rule });
+  }
+
+  const identifier = pair.inner.find((p) => p.rule === 'Identifier');
+  if (identifier === undefined) {
+    throw new ParseError('InvalidPredicate', { _0: 'Missing column name in ORDER BY item' });
+  }
+
+  const identifierStr = identifier.text.trim();
+
+  // Only simple identifiers are supported in ORDER BY (no dotted identifiers).
+  // Unreachable from query text: OrderByItem takes an Identifier, so the grammar
+  // stops at the dot and the selection fails at EOI before this check runs.
+  if (identifierStr.includes('.')) {
+    throw new ParseError('InvalidPredicate', { _0: 'Dotted identifiers are not supported in ORDER BY clauses' });
+  }
+
+  const path = PathExpr.simple(identifierStr);
+
+  const directionPair = pair.inner.find((p) => p.rule === 'OrderDirection');
+  let direction: OrderDirection;
+  if (directionPair === undefined) {
+    direction = OrderDirection.Asc(); // Default
+  } else {
+    switch (directionPair.text.trim().toUpperCase()) {
+      case 'ASC':
+        direction = OrderDirection.Asc();
+        break;
+      case 'DESC':
+        direction = OrderDirection.Desc();
+        break;
+      default:
+        throw new ParseError('InvalidPredicate', { _0: `Invalid order direction: ${directionPair.text}` });
+    }
+  }
+
+  return new OrderByItem(path, direction);
 }
