@@ -28,7 +28,10 @@ use std::collections::HashMap;
 use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
-pub use build::{build_registry, build_registry_with_siblings, resolve_bounds, ExtractedFile};
+pub use build::{
+    build_registry, build_registry_with_siblings, narrow_reads_json, resolve_bounds,
+    ExtractedFile,
+};
 pub use convert::{Conversion, NoConversion};
 pub use impls::ImplId;
 pub use method::{Callee, FieldResolution, MethodResolution, Probe, Undecided};
@@ -101,7 +104,15 @@ pub struct TypeDef {
     pub name: String,
     pub kind: TypeKind,
     /// Field name (in the TypeScript spelling emission uses) to field type.
+    ///
+    /// A field whose type the engine could not resolve is NOT here — the pair
+    /// has nowhere to put a type it does not have. `field_order` carries every
+    /// field, which is what a constructor call needs.
     pub fields: Vec<(String, Ty)>,
+    /// Every field this declaration has, in the order it declares them, whether
+    /// or not its type resolved. The emitted constructor takes its parameters
+    /// in exactly this order, so a struct literal is written from it.
+    pub field_order: Vec<String>,
     /// Declared generic parameter names, in order.
     pub type_params: Vec<String>,
     /// What a parameter falls back to where the use site leaves it unwritten:
@@ -397,6 +408,7 @@ impl TypeRegistry {
             },
         );
         self.defs.push(TypeDef {
+            field_order: Vec::new(),
             module,
             name: decl.name,
             kind: decl.kind,
@@ -673,6 +685,29 @@ impl TypeRegistry {
     /// text))`, and a `T` with no such static turns a parse error into a
     /// `TypeError` at the call. Asking here is what makes the emission
     /// conditional rather than hopeful.
+    /// A declared type of this crate or a sibling, found by its leaf name.
+    ///
+    /// The import map is keyed by the leaf too, so a name two crates declare
+    /// answers with the first found — which is the same rule the import writes.
+    /// Emission holds a TypeScript spelling and needs the identity behind it;
+    /// the leaf is all a spelling carries.
+    pub fn type_by_leaf(&self, leaf: &str) -> Option<TypeId> {
+        self.defs
+            .iter()
+            .position(|def| def.name == leaf)
+            .map(|i| TypeId(i as u32))
+    }
+
+    /// How many types are declared, for a pass that has to walk them all.
+    pub fn declared_count(&self) -> usize {
+        self.defs.len()
+    }
+
+    /// This type's JSON half was refused, so nothing may call its `fromJson`.
+    pub fn clear_reads_json(&mut self, id: TypeId) {
+        self.reads_json.remove(&id);
+    }
+
     pub fn reads_json(&self, id: TypeId) -> bool {
         self.reads_json.contains(&id)
     }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/loop_ownership/src/input.rs
-import { Struct, dropOwned } from '@ankurah/base';
+import { Struct, dropOwned, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -30,7 +30,7 @@ export function drain(entities: Entity[], stopAt: number): number {
     while (_at1 < _seq0.length) {
       const entity = _seq0[_at1++];
       try {
-        total += borrow(entity);
+        total = checkedAdd(total, borrow(entity), 'usize');
         if (total > stopAt) {
           break;
         }
@@ -51,7 +51,7 @@ export function consumeAll(entities: Entity[]): number {
   try {
     while (_at1 < _seq0.length) {
       const entity = _seq0[_at1++];
-      total += consume(entity);
+      total = checkedAdd(total, consume(entity), 'usize');
     }
   } finally {
     dropOwned(_seq0.slice(_at1));
@@ -72,7 +72,7 @@ export function takeUntil(entities: Entity[], stopAt: number): number {
           break;
         }
         _moved0 = true;
-        total += consume(entity);
+        total = checkedAdd(total, consume(entity), 'usize');
       } finally {
         if (!_moved0) entity.drop();
       }
@@ -86,7 +86,7 @@ export function takeUntil(entities: Entity[], stopAt: number): number {
 export function measure(entities: Entity[]): number {
   let total = 0;
   for (const entity of entities) {
-    total += borrow(entity);
+    total = checkedAdd(total, borrow(entity), 'usize');
   }
   return total;
 }

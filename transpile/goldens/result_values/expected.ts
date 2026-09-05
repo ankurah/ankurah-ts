@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/result_values/src/input.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum, Result, checkedAdd } from '@ankurah/base';
 
 export type WireErrorV = {
   Truncated: {};
@@ -33,13 +33,13 @@ export function bound(raw: string): Result<number, WireError> {
   const _r0 = width(raw);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const n = _r0.unwrap();
-  return Result.Ok(n + 1);
+  return Result.Ok(checkedAdd(n, 1, 'usize'));
 }
 
 export function insideAnExpression(raw: string): Result<number, WireError> {
   const _r0 = width(raw);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-  return Result.Ok(_r0.unwrap() + 1);
+  return Result.Ok(checkedAdd(_r0.unwrap(), 1, 'usize'));
 }
 
 export function discarded(raw: string): Result<number, WireError> {

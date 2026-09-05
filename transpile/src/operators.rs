@@ -252,7 +252,7 @@ impl BodyTranslator<'_> {
             })
             .unwrap_or_default();
         let member =
-            crate::emit::impl_method_name(op.trait_name, op.rust_method, &op.ts_method, &args, "");
+            crate::emit::impl_method_name(op.trait_name, op.rust_method, &op.ts_method, &args, "", None);
         drop(tc);
         Some(match op.trait_name {
             "PartialEq" => {
@@ -494,7 +494,7 @@ impl BodyTranslator<'_> {
                 .as_ref()
                 .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(tc.registry, ty)).collect())
                 .unwrap_or_default();
-            crate::emit::impl_method_name("Index", "index", "index", &args, "")
+            crate::emit::impl_method_name("Index", "index", "index", &args, "", None)
         };
         Some(format!("{}.{}({})", base_ts, member, index))
     }

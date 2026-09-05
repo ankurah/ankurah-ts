@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result, JsonError, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
@@ -73,8 +73,12 @@ export class CollectionId extends Struct {
 
   static fromJson(value: unknown): Result<CollectionId, JsonError> {
     try {
-      return Result.Ok(new CollectionId(((v: unknown) => v as string)(value)));
+      const _r_0 = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new CollectionId(_0));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

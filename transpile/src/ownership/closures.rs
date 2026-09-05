@@ -124,24 +124,37 @@ impl<'a> BodyTranslator<'a> {
         // closure's value, and a guard lifted out of it belongs inside the
         // arrow function, because its declaration names the closure's own
         // parameters and those do not exist outside.
+        // `async |..| { .. }` and `async move |..| { .. }` are closures whose
+        // body is a future. `ExprClosure::asyncness` was never read, so the
+        // arrow came out without `async` and the `await` inside it was a parse
+        // error — bun refuses the file.
+        let is_async = closure.asyncness.is_some();
+        let arrow_head = if is_async { "async " } else { "" };
+        // A `return` inside a closure returns from the closure in Rust too, so
+        // the sentinel an enclosing lifted body is collecting stops here.
         let (statements, arrow) = match &*closure.body {
             syn::Expr::Block(block) => {
-                let body = self.translate_block(&block.block);
-                (body.clone(), format!("({}) => {{\n{}}}", params, indent(&body)))
+                let body = self.inside_its_own_function(|| self.translate_block(&block.block));
+                (
+                    body.clone(),
+                    format!("{}({}) => {{\n{}}}", arrow_head, params, indent(&body)),
+                )
             }
             _ => {
-                let (body, lifted) = self.with_own_hoists(|| self.expr_value(&closure.body));
+                let (body, lifted) = self.with_own_hoists(|| {
+                    self.inside_its_own_function(|| self.expr_value(&closure.body))
+                });
                 let inner = Self::arrow_body(&body, &lifted);
                 let arrow = if !lifted.is_empty() {
-                    format!("({}) => {{\n{}}}", params, indent(&inner))
+                    format!("{}({}) => {{\n{}}}", arrow_head, params, indent(&inner))
                 } else if body.starts_with("if ")
                     || body.starts_with("for ")
                     || body.starts_with("while ")
                     || body.starts_with('{')
                 {
-                    format!("({}) => {{\n  {}\n}}", params, body)
+                    format!("{}({}) => {{\n  {}\n}}", arrow_head, params, body)
                 } else {
-                    format!("({}) => {}", params, body)
+                    format!("{}({}) => {}", arrow_head, params, body)
                 };
                 (inner, arrow)
             }

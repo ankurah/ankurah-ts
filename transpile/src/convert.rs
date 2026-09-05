@@ -582,8 +582,11 @@ impl BodyTranslator<'_> {
             }
             return Lowered {
                 declaration: format!(
-                    "const {} = {};\nif ({} == null) return null;\n",
-                    temp, inner, temp
+                    "const {} = {};\nif ({} == null) {};\n",
+                    temp,
+                    inner,
+                    temp,
+                    self.leaving_with("null")
                 ),
                 value: temp,
                 wrapper: None,
@@ -602,11 +605,30 @@ impl BodyTranslator<'_> {
         };
         Lowered {
             declaration: format!(
-                "const {} = {};\nif ({}.isErr()) return Result.Err({});\n",
-                temp, inner, temp, error
+                "const {} = {};\nif ({}.isErr()) {};\n",
+                temp,
+                inner,
+                temp,
+                self.leaving_with(&format!("Result.Err({})", error))
             ),
             value: format!("{}.unwrap()", temp),
             wrapper: Some(temp),
+        }
+    }
+
+    /// The early exit a `?` performs, written for where it stands.
+    ///
+    /// In an ordinary body it is a `return`. Inside a body the emitter lifted
+    /// into an arrow, a `return` would leave the arrow and the caller would
+    /// read the error object as the expression's value — `Result.Err(..)` is
+    /// truthy, so `if (applied)` took the success branch for an event that
+    /// failed to apply. The exit travels out as a sentinel instead and the
+    /// statement holding the lifted value performs the real return.
+    pub(crate) fn leaving_with(&self, value: &str) -> String {
+        if self.jump_as_value.get() {
+            crate::body::return_sentinel(value)
+        } else {
+            format!("return {}", value)
         }
     }
 

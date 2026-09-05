@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/match_guard_temporary/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedMul } from '@ankurah/base';
 
 export class Reading extends Struct {
   readonly limit: number;
@@ -11,7 +11,7 @@ export class Reading extends Struct {
 }
 
 export function limitOf(scale: number): Reading {
-  return new Reading(scale * 2);
+  return new Reading(checkedMul(scale, 2, 'usize'));
 }
 
 export function classify(value: number, scale: number): number {
@@ -56,7 +56,7 @@ export function banded(value: number, scale: number): number {
     {
       const n = value;
       let _c3;
-      const _t2 = limitOf(scale * 4);
+      const _t2 = limitOf(checkedMul(scale, 4, 'usize'));
       try {
         _c3 = _t2.limit > n;
       } finally {

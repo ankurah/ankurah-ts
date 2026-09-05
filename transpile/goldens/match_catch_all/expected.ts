@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/match_catch_all/src/input.rs
-import { Struct, Enum, dropUnbound } from '@ankurah/base';
+import { Struct, Enum, dropUnbound, checkedAdd, checkedMul } from '@ankurah/base';
 
 export class Inner extends Struct {
   readonly width: number;
@@ -176,7 +176,7 @@ export function letInit(cause: Cause): number {
       Other: () => 2,
     });
   })();
-  return picked + 1;
+  return checkedAdd(picked, 1, 'i32');
 }
 
 export function asArgument(cause: Cause): number {
@@ -193,7 +193,7 @@ export function asArgument(cause: Cause): number {
 }
 
 function countTwice(n: number): number {
-  return n * 2;
+  return checkedMul(n, 2, 'usize');
 }
 
 export function ignore(held: Held): number {

@@ -41,8 +41,7 @@ pub fn free_call(reg: &TypeRegistry, found: &MethodResolution) -> Option<FreeCal
     if reg.modules().get(def.module).is_system {
         return None;
     }
-    if has_emitted_class(reg, &def.self_ty) || is_reference_forwarding(&def.self_ty, &def.generics)
-    {
+    if !emits_as_free_function(reg, &def.self_ty, &def.generics, def.module) {
         return None;
     }
     let trait_name = def.trait_ref.as_ref().map(|t| leaf(reg.name_of(t.id)));
@@ -134,6 +133,46 @@ fn forwards(block: &syn::Block, name: &str) -> bool {
 /// system type and a type nothing declares do not.
 pub fn has_emitted_class(reg: &TypeRegistry, self_ty: &Ty) -> bool {
     class_module(reg, self_ty).is_some()
+}
+
+/// Do this impl's methods become module-level FUNCTIONS rather than members of
+/// a class?
+///
+/// This is the ONE question three different places used to answer differently.
+/// A TypeScript class is one declaration in one file, and Rust lets an impl sit
+/// anywhere in the crate, so an impl written away from its type's declaration
+/// cannot add methods to that class — `impl Lineage for Clock` in
+/// `core/src/lineage.rs` cannot put `members` on the `Clock` declared in
+/// `retrieval.rs`. Asking only whether a class exists ANYWHERE — which is what
+/// `has_emitted_class` asks — made the three disagree: the body was translated
+/// with `this` as the receiver (so `Clock_members` read `this.asSlice()`, and
+/// `this` is `undefined` in a module function), the wrapper was emitted with a
+/// `self` parameter nothing read, and the call site went on writing
+/// `subject.members()` against a class with no such method.
+///
+/// `impl_module` is the module the IMPL is written in, which is where its free
+/// function is emitted — not the module of the call site.
+pub fn emits_as_free_function(
+    reg: &TypeRegistry,
+    self_ty: &Ty,
+    generics: &[String],
+    impl_module: crate::registry::ModuleId,
+) -> bool {
+    // An impl for a reference to its own parameter forwards to the value
+    // inside, and emission erases the reference, so it has nothing of its own
+    // to emit anywhere.
+    if is_reference_forwarding(self_ty, generics) {
+        return false;
+    }
+    match class_module(reg, self_ty) {
+        // The class is written in this very file: the methods join it.
+        Some(home) if home == impl_module => false,
+        // A type whose TypeScript is written by hand carries its own methods;
+        // emitting them again beside it would give the port two of each.
+        Some(_) if self_ty.peel_refs().id().is_some_and(|id| reg.is_hand_written(id)) => false,
+        // A class elsewhere, or no class at all: module-level functions.
+        _ => true,
+    }
 }
 
 /// Where the class an impl's methods would join is written, if there is one.

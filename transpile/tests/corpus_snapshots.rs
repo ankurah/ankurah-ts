@@ -24,11 +24,54 @@ fn ankql_snapshot() { check("ankql") }
 #[test]
 fn signals_snapshot() { check("signals") }
 
+// The other seven crates of the port's scope. A snapshot is a bulk recording,
+// refreshable in one command, and holding only three of the ten meant an engine
+// change could move seven crates' output with nothing to read.
+
+#[test]
+fn core_snapshot() { check("core") }
+
+#[test]
+fn storage_common_snapshot() { check("storage-common") }
+
+#[test]
+fn storage_sqlite_snapshot() { check("storage-sqlite") }
+
+#[test]
+fn storage_indexeddb_snapshot() { check("storage-indexeddb") }
+
+#[test]
+fn connector_websocket_snapshot() { check("connector-websocket") }
+
+#[test]
+fn connector_local_snapshot() { check("connector-local") }
+
+#[test]
+fn ankurah_snapshot() { check("ankurah") }
+
 fn snapshot_dir(crate_name: &str) -> PathBuf { transpile_dir().join("tests/snapshots").join(crate_name) }
+
+/// Where each crate's sources sit under the corpus. The package name and the
+/// directory are not the same for seven of the ten.
+fn source_dir(crate_name: &str) -> &'static str {
+    match crate_name {
+        "proto" => "proto/src",
+        "ankql" => "ankql/src",
+        "signals" => "signals/src",
+        "core" => "core/src",
+        "storage-common" => "storage/common/src",
+        "storage-sqlite" => "storage/sqlite/src",
+        "storage-indexeddb" => "storage/indexeddb-wasm/src",
+        "connector-websocket" => "connectors/websocket-client-wasm/src",
+        "connector-local" => "connectors/local-process/src",
+        "ankurah" => "ankurah/src",
+        other => panic!("no source directory recorded for `{other}`"),
+    }
+}
 
 fn check(crate_name: &str) {
     let out = TempDir::new(crate_name);
-    run_batch(&support_tree().join(crate_name).join("src"), out.path(), crate_name);
+    run_batch(&support_tree().join(source_dir(crate_name)), out.path(), crate_name);
 
     let actual: Vec<(String, String)> =
         collect_files(out.path()).into_iter().map(|(k, v)| (k, normalize(&v))).collect();

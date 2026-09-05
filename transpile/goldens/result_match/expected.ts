@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/result_match/src/input.rs
-import { Struct, Result } from '@ankurah/base';
+import { Struct, Result, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -66,14 +66,14 @@ export function score(raw: string): number {
   if (_v.isOk()) {
     const entity = _v.unwrap();
     try {
-      return borrowEntity(entity) + 1;
+      return checkedAdd(borrowEntity(entity), 1, 'usize');
     } finally {
       entity.drop();
     }
   } else {
     const failure = _v.unwrapErr();
     try {
-      return borrowFailure(failure) + 100;
+      return checkedAdd(borrowFailure(failure), 100, 'usize');
     } finally {
       failure.drop();
     }

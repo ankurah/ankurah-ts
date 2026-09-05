@@ -35,6 +35,12 @@ pub struct Config {
     crate_features: HashMap<String, Vec<String>>,
     /// The recorded departures from Cargo's resolved set.
     pub feature_overrides: Vec<FeatureOverride>,
+    /// Every feature each crate's own `Cargo.toml` DECLARES, implicit ones
+    /// included. Filled from the corpus at load; empty when the corpus is not
+    /// where `[paths] rust_source` says, which is what a unit fixture looks
+    /// like. A crate with an entry here can say "nothing decides this feature"
+    /// instead of answering false to a name nobody declared.
+    declared_features: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -55,9 +61,8 @@ pub struct ExcludedItem {
     pub selector: ItemSelector,
     pub written: String,
     /// Why this item is out. Required at load — an exclusion with no reason is
-    /// a config error — and read by this module's own tests; nothing in the
-    /// run's output quotes it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// a config error — and printed beside the `EXCLUDED` line the run writes
+    /// when the item is actually found and dropped.
     pub reason: String,
 }
 
@@ -81,9 +86,10 @@ pub struct FeatureOverride {
     pub feature: String,
     /// `true` = forced on, `false` = forced off.
     pub state: bool,
-    /// Why the port departs from Cargo's resolved set here. Required at load
-    /// and read by this module's own tests.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Why the port departs from Cargo's resolved set here. Required at load,
+    /// and said in the `FEATURE` line the run prints for each override — the
+    /// one class of deliberate departure ought to be visible in the output that
+    /// records what the build decided.
     pub reason: String,
 }
 
@@ -150,6 +156,39 @@ impl Config {
         let provided_impls = parse_provided_impls(table.get("provided_impls"));
         let cross_crate_types = parse_string_map(table.get("cross_crate_types"));
 
+        // What each crate's own Cargo.toml declares. A feature the config names
+        // and the crate does not is a config that has gone stale against the
+        // corpus, and a `#[cfg(feature = "x")]` naming an undeclared feature is
+        // a question nothing answers rather than a false.
+        let declared_features = declared_features(&crates, &paths.rust_source);
+        if !declared_features.is_empty() {
+            let mut stale: Vec<String> = Vec::new();
+            for (krate, named) in crate_features.iter() {
+                let Some(declared) = declared_features.get(krate) else { continue };
+                for feature in named {
+                    if !declared.contains(feature) {
+                        stale.push(format!("[features.{}] names `{}`", krate, feature));
+                    }
+                }
+            }
+            for over in &feature_overrides {
+                let Some(declared) = declared_features.get(&over.krate) else { continue };
+                if !declared.contains(&over.feature) {
+                    stale.push(format!(
+                        "[[feature_overrides]] names `{}` for `{}`",
+                        over.feature, over.krate
+                    ));
+                }
+            }
+            if !stale.is_empty() {
+                bail!(
+                    "the config has gone stale against the corpus: {} — no such feature is \
+                     declared in that crate's Cargo.toml",
+                    stale.join("; ")
+                );
+            }
+        }
+
         Ok(Config {
             paths,
             crates,
@@ -163,6 +202,7 @@ impl Config {
             cfg_flags,
             crate_features,
             feature_overrides,
+            declared_features,
         })
     }
 
@@ -170,6 +210,7 @@ impl Config {
     /// the recorded overrides applied, plus the build's target and profile
     /// predicates.
     pub fn features_for_crate(&self, cargo_crate: &str) -> crate::cfg::CfgFeatures {
+        let declared = self.declared_features.get(cargo_crate).cloned();
         let mut enabled: Vec<String> = self
             .crate_features
             .get(cargo_crate)
@@ -179,6 +220,13 @@ impl Config {
             if over.krate != cargo_crate {
                 continue;
             }
+            eprintln!(
+                "  FEATURE {} {} = {} ({})",
+                over.krate,
+                over.feature,
+                over.state,
+                over.reason.lines().next().unwrap_or_default()
+            );
             if over.state {
                 if !enabled.iter().any(|f| f == &over.feature) {
                     enabled.push(over.feature.clone());
@@ -187,9 +235,13 @@ impl Config {
                 enabled.retain(|f| f != &over.feature);
             }
         }
-        crate::cfg::CfgFeatures::new(enabled)
+        let features = crate::cfg::CfgFeatures::new(enabled)
             .with_key_values(self.cfg_key_values.clone())
-            .with_flags(self.cfg_flags.clone())
+            .with_flags(self.cfg_flags.clone());
+        match declared {
+            Some(declared) => features.with_declared(declared),
+            None => features,
+        }
     }
 
     /// The cfg configuration for the TypeScript package name `batch` is given.
@@ -621,4 +673,82 @@ mod tests {
             "util/cb_future"
         );
     }
+}
+
+/// Every feature each in-scope crate's own `Cargo.toml` declares.
+///
+/// Cargo declares two kinds. The `[features]` table names them outright, and an
+/// OPTIONAL dependency declares one implicitly under its own name — unless some
+/// feature already refers to it as `dep:<name>`, which is Cargo's way of saying
+/// "this dependency is switched on by a feature and is not one itself". Both
+/// count: `ankurah-core`'s `wasm` feature names `js-sys` and `send_wrapper`
+/// without `dep:`, so those ARE features of the crate and a `#[cfg]` may ask
+/// about them.
+///
+/// An empty answer means the corpus was not where `[paths] rust_source` says,
+/// which is what a unit fixture looks like; nothing is checked then.
+fn declared_features(
+    crates: &HashMap<String, String>,
+    rust_source: &Path,
+) -> HashMap<String, Vec<String>> {
+    let mut out = HashMap::new();
+    let root = std::fs::canonicalize(rust_source).unwrap_or_else(|_| rust_source.to_path_buf());
+    for entry in walkdir::WalkDir::new(&root)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name() == "Cargo.toml")
+    {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
+        let Ok(table) = text.parse::<toml::Table>() else { continue };
+        let Some(name) = table
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+        else {
+            continue;
+        };
+        if !crates.contains_key(name) {
+            continue;
+        }
+        let features = table.get("features").and_then(|f| f.as_table());
+        let mut declared: Vec<String> = features
+            .map(|f| f.keys().cloned().collect())
+            .unwrap_or_default();
+        // Cargo declares `default` whether or not the table names it.
+        if !declared.iter().any(|f| f == "default") {
+            declared.push("default".to_string());
+        }
+        // A dependency named as `dep:x` by some feature is not itself a
+        // feature; every other optional dependency is.
+        let mut explicit_deps: Vec<String> = Vec::new();
+        if let Some(features) = features {
+            for value in features.values() {
+                let Some(list) = value.as_array() else { continue };
+                for item in list {
+                    let Some(text) = item.as_str() else { continue };
+                    if let Some(dep) = text.strip_prefix("dep:") {
+                        explicit_deps.push(dep.to_string());
+                    }
+                }
+            }
+        }
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let Some(deps) = table.get(section).and_then(|d| d.as_table()) else { continue };
+            for (dep, spec) in deps {
+                let optional = spec
+                    .get("optional")
+                    .and_then(|o| o.as_bool())
+                    .unwrap_or(false);
+                if !optional || explicit_deps.iter().any(|d| d == dep) {
+                    continue;
+                }
+                if !declared.iter().any(|f| f == dep) {
+                    declared.push(dep.clone());
+                }
+            }
+        }
+        out.insert(name.to_string(), declared);
+    }
+    out
 }

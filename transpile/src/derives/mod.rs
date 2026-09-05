@@ -45,6 +45,7 @@ pub fn report(gaps: Vec<Gap>) {
 /// would refuse the derive alongside it.
 pub fn enum_members(
     reg: &TypeRegistry,
+    self_id: Option<crate::ty::TypeId>,
     e: &EnumInfo,
     emitted: &mut HashSet<String>,
 ) -> (String, Vec<Gap>) {
@@ -56,7 +57,7 @@ pub fn enum_members(
         gaps.append(&mut said);
     }
     if thiserror::is_thiserror(&e.derives) && emitted.insert("toString".to_string()) {
-        let (ts, mut said) = thiserror::enum_error(reg, e);
+        let (ts, mut said) = thiserror::enum_error(reg, self_id, e);
         out.push_str(&ts);
         gaps.append(&mut said);
         // thiserror also reads a container-level `#[error(..)]`, which stands

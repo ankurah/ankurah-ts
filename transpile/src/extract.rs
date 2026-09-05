@@ -65,7 +65,18 @@ pub fn take_exclusions_hit() -> std::collections::BTreeSet<String> {
 }
 
 fn note_exclusion(item: &crate::config::ExcludedItem) {
-    EXCLUSIONS_HIT.with(|h| h.borrow_mut().insert(item.written.clone()));
+    // The reason is why the item is out, and it was recorded and never said.
+    // Printed once per item per run, beside the `PROVIDED` and `SKIP` lines,
+    // so a reader of the run's output can see what the port left behind and on
+    // what grounds.
+    if EXCLUSIONS_HIT.with(|h| h.borrow_mut().insert(item.written.clone())) {
+        eprintln!(
+            "  EXCLUDED {} in {} ({})",
+            item.written,
+            item.file,
+            item.reason.lines().next().unwrap_or_default()
+        );
+    }
 }
 
 /// Is this item named by an `[[excluded_items]]` entry? Records the hit.
@@ -82,7 +93,7 @@ fn is_excluded_item(item: &syn::Item, cfg: ExtractCfg) -> bool {
 /// Report a `#[cfg]` no configuration decides. The item is kept: dropping it
 /// would take every type it declares with it, and the report would be a crowd of
 /// unrelated "no declaration for" lines somewhere else.
-fn report_undecided_cfg(span: proc_macro2::Span, text: &str) {
+pub(crate) fn report_undecided_cfg(span: proc_macro2::Span, text: &str) {
     crate::diag::pending::park(
         span,
         format!(
@@ -104,11 +115,11 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
         match item {
             syn::Item::Struct(s) => {
                 if is_skipped_cfg_with(&s.attrs, features) { continue; }
-                file.structs.push(extract_struct(s));
+                file.structs.push(extract_struct(s, features));
             }
             syn::Item::Enum(e) => {
                 if is_skipped_cfg_with(&e.attrs, features) { continue; }
-                file.enums.push(extract_enum(e));
+                file.enums.push(extract_enum(e, features));
             }
             syn::Item::Trait(t) => {
                 if is_skipped_cfg_with(&t.attrs, features) { continue; }
@@ -116,13 +127,16 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
             }
             syn::Item::Fn(f) => {
                 if is_skipped_cfg_with(&f.attrs, features) { continue; }
-                file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block)));
+                file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block), features));
             }
             syn::Item::Impl(i) => {
                 if is_skipped_cfg_with(&i.attrs, features) { continue; }
                 file.impls.push(extract_impl(i, cfg));
             }
             syn::Item::Use(u) => {
+                // `#[cfg(feature = "wasm")] pub use ::js_sys;` — a re-export
+                // that is not in this build re-exports nothing.
+                if is_skipped_cfg_with(&u.attrs, features) { continue; }
                 file.uses.push(extract_use(u));
             }
             syn::Item::Type(t) => {
@@ -145,24 +159,58 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                     rust_ty: Some((*c.ty).clone()),
                     is_pub: is_public(&c.vis),
                     vis: visibility(&c.vis),
+                    init: Some((*c.expr).clone()),
+                    init_ts: None,
+                    mutable: false,
+                });
+            }
+            // A `static` is a module-level value like a `const`, and the item
+            // walk had no arm for one at all: `pub static D: u32 = 9;` was
+            // dropped, and every use of `D` named something nothing declared.
+            syn::Item::Static(st) => {
+                if is_skipped_cfg_with(&st.attrs, features) { continue; }
+                file.consts.push(ConstInfo {
+                    name: st.ident.to_string(),
+                    ty: name_map::map_type(&st.ty),
+                    rust_ty: Some((*st.ty).clone()),
+                    is_pub: is_public(&st.vis),
+                    vis: visibility(&st.vis),
+                    init: Some((*st.expr).clone()),
+                    init_ts: None,
+                    mutable: matches!(st.mutability, syn::StaticMutability::Mut(_)),
                 });
             }
             syn::Item::Mod(m) => {
-                // Check for #[cfg(test)] mod tests { ... }
+                // `#[cfg(test)] mod tests { .. }` is ordinary Rust: a fixture
+                // struct, an impl on it, a `const`, a `use super::*`. Reading
+                // only `syn::Item::Fn` out of it dropped every one of those and
+                // the emitted test named them anyway — 16 × TS2304 in core, and
+                // ten corpus files affected. The whole module goes through the
+                // ordinary walk now, and its FUNCTIONS are lifted out as the
+                // tests and their helpers.
                 if is_test_module(&m.attrs) {
                     if let Some((_, items)) = &m.content {
-                        for item in items {
-                            if let syn::Item::Fn(f) = item {
-                                let extracted = extract_fn_with_body(&f.sig, true, VisInfo::Private, &f.attrs, Some(&f.block));
-                                if is_test_fn(&f.attrs) {
-                                    file.test_functions.push(extracted);
-                                } else {
-                                    // A helper the tests call. It is part of
-                                    // the suite, not of the module.
-                                    file.test_helpers.push(extracted);
-                                }
+                        let mut sub = RustFile::empty(String::new());
+                        sub.vis = VisInfo::Private;
+                        sub.is_test_module = true;
+                        extract_items(items, cfg, &mut sub);
+                        // The functions stay in the module so that it DECLARES
+                        // them — a test calling a helper of its own module has
+                        // to resolve it — and a copy is lifted out, which is
+                        // what the `.test.ts` writes and what carries the
+                        // translated body.
+                        for f in sub.functions.iter() {
+                            if f.is_test {
+                                file.test_functions.push(f.clone());
+                            } else {
+                                // A helper the tests call. It is part of the
+                                // suite, not of the module.
+                                file.test_helpers.push(f.clone());
                             }
                         }
+                        let name = m.ident.to_string();
+                        file.test_module = Some(name.clone());
+                        file.inline_modules.push((name, sub));
                     }
                 }
                 // Extract inline modules as separate RustFile entries.
@@ -197,7 +245,19 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                 if macro_name == "thread_local" {
                     if let Some((decl, name, ty, rust_ty)) = extract_thread_local(&mac.mac) {
                         file.module_decls.push(decl);
-                        file.consts.push(ConstInfo { name, ty, rust_ty, is_pub: false, vis: VisInfo::Private });
+                        // The `thread_local!` lowering writes its own
+                        // declaration into `module_decls`; this entry exists so
+                        // the name resolves, and codegen skips it.
+                        file.consts.push(ConstInfo {
+                            name,
+                            ty,
+                            rust_ty,
+                            is_pub: false,
+                            vis: VisInfo::Private,
+                            init: None,
+                            init_ts: None,
+                            mutable: false,
+                        });
                     }
                 }
             }
@@ -231,10 +291,6 @@ fn visibility(vis: &Visibility) -> VisInfo {
     }
 }
 
-fn is_skipped_cfg(attrs: &[syn::Attribute]) -> bool {
-    is_skipped_cfg_with(attrs, None)
-}
-
 fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::CfgFeatures>) -> bool {
     if let Some(features) = features {
         return match crate::cfg::gate(attrs, features) {
@@ -250,7 +306,10 @@ fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::C
             }
         };
     }
-    // Legacy fallback: string matching for wasm/uniffi
+    // No configuration was supplied at all. That is a unit fixture or the std
+    // surface, never a `batch` run — `main` always hands the crate's resolved
+    // set down. The token match is what those two have always had; the std
+    // surface writes no `#[cfg]` and a fixture writes one only to test this.
     for attr in attrs {
         if attr.path().is_ident("cfg") {
             let tokens = attr.meta.to_token_stream().to_string();
@@ -303,14 +362,44 @@ fn extract_derives(attrs: &[syn::Attribute]) -> Vec<String> {
     derives
 }
 
+/// Is `#[serde(<flag>)]` written here, as a bare word rather than as the value
+/// of something?
+///
+/// `#[serde(rename = "other")]` names a KEY called `other` and is not
+/// `#[serde(other)]`; a substring test read the two as one. The arguments are
+/// split on commas and compared whole.
+pub(crate) fn has_serde_flag(attrs: &[syn::Attribute], flag: &str) -> bool {
+    for attr in attrs {
+        let syn::Meta::List(meta) = &attr.meta else { continue };
+        if !meta.path.is_ident("serde") {
+            continue;
+        }
+        if meta
+            .tokens
+            .to_string()
+            .split(',')
+            .any(|part| part.trim() == flag)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Is this module the crate's test module — `#[cfg(test)] mod tests`?
+///
+/// The predicate is `cfg(test)` itself, not the substring "test": a
+/// `#[cfg(feature = "test-helpers")] mod x` is a module of the ordinary build
+/// under some configuration and not a test module under any.
 fn is_test_module(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
-        if attr.path().is_ident("cfg") {
-            let tokens = attr.meta.to_token_stream().to_string();
-            tokens.contains("test")
-        } else {
-            false
-        }
+        attr.path().is_ident("cfg")
+            && attr
+                .meta
+                .to_token_stream()
+                .to_string()
+                .replace(' ', "")
+                .starts_with("cfg(test)")
     })
 }
 
@@ -321,34 +410,30 @@ fn is_test_fn(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-fn extract_struct(s: &syn::ItemStruct) -> StructInfo {
+fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::CfgFeatures>) -> StructInfo {
     StructInfo {
         name: s.ident.to_string(),
         is_pub: is_public(&s.vis),
         vis: visibility(&s.vis),
-        fields: extract_fields(&s.fields),
+        fields: extract_fields(&s.fields, features),
         generics: extract_generics(&s.generics),
         type_params: type_param_names(&s.generics),
         param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&s.attrs),
+        serde_transparent: has_serde_flag(&s.attrs, "transparent"),
         span: s.ident.span(),
     }
 }
 
-fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
-    let variants = e.variants.iter().map(|v| {
-        let is_serde_other = v.attrs.iter().any(|a| {
-            if let syn::Meta::List(meta) = &a.meta {
-                if meta.path.is_ident("serde") {
-                    return meta.tokens.to_string().contains("other");
-                }
-            }
-            false
-        });
+fn extract_enum(e: &syn::ItemEnum, features: Option<&crate::cfg::CfgFeatures>) -> EnumInfo {
+    // A variant this build leaves out is not a variant: its key would stand in
+    // the emitted union and in every match the derive writes.
+    let variants = e.variants.iter().filter(|v| !is_skipped_cfg_with(&v.attrs, features)).map(|v| {
+        let is_serde_other = has_serde_flag(&v.attrs, "other");
         // `#[serde(with = "..")]` sits on the VARIANT, not on the field
         // inside it: `#[serde(with = "json_as_bytes")] Json(serde_json::Value)`.
         // The codec asks the field, so the variant's answer stands in for it.
-        let mut fields = extract_fields(&v.fields);
+        let mut fields = extract_fields(&v.fields, features);
         if let Some(module) = serde_with_attr(&v.attrs) {
             for field in &mut fields {
                 field.serde_with.get_or_insert(module.clone());
@@ -372,6 +457,7 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
         type_params: type_param_names(&e.generics),
         param_defaults: type_param_defaults(&e.generics),
         derives: extract_derives(&e.attrs),
+        serde_transparent: has_serde_flag(&e.attrs, "transparent"),
         span: e.ident.span(),
     }
 }
@@ -390,6 +476,7 @@ fn extract_trait(t: &syn::ItemTrait, cfg: ExtractCfg) -> TraitInfo {
     let mut has_default_impls = false;
     let methods = t.items.iter().filter_map(|item| {
         if let syn::TraitItem::Fn(method) = item {
+            if is_skipped_cfg_with(&method.attrs, cfg.features) { return None; }
             if method.default.is_some() {
                 has_default_impls = true;
             }
@@ -399,6 +486,9 @@ fn extract_trait(t: &syn::ItemTrait, cfg: ExtractCfg) -> TraitInfo {
             // Keeping only the flag meant emission wrote a `throw` in its place
             // and each implementor that omitted the method lost it.
             info.body_ast = method.default.clone();
+            if let (Some(block), Some(features)) = (&mut info.body_ast, cfg.features) {
+                crate::cfg::prune_block(block, features);
+            }
             Some(info)
         } else {
             None
@@ -410,7 +500,12 @@ fn extract_trait(t: &syn::ItemTrait, cfg: ExtractCfg) -> TraitInfo {
         _ => None,
     }).collect();
     let assoc_types = t.items.iter().filter_map(|item| match item {
-        syn::TraitItem::Type(ty) if !excluded_assoc(&ty.ident.to_string()) => Some(ty.ident.to_string()),
+        syn::TraitItem::Type(ty)
+            if !excluded_assoc(&ty.ident.to_string())
+                && !is_skipped_cfg_with(&ty.attrs, cfg.features) =>
+        {
+            Some(ty.ident.to_string())
+        }
         _ => None,
     }).collect();
 
@@ -453,10 +548,24 @@ fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String, Opt
     }
 }
 
-fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn::Attribute], body: Option<&syn::Block>) -> FnInfo {
+fn extract_fn_with_body(
+    sig: &syn::Signature,
+    is_pub: bool,
+    vis: VisInfo,
+    attrs: &[syn::Attribute],
+    body: Option<&syn::Block>,
+    features: Option<&crate::cfg::CfgFeatures>,
+) -> FnInfo {
     let mut info = extract_fn_vis(sig, is_pub, vis, attrs);
     if let Some(block) = body {
-        info.body_ast = Some(block.clone());
+        let mut block = block.clone();
+        // A `#[cfg]` inside a body decides whether the statement is in this
+        // build, exactly as it does for an item. Pruning here means nothing
+        // downstream has to ask again.
+        if let Some(features) = features {
+            crate::cfg::prune_block(&mut block, features);
+        }
+        info.body_ast = Some(block);
     }
     info
 }
@@ -464,10 +573,17 @@ fn extract_fn_with_body(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs:
 /// Extract function with body, recording the self type for later translation.
 /// The self_type is stored on the ImplInfo, not the FnInfo — the translation phase
 /// uses ImplInfo.target_type to create the ImplScope.
-fn extract_fn_with_body_and_self(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute], body: Option<&syn::Block>, _self_type: &str) -> FnInfo {
+fn extract_fn_with_body_and_self(
+    sig: &syn::Signature,
+    is_pub: bool,
+    attrs: &[syn::Attribute],
+    body: Option<&syn::Block>,
+    _self_type: &str,
+    features: Option<&crate::cfg::CfgFeatures>,
+) -> FnInfo {
     // self_type is no longer used during extraction — it's resolved from ImplInfo during Phase 3
     let vis = if is_pub { VisInfo::Public } else { VisInfo::Private };
-    extract_fn_with_body(sig, is_pub, vis, attrs, body)
+    extract_fn_with_body(sig, is_pub, vis, attrs, body, features)
 }
 
 fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> FnInfo {
@@ -585,7 +701,7 @@ fn extract_impl(i: &syn::ItemImpl, cfg: ExtractCfg) -> ImplInfo {
 
     let methods = i.items.iter().filter_map(|item| {
         if let syn::ImplItem::Fn(method) = item {
-            if is_skipped_cfg(&method.attrs) { return None; }
+            if is_skipped_cfg_with(&method.attrs, cfg.features) { return None; }
             for entry in cfg.excluded {
                 if entry.selector.matches_method(&i.self_ty, method) {
                     note_exclusion(entry);
@@ -594,14 +710,16 @@ fn extract_impl(i: &syn::ItemImpl, cfg: ExtractCfg) -> ImplInfo {
             }
             Some(extract_fn_with_body_and_self(
                 &method.sig, is_public(&method.vis), &method.attrs,
-                Some(&method.block), &target_type))
+                Some(&method.block), &target_type, cfg.features))
         } else {
             None
         }
     }).collect();
 
     let assoc_types = i.items.iter().filter_map(|item| match item {
-        syn::ImplItem::Type(ty) => Some((ty.ident.to_string(), ty.ty.clone())),
+        syn::ImplItem::Type(ty) if !is_skipped_cfg_with(&ty.attrs, cfg.features) => {
+            Some((ty.ident.to_string(), ty.ty.clone()))
+        }
         _ => None,
     }).collect();
 
@@ -722,9 +840,16 @@ fn serde_with_attr(attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
-fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
+/// One declaration's fields, minus the ones this build leaves out.
+///
+/// `#[cfg(debug_assertions)] pub(crate) prefix_guard_disabled: Arc<AtomicBool>`
+/// is a field of `IndexedDBBucket` in one build and not a field at all in
+/// another, and a field carried into the output unevaluated changes the
+/// constructor's arity for every caller.
+fn extract_fields(fields: &Fields, features: Option<&crate::cfg::CfgFeatures>) -> Vec<FieldInfo> {
+    let in_build = |attrs: &[syn::Attribute]| !is_skipped_cfg_with(attrs, features);
     match fields {
-        Fields::Named(named) => named.named.iter().map(|f| {
+        Fields::Named(named) => named.named.iter().filter(|f| in_build(&f.attrs)).map(|f| {
             FieldInfo {
                 name: f.ident.as_ref().map(|i| name_map::to_camel_case(&i.to_string())),
                 rust_name: f.ident.as_ref().map(|i| i.to_string()),
@@ -734,9 +859,10 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 is_from: has_from_attr(&f.attrs),
                 is_source: has_source_attr(&f.attrs),
                 serde_with: serde_with_attr(&f.attrs),
+                serde_skip: has_serde_flag(&f.attrs, "skip"),
             }
         }).collect(),
-        Fields::Unnamed(unnamed) => unnamed.unnamed.iter().enumerate().map(|(i, f)| {
+        Fields::Unnamed(unnamed) => unnamed.unnamed.iter().filter(|f| in_build(&f.attrs)).enumerate().map(|(i, f)| {
             FieldInfo {
                 name: Some(format!("_{}", i)),
                 rust_name: None,
@@ -746,6 +872,7 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 is_from: has_from_attr(&f.attrs),
                 is_source: has_source_attr(&f.attrs),
                 serde_with: serde_with_attr(&f.attrs),
+                serde_skip: has_serde_flag(&f.attrs, "skip"),
             }
         }).collect(),
         Fields::Unit => Vec::new(),

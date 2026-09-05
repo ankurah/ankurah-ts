@@ -13,7 +13,7 @@
 // enums — `new Expr('Path', { _0: x })`, a struct variant by its field names — and
 // every Rust `fn` that answers `Result` answers a `Result` here, so `?` is an
 // `isErr()` test rather than a throw. `try_into()` on an Expr is the emitted
-// `Predicate_fromExpr` out of conversion.ts, which is where the engine writes
+// `Predicate_tryFromExpr` out of conversion.ts, which is where the engine writes
 // `impl TryFrom<ast::Expr> for Predicate`.
 //
 // Rust drops what a `?` abandons. Each early return below therefore releases the
@@ -23,7 +23,7 @@
 import { Result, dropOwned } from '@ankurah/base';
 import { type Pair, type Rule, parseSelectionRule } from './grammar.ts';
 import { ComparisonOperator, Expr, Literal, OrderByItem, OrderDirection, PathExpr, Predicate, Selection } from './ast.ts';
-import { Predicate_fromExpr } from './conversion.ts';
+import { Predicate_tryFromExpr } from './conversion.ts';
 import { ParseError } from './error.ts';
 
 const I32_MIN = -2147483648n;
@@ -154,7 +154,7 @@ function parseExpr(pair: Pair): Result<Predicate, ParseError> {
       const isNull = new Expr('Predicate', { _0: new Predicate('IsNull', { _0: result }) });
       if (isNot) {
         // `Expr::Predicate(..)` always converts, so this never takes the Err path.
-        const r = Predicate_fromExpr(isNull);
+        const r = Predicate_tryFromExpr(isNull);
         if (r.isErr()) return Result.Err(r.unwrapErr());
         result = new Expr('Predicate', { _0: new Predicate('Not', { _0: r.unwrap() }) });
       } else {
@@ -199,7 +199,7 @@ function parseExpr(pair: Pair): Result<Predicate, ParseError> {
     }
   }
 
-  return Predicate_fromExpr(result);
+  return Predicate_tryFromExpr(result);
 }
 
 // Rust: fn create_comparison
@@ -248,7 +248,7 @@ function comparisonOperatorFor(op: Rule): ComparisonOperator['type'] | null {
 // Rust: fn create_logical_op
 /** Create a logical operation (AND/OR) from a left expression and a right pair */
 function createLogicalOp(op: Rule, left: Expr, right: Pair, rest: Pairs): Result<Expr, ParseError> {
-  const rl = Predicate_fromExpr(left);
+  const rl = Predicate_tryFromExpr(left);
   if (rl.isErr()) return Result.Err(rl.unwrapErr());
   const leftPred = rl.unwrap();
 
@@ -266,7 +266,7 @@ function createLogicalOp(op: Rule, left: Expr, right: Pair, rest: Pairs): Result
   // resumes after them with the whole And/Or as its new left.
   const nextOp = rest.next();
   if (nextOp === undefined) {
-    const rp = Predicate_fromExpr(rightExpr);
+    const rp = Predicate_tryFromExpr(rightExpr);
     if (rp.isErr()) {
       leftPred.drop();
       return Result.Err(rp.unwrapErr());

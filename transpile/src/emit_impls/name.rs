@@ -33,7 +33,7 @@ pub fn method_symbol(
         // which direction it goes.
         Some("Into") | Some("TryInto") | None => ts_method.to_string(),
         Some(trait_name) => {
-            crate::emit::impl_method_name(trait_name, "", ts_method, type_args, self_type)
+            crate::emit::impl_method_name(trait_name, "", ts_method, type_args, self_type, None)
         }
     }
 }

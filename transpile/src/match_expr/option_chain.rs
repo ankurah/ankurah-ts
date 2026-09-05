@@ -12,7 +12,7 @@
 //! Arms are tested in the order Rust tries them, each against the same subject,
 //! which is read once.
 
-use super::{Position, arm_body, indent, subject_of};
+use super::{Position, arm_body, indent, subject_of_bound};
 use crate::body::BodyTranslator;
 
 pub fn translate(
@@ -26,7 +26,14 @@ pub fn translate(
     // Rust evaluates the subject once and each arm tests that one value. The
     // arms are tests here, so a subject that is not already a name is read into
     // one; without it a call with side effects ran once per arm.
-    let (subject, declaration) = subject_of(scrutinee, t);
+    // Every name the arms bind, so a pattern that shadows the subject's own
+    // name gets a temporary to shadow against.
+    let binds: Vec<String> = match_expr
+        .arms
+        .iter()
+        .flat_map(|arm| crate::body::pattern_names(&arm.pat))
+        .collect();
+    let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
 
     let mut branches: Vec<(String, String)> = Vec::new();
     let mut otherwise: Option<String> = None;

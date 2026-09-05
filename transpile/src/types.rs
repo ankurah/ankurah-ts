@@ -52,6 +52,25 @@ pub struct RustFile {
     /// Inline modules extracted as separate files.
     /// (module_name, RustFile) — emitted to parent_dir/module_name.ts
     pub inline_modules: Vec<(String, RustFile)>,
+    /// Is this file the extracted body of a `#[cfg(test)] mod`?
+    ///
+    /// Its functions are DECLARED here — so a test that calls a helper of the
+    /// same module resolves it — and translated and emitted as the parent's
+    /// `test_functions`, which is where they belong. Without the declaration,
+    /// `nullify_columns(..).unwrap()` in ankql's `ast.rs` answered "does not
+    /// name a function here" and the `unwrap` was dropped as an identity, so
+    /// every one of that file's nine tests compared a `Result` to a string.
+    pub is_test_module: bool,
+    /// The name of the inline module that is this file's `#[cfg(test)] mod`.
+    ///
+    /// It lives in `inline_modules` so that its declarations are registered,
+    /// resolved and translated like any other module's — a test fixture is
+    /// ordinary Rust — and it is named here so that EMISSION knows to write it
+    /// into the `.test.ts` rather than into a `.ts` file of its own. The walk
+    /// used to read only `syn::Item::Fn` out of it, so every fixture struct,
+    /// impl, const and `use` was dropped and the emitted test named them
+    /// anyway: 16 × TS2304 in core.
+    pub test_module: Option<String>,
     /// Every field name something in this file assigns. Rust's `pub` means
     /// readable *and* writable, so a field anything writes cannot be emitted
     /// `readonly`. Read off the source while the bodies are still ASTs, because
@@ -74,6 +93,8 @@ impl RustFile {
             consts: Vec::new(),
             test_functions: Vec::new(),
             test_helpers: Vec::new(),
+            test_module: None,
+            is_test_module: false,
             module_decls: Vec::new(),
             mod_decls: Vec::new(),
             assigned_fields: std::collections::HashSet::new(),
@@ -95,6 +116,13 @@ pub struct StructInfo {
     /// the use site leaves it unwritten, positionally alongside `type_params`.
     pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
+    /// `#[serde(transparent)]` — the container has ONE field that is not
+    /// skipped, and serde writes and reads that field's value with no wrapper
+    /// around it. `core/src/property/value/entity_ref.rs`'s `Ref<T>` is a
+    /// NAMED struct written this way, so the newtype rule alone did not catch
+    /// it and the emitted JSON carried an `id` key and a `_phantom` beside it
+    /// where serde writes the `EntityId` alone.
+    pub serde_transparent: bool,
     /// Where the type's name is written, so a derive hook that cannot carry
     /// something over reports it at the declaration a reader has to open.
     pub span: proc_macro2::Span,
@@ -126,6 +154,9 @@ pub struct FieldInfo {
     /// the module's own name, so the codec can look up a hook for it by
     /// identity rather than expanding what the module writes.
     pub serde_with: Option<String>,
+    /// `#[serde(skip)]` — the field is in neither format. serde writes nothing
+    /// for it and reads it back as `Default::default()`.
+    pub serde_skip: bool,
 }
 
 /// What a `thiserror` variant's `#[error(..)]` says.
@@ -148,6 +179,8 @@ pub struct EnumInfo {
     pub type_params: Vec<String>,
     pub param_defaults: Vec<Option<syn::Type>>,
     pub derives: Vec<String>,
+    /// `#[serde(transparent)]`. See `StructInfo::serde_transparent`.
+    pub serde_transparent: bool,
     /// Where the type's name is written. See `StructInfo::span`.
     pub span: proc_macro2::Span,
 }
@@ -204,6 +237,7 @@ pub enum SelfKind {
     Arbitrary,
 }
 
+#[derive(Clone)]
 pub struct FnInfo {
     pub name: String,
     pub ts_name: String,
@@ -317,8 +351,18 @@ impl ImplInfo {
                 // it carry arguments — and the qualifier is the one thing that
                 // tells `bincode::Error` from `anyhow::Error`.
                 syn::GenericArgument::Type(ty) => {
-                    let spelled = crate::name_map::map_type(ty);
-                    let qualifier = match ty {
+                    // A reference keeps its `&`. TypeScript erases it, so
+                    // `From<Literal>` and `From<&Literal>` spell one signature
+                    // — but they do NOT do the same thing with what they are
+                    // given, and reading them as one string made the owned
+                    // body run for a borrowed value and drop something its
+                    // caller still owned.
+                    let (inner, borrowed) = match ty {
+                        syn::Type::Reference(r) => (&*r.elem, "&"),
+                        other => (other, ""),
+                    };
+                    let spelled = crate::name_map::map_type(inner);
+                    let qualifier = match inner {
                         syn::Type::Path(p) if p.path.segments.len() > 1 => p
                             .path
                             .segments
@@ -330,9 +374,9 @@ impl ImplInfo {
                         _ => String::new(),
                     };
                     Some(if qualifier.is_empty() {
-                        spelled
+                        format!("{}{}", borrowed, spelled)
                     } else {
-                        format!("{}::{}", qualifier, spelled)
+                        format!("{}{}::{}", borrowed, qualifier, spelled)
                     })
                 }
                 _ => None,
@@ -459,6 +503,18 @@ pub struct ConstInfo {
     pub rust_ty: Option<syn::Type>,
     pub is_pub: bool,
     pub vis: VisInfo,
+    /// What the const is, as Rust wrote it. Carried so that emission can
+    /// translate it: a `ConstInfo` used to hold the const's TYPE and nothing
+    /// else, and every module-level const came out `undefined as any` — the
+    /// word list `human_id` indexes, the tag byte every JSON value in an index
+    /// key is written with, the system collection's name.
+    pub init: Option<syn::Expr>,
+    /// The translated initialiser, filled by the same pass that translates a
+    /// function body and read by codegen.
+    pub init_ts: Option<String>,
+    /// `static mut NAME` — a global the program writes to, which TypeScript
+    /// spells `let` rather than `const`.
+    pub mutable: bool,
 }
 
 impl FieldInfo {

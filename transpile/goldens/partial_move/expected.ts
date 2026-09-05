@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/partial_move/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -46,7 +46,7 @@ export function takeOne(pair: Pair): number {
   try {
     const one = pair.takeField('one');
     const seen = borrow(pair.two);
-    return consume(one) + seen;
+    return checkedAdd(consume(one), seen, 'usize');
   } finally {
     pair.drop();
   }
@@ -64,7 +64,7 @@ export function takeBoth(pair: Pair): number {
   try {
     const one = pair.takeField('one');
     const two = pair.takeField('two');
-    return consume(one) + consume(two);
+    return checkedAdd(consume(one), consume(two), 'usize');
   } finally {
     pair.drop();
   }

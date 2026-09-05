@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/expected_types/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedAdd } from '@ankurah/base';
 
 export class Header extends Struct {
   readonly version: number;
@@ -26,7 +26,7 @@ export function tag(): Uint8Array {
 }
 
 export function nextLength(header: Header): number {
-  const grown = header.length + 1;
+  const grown = checkedAdd(header.length, 1, 'u16');
   return grown;
 }
 

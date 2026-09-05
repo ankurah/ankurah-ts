@@ -607,3 +607,38 @@ retired: Hermes refuses `using`, so the transpiler emits explicit `.drop()` call
 and `try/finally` blocks instead. `[Symbol.dispose]` still exists on `AkObject`
 and `Arc` and still delegates to `drop()`, but it is not the model and no new
 code should reach for it; the cascade dispatches on `drop()`.
+
+## A `&mut` to a value JavaScript copies is a cell
+
+Rust's `&mut T` is a place the callee writes and the caller reads back. Where
+`T` is something the port writes as a JavaScript object — a class, an array, a
+`HashMap` — the reference is free: JavaScript already passes the object, and the
+callee's writes land in the caller's value. Where `T` is a number, a string, a
+boolean, a bigint or an `Option` of one, JavaScript passes a COPY, and the
+callee's writes go nowhere at all. ankql's SQL generator takes
+`buffer: &mut String` and `found_placeholders: &mut usize`, and every axis of
+`selection/sql.ts` answered the empty string because the buffer the callee
+filled was not the buffer the caller read.
+
+So such a parameter is a `BorrowMut<T>` — the cell `@ankurah/base` already
+exports for `&mut T` — and the emitted body reads and writes it through
+`.value`. A LOCAL the body hands out that way is declared as the cell at its
+`let`, so nothing has to be unboxed after the call; every read of it is
+`.value` too.
+
+The one place a cell is passed whole rather than read is an argument position
+where the name is itself a `&mut` PARAMETER: Rust reborrows there and needs no
+`&mut` to say so, and handing `buffer.value` on would give the callee a copy —
+which is the defect this rule exists to remove.
+
+| Rust | TypeScript |
+|---|---|
+| `fn f(buffer: &mut String)` | `function f(buffer: BorrowMut<string>)` |
+| `*count += 1` inside such a body | `count.value += 1` |
+| `buffer.push_str("?")` inside such a body | `buffer.value += '?'` |
+| `let mut buffer = String::new(); g(&mut buffer)` | `const buffer = new BorrowMut(''); g(buffer)` |
+| `g(buffer)` where `buffer: &mut String` (a reborrow) | `g(buffer)` — the cell, not `buffer.value` |
+| `fn f(v: &mut Vec<u8>)` | `function f(v: Uint8Array)` — an object is already a reference |
+
+`BorrowMut` is `nonOwning`: it is a borrow, the value inside belongs to
+somebody else, and dropping the cell releases nothing.

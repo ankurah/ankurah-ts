@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/sys.rs
-import { Enum, Result, JsonError } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type ItemV = {
@@ -69,14 +69,29 @@ export class Item extends Enum<ItemV> {
           case 'SysRoot': return Result.Ok(new Item('SysRoot', {}));
           case 'Other': return Result.Ok(new Item('Other', {}));
         }
+        return Result.Ok(new Item('Other', {}));
+      }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `Item`'));
       }
       const o = value as Record<string, unknown>;
       if ('Collection' in o) {
-        const p = o['Collection'];
-        return Result.Ok(new Item('Collection', { name: ((v: unknown) => v as string)((p as Record<string, unknown>)['name']) }));
+        if (o['Collection'] === null || typeof o['Collection'] !== 'object' || Array.isArray(o['Collection'])) {
+          return Result.Err(JsonError.custom('expected an object for `Item`'));
+        }
+        const _o = o['Collection'] as Record<string, unknown>;
+        if (!('name' in _o)) {
+          return Result.Err(JsonError.custom('missing field `name`'));
+        }
+        const _rname = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(_o['name']);
+        if (_rname.isErr()) return Result.Err(_rname.unwrapErr());
+        const name = _rname.unwrap();
+        
+        return Result.Ok(new Item('Collection', { name: name }));
       }
-      return Result.Err(JsonError.custom('no variant of `Item` matches this JSON'));
+      return Result.Ok(new Item('Other', {}));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

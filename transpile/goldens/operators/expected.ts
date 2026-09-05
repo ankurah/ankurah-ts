@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/operators/src/input.rs
-import { Struct, boolAnd, boolOr } from '@ankurah/base';
+import { Struct, boolAnd, boolOr, checkedAdd, checkedDiv } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly id: number;
@@ -32,7 +32,7 @@ export class Weight extends Struct {
   add(rhs: Weight): Weight {
     try {
       try {
-        return new Weight(this.label, this.grams + rhs.grams);
+        return new Weight(this.label, checkedAdd(this.grams, rhs.grams, 'u64'));
       } finally {
         rhs.drop();
       }
@@ -51,7 +51,7 @@ export class Left extends Struct {
   }
 
   add(rhs: Right): bigint {
-    return this.grams + rhs.grams;
+    return checkedAdd(this.grams, rhs.grams, 'u64');
   }
 }
 
@@ -75,7 +75,7 @@ export class Parcel extends Struct {
   add(rhs: Right): bigint {
     try {
       try {
-        return this.grams + rhs.grams;
+        return checkedAdd(this.grams, rhs.grams, 'u64');
       } finally {
         rhs.drop();
       }
@@ -140,7 +140,7 @@ export function different(a: Tag, b: Tag): boolean {
 }
 
 export function halves(n: number): number {
-  return Math.trunc(n / 2);
+  return checkedDiv(n, 2, 'u32');
 }
 
 export function flipped(bits: number): number {

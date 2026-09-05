@@ -952,6 +952,26 @@ impl<'a> TypeContext<'a> {
         if segments.len() >= 2 {
             let name = segments.last().cloned().unwrap_or_default();
             if let Some(ty) = self.type_of_prefix(path) {
+                // A MODULE resolves as a foreign type here — nothing declares
+                // `serde_json`, and a prefix with no declaration is not
+                // evidence that the last segment is an associated function. Ask
+                // the value namespace first in that case: `serde_json::to_string`
+                // is a free function returning `Result<String, Error>`, and
+                // asking the type first found `ToString::to_string` through the
+                // blanket impl and typed the call `String` — so the `.unwrap()`
+                // written after it was dropped as an identity.
+                let declared = ty
+                    .id()
+                    .is_some_and(|id| !id.is_foreign() && self.registry.def(id).is_some());
+                if !declared {
+                    if let Ok(Some(Def::Value(id))) =
+                        self.registry.lookup(self.module, Ns::Value, &segments)
+                    {
+                        if let Some(ty) = self.registry.value(id).and_then(|v| v.ty.clone()) {
+                            return Ok(ty);
+                        }
+                    }
+                }
                 if let Some(ret) = self.assoc_fn_return(&ty, &name) {
                     return Ok(ret);
                 }
@@ -1275,6 +1295,39 @@ impl<'a> TypeContext<'a> {
             .collect()
     }
 
+    /// The fields a struct literal's DECLARATION has, in declaration order,
+    /// without resolving the literal's type arguments.
+    ///
+    /// `Attested { payload, attestations }` writes no `T`, so resolving the
+    /// whole type fails and `struct_literal_field_types` answers nothing — but
+    /// the ORDER of the fields does not depend on the arguments, and the order
+    /// is what the constructor call needs.
+    pub fn struct_literal_field_order(&self, lit: &syn::ExprStruct) -> Vec<String> {
+        let segments: Vec<String> = lit
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let mut id = match self.registry.lookup_type(self.module, &segments) {
+            Ok(Some(crate::registry::Def::Type(id))) => Some(id),
+            _ => None,
+        };
+        if id.is_none() {
+            // `Self { .. }`, and a path naming a variant of an enum.
+            if segments.len() == 1 && segments[0] == "Self" {
+                if let Some(Ty::Named { id: self_id, .. }) = self.self_ty.as_ref() {
+                    id = Some(*self_id);
+                }
+            }
+        }
+        let Some(id) = id else { return Vec::new() };
+        let Some(def) = self.registry.def(id) else {
+            return Vec::new();
+        };
+        def.field_order.clone()
+    }
+
     fn resolve_struct_literal(&self, lit: &syn::ExprStruct) -> Result<Ty, Diag> {
         let ty = syn::Type::Path(syn::TypePath {
             qself: lit.qself.clone(),
@@ -1502,7 +1555,21 @@ impl<'a> TypeContext<'a> {
     /// struct-variant LITERAL — `Predicate::Comparison { left, .. }` — names a
     /// variant that does carry fields and is built the same way.
     pub fn variant_of_emitted_enum(&self, segments: &[String]) -> Option<(String, String)> {
-        let (id, variant) = self.registry.lookup_variant(self.module, segments)?;
+        // `Self::Add { .. }` inside `impl WatcherChange` names the same variant
+        // `WatcherChange::Add` does. `Self` is not a name the registry holds,
+        // so the path was looked up, found nothing, and fell through to the
+        // struct-literal writing, which emitted `new WatcherChange.Add(..)` —
+        // not a constructor.
+        let (id, variant) = match (segments.first().map(String::as_str), self.self_ty.as_ref()) {
+            (Some("Self"), Some(Ty::Named { id, .. })) if segments.len() == 2 => {
+                let variant = segments[1].clone();
+                if !self.registry.is_variant_of(*id, &variant) {
+                    return None;
+                }
+                (*id, variant)
+            }
+            _ => self.registry.lookup_variant(self.module, segments)?,
+        };
         let ty = Ty::Named { id, args: Vec::new() };
         if !crate::emit_impls::has_emitted_class(self.registry, &ty) {
             return None;
@@ -1568,11 +1635,15 @@ impl<'a> TypeContext<'a> {
     /// `unwrap` the source writes to take apart. `serde_json::from_str` is
     /// deliberately absent: the port's `T.fromJson` does return a `Result`,
     /// because a malformed value is a real failure there.
-    const VALUE_NOT_RESULT: [&'static str; 3] = [
-        "bincode::serialize",
-        "bincode::deserialize",
-        "serde_json::to_string",
-    ];
+    /// Calls the port writes as the VALUE Rust wraps in a `Result`, so that the
+    /// `unwrap` written after one has nothing left to unwrap.
+    ///
+    /// `serde_json::to_string` was here while it was emitted as
+    /// `JSON.stringify(x)`. It answers a `Result` now, exactly as Rust does, so
+    /// the `unwrap` after it is a real one — and dropping it was what left
+    /// `test_event_id_json_serialization` comparing a `Result` to a string.
+    const VALUE_NOT_RESULT: [&'static str; 2] =
+        ["bincode::serialize", "bincode::deserialize"];
 
     /// Did this expression come from a call the port writes as the value
     /// itself, so that the `unwrap` written after it has nothing to unwrap?

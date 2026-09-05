@@ -17,7 +17,28 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
     match js_shape(reg, ty) {
         JsShape::Bytes => "Uint8Array".to_string(),
         JsShape::Array(elem) => format!("{}[]", map_ty(reg, &elem)),
-        JsShape::Nullable(inner) => format!("{} | null", map_ty(reg, &inner)),
+        // R5: an `Option<T>` is `T | null`, and that spelling has room for ONE
+        // `null`. `Option<Option<T>>` collapses — `Some(None)` and the outer
+        // `None` become the same value — and so does an `Option` of anything
+        // whose own spelling already admits null. The port has no tagged shape
+        // for it, so the site says so rather than writing a type that cannot
+        // tell the two apart.
+        JsShape::Nullable(inner) => {
+            let written = map_ty(reg, &inner);
+            if written.ends_with(" | null") || written == "null" {
+                crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`Option<{}>` is written `{} | null`, and that spelling holds one \
+                         `null`: the outer `None` and an inner one are the same value, so \
+                         `Some(None)` and `None` cannot be told apart",
+                        written, written
+                    ),
+                );
+            }
+            format!("{} | null", written)
+        }
         // The runtime's own keyed containers, not JavaScript's `Map` and
         // `Set`. Those compare keys by IDENTITY, so a `HashMap<EntityId, _>`
         // answered nothing for every key that was not the very object it had

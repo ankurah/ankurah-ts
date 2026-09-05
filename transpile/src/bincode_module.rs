@@ -203,19 +203,72 @@ fn width_of(ty: Option<&Ty>) -> Option<&'static str> {
         Ty::Prim(p) => Some(match p {
             Prim::U8 => "U8",
             Prim::U16 => "U16",
-            // `usize` is 4 bytes on wasm32, which is what the std surface pins.
-            Prim::U32 | Prim::Usize => "U32",
+            Prim::U32 => "U32",
             Prim::U64 => "U64",
             Prim::I8 => "I8",
             Prim::I16 => "I16",
-            Prim::I32 | Prim::Isize => "I32",
+            Prim::I32 => "I32",
             Prim::I64 => "I64",
-            Prim::F32 | Prim::F64 => "F64",
-            Prim::Bool | Prim::Char | Prim::U128 | Prim::I128 => return None,
+            Prim::F64 => "F64",
+            // The WIRE width, which is not the memory width. serde's
+            // `Serialize for usize` calls `serialize_u64`, so bincode writes
+            // eight bytes whatever the target's pointer is — the comment here
+            // used to say "`usize` is 4 bytes on wasm32, which is what the std
+            // surface pins", and that is the in-memory width, which is the
+            // mistake the signed-width fix was written to correct.
+            Prim::Usize => "U64",
+            Prim::Isize => "I64",
+            // These four the port's writer has no method for. The correct call
+            // is written and the site says which method the runtime owes: an
+            // `f32` is four bytes and was written as eight, a `char` is raw
+            // UTF-8 with no length prefix and was written as a length-prefixed
+            // string, and a `u128`/`i128` is sixteen bytes and was written as
+            // eight, unsigned either way.
+            Prim::F32 => "F32",
+            Prim::Char => "Char",
+            Prim::U128 => "U128",
+            Prim::I128 => "I128",
+            Prim::Bool => return None,
         }),
         _ => None,
     }
 }
+
+/// The widths the port's `BincodeWriter`/`BincodeReader` has no method for.
+///
+/// Zero sites in the corpus today — no `#[derive(Serialize)]` type in the ten
+/// crates has a field of one — so this is a gate rather than a gap: the first
+/// such field says what the runtime owes instead of writing the wrong number of
+/// bytes in silence.
+const NO_RUNTIME_METHOD: [&str; 4] = ["F32", "Char", "U128", "I128"];
+
+/// A width whose method the codec does not have, said once at the site that
+/// wants it. The call IS written — `writer.writeF32(x)` names the pair the
+/// runtime owes, where `writer.writeF64(x)` wrote eight bytes and said nothing.
+fn report_missing_width(width: &str) {
+    if !NO_RUNTIME_METHOD.contains(&width) {
+        return;
+    }
+    crate::diag::pending::park_at(
+        0,
+        0,
+        format!(
+            "the wire format writes this value as a `{}`, and the port's codec has no \
+             `write{}`/`read{}`; the call is written so the gap is loud rather than a wrong \
+             number of bytes, and the runtime owes the pair",
+            width, width, width
+        ),
+    );
+}
+
+/// Sort a map's entries the way Rust's `BTreeMap<String, _>` iterates: by the
+/// key's UTF-8 BYTES, which is code-point order.
+///
+/// JavaScript's `<` on two strings compares UTF-16 code units, and the two
+/// disagree above the BMP: `"\u{FFFD}"` sorts after `"🚀"` in UTF-16 and before
+/// it in UTF-8. bincode writes a map in iteration order, so the two orders are
+/// two different byte strings on the wire.
+const BY_UTF8_KEY: &str = "(a, b) => { const x = [...a[0]], y = [...b[0]]; const n = Math.min(x.length, y.length); for (let i = 0; i < n; i++) { const d = (x[i].codePointAt(0) ?? 0) - (y[i].codePointAt(0) ?? 0); if (d !== 0) return d < 0 ? -1 : 1; } return x.length === y.length ? 0 : (x.length < y.length ? -1 : 1); }";
 
 /// The element type inside a `Vec<T>`, an `Option<T>` or an array, so the width
 /// question can be asked of it too.
@@ -225,6 +278,35 @@ fn element_of<'t>(ty: Option<&'t Ty>) -> Option<&'t Ty> {
         Ty::Array { elem, .. } | Ty::Slice(elem) => Some(elem),
         _ => None,
     }
+}
+
+/// The `n`th type argument of a container.
+fn argument_of<'t>(ty: Option<&'t Ty>, n: usize) -> Option<&'t Ty> {
+    match ty?.peel_refs() {
+        Ty::Named { args, .. } => args.get(n),
+        _ => None,
+    }
+}
+
+/// `K, V` of a `HashMap<K, V>` as written, split on the comma that is not
+/// inside brackets. `splitn(2, ", ")` read `[string, number]` as two arguments,
+/// so a tuple key or a nested map took the wrong halves.
+fn type_arguments(inner: &str) -> Option<(String, String)> {
+    let mut depth = 0i32;
+    for (i, ch) in inner.char_indices() {
+        match ch {
+            '<' | '[' | '(' | '{' => depth += 1,
+            '>' | ']' | ')' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                return Some((
+                    inner[..i].trim().to_string(),
+                    inner[i + 1..].trim().to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The `n`th element of a tuple type.
@@ -239,6 +321,7 @@ fn tuple_element<'t>(ty: Option<&'t Ty>, n: usize) -> Option<&'t Ty> {
 /// `wr` is the writer variable name (e.g., "writer" at top level, "w" inside callbacks)
 fn encode_expr_with(value: &str, ts_type: &str, wr: &str, ty: Option<&Ty>) -> String {
     if let Some(width) = width_of(ty) {
+        report_missing_width(width);
         return format!("{}.write{}({})", wr, width, value);
     }
     match ts_type {
@@ -261,15 +344,33 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str, ty: Option<&Ty>) -> St
         }
         t if t.starts_with("HashMap<") => {
             // BTreeMap: sorted by key in Rust. Encode as length + sorted entries.
-            let inner = &t[8..t.len()-1];
-            let parts: Vec<&str> = inner.splitn(2, ", ").collect();
-            if parts.len() == 2 {
-                let k_enc = encode_expr_with("k", parts[0], wr, None);
-                let v_enc = encode_expr_with("v", parts[1], wr, None);
-                format!("{{ const _entries = [...{}.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); {}.writeLength(_entries.length); for (const [k, v] of _entries) {{ {}; {}; }} }}",
-                    value, wr, k_enc, v_enc)
-            } else {
-                format!("/* TODO: Map encode */ {}.writeLength({}.size)", wr, value)
+            let inner = &t[8..t.len() - 1];
+            match type_arguments(inner) {
+                Some((key, value_ty)) => {
+                    // The resolved map's own arguments, NOT the halves of a
+                    // string split: the widths live in the `Ty`, and passing
+                    // `None` here made a `BTreeMap<String, i16>` write its
+                    // values with `writeU32` — four bytes, unsigned, where Rust
+                    // writes two, signed.
+                    let k_enc = encode_expr_with("k", &key, wr, argument_of(ty, 0));
+                    let v_enc = encode_expr_with("v", &value_ty, wr, argument_of(ty, 1));
+                    format!(
+                        "{{ const _entries = [...{}.entries()].sort({}); {}.writeLength(_entries.length); for (const [k, v] of _entries) {{ {}; {}; }} }}",
+                        value, BY_UTF8_KEY, wr, k_enc, v_enc
+                    )
+                }
+                None => {
+                    crate::diag::pending::park_at(
+                        0,
+                        0,
+                        format!(
+                            "`{}` is a map whose key and value types the emitter could not \
+                             read apart, so only its LENGTH is written and every entry is lost",
+                            t
+                        ),
+                    );
+                    format!("{}.writeLength({}.size)", wr, value)
+                }
             }
         }
         t if t.ends_with(" | null") => {
@@ -376,6 +477,7 @@ fn report_if_unwritable(
 /// `rd` is the reader variable name
 pub(crate) fn decode_expr_with(ts_type: &str, rd: &str, ty: Option<&Ty>) -> String {
     if let Some(width) = width_of(ty) {
+        report_missing_width(width);
         return format!("{}.read{}()", rd, width);
     }
     match ts_type {
@@ -397,15 +499,28 @@ pub(crate) fn decode_expr_with(ts_type: &str, rd: &str, ty: Option<&Ty>) -> Stri
         }
         t if t.starts_with("HashMap<") => {
             // BTreeMap: decode as length + entries into the runtime's keyed map.
-            let inner = &t[8..t.len()-1];
-            let parts: Vec<&str> = inner.splitn(2, ", ").collect();
-            if parts.len() == 2 {
-                let k_dec = decode_expr_with(parts[0], rd, None);
-                let v_dec = decode_expr_with(parts[1], rd, None);
-                format!("(() => {{ const _m = new HashMap(); const _len = {}.readLength(); for (let _i = 0; _i < _len; _i++) {{ _m.set({}, {}); }} return _m; }})()",
-                    rd, k_dec, v_dec)
-            } else {
-                format!("new HashMap() /* TODO: Map decode */")
+            let inner = &t[8..t.len() - 1];
+            match type_arguments(inner) {
+                Some((key, value)) => {
+                    let k_dec = decode_expr_with(&key, rd, argument_of(ty, 0));
+                    let v_dec = decode_expr_with(&value, rd, argument_of(ty, 1));
+                    format!(
+                        "(() => {{ const _m = new HashMap<{}, {}>(); const _len = {}.readLength(); for (let _i = 0; _i < _len; _i++) {{ _m.set({}, {}); }} return _m; }})()",
+                        key, value, rd, k_dec, v_dec
+                    )
+                }
+                None => {
+                    crate::diag::pending::park_at(
+                        0,
+                        0,
+                        format!(
+                            "`{}` is a map whose key and value types the emitter could not \
+                             read apart, so an empty map is read where the bytes hold entries",
+                            t
+                        ),
+                    );
+                    "new HashMap()".to_string()
+                }
             }
         }
         t if t.ends_with(" | null") => {
@@ -522,5 +637,79 @@ mod tests {
         );
         assert!(ts.contains("default: return new Item('Other', {});"), "{}", ts);
         assert!(ts.contains("case 1: {"), "{}", ts);
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use crate::testing::Fixture;
+
+    const DERIVE: &str = "#[derive(Serialize, Deserialize)]\n";
+
+    fn built(src: &str) -> Fixture {
+        Fixture::build(&[("lib.rs", src)])
+    }
+
+    /// The WIRE width, not the memory width. serde's `Serialize for usize`
+    /// calls `serialize_u64`, so bincode writes eight bytes whatever the
+    /// target's pointer is — and the comment that used to sit on this table
+    /// conflated the two, which is the mistake the signed-width fix was written
+    /// to correct.
+    #[test]
+    fn usize_is_eight_bytes_on_the_wire() {
+        let mut f = built(&format!(
+            "{}pub struct Row {{ pub n: usize, pub m: isize }}",
+            DERIVE
+        ));
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("writer.writeU64(this.n)"), "{}", ts);
+        assert!(ts.contains("writer.writeI64(this.m)"), "{}", ts);
+        assert!(ts.contains("reader.readU64()"), "{}", ts);
+        assert!(ts.contains("reader.readI64()"), "{}", ts);
+    }
+
+    /// A width the codec has no method for writes the CORRECT call and says
+    /// which pair the runtime owes. `f32` was written as eight bytes, a `char`
+    /// as a length-prefixed string, and a `u128`/`i128` as eight bytes unsigned.
+    #[test]
+    fn a_width_the_codec_has_no_method_for_is_reported() {
+        let mut f = built(&format!("{}pub struct Row {{ pub x: f32 }}", DERIVE));
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("writer.writeF32(this.x)"), "{}", ts);
+        assert!(!ts.contains("writeF64(this.x)"), "{}", ts);
+        assert!(
+            f.messages().iter().any(|m| m.contains("has no `writeF32`/`readF32`")),
+            "{:?}",
+            f.messages()
+        );
+    }
+
+    /// A map's key and value widths come from the resolved map's own arguments.
+    /// Passing `None` made a `BTreeMap<String, i16>` write its values with
+    /// `writeU32` — four bytes, unsigned, where Rust writes two, signed.
+    #[test]
+    fn a_maps_value_keeps_its_width_and_its_sign() {
+        let mut f = built(&format!(
+            "use std::collections::BTreeMap;\n{}pub struct Row {{ pub m: BTreeMap<String, i16> }}",
+            DERIVE
+        ));
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("w.writeI16(v)") || ts.contains("writeI16(v)"), "{}", ts);
+        assert!(!ts.contains("writeU32(v)"), "{}", ts);
+        assert!(ts.contains("readI16()"), "{}", ts);
+    }
+
+    /// bincode writes a map in ITERATION order, and Rust's `BTreeMap<String, _>`
+    /// iterates by the key's UTF-8 bytes. JavaScript's `<` compares UTF-16 code
+    /// units, and the two disagree above the BMP.
+    #[test]
+    fn a_maps_keys_are_ordered_by_their_utf8_bytes() {
+        let mut f = built(&format!(
+            "use std::collections::BTreeMap;\n{}pub struct Row {{ pub m: BTreeMap<String, u8> }}",
+            DERIVE
+        ));
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("codePointAt(0)"), "{}", ts);
+        assert!(!ts.contains("a[0] < b[0] ? -1"), "{}", ts);
     }
 }

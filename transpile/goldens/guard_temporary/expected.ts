@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/guard_temporary/src/input.rs
-import { Struct, Mutex } from '@ankurah/base';
+import { Struct, Mutex, checkedAdd } from '@ankurah/base';
 
 export class Counter extends Struct {
   readonly value: Mutex<number>;
@@ -14,7 +14,7 @@ export class Counter extends Struct {
     try {
       const seen = _t0.value;
       _t0.drop();
-      return seen + 1;
+      return checkedAdd(seen, 1, 'usize');
     } finally {
       _t0.drop();
     }

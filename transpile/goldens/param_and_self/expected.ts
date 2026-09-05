@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/param_and_self/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -21,7 +21,7 @@ export class Holder extends Struct {
   }
 
   width(): number {
-    return borrow(this.inner) + borrow(this.spare);
+    return checkedAdd(borrow(this.inner), borrow(this.spare), 'usize');
   }
 
   intoInner(): Entity {

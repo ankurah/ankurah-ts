@@ -1,85 +1,85 @@
 // MIRRORS: ankurah/ankql/src/selection/sql.rs
-import { Result } from '@ankurah/base';
+import { Result, BorrowMut } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, Predicate } from '../ast';
 import { SqlGenerationError } from '../error';
 
-function generateExprSql(expr: Expr, placeholderCount: number | null, foundPlaceholders: number, buffer: string): Result<void, SqlGenerationError> {
-  expr.match({
+function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>, foundPlaceholders: BorrowMut<number>, buffer: BorrowMut<string>): Result<void, SqlGenerationError> {
+  const _m0 = expr.match<any>({
     Placeholder: () => {
       foundPlaceholders.value += 1;
       {
-        const _v = placeholderCount;
+        const _v = placeholderCount.value;
         if (_v != null) {
           const expected = _v;
-          if (foundPlaceholders > expected) {
-            return Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders }));
+          if (foundPlaceholders.value > expected) {
+            return { $jump: 'return', $value: Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders.value })) };
           }
         }
       }
-      buffer += '?';
+      buffer.value += '?';
     },
     Literal: (v) => {
       const lit = v._0;
-      lit.match({
+      lit.match<any>({
         I16: (v) => {
           const i = v._0;
-          buffer += i.toString();
+          buffer.value += i.toString();
         },
         I32: (v) => {
           const i = v._0;
-          buffer += i.toString();
+          buffer.value += i.toString();
         },
         I64: (v) => {
           const i = v._0;
-          buffer += i.toString();
+          buffer.value += i.toString();
         },
         F64: (v) => {
           const f = v._0;
-          buffer += f.toString();
+          buffer.value += f.toString();
         },
         Bool: (v) => {
           const b = v._0;
-          buffer += b ? 'true' : 'false';
+          buffer.value += b ? 'true' : 'false';
         },
         String: (v) => {
           const s = v._0;
-          buffer += '\'';
+          buffer.value += '\'';
           for (const c of [...s]) {
             if (c === '\'') {
-              buffer += '\'\'';
-            } else if (c === '\0') {
+              buffer.value += '\'\'';
+            } else if (c === '\u{0}') {
               {
-                continue;
+                return { $jump: 'continue' };
               }
             } else {
-              buffer += c;
+              buffer.value += c;
             }
           }
-          buffer += '\'';
+          buffer.value += '\'';
         },
         EntityId: (v) => {
           const ulid = v._0;
-          buffer += '\'';
-          buffer += generalPurpose.URL_SAFE_NO_PAD.encode(ulid.toBytes());
-          buffer += '\'';
+          buffer.value += '\'';
+          buffer.value += generalPurpose.URL_SAFE_NO_PAD.encode(ulid.toBytes());
+          buffer.value += '\'';
         },
         Object: (v) => {
           const bytes = v._0;
-          buffer += '\'';
-          buffer += String.fromUtf8Lossy(bytes);
-          buffer += '\'';
+          buffer.value += '\'';
+          buffer.value += String.fromUtf8Lossy(bytes);
+          buffer.value += '\'';
         },
         Binary: (v) => {
           const bytes = v._0;
-          buffer += '\'';
-          buffer += String.fromUtf8Lossy(bytes);
-          buffer += '\'';
+          buffer.value += '\'';
+          buffer.value += String.fromUtf8Lossy(bytes);
+          buffer.value += '\'';
         },
         Json: (v) => {
           const value = v._0;
-          buffer += '\'';
-          buffer += value.toString();
-          buffer += '\'';
+          buffer.value += '\'';
+          buffer.value += value.toString();
+          buffer.value += '\'';
         },
       })
     },
@@ -87,78 +87,78 @@ function generateExprSql(expr: Expr, placeholderCount: number | null, foundPlace
       const path = v._0;
       for (const [i, step] of [...path.steps].entries()) {
         if (i > 0) {
-          buffer += '.';
+          buffer.value += '.';
         }
-        buffer += '"';
-        buffer += step;
-        buffer += '"';
+        buffer.value += '"';
+        buffer.value += step;
+        buffer.value += '"';
       }
     },
     ExprList: (v) => {
       const exprs = v._0;
-      buffer += '(';
+      buffer.value += '(';
       for (const [i, expr] of [...exprs].entries()) {
         if (i > 0) {
-          buffer += ', ';
+          buffer.value += ', ';
         }
-        return expr.match({
+        return expr.match<any>({
           Placeholder: () => {
             foundPlaceholders.value += 1;
             {
-              const _v1 = placeholderCount;
+              const _v1 = placeholderCount.value;
               if (_v1 != null) {
                 const expected = _v1;
-                if (foundPlaceholders > expected) {
-                  return Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders }));
+                if (foundPlaceholders.value > expected) {
+                  return { $jump: 'return', $value: Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders.value })) };
                 }
               }
             }
-            buffer += '?';
+            buffer.value += '?';
           },
           Literal: (v) => {
             const lit = v._0;
-            lit.match({
+            lit.match<any>({
               I16: (v) => {
                 const i = v._0;
-                buffer += i.toString();
+                buffer.value += i.toString();
               },
               I32: (v) => {
                 const i = v._0;
-                buffer += i.toString();
+                buffer.value += i.toString();
               },
               I64: (v) => {
                 const i = v._0;
-                buffer += i.toString();
+                buffer.value += i.toString();
               },
               F64: (v) => {
                 const f = v._0;
-                buffer += f.toString();
+                buffer.value += f.toString();
               },
               String: (v) => {
                 const s = v._0;
-                buffer += '\'';
+                buffer.value += '\'';
                 for (const c of [...s]) {
                   if (c === '\'') {
-                    buffer += '\'\'';
-                  } else if (c === '\0') {
+                    buffer.value += '\'\'';
+                  } else if (c === '\u{0}') {
                     {
-                      continue;
+                      return { $jump: 'continue' };
                     }
                   } else {
-                    buffer += c;
+                    buffer.value += c;
                   }
                 }
-                buffer += '\'';
+                buffer.value += '\'';
               },
               Bool: (v) => {
                 const b = v._0;
-                buffer += b ? 'true' : 'false';
+                buffer.value += b ? 'true' : 'false';
               },
               EntityId: (v) => {
                 const ulid = v._0;
-                buffer += '\'';
-                buffer += generalPurpose.URL_SAFE_NO_PAD.encode(ulid.toBytes());
-                buffer += '\'';
+                buffer.value += '\'';
+                buffer.value += generalPurpose.URL_SAFE_NO_PAD.encode(ulid.toBytes());
+                buffer.value += '\'';
               },
               Object: (v) => {
                 const _bytes = v._0;
@@ -170,57 +170,62 @@ function generateExprSql(expr: Expr, placeholderCount: number | null, foundPlace
               },
               Json: (v) => {
                 const value = v._0;
-                buffer += '\'';
-                buffer += value.toString();
-                buffer += '\'';
+                buffer.value += '\'';
+                buffer.value += value.toString();
+                buffer.value += '\'';
               },
             })
           },
           Path: () => {
-            return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' }));
+            return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
           },
           Predicate: () => {
-            return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' }));
+            return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
           },
           InfixExpr: () => {
-            return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' }));
+            return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
           },
           ExprList: () => {
-            return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' }));
+            return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
           },
         });
       }
-      buffer += ')';
+      buffer.value += ')';
     },
     Predicate: () => {
-      return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' }))
+      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) }
     },
     InfixExpr: () => {
-      return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' }))
+      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) }
     },
-  })
+  });
+  if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
   return Result.Ok([]);
 }
 
 function comparisonOpToSql(op: ComparisonOperator): Result<string, SqlGenerationError> {
-  return Result.Ok(op.match({
-    Equal: () => '=',
-    NotEqual: () => '<>',
-    GreaterThan: () => '>',
-    GreaterThanOrEqual: () => '>=',
-    LessThan: () => '<',
-    LessThanOrEqual: () => '<=',
-    In: () => 'IN',
-    Between: () => {
-      return Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' }))
-    },
-  }));
+  const _m0 = (() => {
+    return op.match<any>({
+      Equal: () => '=',
+      NotEqual: () => '<>',
+      GreaterThan: () => '>',
+      GreaterThanOrEqual: () => '>=',
+      LessThan: () => '<',
+      LessThanOrEqual: () => '<=',
+      In: () => 'IN',
+      Between: () => {
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' })) }
+      },
+    });
+  })();
+  if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+  return Result.Ok((_m0 as any));
 }
 
 export function generateSelectionSql(predicate: Predicate, expectedPlaceholders: number | null): Result<string, SqlGenerationError> {
-  let placeholderCount = expectedPlaceholders;
-  let foundPlaceholders = 0;
-  let buffer = '';
+  const placeholderCount = new BorrowMut(expectedPlaceholders);
+  const foundPlaceholders = new BorrowMut(0);
+  const buffer = new BorrowMut('');
   const _r0 = generateSelectionSqlInner(predicate, placeholderCount, foundPlaceholders, buffer);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   _r0.drop();
@@ -228,81 +233,82 @@ export function generateSelectionSql(predicate: Predicate, expectedPlaceholders:
     const _v = expectedPlaceholders;
     if (_v != null) {
       const expected = _v;
-      if (foundPlaceholders !== expected) {
-        return Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders }));
+      if (foundPlaceholders.value !== expected) {
+        return Result.Err(new SqlGenerationError('PlaceholderCountMismatch', { expected: expected, found: foundPlaceholders.value }));
       }
     }
   }
-  return Result.Ok(buffer);
+  return Result.Ok(buffer.value);
 }
 
-function generateSelectionSqlInner(predicate: Predicate, placeholderCount: number | null, foundPlaceholders: number, buffer: string): Result<void, SqlGenerationError> {
-  predicate.match({
+function generateSelectionSqlInner(predicate: Predicate, placeholderCount: BorrowMut<number | null>, foundPlaceholders: BorrowMut<number>, buffer: BorrowMut<string>): Result<void, SqlGenerationError> {
+  const _m9 = predicate.match<any>({
     Comparison: (v) => {
       const left = v.left;
       const operator = v.operator;
       const right = v.right;
       const _r0 = generateExprSql(left, placeholderCount, foundPlaceholders, buffer);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
       _r0.drop();
-      buffer += ' ';
+      buffer.value += ' ';
       const _r1 = comparisonOpToSql(operator);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-      buffer += _r1.unwrap();
-      buffer += ' ';
+      if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
+      buffer.value += _r1.unwrap();
+      buffer.value += ' ';
       const _r2 = generateExprSql(right, placeholderCount, foundPlaceholders, buffer);
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
       _r2.drop();
     },
     And: (v) => {
       const left = v._0;
       const right = v._1;
       const _r3 = generateSelectionSqlInner(left, placeholderCount, foundPlaceholders, buffer);
-      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
       _r3.drop();
-      buffer += ' AND ';
+      buffer.value += ' AND ';
       const _r4 = generateSelectionSqlInner(right, placeholderCount, foundPlaceholders, buffer);
-      if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+      if (_r4.isErr()) return { $jump: 'return', $value: Result.Err(_r4.unwrapErr()) };
       _r4.drop();
     },
     Or: (v) => {
       const left = v._0;
       const right = v._1;
-      buffer += '(';
+      buffer.value += '(';
       const _r5 = generateSelectionSqlInner(left, placeholderCount, foundPlaceholders, buffer);
-      if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+      if (_r5.isErr()) return { $jump: 'return', $value: Result.Err(_r5.unwrapErr()) };
       _r5.drop();
-      buffer += ' OR ';
+      buffer.value += ' OR ';
       const _r6 = generateSelectionSqlInner(right, placeholderCount, foundPlaceholders, buffer);
-      if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+      if (_r6.isErr()) return { $jump: 'return', $value: Result.Err(_r6.unwrapErr()) };
       _r6.drop();
-      buffer += ')';
+      buffer.value += ')';
     },
     Not: (v) => {
       const pred = v._0;
-      buffer += 'NOT (';
+      buffer.value += 'NOT (';
       const _r7 = generateSelectionSqlInner(pred, placeholderCount, foundPlaceholders, buffer);
-      if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+      if (_r7.isErr()) return { $jump: 'return', $value: Result.Err(_r7.unwrapErr()) };
       _r7.drop();
-      buffer += ')';
+      buffer.value += ')';
     },
     IsNull: (v) => {
       const expr = v._0;
       const _r8 = generateExprSql(expr, placeholderCount, foundPlaceholders, buffer);
-      if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+      if (_r8.isErr()) return { $jump: 'return', $value: Result.Err(_r8.unwrapErr()) };
       _r8.drop();
-      buffer += ' IS NULL';
+      buffer.value += ' IS NULL';
     },
     True: () => {
-      buffer += 'TRUE';
+      buffer.value += 'TRUE';
     },
     False: () => {
-      buffer += 'FALSE';
+      buffer.value += 'FALSE';
     },
     Placeholder: () => {
-      return Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Placeholder must be transformed before SQL generation' }));
+      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Placeholder must be transformed before SQL generation' })) };
     },
-  })
+  });
+  if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
   return Result.Ok([]);
 }
 

@@ -121,23 +121,27 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
 
 export function Arc_Inner_observe<T>(self: Arc<Inner<T>>, signal: Signal): void {
   const broadcastId = signal.broadcastId();
-  (() => {
-    let entries = self.value.entries.write();
-    try {
-      {
-        const _v = entries.value.get(broadcastId);
-        if (_v != null) {
-          const entry = _v;
-          entry.markedForRemoval = false;
-          return;
+  const _m0 = (() => {
+    {
+      let entries = self.value.entries.write();
+      try {
+        {
+          const _v = entries.value.get(broadcastId);
+          if (_v != null) {
+            const entry = _v;
+            entry.markedForRemoval = false;
+            return { $jump: 'return', $value: undefined };
+          }
         }
+      } finally {
+        entries.drop();
       }
-    } finally {
-      entries.drop();
     }
-  })()
+  })();
+  if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+  (_m0 as any)
   const weak = self.downgrade();
-  let _moved0 = false;
+  let _moved1 = false;
   const guard = signal.listen(Arc.new((_) => {
     {
       const _v1 = weak.upgrade();
@@ -150,13 +154,13 @@ export function Arc_Inner_observe<T>(self: Arc<Inner<T>>, signal: Signal): void 
   try {
     let entries = self.value.entries.write();
     try {
-      _moved0 = true;
+      _moved1 = true;
       entries.value.set(broadcastId, new SubscriptionEntry(guard, false));
     } finally {
       entries.drop();
     }
   } finally {
-    if (!_moved0) guard.drop();
+    if (!_moved1) guard.drop();
   }
 }
 

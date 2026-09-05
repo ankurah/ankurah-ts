@@ -24,12 +24,17 @@ use std::fmt::Write as _;
 use syn::visit::Visit;
 
 /// Crate label, then the source directory under the support checkout.
-const CRATES: [(&str, &str); 5] = [
+const CRATES: [(&str, &str); 10] = [
     ("proto", "proto/src"),
     ("ankql", "ankql/src"),
     ("signals", "signals/src"),
     ("core", "core/src"),
     ("storage-common", "storage/common/src"),
+    ("storage-sqlite", "storage/sqlite/src"),
+    ("storage-indexeddb", "storage/indexeddb-wasm/src"),
+    ("connector-websocket", "connectors/websocket-client-wasm/src"),
+    ("connector-local", "connectors/local-process/src"),
+    ("ankurah", "ankurah/src"),
 ];
 
 #[test]

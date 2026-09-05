@@ -62,7 +62,20 @@ pub fn conversion_call(
         "TryFrom" => "tryFrom",
         other => return Err(format!("`{}` is not a conversion trait", other)),
     };
-    let method = crate::emit::disambiguate_trait_method(base, &trait_name, &[source_ts], "");
+    // The name the class DECLARED for this impl, read from the one decision
+    // rather than computed a second time. Passing an empty self type here — as
+    // this call and the two below used to — meant the call site never saw a
+    // contest, so it wrote `fromError` against a class declaring
+    // `fromBincodeError`.
+    let method = crate::emit_impls::conversion_name_of_impl(reg, id).unwrap_or_else(|| {
+        crate::emit::disambiguate_trait_method(
+            base,
+            &trait_name,
+            &[source_ts.clone()],
+            "",
+            def.self_ty.peel_refs().id(),
+        )
+    });
 
     // An impl the declared surface wrote describes a conversion the runtime is
     // supposed to already have. `@ankurah/base` has no `anyhow::Error` and no
@@ -135,6 +148,7 @@ pub fn conversion_names(reg: &TypeRegistry, target: &Ty, trait_path: &str) -> Ve
                 &trait_name,
                 &[source_ts],
                 "",
+                Some(target_id),
             ))
         })
         .collect()

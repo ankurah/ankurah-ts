@@ -19,11 +19,17 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 /// Crate label, then the source directory under the support checkout.
-const CRATES: [(&str, &str); 4] = [
+const CRATES: [(&str, &str); 10] = [
     ("proto", "proto/src"),
     ("ankql", "ankql/src"),
     ("signals", "signals/src"),
     ("core", "core/src"),
+    ("storage-common", "storage/common/src"),
+    ("storage-sqlite", "storage/sqlite/src"),
+    ("storage-indexeddb", "storage/indexeddb-wasm/src"),
+    ("connector-websocket", "connectors/websocket-client-wasm/src"),
+    ("connector-local", "connectors/local-process/src"),
+    ("ankurah", "ankurah/src"),
 ];
 
 /// What one crate's run produced.

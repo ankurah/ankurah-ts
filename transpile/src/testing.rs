@@ -40,9 +40,17 @@ impl Fixture {
                 hand_written: false,
             })
             .collect();
-        let reg = std_surface::with_cached(&surface_dir(), |surface| {
+        let mut reg = std_surface::with_cached(&surface_dir(), |surface| {
             build_registry(&mut parsed, surface, &[crate_name.to_string()], &sink)
         });
+        // A type whose JSON half is refused has no `fromJson`, and neither does
+        // anything that holds one. `batch` narrows this after it has marked the
+        // hand-written types; a fixture has none.
+        let ours: std::collections::HashSet<ModuleId> = parsed
+            .iter()
+            .filter_map(|f| reg.modules().lookup_file(&f.path))
+            .collect();
+        crate::registry::narrow_reads_json(&mut reg, &ours);
         Fixture {
             reg,
             sink,

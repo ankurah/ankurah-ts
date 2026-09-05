@@ -221,6 +221,12 @@ fn batch_generate(
     let features = config.map(|c| c.features_for_package(crate_name));
 
     // Phase 1: Parse all files and build type→file map
+    // Which `[[provided]]` and `[[extra_exports]]` entries named a file the
+    // walk actually saw. An entry naming a file that does not exist was ignored
+    // in silence, and that failure has already bitten once: every one of the
+    // fifteen entries was matching nothing because `[paths] rust_source`
+    // resolved wrong from a worktree, and it was found by accident.
+    let mut provided_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut parsed_files: Vec<registry::ExtractedFile> = Vec::new();
     let mut type_to_file: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
@@ -253,7 +259,11 @@ fn batch_generate(
                     provided.module,
                     first_line(&provided.reason)
                 );
+                provided_seen.insert(provided.file.clone());
                 declarations_only = true;
+            }
+            for extra in cfg.extra_exports_in(&full_path) {
+                provided_seen.insert(extra.file.clone());
             }
             excluded_here = cfg.excluded_items_in(&full_path);
         }
@@ -452,6 +462,34 @@ fn batch_generate(
     // Phase 2: Build the registry from the declared std surface and everything
     // this crate declares. The surface is parsed once per run and declared into
     // each registry the run builds.
+    // A `[[provided]]` or `[[extra_exports]]` entry naming a file the walk
+    // never saw. An `[[excluded_items]]` entry that matched nothing has been
+    // reported since step 8; these two were ignored, so a provided module whose
+    // Rust file is renamed silently starts being transpiled over.
+    if let Some(cfg) = config {
+        let mut stale: Vec<&str> = Vec::new();
+        for entry in cfg.provided_modules.iter().chain(cfg.extra_exports.iter()) {
+            if entry.file.starts_with(&format!("{}/", corpus_prefix))
+                && !provided_seen.contains(&entry.file)
+            {
+                stale.push(&entry.file);
+            }
+        }
+        stale.sort();
+        for file in stale {
+            sink.push(diag::Diag {
+                file: file.to_string(),
+                line: 0,
+                col: 0,
+                message: format!(
+                    "transpile.toml names `{}` as hand-written and this crate's source walk \
+                     never saw it; the config has gone stale against the corpus",
+                    file
+                ),
+            });
+        }
+    }
+
     let crate_names = crate_names_for(crate_name, config);
     let surface_dir = registry::std_surface::default_dir(std_surface_dir);
     let mut registry = registry::std_surface::with_cached(&surface_dir, |surface| {
@@ -470,6 +508,15 @@ fn batch_generate(
         )
     });
     mark_hand_written_types(&mut registry, &parsed_files, config);
+    // A type whose JSON half is refused has no `fromJson`, and neither does
+    // anything that holds one. Asked AFTER the hand-written marking, because a
+    // type whose TypeScript somebody wrote carries its own pair.
+    let ours: std::collections::HashSet<registry::ModuleId> = parsed_files
+        .iter()
+        .filter(|f| !f.declarations_only)
+        .filter_map(|f| registry.modules().lookup_file(&f.path))
+        .collect();
+    registry::narrow_reads_json(&mut registry, &ours);
     let registry = registry;
 
     // Phase 3: Translate all deferred bodies with type context
@@ -572,8 +619,15 @@ fn batch_generate(
         file_count += 1;
         println!("  {} → {}", rel_str, ts_relative);
 
-        // Generate inline module files
-        for (mod_name, sub_file) in &rust_file.inline_modules {
+        // Generate inline module files. The test module is NOT one: its
+        // declarations belong in the `.test.ts` beside the tests that name
+        // them, and a `tests.ts` of its own would be a production module the
+        // package index re-exports.
+        for (mod_name, sub_file) in rust_file
+            .inline_modules
+            .iter()
+            .filter(|(name, _)| Some(name) != rust_file.test_module.as_ref())
+        {
             let sub_module = format!("{}/{}", current_module.trim_end_matches("/index"), mod_name);
             let sub_crate_path = format!("{}/{}", crate_path.trim_end_matches(".rs"), mod_name);
             let sub_ts = codegen::generate_ts_with_imports_configured(
@@ -597,6 +651,7 @@ fn batch_generate(
 
         // Generate test file if there are test functions
         if let Some(test_ts) = codegen::generate_test_ts_with_imports(
+            &registry,
             rust_file,
             &crate_path,
             &type_to_file,
@@ -671,34 +726,6 @@ fn corpus_prefix_for(src_dir: &Path, crate_name: &str, config: Option<&config::C
 /// There is no shape in the port that fixes this: the parameter would have to
 /// become a return value or a holder object, and either is a change to what the
 /// function means. So it is reported at the signature.
-fn report_mut_primitive_params(file: &types::RustFile, sink: &diag::DiagSink) {
-    let functions = file
-        .functions
-        .iter()
-        .chain(file.impls.iter().flat_map(|i| i.methods.iter()));
-    for func in functions {
-        for param in &func.params {
-            let Some(rust_ty) = &param.rust_ty else { continue };
-            let syn::Type::Reference(reference) = rust_ty else { continue };
-            if reference.mutability.is_none() {
-                continue;
-            }
-            if !matches!(param.ty.as_str(), "string" | "number" | "boolean" | "bigint") {
-                continue;
-            }
-            sink.push(diag::Diag::at(
-                &sink.file(),
-                syn::spanned::Spanned::span(rust_ty),
-                format!(
-                    "`{}` takes `{}` by `&mut`, and JavaScript passes a `{}` by value, so what \
-                     this function writes to it the caller never sees",
-                    func.name, param.name, param.ty
-                ),
-            ));
-        }
-    }
-}
-
 /// Where `mod x;` written in `parent` puts x's file, crate-relative. A crate
 /// root or a `mod.rs` keeps its children beside it; any other module keeps them
 /// in a directory named after itself.
@@ -870,7 +897,13 @@ const RUNTIME_MEMBERS: [&str; 8] = [
 const ENUM_MEMBERS: [&str; 5] = ["type", "value", "match", "intoMatch", "is"];
 
 /// Say so where a declared name is one the runtime already uses.
-fn report_member_collisions(file: &types::RustFile, sink: &diag::DiagSink) {
+fn report_member_collisions(
+    file: &types::RustFile,
+    reg: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    sink: &diag::DiagSink,
+) {
+    let self_id = |name: &str| reg.module_type(module, name);
     for s in &file.structs {
         for f in &s.fields {
             let Some(name) = &f.name else { continue };
@@ -907,7 +940,13 @@ fn report_member_collisions(file: &types::RustFile, sink: &diag::DiagSink) {
         }
         for m in &imp.methods {
             let emitted = match &trait_name {
-                Some(trait_name) => emit::trait_method_name(trait_name, &type_args, m, &imp.target_type),
+                Some(trait_name) => emit::trait_method_name(
+                    trait_name,
+                    &type_args,
+                    m,
+                    &imp.target_type,
+                    self_id(&imp.target_type),
+                ),
                 None => m.ts_name.clone(),
             };
             let taken = RUNTIME_MEMBERS.contains(&emitted.as_str())
@@ -941,8 +980,8 @@ fn translate_module(
         .map(|(name, _)| name.clone())
         .collect();
     let consts = resolve_module_consts(registry, module, &file.consts, sink);
-    report_member_collisions(file, sink);
-    report_mut_primitive_params(file, sink);
+    translate_module_consts(file, registry, module, &consts, sink);
+    report_member_collisions(file, registry, module, sink);
     // The module-level functions this file's impls become, asked for once with
     // the run's sink so that a name two impls would take is reported here and
     // nowhere else.
@@ -950,7 +989,10 @@ fn translate_module(
     // Read while the bodies are still ASTs: translation drops them below.
     file.assigned_fields = emit::assigned_fields(file);
 
-    for func in &mut file.functions {
+    // A test module's functions are DECLARED here and translated as the
+    // parent's `test_functions`; translating them twice would count every gap
+    // in them twice.
+    for func in file.functions.iter_mut().filter(|_| !file.is_test_module) {
         translate_fn_body(
             func,
             "Self",
@@ -985,7 +1027,16 @@ fn translate_module(
         // An impl written for a type with no class of its own is emitted as
         // module-level functions, and there `self` is an ordinary parameter.
         let self_name = match &self_ty {
-            Some(ty) if !emit_impls::has_emitted_class(registry, ty) => "self",
+            Some(ty)
+                if emit_impls::emits_as_free_function(
+                    registry,
+                    ty,
+                    &imp.type_params,
+                    module,
+                ) =>
+            {
+                "self"
+            }
             _ => "this",
         };
         // What the impl's own parameters are known to implement, so that a call
@@ -1016,6 +1067,15 @@ fn translate_module(
         }
     }
 
+    // A test body is written INSIDE `mod tests`, so it resolves in that
+    // module: `TestEntity::new(..)` names a struct the test module declares,
+    // and asking the parent's scope for it answered "does not name a function
+    // here" at every fixture in the corpus.
+    let test_scope = file
+        .test_module
+        .as_ref()
+        .and_then(|name| registry.modules().get(module).children.get(name).copied())
+        .unwrap_or(module);
     for func in file.test_helpers.iter_mut().chain(file.test_functions.iter_mut()) {
         translate_fn_body(
             func,
@@ -1025,7 +1085,7 @@ fn translate_module(
             &[],
             &[],
             registry,
-            module,
+            test_scope,
             &[],
             &consts,
             sink,
@@ -1102,6 +1162,49 @@ fn resolve_module_consts(
         }
     }
     out
+}
+
+/// What each module-level `const` and `static` IS, written as TypeScript.
+///
+/// The initialiser goes through the ordinary expression path with the const's
+/// own declared type as the expectation, so `const TAG: u8 = 0x00` writes `0`
+/// and `const WORDLIST: &[&str; 256] = &[..]` writes the array. A const the
+/// translator cannot write keeps `undefined` and says so AT THE CONST, where
+/// before the stub was emitted in silence and the failure surfaced as an
+/// `undefined` index somewhere else entirely.
+fn translate_module_consts(
+    file: &mut types::RustFile,
+    registry: &registry::TypeRegistry,
+    module: registry::ModuleId,
+    consts: &[(String, ty::Ty)],
+    sink: &diag::DiagSink,
+) {
+    // A `thread_local!` writes its own declaration; this list is only what
+    // codegen emits as a `const`.
+    let declared: Vec<String> = file.module_decls.clone();
+    for c in file.consts.iter_mut() {
+        if declared.iter().any(|d| d.contains(&c.name)) {
+            continue;
+        }
+        let Some(init) = c.init.clone() else { continue };
+        let mut tc = infer::TypeContext::new(registry, module, None, Vec::new(), sink);
+        for (name, ty) in consts {
+            tc.bind(name, ty.clone());
+        }
+        let want = c
+            .rust_ty
+            .as_ref()
+            .and_then(|written| tc.resolve_written_type(written).ok());
+        let translator = body::BodyTranslator::with_context("Self", tc);
+        let written = match &want {
+            Some(ty) => translator.expecting(&init, Some(ty), || translator.expr_value(&init)),
+            None => translator.expr_value(&init),
+        };
+        translator.pop_scope();
+        diag::pending::drain(sink);
+        c.init_ts = Some(written);
+        c.init = None;
+    }
 }
 
 /// Translate a single function's body_ast → body_ts with type-aware context.
@@ -1221,6 +1324,17 @@ fn translate_fn_body(
         }
 
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
+        // C1: a `&mut T` parameter whose `T` the port writes as a JavaScript
+        // VALUE is a `BorrowMut<T>`, and the body reads and writes it through
+        // `.value`. Without the cell the callee's writes went nowhere.
+        let cell_params: Vec<String> = func
+            .params
+            .iter()
+            .filter(|p| is_boxed_mut(p))
+            .map(|p| p.name.clone())
+            .collect();
+        *translator.boxed.borrow_mut() = cell_params.clone();
+        *translator.cell_params.borrow_mut() = cell_params;
         translator.self_name = self_name;
         translator.inline_module_names = inline_module_names.to_vec();
         translator.fn_return = returns;
@@ -1243,6 +1357,29 @@ fn translate_fn_body(
     if func.body_ts.is_some() {
         func.body_ast = None;
     }
+}
+
+/// Is this parameter a `&mut` to something the port writes as a JavaScript
+/// VALUE, so that a write through it needs a runtime cell?
+///
+/// A `&mut` to a class is already a reference in JavaScript and needs nothing:
+/// `fn fill(v: &mut Vec<u8>)` writes into the array the caller passed. A number,
+/// a string, a boolean and a bigint are copied at the call, and so is a
+/// nullable of one.
+pub(crate) fn is_boxed_mut(param: &types::ParamInfo) -> bool {
+    let Some(syn::Type::Reference(reference)) = &param.rust_ty else {
+        return false;
+    };
+    if reference.mutability.is_none() {
+        return false;
+    }
+    is_value_spelling(&param.ty)
+}
+
+/// Is this TypeScript spelling a value JavaScript copies?
+pub(crate) fn is_value_spelling(ty: &str) -> bool {
+    let bare = ty.strip_suffix(" | null").unwrap_or(ty);
+    matches!(bare, "string" | "number" | "boolean" | "bigint")
 }
 
 /// Does this written type name a type alias?

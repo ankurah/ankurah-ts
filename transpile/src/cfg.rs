@@ -33,6 +33,13 @@ pub struct CfgFeatures {
     /// Bare predicates: `debug_assertions`, `test`, `unix`. A name absent here
     /// is undecided.
     flags: BTreeMap<String, bool>,
+    /// Every feature this crate's own `Cargo.toml` declares, implicit ones
+    /// included. A `#[cfg(feature = "x")]` naming something absent from this
+    /// set is not FALSE — it is a question nothing in the corpus can answer,
+    /// which is what an undecided predicate means everywhere else. `None` here
+    /// is "nobody said", which is what a unit test that only lists the enabled
+    /// features wants.
+    declared: Option<HashSet<String>>,
 }
 
 impl CfgFeatures {
@@ -43,6 +50,7 @@ impl CfgFeatures {
             enabled: enabled.into_iter().collect(),
             key_values: BTreeMap::new(),
             flags: BTreeMap::new(),
+            declared: None,
         }
     }
 
@@ -56,9 +64,36 @@ impl CfgFeatures {
         self
     }
 
-    /// Check if a feature is enabled
+    /// The features the crate's own `Cargo.toml` declares.
+    pub fn with_declared(mut self, declared: Vec<String>) -> Self {
+        self.declared = Some(declared.into_iter().collect());
+        self
+    }
+
+    /// Is this feature on in the port's build? Read by the config's own tests,
+    /// which check that the resolved set is the one Cargo would resolve;
+    /// evaluation goes through `answer_feature`, which can also say "nobody
+    /// decided".
+    #[cfg(test)]
     pub fn is_enabled(&self, feature: &str) -> bool {
         self.enabled.contains(feature)
+    }
+
+    /// What this build says about a feature: on, off, or a question nothing
+    /// answers.
+    ///
+    /// A feature name used to be the ONE predicate that could never be
+    /// undecided — `is_enabled` answered false for everything the config did
+    /// not list, so `#[cfg(feature = "never-declared")]` dropped its item in
+    /// silence. It can now be undecided for the reason every other predicate
+    /// can: the crate does not declare it, so nothing in the corpus says what
+    /// Cargo would resolve it to, and a typo in either the source or
+    /// `[features.<crate>]` reads exactly like a feature that is off.
+    fn answer_feature(&self, name: &str) -> Answer {
+        match &self.declared {
+            Some(declared) if !declared.contains(name) => None,
+            _ => Some(self.enabled.contains(name)),
+        }
     }
 
     /// Read by this module's own tests, which check that the resolved set is
@@ -99,8 +134,9 @@ impl CfgExpr {
     fn eval(&self, cfg: &CfgFeatures) -> Answer {
         match self {
             CfgExpr::Feature(name) => {
-                record(format!("feature = \"{}\"", name), Some(cfg.is_enabled(name)));
-                Some(cfg.is_enabled(name))
+                let answer = cfg.answer_feature(name);
+                record(format!("feature = \"{}\"", name), answer);
+                answer
             }
             CfgExpr::Not(inner) => inner.eval(cfg).map(|v| !v),
             CfgExpr::Any(exprs) => {
@@ -184,6 +220,111 @@ pub fn gate(attrs: &[syn::Attribute], cfg: &CfgFeatures) -> Gate {
 #[cfg(test)]
 pub fn should_skip(attrs: &[syn::Attribute], features: &CfgFeatures) -> bool {
     gate(attrs, features) == Gate::Skip
+}
+
+/// Decide the `#[cfg]` written INSIDE a body: on a statement, on a `let`, on a
+/// match arm, on a field of a struct literal, and on an item declared in a
+/// block.
+///
+/// Rust drops these exactly as it drops a top-level item, and the emitter used
+/// to carry every one of them into the output unevaluated. Two `let`s written
+/// as `#[cfg(debug_assertions)]` and `#[cfg(not(debug_assertions))]` both came
+/// out, the shadowing rename gave the second a fresh name so the file still
+/// compiled, and the scanner then read the release branch — inverting the
+/// `debug_assertions = true` ruling in the one place it was made for
+/// (`storage/indexeddb-wasm/src/collection.rs:345,352`).
+///
+/// The block is pruned in place before anything translates it, so nothing
+/// downstream has to ask again.
+pub fn prune_block(block: &mut syn::Block, cfg: &CfgFeatures) {
+    let mut pruner = Pruner { cfg };
+    syn::visit_mut::VisitMut::visit_block_mut(&mut pruner, block);
+}
+
+struct Pruner<'a> {
+    cfg: &'a CfgFeatures,
+}
+
+impl Pruner<'_> {
+    /// Is what carries these attributes in this build? An undecided predicate
+    /// keeps it and says so, exactly as it does for a top-level item.
+    fn keeps(&self, attrs: &[syn::Attribute], span: proc_macro2::Span) -> bool {
+        match gate(attrs, self.cfg) {
+            Gate::Keep => true,
+            Gate::Skip => false,
+            Gate::Undecided(text) => {
+                crate::extract::report_undecided_cfg(span, &text);
+                true
+            }
+        }
+    }
+}
+
+impl syn::visit_mut::VisitMut for Pruner<'_> {
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        block.stmts.retain(|stmt| {
+            let span = syn::spanned::Spanned::span(stmt);
+            match stmt {
+                syn::Stmt::Local(local) => self.keeps(&local.attrs, span),
+                syn::Stmt::Item(item) => self.keeps(item_attrs(item), span),
+                syn::Stmt::Expr(expr, _) => self.keeps(expr_attrs(expr), span),
+                syn::Stmt::Macro(mac) => self.keeps(&mac.attrs, span),
+            }
+        });
+        syn::visit_mut::visit_block_mut(self, block);
+    }
+
+    fn visit_expr_match_mut(&mut self, node: &mut syn::ExprMatch) {
+        node.arms
+            .retain(|arm| self.keeps(&arm.attrs, syn::spanned::Spanned::span(arm)));
+        syn::visit_mut::visit_expr_match_mut(self, node);
+    }
+
+    fn visit_expr_struct_mut(&mut self, node: &mut syn::ExprStruct) {
+        let kept: syn::punctuated::Punctuated<syn::FieldValue, syn::token::Comma> = node
+            .fields
+            .iter()
+            .filter(|field| self.keeps(&field.attrs, syn::spanned::Spanned::span(field)))
+            .cloned()
+            .collect();
+        node.fields = kept;
+        syn::visit_mut::visit_expr_struct_mut(self, node);
+    }
+}
+
+/// The attributes on any expression form. `syn` gives every one an `attrs`
+/// field and no trait to read it through.
+fn expr_attrs(expr: &syn::Expr) -> &[syn::Attribute] {
+    macro_rules! arms {
+        ($($variant:ident),* $(,)?) => {
+            match expr {
+                $(syn::Expr::$variant(e) => &e.attrs,)*
+                _ => &[],
+            }
+        };
+    }
+    arms!(
+        Array, Assign, Async, Await, Binary, Block, Break, Call, Cast, Closure, Const, Continue,
+        Field, ForLoop, Group, If, Index, Infer, Let, Lit, Loop, Macro, Match, MethodCall, Paren,
+        Path, Range, Reference, Repeat, Return, Struct, Try, TryBlock, Tuple, Unary, Unsafe, While,
+        Yield,
+    )
+}
+
+/// The attributes on any item form, for an item declared inside a block.
+fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    macro_rules! arms {
+        ($($variant:ident),* $(,)?) => {
+            match item {
+                $(syn::Item::$variant(i) => &i.attrs,)*
+                _ => &[],
+            }
+        };
+    }
+    arms!(
+        Const, Enum, ExternCrate, Fn, ForeignMod, Impl, Macro, Mod, Static, Struct, Trait,
+        TraitAlias, Type, Union, Use,
+    )
 }
 
 /// Parse a `#[cfg(...)]` attribute string into a CfgExpr.
@@ -401,6 +542,76 @@ mod tests {
             Some(false),
             "multithread branch should be excluded"
         );
+    }
+
+    /// R6: a `#[cfg]` written anywhere an attribute can sit is evaluated.
+    /// Before this, only a top-level item was asked, so both branches of the
+    /// indexeddb prefix guard were emitted and the release one was read.
+    #[test]
+    fn a_cfg_on_a_statement_decides_whether_the_statement_is_in_this_build() {
+        let f = port_build(&[]);
+        let mut block: syn::Block = syn::parse_quote!({
+            #[cfg(debug_assertions)]
+            let n = 1;
+            #[cfg(not(debug_assertions))]
+            let n = 2;
+            n
+        });
+        prune_block(&mut block, &f);
+        assert_eq!(block.stmts.len(), 2, "one `let` and the tail");
+        let written = quote::ToTokens::to_token_stream(&block).to_string();
+        assert!(written.contains("let n = 1"), "{written}");
+        assert!(!written.contains("let n = 2"), "{written}");
+    }
+
+    /// A match arm and a struct-literal field carry `#[cfg]` too:
+    /// `signals/src/react.rs:98` builds an `Inner` whose `name` field exists
+    /// only in a debug build.
+    #[test]
+    fn a_cfg_on_a_match_arm_and_on_a_literal_field_decides_them_too() {
+        let f = port_build(&[]);
+        let mut block: syn::Block = syn::parse_quote!({
+            let inner = Inner {
+                #[cfg(debug_assertions)]
+                name: OnceLock::new(),
+                #[cfg(not(debug_assertions))]
+                shadow: 0,
+                version,
+            };
+            match x {
+                #[cfg(not(debug_assertions))]
+                A => 1,
+                B => 2,
+            }
+        });
+        prune_block(&mut block, &f);
+        let written = quote::ToTokens::to_token_stream(&block).to_string();
+        assert!(written.contains("name :"), "{written}");
+        assert!(!written.contains("shadow"), "{written}");
+        assert!(!written.contains("A =>"), "{written}");
+        assert!(written.contains("B =>"), "{written}");
+    }
+
+    /// A feature the crate does not declare is NOT false. It used to be the one
+    /// predicate that could never be undecided, so a typo — in the source or in
+    /// `[features.<crate>]` — dropped its item in silence.
+    #[test]
+    fn a_feature_the_crate_never_declares_is_undecided_not_false() {
+        let declared = port_build(&["wasm"]).with_declared(vec![
+            "wasm".to_string(),
+            "uniffi".to_string(),
+        ]);
+        assert_eq!(eval("cfg(feature = \"wasm\")", &declared), Some(true));
+        assert_eq!(eval("cfg(feature = \"uniffi\")", &declared), Some(false));
+        assert_eq!(eval("cfg(feature = \"never-declared\")", &declared), None);
+        let attrs: Vec<syn::Attribute> = syn::parse_quote!(#[cfg(feature = "never-declared")]);
+        match gate(&attrs, &declared) {
+            Gate::Undecided(text) => assert!(text.contains("never-declared"), "{text}"),
+            other => panic!("expected Undecided, got {other:?}"),
+        }
+        // With nothing declared, the question is answered from the enabled set
+        // alone — which is what a unit fixture wants.
+        assert_eq!(eval("cfg(feature = \"never-declared\")", &port_build(&[])), Some(false));
     }
 
     #[test]

@@ -54,6 +54,48 @@ impl<'a> BodyTranslator<'a> {
         self.types.as_ref().map(|tc| tc.borrow().registry)
     }
 
+    /// Does this written path name `Option`'s own `Some` or `None`, rather than
+    /// a crate enum's variant of that name?
+    ///
+    /// The port writes an `Option<T>` as `T | null`, so `Some(x)` is a null
+    /// test and `None` is `== null`. A crate enum with a variant of that name
+    /// is a different value entirely: `enum State { None, Some(i32), Other }`
+    /// under a guard came out `if (s != null) { const n = s; …` — arm one ran
+    /// for `State::Other`, and `State::None` was dead. The routing decision got
+    /// this by identity at step 8; the pattern tests still decided by NAME, so
+    /// a guard, a loop jump or an `if let` walked straight past it.
+    pub(crate) fn names_option_variant(&self, path: &syn::Path) -> bool {
+        let segments: Vec<String> = path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        self.names_option_variant_by(&segments)
+    }
+
+    /// The same for a bare identifier, which is how `None` is written.
+    pub(crate) fn names_option_variant_by(&self, segments: &[String]) -> bool {
+        let Some(tc) = &self.types else { return true };
+        let tc = tc.borrow();
+        // A qualified path names the enum outright.
+        if segments.len() >= 2 {
+            return match tc.registry.lookup_variant(tc.module, segments) {
+                Some((id, _)) => tc.registry.name_of(id) == "Option",
+                None => true,
+            };
+        }
+        // A bare `Some`/`None` is the prelude's unless the value namespace of
+        // this module answers with something else: `use State::*` brings a
+        // crate enum's own variants into scope under their bare names.
+        match tc
+            .registry
+            .lookup(tc.module, crate::registry::Ns::Value, segments)
+        {
+            Ok(Some(crate::registry::Def::Type(id))) => tc.registry.name_of(id) == "Option",
+            _ => true,
+        }
+    }
+
     /// Resolve the type of an expression, or say why not.
     pub(crate) fn resolve_expr_type(&self, expr: &syn::Expr) -> Result<crate::ty::Ty, crate::diag::Diag> {
         let expected = self.expectation_for(expr);
@@ -258,6 +300,69 @@ impl<'a> BodyTranslator<'a> {
         })
     }
 
+    /// The same rename applied to a pattern's BINDING text, for a form whose
+    /// names are written out as declarations rather than as one pattern.
+    ///
+    /// Only the DECLARING half of each line is rewritten — everything before
+    /// the `=` — because the initialiser is written in the scope the binding is
+    /// shadowing. The three shapes the pattern machinery produces:
+    /// `const x = e;`, `const [a, b] = e;` and `const { k: v } = e;`, the last
+    /// of which may be written shorthand.
+    pub(crate) fn freshen_bindings(&self, bind: String, shadowing: &[String]) -> String {
+        if shadowing.is_empty() {
+            return bind;
+        }
+        let fresh: Vec<(String, String)> = shadowing
+            .iter()
+            .map(|name| (name.clone(), self.freshen(name)))
+            .collect();
+        let mut out = String::new();
+        for line in bind.lines() {
+            match line.split_once(" = ") {
+                Some((head, tail)) => {
+                    out.push_str(&rename_declared(head, &fresh));
+                    out.push_str(" = ");
+                    out.push_str(tail);
+                }
+                None => out.push_str(line),
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Does this expression name a value the body holds in a runtime cell?
+    pub(crate) fn names_a_cell(&self, expr: &syn::Expr) -> bool {
+        let syn::Expr::Path(path) = expr else { return false };
+        if path.path.segments.len() != 1 {
+            return false;
+        }
+        let written = Self::path_static(&path.path);
+        let written = self.emitted_name(&written).unwrap_or(written);
+        self.boxed.borrow().iter().any(|name| *name == written)
+    }
+
+    /// Does this expression name a PARAMETER the body holds in a cell? Such a
+    /// name is the reference itself, so handing it to another `&mut` parameter
+    /// hands the cell over rather than a copy of what is inside it.
+    pub(crate) fn names_a_cell_param(&self, expr: &syn::Expr) -> bool {
+        let syn::Expr::Path(path) = expr else { return false };
+        if path.path.segments.len() != 1 {
+            return false;
+        }
+        let written = Self::path_static(&path.path);
+        let written = self.emitted_name(&written).unwrap_or(written);
+        self.cell_params.borrow().iter().any(|name| *name == written)
+    }
+
+    /// Note that this body holds `name` in a runtime cell.
+    pub(crate) fn hold_in_a_cell(&self, name: &str) {
+        let mut boxed = self.boxed.borrow_mut();
+        if !boxed.iter().any(|held| held == name) {
+            boxed.push(name.to_string());
+        }
+    }
+
     /// Does the statement being written throw this call's value away?
     pub(crate) fn discards(&self, call: &syn::ExprMethodCall) -> bool {
         let at = syn::spanned::Spanned::span(&call.method).start();
@@ -337,4 +442,50 @@ impl<'a> BodyTranslator<'a> {
         tc.borrow_mut().bind_pattern(pat, scrutinee);
     }
 
+}
+
+/// Rename the names a declaration head introduces, leaving the KEYS of an
+/// object pattern alone: `{ _0: path }` names the key `_0` and binds `path`,
+/// and `{ path }` is the same thing written shorthand — which has to become
+/// `{ path: path_1 }` rather than `{ path_1 }`, because the key is the payload's
+/// and only the binding moves.
+fn rename_declared(head: &str, fresh: &[(String, String)]) -> String {
+    let mut out = String::new();
+    let mut rest = head;
+    let mut in_object = 0usize;
+    while !rest.is_empty() {
+        let take = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .unwrap_or(rest.len());
+        if take == 0 {
+            let ch = rest.chars().next().expect("not empty");
+            match ch {
+                '{' => in_object += 1,
+                '}' => in_object = in_object.saturating_sub(1),
+                _ => {}
+            }
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let word = &rest[..take];
+        rest = &rest[take..];
+        // A key is followed by `:`; the name after it is the binding.
+        let is_key = in_object > 0 && rest.trim_start().starts_with(':');
+        match fresh.iter().find(|(from, _)| from == word) {
+            Some((from, to)) if !is_key && word != "const" && word != "let" => {
+                // Shorthand `{ x }` becomes `{ x: x_1 }`: the key stays the
+                // payload's and only the binding moves.
+                let shorthand = in_object > 0
+                    && !out.trim_end().ends_with(':');
+                if shorthand {
+                    out.push_str(&format!("{}: {}", from, to));
+                } else {
+                    out.push_str(to);
+                }
+            }
+            _ => out.push_str(word),
+        }
+    }
+    out
 }

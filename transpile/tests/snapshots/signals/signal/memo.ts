@@ -34,20 +34,24 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   withCached<R>(f: (arg0: Output) => R): R {
-    (() => {
-      const guard = this.cached.value.read();
-      try {
-        {
-          const _v = guard.value;
-          if (_v != null) {
-            const value = _v;
-            return f(value);
+    const _m0 = (() => {
+      {
+        const guard = this.cached.value.read();
+        try {
+          {
+            const _v = guard.value;
+            if (_v != null) {
+              const value = _v;
+              return { $jump: 'return', $value: f(value) };
+            }
           }
+        } finally {
+          guard.drop();
         }
-      } finally {
-        guard.drop();
       }
-    })()
+    })();
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+    (_m0 as any)
     let guard = this.cached.value.write();
     try {
       if (guard.value == null) {

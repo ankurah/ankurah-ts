@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/consuming_match/src/input.rs
-import { Struct, Enum, dropOwned } from '@ankurah/base';
+import { Struct, Enum, dropOwned, checkedAdd, checkedMul } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -46,7 +46,7 @@ export function width(slot: Slot): number {
     Filled: (v) => {
       const entity = v._0;
       try {
-        return borrow(entity) + 1;
+        return checkedAdd(borrow(entity), 1, 'usize');
       } finally {
         entity.drop();
       }
@@ -71,7 +71,7 @@ export function label(slot: Slot): number {
       const entity = v._0;
       try {
         const width = borrow(entity);
-        return width * 2;
+        return checkedMul(width, 2, 'usize');
       } finally {
         entity.drop();
       }
@@ -96,7 +96,7 @@ export function untilFilled(slots: Slot[]): number {
   try {
     while (_at3 < _seq2.length) {
       const slot = _seq2[_at3++];
-      const _m1 = slot.intoMatch({
+      const _m1 = slot.intoMatch<any>({
         Filled: (v) => {
           const entity = v._0;
           let _moved0 = false;
@@ -109,7 +109,7 @@ export function untilFilled(slots: Slot[]): number {
           }
         },
         Empty: () => {
-          seen += 1;
+          seen = checkedAdd(seen, 1, 'i32');
         },
       });
       if ((_m1 as any)?.$jump === 'break') break;
@@ -127,7 +127,7 @@ export function countEmpty(slots: Slot[]): number {
   try {
     while (_at3 < _seq2.length) {
       const slot = _seq2[_at3++];
-      const _m1 = slot.intoMatch({
+      const _m1 = slot.intoMatch<any>({
         Filled: (v) => {
           const entity = v._0;
           let _moved0 = false;
@@ -142,7 +142,7 @@ export function countEmpty(slots: Slot[]): number {
         Empty: () => {},
       });
       if ((_m1 as any)?.$jump === 'continue') continue;
-      seen += 1;
+      seen = checkedAdd(seen, 1, 'i32');
     }
   } finally {
     dropOwned(_seq2.slice(_at3));

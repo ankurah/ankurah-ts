@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/context/stack
 import { Arc, RefCell, ThreadLocal, dropOwned } from '@ankurah/base';
-import { Observer } from '../observer';
+import { Observer, Observer_dispatch_observe, Observer_dispatch_observerId } from '../observer';
 import { Signal } from '../signal';
 
 export function track<S extends Signal>(signal: S): void {
@@ -11,7 +11,7 @@ export function track<S extends Signal>(signal: S): void {
         const _v = _t0.value.at(-1);
         if (_v != null) {
           const observer = _v;
-          observer.value.observe(signal);
+          Observer_dispatch_observe(observer.value, signal);
         }
       }
     } finally {
@@ -43,7 +43,7 @@ export function pop(): void {
 }
 
 export function remove(observer: Observer): void {
-  const targetId = observer.observerId();
+  const targetId = Observer_dispatch_observerId(observer);
   OBSERVER_STACK.with((stack) => {
     let stack_1 = stack.borrowMut();
     try {
@@ -51,13 +51,13 @@ export function remove(observer: Observer): void {
         const _v = stack_1.value.at(-1);
         if (_v != null) {
           const last = _v;
-          if (last.value.observerId() === targetId) {
+          if (Observer_dispatch_observerId(last.value) === targetId) {
             dropOwned(stack_1.value.pop());
             return;
           }
         }
       }
-      /* TODO: retain */ stack_1.value.filter((o) => o.value.observerId() !== targetId);
+      /* TODO: retain */ stack_1.value.filter((o) => Observer_dispatch_observerId(o.value) !== targetId);
     } finally {
       stack_1.drop();
     }

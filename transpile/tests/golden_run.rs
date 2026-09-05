@@ -42,6 +42,51 @@ const TSC_UNDER_ROOT: &str = "node_modules/.bin/tsc";
 /// past — it says the emitter handed the cascade something with no drop glue.
 const OWNERSHIP_REPORTS: [&str; 3] = ["BUG:", "OwnershipFatal", "the drop cascade reached a"];
 
+/// How long one golden's driver may take. Generous — the whole suite is under
+/// four seconds — and finite, which is the point: emitted code that loops
+/// forever is a defect the run has to report rather than a harness that hangs.
+const GOLDEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Run a command, killing it if it outlives `limit`. `None` means it was
+/// killed, which is a failure the caller reports in its own words.
+fn run_with_timeout(
+    command: &mut Command,
+    limit: std::time::Duration,
+    what: &str,
+) -> Option<std::process::Output> {
+    use std::io::Read as _;
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("cannot run {what}: {e}"));
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    let _ = pipe.read_to_end(&mut stdout);
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_end(&mut stderr);
+                }
+                return Some(std::process::Output { status, stdout, stderr });
+            }
+            Ok(None) if started.elapsed() < limit => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(e) => panic!("cannot wait for {what}: {e}"),
+        }
+    }
+}
+
 /// Which goldens are allowed to have no `run.test.ts`, and why each one has
 /// none.
 ///
@@ -293,11 +338,24 @@ fn run_one(goldens: &Path, name: &str, base: &Path) -> Option<String> {
     }
     scaffold(out.path(), base, &golden, name);
 
-    let output = Command::new("bun")
-        .arg("test")
-        .current_dir(out.path())
-        .output()
-        .unwrap_or_else(|e| panic!("cannot run bun for golden {name}: {e}"));
+    // Under a timeout: emitted code CAN loop forever, and it has — a
+    // `let Some(x) = e else { break }` whose `break` the emitter dropped turned
+    // `loop { .. }` into a program with no exit, and `bun test packages/core`
+    // ran until somebody killed it. A run that does not finish is a failing
+    // golden, not a wedged harness.
+    let finished = run_with_timeout(
+        Command::new("bun").arg("test").current_dir(out.path()),
+        GOLDEN_TIMEOUT,
+        &format!("golden {name}"),
+    );
+    let Some(output) = finished else {
+        return Some(format!(
+            "the driver did not finish within {}s and was killed. Emitted code that loops \
+             forever is a defect: a `let Some(x) = e else {{ break }}` whose `break` the \
+             emitter dropped turned `loop {{ .. }}` into a program with no exit.",
+            GOLDEN_TIMEOUT.as_secs()
+        ));
+    };
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
 

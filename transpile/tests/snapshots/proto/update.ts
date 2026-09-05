@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/update.rs
-import { Struct, Enum, Result, JsonError } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
 import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
@@ -65,6 +65,47 @@ export class SubscriptionUpdateItem extends Struct {
     const predicateRelevance = reader.readVec((r) => [QueryId.decode(r), MembershipChange.decode(r)] as [QueryId, MembershipChange]);
     return new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
   }
+
+  toJSON(): unknown {
+    return { 'entity_id': this.entityId.toJSON(), 'collection': this.collection.toJSON(), 'content': this.content.toJSON(), 'predicate_relevance': this.predicateRelevance.map((x) => [x[0].toJSON(), x[1].toJSON()]) };
+  }
+
+  static fromJson(value: unknown): Result<SubscriptionUpdateItem, JsonError> {
+    try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `SubscriptionUpdateItem`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('entity_id' in _o)) {
+        return Result.Err(JsonError.custom('missing field `entity_id`'));
+      }
+      const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
+      if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
+      const entityId = _rentityId.unwrap();
+      if (!('collection' in _o)) {
+        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `collection`'));
+      }
+      const _rcollection = ((v: unknown) => CollectionId.fromJson(v))(_o['collection']);
+      if (_rcollection.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rcollection.unwrapErr());
+      const collection = _rcollection.unwrap();
+      if (!('content' in _o)) {
+        return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(JsonError.custom('missing field `content`'));
+      }
+      const _rcontent = ((v: unknown) => UpdateContent.fromJson(v))(_o['content']);
+      if (_rcontent.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(_rcontent.unwrapErr());
+      const content = _rcontent.unwrap();
+      if (!('predicate_relevance' in _o)) {
+        return ((e: JsonError) => { dropOwned([entityId, collection, content]); return Result.Err(e); })(JsonError.custom('missing field `predicate_relevance`'));
+      }
+      const _rpredicateRelevance = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (Array.isArray(v) && v.length === 2 ? ((a: unknown[]) => jsonAll([((v: unknown) => QueryId.fromJson(v))(a[0]), ((v: unknown) => MembershipChange.fromJson(v))(a[1])]))(v) : Result.Err(JsonError.custom('expected an array of 2'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['predicate_relevance']);
+      if (_rpredicateRelevance.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection, content]); return Result.Err(e); })(_rpredicateRelevance.unwrapErr());
+      const predicateRelevance = _rpredicateRelevance.unwrap();
+      return Result.Ok(new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance));
+    } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class NodeUpdate extends Struct {
@@ -105,24 +146,42 @@ export class NodeUpdate extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'id': this.id,
-      'from': this.from,
-      'to': this.to,
-      'body': this.body,
-    };
+    return { 'id': this.id.toJSON(), 'from': this.from.toJSON(), 'to': this.to.toJSON(), 'body': this.body.toJSON() };
   }
 
   static fromJson(value: unknown): Result<NodeUpdate, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      const o = value as Record<string, unknown>;
-      const id = ((v: unknown) => _take(UpdateId.fromJson(v)))(o['id']);
-      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
-      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
-      const body = ((v: unknown) => _take(NodeUpdateBody.fromJson(v)))(o['body']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `NodeUpdate`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('id' in _o)) {
+        return Result.Err(JsonError.custom('missing field `id`'));
+      }
+      const _rid = ((v: unknown) => UpdateId.fromJson(v))(_o['id']);
+      if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
+      const id = _rid.unwrap();
+      if (!('from' in _o)) {
+        return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(JsonError.custom('missing field `from`'));
+      }
+      const _rfrom = ((v: unknown) => EntityId.fromJson(v))(_o['from']);
+      if (_rfrom.isErr()) return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(_rfrom.unwrapErr());
+      const from = _rfrom.unwrap();
+      if (!('to' in _o)) {
+        return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(JsonError.custom('missing field `to`'));
+      }
+      const _rto = ((v: unknown) => EntityId.fromJson(v))(_o['to']);
+      if (_rto.isErr()) return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(_rto.unwrapErr());
+      const to = _rto.unwrap();
+      if (!('body' in _o)) {
+        return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(JsonError.custom('missing field `body`'));
+      }
+      const _rbody = ((v: unknown) => NodeUpdateBody.fromJson(v))(_o['body']);
+      if (_rbody.isErr()) return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(_rbody.unwrapErr());
+      const body = _rbody.unwrap();
       return Result.Ok(new NodeUpdate(id, from, to, body));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -166,24 +225,42 @@ export class NodeUpdateAck extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'id': this.id,
-      'from': this.from,
-      'to': this.to,
-      'body': this.body,
-    };
+    return { 'id': this.id.toJSON(), 'from': this.from.toJSON(), 'to': this.to.toJSON(), 'body': this.body.toJSON() };
   }
 
   static fromJson(value: unknown): Result<NodeUpdateAck, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      const o = value as Record<string, unknown>;
-      const id = ((v: unknown) => _take(UpdateId.fromJson(v)))(o['id']);
-      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
-      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
-      const body = ((v: unknown) => _take(NodeUpdateAckBody.fromJson(v)))(o['body']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `NodeUpdateAck`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('id' in _o)) {
+        return Result.Err(JsonError.custom('missing field `id`'));
+      }
+      const _rid = ((v: unknown) => UpdateId.fromJson(v))(_o['id']);
+      if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
+      const id = _rid.unwrap();
+      if (!('from' in _o)) {
+        return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(JsonError.custom('missing field `from`'));
+      }
+      const _rfrom = ((v: unknown) => EntityId.fromJson(v))(_o['from']);
+      if (_rfrom.isErr()) return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(_rfrom.unwrapErr());
+      const from = _rfrom.unwrap();
+      if (!('to' in _o)) {
+        return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(JsonError.custom('missing field `to`'));
+      }
+      const _rto = ((v: unknown) => EntityId.fromJson(v))(_o['to']);
+      if (_rto.isErr()) return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(_rto.unwrapErr());
+      const to = _rto.unwrap();
+      if (!('body' in _o)) {
+        return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(JsonError.custom('missing field `body`'));
+      }
+      const _rbody = ((v: unknown) => NodeUpdateAckBody.fromJson(v))(_o['body']);
+      if (_rbody.isErr()) return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(_rbody.unwrapErr());
+      const body = _rbody.unwrap();
       return Result.Ok(new NodeUpdateAck(id, from, to, body));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -232,20 +309,33 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
 
   toJSON(): unknown {
     return this.match<unknown>({
-      SubscriptionUpdate: (v) => ({ 'SubscriptionUpdate': { 'items': v.items } }),
+      SubscriptionUpdate: (v) => ({ 'SubscriptionUpdate': { 'items': v.items.map((x) => x.toJSON()) } }),
     });
   }
 
   static fromJson(value: unknown): Result<NodeUpdateBody, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `NodeUpdateBody`'));
+      }
       const o = value as Record<string, unknown>;
       if ('SubscriptionUpdate' in o) {
-        const p = o['SubscriptionUpdate'];
-        return Result.Ok(new NodeUpdateBody('SubscriptionUpdate', { items: ((v: unknown) => (v as unknown[]).map((v) => _take(SubscriptionUpdateItem.fromJson(v))))((p as Record<string, unknown>)['items']) }));
+        if (o['SubscriptionUpdate'] === null || typeof o['SubscriptionUpdate'] !== 'object' || Array.isArray(o['SubscriptionUpdate'])) {
+          return Result.Err(JsonError.custom('expected an object for `NodeUpdateBody`'));
+        }
+        const _o = o['SubscriptionUpdate'] as Record<string, unknown>;
+        if (!('items' in _o)) {
+          return Result.Err(JsonError.custom('missing field `items`'));
+        }
+        const _ritems = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => SubscriptionUpdateItem.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_o['items']);
+        if (_ritems.isErr()) return Result.Err(_ritems.unwrapErr());
+        const items = _ritems.unwrap();
+
+        return Result.Ok(new NodeUpdateBody('SubscriptionUpdate', { items: items }));
       }
       return Result.Err(JsonError.custom('no variant of `NodeUpdateBody` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -318,25 +408,41 @@ export class UpdateContent extends Enum<UpdateContentV> {
 
   toJSON(): unknown {
     return this.match<unknown>({
-      EventOnly: (v) => ({ 'EventOnly': v._0 }),
-      StateAndEvent: (v) => ({ 'StateAndEvent': [v._0, v._1] }),
+      EventOnly: (v) => ({ 'EventOnly': v._0.map((x) => x.toJSON()) }),
+      StateAndEvent: (v) => ({ 'StateAndEvent': [v._0.toJSON(), v._1.map((x) => x.toJSON())] }),
     });
   }
 
   static fromJson(value: unknown): Result<UpdateContent, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `UpdateContent`'));
+      }
       const o = value as Record<string, unknown>;
       if ('EventOnly' in o) {
-        const p = o['EventOnly'];
-        return Result.Ok(new UpdateContent('EventOnly', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(EventFragment.fromJson(v))))(p) }));
+        const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EventFragment.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(o['EventOnly']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+
+        return Result.Ok(new UpdateContent('EventOnly', { _0: _0 }));
       }
       if ('StateAndEvent' in o) {
-        const p = o['StateAndEvent'];
-        return Result.Ok(new UpdateContent('StateAndEvent', { _0: ((v: unknown) => _take(StateFragment.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => (v as unknown[]).map((v) => _take(EventFragment.fromJson(v))))((p as unknown[])[1]) }));
+        if (!Array.isArray(o['StateAndEvent']) || o['StateAndEvent'].length !== 2) {
+          return Result.Err(JsonError.custom('expected an array of 2 for `UpdateContent`'));
+        }
+        const _a = o['StateAndEvent'] as unknown[];
+        const _r_0 = ((v: unknown) => StateFragment.fromJson(v))(_a[0]);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        const _r_1 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EventFragment.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_a[1]);
+        if (_r_1.isErr()) return ((e: JsonError) => { dropOwned([_0]); return Result.Err(e); })(_r_1.unwrapErr());
+        const _1 = _r_1.unwrap();
+
+        return Result.Ok(new UpdateContent('StateAndEvent', { _0: _0, _1: _1 }));
       }
       return Result.Err(JsonError.custom('no variant of `UpdateContent` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -413,9 +519,13 @@ export class MembershipChange extends Enum<MembershipChangeV> {
           case 'Remove': return Result.Ok(new MembershipChange('Remove', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `MembershipChange`'));
+      }
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `MembershipChange` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -485,13 +595,20 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
           case 'Success': return Result.Ok(new NodeUpdateAckBody('Success', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `NodeUpdateAckBody`'));
+      }
       const o = value as Record<string, unknown>;
       if ('Error' in o) {
-        const p = o['Error'];
-        return Result.Ok(new NodeUpdateAckBody('Error', { _0: ((v: unknown) => v as string)(p) }));
+        const _r_0 = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(o['Error']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+
+        return Result.Ok(new NodeUpdateAckBody('Error', { _0: _0 }));
       }
       return Result.Err(JsonError.custom('no variant of `NodeUpdateAckBody` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/condition_temporaries/src/input.rs
-import { Struct, Mutex } from '@ankurah/base';
+import { Struct, Mutex, checkedAdd } from '@ankurah/base';
 
 export class Counter extends Struct {
   readonly value: Mutex<number>;
@@ -43,7 +43,7 @@ export class Counter extends Struct {
       let guard = this.value.lock();
       try {
         guard.value -= 1;
-        turns += 1;
+        turns = checkedAdd(turns, 1, 'usize');
       } finally {
         guard.drop();
       }

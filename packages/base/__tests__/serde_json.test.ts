@@ -108,3 +108,126 @@ describe('serde_json::Error', () => {
     expect(error.toString()).toBe('serde_json::Error (dropped)');
   });
 });
+
+// ── The lossless integer layer (R3) ──────────────────────────────
+//
+// serde_json keeps an integer token exactly. JSON.parse does not: it reads
+// every number as a double, so a `u64` above 2^53 comes back rounded and cannot
+// be recovered, and JSON.stringify writes a rounded token Rust then refuses.
+// These pin both directions against what the Rust reference prints.
+//
+// Both answer a `Result`, as `serde_json::from_str` and `to_string` do, so a
+// failure is a value the caller owns rather than an exception — and the
+// `JsonError` in it is a tracked value, dropped here as Rust drops it.
+
+import { parse, stringify } from '../src/serde_json.ts';
+
+/** The value a successful parse produced. */
+function parsed(text: string): unknown {
+  const answer = parse(text);
+  expect(answer.isOk()).toBe(true);
+  return answer.unwrap();
+}
+
+/** That a parse failed, with the error released the way its owner would. */
+function refused(text: string): void {
+  const answer = parse(text);
+  expect(answer.isErr()).toBe(true);
+  answer.unwrapErr().drop();
+}
+
+/** The text a successful stringify produced. */
+function written(value: unknown): string {
+  const answer = stringify(value);
+  expect(answer.isOk()).toBe(true);
+  return answer.unwrap();
+}
+
+function unwritable(value: unknown): void {
+  const answer = stringify(value);
+  expect(answer.isErr()).toBe(true);
+  answer.unwrapErr().drop();
+}
+
+describe('serde_json.parse keeps an integer token', () => {
+  test('an integer beyond the safe range comes back as a bigint', () => {
+    expect(parsed('9007199254740993')).toBe(9007199254740993n);
+    expect(parsed('-9007199254740993')).toBe(-9007199254740993n);
+    expect(parsed('18446744073709551615')).toBe(18446744073709551615n);
+  });
+
+  test('an integer a number holds exactly stays a number', () => {
+    expect(parsed('0')).toBe(0);
+    expect(parsed('1')).toBe(1);
+    expect(parsed('-42')).toBe(-42);
+    expect(parsed('9007199254740991')).toBe(9007199254740991);
+  });
+
+  test('a fractional or exponential number is a number, whatever its size', () => {
+    expect(parsed('1.5')).toBe(1.5);
+    expect(parsed('-0.25')).toBe(-0.25);
+    expect(parsed('1e400')).toBe(Infinity);
+    expect(parsed('9007199254740993.0')).toBe(9007199254740992);
+  });
+
+  test('everything else reads as JSON.parse reads it', () => {
+    expect(parsed('null')).toBe(null);
+    expect(parsed('true')).toBe(true);
+    expect(parsed('"a\\nb"')).toBe('a\nb');
+    expect(parsed('"\\ud83d\\ude80"')).toBe('🚀');
+    expect(parsed('[]')).toEqual([]);
+    expect(parsed('{}')).toEqual({});
+    expect(parsed('  [1, "two", {"k": [null, false]}]  ')).toEqual([1, 'two', { k: [null, false] }]);
+  });
+
+  test('a wide integer inside a container is kept too', () => {
+    expect(parsed('{"unsigned":9007199254740993,"signed":-9007199254740993}')).toEqual({
+      unsigned: 9007199254740993n,
+      signed: -9007199254740993n,
+    });
+    expect(parsed('[9007199254740993]')).toEqual([9007199254740993n]);
+  });
+
+  test('malformed input is an Err, not a guess and not a throw', () => {
+    refused('');
+    refused('{');
+    refused('[1,]');
+    refused('{"a" 1}');
+    refused('1 2');
+    refused('"unterminated');
+    refused('tru');
+  });
+});
+
+describe('serde_json.stringify writes a bigint as a bare integer token', () => {
+  test('a bigint is the digits, not a string and not a throw', () => {
+    expect(written(9007199254740993n)).toBe('9007199254740993');
+    expect(written(-9007199254740993n)).toBe('-9007199254740993');
+    expect(written(18446744073709551615n)).toBe('18446744073709551615');
+  });
+
+  test('the round trip through both is exact', () => {
+    const text = '{"unsigned":9007199254740993,"signed":-9007199254740993}';
+    expect(written(parsed(text))).toBe(text);
+  });
+
+  test('a value Rust could not read back is an Err', () => {
+    // Above u64::MAX and below i64::MIN.
+    unwritable(18446744073709551616n);
+    unwritable(-9223372036854775809n);
+    // serde_json refuses to write a non-finite float.
+    unwritable(Number.NaN);
+    unwritable(Number.POSITIVE_INFINITY);
+  });
+
+  test('everything else writes as JSON.stringify writes it', () => {
+    expect(written(null)).toBe('null');
+    expect(written(true)).toBe('true');
+    expect(written(1.5)).toBe('1.5');
+    expect(written('a\nb')).toBe('"a\\nb"');
+    expect(written(['x', 1, null])).toBe('["x",1,null]');
+    expect(written({ a: 1, b: [true] })).toBe('{"a":1,"b":[true]}');
+    // An absent field is absent, which is what `Option::None` writes.
+    expect(written({ a: 1, b: undefined })).toBe('{"a":1}');
+  });
+});

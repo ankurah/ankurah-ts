@@ -2,15 +2,16 @@
 
 import { describe, test, expect } from 'bun:test';
 import { EventId } from './data';
+import { serde_json } from '@ankurah/base';
 import { BincodeWriter, BincodeReader } from './codec';
 
 describe('data unit tests', () => {
   test('test_event_id_json_serialization', () => {
     const id = EventId.fromBytes(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]));
     try {
-      const json = JSON.stringify(id);
+      const json = serde_json.stringify((id).toJSON()).unwrap();
       expect(json).toEqual('"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"');
-      const _t0 = EventId.fromJson(JSON.parse(json)).unwrap();
+      const _t0 = serde_json.parse(json).andThen((v) => EventId.fromJson(v)).unwrap();
       try {
         expect(id).toEqual(_t0);
       } finally {

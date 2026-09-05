@@ -41,10 +41,13 @@ fn equality_with_no_impl_says_so_and_keeps_the_operator() {
     );
 }
 
+/// PREMISE CHANGED (R7): integer division goes through `checkedDiv`, which
+/// truncates towards zero as `Math.trunc` did AND panics on a zero divisor as
+/// Rust does. `Math.trunc(n / 0)` is `Infinity`.
 #[test]
-fn integer_division_truncates() {
+fn integer_division_truncates_and_refuses_a_zero_divisor() {
     let (ts, _) = body("pub fn f(n: u32) -> u32 { n / 2 }", "f");
-    assert!(ts.contains("Math.trunc(n / 2)"), "{}", ts);
+    assert!(ts.contains("checkedDiv(n, 2, 'u32')"), "{}", ts);
 }
 
 #[test]
@@ -68,10 +71,14 @@ fn the_negation_of_a_boolean_is_the_javascript_one() {
 
 /// A `bigint` beside a `number` throws in JavaScript rather than adding, so a
 /// literal written against a 64-bit operand has to be a `bigint` too.
+///
+/// PREMISE CHANGED (R7): the addition itself is `checkedAdd`, which panics on
+/// overflow as the debug build does. What this test is about — the literal's
+/// width — is unchanged and is what the `1n` says.
 #[test]
 fn a_literal_written_against_a_64_bit_operand_is_a_bigint() {
     let (ts, messages) = body("pub fn f(n: u64) -> u64 { n + 1 }", "f");
-    assert!(ts.contains("n + 1n"), "{}\n{:?}", ts, messages);
+    assert!(ts.contains("checkedAdd(n, 1n, 'u64')"), "{}\n{:?}", ts, messages);
 }
 
 #[test]
@@ -349,4 +356,64 @@ fn the_unary_operators_and_indexing_resolve_through_their_impls() {
 fn a_unary_operator_with_no_impl_is_reported() {
     let (_, said) = body("pub struct T { pub n: i32 }\npub fn negated(a: T) -> T { -a }", "negated");
     assert!(said.iter().any(|m| m.contains("resolves through `Neg`")), "{:?}", said);
+}
+
+/// R7: `+`, `-` and `*` on a fixed-width integer PANIC on overflow, as the
+/// `debug_assertions = true` build this port mirrors does. JavaScript wraps
+/// nothing and saturates nothing — it goes on counting in doubles, silently
+/// losing precision above 2^53 — so a bare `a + b` was a third answer, neither
+/// Rust's release wrap nor Rust's debug panic.
+#[test]
+fn arithmetic_on_an_integer_goes_through_the_checked_helper() {
+    let (ts, _) = body("pub fn f(a: u8, b: u8) -> u8 { a + b }", "f");
+    assert!(ts.contains("checkedAdd(a, b, 'u8')"), "{}", ts);
+    let (ts, _) = body("pub fn f(a: i32, b: i32) -> i32 { a - b }", "f");
+    assert!(ts.contains("checkedSub(a, b, 'i32')"), "{}", ts);
+    let (ts, _) = body("pub fn f(a: u64, b: u64) -> u64 { a * b }", "f");
+    assert!(ts.contains("checkedMul(a, b, 'u64')"), "{}", ts);
+}
+
+/// Floats are untouched: Rust's `f64` arithmetic is IEEE and so is
+/// JavaScript's.
+#[test]
+fn float_arithmetic_is_the_javascript_one() {
+    let (ts, _) = body("pub fn f(a: f64, b: f64) -> f64 { a + b }", "f");
+    assert!(ts.contains("a + b"), "{}", ts);
+    assert!(!ts.contains("checked"), "{}", ts);
+}
+
+/// The helper is skipped only where the ANSWER is provably in range, not where
+/// the OPERANDS are: `255 + 1` on a `u8` has two operands that fit and an
+/// answer that does not, and Rust panics on it.
+#[test]
+fn the_helper_is_skipped_only_when_the_answer_fits() {
+    let (ts, _) = body("pub fn f() -> u8 { 1 + 2 }", "f");
+    assert!(!ts.contains("checkedAdd"), "two small literals need no check:\n{}", ts);
+    let (ts, _) = body("pub fn f() -> u8 { 255 + 1 }", "f");
+    assert!(ts.contains("checkedAdd"), "the ANSWER is what overflows:\n{}", ts);
+}
+
+/// C1: a `&mut T` parameter whose `T` the port writes as a JavaScript VALUE is
+/// a `BorrowMut<T>`. JavaScript passes a number, a string and a boolean by
+/// value, so a plain parameter carried the callee's writes nowhere: every axis
+/// of ankql's `selection/sql.ts` answered the empty string.
+#[test]
+fn a_mut_reference_to_a_value_is_a_cell() {
+    let (ts, _) = body(
+        "fn fill(buffer: &mut String, found: &mut usize) { buffer.push_str(\"?\"); *found += 1; }",
+        "fill",
+    );
+    assert!(ts.contains("buffer.value += '?'"), "{}", ts);
+    assert!(ts.contains("found.value += 1"), "{}", ts);
+}
+
+/// A `&mut` to a class is already a reference in JavaScript and needs no cell.
+#[test]
+fn a_mut_reference_to_an_object_needs_no_cell() {
+    let (ts, _) = body(
+        "pub struct Row { pub n: u32 }\nfn bump(row: &mut Row) { row.n = 1; }",
+        "bump",
+    );
+    assert!(ts.contains("row.n = 1"), "{}", ts);
+    assert!(!ts.contains(".value"), "{}", ts);
 }

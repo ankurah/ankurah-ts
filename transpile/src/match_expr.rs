@@ -148,22 +148,52 @@ fn leaves_the_loop(
     t: &BodyTranslator,
     position: Position,
 ) -> Option<String> {
-    if !match_expr.arms.iter().any(|arm| jumps_out(&arm.body)) {
+    let jumps = match_expr.arms.iter().any(|arm| jumps_out(&arm.body));
+    // An arm of `match` or `intoMatch` is an arrow function either way, so a
+    // `?` or a `return` written in one leaves the ARM. Where the match's own
+    // value is what the function returns, the arm's `return` is the function's
+    // and that is right; where the value is discarded, so is the error.
+    let exits = match_expr
+        .arms
+        .iter()
+        .any(|arm| leaves_the_function(&arm.body));
+    if !jumps && !exits {
         return None;
     }
-    if t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload {
-        // The if-chain is not available here — it would read the payload
-        // without marking the enum moved — so the arms stay functions and the
-        // jump is handed back as a value. Each arm settles what it owns first,
-        // in its own `finally`, and the caller performs the jump.
-        // Only where the match's own value is `()`. Where something wants the
-        // value, the sentinel would be standing in the place of that value and
-        // there is nowhere to put the test.
-        // A statement's value is discarded whatever it is, and a match whose
-        // own Rust value is `()` has none to discard.
-        if position == Position::Statement || !produces_a_value(match_expr, t) {
-            return Some(jump_through_a_value(scrutinee, match_expr, t));
+    if exits && !jumps {
+        // In return position the arm's `return` IS the function's return: the
+        // match's value is what the function answers with, so the exit needs no
+        // carrying.
+        if position == Position::Returning {
+            return None;
         }
+        // Already inside a lifted body that carries exits out. The arm's
+        // sentinel travels through this match's value into the enclosing
+        // arrow, where the test that performs the return already stands, so a
+        // second test here would read a value nobody put there.
+        if t.jump_as_value.get() {
+            return None;
+        }
+    }
+    if jumps && t.match_takes(match_expr) != crate::ownership::scrutinee::Takes::Payload {
+        // A borrowing match can be written as the if-chain, where each arm is
+        // a block of the enclosing function and both keywords mean what Rust
+        // meant by them — and a `?` written in such a block is a real return.
+        return Some(translate_value_match(scrutinee, match_expr, t, position));
+    }
+    // The if-chain is not available for a consuming match — it would read the
+    // payload without marking the enum moved — so the arms stay functions and
+    // the jump is handed back as a value. Each arm settles what it owns first,
+    // in its own `finally`, and the caller performs the jump.
+    //
+    // Only where the match's own value is discarded. Where something wants the
+    // value, the sentinel would be standing in the place of that value and
+    // there is nowhere to put the test. A statement's value is discarded
+    // whatever it is, and a match whose own Rust value is `()` has none.
+    if position == Position::Statement || !produces_a_value(match_expr, t) {
+        return Some(jump_through_a_value(scrutinee, match_expr, t));
+    }
+    if jumps {
         t.report_match_gap(
             match_expr,
             "an arm of this `match` leaves the loop around it, the match hands its payload to \
@@ -171,9 +201,8 @@ fn leaves_the_loop(
              leave — and the match stands where its value is wanted, so there is nowhere to \
              put the test that would perform the jump",
         );
-        return None;
     }
-    Some(translate_value_match(scrutinee, match_expr, t, position))
+    None
 }
 
 /// Does this match hand a value back at all?
@@ -214,6 +243,18 @@ fn jump_through_a_value(
     }
     let held = t.hoist_name(written);
     let mut out = String::new();
+    // The function's own exit first: an arm left with an error, and nothing
+    // below may carry on as if the match had produced a value.
+    if match_expr
+        .arms
+        .iter()
+        .any(|arm| leaves_the_function(&arm.body))
+    {
+        out.push_str(&format!(
+            "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
+            held = held
+        ));
+    }
     for kind in kinds {
         let (word, label) = match kind.split_once('#') {
             Some((word, label)) => (word, format!(" && ({held} as any)?.$label === '{label}'", held = held, label = label)),
@@ -279,9 +320,56 @@ fn collect_jumps(expr: &syn::Expr, out: &mut Vec<String>) {
 }
 
 fn collect_jumps_stmt(stmt: &syn::Stmt, out: &mut Vec<String>) {
-    if let syn::Stmt::Expr(expr, _) = stmt {
-        collect_jumps(expr, out);
+    match stmt {
+        syn::Stmt::Expr(expr, _) => collect_jumps(expr, out),
+        syn::Stmt::Local(local) => {
+            if let Some(init) = &local.init {
+                collect_jumps(&init.expr, out);
+                if let Some((_, diverge)) = &init.diverge {
+                    collect_jumps(diverge, out);
+                }
+            }
+        }
+        _ => {}
     }
+}
+
+/// Does this expression leave the FUNCTION — through a `return`, or through
+/// the early exit a `?` performs?
+///
+/// The emitter lifts a block, a value-position `match` and an `if` used as a
+/// value into an arrow function, and a `return` inside an arrow returns from
+/// the arrow. So an expression that leaves the function cannot be lifted as it
+/// stands: the exit is handed back as a value the statement below performs,
+/// exactly as a `break` is. A closure, an `async` block and a nested item
+/// carry their own exits and are not this expression's.
+pub(crate) fn leaves_the_function(expr: &syn::Expr) -> bool {
+    struct Exits {
+        found: bool,
+    }
+    impl syn::visit::Visit<'_> for Exits {
+        fn visit_expr(&mut self, expr: &syn::Expr) {
+            match expr {
+                // `write!(f, "..")?` is not an exit here: a formatter body
+                // APPENDS, so the emitter writes the whole thing as a string
+                // and there is no `Result` to leave with.
+                syn::Expr::Try(t) if crate::body::as_write_macro(&t.expr).is_some() => return,
+                syn::Expr::Return(_) | syn::Expr::Try(_) => {
+                    self.found = true;
+                    return;
+                }
+                // A closure's `return` leaves the closure; an `async` block's
+                // leaves the future. Neither reaches this function.
+                syn::Expr::Closure(_) | syn::Expr::Async(_) => return,
+                _ => {}
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+        fn visit_item(&mut self, _: &syn::Item) {}
+    }
+    let mut exits = Exits { found: false };
+    syn::visit::Visit::visit_expr(&mut exits, expr);
+    exits.found
 }
 
 /// Does this expression, or an arm of it, leave a loop that stands outside it?
@@ -315,10 +403,12 @@ fn jumps_out(expr: &syn::Expr) -> bool {
 fn stmt_jumps_out(stmt: &syn::Stmt) -> bool {
     match stmt {
         syn::Stmt::Expr(expr, _) => jumps_out(expr),
-        syn::Stmt::Local(local) => local
-            .init
-            .as_ref()
-            .is_some_and(|init| jumps_out(&init.expr)),
+        syn::Stmt::Local(local) => local.init.as_ref().is_some_and(|init| {
+            // `let Some(x) = e else { break };` — the else block is where the
+            // jump is written, and it is the whole point of the form.
+            jumps_out(&init.expr)
+                || init.diverge.as_ref().is_some_and(|(_, e)| jumps_out(e))
+        }),
         _ => false,
     }
 }
@@ -382,7 +472,12 @@ fn translate_value_match(
     position: Position,
 ) -> String {
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
-    let (subject, declaration) = subject_of(scrutinee, t);
+    let binds: Vec<String> = match_expr
+        .arms
+        .iter()
+        .flat_map(|arm| crate::body::pattern_names(&arm.pat))
+        .collect();
+    let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
     let arms: Vec<Arm> = match_expr
         .arms
         .iter()
@@ -415,7 +510,12 @@ fn translate_value_match(
         // `undefined`, which the function's return type does not admit:
         // `match flag { true => .., false => .. }` needs no `_` arm in Rust and
         // had no `else` here.
-        let catch_all = arm.test == "true" || i + 1 == arms.len();
+        // ...but an arm whose test the translator could not write is not one
+        // that matches anything: `false` is what a refused pattern answers, and
+        // reading the LAST arm as a catch-all whatever its test said turned
+        // "written as one that never matches" into the arm that always runs.
+        let catch_all =
+            arm.test == "true" || (i + 1 == arms.len() && arm.test != "false");
         let head = match (i, catch_all) {
             // An arm that matches everything and stands first is the whole
             // match; there is nothing left to test.
@@ -552,12 +652,19 @@ fn leaves_the_arm(body: &str) -> bool {
 ///
 /// A scrutinee that is already a name is tested where it stands; anything else
 /// is read once, because Rust evaluates it once and the arms each test it.
-fn subject_of(scrutinee: &str, t: &BodyTranslator) -> (String, String) {
+/// The same, told which names the arms are about to bind.
+///
+/// A pattern may bind the subject's OWN name — `match b { Some(b) => b + 1 }`
+/// is ordinary Rust, and a shadow there is what the source meant. `const b = b`
+/// is a `ReferenceError: Cannot access 'b' before initialization`, so where an
+/// arm binds the name the subject is written as, the subject is read into a
+/// temporary first and the shadow declares against that.
+fn subject_of_bound(scrutinee: &str, binds: &[String], t: &BodyTranslator) -> (String, String) {
     let is_name = !scrutinee.is_empty()
         && scrutinee
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.');
-    if is_name {
+    if is_name && !binds.iter().any(|name| name == scrutinee) {
         return (scrutinee.to_string(), String::new());
     }
     let subject = t.fresh_temp();
@@ -625,7 +732,12 @@ fn translate_result_match(
     position: Position,
 ) -> String {
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
-    let (subject, declaration) = subject_of(scrutinee, t);
+    let binds: Vec<String> = match_expr
+        .arms
+        .iter()
+        .flat_map(|arm| crate::body::pattern_names(&arm.pat))
+        .collect();
+    let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
     let mut ok = None;
     let mut err = None;
     for arm in &match_expr.arms {
@@ -805,7 +917,14 @@ fn enum_match_over(
         crate::ownership::scrutinee::Takes::Payload => "intoMatch",
         crate::ownership::scrutinee::Takes::Nothing => "match",
     };
-    let mut out = format!("{}.{}({{\n", scrutinee, method);
+    // Where an arm hands a jump back as a sentinel, the arms no longer agree
+    // about what they answer: one gives the sentinel object and the rest give
+    // the match's own value, and `match<R>` takes ONE `R` inferred from all of
+    // them — whichever arm TypeScript reaches first. Naming `R` as `any` says
+    // that the answer is read by the test the caller writes and by nothing
+    // else, and keeps the arms from having to agree.
+    let out_ty = if t.jump_as_value.get() { "<any>" } else { "" };
+    let mut out = format!("{}.{}{}({{\n", scrutinee, method, out_ty);
 
     // One key per variant. Two arms naming one variant — which Rust reads in
     // order and this form cannot — used to emit the same key twice, and
@@ -876,8 +995,11 @@ fn enum_match_over(
             // arm. Where the match is the enclosing function's value that is
             // exactly right — the arm's `Result` is what the function returns —
             // and where it is a statement it is not, and nobody sees the error.
+            // `leaves_the_loop` routes such a match through the sentinel, which
+            // sets `jump_as_value`; anything still here has no route.
             if position == Position::Statement
-                && lifted.iter().any(|h| h.declaration.contains("return "))
+                && !t.jump_as_value.get()
+                && leaves_the_function(&arm.body)
             {
                 t.report_match_gap(
                     match_expr,

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/owned_closures/src/input.rs
-import { Struct, OwnedClosure } from '@ankurah/base';
+import { Struct, OwnedClosure, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -36,7 +36,7 @@ export function runLater(): number {
 }
 
 export function plain(n: number): number {
-  const f = () => n + 1;
+  const f = () => checkedAdd(n, 1, 'usize');
   return f();
 }
 

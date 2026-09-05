@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/select_value/src/input.rs
-import { select, Receiver, dropOwned } from '@ankurah/base';
+import { dropOwned, checkedMul, select, Receiver } from '@ankurah/base';
 
 export async function firstOf(left: Receiver<number>, right: Receiver<number>): Promise<number> {
   try {
@@ -61,7 +61,7 @@ export async function doubled(left: Receiver<number>, right: Receiver<number>): 
 }
 
 export function twice(n: number): number {
-  return n * 2;
+  return checkedMul(n, 2, 'u32');
 }
 
 export async function lastWord(left: Receiver<number>, right: Receiver<number>): Promise<number> {

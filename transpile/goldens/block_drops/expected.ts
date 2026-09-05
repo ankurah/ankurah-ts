@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/block_drops/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -30,7 +30,7 @@ export class Registry extends Struct {
         if (empty) {
           return 0;
         }
-        return first.name.length + second.name.length;
+        return checkedAdd(first.name.length, second.name.length, 'usize');
       } finally {
         second.drop();
       }
@@ -41,7 +41,7 @@ export class Registry extends Struct {
 
   tally(): number {
     const n = 3;
-    return n + this.count;
+    return checkedAdd(n, this.count, 'usize');
   }
 }
 

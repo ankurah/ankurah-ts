@@ -108,6 +108,17 @@ pub(crate) fn jump_sentinel(kind: &str, label: &Option<syn::Lifetime>) -> String
     }
 }
 
+/// What a lifted body hands back in place of a `return` it cannot perform.
+///
+/// A `return` written inside an arrow returns from the arrow, and Rust's
+/// `return` — and the early exit a `?` performs — leaves the whole function.
+/// So the value the function was going to answer with travels out as `$value`
+/// beside the `$jump` marker, and the statement that reads the lifted value
+/// performs the real `return` before anything looks at it.
+pub(crate) fn return_sentinel(value: &str) -> String {
+    format!("return {{ $jump: 'return', $value: {} }}", value)
+}
+
 /// The type a turbofish names, as the syntax wrote it.
 pub(crate) fn turbofish_written(callee: Option<&syn::Path>) -> Option<syn::Type> {
     let segment = callee?.segments.last()?;
@@ -240,7 +251,13 @@ pub fn quoted(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
+            // NUL goes out as `\u{0}` and NOT as `\0`: `\0` followed by a
+            // decimal digit is a LEGACY OCTAL escape, which a JavaScript engine
+            // reads as a different character in sloppy mode and refuses
+            // outright in a module. Rust's `"nul\01digit"` is NUL then `'1'`;
+            // `'nul\01digit'` is U+0001 then `digit`, and Node ESM will not
+            // parse it at all. It falls out of the control-character arm below,
+            // which is where every other one goes.
             // A lone surrogate or a control character has no printable form;
             // `\u{..}` is what both TypeScript and Rust write.
             c if (c as u32) < 0x20 || c as u32 == 0x7f => {
@@ -376,12 +393,30 @@ mod literal_tests {
         assert_eq!(quoted(r"a\b"), r"'a\\b'");
     }
 
+    /// PREMISE CHANGED: NUL is `\u{0}`, not `\0`.
+    ///
+    /// `\0` followed by a decimal digit is a legacy octal escape: Rust's
+    /// `"nul\01digit"` is NUL then `'1'`, and `'nul\01digit'` is U+0001 then
+    /// `digit` — a different string in sloppy mode and a parse error in a
+    /// module, which is what the port emits.
     #[test]
     fn control_characters_keep_their_escape() {
-        assert_eq!(quoted("\0"), r"'\0'");
+        assert_eq!(quoted("\0"), r"'\u{0}'");
+        assert_eq!(quoted("\u{0}1"), r"'\u{0}1'");
         assert_eq!(quoted("\n"), r"'\n'");
         assert_eq!(quoted("\t"), r"'\t'");
         assert_eq!(quoted("\u{1}"), r"'\u{1}'");
+    }
+
+    /// The template-literal escaper is the same rule. It used to handle neither
+    /// NUL nor any other control character, and a raw one in the middle of a
+    /// template is a character nothing reading the output can see.
+    #[test]
+    fn a_template_escapes_every_control_character_too() {
+        use crate::macros::format_emit::escape_template;
+        assert_eq!(escape_template("a\0b"), r"a\u{0}b");
+        assert_eq!(escape_template("a\u{1}b"), r"a\u{1}b");
+        assert_eq!(escape_template("a`b"), r"a\`b");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/async_guard/src/input.rs
-import { Struct, AsyncMutex, select, Receiver, dropOwned } from '@ankurah/base';
+import { Struct, dropOwned, AsyncMutex, select, Receiver } from '@ankurah/base';
 
 export class Gate extends Struct {
   readonly lock: AsyncMutex<number>;

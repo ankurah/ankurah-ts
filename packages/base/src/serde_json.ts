@@ -135,3 +135,350 @@ export { JsonError as Error };
  * more — a type alias in Rust and a type alias here.
  */
 export type Result<T> = ResultValue<T, JsonError>;
+
+// ── The lossless integer layer ──────────────────────────────────────────────
+//
+// `serde_json` keeps an integer token exactly: `9007199254740993` reads back as
+// the `u64` it was written from, and writes back out the same digits.
+// `JSON.parse` reads every number as a double, so the same token comes back as
+// `9007199254740992` and cannot be recovered. A port that uses `JSON.parse` for
+// a `u64` field therefore corrupts data silently in both directions, and can
+// emit a token above `u64::MAX` that Rust then refuses to read.
+//
+// `parse` and `stringify` below are the port's `serde_json::from_str` and
+// `to_string`. `parse` is a small recursive-descent reader — no `eval`, no
+// `Function` — that hands back an integer token beyond the safe range as a
+// `bigint` and everything else as `JSON.parse` would. `stringify` writes a
+// `bigint` as a bare integer token, which is what `serde_json` writes.
+//
+// A field the emitter typed `u64` or `i64` reads a `bigint` and writes one, so
+// the round trip is exact whatever the magnitude; a field typed `number` reads
+// a JavaScript number, so `1` is `1` and not `1n`.
+
+/** `u64::MAX` and the two `i64` bounds, which are what Rust refuses outside. */
+const U64_MAX = 18446744073709551615n;
+const I64_MIN = -9223372036854775808n;
+
+/**
+ * `serde_json::from_str` for the port: `JSON.parse` with the integer tokens
+ * kept.
+ *
+ * Every integer token outside `Number.MAX_SAFE_INTEGER` comes back as a
+ * `bigint`; every other number comes back as a `number`, so nothing that used
+ * to be a `number` becomes a `bigint`. Throws a `JsonError` where serde_json
+ * would answer `Err`.
+ */
+export function parse(text: string): ResultValue<unknown, JsonError> {
+  const reader = new JsonReader(text);
+  try {
+    reader.skipWhitespace();
+    const value = reader.value();
+    reader.skipWhitespace();
+    if (!reader.atEnd()) {
+      return ResultValue.Err(JsonError.syntax('trailing characters', 1, reader.position + 1));
+    }
+    return ResultValue.Ok(value);
+  } catch (thrown) {
+    if (thrown instanceof Fault) {
+      return ResultValue.Err(JsonError.syntax(thrown.message, 1, thrown.at + 1));
+    }
+    throw thrown;
+  }
+}
+
+/**
+ * `serde_json::to_string` for the port: `JSON.stringify` with a `bigint`
+ * written as the bare integer token Rust writes, rather than throwing.
+ *
+ * A `bigint` outside `u64::MAX` or below `i64::MIN` is a value Rust could not
+ * have produced and could not read back, so it is an error here rather than a
+ * token nothing accepts.
+ */
+export function stringify(value: unknown): ResultValue<string, JsonError> {
+  try {
+    return ResultValue.Ok(write(value));
+  } catch (thrown) {
+    if (thrown instanceof Fault) {
+      return ResultValue.Err(JsonError.custom(thrown.message));
+    }
+    throw thrown;
+  }
+}
+
+function write(value: unknown): string {
+  if (typeof value === 'bigint') {
+    return bigintToken(value);
+  }
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'number') {
+    // Rust has no NaN or infinity in JSON, and serde_json refuses to write one.
+    if (!Number.isFinite(value)) {
+      throw new Fault(`${value} cannot be written as JSON`, 0);
+    }
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(write).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const parts: string[] = [];
+    for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
+      if (member === undefined) continue;
+      parts.push(`${JSON.stringify(key)}:${write(member)}`);
+    }
+    return `{${parts.join(',')}}`;
+  }
+  throw new Fault(`a ${typeof value} cannot be written as JSON`, 0);
+}
+
+/**
+ * What the reader and the writer throw among themselves.
+ *
+ * NOT a `JsonError`: a `JsonError` is a tracked value, and one built on a path
+ * that abandons it is a leak the registry will report. The two public functions
+ * catch this and build the tracked error once, on the way out, at the moment
+ * something takes ownership of it.
+ */
+class Fault extends Error {
+  readonly at: number;
+  constructor(message: string, at: number) {
+    super(message);
+    this.at = at;
+  }
+}
+
+function bigintToken(value: bigint): string {
+  if (value > U64_MAX || value < I64_MIN) {
+    throw new Fault(
+      `${value} is outside the range Rust can read back (i64::MIN..=u64::MAX)`,
+      0,
+    );
+  }
+  return value.toString();
+}
+
+/**
+ * The reader `parse` is. Recursive descent over the text, one character at a
+ * time; the only thing it does that `JSON.parse` does not is decide, from the
+ * TOKEN, whether a number is an integer beyond the safe range.
+ */
+class JsonReader {
+  readonly #text: string;
+  #at = 0;
+
+  constructor(text: string) {
+    this.#text = text;
+  }
+
+  get position(): number {
+    return this.#at;
+  }
+
+  atEnd(): boolean {
+    return this.#at >= this.#text.length;
+  }
+
+  skipWhitespace(): void {
+    while (this.#at < this.#text.length) {
+      const ch = this.#text[this.#at];
+      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') this.#at += 1;
+      else break;
+    }
+  }
+
+  value(): unknown {
+    this.skipWhitespace();
+    if (this.atEnd()) throw this.fail('unexpected end of input');
+    const ch = this.#text[this.#at];
+    switch (ch) {
+      case '{':
+        return this.object();
+      case '[':
+        return this.array();
+      case '"':
+        return this.string();
+      case 't':
+        this.literal('true');
+        return true;
+      case 'f':
+        this.literal('false');
+        return false;
+      case 'n':
+        this.literal('null');
+        return null;
+      default:
+        return this.number();
+    }
+  }
+
+  private object(): Record<string, unknown> {
+    this.#at += 1;
+    const out: Record<string, unknown> = {};
+    this.skipWhitespace();
+    if (this.#text[this.#at] === '}') {
+      this.#at += 1;
+      return out;
+    }
+    for (;;) {
+      this.skipWhitespace();
+      if (this.#text[this.#at] !== '"') throw this.fail('expected a key');
+      const key = this.string();
+      this.skipWhitespace();
+      if (this.#text[this.#at] !== ':') throw this.fail('expected `:`');
+      this.#at += 1;
+      out[key] = this.value();
+      this.skipWhitespace();
+      const ch = this.#text[this.#at];
+      if (ch === ',') {
+        this.#at += 1;
+        continue;
+      }
+      if (ch === '}') {
+        this.#at += 1;
+        return out;
+      }
+      throw this.fail('expected `,` or `}`');
+    }
+  }
+
+  private array(): unknown[] {
+    this.#at += 1;
+    const out: unknown[] = [];
+    this.skipWhitespace();
+    if (this.#text[this.#at] === ']') {
+      this.#at += 1;
+      return out;
+    }
+    for (;;) {
+      out.push(this.value());
+      this.skipWhitespace();
+      const ch = this.#text[this.#at];
+      if (ch === ',') {
+        this.#at += 1;
+        continue;
+      }
+      if (ch === ']') {
+        this.#at += 1;
+        return out;
+      }
+      throw this.fail('expected `,` or `]`');
+    }
+  }
+
+  private string(): string {
+    const start = this.#at;
+    this.#at += 1;
+    while (this.#at < this.#text.length) {
+      const ch = this.#text[this.#at];
+      if (ch === '\\') {
+        this.#at += 2;
+        continue;
+      }
+      if (ch === '"') {
+        this.#at += 1;
+        // The escapes are JSON's own, so the host's reader is what decodes
+        // them: writing a second unescaper here would be a second thing to get
+        // wrong about `🚀`.
+        return JSON.parse(this.#text.slice(start, this.#at)) as string;
+      }
+      this.#at += 1;
+    }
+    throw this.fail('unterminated string');
+  }
+
+  private literal(word: string): void {
+    if (!this.#text.startsWith(word, this.#at)) throw this.fail(`expected \`${word}\``);
+    this.#at += word.length;
+  }
+
+  private number(): number | bigint {
+    const start = this.#at;
+    if (this.#text[this.#at] === '-') this.#at += 1;
+    while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
+      this.#at += 1;
+    }
+    const integerEnd = this.#at;
+    let fractional = false;
+    if (this.#text[this.#at] === '.') {
+      fractional = true;
+      this.#at += 1;
+      while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
+        this.#at += 1;
+      }
+    }
+    if (this.#text[this.#at] === 'e' || this.#text[this.#at] === 'E') {
+      fractional = true;
+      this.#at += 1;
+      if (this.#text[this.#at] === '+' || this.#text[this.#at] === '-') this.#at += 1;
+      while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
+        this.#at += 1;
+      }
+    }
+    const token = this.#text.slice(start, this.#at);
+    if (token === '' || token === '-') throw this.fail('expected a value');
+    if (fractional) return Number(token);
+    // An integer token. It stays a `number` while a `number` can hold it
+    // exactly, so nothing that used to be a `number` becomes a `bigint`; beyond
+    // that it is a `bigint`, which is what keeps `u64::MAX` readable.
+    const asNumber = Number(this.#text.slice(start, integerEnd));
+    if (Number.isSafeInteger(asNumber)) return asNumber;
+    return BigInt(token);
+  }
+
+  private fail(message: string): Fault {
+    return new Fault(message, this.#at);
+  }
+}
+
+// ── The reader's two combinators ───────────────────────────────────────────
+//
+// An emitted `fromJson` reads one field at a time and hands an `Err` straight
+// out. A field whose type is a LIST or a MAP has many reads inside it, and the
+// same rule applies to each: the first failure is the answer, and everything
+// already decoded is released before it leaves. Doing that inline would be a
+// loop and a `try` per field in every emitted reader; these two are the loop,
+// written once.
+
+import { dropOwned } from './object.ts';
+
+/**
+ * Every read, or the first failure — with everything already decoded released.
+ *
+ * `Result<T, JsonError>[]` → `Result<T[], JsonError>`. What Rust's
+ * `collect::<Result<Vec<_>, _>>()` does, plus the drop: a decoder owns what it
+ * has built until it returns, so the elements before the failing one are this
+ * function's to release.
+ */
+export function jsonAll<T>(reads: ResultValue<T, JsonError>[]): ResultValue<T[], JsonError> {
+  const out: T[] = [];
+  for (let i = 0; i < reads.length; i += 1) {
+    const read = reads[i];
+    if (read.isErr()) {
+      dropOwned(out);
+      // The reads after the failing one succeeded and are owned too.
+      for (let j = i + 1; j < reads.length; j += 1) {
+        const later = reads[j];
+        if (later.isOk()) dropOwned(later.unwrap());
+        else later.unwrapErr().drop();
+      }
+      return ResultValue.Err(read.unwrapErr());
+    }
+    out.push(read.unwrap());
+  }
+  return ResultValue.Ok(out);
+}
+
+/**
+ * `Result::map` for a read: build something out of what came back, or hand the
+ * error on untouched.
+ */
+export function jsonMap<T, U>(
+  read: ResultValue<T, JsonError>,
+  build: (value: T) => U,
+): ResultValue<U, JsonError> {
+  if (read.isErr()) return ResultValue.Err(read.unwrapErr());
+  return ResultValue.Ok(build(read.unwrap()));
+}

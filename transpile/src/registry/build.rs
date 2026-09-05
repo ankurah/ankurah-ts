@@ -44,6 +44,8 @@ pub(super) enum Update {
     Fields {
         id: TypeId,
         fields: Vec<(String, Ty)>,
+        /// Every field, in declaration order, whether or not its type resolved.
+        order: Vec<String>,
     },
     Variants {
         id: TypeId,
@@ -179,72 +181,85 @@ pub fn build_registry_with_siblings(
     // what the blanket index needs to know which methods each blanket offers.
     reg.index_blankets();
 
-    crate::emit::set_contested_conversions(contested_conversions(&reg));
+    // What every `From` / `TryFrom` static is called, settled once over the
+    // whole impl table and read by both the class's declaration and every call
+    // site. See `emit_impls::naming`.
+    crate::emit_impls::set_conversion_names(crate::emit_impls::resolve_conversion_names(&reg));
     crate::emit_impls::set_contested_traits(&reg);
 
     reg
 }
 
-/// Which conversion statics two impls of one type would both take.
+/// A type reads JSON only if everything it HOLDS does.
 ///
-/// `RetrievalError` has `From<bincode::Error>`, `From<crate::selection::filter::
-/// Error>` and `From<anyhow::Error>`; all three name `fromError` from the leaf
-/// alone, and emission wrote one and dropped two. The answer is a fact about a
-/// type's SIBLING impls, which neither the class being written nor the call site
-/// being named can see from the impl in its hand — so it is computed once here,
-/// over the whole impl table, and both halves read it.
+/// `reads_json` is set from the derive alone, and the JSON emitter refuses a
+/// type whose fields it has no spelling for — so a type with a `HashMap<u32, V>`
+/// field got no `fromJson`, and every type that held one went on calling
+/// `Refused.fromJson`. Ten call sites in the corpus named a static no class
+/// declares, and `Event`, `EventFragment`, `StateFragment` and `NodeUpdateBody`
+/// — the wire types — raised on their first call.
 ///
-/// Keyed by the self type's own leaf name, which is what both halves have.
-fn contested_conversions(
-    reg: &TypeRegistry,
-) -> std::collections::HashSet<(String, String)> {
-    // Per (self type, emitted name): the distinct TypeScript spellings of the
-    // sources that want it. `From<&str>` and `From<String>` are one signature
-    // in TypeScript, so one method serves both and the name is not contested;
-    // `From<String>` and `From<i64>` are two signatures wanting one name, and
-    // that is what has to be told apart.
-    let mut seen: std::collections::HashMap<(String, String), std::collections::HashSet<String>> =
-        Default::default();
-    for i in 0..reg.impls().len() {
-        let def = reg.impl_def(crate::registry::ImplId(i as u32));
-        let Some(implemented) = def.trait_ref.as_ref() else {
-            continue;
-        };
-        let trait_name = reg
-            .name_of(implemented.id)
-            .rsplit("::")
-            .next()
-            .unwrap_or_default()
-            .to_string();
-        if !matches!(trait_name.as_str(), "From" | "TryFrom") {
-            continue;
+/// A fixed point, because losing one type's half can lose another's: the loop
+/// only ever removes, so it terminates in at most one pass per type.
+pub fn narrow_reads_json(reg: &mut TypeRegistry, ours: &std::collections::HashSet<ModuleId>) {
+    loop {
+        let mut lost: Vec<(TypeId, String, String)> = Vec::new();
+        for i in 0..reg.declared_count() {
+            let id = TypeId(i as u32);
+            if !reg.reads_json(id) || reg.is_hand_written(id) {
+                continue;
+            }
+            let Some(def) = reg.def(id) else { continue };
+            let mut held: Vec<(String, Ty)> = def
+                .fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), ty.clone()))
+                .collect();
+            if let TypeKind::Enum { variants } = &def.kind {
+                for variant in variants {
+                    held.extend(
+                        variant
+                            .fields
+                            .iter()
+                            .map(|(name, ty)| (format!("{}.{}", variant.name, name), ty.clone())),
+                    );
+                }
+            }
+            let refused = held.iter().find_map(|(name, ty)| {
+                let spelling = crate::name_map::map_ty(reg, ty);
+                match crate::json_module::json_shape_refusal(reg, &spelling, Some(ty)) {
+                    Some(why) => Some((name.clone(), why)),
+                    None => None,
+                }
+            });
+            if let Some((field, why)) = refused {
+                lost.push((id, field, why));
+            }
         }
-        let Some(source) = def.trait_args_written.first() else {
-            continue;
-        };
-        let Some(self_id) = def.self_ty.peel_refs().id() else {
-            continue;
-        };
-        let self_name = reg.name_of(self_id);
-        let self_leaf = self_name.rsplit("::").next().unwrap_or(&self_name).to_string();
-        let leaf = source.rsplit("::").next().unwrap_or(source);
-        let base = if trait_name == "From" { "from" } else { "tryFrom" };
-        // The name this impl WOULD take if nothing contested it, which is the
-        // plain one where the source's TypeScript spelling says nothing about
-        // which impl it is. Counting only the leaf-qualified form missed
-        // `From<String>` and `From<i64>` colliding on `from`.
-        let name = if crate::emit::source_reads_as_plain(source) {
-            base.to_string()
-        } else {
-            format!("{}{}", base, leaf)
-        };
-        let spelling = crate::name_map::map_type_name(leaf);
-        seen.entry((self_leaf, name)).or_default().insert(spelling.to_string());
+        if lost.is_empty() {
+            return;
+        }
+        for (id, field, why) in lost {
+            // Said once, at the type that loses its half, naming the field that
+            // cost it. Without this the roots were silent and only the types
+            // that HELD one said anything. A SIBLING crate's types are narrowed
+            // too — the answer has to be the same wherever it is asked — and
+            // reported in that crate's own run, not in this one.
+            if reg.def(id).is_some_and(|def| ours.contains(&def.module)) {
+                    crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`{}` gets no `toJSON`/`fromJson` pair: its `{}` {}",
+                        reg.name_of(id).rsplit("::").next().unwrap_or_default(),
+                        field,
+                        why
+                    ),
+                );
+            }
+            reg.clear_reads_json(id);
+        }
     }
-    seen.into_iter()
-        .filter(|(_, spellings)| spellings.len() > 1)
-        .map(|(key, _)| key)
-        .collect()
 }
 
 /// Write what pass two learned into the registry.
@@ -252,9 +267,10 @@ pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
     for update in updates {
         match update {
             Update::ReadsJson(id) => reg.mark_reads_json(id),
-            Update::Fields { id, fields } => {
+            Update::Fields { id, fields, order } => {
                 if let Some(def) = reg.def_mut(id) {
                     def.fields = fields;
+                    def.field_order = order;
                 }
             }
             Update::Variants { id, variants } => {
@@ -419,13 +435,21 @@ pub(super) fn resolve_file(
 ) {
     for s in &mut file.structs {
         let id = reg.module_type(module, &s.name);
+        // Read before resolution: a field whose type does not resolve is not in
+        // `fields`, and the constructor still takes a parameter for it.
+        let order: Vec<String> = s
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| f.name.clone().unwrap_or_else(|| format!("_{}", i)))
+            .collect();
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
             derived_impls(reg, module, id, &s.type_params, &s.derives, updates);
             if derives_json_read(&s.derives) {
                 updates.push(Update::ReadsJson(id));
             }
-            updates.push(Update::Fields { id, fields });
+            updates.push(Update::Fields { id, fields, order });
         }
     }
 

@@ -19,7 +19,7 @@ export function Selection_tryFrom(value: string): Result<Selection, ParseError> 
   return parser.parseSelection(value);
 }
 
-export function Predicate_fromExpr(value: Expr): Result<Predicate, ParseError> {
+export function Predicate_tryFromExpr(value: Expr): Result<Predicate, ParseError> {
   return value.intoMatch({
     Predicate: (v) => {
       const p = v._0;
@@ -51,7 +51,7 @@ export function Predicate_fromExpr(value: Expr): Result<Predicate, ParseError> {
   });
 }
 
-export function Expr_fromJsValue(value: unknown): Result<Expr, ParseError> {
+export function Expr_tryFromJsValue(value: unknown): Result<Expr, ParseError> {
   if ((value === null) || (value === undefined)) {
     return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('String', { _0: 'NULL_IMPROBABLE_VALUE' }) }));
   }

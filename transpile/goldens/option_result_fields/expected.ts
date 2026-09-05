@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_result_fields/src/input.rs
-import { Struct, Enum, Result, JsonError } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Slot extends Struct {
@@ -41,19 +41,24 @@ export class Slot extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'name': this.name,
-      'count': this.count,
-    };
+    return { 'name': this.name, 'count': this.count };
   }
 
   static fromJson(value: unknown): Result<Slot, JsonError> {
     try {
-      const o = value as Record<string, unknown>;
-      const name = ((v: unknown) => v as string | null)(o['name']);
-      const count = ((v: unknown) => v as number | null)(o['count']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `Slot`'));
+      }
+      const _o = value as Record<string, unknown>;
+      const _rname = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(v)))(_o['name']);
+      if (_rname.isErr()) return Result.Err(_rname.unwrapErr());
+      const name = _rname.unwrap();
+      const _rcount = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(v)))(_o['count']);
+      if (_rcount.isErr()) return Result.Err(_rcount.unwrapErr());
+      const count = _rcount.unwrap();
       return Result.Ok(new Slot(name, count));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

@@ -158,6 +158,29 @@ pub struct BodyTranslator<'a> {
     /// it by value — Rust would refuse both, and emitting them left the caller
     /// holding a value the body had marked moved.
     pub owns_self: bool,
+    /// Names this body reads and writes through a runtime cell (C1).
+    ///
+    /// A `&mut usize` parameter is a place the callee WRITES and the caller
+    /// reads back. JavaScript passes a number, a string and a boolean by value,
+    /// so a plain parameter carries the write nowhere: ankql's SQL generator
+    /// takes `buffer: &mut String` and `found_placeholders: &mut usize`, and
+    /// every axis of `selection/sql.ts` answered the empty string because the
+    /// buffer the callee filled was a copy. Such a parameter is a
+    /// `BorrowMut<T>` here, and every read of the name is `name.value`.
+    pub boxed: std::cell::RefCell<Vec<String>>,
+    /// Locals this body hands out as `&mut`. Whether each really needs a cell
+    /// is settled at its `let`, which is the only place its type is known: a
+    /// `&mut` to a class is already a reference in JavaScript.
+    pub cell_candidates: std::cell::RefCell<Vec<String>>,
+    /// Of the cells, the ones that are PARAMETERS.
+    ///
+    /// The difference matters in argument position only. A `&mut T` parameter
+    /// IS the reference: `f(buffer)` where `buffer: &mut String` reborrows it,
+    /// and Rust needs no `&mut` to say so — so the cell goes over whole. A
+    /// boxed LOCAL is the value, and `f(buffer)` moves it, so `.value` is what
+    /// the callee gets. Everywhere else both read through `.value`, because
+    /// Rust dereferences a `&mut` for every other use.
+    pub cell_params: std::cell::RefCell<Vec<String>>,
     /// What this body still owes: the values in scope, the declarations lifted
     /// out of the statement being written, and the drop flags. Every decision
     /// that reads or writes it lives in `ownership::lowering`.
@@ -224,6 +247,9 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             jump_as_value: std::cell::Cell::new(false),
+            boxed: std::cell::RefCell::new(Vec::new()),
+            cell_candidates: std::cell::RefCell::new(Vec::new()),
+            cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
             self_name: "this",
         }
@@ -243,6 +269,9 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             jump_as_value: std::cell::Cell::new(false),
+            boxed: std::cell::RefCell::new(Vec::new()),
+            cell_candidates: std::cell::RefCell::new(Vec::new()),
+            cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
             self_name: "this",
         }
@@ -312,9 +341,20 @@ impl<'a> BodyTranslator<'a> {
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        self.expecting(a, want.get(index).and_then(|t| t.as_ref()), || {
-                            self.moved_value(a)
-                        })
+                        let wants = want.get(index).and_then(|t| t.as_ref());
+                        // C1: a cell handed to a parameter that is itself a
+                        // `&mut` to a value goes over as the CELL. Rust
+                        // reborrows a `&mut` implicitly — `f(buffer)` where
+                        // `buffer: &mut String` passes the reference — and
+                        // `buffer.value` would hand the callee a copy of the
+                        // string, which is the defect this is all about.
+                        if self.names_a_cell_param(a) {
+                            return Self::path_static(match a {
+                                syn::Expr::Path(path) => &path.path,
+                                _ => unreachable!("names_a_cell answered for a path"),
+                            });
+                        }
+                        self.expecting(a, wants, || self.moved_value(a))
                     })
                     .collect();
 
@@ -417,6 +457,18 @@ impl<'a> BodyTranslator<'a> {
                             drop(tc_ref);
                             return self.render_free_call(&free, &recv, &args, call);
                         }
+                        // A call through an open bound: the receiver is a type
+                        // parameter, so the engine reached the trait's own
+                        // declaration and no impl. Where the trait's impls are
+                        // emitted as module-level functions, the class the
+                        // receiver will be has no such method and
+                        // `subject.members()` is a call on `undefined`.
+                        if let Some(name) = self.open_bound_call(&tc_ref, &found, call) {
+                            drop(tc_ref);
+                            let mut written = vec![recv];
+                            written.extend(args.iter().cloned());
+                            return format!("{}({})", name, written.join(", "));
+                        }
                         let translated = native_types::translate_method_using(
                             tc_ref.registry,
                             found.receiver_type(),
@@ -480,6 +532,17 @@ impl<'a> BodyTranslator<'a> {
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
+                        // C1: a `&mut T` parameter IS the reference, so handing
+                        // it to another one reborrows — Rust needs no `&mut` to
+                        // say so — and the CELL goes over. `.value` would hand
+                        // the callee a copy of the string, which is the defect
+                        // this is all about.
+                        if self.names_a_cell_param(a) {
+                            return Self::path_static(match a {
+                                syn::Expr::Path(path) => &path.path,
+                                _ => unreachable!("names_a_cell_param answered for a path"),
+                            });
+                        }
                         self.expecting(a, want.get(index).and_then(|t| t.as_ref()), || {
                             self.moved_value(a)
                         })
@@ -648,15 +711,25 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Return(ret) => {
-                if let Some(expr) = &ret.expr {
+                let value = match &ret.expr {
                     // What is returned leaves through the function's return
                     // type, which is what says what it has to be.
-                    let want = self.fn_return.clone();
-                    let value =
-                        self.expecting(expr, want.as_ref(), || self.moved_value(expr));
-                    format!("return {}", value)
-                } else {
-                    "return".to_string()
+                    Some(expr) => {
+                        let want = self.fn_return.clone();
+                        Some(self.expecting(expr, want.as_ref(), || self.moved_value(expr)))
+                    }
+                    None => None,
+                };
+                // Inside a body the emitter lifted into an arrow, a `return`
+                // returns from the arrow. It is handed back as a value
+                // instead, and the statement that reads the lifted value
+                // performs the real return.
+                if self.jump_as_value.get() {
+                    return return_sentinel(value.as_deref().unwrap_or("undefined"));
+                }
+                match value {
+                    Some(value) => format!("return {}", value),
+                    None => "return".to_string(),
                 }
             }
 
@@ -774,6 +847,18 @@ impl<'a> BodyTranslator<'a> {
             // Rust drops it at the end of the statement. Emitting the
             // expression in place left nothing holding it and nothing releasing
             // it.
+            // C1: `&mut x` where `x` is already a cell hands the cell over.
+            // `x` alone would read `x.value` — the value, not the place — and
+            // the callee's writes would go nowhere.
+            syn::Expr::Reference(reference)
+                if reference.mutability.is_some() && self.names_a_cell(&reference.expr) =>
+            {
+                Self::path_static(match &*reference.expr {
+                    syn::Expr::Path(path) => &path.path,
+                    _ => unreachable!("names_a_cell answered for a path"),
+                })
+            }
+
             syn::Expr::Reference(reference) => {
                 let written = self.expr(&reference.expr);
                 self.hoist_produced(&reference.expr, written)
@@ -808,19 +893,7 @@ impl<'a> BodyTranslator<'a> {
                 }
                 let mut name = Self::path_static(&s.path);
                 if name == "Self" { name = self.self_type.to_string(); }
-                // A field's declared type is what its initialiser has to be, so
-                // `Header { len: 1 }` writes the width the field declares.
-                let want = self.struct_field_types(s);
-                let values: Vec<String> = s
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        let member = crate::infer::member_name(&f.member);
-                        let field = want.iter().find(|(name, _)| *name == member).map(|(_, t)| t);
-                        self.expecting(&f.expr, field, || self.moved_value(&f.expr))
-                    })
-                    .collect();
-                format!("new {}({})", name, values.join(", "))
+                self.struct_literal(s, &name)
             }
 
             syn::Expr::Try(try_expr) => {
@@ -842,7 +915,13 @@ impl<'a> BodyTranslator<'a> {
                 });
                 lowered.value
             }
-            syn::Expr::Await(await_expr) => format!("await {}", self.expr(&await_expr.base)),
+            // What is awaited is read for its value, so a `match` or an `if`
+            // written there is a value and not a statement: `.await` on a
+            // `match` whose arm leaves the function used to reach the
+            // statement form and put a bare `if` where the operand belonged.
+            syn::Expr::Await(await_expr) => {
+                format!("await {}", self.expr_value(&await_expr.base))
+            }
 
             // A range is a value in Rust — `(0..n).rev()` calls a method on one
             // — and the port has no type for it. It used to be written as a
@@ -903,7 +982,10 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Async(async_block) => {
-                let body = self.translate_block(&async_block.block);
+                // The block is a future of its own, so a `return` inside it
+                // returns from it and belongs to it. Whatever the body around
+                // it is doing with jumps is not this block's business.
+                let body = self.inside_its_own_function(|| self.translate_block(&async_block.block));
                 format!("(async () => {{\n{}}})()", indent(&body))
             }
 
@@ -956,6 +1038,15 @@ impl<'a> BodyTranslator<'a> {
         let awaits = control_flow::awaiting::awaits(expr);
         let held = self.hoist_name(iife("()", &format!("{}\n", body), "", awaits));
         let mut tests = String::new();
+        // The function's own exit comes first: a `?` inside the lifted body
+        // left with an error, and nothing below may read that error as if it
+        // were the expression's value.
+        if crate::match_expr::leaves_the_function(expr) {
+            tests.push_str(&format!(
+                "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
+                held = held
+            ));
+        }
         for kind in crate::match_expr::jumps_out_of(expr) {
             let (word, label) = match kind.split_once('#') {
                 Some((word, label)) => (
@@ -986,6 +1077,16 @@ impl<'a> BodyTranslator<'a> {
     }
 
     fn block_as_value(&self, block: &syn::ExprBlock) -> String {
+        // A `?`, a `return`, a `break` or a `continue` written in the block
+        // leaves something the arrow this block becomes is not: the function,
+        // or the loop around it. The exit travels out as a value the statement
+        // below performs; see `value_through_a_jump`.
+        let whole = syn::Expr::Block(block.clone());
+        if crate::match_expr::leaves_the_function(&whole)
+            || crate::match_expr::jumps_out_of_a_loop(&whole)
+        {
+            return self.value_through_a_jump(&whole);
+        }
         // Multi-statement block as expression → IIFE
         // Detect shadowed variables: if a local in the block has the same name
         // as a variable used in its init, thread it as an IIFE parameter
@@ -1068,6 +1169,12 @@ impl<'a> BodyTranslator<'a> {
             // the statements have to stand inside an arrow function, or
             // `const x = if (..) {` is what comes out, which does not parse.
             syn::Expr::Match(_) => {
+                // Ask before writing: an arm that leaves the function has to
+                // leave THIS function, and every arm of the runtime's match is
+                // an arrow. The written form is what the answer changes.
+                if crate::match_expr::leaves_the_function(expr) {
+                    return self.value_through_a_jump(expr);
+                }
                 let written = self.expr(expr);
                 if !match_expr::is_statements(&written) {
                     return written;
@@ -1075,12 +1182,16 @@ impl<'a> BodyTranslator<'a> {
             }
             _ => return self.expr(expr),
         }
-        // The wrapper is a function, and `break` and `continue` cannot leave
-        // one: `Cannot use "continue" here` is what a JavaScript engine says,
-        // and the whole module then fails to load. The jump is handed back as
-        // a value instead, and the statement that wanted the value performs it
-        // before reading one.
-        if crate::match_expr::jumps_out_of_a_loop(expr) {
+        // The wrapper is a function, and no jump can leave one. `break` and
+        // `continue` do not parse there at all — `Cannot use "continue" here`
+        // is what a JavaScript engine says, and the whole module then fails to
+        // load — and a `return`, or the early exit a `?` performs, quietly
+        // returns from the wrapper instead of from the function. Either way
+        // the jump is handed back as a value, and the statement that wanted
+        // the value performs it before reading one.
+        if crate::match_expr::jumps_out_of_a_loop(expr)
+            || crate::match_expr::leaves_the_function(expr)
+        {
             return self.value_through_a_jump(expr);
         }
         let body = control_flow::translate_expr_in_return_position(expr, self);
@@ -1090,6 +1201,19 @@ impl<'a> BodyTranslator<'a> {
             "",
             crate::control_flow::awaiting::awaits(expr),
         )
+    }
+
+    /// Translate something that is a function of its own — a closure body, an
+    /// `async` block — with the enclosing body's jump handling put aside.
+    ///
+    /// A `return` inside a closure returns from the closure, and Rust means it
+    /// that way too, so the sentinel the enclosing lift is collecting has no
+    /// business here.
+    pub(crate) fn inside_its_own_function<R>(&self, write: impl FnOnce() -> R) -> R {
+        let previous = self.jump_as_value.replace(false);
+        let answer = write();
+        self.jump_as_value.set(previous);
+        answer
     }
 
     /// A name for a value the emitted code has to hold on to.
@@ -1233,6 +1357,12 @@ impl<'a> BodyTranslator<'a> {
     /// all. So the target keeps `.value` as its default, and says that it
     /// assumed it.
     pub(crate) fn deref_place(&self, unary: &syn::ExprUnary) -> String {
+        // C1: a name the body holds in a cell is ALREADY read through it —
+        // `path_expr` writes `found.value` — so `*found` is that place and not
+        // a second `.value` on top of it.
+        if self.names_a_cell(&unary.expr) {
+            return self.expr(&unary.expr);
+        }
         let inner = self.expr(&unary.expr);
         let inner = self.hoist_produced(&unary.expr, inner);
         let Some(tc) = &self.types else {
@@ -1323,3 +1453,4 @@ mod patterns;
 /// What the pattern machinery writes, tested apart from the rest of the body.
 #[cfg(test)]
 mod pattern_tests;
+

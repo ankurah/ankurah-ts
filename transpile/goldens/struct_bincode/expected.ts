@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/struct_bincode/src/input.rs
-import { Struct, Result, JsonError } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
@@ -47,21 +47,36 @@ export class Envelope extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'id': Number(this.id),
-      'label': this.label,
-      'payload': Array.from(this.payload),
-    };
+    return { 'id': this.id, 'label': this.label, 'payload': Array.from(this.payload) };
   }
 
   static fromJson(value: unknown): Result<Envelope, JsonError> {
     try {
-      const o = value as Record<string, unknown>;
-      const id = ((v: unknown) => BigInt(v as number))(o['id']);
-      const label = ((v: unknown) => v as string)(o['label']);
-      const payload = ((v: unknown) => new Uint8Array(v as number[]))(o['payload']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `Envelope`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('id' in _o)) {
+        return Result.Err(JsonError.custom('missing field `id`'));
+      }
+      const _rid = ((v: unknown) => (typeof v === 'bigint' ? Result.Ok(v) : (typeof v === 'number' && Number.isInteger(v) ? Result.Ok(BigInt(v)) : Result.Err(JsonError.custom('expected an integer')))))(_o['id']);
+      if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
+      const id = _rid.unwrap();
+      if (!('label' in _o)) {
+        return Result.Err(JsonError.custom('missing field `label`'));
+      }
+      const _rlabel = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(_o['label']);
+      if (_rlabel.isErr()) return Result.Err(_rlabel.unwrapErr());
+      const label = _rlabel.unwrap();
+      if (!('payload' in _o)) {
+        return Result.Err(JsonError.custom('missing field `payload`'));
+      }
+      const _rpayload = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['payload']);
+      if (_rpayload.isErr()) return Result.Err(_rpayload.unwrapErr());
+      const payload = _rpayload.unwrap();
       return Result.Ok(new Envelope(id, label, payload));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -103,8 +118,12 @@ export class Signature extends Struct {
 
   static fromJson(value: unknown): Result<Signature, JsonError> {
     try {
-      return Result.Ok(new Signature(((v: unknown) => new Uint8Array(v as number[]))(value)));
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new Signature(_0));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

@@ -7,7 +7,7 @@ export { Result } from './result.ts';
 export { OwnedClosure } from './closure.ts';
 export { AnyhowError } from './anyhow.ts';
 export * as anyhow from './anyhow.ts';
-export { JsonError } from './serde_json.ts';
+export { JsonError, jsonAll, jsonMap } from './serde_json.ts';
 export * as serde_json from './serde_json.ts';
 // `use tracing::info;` never reaches the flat name — the corpus writes the
 // macros path-qualified or imports the macro, and either way the emitter
@@ -39,7 +39,27 @@ export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
 export { HashMap, HashSet, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
-export { boolAnd, boolOr } from './std/ops.ts';
+export {
+  boolAnd,
+  boolOr,
+  checkedAdd,
+  checkedSub,
+  checkedMul,
+  checkedDiv,
+  checkedRem,
+  wrappingAdd,
+  wrappingSub,
+  wrappingMul,
+  checkedAddOption,
+  checkedSubOption,
+  checkedMulOption,
+  saturatingAdd,
+  saturatingSub,
+  saturatingMul,
+  overflowingAdd,
+  overflowingSub,
+  overflowingMul,
+} from './std/ops.ts';
 
 // ── tokio ───────────────────────────────────────────────────────────────
 //

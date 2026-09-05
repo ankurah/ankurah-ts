@@ -134,7 +134,7 @@ pub fn translate_method_using(
         },
         JsShape::Str => string::translate(receiver, rust_method, args),
         // `serde_json::Value` and `JsValue`: the value JavaScript already holds.
-        JsShape::Unknown => js_value::translate(receiver, rust_method, args),
+        JsShape::Unknown => js_value::translate(reg, receiver_ty, receiver, rust_method, args),
         // An `AtomicBool` is a boolean here, and `load`/`store`/`swap` on one are
         // the same rewrites the numeric atomics take.
         JsShape::Number | JsShape::Boolean => number::translate(receiver, rust_method, args),

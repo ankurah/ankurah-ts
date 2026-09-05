@@ -271,7 +271,7 @@ fn a_question_mark_returns_the_error_and_consumes_both_wrappers() {
         "const _r0 = g();\n\
          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());\n\
          const n = _r0.unwrap();\n\
-         return Result.Ok(n + 1);",
+         return Result.Ok(checkedAdd(n, 1, 'u32'));",
         "{}",
         ts
     );
@@ -302,7 +302,7 @@ fn a_question_mark_inside_an_expression_is_lifted_out_of_it() {
         ts.trim(),
         "const _r0 = g();\n\
          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());\n\
-         return Result.Ok(_r0.unwrap() + 1);",
+         return Result.Ok(checkedAdd(_r0.unwrap(), 1, 'u32'));",
         "{}",
         ts
     );

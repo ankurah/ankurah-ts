@@ -31,6 +31,9 @@ pub enum ItemSelector {
     AssocType { trait_name: String, name: String },
     /// `mod <name>` — an inline module.
     Module { name: String },
+    /// `const <name>` — a module-level `const` or `static`. Both are values
+    /// declared at the top of a module, and the exclusion list names either.
+    Const { name: String },
 }
 
 impl ItemSelector {
@@ -79,9 +82,14 @@ impl ItemSelector {
                 name: rest.trim().to_string(),
             });
         }
+        if let Some(rest) = s.strip_prefix("const ") {
+            return Ok(ItemSelector::Const {
+                name: rest.trim().to_string(),
+            });
+        }
         bail!(
             "an item is named `impl <Trait> for <Type>`, `impl <Type>`, `fn <name>`, \
-             `fn <Type>::<name>`, `type <Trait>::<name>` or `mod <name>`"
+             `fn <Type>::<name>`, `type <Trait>::<name>`, `mod <name>` or `const <name>`"
         )
     }
 
@@ -116,6 +124,8 @@ impl ItemSelector {
             }
             (ItemSelector::FreeFn { name }, syn::Item::Fn(f)) => f.sig.ident == name.as_str(),
             (ItemSelector::Module { name }, syn::Item::Mod(m)) => m.ident == name.as_str(),
+            (ItemSelector::Const { name }, syn::Item::Const(c)) => c.ident == name.as_str(),
+            (ItemSelector::Const { name }, syn::Item::Static(st)) => st.ident == name.as_str(),
             _ => false,
         }
     }

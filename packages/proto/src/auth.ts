@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/auth.rs
-import { Struct, Result, JsonError } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, OwnershipFatal } from '@ankurah/base';
 import { Attested } from './auth.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 export { Attested };
@@ -39,8 +39,12 @@ export class AuthData extends Struct {
 
   static fromJson(value: unknown): Result<AuthData, JsonError> {
     try {
-      return Result.Ok(new AuthData(((v: unknown) => new Uint8Array(v as number[]))(value)));
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new AuthData(_0));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -86,8 +90,12 @@ export class Attestation extends Struct {
 
   static fromJson(value: unknown): Result<Attestation, JsonError> {
     try {
-      return Result.Ok(new Attestation(((v: unknown) => new Uint8Array(v as number[]))(value)));
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new Attestation(_0));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -144,14 +152,17 @@ export class AttestationSet extends Struct {
   }
 
   toJSON(): unknown {
-    return this._0;
+    return this._0.map((x) => x.toJSON());
   }
 
   static fromJson(value: unknown): Result<AttestationSet, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      return Result.Ok(new AttestationSet(((v: unknown) => (v as unknown[]).map((v) => _take(Attestation.fromJson(v))))(value)));
+      const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => Attestation.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new AttestationSet(_0));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -182,6 +193,7 @@ export class Principal extends Struct {
     try {
       return Result.Ok(new Principal());
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

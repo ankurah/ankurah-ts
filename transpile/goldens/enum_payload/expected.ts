@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/enum_payload/src/input.rs
-import { Enum, Result, JsonError } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type NoticeV = {
@@ -81,17 +81,40 @@ export class Notice extends Enum<NoticeV> {
           case 'Idle': return Result.Ok(new Notice('Idle', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `Notice`'));
+      }
       const o = value as Record<string, unknown>;
       if ('Text' in o) {
-        const p = o['Text'];
-        return Result.Ok(new Notice('Text', { _0: ((v: unknown) => v as string)(p) }));
+        const _r_0 = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(o['Text']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        
+        return Result.Ok(new Notice('Text', { _0: _0 }));
       }
       if ('Span' in o) {
-        const p = o['Span'];
-        return Result.Ok(new Notice('Span', { start: ((v: unknown) => v as number)((p as Record<string, unknown>)['start']), end: ((v: unknown) => v as number)((p as Record<string, unknown>)['end']) }));
+        if (o['Span'] === null || typeof o['Span'] !== 'object' || Array.isArray(o['Span'])) {
+          return Result.Err(JsonError.custom('expected an object for `Notice`'));
+        }
+        const _o = o['Span'] as Record<string, unknown>;
+        if (!('start' in _o)) {
+          return Result.Err(JsonError.custom('missing field `start`'));
+        }
+        const _rstart = ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(_o['start']);
+        if (_rstart.isErr()) return Result.Err(_rstart.unwrapErr());
+        const start = _rstart.unwrap();
+        if (!('end' in _o)) {
+          return Result.Err(JsonError.custom('missing field `end`'));
+        }
+        const _rend = ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(_o['end']);
+        if (_rend.isErr()) return Result.Err(_rend.unwrapErr());
+        const end = _rend.unwrap();
+        
+        return Result.Ok(new Notice('Span', { start: start, end: end }));
       }
       return Result.Err(JsonError.custom('no variant of `Notice` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

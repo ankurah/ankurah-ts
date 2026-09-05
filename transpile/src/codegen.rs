@@ -129,7 +129,11 @@ pub fn generate_ts_with_imports_configured(
 
     // Import functions from inline modules.
     // Scan bodies for function names that exist in inline modules.
-    for (mod_name, sub_file) in &file.inline_modules {
+    for (mod_name, sub_file) in file
+        .inline_modules
+        .iter()
+        .filter(|(name, _)| Some(name) != file.test_module.as_ref())
+    {
         let sub_module = format!("{}/{}", current_module.trim_end_matches("/index"), mod_name);
         let func_names: std::collections::HashSet<String> = sub_file.functions.iter()
             .map(|f| f.ts_name.clone()).collect();
@@ -184,19 +188,32 @@ pub fn generate_ts_with_imports_configured(
 /// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
 /// std's `Mutex` into a file that only ever names tokio's.
 ///
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 47] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 70] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
     // The closure that owns its captures, and the error `?` converts into.
     "OwnedClosure", "AnyhowError", "anyhow",
-    // What an emitted `fromJson` answers with: serde_json::Error's stand-in.
-    "JsonError",
+    // What an emitted `fromJson` answers with: serde_json::Error's stand-in,
+    // the lossless reader and writer, and the two combinators a list or a map
+    // reads through. `dropOwned` releases what a failed decode had already
+    // built, and `OwnershipFatal` is what its `catch` has to rethrow.
+    "JsonError", "serde_json", "jsonAll", "jsonMap", "dropOwned", "OwnershipFatal",
     // The logger every `tracing::` macro writes a call on.
     "tracing",
     // What a consuming match arm releases the payload it took no name for
     // with, and Rust's two eager boolean operators.
     "dropUnbound", "boolAnd", "boolOr",
+    // C1: the cell a `&mut` to a JavaScript VALUE is passed in.
+    "BorrowMut",
+    // R7: arithmetic on a fixed-width integer PANICS on overflow, as the
+    // `debug_assertions = true` build this port mirrors does, and the four
+    // families Rust offers for saying what should happen instead.
+    "checkedAdd", "checkedSub", "checkedMul", "checkedDiv", "checkedRem",
+    "wrappingAdd", "wrappingSub", "wrappingMul",
+    "checkedAddOption", "checkedSubOption", "checkedMulOption",
+    "saturatingAdd", "saturatingSub", "saturatingMul",
+    "overflowingAdd", "overflowingSub", "overflowingMul",
     // The keyed containers a `HashMap`/`HashSet` becomes, and the hash a
     // derived key writes itself with.
     "HashMap", "HashSet", "keyHash",
@@ -260,7 +277,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         }
     }
     // What the file will actually contain. The import list is read off it.
-    let emitted = generate_declarations(reg, file, &provided_set);
+    let emitted = generate_declarations(reg, file, &provided_set, None);
 
     // Auto-detect base types used in fields, return types, and method bodies
     let mut all_type_refs = String::new();
@@ -471,11 +488,79 @@ fn public_reexports(
             }
         }
     }
+    // `pub use ankurah_proto as proto;` gives the crate a LOCAL name, and the
+    // line below it — `pub use proto::EntityId;` — reaches the crate through
+    // that name. Without the map the second line names nothing and `EntityId`
+    // was simply absent from the facade's surface.
+    let mut crate_aliases: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for u in &file.uses {
+        for binding in &u.bindings {
+            if let (Some(local), [one]) = (&binding.local, &binding.path[..]) {
+                if reg.sibling_crate(one).is_some() {
+                    crate_aliases.insert(local.as_str(), one.as_str());
+                }
+            }
+        }
+    }
     for u in &file.uses {
         if u.vis != crate::types::VisInfo::Public {
             continue;
         }
         for binding in &u.bindings {
+            // `pub use ankurah_proto as proto;` and `pub use proto::EntityId;`
+            // name ANOTHER CRATE, and a crate is a package here, not a file
+            // beside this one. The registry keeps a sibling's root among this
+            // module's children, so asking `children` alone wrote
+            // `export { proto } from './ankurah_proto'` — 29 broken module
+            // specifiers in the facade's index, which is every own-file error
+            // that package had.
+            let head = binding.path.first().map(String::as_str).unwrap_or_default();
+            let head = crate_aliases.get(head).copied().unwrap_or(head);
+            if let Some(package) = sibling_package(reg, head) {
+                // `pub use ankurah_core::{changes, entity, ..}` re-exports
+                // another crate's MODULES. The port flattens a crate's modules
+                // into its package surface — `export * from './changes'` — so
+                // there is no `changes` name on the other side to re-export,
+                // and writing one names nothing.
+                if let (Some(local), [_, name]) = (&binding.local, &binding.path[..]) {
+                    if reg
+                        .sibling_crate(head)
+                        .is_some_and(|root| reg.modules().get(root).children.contains_key(name))
+                    {
+                        crate::diag::pending::park_at(
+                            0,
+                            0,
+                            format!(
+                                "`{}` re-exports `{}`, which is a MODULE of that crate, and the \
+                                 port flattens a crate's modules into its package surface, so \
+                                 there is no name to re-export",
+                                package, local
+                            ),
+                        );
+                        continue;
+                    }
+                }
+                let line = match (&binding.local, &binding.path[..]) {
+                    // `pub use ankql;` / `pub use ankurah_core as core;` —
+                    // the whole crate under one name.
+                    (Some(local), [_one]) => {
+                        format!("export * as {} from '{}';\n", local, package)
+                    }
+                    // `pub use proto::EntityId;` — one name out of it.
+                    (Some(local), [_, ..]) => {
+                        format!("export {{ {} }} from '{}';\n", local, package)
+                    }
+                    // `pub use ankurah_derive::*;`
+                    (None, _) => format!("export * from '{}';\n", package),
+                    // A binding with a local name and no path is not a shape
+                    // `use` produces.
+                    (Some(_), []) => continue,
+                };
+                if !out.contains(&line) {
+                    out.push(line);
+                }
+                continue;
+            }
             let line = match (&binding.local, &binding.path[..]) {
                 (None, [name]) if children.contains_key(name) => format!(
                     "export * from '{}';\n",
@@ -501,6 +586,20 @@ fn public_reexports(
         }
     }
     out
+}
+
+/// The package a `pub use` of another crate re-exports from, where the head of
+/// the path names one.
+///
+/// A crate the port does not carry — `ankurah_derive`, whose macros are
+/// expanded away — has no package to name, and the re-export is reported rather
+/// than written against a specifier nothing resolves.
+fn sibling_package(reg: &TypeRegistry, head: &str) -> Option<String> {
+    reg.sibling_crate(head)?;
+    match crate::name_map::map_crate_to_package(head) {
+        Some(package) => Some(package.to_string()),
+        None => None,
+    }
 }
 
 /// Where a hand-written child module sits, when the TypeScript it is called is
@@ -565,6 +664,12 @@ fn generate_declarations(
     reg: &TypeRegistry,
     file: &RustFile,
     provided_set: &HashSet<String>,
+    // Which module this file's declarations belong to. `None` looks it up from
+    // the file's path, which is what a real file has; an INLINE module has no
+    // path of its own, and looking one up for it answered the crate root — so
+    // every impl in a test module was read as "declared in another module" and
+    // came out as a free function.
+    module: Option<crate::registry::ModuleId>,
 ) -> String {
     let mut out = String::new();
     // Organize impl blocks
@@ -588,19 +693,19 @@ fn generate_declarations(
     // An impl whose self type has no emitted class contributes module-level
     // functions instead of methods, and its methods must not also be hung on a
     // class named after its target — there is none.
-    let free: Vec<crate::emit_impls::FreeFn> = match reg.modules().lookup_file(&file.path) {
+    let here = module.or_else(|| reg.modules().lookup_file(&file.path));
+    let free: Vec<crate::emit_impls::FreeFn> = match here {
         Some(module) => crate::emit_impls::free_functions(reg, module, file),
         None => Vec::new(),
     };
     // A trait this file declares carries the function that picks among its
     // impls at run time, for the calls that dispatch through a bound the engine
     // cannot close.
-    let dispatchers: Vec<crate::emit_impls::Dispatcher> =
-        match reg.modules().lookup_file(&file.path) {
-            Some(module) => crate::emit_impls::dispatchers(reg, module, file),
-            None => Vec::new(),
-        };
-    let on_a_class = |imp: &ImplInfo| match reg.modules().lookup_file(&file.path) {
+    let dispatchers: Vec<crate::emit_impls::Dispatcher> = match here {
+        Some(module) => crate::emit_impls::dispatchers(reg, module, file),
+        None => Vec::new(),
+    };
+    let on_a_class = |imp: &ImplInfo| match here {
         Some(module) => crate::emit_impls::impl_has_class(reg, module, imp),
         None => true,
     };
@@ -644,19 +749,21 @@ fn generate_declarations(
         if provided_set.contains(&s.name) {
             continue;
         }
-        emit::emit_struct(&mut out, reg, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name), &file.assigned_fields);
+        emit::emit_struct(&mut out, reg, here, s, &inherent_methods, &trait_impls, &trait_methods, impl_bounds.get(&s.name), &file.assigned_fields);
     }
     for e in &file.enums {
         if provided_set.contains(&e.name) {
             continue;
         }
-        emit::emit_enum(&mut out, reg, e, &inherent_methods, &trait_impls, &trait_methods);
+        emit::emit_enum(&mut out, reg, here, e, &inherent_methods, &trait_impls, &trait_methods);
     }
     for t in &file.traits {
         emit::emit_trait(&mut out, t);
     }
     for f in &file.functions {
-        if !f.is_test {
+        // A test module's functions are written inside the `describe` of the
+        // `.test.ts`, not as module-level functions beside its fixtures.
+        if !f.is_test && !file.is_test_module {
             emit::emit_function(&mut out, f);
         }
     }
@@ -669,7 +776,19 @@ fn generate_declarations(
         let has_decl = file.module_decls.iter().any(|d| d.contains(&c.name));
         if has_decl { continue; }
         let export = if c.is_pub { "export " } else { "" };
-        out.push_str(&format!("{}const {}: {} = undefined as any; // TODO\n\n", export, c.name, c.ty));
+        // Rust's `static mut` is a global the program writes to; everything
+        // else here is a value fixed at load.
+        let keyword = if c.mutable { "let" } else { "const" };
+        match &c.init_ts {
+            Some(init) => out.push_str(&format!(
+                "{}{} {}: {} = {};\n\n",
+                export, keyword, c.name, c.ty, init
+            )),
+            None => out.push_str(&format!(
+                "{}{} {}: {} = undefined as any; // TODO\n\n",
+                export, keyword, c.name, c.ty
+            )),
+        }
     }
 
     // The impls with no class of their own, as the functions they become.
@@ -693,6 +812,7 @@ fn generate_declarations(
 }
 
 pub fn generate_test_ts_with_imports(
+    reg: &TypeRegistry,
     file: &RustFile,
     rust_crate_path: &str,
     type_to_file: &HashMap<String, String>,
@@ -727,26 +847,95 @@ pub fn generate_test_ts_with_imports(
         }
     }
 
-    // Import types from the parent module (same file)
-    let local_imports: Vec<&String> = test_refs.iter()
-        .filter(|t| available_types.contains(*t))
-        .collect();
-    if !local_imports.is_empty() {
-        let mut sorted = local_imports;
-        sorted.sort();
-        out.push_str(&format!("import {{ {} }} from './{}';\n",
-            sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), module_name));
-    }
+    // The fixtures the test module declares, written once here and used twice:
+    // to decide the imports, and as the text emitted above the `describe`.
+    let fixtures = match &file.test_module {
+        Some(name) => file
+            .inline_modules
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, sub)| {
+                let id = reg
+                    .modules()
+                    .lookup_file(&file.path)
+                    .and_then(|parent| reg.modules().get(parent).children.get(name).copied());
+                generate_declarations(reg, sub, &HashSet::new(), id)
+            })
+            .unwrap_or_default(),
+        None => String::new(),
+    };
 
-    // Import base types (Arc, Mutex, RefCell, etc.)
-    let base_runtime_types = BASE_RUNTIME_SYMBOLS;
-    let all_bodies: String = file
+    // A fixture the test module declares is written into this file, so it is
+    // not imported from anywhere: `import { TestEntity } from './tests'` named
+    // a module that is not emitted at all.
+    let declared_here: HashSet<String> = match &file.test_module {
+        Some(name) => file
+            .inline_modules
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, sub)| {
+                sub.structs
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .chain(sub.enums.iter().map(|e| e.name.clone()))
+                    .chain(sub.traits.iter().map(|t| t.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => HashSet::new(),
+    };
+    test_refs.retain(|name| !declared_here.contains(name));
+
+    // `use super::*` — which is how every test module in the corpus opens —
+    // brings the WHOLE parent module into the test's scope: its functions and
+    // its consts as well as its types. Only the types were importable, so
+    // `selection/sql.test.ts` never imported `generateSelectionSql` and all
+    // fourteen of its tests died on a `ReferenceError`.
+    let mut from_parent: Vec<String> = test_refs
+        .iter()
+        .filter(|t| available_types.contains(*t))
+        .cloned()
+        .collect();
+    let fixture_text = fixtures.clone();
+    let bodies_and_fixtures: String = file
         .test_functions
         .iter()
         .chain(&file.test_helpers)
         .filter_map(|f| f.body_ts.as_deref())
+        .chain(std::iter::once(fixture_text.as_str()))
         .collect::<Vec<_>>()
         .join(" ");
+    for f in &file.functions {
+        if f.is_test || declared_here.contains(&f.ts_name) {
+            continue;
+        }
+        if names_word(&bodies_and_fixtures, &f.ts_name) && !from_parent.contains(&f.ts_name) {
+            from_parent.push(f.ts_name.clone());
+        }
+    }
+    for c in &file.consts {
+        if declared_here.contains(&c.name) {
+            continue;
+        }
+        if names_word(&bodies_and_fixtures, &c.name) && !from_parent.contains(&c.name) {
+            from_parent.push(c.name.clone());
+        }
+    }
+    if !from_parent.is_empty() {
+        from_parent.sort();
+        from_parent.dedup();
+        out.push_str(&format!(
+            "import {{ {} }} from './{}';\n",
+            from_parent.join(", "),
+            module_name
+        ));
+    }
+
+    // Import base types (Arc, Mutex, RefCell, etc.)
+    let base_runtime_types = BASE_RUNTIME_SYMBOLS;
+    // The fixture declarations are part of this file too, and they name
+    // `Struct`, `Enum` and whatever else the runtime supplies.
+    let all_bodies: String = bodies_and_fixtures.clone();
     // Read the emitted bodies rather than the PascalCase names the type scan
     // found: `dropOwned` is a function and `oneshot` a namespace, and neither is
     // a type reference.
@@ -757,9 +946,21 @@ pub fn generate_test_ts_with_imports(
     if all_bodies.contains("dropOwned(") {
         base_imports.push(&cascade);
     }
+    // The bases a fixture class extends. `Struct` and `Enum` are not in the
+    // runtime-symbol table — the main file's import list adds them from what it
+    // DECLARES, and a test file declares its fixtures the same way.
+    let struct_base = "Struct";
+    let enum_base = "Enum";
+    if fixtures.contains("extends Struct") {
+        base_imports.push(&struct_base);
+    }
+    if fixtures.contains("extends Enum<") {
+        base_imports.push(&enum_base);
+    }
     if !base_imports.is_empty() {
         let mut sorted = base_imports;
         sorted.sort();
+        sorted.dedup();
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n",
             sorted.iter().map(|s| **s).collect::<Vec<_>>().join(", ")));
     }
@@ -814,6 +1015,13 @@ pub fn generate_test_ts_with_imports(
         out.push_str("import { BincodeWriter, BincodeReader } from './codec';\n");
     }
     out.push('\n');
+
+    // The fixtures the test module declares — a struct, an impl on it, a
+    // `const` — written before the `describe` that names them. `mod tests` is
+    // ordinary Rust and every non-`fn` item in it used to be dropped.
+    if !fixtures.trim().is_empty() {
+        out.push_str(&fixtures);
+    }
 
     out.push_str(&format!("describe('{} unit tests', () => {{\n", module_name));
 
@@ -995,6 +1203,27 @@ fn mentions(text: &str, word: &str) -> bool {
             return true;
         }
         from = start + 1;
+    }
+    false
+}
+
+/// Does this text name `word` as a whole identifier?
+///
+/// The import lists are built by looking for a name in emitted text, and a
+/// substring match imported `Mutex` into a file that only ever wrote
+/// `AsyncMutex`.
+fn names_word(text: &str, word: &str) -> bool {
+    let is_part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut from = 0usize;
+    while let Some(at) = text[from..].find(word) {
+        let start = from + at;
+        let end = start + word.len();
+        let before = text[..start].chars().next_back().is_some_and(is_part);
+        let after = text[end..].chars().next().is_some_and(is_part);
+        if !before && !after {
+            return true;
+        }
+        from = end;
     }
     false
 }

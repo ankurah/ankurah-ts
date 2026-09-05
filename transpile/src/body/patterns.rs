@@ -94,6 +94,14 @@ impl BodyTranslator<'_> {
     /// beside it so that the question still gets asked.
     pub(crate) fn is_irrefutable(pat: &syn::Pat) -> bool {
         match pat {
+            // `None` is not a binding. syn hands it over as an identifier
+            // because it is written without a path, and Rust resolves it to
+            // `Option`'s empty case — binding it is an error, not a shadow.
+            // `pattern_test` was given this exception and this was not, so a
+            // `None` NESTED in any pattern — `Some(None)`, `E::Opt(None)` —
+            // was read as a name that matches everything, and the arm ran for
+            // a value that was there.
+            syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => false,
             // `x @ Some(_)` binds *and* asks.
             syn::Pat::Ident(ident) => ident
                 .subpat
@@ -181,12 +189,17 @@ impl BodyTranslator<'_> {
         match pat {
             syn::Pat::TupleStruct(ts) => {
                 let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                // `Some` and `None` are decided by IDENTITY, not by the name: a
+                // crate enum with a variant of that name is a different value,
+                // and reading `State::Some(n)` as a null test made arm one run
+                // for `State::Other`.
+                let option = self.names_option_variant(&ts.path);
                 match name.as_str() {
                     // The port writes an `Option<T>` as `T | null`, so the
                     // payload of a `Some` *is* the subject — which is why a
                     // pattern inside it tests against the same place, and
                     // `Some(true)` is a test and not only a binding.
-                    "Some" => {
+                    "Some" if option => {
                         let Some(inner) = ts.elems.first() else {
                             return (format!("{} != null", subject), String::new());
                         };
@@ -276,7 +289,9 @@ impl BodyTranslator<'_> {
                 }
                 let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
                 match name.as_str() {
-                    "None" => (format!("{} == null", subject), String::new()),
+                    "None" if self.names_option_variant(&p.path) => {
+                        (format!("{} == null", subject), String::new())
+                    }
                     _ => (format!("{}.is('{}')", subject, name), String::new()),
                 }
             }
@@ -337,23 +352,30 @@ impl BodyTranslator<'_> {
                     Some(first) if binds.iter().all(|b| b == first) => {
                         (tests.join(" || "), first.clone())
                     }
-                    _ => {
-                        self.fallback(
-                            syn::spanned::Spanned::span(or),
-                            "the alternatives of this pattern bind their names from \
-                             different places, which the translator cannot write as one test, \
-                             so the arm is written as one that never matches",
-                        );
-                        // NOT `true`: an arm whose test cannot be written and
-                        // which is taken anyway runs a body naming the very
-                        // bindings the alternatives disagreed about. ankql's
-                        // `(Expr::Path(path), _) | (_, Expr::Path(path))` came
-                        // out as an unconditional `return columns.includes(
-                        // path.property())` with `path` bound nowhere, so the
-                        // suite died on a ReferenceError instead of on the
-                        // engine's own report.
-                        ("false".to_string(), String::new())
-                    }
+                    // The alternatives bind the same names from DIFFERENT
+                    // places, which is what Rust's or-pattern is for:
+                    // `(Expr::Path(p), _) | (_, Expr::Path(p))` binds `p` out
+                    // of the left or out of the right, whichever matched. One
+                    // test cannot say which, so the BINDING asks: each name is
+                    // read from the alternative whose test passed.
+                    _ => match per_alternative(&tests, &binds) {
+                        Some(bind) => (tests.join(" || "), bind),
+                        None => {
+                            self.fallback(
+                                syn::spanned::Spanned::span(or),
+                                "the alternatives of this pattern bind their names in a form \
+                                 the translator cannot read back — each alternative has to \
+                                 bind the same names, one `const` apiece — so the arm is \
+                                 written as one that never matches",
+                            );
+                            // NOT `true`: an arm whose test cannot be written
+                            // and which is taken anyway runs a body naming the
+                            // very bindings the alternatives disagreed about,
+                            // so the suite dies on a ReferenceError instead of
+                            // on the engine's own report.
+                            ("false".to_string(), String::new())
+                        }
+                    },
                 }
             }
             // A plain name binds whatever it was given, and always matches —
@@ -362,8 +384,25 @@ impl BodyTranslator<'_> {
             // empty case rather than to a binding (binding it is an error, not
             // a shadow). Reading it as a name made every `None` arm a
             // catch-all that ran for a value that was there.
-            syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => {
+            syn::Pat::Ident(ident)
+                if ident.ident == "None"
+                    && ident.subpat.is_none()
+                    && self.names_option_variant_by(&[ident.ident.to_string()]) =>
+            {
                 (format!("{} == null", subject), String::new())
+            }
+            // `n @ 1` and `whole @ Some(_)` bind AND ask: the subpattern is
+            // the test, and the name is bound to the same subject. Ignoring the
+            // subpattern made `Some(n @ 1) => n` an arm that matches every
+            // `Some`, so `o == 7` took it.
+            syn::Pat::Ident(ident) if ident.subpat.is_some() => {
+                let (_, inner) = ident.subpat.as_ref().expect("just tested");
+                let (test, mut bind) = self.pattern_test(subject, inner);
+                let var = name_map::escape_reserved(&name_map::to_camel_case(
+                    &ident.ident.to_string(),
+                ));
+                bind.insert_str(0, &format!("const {} = {};\n", var, subject));
+                (test, bind)
             }
             syn::Pat::Ident(_) => {
                 let var = Self::pat_static(pat);
@@ -401,13 +440,106 @@ impl BodyTranslator<'_> {
             syn::Pat::Wild(_) => ("true".to_string(), String::new()),
             syn::Pat::Reference(r) => self.pattern_test(subject, &r.pat),
             syn::Pat::Paren(p) => self.pattern_test(subject, &p.pat),
+            // A pattern with no test the translator can write is NOT a
+            // catch-all. `true` here was the opposite convention from the
+            // or-pattern's `false` a hundred lines above, and it ran an arm
+            // whose bindings the translator had just said it could not write.
             other => {
                 self.fallback(
                     syn::spanned::Spanned::span(other),
-                    "this pattern has no test the translator can write, so the loop runs unconditionally",
+                    "this pattern has no test the translator can write, so the arm is written \
+                     as one that never matches",
                 );
-                ("true".to_string(), String::new())
+                ("false".to_string(), String::new())
             }
         }
     }
+}
+
+/// One binding per name, read from whichever alternative of an or-pattern
+/// matched.
+///
+/// `(Expr::Path(p), _) | (_, Expr::Path(p))` binds `p` out of the left element
+/// or out of the right, and the arm's body names `p` once. The test is the
+/// disjunction; the binding is a chain of conditionals over the same tests, in
+/// the same order, so the name is read from the alternative Rust would have
+/// taken. `None` where an alternative binds something this cannot read back —
+/// a destructuring, a differing set of names — and the site says so.
+fn per_alternative(tests: &[String], binds: &[String]) -> Option<String> {
+    let parsed: Vec<Vec<(String, String)>> = binds.iter().map(|b| simple_bindings(b)).collect::<Option<Vec<_>>>()?;
+    let first = parsed.first()?;
+    if first.is_empty() {
+        return None;
+    }
+    // Every alternative binds the same names, in the same order: Rust requires
+    // it, and a set that differs here means this did not read them properly.
+    for other in &parsed {
+        if other.len() != first.len() {
+            return None;
+        }
+        if other.iter().zip(first).any(|((a, _), (b, _))| a != b) {
+            return None;
+        }
+    }
+    let mut out = String::new();
+    for (index, (name, _)) in first.iter().enumerate() {
+        let mut written = "undefined".to_string();
+        for (alternative, test) in parsed.iter().zip(tests).rev() {
+            written = format!("({}) ? {} : {}", test, alternative[index].1, written);
+        }
+        out.push_str(&format!("const {} = {};\n", name, written));
+    }
+    Some(out)
+}
+
+/// What a pattern's binding text names, as `(name, the expression it reads)`
+/// pairs — or `None` for a form this cannot read back.
+///
+/// The two forms the pattern machinery writes: `const x = e;`, and the payload
+/// destructuring `const { _0: x, name: y } = e;`. The second is turned back
+/// into member reads, which is what a conditional over two alternatives needs:
+/// there is no destructuring that reads from one place or another.
+fn simple_bindings(text: &str) -> Option<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let rest = line.strip_prefix("const ")?;
+        let (bound, value) = rest.split_once(" = ")?;
+        let value = value.trim_end_matches(';').trim();
+        match bound.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
+            Some(fields) => {
+                for field in fields.split(',') {
+                    let field = field.trim();
+                    if field.is_empty() {
+                        continue;
+                    }
+                    let (key, name) = match field.split_once(':') {
+                        Some((key, name)) => (key.trim(), name.trim()),
+                        None => (field, field),
+                    };
+                    if !is_identifier(key) || !is_identifier(name) {
+                        return None;
+                    }
+                    out.push((name.to_string(), format!("{}.{}", value, key)));
+                }
+            }
+            None => {
+                if !is_identifier(bound) {
+                    return None;
+                }
+                out.push((bound.to_string(), value.to_string()));
+            }
+        }
+    }
+    Some(out)
+}
+
+fn is_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }

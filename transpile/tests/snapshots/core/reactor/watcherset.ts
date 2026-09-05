@@ -1,0 +1,369 @@
+// MIRRORS: ankurah/core/src/reactor/watcherset.rs
+import { Struct, Enum, Arc, HashMap, HashSet } from '@ankurah/base';
+import { Comparison } from '../lineage';
+import { AbstractEntity } from '../reactor';
+import { CandidateChanges } from './candidate_changes';
+import { ComparisonIndex } from './comparison_index';
+import { PropertyPath } from './property_path';
+import { ReactorSubscriptionId } from './subscription';
+import { Subscription } from './subscription_state';
+import { Predicate } from '@ankurah/ankql';
+import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
+
+export class WatcherSet extends Struct {
+  indexWatchers: HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>;
+  wildcardWatchers: HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>;
+  entityWatchers: HashMap<EntityId, HashSet<EntityWatcherId>>;
+
+  constructor(indexWatchers: HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>, wildcardWatchers: HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>, entityWatchers: HashMap<EntityId, HashSet<EntityWatcherId>>) {
+    super();
+    this.indexWatchers = indexWatchers;
+    this.wildcardWatchers = wildcardWatchers;
+    this.entityWatchers = entityWatchers;
+  }
+
+  static new(): WatcherSet {
+    return new WatcherSet(new HashMap(), new HashMap(), new HashMap());
+  }
+
+  accumulateInterestedWatchers<E extends AbstractEntity, C>(entity: E, offset: number, changesArc: Arc<C[]>, candidatesBySub: HashMap<ReactorSubscriptionId, CandidateChanges<C>>): void {
+    const entityId = AbstractEntity.id(entity);
+    for (const [[collectionId, propertyPath], indexRef] of this.indexWatchers) {
+      try {
+        try {
+          try {
+            if (collectionId === AbstractEntity.collection(entity)) {
+              {
+                const _v = propertyPath.extractValue(entity);
+                if (_v != null) {
+                  const value = _v;
+                  for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
+                    candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+                  }
+                }
+              }
+            }
+          } finally {
+            indexRef.drop();
+          }
+        } finally {
+          propertyPath.drop();
+        }
+      } finally {
+        collectionId.drop();
+      }
+    }
+    {
+      const _v1 = this.wildcardWatchers.get(AbstractEntity.collection(entity));
+      if (_v1 != null) {
+        const watchers = _v1;
+        for (const [subscriptionId, queryId] of [...watchers]) {
+          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+        }
+      }
+    }
+    {
+      const _v2 = this.entityWatchers.get(entityId);
+      if (_v2 != null) {
+        const subscriptionIds = _v2;
+        for (const subId of [...subscriptionIds]) {
+          return subId.match({
+            Predicate: (v) => {
+              const subscriptionId = v._0;
+              const queryId = v._1;
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+            },
+            Subscription: (v) => {
+              const subscriptionId = v._0;
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addEntity(offset);
+            },
+          });
+        }
+      }
+    }
+  }
+
+  applyWatcherChange(change: WatcherChange): void {
+    try {
+      return change.match({
+        Add: (v) => {
+          const entityId = v.entityId;
+          const subscriptionId = v.subscriptionId;
+          const queryId = v.queryId;
+          this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+        },
+        Remove: (v) => {
+          const entityId = v.entityId;
+          const subscriptionId = v.subscriptionId;
+          const queryId = v.queryId;
+          {
+            const _v = this.entityWatchers.get(entityId);
+            if (_v != null) {
+              const watchers = _v;
+              const _t0 = new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId });
+              try {
+                watchers.delete(_t0);
+              } finally {
+                _t0.drop();
+              }
+              if (watchers.size === 0) {
+                this.entityWatchers.delete(entityId);
+              }
+            }
+          }
+        },
+      });
+    } finally {
+      change.drop();
+    }
+  }
+
+  addEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
+    this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
+  }
+
+  removeEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
+    {
+      const _v = this.entityWatchers.get(entityId);
+      if (_v != null) {
+        const watchers = _v;
+        const _t0 = new EntityWatcherId('Subscription', { _0: subscriptionId });
+        try {
+          watchers.delete(_t0);
+        } finally {
+          _t0.drop();
+        }
+        if (watchers.size === 0) {
+          this.entityWatchers.delete(entityId);
+        }
+      }
+    }
+  }
+
+  removeEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: EntityId[]): void {
+    for (const entityId of entityIds) {
+      this.removeEntitySubscription(subscriptionId, entityId);
+    }
+  }
+
+  clearEntityWatchers(): void {
+    this.entityWatchers.clear();
+  }
+
+  debugData(): [HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>, HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>, HashMap<EntityId, HashSet<EntityWatcherId>>] {
+    return [this.indexWatchers, this.wildcardWatchers, this.entityWatchers];
+  }
+
+  addPredicateEntityWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, entityIds: EntityId[]): void {
+    for (const entityId of entityIds) {
+      this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+    }
+  }
+
+  cleanupRemovedPredicateWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, removedEntities: EntityId[]): void {
+    for (const entityId of removedEntities) {
+      {
+        const _v = this.entityWatchers.get(entityId);
+        if (_v != null) {
+          const entityWatcher = _v;
+          const _t0 = new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId });
+          try {
+            entityWatcher.delete(_t0);
+          } finally {
+            _t0.drop();
+          }
+        }
+      }
+    }
+  }
+
+  recursePredicateWatchers(collectionId: CollectionId, predicate: Predicate, watcherId: [ReactorSubscriptionId, QueryId], op: WatcherOp): void {
+    return predicate.match({
+      Comparison: (v) => {
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        {
+          const _v = [left, right];
+          if (false) {
+            try {
+              try {
+                const propertyPath = PropertyPath.fromPath(path);
+                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault();
+                return op.match({
+                  Add: () => {
+                    index.add((literal).clone(), operator.clone(), watcherId);
+                  },
+                  Remove: () => {
+                    index.remove((literal).clone(), operator.clone(), watcherId);
+                  },
+                });
+              } finally {
+                literal.drop();
+              }
+            } finally {
+              literal.drop();
+            }
+          } else {
+        }
+        }
+      },
+      And: (v) => {
+        const left = v._0;
+        const right = v._1;
+        this.recursePredicateWatchers(collectionId, left, watcherId, op);
+        this.recursePredicateWatchers(collectionId, right, watcherId, op);
+      },
+      Or: (v) => {
+        const left = v._0;
+        const right = v._1;
+        this.recursePredicateWatchers(collectionId, left, watcherId, op);
+        this.recursePredicateWatchers(collectionId, right, watcherId, op);
+      },
+      Not: (v) => {
+        const pred = v._0;
+        this.recursePredicateWatchers(collectionId, pred, watcherId, op);
+      },
+      IsNull: (v) => {
+        throw new Error('unimplemented');
+      },
+      True: () => {
+        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault();
+        return op.match({
+          Add: () => {
+            set.add(watcherId);
+          },
+          Remove: () => {
+            set.delete(watcherId);
+          },
+        });
+      },
+      False: () => {
+        throw new Error('unimplemented');
+      },
+      Placeholder: () => {
+        throw new Error('unimplemented');
+      },
+    });
+  }
+}
+
+type EntityWatcherIdV = {
+  Predicate: { _0: ReactorSubscriptionId; _1: QueryId };
+  Subscription: { _0: ReactorSubscriptionId };
+};
+
+class EntityWatcherId extends Enum<EntityWatcherIdV> {
+
+  subscriptionId(): ReactorSubscriptionId {
+    return this.match({
+      Predicate: (v) => {
+        const subId = v._0;
+        return subId;
+      },
+      Subscription: (v) => {
+        const subId = v._0;
+        return subId;
+      },
+    });
+  }
+
+  clone(): EntityWatcherId {
+    return this.match({
+      Predicate: (v) => new EntityWatcherId('Predicate', { _0: v._0.clone(), _1: v._1.clone() }),
+      Subscription: (v) => new EntityWatcherId('Subscription', { _0: v._0.clone() }),
+    });
+  }
+
+  equals(other: EntityWatcherId): boolean {
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    switch (this.type) {
+      case 'Predicate': return ['Predicate', (this.value as any)._0.hash(), (this.value as any)._1.hash()].join('|');
+      case 'Subscription': return ['Subscription', (this.value as any)._0.hash()].join('|');
+    }
+    return String(this.type);
+  }
+
+  compareTo(other: EntityWatcherId): number {
+    const order = ['Predicate', 'Subscription'];
+    const a = order.indexOf(this.type);
+    const b = order.indexOf(other.type);
+    if (a !== b) return a < b ? -1 : 1;
+    switch (this.type) {
+      case 'Predicate': {
+        let c = (this.value as any)._0.compareTo((other.value as any)._0);
+        if (c !== 0) return c;
+        c = (this.value as any)._1.compareTo((other.value as any)._1);
+        if (c !== 0) return c;
+        return 0;
+      }
+      case 'Subscription': {
+        let c = (this.value as any)._0.compareTo((other.value as any)._0);
+        if (c !== 0) return c;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  debug(): string {
+    return this.match({
+      Predicate: (v) => `Predicate(${v._0.debug()}, ${v._1.debug()})`,
+      Subscription: (v) => `Subscription(${v._0.debug()})`,
+    });
+  }
+}
+
+export type WatcherOpV = {
+  Add: {};
+  Remove: {};
+};
+
+export class WatcherOp extends Enum<WatcherOpV> {
+
+  clone(): WatcherOp {
+    return new WatcherOp(this.type, { ...this.value });
+  }
+
+  debug(): string {
+    return this.match({
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
+  }
+}
+
+export type WatcherChangeV = {
+  Add: { entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId };
+  Remove: { entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId };
+};
+
+export class WatcherChange extends Enum<WatcherChangeV> {
+
+  static add(entityId: EntityId, subscriptionId: ReactorSubscriptionId, queryId: QueryId): WatcherChange {
+    return new WatcherChange('Add', { entityId: entityId, subscriptionId: subscriptionId, queryId: queryId });
+  }
+
+  static remove(entityId: EntityId, subscriptionId: ReactorSubscriptionId, queryId: QueryId): WatcherChange {
+    return new WatcherChange('Remove', { entityId: entityId, subscriptionId: subscriptionId, queryId: queryId });
+  }
+
+  clone(): WatcherChange {
+    return this.match({
+      Add: (v) => new WatcherChange('Add', { entityId: v.entityId.clone(), subscriptionId: v.subscriptionId.clone(), queryId: v.queryId.clone() }),
+      Remove: (v) => new WatcherChange('Remove', { entityId: v.entityId.clone(), subscriptionId: v.subscriptionId.clone(), queryId: v.queryId.clone() }),
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Add: (v) => `Add { entityId: ${v.entityId.debug()}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId.debug()} }`,
+      Remove: (v) => `Remove { entityId: ${v.entityId.debug()}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId.debug()} }`,
+    });
+  }
+}
+

@@ -40,12 +40,16 @@ pub fn is_thiserror(derives: &[String]) -> bool {
 
 /// The `toString()` and the `static from`s this enum's derive writes, with
 /// whatever the port could not carry over.
-pub fn enum_error(reg: &TypeRegistry, e: &EnumInfo) -> (String, Vec<Gap>) {
+pub fn enum_error(
+    reg: &TypeRegistry,
+    self_id: Option<crate::ty::TypeId>,
+    e: &EnumInfo,
+) -> (String, Vec<Gap>) {
     let mut gaps = Vec::new();
     let mut out = String::new();
     out.push_str(&display(reg, e, &mut gaps));
     out.push_str(&source_accessor(e));
-    out.push_str(&from_impls(reg, e, &mut gaps));
+    out.push_str(&from_impls(reg, self_id, e, &mut gaps));
     (out, gaps)
 }
 
@@ -172,7 +176,12 @@ fn display(reg: &TypeRegistry, e: &EnumInfo, gaps: &mut Vec<Gap>) -> String {
 
 /// `impl From<Inner> for Self` for each `#[from]` field: what a `?` calls when
 /// it carries an inner error out through this type.
-fn from_impls(reg: &TypeRegistry, e: &EnumInfo, gaps: &mut Vec<Gap>) -> String {
+fn from_impls(
+    reg: &TypeRegistry,
+    self_id: Option<crate::ty::TypeId>,
+    e: &EnumInfo,
+    gaps: &mut Vec<Gap>,
+) -> String {
     let mut out = String::new();
     let mut seen: Vec<String> = Vec::new();
     for variant in &e.variants {
@@ -190,6 +199,7 @@ fn from_impls(reg: &TypeRegistry, e: &EnumInfo, gaps: &mut Vec<Gap>) -> String {
                 "From",
                 std::slice::from_ref(&crate::name_map::map_type(&field.rust_ty)),
                 "",
+                self_id,
             );
             // Two sources whose written spellings agree are one TypeScript
             // name, and a class cannot hold both.
@@ -289,7 +299,7 @@ mod tests {
             "use thiserror::Error;\n\
              #[derive(Debug, Error)] pub enum E { #[error(\"Empty expression\")] Empty }",
         );
-        let (ts, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(ts.contains("Empty: () => 'Empty expression',"), "{}", ts);
         assert!(ts.contains("override toString(): string"), "{}", ts);
@@ -301,7 +311,7 @@ mod tests {
             "use thiserror::Error;\n\
              #[derive(Debug, Error)] pub enum E { #[error(\"Syntax error: {0}\")] Syntax(String) }",
         );
-        let (ts, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(ts.contains("Syntax: (v) => `Syntax error: ${v._0}`,"), "{}", ts);
     }
@@ -315,7 +325,7 @@ mod tests {
                Mismatch { expected: usize, found: usize },\n\
              }",
         );
-        let (ts, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(
             ts.contains(
@@ -336,7 +346,7 @@ mod tests {
                Unexpected { expected: String, got: Rule },\n\
              }",
         );
-        let (ts, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(
             ts.contains("Unexpected: (v) => `Expected ${v.expected}, got ${v.got.debug()}`,"),
@@ -352,7 +362,7 @@ mod tests {
              pub struct Denied;\n\
              #[derive(Debug, Error)] pub enum E { #[error(\"access denied\")] Denied(Denied) }",
         );
-        let (ts, _) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, _) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(ts.contains("Denied: () => 'access denied',"), "{}", ts);
     }
 
@@ -363,7 +373,7 @@ mod tests {
              pub struct Inner;\n\
              #[derive(Debug, Error)] pub enum E { #[error(\"other: {0}\")] Other(#[from] Inner) }",
         );
-        let (ts, _) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, _) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert!(
             ts.contains("static fromInner(inner: Inner): E {\n    return new E('Other', { _0: inner });"),
             "{}",
@@ -381,7 +391,7 @@ mod tests {
                #[error(\"b: {0}\")] B(#[from] B),\n\
              }",
         );
-        let (ts, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (ts, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         // Two different source types are two different names, so both are
         // written: only a collision between their names is a gap.
         assert_eq!(ts.matches("static from").count(), 2, "{}", ts);
@@ -395,7 +405,7 @@ mod tests {
         let f = built(
             "use thiserror::Error;\n#[derive(Debug, Error)] pub enum E { Bare }",
         );
-        let (_, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
+        let (_, gaps) = enum_error(&f.reg, None, enum_of(&f, "E"));
         assert_eq!(gaps.len(), 1, "{:?}", gaps);
         assert!(gaps[0].1.contains("carries no `#[error"), "{}", gaps[0].1);
     }

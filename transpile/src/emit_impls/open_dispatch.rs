@@ -160,9 +160,83 @@ pub fn dispatchers(reg: &TypeRegistry, module: ModuleId, file: &crate::types::Ru
     out
 }
 
+/// The function a call through an OPEN BOUND has to name, where the trait's
+/// impls are emitted as module-level functions rather than as methods.
+///
+/// `subject.members()` where `subject: C, C: TClock` is a method call on a
+/// value whose class does not carry the method: `impl TClock for Clock` is
+/// written in core while `Clock` is declared in proto, so its method is
+/// `Clock_members(self)`. Where the trait has one such impl there is nothing to
+/// choose and the call names it; where it has several, the dispatcher chooses.
+/// Where every impl IS a method on its class, the call stays what it was.
+pub enum OpenCall {
+    /// One impl, emitted as a function: call it by name.
+    One(String),
+    /// Several: the dispatcher picks by the receiver's shape at run time.
+    Dispatch,
+}
+
+pub fn open_bound_call(
+    reg: &TypeRegistry,
+    trait_id: TypeId,
+    trait_name: &str,
+    method: &str,
+) -> Option<OpenCall> {
+    let impls = reg.impls().of_trait(trait_id);
+    let free: Vec<ImplId> = impls
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let def = reg.impl_def(id);
+            !reg.modules().get(def.module).is_system
+                && super::dispatch::emits_as_free_function(
+                    reg,
+                    &def.self_ty,
+                    &def.generics,
+                    def.module,
+                )
+        })
+        .collect();
+    if free.is_empty() {
+        return None;
+    }
+    if impls.len() == 1 {
+        let def = reg.impl_def(free[0]);
+        let symbol = super::method_symbol(
+            Some(leaf(trait_name)).as_deref(),
+            &def.trait_ref
+                .as_ref()
+                .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(reg, ty)).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            &crate::name_map::map_fn_name(method),
+            &crate::name_map::map_ty(reg, &def.self_ty),
+        );
+        return Some(OpenCall::One(super::free_fn_name(
+            reg,
+            &def.self_ty,
+            &def.generics,
+            &symbol,
+        )));
+    }
+    Some(OpenCall::Dispatch)
+}
+
 /// Can a dispatcher be written for this trait method, and what stops it?
 pub fn refusal(reg: &TypeRegistry, trait_id: TypeId, trait_name: &str, method: &str) -> Option<String> {
-    write(reg, trait_id, trait_name, method).err()
+    // Asking is not writing. Every call site through a bound asks whether a
+    // dispatcher can be written, and parking one impl's "no run-time test"
+    // report on each ask filed it 22 times for `Collatable`. The report belongs
+    // to the dispatcher that is actually emitted, which `dispatchers` writes
+    // once per file.
+    write_with(reg, trait_id, trait_name, method, Report::No).err()
+}
+
+/// Whether this call is the one that emits the dispatcher, and so the one that
+/// owes a report for each impl it had to leave out.
+#[derive(Clone, Copy, PartialEq)]
+enum Report {
+    Yes,
+    No,
 }
 
 fn write(
@@ -170,6 +244,16 @@ fn write(
     trait_id: TypeId,
     trait_name: &str,
     method: &str,
+) -> Result<Dispatcher, String> {
+    write_with(reg, trait_id, trait_name, method, Report::Yes)
+}
+
+fn write_with(
+    reg: &TypeRegistry,
+    trait_id: TypeId,
+    trait_name: &str,
+    method: &str,
+    report: Report,
 ) -> Result<Dispatcher, String> {
     let def = reg.trait_def(trait_id).ok_or("the trait is not declared")?;
     let sig = &def
@@ -193,18 +277,20 @@ fn write(
         let test = match shape_test(reg, id) {
             Ok(test) => test,
             Err(why) => {
-                crate::diag::pending::park_at(
-                    0,
-                    0,
-                    format!(
-                        "`{}` for `{}` has no run-time test the dispatcher can make, because \
-                         {}; the branch is left out and a receiver of that shape reaches the \
-                         dispatcher's own fatal",
-                        leaf(trait_name),
-                        reg.describe(&reg.impl_def(id).self_ty),
-                        why
-                    ),
-                );
+                if report == Report::Yes {
+                    crate::diag::pending::park_at(
+                        0,
+                        0,
+                        format!(
+                            "`{}` for `{}` has no run-time test the dispatcher can make, because \
+                             {}; the branch is left out and a receiver of that shape reaches the \
+                             dispatcher's own fatal",
+                            leaf(trait_name),
+                            reg.describe(&reg.impl_def(id).self_ty),
+                            why
+                        ),
+                    );
+                }
                 continue;
             }
         };
@@ -214,16 +300,18 @@ fn write(
             // branch rather than a test. A second one has nothing to tell it
             // from the first, so it is reported and left out.
             if catch_all.is_some() {
-                crate::diag::pending::park_at(
-                    0,
-                    0,
-                    format!(
-                        "`{}` for `{}` is written for anything at all, and so is an impl \
-                         before it, so nothing chooses between them; this one is left out",
-                        leaf(trait_name),
-                        reg.describe(&reg.impl_def(id).self_ty),
-                    ),
-                );
+                if report == Report::Yes {
+                    crate::diag::pending::park_at(
+                        0,
+                        0,
+                        format!(
+                            "`{}` for `{}` is written for anything at all, and so is an impl \
+                             before it, so nothing chooses between them; this one is left out",
+                            leaf(trait_name),
+                            reg.describe(&reg.impl_def(id).self_ty),
+                        ),
+                    );
+                }
                 continue;
             }
             catch_all = Some(call(reg, id, &ts_method, sig));
@@ -232,17 +320,19 @@ fn write(
         if let Some(other) = seen.insert(test.clone(), id) {
             // Two impls of one shape: the first one written wins, the way
             // Rust's own coherence would have refused the pair outright.
-            crate::diag::pending::park_at(
-                0,
-                0,
-                format!(
-                    "`{}` for `{}` and for `{}` are the same shape at run time, so no test \
-                     tells them apart; the first is what the dispatcher calls",
-                    leaf(trait_name),
-                    reg.describe(&reg.impl_def(other).self_ty),
-                    reg.describe(&reg.impl_def(id).self_ty),
-                ),
-            );
+            if report == Report::Yes {
+                crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`{}` for `{}` and for `{}` are the same shape at run time, so no test \
+                         tells them apart; the first is what the dispatcher calls",
+                        leaf(trait_name),
+                        reg.describe(&reg.impl_def(other).self_ty),
+                        reg.describe(&reg.impl_def(id).self_ty),
+                    ),
+                );
+            }
             continue;
         }
         branches.push((test, call(reg, id, &ts_method, sig)));
@@ -449,7 +539,7 @@ fn call(reg: &TypeRegistry, id: ImplId, ts_method: &str, sig: &crate::registry::
         .filter(|(name, _)| name != "self")
         .map(|(name, _)| crate::name_map::to_camel_case(name))
         .collect();
-    if has_emitted_class(reg, &def.self_ty) {
+    if !super::dispatch::emits_as_free_function(reg, &def.self_ty, &def.generics, def.module) {
         let mut written = vec![format!("(self as any).{}", ts_method)];
         written.push(format!("({})", args.join(", ")));
         return written.join("");

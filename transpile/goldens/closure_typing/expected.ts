@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/closure_typing/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedMul } from '@ankurah/base';
 
 export class Reading extends Struct {
   readonly level: number;
@@ -10,7 +10,7 @@ export class Reading extends Struct {
   }
 
   doubled(): number {
-    return this.level * 2;
+    return checkedMul(this.level, 2, 'u32');
   }
 }
 

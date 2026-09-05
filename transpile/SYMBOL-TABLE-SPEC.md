@@ -684,6 +684,27 @@ unchanged where it was already correct.
 Each of these is understood, has a place in the plan, and is deliberately not
 addressed by the step that found it.
 
+- **Arithmetic on a fixed-width integer costs a call (R7).** The port mirrors
+  the `debug_assertions = true` build, and that build PANICS on overflow:
+  `u8::MAX + 1` is `attempt to add with overflow`, not `0`. JavaScript wraps
+  nothing and saturates nothing — it goes on counting in doubles, silently
+  losing precision above 2^53 — so a bare `a + b` was a third answer, neither
+  Rust's release wrap nor Rust's debug panic. `+`, `-`, `*`, `/` and `%` on an
+  integer therefore go through `@ankurah/base`'s `checkedAdd`, `checkedSub`,
+  `checkedMul`, `checkedDiv` and `checkedRem`, each of which takes the width by
+  name and raises where Rust panics; division and remainder by zero raise as
+  Rust does, and integer division truncates towards zero as Rust does.
+  `wrapping_*`, `checked_*`, `saturating_*` and `overflowing_*` map to helpers
+  with Rust's own semantics. Floats are untouched — Rust's `f64` arithmetic is
+  IEEE and so is JavaScript's.
+
+  The cost is one call per operation, and the emitted expression is a call
+  rather than an operator wherever the answer is not provably in range. The
+  emitter skips the helper only where the ANSWER is provable: two decimal
+  literals whose result fits, and two array lengths added in a 64-bit type
+  (a JavaScript length is below 2^32). Not where the OPERANDS fit —
+  `255 + 1` on a `u8` has two operands that fit and an answer that does not.
+
 - **A crate `Deref` body needs a coercion the engine does not yet insert.**
   `impl Deref for Entity { type Target = EntityInner; fn deref(&self) -> &Self::Target { &self.0 } }`
   where `self.0: Arc<EntityInner>` relies on Rust's deref coercion at the return

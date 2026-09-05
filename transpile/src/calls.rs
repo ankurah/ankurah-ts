@@ -86,8 +86,16 @@ impl BodyTranslator<'_> {
 
         // 3. Serde/bincode crate calls
         match func {
+            // `to_string` answers a `Result<String, Error>`, and it was emitted
+            // as a bare string — so `storage-sqlite/engine.ts` called `.mapErr`
+            // on one and tsc refused it. And `JSON.stringify` throws on a
+            // `bigint` and rounds a wide integer, where serde_json writes the
+            // token exactly (R3).
             "serde_json.to_string" | "serde_json::to_string" | "serdeJson.toString"
-                if args.len() == 1 => return format!("JSON.stringify({})", args[0]),
+                if args.len() == 1 =>
+            {
+                return format!("serde_json.stringify(({}).toJSON())", args[0])
+            }
             // `from_str::<T>(s)` parses the text and then asks `T` to read
             // itself out of it, which is what `Deserialize` does. Parsing alone
             // hands back a plain object where a `T` was wanted.
@@ -99,8 +107,14 @@ impl BodyTranslator<'_> {
                 // into a `TypeError` at the call, with nothing said.
                 let target = self.read_into_type(callee, span);
                 let declares = target.as_ref().is_some_and(|_| self.reads_json(callee, span));
+                // `from_str` answers a `Result`, and so does the port's parse:
+                // `JSON.parse` throws where Rust returns `Err`, and reads a
+                // `u64` above 2^53 as a rounded double (R3).
                 return match target.and_then(class_head).filter(|_| declares) {
-                    Some(ty) => format!("{}.fromJson(JSON.parse({}))", ty, args[0]),
+                    Some(ty) => format!(
+                        "serde_json.parse({}).andThen((v) => {}.fromJson(v))",
+                        args[0], ty
+                    ),
                     None => {
                         self.fallback(
                             span,
@@ -108,7 +122,7 @@ impl BodyTranslator<'_> {
                              out of the parsed value — a `#[derive(Deserialize)]` is what writes \
                              one — so the parse stands alone and hands back a plain object",
                         );
-                        format!("JSON.parse({})", args[0])
+                        format!("serde_json.parse({})", args[0])
                     }
                 };
             }

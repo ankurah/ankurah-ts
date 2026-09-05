@@ -2057,3 +2057,83 @@ describe('Eager boolean operators', () => {
       .toEqual([true, true, true, false]);
   });
 });
+
+// ── Checked arithmetic (R7) ────────────────────────────────────────────────
+//
+// The port mirrors the `debug_assertions = true` build, and that build PANICS
+// on arithmetic overflow. JavaScript wraps nothing and saturates nothing — it
+// goes on counting in doubles — so an emitted `a + b` was a third answer,
+// neither Rust's release wrap nor Rust's debug panic.
+
+import {
+  checkedAdd,
+  checkedDiv,
+  checkedMul,
+  checkedRem,
+  checkedSub,
+  checkedAddOption,
+  overflowingAdd,
+  saturatingAdd,
+  saturatingSub,
+  wrappingAdd,
+  wrappingMul,
+  wrappingSub,
+} from '../src/std/ops.ts';
+
+describe('checked arithmetic panics where the debug build does', () => {
+  test('an in-range answer is the answer', () => {
+    expect(checkedAdd(1, 2, 'u8')).toBe(3);
+    expect(checkedSub(5, 2, 'i32')).toBe(3);
+    expect(checkedMul(3, 4, 'u16')).toBe(12);
+    expect(checkedAdd(1n, 2n, 'u64')).toBe(3n);
+  });
+
+  test('overflow raises, with the message Rust prints', () => {
+    expect(() => checkedAdd(255, 1, 'u8')).toThrow('attempt to add with overflow');
+    expect(() => checkedSub(0, 1, 'u8')).toThrow('attempt to subtract with overflow');
+    expect(() => checkedMul(128, 2, 'i8')).toThrow('attempt to multiply with overflow');
+    expect(() => checkedAdd(18446744073709551615n, 1n, 'u64')).toThrow();
+    expect(() => checkedSub(-2147483648, 1, 'i32')).toThrow();
+  });
+
+  test('a wide answer is exact, not a double', () => {
+    // 2^53 + 1 is not representable as a number; the bigint path keeps it.
+    expect(checkedAdd(9007199254740992n, 1n, 'u64')).toBe(9007199254740993n);
+  });
+
+  test('division and remainder by zero raise', () => {
+    expect(() => checkedDiv(1, 0, 'i32')).toThrow('attempt to divide by zero');
+    expect(() => checkedRem(1, 0, 'i32')).toThrow('divisor of zero');
+  });
+
+  test('integer division truncates towards zero and the remainder takes the dividend sign', () => {
+    expect(checkedDiv(7, 2, 'i32')).toBe(3);
+    expect(checkedDiv(-7, 2, 'i32')).toBe(-3);
+    expect(checkedRem(-7, 2, 'i32')).toBe(-1);
+  });
+});
+
+describe('the four families say what should happen instead', () => {
+  test('wrapping is the release build answer', () => {
+    expect(wrappingAdd(255, 1, 'u8')).toBe(0);
+    expect(wrappingSub(0, 1, 'u8')).toBe(255);
+    expect(wrappingMul(128, 2, 'i8')).toBe(0);
+    expect(wrappingAdd(-128, -1, 'i8')).toBe(127);
+  });
+
+  test('checked answers None', () => {
+    expect(checkedAddOption(1, 2, 'u8')).toBe(3);
+    expect(checkedAddOption(255, 1, 'u8')).toBe(null);
+  });
+
+  test('saturating stops at the bound', () => {
+    expect(saturatingAdd(255, 1, 'u8')).toBe(255);
+    expect(saturatingSub(0, 1, 'u8')).toBe(0);
+    expect(saturatingAdd(127, 1, 'i8')).toBe(127);
+  });
+
+  test('overflowing says whether it wrapped', () => {
+    expect(overflowingAdd(1, 2, 'u8')).toEqual([3, false]);
+    expect(overflowingAdd(255, 1, 'u8')).toEqual([0, true]);
+  });
+});

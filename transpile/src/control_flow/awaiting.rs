@@ -64,16 +64,35 @@ impl<'ast> Visit<'ast> for Finder {
 /// Does this macro's argument list `.await` something?
 ///
 /// The arguments are parsed where they can be, so an `await` inside a closure
-/// written as a macro argument still belongs to that closure. Where they cannot
-/// be parsed — a macro whose body is not an expression list — the `await`
-/// keyword in the token stream is the answer, which can only over-report.
+/// or an `async` block written as a macro argument still belongs to that
+/// closure or that block.
+///
+/// Where they cannot be parsed — a macro whose body is not an expression list —
+/// the answer is NO, and the gap is recorded. A raw token scan was the answer
+/// before, and it ignores exactly the `async` blocks and closures this visitor
+/// exists to stop at: `weird! { branch => async move { helper(k).await } }`
+/// marked a body with no `await` of its own `async`, which emits
+/// `await (async () => ..)()` in a method that is not `async` — TS1308, and a
+/// SyntaxError that costs the whole file. Over-reporting is not harmless.
 fn tokens_await(tokens: &proc_macro2::TokenStream) -> bool {
     use syn::parse::Parser as _;
     let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
     if let Ok(args) = parser.parse2(tokens.clone()) {
         return args.iter().any(awaits);
     }
-    has_await_token(tokens)
+    if has_await_token(tokens) {
+        crate::diag::pending::park_at(
+            0,
+            0,
+            format!(
+                "a macro whose arguments are not an expression list writes `await` somewhere \
+                 in `{}`, and whether that await belongs to this body or to a closure inside \
+                 it cannot be read from the tokens; the body is left as it stands",
+                tokens
+            ),
+        );
+    }
+    false
 }
 
 fn has_await_token(tokens: &proc_macro2::TokenStream) -> bool {

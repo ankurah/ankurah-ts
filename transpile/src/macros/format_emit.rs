@@ -129,6 +129,13 @@ pub fn escape_template(text: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            // Every other control character, NUL included, as `\u{..}`. A raw
+            // one in the middle of a template literal is a character nothing
+            // reading the output can see, and `\0` before a digit is a legacy
+            // octal escape a module refuses.
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32));
+            }
             _ => out.push(c),
         }
     }
@@ -136,20 +143,12 @@ pub fn escape_template(text: &str) -> String {
 }
 
 /// A TypeScript single-quoted string literal holding this text.
+///
+/// ONE escaper, `body::quoted`. This was a second and weaker one — it handled
+/// neither NUL nor any other control character — and two rules for one
+/// question drift.
 pub fn quoted(text: &str) -> String {
-    let mut out = String::from("'");
-    for c in text.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
+    crate::body::quoted(text)
 }
 
 #[cfg(test)]

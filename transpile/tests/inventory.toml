@@ -160,3 +160,129 @@ plan = 5
 selection = 14
 todo = 3
 vec = 77
+
+[storage-sqlite]
+files = 6
+method_calls = 461
+field_accesses = 91
+closures = 92
+try_ops = 123
+awaits = 40
+into_calls = 6
+binary_ops = 11
+unary_ops = 21
+match_arms = 118
+if_lets = 6
+while_lets = 0
+trait_impls = 12
+generic_fns = 3
+
+[storage-sqlite.macros]
+assert = 10
+assert_eq = 12
+debug = 10
+eprintln = 3
+format = 26
+matches = 5
+panic = 1
+params = 3
+vec = 4
+warn = 3
+
+[storage-indexeddb]
+files = 16
+method_calls = 545
+field_accesses = 127
+closures = 38
+try_ops = 145
+awaits = 57
+into_calls = 46
+binary_ops = 40
+unary_ops = 40
+match_arms = 83
+if_lets = 32
+while_lets = 2
+trait_impls = 30
+generic_fns = 10
+
+[storage-indexeddb.macros]
+action_debug = 1
+anyhow = 23
+assert = 20
+assert_eq = 17
+assert_ne = 1
+debug = 2
+error = 2
+format = 14
+info = 4
+lazy_static = 1
+notice_info = 2
+pin = 1
+println = 3
+unreachable = 1
+vec = 8
+warn = 3
+write = 14
+
+[connector-websocket]
+files = 4
+method_calls = 117
+field_accesses = 54
+closures = 9
+try_ops = 6
+awaits = 3
+into_calls = 1
+binary_ops = 3
+unary_ops = 9
+match_arms = 16
+if_lets = 9
+while_lets = 0
+trait_impls = 10
+generic_fns = 1
+
+[connector-websocket.macros]
+action_info = 4
+anyhow = 2
+error = 1
+format = 2
+info = 11
+notice_info = 1
+vec = 1
+warn = 3
+write = 2
+
+[connector-local]
+files = 1
+method_calls = 20
+field_accesses = 18
+closures = 1
+try_ops = 1
+awaits = 2
+into_calls = 0
+binary_ops = 0
+unary_ops = 0
+match_arms = 0
+if_lets = 2
+while_lets = 1
+trait_impls = 2
+generic_fns = 1
+
+[connector-local.macros]
+
+[ankurah]
+files = 1
+method_calls = 0
+field_accesses = 0
+closures = 0
+try_ops = 0
+awaits = 0
+into_calls = 0
+binary_ops = 0
+unary_ops = 0
+match_arms = 0
+if_lets = 0
+while_lets = 0
+trait_impls = 0
+generic_fns = 0
+
+[ankurah.macros]

@@ -73,6 +73,32 @@ impl BodyTranslator<'_> {
                 value
             });
         }
+        // R7: `+`, `-` and `*` on a fixed-width integer PANIC on overflow, as
+        // the `debug_assertions = true` build this port mirrors does. JavaScript
+        // wraps nothing and saturates nothing — it goes on counting in doubles,
+        // silently losing precision above 2^53 — so a bare `a + b` was a third
+        // answer, neither Rust's release wrap nor Rust's debug panic. Division
+        // and remainder go through the same helpers, which panic on a zero
+        // divisor as Rust does and truncate towards zero as Rust does.
+        if left_ty.is_integer() {
+            if let Some(name) = checked_helper(op.native) {
+                let width = width_name(left_ty);
+                // The helper is skipped only where the ANSWER is provably in
+                // range, not where the operands are: `255 + 1` on a `u8` has
+                // two operands that fit and a result that does not, and Rust
+                // panics on it. Two literals are computed; a pair of array
+                // lengths cannot overflow a 64-bit type, because a length is
+                // below 2^32.
+                if !answer_fits(op.native, left, right, left_ty) {
+                    let call = format!("{}({}, {}, '{}')", name, left, right, width);
+                    return Some(if op.native.ends_with('=') {
+                        self.place_assignment(left, &call, span)
+                    } else {
+                        call
+                    });
+                }
+            }
+        }
         // Rust's integer division truncates towards zero. JavaScript's `/` on
         // two numbers is real division, so `7 / 2` is 3.5 where Rust says 3. A
         // bigint division already truncates.
@@ -205,4 +231,72 @@ fn bitwise(op: &Operator, left_ty: Prim, left: &str, right: &str) -> Option<Stri
         left_ty,
         &format!("({} {} {})", left, native, right),
     ))
+}
+
+/// The base helper an arithmetic operator goes through, or `None` for an
+/// operator Rust cannot overflow (the bit operations, the comparisons).
+fn checked_helper(native: &str) -> Option<&'static str> {
+    Some(match native {
+        "+" | "+=" => "checkedAdd",
+        "-" | "-=" => "checkedSub",
+        "*" | "*=" => "checkedMul",
+        "/" | "/=" => "checkedDiv",
+        "%" | "%=" => "checkedRem",
+        _ => return None,
+    })
+}
+
+/// The name the runtime knows this width by.
+fn width_name(prim: Prim) -> String {
+    format!("{:?}", prim).to_lowercase()
+}
+
+/// Is the ANSWER provably inside the type's range, so that the helper can be
+/// left out and the emitted expression stay what a reader of the port expects?
+///
+/// Two decimal literals: the answer is computed. Two array LENGTHS added or
+/// subtracted in a 64-bit type: a JavaScript length is a non-negative integer
+/// below 2^32, so their sum is below 2^33 and cannot leave the range. Anything
+/// else is checked at run time, because a value that came from somewhere else
+/// can be anything — `255 + 1` on a `u8` has two operands that fit and an
+/// answer that does not, and Rust panics on it.
+fn answer_fits(native: &str, left: &str, right: &str, prim: Prim) -> bool {
+    let Some((bits, signed)) = crate::convert::cast::width(prim) else {
+        return false;
+    };
+    if bits > 64 {
+        return false;
+    }
+    let (low, high): (i128, i128) = if signed {
+        (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+    } else {
+        (0, (1i128 << bits) - 1)
+    };
+    if let (Some(a), Some(b)) = (literal(left), literal(right)) {
+        let answer = match native.trim_end_matches('=') {
+            "+" => a.checked_add(b),
+            "-" => a.checked_sub(b),
+            "*" => a.checked_mul(b),
+            "/" if b != 0 => a.checked_div(b),
+            "%" if b != 0 => a.checked_rem(b),
+            _ => None,
+        };
+        return answer.is_some_and(|answer| answer >= low && answer <= high);
+    }
+    // A length is below 2^32; two of them added or subtracted stay inside any
+    // 64-bit type, and inside `u64` only when nothing is subtracted.
+    let lengths = is_length(left) && is_length(right);
+    let widening = bits >= 64 && matches!(native.trim_end_matches('='), "+" | "-");
+    lengths && widening && (signed || native.trim_end_matches('=') == "+")
+}
+
+fn literal(written: &str) -> Option<i128> {
+    let text = written.trim().trim_start_matches('(').trim_end_matches(')');
+    text.trim_end_matches('n').parse::<i128>().ok()
+}
+
+/// Is this written operand a JavaScript array or string length?
+fn is_length(written: &str) -> bool {
+    let text = written.trim().trim_start_matches('(').trim_end_matches(')');
+    text.ends_with(".length") || text.ends_with(".size")
 }

@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
-import { Calculated } from './calculated';
+import { Calculated, trigger } from './calculated';
 import { Arc } from '@ankurah/base';
 import { Mut } from './mutable';
 

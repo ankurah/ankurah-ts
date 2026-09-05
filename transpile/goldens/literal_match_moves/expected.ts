@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/literal_match_moves/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -47,7 +47,7 @@ export function byNumber(which: number): number {
       _moved0 = true;
       return consume(entity);
     } else {
-      return borrow(entity) + 1;
+      return checkedAdd(borrow(entity), 1, 'usize');
     }
   } finally {
     if (!_moved0) entity.drop();

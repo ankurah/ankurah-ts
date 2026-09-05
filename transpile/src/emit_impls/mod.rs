@@ -33,6 +33,10 @@
 //! silent overwrite.
 
 mod conversion;
+mod naming;
+pub use naming::{
+    conversion_name, conversion_name_of_impl, resolve_conversion_names, set_conversion_names,
+};
 mod dispatch;
 mod name;
 mod open_dispatch;
@@ -42,11 +46,13 @@ mod tests;
 pub use conversion::{conversion_call, conversion_names};
 pub use dispatch::{
     class_module,
-    forwards_every_method, free_call, has_emitted_class, is_reference_forwarding, FreeCall,
+    emits_as_free_function, forwards_every_method, free_call, has_emitted_class,
+    is_reference_forwarding, FreeCall,
 };
 pub use open_dispatch::set_contested_traits;
 pub use open_dispatch::{
-    dispatcher_name, dispatchers, record_wanted, refusal as dispatcher_refusal, Dispatcher,
+    dispatcher_name, dispatchers, open_bound_call, record_wanted, refusal as dispatcher_refusal,
+    Dispatcher, OpenCall,
 };
 pub use name::{free_fn_name, method_symbol};
 

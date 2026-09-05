@@ -10,6 +10,7 @@ use crate::types::*;
 pub fn emit_struct(
     out: &mut String,
     reg: &TypeRegistry,
+    module: Option<crate::registry::ModuleId>,
     s: &StructInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
@@ -29,6 +30,10 @@ pub fn emit_struct(
     };
     let generics_usage = strip_generic_defaults(&generics_decl);
     let self_type = format!("{}{}", s.name, generics_usage);
+    // The identity of the class being written, which is what the conversion
+    // naming decision is keyed by. The leaf alone made two unrelated `Wrap`
+    // classes in different modules contest each other's names.
+    let self_id = module.and_then(|m| reg.module_type(m, &s.name));
     let implements = format_implements(reg, traits);
 
     out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, generics_decl, base, implements));
@@ -72,7 +77,7 @@ pub fn emit_struct(
     // Methods
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
-    emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
+    emit_trait_methods(out, &self_type, self_id, trait_methods, &mut emitted);
     // The ordering a `PartialOrd`/`Ord` derive writes needs the whole
     // declaration, which `emit_derive_methods` is not handed.
     let ordering = crate::derives::ordering::struct_compare(
@@ -108,7 +113,7 @@ pub fn emit_struct(
             }
         }
     }
-    emit_struct_bincode(out, reg, s, trait_impls);
+    emit_struct_bincode(out, reg, module, s, trait_impls);
 
     out.push_str("}\n\n");
 }
@@ -116,6 +121,7 @@ pub fn emit_struct(
 pub fn emit_enum(
     out: &mut String,
     reg: &TypeRegistry,
+    module: Option<crate::registry::ModuleId>,
     e: &EnumInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     _trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
@@ -142,9 +148,10 @@ pub fn emit_enum(
 
     let generics_usage = strip_generic_defaults(&e.generics);
     let self_type = format!("{}{}", e.name, generics_usage);
+    let self_id = module.and_then(|m| reg.module_type(m, &e.name));
     let mut emitted = HashSet::new();
     emit_inherent_methods(out, &self_type, inherent_methods, &mut emitted);
-    emit_trait_methods(out, &self_type, trait_methods, &mut emitted);
+    emit_trait_methods(out, &self_type, self_id, trait_methods, &mut emitted);
 
     // Enum-specific derive handling (clone needs variant-aware logic)
     if e.derives.iter().any(|d| d == "Clone") && emitted.insert("clone".to_string()) {
@@ -212,7 +219,7 @@ pub fn emit_enum(
     // `emitted` already holds every method a written impl put on the class, so a
     // hand-written `Display` keeps its `toString` and the derive does not write
     // a second one over it.
-    let (derived, gaps) = crate::derives::enum_members(reg, e, &mut emitted);
+    let (derived, gaps) = crate::derives::enum_members(reg, self_id, e, &mut emitted);
     out.push_str(&derived);
     crate::derives::report(gaps);
 
@@ -220,15 +227,20 @@ pub fn emit_enum(
         out.push('\n');
         out.push_str(&crate::bincode_module::generate_enum_codec(reg, e));
         // The human-readable half of the same derive. A type whose fields have
-        // no JSON spelling gets neither method rather than half a pair, and
-        // says why.
-        match crate::json_module::enum_json(reg, e) {
-            Ok(json) if emitted.insert("toJSON".to_string()) => {
-                out.push('\n');
-                out.push_str(&json);
+        // no JSON spelling gets neither method rather than half a pair, and the
+        // registry has already said why (`narrow_reads_json`) — asking again
+        // here would file the same refusal a second time.
+        if self_id.is_some_and(|id| reg.reads_json(id)) {
+            match crate::json_module::enum_json(reg, e) {
+                Ok(json) if emitted.insert("toJSON".to_string()) => {
+                    out.push('\n');
+                    out.push_str(&json);
+                }
+                Ok(_) => {}
+                Err(reason) => {
+                    crate::diag::pending::park_at(0, 0, format!("`{}`: {}", e.name, reason))
+                }
             }
-            Ok(_) => {}
-            Err(reason) => crate::diag::pending::park_at(0, 0, format!("`{}`: {}", e.name, reason)),
         }
     }
 
@@ -418,6 +430,7 @@ fn emit_inherent_methods(
 fn emit_trait_methods(
     out: &mut String,
     self_type: &str,
+    self_id: Option<crate::ty::TypeId>,
     trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo, &[String])>>,
     emitted: &mut HashSet<String>,
 ) {
@@ -435,7 +448,7 @@ fn emit_trait_methods(
                 continue;
             }
             let ret_override = trait_method_mapping(trait_name, &method.name).and_then(|m| m.1);
-            let ts_name = trait_method_name(trait_name, type_args, method, self_type);
+            let ts_name = trait_method_name(trait_name, type_args, method, self_type, self_id);
             // `Drop` declares `onDrop` protected, so the override has to say so.
             let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
             let signature = format!(
@@ -742,6 +755,7 @@ fn emit_field_eq(name: &str, ty: &str) -> String {
 fn emit_struct_bincode(
     out: &mut String,
     reg: &TypeRegistry,
+    module: Option<crate::registry::ModuleId>,
     s: &StructInfo,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
 ) {
@@ -757,12 +771,19 @@ fn emit_struct_bincode(
         } else {
             out.push_str(&crate::bincode_module::generate_tuple_struct_codec(reg, s));
         }
-        match crate::json_module::struct_json(reg, s) {
-            Ok(json) => {
-                out.push('\n');
-                out.push_str(&json);
+        // The registry already decided whether this type has a JSON half, and
+        // said why where it does not (`narrow_reads_json`). Asking again here
+        // would file the same refusal a second time under a different wording.
+        if module.and_then(|m| reg.module_type(m, &s.name)).is_some_and(|id| reg.reads_json(id)) {
+            match crate::json_module::struct_json(reg, s) {
+                Ok(json) => {
+                    out.push('\n');
+                    out.push_str(&json);
+                }
+                Err(reason) => {
+                    crate::diag::pending::park_at(0, 0, format!("`{}`: {}", s.name, reason))
+                }
             }
-            Err(reason) => crate::diag::pending::park_at(0, 0, format!("`{}`: {}", s.name, reason)),
         }
     }
 }
@@ -894,7 +915,7 @@ fn resolve_self_type(ty: &str, self_type: &str) -> String {
 fn format_params(params: &[ParamInfo]) -> String {
     params.iter()
         .filter(|p| !p.is_self)
-        .map(|p| format!("{}: {}", p.name, p.ty))
+        .map(|p| format!("{}: {}", p.name, param_spelling(p)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -902,7 +923,7 @@ fn format_params(params: &[ParamInfo]) -> String {
 fn format_params_filtered(params: &[ParamInfo], self_type: &str) -> String {
     params.iter()
         .filter(|p| !p.is_self && !is_rust_only_type(&p.ty))
-        .map(|p| format!("{}: {}", p.name, resolve_self_type(&p.ty, self_type)))
+        .map(|p| format!("{}: {}", p.name, resolve_self_type(&param_spelling(p), self_type)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -1028,6 +1049,19 @@ fn strip_generic_defaults(generics: &str) -> String {
     format!("<{}>", stripped.join(", "))
 }
 
+/// The TypeScript a parameter is declared with.
+///
+/// C1: a `&mut T` whose `T` the port writes as a JavaScript VALUE is a
+/// `BorrowMut<T>` — a cell the callee writes through and the caller reads back.
+/// JavaScript passes a number, a string and a boolean by value, so a plain
+/// parameter carried the callee's writes nowhere.
+pub(crate) fn param_spelling(param: &crate::types::ParamInfo) -> String {
+    if crate::is_boxed_mut(param) {
+        return format!("BorrowMut<{}>", param.ty);
+    }
+    param.ty.clone()
+}
+
 fn is_rust_only_type(ty: &str) -> bool {
     ty.contains("Formatter") || ty.contains("Serializer") || ty.contains("Deserializer")
         || ty.contains("PhantomData")
@@ -1039,7 +1073,23 @@ fn is_phantom_field(reg: &TypeRegistry, f: &FieldInfo) -> bool {
 }
 
 
-pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_args: &[String], _self_type: &str) -> String {
+pub(crate) fn disambiguate_trait_method(
+    base_name: &str,
+    trait_name: &str,
+    type_args: &[String],
+    _self_type: &str,
+    self_id: Option<crate::ty::TypeId>,
+) -> String {
+    // The one decision, settled over the whole impl table before anything is
+    // written. Where the asker knows which type is being built, this is the
+    // answer; the rules below are what remains for a caller that does not.
+    if matches!(trait_name, "From" | "TryFrom") {
+        if let (Some(self_id), Some(source)) = (self_id, type_args.first()) {
+            if let Some(name) = crate::emit_impls::conversion_name(self_id, source) {
+                return name;
+            }
+        }
+    }
     if type_args.is_empty() {
         return base_name.to_string();
     }
@@ -1063,35 +1113,23 @@ pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_
     // `String`, `crate::property::PropertyError` — because that is what tells
     // two conversions of one type apart. The primitive question is about the
     // TYPE, so it is asked of the leaf's TypeScript spelling.
-    let source = &type_args[0];
+    let source = type_args[0].trim_start_matches('&');
     let leaf = source.rsplit("::").next().unwrap_or(source);
 
+    // Nothing here settles a contest: that is `emit_impls::naming`'s answer,
+    // asked above by every caller that knows which type is being built. What
+    // remains is the plain reading, for a caller that does not — an operator's
+    // method name, a free function's symbol.
     if source_reads_as_plain(source) {
-        // Until two impls of one type both want the plain name. `From<String>
-        // for Expr` and `From<i64> for Expr` are both `from`, and emission kept
-        // the first and dropped the other seven — so where the name is
-        // contested the Rust leaf is what tells them apart, `bigint` having
-        // nothing to say about `i64` versus `u64`.
-        if is_contested(_self_type, base_name) {
-            if let Some(fragment) = name_fragment(leaf) {
-                return format!("{}{}", base_name, fragment);
-            }
-        }
         return base_name.to_string();
     }
-
     if leaf.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-        && !source.contains('<') && !source.contains(',') && !source.contains(' ')
+        && !source.contains('<')
+        && !source.contains(',')
+        && !source.contains(' ')
     {
-        // The leaf alone unless it is contested: `RetrievalError` converts from
-        // three different `Error`s and one `fromError` cannot be all three.
-        let plain = format!("from{}", leaf);
-        if !is_contested(_self_type, &plain) {
-            return plain;
-        }
-        return format!("from{}", qualified_source(source));
+        return format!("{}{}", base_name, leaf);
     }
-
     base_name.to_string()
 }
 
@@ -1103,6 +1141,9 @@ pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_
 /// halves of the naming — the class's method and the registry post-pass that
 /// finds out which names are contested — ask this one question.
 pub(crate) fn source_reads_as_plain(source: &str) -> bool {
+    // The written path keeps the `&` of a reference argument, and the question
+    // here is about the TYPE.
+    let source = source.trim_start_matches('&');
     let leaf = source.rsplit("::").next().unwrap_or(source);
     let as_ts = crate::name_map::map_type_name(leaf);
     as_ts.ends_with("[]")
@@ -1115,7 +1156,7 @@ pub(crate) fn source_reads_as_plain(source: &str) -> bool {
 /// A type's spelling as a fragment of a method name: identifier characters
 /// only, first letter capitalised. `T[]` is `T` and `Uint8Array` is itself; a
 /// spelling with nothing left in it has no fragment to give.
-fn name_fragment(spelling: &str) -> Option<String> {
+pub(crate) fn name_fragment(spelling: &str) -> Option<String> {
     let kept: String = spelling.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let mut chars = kept.chars();
     let first = chars.next()?;
@@ -1123,25 +1164,6 @@ fn name_fragment(spelling: &str) -> Option<String> {
         return None;
     }
     Some(first.to_uppercase().chain(chars).collect())
-}
-
-thread_local! {
-    /// `(self type, unqualified static)` pairs that more than one impl of that
-    /// type would take. Filled once per run, from the whole impl table, because
-    /// the answer is a fact about a type's SIBLING impls and neither half of
-    /// emission can see them from the impl in its hand.
-    static CONTESTED: std::cell::RefCell<std::collections::HashSet<(String, String)>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
-}
-
-/// Record which conversion statics two impls of one type would both take.
-pub fn set_contested_conversions(pairs: std::collections::HashSet<(String, String)>) {
-    CONTESTED.with(|c| *c.borrow_mut() = pairs);
-}
-
-fn is_contested(self_type: &str, method: &str) -> bool {
-    let leaf = self_type.split('<').next().unwrap_or(self_type);
-    CONTESTED.with(|c| c.borrow().contains(&(leaf.to_string(), method.to_string())))
 }
 
 /// The source type's name as a conversion static spells it.
@@ -1264,8 +1286,16 @@ pub(crate) fn trait_method_name(
     type_args: &[String],
     method: &FnInfo,
     self_type: &str,
+    self_id: Option<crate::ty::TypeId>,
 ) -> String {
-    impl_method_name(trait_name, &method.name, &method.ts_name, type_args, self_type)
+    impl_method_name(
+        trait_name,
+        &method.name,
+        &method.ts_name,
+        type_args,
+        self_type,
+        self_id,
+    )
 }
 
 /// The same, for a caller that has the trait's method by name rather than an
@@ -1277,6 +1307,7 @@ pub(crate) fn impl_method_name(
     ts_method: &str,
     type_args: &[String],
     self_type: &str,
+    self_id: Option<crate::ty::TypeId>,
 ) -> String {
     // For known Rust traits (Display, Clone, etc.), apply name mapping. For
     // unknown or domain traits, the method's own TypeScript name stands.
@@ -1284,7 +1315,7 @@ pub(crate) fn impl_method_name(
         Some((mapped, _)) => mapped.to_string(),
         None => ts_method.to_string(),
     };
-    disambiguate_trait_method(&base, trait_name, type_args, self_type)
+    disambiguate_trait_method(&base, trait_name, type_args, self_type, self_id)
 }
 
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {

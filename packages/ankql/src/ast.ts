@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, JsonError, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -55,17 +55,24 @@ export class PathExpr extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'steps': this.steps,
-    };
+    return { 'steps': this.steps };
   }
 
   static fromJson(value: unknown): Result<PathExpr, JsonError> {
     try {
-      const o = value as Record<string, unknown>;
-      const steps = ((v: unknown) => v as string[])(o['steps']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `PathExpr`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('steps' in _o)) {
+        return Result.Err(JsonError.custom('missing field `steps`'));
+      }
+      const _rsteps = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['steps']);
+      if (_rsteps.isErr()) return Result.Err(_rsteps.unwrapErr());
+      const steps = _rsteps.unwrap();
       return Result.Ok(new PathExpr(steps));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -187,27 +194,6 @@ export class Selection extends Struct {
     const limit = reader.readOption((r) => r.readU64());
     return new Selection(predicate, orderBy, limit);
   }
-
-  toJSON(): unknown {
-    return {
-      'predicate': this.predicate,
-      'order_by': this.orderBy,
-      'limit': (this.limit == null ? null : ((x) => Number(x))(this.limit)),
-    };
-  }
-
-  static fromJson(value: unknown): Result<Selection, JsonError> {
-    try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      const o = value as Record<string, unknown>;
-      const predicate = ((v: unknown) => _take(Predicate.fromJson(v)))(o['predicate']);
-      const orderBy = ((v: unknown) => (v == null ? null : ((v) => (v as unknown[]).map((v) => _take(OrderByItem.fromJson(v))))(v)))(o['order_by']);
-      const limit = ((v: unknown) => (v == null ? null : ((v) => BigInt(v as number))(v)))(o['limit']);
-      return Result.Ok(new Selection(predicate, orderBy, limit));
-    } catch (e) {
-      return Result.Err(JsonError.fromException(e));
-    }
-  }
 }
 
 export class OrderByItem extends Struct {
@@ -253,20 +239,30 @@ export class OrderByItem extends Struct {
   }
 
   toJSON(): unknown {
-    return {
-      'path': this.path,
-      'direction': this.direction,
-    };
+    return { 'path': this.path.toJSON(), 'direction': this.direction.toJSON() };
   }
 
   static fromJson(value: unknown): Result<OrderByItem, JsonError> {
     try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      const o = value as Record<string, unknown>;
-      const path = ((v: unknown) => _take(PathExpr.fromJson(v)))(o['path']);
-      const direction = ((v: unknown) => _take(OrderDirection.fromJson(v)))(o['direction']);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `OrderByItem`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('path' in _o)) {
+        return Result.Err(JsonError.custom('missing field `path`'));
+      }
+      const _rpath = ((v: unknown) => PathExpr.fromJson(v))(_o['path']);
+      if (_rpath.isErr()) return Result.Err(_rpath.unwrapErr());
+      const path = _rpath.unwrap();
+      if (!('direction' in _o)) {
+        return ((e: JsonError) => { dropOwned([path]); return Result.Err(e); })(JsonError.custom('missing field `direction`'));
+      }
+      const _rdirection = ((v: unknown) => OrderDirection.fromJson(v))(_o['direction']);
+      if (_rdirection.isErr()) return ((e: JsonError) => { dropOwned([path]); return Result.Err(e); })(_rdirection.unwrapErr());
+      const direction = _rdirection.unwrap();
       return Result.Ok(new OrderByItem(path, direction));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -457,52 +453,6 @@ export class Expr extends Enum<ExprV> {
       default: throw new Error(`Unknown Expr variant: ${variant}`);
     }
   }
-
-  toJSON(): unknown {
-    return this.match<unknown>({
-      Literal: (v) => ({ 'Literal': v._0 }),
-      Path: (v) => ({ 'Path': v._0 }),
-      Predicate: (v) => ({ 'Predicate': v._0 }),
-      InfixExpr: (v) => ({ 'InfixExpr': { 'left': v.left, 'operator': v.operator, 'right': v.right } }),
-      ExprList: (v) => ({ 'ExprList': v._0 }),
-      Placeholder: () => 'Placeholder',
-    });
-  }
-
-  static fromJson(value: unknown): Result<Expr, JsonError> {
-    try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      if (typeof value === 'string') {
-        switch (value) {
-          case 'Placeholder': return Result.Ok(new Expr('Placeholder', {}));
-        }
-      }
-      const o = value as Record<string, unknown>;
-      if ('Literal' in o) {
-        const p = o['Literal'];
-        return Result.Ok(new Expr('Literal', { _0: ((v: unknown) => _take(Literal.fromJson(v)))(p) }));
-      }
-      if ('Path' in o) {
-        const p = o['Path'];
-        return Result.Ok(new Expr('Path', { _0: ((v: unknown) => _take(PathExpr.fromJson(v)))(p) }));
-      }
-      if ('Predicate' in o) {
-        const p = o['Predicate'];
-        return Result.Ok(new Expr('Predicate', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))(p) }));
-      }
-      if ('InfixExpr' in o) {
-        const p = o['InfixExpr'];
-        return Result.Ok(new Expr('InfixExpr', { left: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['left']), operator: ((v: unknown) => _take(InfixOperator.fromJson(v)))((p as Record<string, unknown>)['operator']), right: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['right']) }));
-      }
-      if ('ExprList' in o) {
-        const p = o['ExprList'];
-        return Result.Ok(new Expr('ExprList', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(Expr.fromJson(v))))(p) }));
-      }
-      return Result.Err(JsonError.custom('no variant of `Expr` matches this JSON'));
-    } catch (e) {
-      return Result.Err(JsonError.fromException(e));
-    }
-  }
 }
 
 export type LiteralV = {
@@ -645,71 +595,6 @@ export class Literal extends Enum<LiteralV> {
       default: throw new Error(`Unknown Literal variant: ${variant}`);
     }
   }
-
-  toJSON(): unknown {
-    return this.match<unknown>({
-      I16: (v) => ({ 'I16': v._0 }),
-      I32: (v) => ({ 'I32': v._0 }),
-      I64: (v) => ({ 'I64': Number(v._0) }),
-      F64: (v) => ({ 'F64': v._0 }),
-      Bool: (v) => ({ 'Bool': v._0 }),
-      String: (v) => ({ 'String': v._0 }),
-      EntityId: (v) => ({ 'EntityId': v._0 }),
-      Object: (v) => ({ 'Object': Array.from(v._0) }),
-      Binary: (v) => ({ 'Binary': Array.from(v._0) }),
-      Json: (v) => ({ 'Json': Array.from(new TextEncoder().encode(JSON.stringify(v._0))) }),
-    });
-  }
-
-  static fromJson(value: unknown): Result<Literal, JsonError> {
-    try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      const o = value as Record<string, unknown>;
-      if ('I16' in o) {
-        const p = o['I16'];
-        return Result.Ok(new Literal('I16', { _0: ((v: unknown) => v as number)(p) }));
-      }
-      if ('I32' in o) {
-        const p = o['I32'];
-        return Result.Ok(new Literal('I32', { _0: ((v: unknown) => v as number)(p) }));
-      }
-      if ('I64' in o) {
-        const p = o['I64'];
-        return Result.Ok(new Literal('I64', { _0: ((v: unknown) => BigInt(v as number))(p) }));
-      }
-      if ('F64' in o) {
-        const p = o['F64'];
-        return Result.Ok(new Literal('F64', { _0: ((v: unknown) => v as number)(p) }));
-      }
-      if ('Bool' in o) {
-        const p = o['Bool'];
-        return Result.Ok(new Literal('Bool', { _0: ((v: unknown) => v as boolean)(p) }));
-      }
-      if ('String' in o) {
-        const p = o['String'];
-        return Result.Ok(new Literal('String', { _0: ((v: unknown) => v as string)(p) }));
-      }
-      if ('EntityId' in o) {
-        const p = o['EntityId'];
-        return Result.Ok(new Literal('EntityId', { _0: ((v: unknown) => _take(Ulid.fromJson(v)))(p) }));
-      }
-      if ('Object' in o) {
-        const p = o['Object'];
-        return Result.Ok(new Literal('Object', { _0: ((v: unknown) => new Uint8Array(v as number[]))(p) }));
-      }
-      if ('Binary' in o) {
-        const p = o['Binary'];
-        return Result.Ok(new Literal('Binary', { _0: ((v: unknown) => new Uint8Array(v as number[]))(p) }));
-      }
-      if ('Json' in o) {
-        const p = o['Json'];
-        return Result.Ok(new Literal('Json', { _0: ((v: unknown) => JSON.parse(new TextDecoder().decode(new Uint8Array(v as number[]))))(p) }));
-      }
-      return Result.Err(JsonError.custom('no variant of `Literal` matches this JSON'));
-    } catch (e) {
-      return Result.Err(JsonError.fromException(e));
-    }
-  }
 }
 
 export type OrderDirectionV = {
@@ -773,9 +658,13 @@ export class OrderDirection extends Enum<OrderDirectionV> {
           case 'Desc': return Result.Ok(new OrderDirection('Desc', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `OrderDirection`'));
+      }
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `OrderDirection` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -866,7 +755,8 @@ export class Predicate extends Enum<PredicateV> {
         const right = v.right;
         const hasNullPath = (() => {
           const _v1 = [left, right];
-          if (false) {
+          if (((_v1[0].is('Path'))) || ((_v1[1].is('Path')))) {
+            const path = (((_v1[0].is('Path')))) ? _v1[0].value._0 : (((_v1[1].is('Path')))) ? _v1[1].value._0 : undefined;
             return columns.includes(path.property().toString());
           } else {
             return false;
@@ -915,7 +805,8 @@ export class Predicate extends Enum<PredicateV> {
               return new Predicate('False', {});
             } else if ((_v2[0].is('True')) && (_v2[1].is('True'))) {
               return new Predicate('True', {});
-            } else if (false) {
+            } else if (((_v2[0].is('True'))) || ((_v2[1].is('True')))) {
+              const p = (((_v2[0].is('True')))) ? _v2[1] : (((_v2[1].is('True')))) ? _v2[0] : undefined;
               return p.clone();
             } else {
               _moved0 = true;
@@ -943,7 +834,8 @@ export class Predicate extends Enum<PredicateV> {
               return new Predicate('True', {});
             } else if ((_v3[0].is('False')) && (_v3[1].is('False'))) {
               return new Predicate('False', {});
-            } else if (false) {
+            } else if (((_v3[0].is('False'))) || ((_v3[1].is('False')))) {
+              const p = (((_v3[0].is('False')))) ? _v3[1] : (((_v3[1].is('False')))) ? _v3[0] : undefined;
               return p.clone();
             } else {
               _moved2 = true;
@@ -1211,56 +1103,6 @@ export class Predicate extends Enum<PredicateV> {
       default: throw new Error(`Unknown Predicate variant: ${variant}`);
     }
   }
-
-  toJSON(): unknown {
-    return this.match<unknown>({
-      Comparison: (v) => ({ 'Comparison': { 'left': v.left, 'operator': v.operator, 'right': v.right } }),
-      IsNull: (v) => ({ 'IsNull': v._0 }),
-      And: (v) => ({ 'And': [v._0, v._1] }),
-      Or: (v) => ({ 'Or': [v._0, v._1] }),
-      Not: (v) => ({ 'Not': v._0 }),
-      True: () => 'True',
-      False: () => 'False',
-      Placeholder: () => 'Placeholder',
-    });
-  }
-
-  static fromJson(value: unknown): Result<Predicate, JsonError> {
-    try {
-      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
-      if (typeof value === 'string') {
-        switch (value) {
-          case 'True': return Result.Ok(new Predicate('True', {}));
-          case 'False': return Result.Ok(new Predicate('False', {}));
-          case 'Placeholder': return Result.Ok(new Predicate('Placeholder', {}));
-        }
-      }
-      const o = value as Record<string, unknown>;
-      if ('Comparison' in o) {
-        const p = o['Comparison'];
-        return Result.Ok(new Predicate('Comparison', { left: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['left']), operator: ((v: unknown) => _take(ComparisonOperator.fromJson(v)))((p as Record<string, unknown>)['operator']), right: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['right']) }));
-      }
-      if ('IsNull' in o) {
-        const p = o['IsNull'];
-        return Result.Ok(new Predicate('IsNull', { _0: ((v: unknown) => _take(Expr.fromJson(v)))(p) }));
-      }
-      if ('And' in o) {
-        const p = o['And'];
-        return Result.Ok(new Predicate('And', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[1]) }));
-      }
-      if ('Or' in o) {
-        const p = o['Or'];
-        return Result.Ok(new Predicate('Or', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[1]) }));
-      }
-      if ('Not' in o) {
-        const p = o['Not'];
-        return Result.Ok(new Predicate('Not', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))(p) }));
-      }
-      return Result.Err(JsonError.custom('no variant of `Predicate` matches this JSON'));
-    } catch (e) {
-      return Result.Err(JsonError.fromException(e));
-    }
-  }
 }
 
 export type ComparisonOperatorV = {
@@ -1384,9 +1226,13 @@ export class ComparisonOperator extends Enum<ComparisonOperatorV> {
           case 'Between': return Result.Ok(new ComparisonOperator('Between', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `ComparisonOperator`'));
+      }
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `ComparisonOperator` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -1473,9 +1319,13 @@ export class InfixOperator extends Enum<InfixOperatorV> {
           case 'Divide': return Result.Ok(new InfixOperator('Divide', {}));
         }
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `InfixOperator`'));
+      }
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `InfixOperator` matches this JSON'));
     } catch (e) {
+      if (e instanceof OwnershipFatal) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

@@ -1,0 +1,33 @@
+# Emitted imports that name a module `batch` does not write and
+             # `transpile.toml` does not declare as `[[provided]]`. Written by
+             # transpile/tests/parse_gate.rs. Matched EXACTLY in both directions.
+             # Generated: do not hand-edit. Refresh with:
+             #     cd transpile && UPDATE_PARSE_GATE=1 cargo test --test parse_gate
+
+             unresolved = [
+  "core/context.ts: `./indexel` names no emitted file",
+  "core/entity.ts: `./indexel` names no emitted file",
+  "core/indexing/key_spec.ts: `./codec` names no emitted file",
+  "core/livequery.ts: `./indexel` names no emitted file",
+  "core/property/backend/index.ts: `./yrs` names no emitted file",
+  "core/property/backend/index.ts: `./yrs` names no emitted file",
+  "core/property/backend/lww.ts: `./codec` names no emitted file",
+  "core/property/value/entity_ref.ts: `../../indexel` names no emitted file",
+  "core/property/value/entity_ref.ts: `./codec` names no emitted file",
+  "core/property/value/index.ts: `./yrs` names no emitted file",
+  "core/property/value/json.ts: `./codec` names no emitted file",
+  "core/property/value/yjs.ts: `../backend/yrs` names no emitted file",
+  "core/resultset.ts: `./indexel` names no emitted file",
+  "core/transaction.ts: `./indexel` names no emitted file",
+  "core/value/index.test.ts: `./mod` names no emitted file",
+  "core/value/index.ts: `./codec` names no emitted file",
+  "proto/auth.ts: `./auth.provided` names no emitted file",
+  "proto/clock.ts: `./clock.provided` names no emitted file",
+  "proto/data.ts: `./id.provided` names no emitted file",
+  "proto/error.ts: `./error.provided` names no emitted file",
+  "proto/id.ts: `./id.provided` names no emitted file",
+  "proto/request.ts: `./id.provided` names no emitted file",
+  "proto/subscription.ts: `./id.provided` names no emitted file",
+  "proto/transaction.ts: `./id.provided` names no emitted file",
+  "proto/update.ts: `./id.provided` names no emitted file",
+]

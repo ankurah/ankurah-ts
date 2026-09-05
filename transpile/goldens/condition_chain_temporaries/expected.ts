@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/condition_chain_temporaries/src/input.rs
-import { Struct, Mutex } from '@ankurah/base';
+import { Struct, Mutex, checkedAdd } from '@ankurah/base';
 
 export class Reading extends Struct {
   readonly level: number;
@@ -66,7 +66,7 @@ export class Meter extends Struct {
         _t0.drop();
       }
       if (!_c1) break;
-      level += 1;
+      level = checkedAdd(level, 1, 'usize');
     }
     return level;
   }

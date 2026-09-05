@@ -129,6 +129,52 @@ impl BodyTranslator<'_> {
         ))
     }
 
+    /// The name a call through an OPEN BOUND has to write, where the trait's
+    /// impls become module-level functions.
+    ///
+    /// The engine resolved `subject.members()` only to `TClock`'s declaration,
+    /// because `subject` is a type parameter. `Clock`'s impl of that trait is
+    /// written in core while `Clock` itself is declared in proto, so the method
+    /// is `Clock_members(self)` and the class carries nothing called `members`.
+    /// One such impl is called by name; several go through the dispatcher.
+    pub(crate) fn open_bound_call(
+        &self,
+        tc: &crate::infer::TypeContext<'_>,
+        found: &crate::registry::MethodResolution,
+        call: &syn::ExprMethodCall,
+    ) -> Option<String> {
+        let crate::registry::Callee::TraitObject(trait_id, method) = &found.callee else {
+            return None;
+        };
+        let reg = tc.registry;
+        let trait_name = reg.name_of(*trait_id);
+        match crate::emit_impls::open_bound_call(reg, *trait_id, &trait_name, method)? {
+            crate::emit_impls::OpenCall::One(name) => Some(name),
+            crate::emit_impls::OpenCall::Dispatch => {
+                if let Some(why) =
+                    crate::emit_impls::dispatcher_refusal(reg, *trait_id, &trait_name, method)
+                {
+                    self.fallback(
+                        syn::spanned::Spanned::span(call),
+                        format!(
+                            "`{}` here is called through a bound on `{}`, whose impls are \
+                             emitted as module-level functions, and no run-time selection \
+                             among them can be written because {}; the call is written as a \
+                             method on the receiver, which carries none",
+                            method, trait_name, why
+                        ),
+                    );
+                    return None;
+                }
+                crate::emit_impls::record_wanted(*trait_id, method);
+                Some(crate::emit_impls::dispatcher_name(
+                    &trait_name,
+                    &crate::name_map::map_fn_name(method),
+                ))
+            }
+        }
+    }
+
     /// What the receiver of a wrapper-opening call is expected to produce.
     ///
     /// `unwrap`, `expect` and their kind hand back what a `Result` or an
@@ -205,6 +251,17 @@ impl BodyTranslator<'_> {
     ) -> Vec<(String, crate::ty::Ty)> {
         match &self.types {
             Some(tc) => self.quietly(|| tc.borrow().struct_literal_field_types(lit)),
+            None => Vec::new(),
+        }
+    }
+
+    /// The order the declaration puts its fields in, which is the order the
+    /// emitted constructor takes them. Answered even where the literal's type
+    /// ARGUMENTS cannot be resolved — `Attested { payload, attestations }`
+    /// writes no `T`, and the order does not depend on one.
+    pub(crate) fn struct_field_order(&self, lit: &syn::ExprStruct) -> Vec<String> {
+        match &self.types {
+            Some(tc) => self.quietly(|| tc.borrow().struct_literal_field_order(lit)),
             None => Vec::new(),
         }
     }

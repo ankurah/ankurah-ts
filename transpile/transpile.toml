@@ -1,6 +1,9 @@
 [paths]
 rust_source = "../ankurah-ts-support"
-ts_target = ".."
+# There is no `ts_target`. `batch` is told where to write on the command line —
+# one crate at a time, into a directory the caller names — so a target here
+# would be a second answer to a question the caller has already answered. It was
+# parsed and never read.
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Crate scope
@@ -150,6 +153,16 @@ reason = "wasm-bindgen ABI"
 file = "core/src/property/value/json.rs"
 item = "impl FromWasmAbi for Json"
 reason = "wasm-bindgen ABI"
+
+[[excluded_items]]
+file = "core/src/property/value/json.rs"
+item = "impl From<Json> for JsValue"
+reason = "an error-free value crossing the wasm ABI; serde_wasm_bindgen's Serializer has no counterpart in the port"
+
+[[excluded_items]]
+file = "core/src/property/value/json.rs"
+item = "const TS_JSON_TYPE"
+reason = "a wasm_bindgen typescript_custom_section: text handed to wasm-bindgen's own .d.ts writer, not a value the port declares"
 
 [[excluded_items]]
 file = "core/src/error.rs"
@@ -330,15 +343,12 @@ file = "proto/src/lib.rs"
 module = "codec"
 reason = "the bincode reader and writer; `bincode` is a crate in Rust and a module here"
 
-[name_overrides]
-fmt = "toString"
-serialize = "encode"
-deserialize = "decode"
-eq = "equals"
-default = "default"
-drop = "drop"
-new = "new"
-from = "from"
+# There is no `[name_overrides]` table. The Rust-to-TypeScript method names —
+# `fmt` → `toString`, `serialize` → `encode`, `eq` → `equals` — are decided by
+# `src/name_map/`, which knows which TRAIT each name comes from: `Display::fmt`
+# is `toString` and `Debug::fmt` is `debug`, and a table keyed by the bare name
+# cannot tell them apart. The table here was parsed and never read, so editing
+# it changed nothing.
 
 [provided_impls]
 # Custom impl Serialize/Deserialize (raw bytes + base64) — not derive-based

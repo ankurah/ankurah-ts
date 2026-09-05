@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/question_from/src/input.rs
-import { Struct, Result } from '@ankurah/base';
+import { Struct, Result, checkedAdd, checkedMul } from '@ankurah/base';
 
 export class Wire extends Struct {
   readonly code: number;
@@ -40,19 +40,19 @@ export function wrapped(raw: string): Result<number, Wrapped> {
   const _r0 = read(raw);
   if (_r0.isErr()) return Result.Err(Wrapped.fromWire(_r0.unwrapErr()));
   const n = _r0.unwrap();
-  return Result.Ok(n + 1);
+  return Result.Ok(checkedAdd(n, 1, 'u32'));
 }
 
 export function passedOn(raw: string): Result<number, Wire> {
   const _r0 = read(raw);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const n = _r0.unwrap();
-  return Result.Ok(n + 1);
+  return Result.Ok(checkedAdd(n, 1, 'u32'));
 }
 
 export function doubled(raw: string): Result<number, Wrapped> {
   const _r0 = wrapped(raw);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-  return Result.Ok(_r0.unwrap() * 2);
+  return Result.Ok(checkedMul(_r0.unwrap(), 2, 'u32'));
 }
 

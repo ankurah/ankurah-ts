@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/condition_guard_field/src/input.rs
-import { Struct, Mutex } from '@ankurah/base';
+import { Struct, Mutex, checkedAdd, checkedSub } from '@ankurah/base';
 
 export class Slot extends Struct {
   n: number;
@@ -51,8 +51,8 @@ export class Cell extends Struct {
       if (!_c1) break;
       let guard = this.slot.lock();
       try {
-        guard.value.n -= 1;
-        turns += 1;
+        guard.value.n = checkedSub(guard.value.n, 1, 'usize');
+        turns = checkedAdd(turns, 1, 'usize');
       } finally {
         guard.drop();
       }
