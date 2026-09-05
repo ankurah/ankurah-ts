@@ -11,42 +11,102 @@ use syn::{self, Visibility, FnArg, ReturnType, Fields};
 use crate::name_map;
 use crate::types::*;
 
+/// What the build says about the file being read: which features are on, and
+/// which of its items the port leaves out one at a time.
+///
+/// Both are questions only `transpile.toml` can answer, and both decide whether
+/// an item exists at all — so they are asked here, at extraction, rather than
+/// later where an absent item looks like a bug.
+#[derive(Default, Clone, Copy)]
+pub struct ExtractCfg<'a> {
+    pub features: Option<&'a crate::cfg::CfgFeatures>,
+    /// The `[[excluded_items]]` entries naming items in THIS file.
+    pub excluded: &'a [&'a crate::config::ExcludedItem],
+}
+
+impl<'a> ExtractCfg<'a> {
+    pub fn features(features: Option<&'a crate::cfg::CfgFeatures>) -> Self {
+        ExtractCfg {
+            features,
+            excluded: &[],
+        }
+    }
+}
+
 /// Extract all items from a Rust source file.
 /// If features is provided, #[cfg(...)] expressions are evaluated against it.
 /// Otherwise, only wasm/uniffi are skipped (legacy behavior).
 pub fn extract(path: &Path) -> Result<RustFile> {
-    extract_with_features(path, None)
+    extract_with_cfg(path, ExtractCfg::default())
 }
 
-pub fn extract_with_features(path: &Path, features: Option<&crate::cfg::CfgFeatures>) -> Result<RustFile> {
+pub fn extract_with_cfg(path: &Path, cfg: ExtractCfg) -> Result<RustFile> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
-    extract_source(&path.display().to_string(), &content, features)
+    extract_source(&path.display().to_string(), &content, cfg)
 }
 
 /// Extract from source text already in hand. Batch reads from disk; the engine's
 /// unit tests hand it a few lines of Rust directly.
-pub fn extract_source(
-    path: &str,
-    content: &str,
-    features: Option<&crate::cfg::CfgFeatures>,
-) -> Result<RustFile> {
+pub fn extract_source(path: &str, content: &str, cfg: ExtractCfg) -> Result<RustFile> {
     let syntax = syn::parse_file(content)
         .with_context(|| format!("Failed to parse {}", path))?;
 
     let mut file = RustFile::empty(path.to_string());
-    extract_items(&syntax.items, features, &mut file);
+    extract_items(&syntax.items, cfg, &mut file);
     Ok(file)
+}
+
+thread_local! {
+    /// Which `[[excluded_items]]` selectors matched something while reading the
+    /// current file. An entry that never matches is a config that has gone
+    /// stale against the corpus, and the caller reports it.
+    static EXCLUSIONS_HIT: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+}
+
+/// Take the selectors that matched since the last call.
+pub fn take_exclusions_hit() -> std::collections::BTreeSet<String> {
+    EXCLUSIONS_HIT.with(|h| std::mem::take(&mut *h.borrow_mut()))
+}
+
+fn note_exclusion(item: &crate::config::ExcludedItem) {
+    EXCLUSIONS_HIT.with(|h| h.borrow_mut().insert(item.written.clone()));
+}
+
+/// Is this item named by an `[[excluded_items]]` entry? Records the hit.
+fn is_excluded_item(item: &syn::Item, cfg: ExtractCfg) -> bool {
+    for entry in cfg.excluded {
+        if entry.selector.matches(item) {
+            note_exclusion(entry);
+            return true;
+        }
+    }
+    false
+}
+
+/// Report a `#[cfg]` no configuration decides. The item is kept: dropping it
+/// would take every type it declares with it, and the report would be a crowd of
+/// unrelated "no declaration for" lines somewhere else.
+fn report_undecided_cfg(span: proc_macro2::Span, text: &str) {
+    crate::diag::pending::park(
+        span,
+        format!(
+            "`#[{}]` has a predicate nothing in transpile.toml's [cfg] or [features] decides; \
+             the item is kept",
+            text
+        ),
+    );
 }
 
 /// Read one module's items into `file`. A file's top level and an inline
 /// `mod x { .. }` are the same thing to Rust, so they are read by the same walk.
-fn extract_items(
-    items: &[syn::Item],
-    features: Option<&crate::cfg::CfgFeatures>,
-    file: &mut RustFile,
-) {
+fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
+    let features = cfg.features;
     for item in items {
+        if is_excluded_item(item, cfg) {
+            continue;
+        }
         match item {
             syn::Item::Struct(s) => {
                 if is_skipped_cfg_with(&s.attrs, features) { continue; }
@@ -58,7 +118,7 @@ fn extract_items(
             }
             syn::Item::Trait(t) => {
                 if is_skipped_cfg_with(&t.attrs, features) { continue; }
-                file.traits.push(extract_trait(t));
+                file.traits.push(extract_trait(t, cfg));
             }
             syn::Item::Fn(f) => {
                 if is_skipped_cfg_with(&f.attrs, features) { continue; }
@@ -66,7 +126,7 @@ fn extract_items(
             }
             syn::Item::Impl(i) => {
                 if is_skipped_cfg_with(&i.attrs, features) { continue; }
-                file.impls.push(extract_impl(i));
+                file.impls.push(extract_impl(i, cfg));
             }
             syn::Item::Use(u) => {
                 file.uses.push(extract_use(u));
@@ -99,8 +159,13 @@ fn extract_items(
                     if let Some((_, items)) = &m.content {
                         for item in items {
                             if let syn::Item::Fn(f) = item {
+                                let extracted = extract_fn_with_body(&f.sig, true, VisInfo::Private, &f.attrs, Some(&f.block));
                                 if is_test_fn(&f.attrs) {
-                                    file.test_functions.push(extract_fn_with_body(&f.sig, true, VisInfo::Private, &f.attrs, Some(&f.block)));
+                                    file.test_functions.push(extracted);
+                                } else {
+                                    // A helper the tests call. It is part of
+                                    // the suite, not of the module.
+                                    file.test_helpers.push(extracted);
                                 }
                             }
                         }
@@ -116,11 +181,17 @@ fn extract_items(
                 // surface's `pub mod` blocks — tokio's `oneshot` and `mpsc`,
                 // serde's `ser` and `de` — are nothing but impls and traits.
                 else if !is_skipped_cfg_with(&m.attrs, features) {
+                    if m.content.is_none() {
+                        // `mod x;` — the file beside this one. Rust needs the
+                        // declaration for the module to exist at all, and the
+                        // emitted index needs it to know what to re-export.
+                        file.mod_decls.push((m.ident.to_string(), visibility(&m.vis)));
+                    }
                     if let Some((_, items)) = &m.content {
                         let mod_name = m.ident.to_string();
                         let mut sub_file = RustFile::empty(String::new());
                         sub_file.vis = visibility(&m.vis);
-                        extract_items(items, features, &mut sub_file);
+                        extract_items(items, cfg, &mut sub_file);
                         file.inline_modules.push((mod_name, sub_file));
                     }
                 }
@@ -172,7 +243,18 @@ fn is_skipped_cfg(attrs: &[syn::Attribute]) -> bool {
 
 fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::CfgFeatures>) -> bool {
     if let Some(features) = features {
-        return crate::cfg::should_skip(attrs, features);
+        return match crate::cfg::gate(attrs, features) {
+            crate::cfg::Gate::Keep => false,
+            crate::cfg::Gate::Skip => true,
+            crate::cfg::Gate::Undecided(text) => {
+                let span = attrs
+                    .first()
+                    .map(syn::spanned::Spanned::span)
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                report_undecided_cfg(span, &text);
+                false
+            }
+        };
     }
     // Legacy fallback: string matching for wasm/uniffi
     for attr in attrs {
@@ -263,9 +345,18 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
             }
             false
         });
+        // `#[serde(with = "..")]` sits on the VARIANT, not on the field
+        // inside it: `#[serde(with = "json_as_bytes")] Json(serde_json::Value)`.
+        // The codec asks the field, so the variant's answer stands in for it.
+        let mut fields = extract_fields(&v.fields);
+        if let Some(module) = serde_with_attr(&v.attrs) {
+            for field in &mut fields {
+                field.serde_with.get_or_insert(module.clone());
+            }
+        }
         VariantInfo {
             name: v.ident.to_string(),
-            fields: extract_fields(&v.fields),
+            fields,
             is_serde_other,
             error_format: error_attribute(&v.attrs),
             span: v.ident.span(),
@@ -285,7 +376,17 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
     }
 }
 
-fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
+fn extract_trait(t: &syn::ItemTrait, cfg: ExtractCfg) -> TraitInfo {
+    let trait_name = t.ident.to_string();
+    let excluded_assoc = |name: &str| {
+        for entry in cfg.excluded {
+            if entry.selector.matches_assoc_type(&trait_name, name) {
+                note_exclusion(entry);
+                return true;
+            }
+        }
+        false
+    };
     let mut has_default_impls = false;
     let methods = t.items.iter().filter_map(|item| {
         if let syn::TraitItem::Fn(method) = item {
@@ -309,12 +410,12 @@ fn extract_trait(t: &syn::ItemTrait) -> TraitInfo {
         _ => None,
     }).collect();
     let assoc_types = t.items.iter().filter_map(|item| match item {
-        syn::TraitItem::Type(ty) => Some(ty.ident.to_string()),
+        syn::TraitItem::Type(ty) if !excluded_assoc(&ty.ident.to_string()) => Some(ty.ident.to_string()),
         _ => None,
     }).collect();
 
     TraitInfo {
-        name: t.ident.to_string(),
+        name: trait_name,
         is_pub: is_public(&t.vis),
         vis: visibility(&t.vis),
         is_auto: t.auto_token.is_some(),
@@ -435,7 +536,7 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
     }
 }
 
-fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
+fn extract_impl(i: &syn::ItemImpl, cfg: ExtractCfg) -> ImplInfo {
     let self_type_name = if let syn::Type::Path(p) = &*i.self_ty {
         p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
     } else {
@@ -475,6 +576,12 @@ fn extract_impl(i: &syn::ItemImpl) -> ImplInfo {
     let methods = i.items.iter().filter_map(|item| {
         if let syn::ImplItem::Fn(method) = item {
             if is_skipped_cfg(&method.attrs) { return None; }
+            for entry in cfg.excluded {
+                if entry.selector.matches_method(&i.self_ty, method) {
+                    note_exclusion(entry);
+                    return None;
+                }
+            }
             Some(extract_fn_with_body_and_self(
                 &method.sig, is_public(&method.vis), &method.attrs,
                 Some(&method.block), &target_type))
@@ -582,24 +689,45 @@ fn has_from_attr(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("from"))
 }
 
+/// The module named by `#[serde(with = "..")]`, if the field carries one.
+fn serde_with_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let tokens = attr.meta.to_token_stream().to_string();
+        if let Some(at) = tokens.find("with") {
+            let rest = &tokens[at + 4..];
+            let start = rest.find('"')? + 1;
+            let end = rest[start..].find('"')? + start;
+            return Some(rest[start..end].to_string());
+        }
+    }
+    None
+}
+
 fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
     match fields {
         Fields::Named(named) => named.named.iter().map(|f| {
             FieldInfo {
                 name: f.ident.as_ref().map(|i| name_map::to_camel_case(&i.to_string())),
+                rust_name: f.ident.as_ref().map(|i| i.to_string()),
                 rust_ty: f.ty.clone(),
                 ty: None,
                 is_pub: is_public(&f.vis),
                 is_from: has_from_attr(&f.attrs),
+                serde_with: serde_with_attr(&f.attrs),
             }
         }).collect(),
         Fields::Unnamed(unnamed) => unnamed.unnamed.iter().enumerate().map(|(i, f)| {
             FieldInfo {
                 name: Some(format!("_{}", i)),
+                rust_name: None,
                 rust_ty: f.ty.clone(),
                 ty: None,
                 is_pub: is_public(&f.vis),
                 is_from: has_from_attr(&f.attrs),
+                serde_with: serde_with_attr(&f.attrs),
             }
         }).collect(),
         Fields::Unit => Vec::new(),

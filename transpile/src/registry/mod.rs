@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
-pub use build::{build_registry, resolve_bounds, ExtractedFile};
+pub use build::{build_registry, build_registry_with_siblings, resolve_bounds, ExtractedFile};
 pub use convert::NoConversion;
 pub use impls::ImplId;
 pub use method::{Callee, FieldResolution, MethodResolution, Probe, Undecided};
@@ -191,6 +191,12 @@ pub struct TypeRegistry {
     /// Types whose TypeScript a person wrote: the `[provided_impls]` entries and
     /// everything declared in a `[hardcode]` file. See `mark_hand_written`.
     hand_written: std::collections::HashSet<TypeId>,
+    /// The other in-family crates loaded for their declarations, by the Rust
+    /// identifier a path names them with. Each is a child of the crate root,
+    /// which is where an extern crate sits in Rust too: `ankql::ast::Selection`
+    /// written inside proto reaches ankql's real declaration and its real id,
+    /// rather than a foreign name with no fields and no methods.
+    sibling_crates: HashMap<String, ModuleId>,
     /// Aliases part-way through expansion, so a cycle stops rather than recurses.
     expanding: RefCell<Vec<AliasId>>,
     /// What each declared system type becomes in TypeScript, by identity.
@@ -243,6 +249,7 @@ impl TypeRegistry {
             traits: HashMap::new(),
             foreign: RefCell::new(ForeignTypes::default()),
             hand_written: std::collections::HashSet::new(),
+            sibling_crates: HashMap::new(),
             expanding: RefCell::new(Vec::new()),
             shapes: Default::default(),
         }
@@ -308,6 +315,59 @@ impl TypeRegistry {
     }
 
     pub fn crate_root(&self) -> ModuleId {
+        self.modules.crate_root()
+    }
+
+    /// Record that `ident` names an in-family crate rooted at `module`.
+    pub fn add_sibling_crate(&mut self, ident: &str, module: ModuleId) {
+        self.sibling_crates.insert(ident.replace('-', "_"), module);
+    }
+
+    /// Every in-family crate root loaded for this run.
+    pub fn sibling_crate_roots(&self) -> Vec<ModuleId> {
+        self.sibling_crates.values().copied().collect()
+    }
+
+    /// A name declared anywhere inside a sibling crate, searched by leaf.
+    ///
+    /// Rust would need a `use` for this and the port's import map is keyed by
+    /// the leaf name alone, so the two agree only if the registry answers the
+    /// same question the import map does. A name two sibling crates both
+    /// declare answers with the first found, which is the same rule the import
+    /// map applies.
+    pub(super) fn sibling_module_scan(
+        &self,
+        root: ModuleId,
+        ns: Ns,
+        name: &str,
+    ) -> Option<Def> {
+        if ns != Ns::Type {
+            return None;
+        }
+        let mut stack = vec![root];
+        while let Some(module) = stack.pop() {
+            if let Some(id) = self.module_type(module, name) {
+                return Some(Def::Type(id));
+            }
+            stack.extend(self.modules.get(module).children.values().copied());
+        }
+        None
+    }
+
+    /// The root a sibling crate's name reaches, if it names one.
+    pub fn sibling_crate(&self, ident: &str) -> Option<ModuleId> {
+        self.sibling_crates.get(&ident.replace('-', "_")).copied()
+    }
+
+    /// The crate root `module` belongs to: a sibling's own root when the module
+    /// is inside one, and this crate's otherwise. `crate::ast::Predicate`
+    /// written inside ankql means ankql's, whichever crate is being emitted.
+    pub fn crate_root_of(&self, module: ModuleId) -> ModuleId {
+        for root in self.sibling_crates.values() {
+            if self.modules.is_within(module, *root) {
+                return *root;
+            }
+        }
         self.modules.crate_root()
     }
     pub fn system_root(&self) -> ModuleId {

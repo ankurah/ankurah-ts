@@ -188,12 +188,14 @@ pub fn generate_ts_with_imports_configured(
 /// hook emits `tracing.warn(..)` because the alternative is the comment the
 /// port used to emit, which logged nothing at all; the report that goes with
 /// this pass carries the exact API the runtime owes.
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 40] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 41] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
     // The closure that owns its captures, and the error `?` converts into.
     "OwnedClosure", "AnyhowError", "anyhow",
+    // What an emitted `fromJson` answers with: serde_json::Error's stand-in.
+    "JsonError",
     // The logger every `tracing::` macro writes a call on.
     "tracing",
     "AsyncMutex", "AsyncMutexGuard",
@@ -407,7 +409,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
     // nothing at all. Without it the emitted index was a header and a blank
     // line, and every name the package is supposed to offer — `QueryId` among
     // them — was reachable only by importing the module it was declared in.
-    for line in public_reexports(reg, file) {
+    for line in public_reexports(reg, file, rust_crate_path, config) {
         out.push_str(&line);
     }
 
@@ -428,27 +430,66 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
 ///
 /// Only a module this file declares: `pub use serde::*` is another crate's
 /// business, and the cross-crate import machinery writes that where it is used.
-fn public_reexports(reg: &TypeRegistry, file: &RustFile) -> Vec<String> {
+fn public_reexports(
+    reg: &TypeRegistry,
+    file: &RustFile,
+    corpus_path: &str,
+    config: Option<&crate::config::Config>,
+) -> Vec<String> {
     let Some(module) = reg.modules().lookup_file(&file.path) else {
         return Vec::new();
     };
     let children = &reg.modules().get(module).children;
     let mut out: Vec<String> = Vec::new();
+    // `pub mod ast;` is how `ankql::ast::Expr` becomes reachable from outside
+    // the crate. TypeScript has no nested module namespace to mirror, and the
+    // port's own hand-written indexes settled the convention long ago: a public
+    // child module is re-exported whole. Without this the emitted `index.ts`
+    // for a crate whose root is nothing but `pub mod` lines — ankql's — was a
+    // header and a blank line, and the package exported nothing at all.
+    let mut whole_modules: Vec<String> = Vec::new();
+    for (name, vis) in &file.mod_decls {
+        if *vis != crate::types::VisInfo::Public {
+            continue;
+        }
+        let target = provided_child_module(corpus_path, name, config)
+            .unwrap_or_else(|| child_module(&file.path, name));
+        let line = format!("export * from '{}';\n", target);
+        if !out.contains(&line) {
+            out.push(line);
+            whole_modules.push(target);
+        }
+    }
+    // A TypeScript-only module the port adds beside this crate.
+    if let Some(cfg) = config {
+        for extra in cfg.extra_exports_in(corpus_path) {
+            let line = format!("export * from './{}';\n", extra.module);
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+    }
     for u in &file.uses {
         if u.vis != crate::types::VisInfo::Public {
             continue;
         }
         for binding in &u.bindings {
             let line = match (&binding.local, &binding.path[..]) {
-                (None, [name]) if children.contains_key(name) => {
-                    format!("export * from '{}';\n", child_module(&file.path, name))
-                }
+                (None, [name]) if children.contains_key(name) => format!(
+                    "export * from '{}';\n",
+                    provided_child_module(corpus_path, name, config)
+                        .unwrap_or_else(|| child_module(&file.path, name))
+                ),
                 (Some(local), [name, ..]) if children.contains_key(name) => {
-                    format!(
-                        "export {{ {} }} from '{}';\n",
-                        local,
-                        child_module(&file.path, name)
-                    )
+                    let target = provided_child_module(corpus_path, name, config)
+                        .unwrap_or_else(|| child_module(&file.path, name));
+                    // `pub mod broadcast;` beside `pub use broadcast::BroadcastId;`
+                    // is two true statements about one module, and the star
+                    // export already carries the name.
+                    if whole_modules.contains(&target) {
+                        continue;
+                    }
+                    format!("export {{ {} }} from '{}';\n", local, target)
                 }
                 _ => continue,
             };
@@ -458,6 +499,40 @@ fn public_reexports(reg: &TypeRegistry, file: &RustFile) -> Vec<String> {
         }
     }
     out
+}
+
+/// Where a hand-written child module sits, when the TypeScript it is called is
+/// not what the Rust module is called. A `[[provided]]` entry names both, so a
+/// re-export of `mod connection;` reaches `connection.provided.ts` where that is
+/// what somebody wrote.
+fn provided_child_module(
+    corpus_path: &str,
+    child: &str,
+    config: Option<&crate::config::Config>,
+) -> Option<String> {
+    let cfg = config?;
+    // The parent's own directory, as a corpus path: `ankql/src/lib.rs` puts its
+    // children at `ankql/src/<child>.rs`.
+    let dir = corpus_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let stem = corpus_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(corpus_path)
+        .trim_end_matches(".rs");
+    let candidate = match (dir, stem) {
+        ("", "lib") | ("", "mod") => format!("{child}.rs"),
+        ("", other) => format!("{other}/{child}.rs"),
+        (dir, "lib") | (dir, "mod") => format!("{dir}/{child}.rs"),
+        (dir, other) => format!("{dir}/{other}/{child}.rs"),
+    };
+    let provided = cfg.provided_module(&candidate)?;
+    // `module` is relative to the package's src/; this file imports it relative
+    // to itself, and everything that re-exports a child is a module index.
+    let last = provided.module.rsplit('/').next().unwrap_or(&provided.module);
+    Some(match (dir, stem) {
+        (_, "lib") | (_, "mod") => format!("./{last}"),
+        (_, other) => format!("./{other}/{last}"),
+    })
 }
 
 /// Where a child module's file sits, as this file would import it.
@@ -498,8 +573,15 @@ fn generate_declarations(
     // The trait an impl block names lives on it as the `syn::Path` the source
     // wrote. Emission needs the TypeScript spelling of the name and of each
     // argument, derived once here so the maps below can borrow it.
-    let impl_traits: Vec<(Option<String>, Vec<String>)> =
-        file.impls.iter().map(|i| (i.trait_name(), i.trait_type_args())).collect();
+    // Two spellings of one impl's trait arguments, and they are not
+    // interchangeable: the `implements` clause needs the TypeScript type
+    // (`GetReadCell<T | null>`), and the method NAME needs the path as written
+    // (`From<bincode::Error>`), which is what tells two conversions apart.
+    let impl_traits: Vec<(Option<String>, Vec<String>, Vec<String>)> = file
+        .impls
+        .iter()
+        .map(|i| (i.trait_name(), i.trait_type_args(), i.trait_type_arg_paths()))
+        .collect();
 
     // An impl whose self type has no emitted class contributes module-level
     // functions instead of methods, and its methods must not also be hung on a
@@ -521,7 +603,7 @@ fn generate_declarations(
         None => true,
     };
 
-    for (imp, (trait_name, type_args)) in file.impls.iter().zip(&impl_traits) {
+    for (imp, (trait_name, type_args, written_args)) in file.impls.iter().zip(&impl_traits) {
         if !on_a_class(imp) {
             continue;
         }
@@ -530,7 +612,7 @@ fn generate_declarations(
             for method in &imp.methods {
                 trait_methods.entry(imp.target_type.clone())
                     .or_default()
-                    .push((trait_name.as_str(), type_args.as_slice(), method));
+                    .push((trait_name.as_str(), written_args.as_slice(), method));
             }
         } else {
             inherent_methods.entry(imp.target_type.clone()).or_default().extend(imp.methods.iter());
@@ -637,7 +719,7 @@ pub fn generate_test_ts_with_imports(
 
     // Collect all type references from test bodies
     let mut test_refs: HashSet<String> = HashSet::new();
-    for f in &file.test_functions {
+    for f in file.test_functions.iter().chain(&file.test_helpers) {
         if let Some(body) = &f.body_ts {
             imports::collect_type_refs(body, &mut test_refs);
         }
@@ -659,6 +741,7 @@ pub fn generate_test_ts_with_imports(
     let all_bodies: String = file
         .test_functions
         .iter()
+        .chain(&file.test_helpers)
         .filter_map(|f| f.body_ts.as_deref())
         .collect::<Vec<_>>()
         .join(" ");
@@ -677,6 +760,20 @@ pub fn generate_test_ts_with_imports(
         sorted.sort();
         out.push_str(&format!("import {{ {} }} from '@ankurah/base';\n",
             sorted.iter().map(|s| **s).collect::<Vec<_>>().join(", ")));
+    }
+
+    // A module-level function the suite calls — `parseSelection`,
+    // `generateSelectionSql` — is a name, not a type, so the PascalCase scan
+    // above passes over it. A test-module helper is where these turn up:
+    // ankql's `nullify_columns` calls two of them.
+    let free_names: std::collections::HashSet<String> = type_to_file
+        .keys()
+        .filter(|name| name.chars().next().is_some_and(|c| c.is_lowercase()))
+        .cloned()
+        .collect();
+    let mut test_refs = test_refs;
+    if !free_names.is_empty() {
+        imports::collect_named_refs(&all_bodies, &free_names, &mut test_refs);
     }
 
     // Cross-file imports from the same crate (using type_to_file map)
@@ -708,7 +805,7 @@ pub fn generate_test_ts_with_imports(
     }
 
     // Bincode imports if test bodies reference them
-    let all_test_body: String = file.test_functions.iter()
+    let all_test_body: String = file.test_functions.iter().chain(&file.test_helpers)
         .filter_map(|f| f.body_ts.as_deref())
         .collect::<Vec<_>>().join(" ");
     if all_test_body.contains("BincodeWriter") || all_test_body.contains("BincodeReader") {
@@ -717,6 +814,33 @@ pub fn generate_test_ts_with_imports(
     out.push('\n');
 
     out.push_str(&format!("describe('{} unit tests', () => {{\n", module_name));
+
+    // The helpers first: every test that calls one is written below it.
+    for f in &file.test_helpers {
+        let params: Vec<String> = f
+            .params
+            .iter()
+            .filter(|p| !p.is_self)
+            .map(|p| format!("{}: {}", crate::name_map::to_camel_case(&p.name), p.ty))
+            .collect();
+        let ret = if f.return_type.is_empty() { "void".to_string() } else { f.return_type.clone() };
+        let body = match &f.body_ts {
+            Some(body) => body
+                .lines()
+                .map(|line| if line.is_empty() { String::new() } else { format!("    {}", line) })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            None => "    throw new Error('TODO');".to_string(),
+        };
+        out.push_str(&format!(
+            "  {}function {}({}): {} {{\n{}\n  }}\n\n",
+            if f.is_async { "async " } else { "" },
+            f.ts_name,
+            params.join(", "),
+            if f.is_async { format!("Promise<{}>", ret) } else { ret },
+            body
+        ));
+    }
 
     for f in &file.test_functions {
         let test_name = &f.name;

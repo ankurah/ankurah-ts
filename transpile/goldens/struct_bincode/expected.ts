@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/struct_bincode/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
@@ -45,6 +45,26 @@ export class Envelope extends Struct {
     const payload = reader.readByteVec();
     return new Envelope(id, label, payload);
   }
+
+  toJSON(): unknown {
+    return {
+      'id': Number(this.id),
+      'label': this.label,
+      'payload': Array.from(this.payload),
+    };
+  }
+
+  static fromJson(value: unknown): Result<Envelope, JsonError> {
+    try {
+      const o = value as Record<string, unknown>;
+      const id = ((v: unknown) => BigInt(v as number))(o['id']);
+      const label = ((v: unknown) => v as string)(o['label']);
+      const payload = ((v: unknown) => new Uint8Array(v as number[]))(o['payload']);
+      return Result.Ok(new Envelope(id, label, payload));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class Signature extends Struct {
@@ -75,6 +95,18 @@ export class Signature extends Struct {
   static decode(reader: BincodeReader): Signature {
     const _0 = reader.readByteVec();
     return new Signature(_0);
+  }
+
+  toJSON(): unknown {
+    return Array.from(this._0);
+  }
+
+  static fromJson(value: unknown): Result<Signature, JsonError> {
+    try {
+      return Result.Ok(new Signature(((v: unknown) => new Uint8Array(v as number[]))(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 

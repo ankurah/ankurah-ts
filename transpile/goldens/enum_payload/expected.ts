@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/enum_payload/src/input.rs
-import { Enum } from '@ankurah/base';
+import { Enum, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type NoticeV = {
@@ -63,6 +63,36 @@ export class Notice extends Enum<NoticeV> {
         return new Notice('Span', { start, end });
       }
       default: throw new Error(`Unknown Notice variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Idle: () => 'Idle',
+      Text: (v) => ({ 'Text': v._0 }),
+      Span: (v) => ({ 'Span': { 'start': v.start, 'end': v.end } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<Notice, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Idle': return Result.Ok(new Notice('Idle', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('Text' in o) {
+        const p = o['Text'];
+        return Result.Ok(new Notice('Text', { _0: ((v: unknown) => v as string)(p) }));
+      }
+      if ('Span' in o) {
+        const p = o['Span'];
+        return Result.Ok(new Notice('Span', { start: ((v: unknown) => v as number)((p as Record<string, unknown>)['start']), end: ((v: unknown) => v as number)((p as Record<string, unknown>)['end']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Notice` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }

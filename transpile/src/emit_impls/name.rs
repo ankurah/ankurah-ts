@@ -20,14 +20,21 @@ use crate::ty::{TraitRef, Ty};
 /// type and the method name are the same in both: without the trait's argument
 /// they take one name and one of them is lost. On a class the two are `fromClock`
 /// and `fromEventId`; here they are the same, because it is the same question.
-pub fn method_symbol(trait_name: Option<&str>, type_args: &[String], ts_method: &str) -> String {
+pub fn method_symbol(
+    trait_name: Option<&str>,
+    type_args: &[String],
+    ts_method: &str,
+    self_type: &str,
+) -> String {
     match trait_name {
         // `Into` and `TryInto` name their *target*, not their source, so the
         // scheme's `from<Arg>` would read backwards on a function whose
         // receiver is the thing being converted. Their method name already says
         // which direction it goes.
         Some("Into") | Some("TryInto") | None => ts_method.to_string(),
-        Some(trait_name) => crate::emit::impl_method_name(trait_name, "", ts_method, type_args),
+        Some(trait_name) => {
+            crate::emit::impl_method_name(trait_name, "", ts_method, type_args, self_type)
+        }
     }
 }
 

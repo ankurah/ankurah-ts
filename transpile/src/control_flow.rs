@@ -6,6 +6,9 @@
 //! at every early exit, and what threading a list of drop calls into each
 //! branch could never cover for a `?`, a `break` or an unwind.
 
+pub mod awaiting;
+mod let_chain;
+
 use crate::body::{indent, translate_pat, BodyTranslator};
 use crate::match_expr;
 
@@ -102,6 +105,11 @@ fn translate_if_at(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position
 /// statements rather than an expression — written between the `else` and the
 /// `if` it belongs to, that run is not a program at all.
 fn if_chain(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position) -> (String, String) {
+    // A `let` anywhere but the first conjunct: the chain nests, one `if` per
+    // `let`, because that is where the binding it introduces is in scope.
+    if let_chain::has_inner_let(&if_expr.cond) {
+        return (String::new(), let_chain::translate(if_expr, t, position));
+    }
     if let syn::Expr::Let(let_expr) = &*if_expr.cond {
         let written =
             translate_if_let(let_expr, &if_expr.then_branch, &if_expr.else_branch, None, t, position);
@@ -142,7 +150,7 @@ fn if_chain(if_expr: &syn::ExprIf, t: &BodyTranslator, position: Position) -> (S
 }
 
 /// What follows the `then` branch, from `else if` down to nothing at all.
-fn else_part(
+pub(crate) fn else_part(
     else_branch: &Option<(syn::token::Else, Box<syn::Expr>)>,
     t: &BodyTranslator,
     position: Position,
@@ -169,7 +177,7 @@ fn else_part(
 
 /// One branch of an `if`. In returning position its last expression becomes the
 /// value; otherwise `translate_block` writes it as it stands.
-fn branch(block: &syn::Block, t: &BodyTranslator, position: Position) -> String {
+pub(crate) fn branch(block: &syn::Block, t: &BodyTranslator, position: Position) -> String {
     match position {
         Position::Statement => t.translate_block(block),
         Position::Returning => {

@@ -29,7 +29,7 @@ export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeErro
   }
 }
 
-export function Vec_EventId_fromClock(self: EventId[], clock: Clock): EventId[] {
+export function Vec_EventId_fromClock(clock: Clock): EventId[] {
   return clock._0.toVec();
 }
 

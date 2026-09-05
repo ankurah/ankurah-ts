@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
@@ -61,9 +61,21 @@ export class CollectionId extends Struct {
     const _0 = reader.readString();
     return new CollectionId(_0);
   }
+
+  toJSON(): unknown {
+    return this._0;
+  }
+
+  static fromJson(value: unknown): Result<CollectionId, JsonError> {
+    try {
+      return Result.Ok(new CollectionId(((v: unknown) => v as string)(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
-export function String_fromCollectionId(self: string, collectionId: CollectionId): string {
+export function String_fromCollectionId(collectionId: CollectionId): string {
   try {
     return collectionId._0;
   } finally {

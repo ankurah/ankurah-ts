@@ -84,10 +84,15 @@ impl<'a> BodyTranslator<'a> {
             self.own.prelude.borrow_mut().extend(lifted);
             return written;
         }
-        format!(
-            "(() => {{\n{}}})()",
-            indent(&ownership::hoisted(&format!("return {};\n", written), &lifted))
-        )
+        // The wrapper is a function, and JavaScript's `await` belongs to the
+        // nearest one, so an operand that awaits gets an `async` wrapper and the
+        // call is awaited where the operand stood.
+        let body = ownership::hoisted(&format!("return {};\n", written), &lifted);
+        if crate::control_flow::awaiting::awaits(operand) {
+            format!("await (async () => {{\n{}}})()", indent(&body))
+        } else {
+            format!("(() => {{\n{}}})()", indent(&body))
+        }
     }
 
     /// Lift a receiver the statement produced and nothing binds.

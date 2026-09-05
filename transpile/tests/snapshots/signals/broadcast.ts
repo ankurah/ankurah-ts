@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Sender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -232,6 +232,16 @@ export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<() => void>): Broadca
   }
 }
 
+export function UnboundedSender_intoBroadcastListener<T>(self: UnboundedSender<T>): BroadcastListener<T> {
+  try {
+    return new BroadcastListener('Payload', { _0: Arc.new(new OwnedClosure([this], (value) => {
+      const _ = self.send(value);
+    })) });
+  } finally {
+    self.drop();
+  }
+}
+
 export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListener<T> {
   return new BroadcastListener('Payload', { _0: Arc.new((value) => {
     const _ = self.send(value);
@@ -243,6 +253,7 @@ export function IntoBroadcastListener_dispatch_intoBroadcastListener<T>(self: un
   if (self instanceof BroadcastListener) return (self as any).intoBroadcastListener();
   if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 1) return Arc_Fn1_intoBroadcastListener(self as any);
   if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 0) return Arc_Fn0_intoBroadcastListener(self as any);
+  if (self instanceof UnboundedSender) return UnboundedSender_intoBroadcastListener(self as any);
   if (self instanceof Sender) return Sender_intoBroadcastListener(self as any);
   throw new Error(`BUG: no IntoBroadcastListener impl for ${(self as object)?.constructor?.name ?? typeof self}`);
 }

@@ -29,6 +29,24 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "contains" => format!("{}.includes({})", receiver, args.join(", ")),
         "chars" => format!("[...{}]", receiver),
 
+        // `String::push` and `push_str` grow the string in place. A JavaScript
+        // string cannot be grown, so the place is assigned: `buffer.push('\"')`
+        // used to be emitted as it stood and threw `buffer.push is not a
+        // function` the first time ankql's SQL renderer ran.
+        "push" | "push_str" => format!("{} += {}", receiver, args.join(", ")),
+        "insert_str" if args.len() == 2 => format!(
+            "{r} = {r}.slice(0, {at}) + {s} + {r}.slice({at})",
+            r = receiver,
+            at = args[0],
+            s = args[1]
+        ),
+        "clear" => format!("{} = ''", receiver),
+        "truncate" if args.len() == 1 => {
+            format!("{r} = {r}.slice(0, {n})", r = receiver, n = args[0])
+        }
+        // `as_str`, `as_mut_str` and `to_string` on a `String` are the string.
+        "as_str" | "as_mut_str" => receiver.to_string(),
+
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)

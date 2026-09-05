@@ -41,6 +41,7 @@ mod tests;
 
 pub use conversion::{conversion_call, conversion_names};
 pub use dispatch::{
+    class_module,
     forwards_every_method, free_call, has_emitted_class, is_reference_forwarding, FreeCall,
 };
 pub use open_dispatch::{
@@ -94,8 +95,39 @@ pub fn free_functions_reporting(
         let Some(self_ty) = resolved_self(reg, module, imp, &quiet) else {
             continue;
         };
-        if has_emitted_class(reg, &self_ty) {
-            continue;
+        // An impl whose class is emitted in THIS file becomes methods on it.
+        // One whose class is emitted somewhere else cannot: a TypeScript class
+        // is one declaration in one file, and Rust lets the impl sit anywhere.
+        // Those become module-level functions here, like an impl on a type the
+        // port does not declare at all, and the import map carries their names.
+        match class_module(reg, &self_ty) {
+            Some(home) if home == module => continue,
+            // A type whose TypeScript is written by hand carries its own
+            // methods: `Attested<T>`'s conversions are in auth.provided.ts, and
+            // emitting them again beside it would give the port two of each.
+            Some(_)
+                if self_ty
+                    .peel_refs()
+                    .id()
+                    .is_some_and(|id| reg.is_hand_written(id)) =>
+            {
+                continue;
+            }
+            Some(_) => {
+                sink.push(crate::diag::Diag::at(
+                    &sink.file(),
+                    imp.self_ty
+                        .as_ref()
+                        .map(|t| t.span())
+                        .unwrap_or_else(proc_macro2::Span::call_site),
+                    format!(
+                        "`{}` is declared in another module, so this impl is written as module-level \
+                         functions here rather than as methods on its class",
+                        imp.target_type
+                    ),
+                ));
+            }
+            None => {}
         }
         // An impl written for a reference to its own parameter forwards to the
         // value inside, and emission erases the reference — so emitting it
@@ -134,6 +166,7 @@ pub fn free_functions_reporting(
                 imp.trait_name().as_deref(),
                 &imp.trait_type_args(),
                 &method.ts_name,
+                &imp.target_type,
             );
             let name = free_fn_name(reg, &self_ty, &imp.type_params, &symbol);
             // Two impls of two traits can write one method name for one self
@@ -208,7 +241,10 @@ fn trait_source(imp: &ImplInfo) -> String {
 pub fn impl_has_class(reg: &TypeRegistry, module: ModuleId, imp: &ImplInfo) -> bool {
     let quiet = crate::diag::DiagSink::new();
     match resolved_self(reg, module, imp, &quiet) {
-        Some(ty) => has_emitted_class(reg, &ty) || is_reference_forwarding(&ty, &imp.type_params),
+        Some(ty) => {
+            class_module(reg, &ty) == Some(module)
+                || is_reference_forwarding(&ty, &imp.type_params)
+        }
         None => true,
     }
 }
@@ -239,7 +275,14 @@ fn write(
     name: &str,
 ) -> String {
     let generics = declared_generics(reg, module, imp, method);
-    let mut params = vec![format!("self: {}", crate::name_map::map_ty(reg, self_ty))];
+    // An associated function has no receiver — `From::from(value)` takes only
+    // its argument — so writing a `self` parameter for it declared a parameter
+    // no call site passes and no body reads.
+    let mut params = if method.is_static {
+        Vec::new()
+    } else {
+        vec![format!("self: {}", crate::name_map::map_ty(reg, self_ty))]
+    };
     params.extend(
         method
             .params

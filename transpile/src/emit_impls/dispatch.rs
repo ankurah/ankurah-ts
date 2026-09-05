@@ -55,6 +55,7 @@ pub fn free_call(reg: &TypeRegistry, found: &MethodResolution) -> Option<FreeCal
         trait_name.as_deref(),
         &type_args,
         &crate::name_map::map_fn_name(method),
+        &crate::name_map::map_ty(reg, &def.self_ty),
     );
     Some(FreeCall {
         name: super::free_fn_name(reg, &def.self_ty, &def.generics, &symbol),
@@ -132,24 +133,34 @@ fn forwards(block: &syn::Block, name: &str) -> bool {
 /// A struct or an enum the corpus declares does; a type parameter, a declared
 /// system type and a type nothing declares do not.
 pub fn has_emitted_class(reg: &TypeRegistry, self_ty: &Ty) -> bool {
-    let Some(id) = self_ty.peel_refs().id() else {
-        return false;
-    };
+    class_module(reg, self_ty).is_some()
+}
+
+/// Where the class an impl's methods would join is written, if there is one.
+///
+/// Rust lets an impl sit anywhere in the crate; a TypeScript class is one
+/// declaration in one file. An impl written beside its type becomes methods on
+/// that class, and an impl written elsewhere cannot — `impl TryFrom<Expr> for
+/// Predicate` lives in ankql's conversion.rs while `Predicate` is declared in
+/// ast.rs, and all five of that file's conversions used to be emitted nowhere
+/// at all: conversion.ts was a header and a blank line.
+pub fn class_module(reg: &TypeRegistry, self_ty: &Ty) -> Option<crate::registry::ModuleId> {
+    let id = self_ty.peel_refs().id()?;
     if id.is_foreign() {
-        return false;
+        return None;
     }
-    let Some(def) = reg.def(id) else {
-        return false;
-    };
+    let def = reg.def(id)?;
     // A declared system type is the runtime's, not this crate's: `Arc` has no
     // emitted class here whatever methods an impl adds to it.
     if reg.is_system(id) {
-        return false;
+        return None;
     }
-    matches!(
-        def.kind,
-        crate::registry::TypeKind::Struct | crate::registry::TypeKind::Enum { .. }
-    )
+    match def.kind {
+        crate::registry::TypeKind::Struct | crate::registry::TypeKind::Enum { .. } => {
+            Some(def.module)
+        }
+        _ => None,
+    }
 }
 
 /// The last segment of a module-qualified name.

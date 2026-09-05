@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/request.rs
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError } from '@ankurah/base';
 import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -48,6 +48,29 @@ export class NodeRequest extends Struct {
     const body = NodeRequestBody.decode(reader);
     return new NodeRequest(id, to, from, body);
   }
+
+  toJSON(): unknown {
+    return {
+      'id': this.id,
+      'to': this.to,
+      'from': this.from,
+      'body': this.body,
+    };
+  }
+
+  static fromJson(value: unknown): Result<NodeRequest, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const id = ((v: unknown) => _take(RequestId.fromJson(v)))(o['id']);
+      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
+      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
+      const body = ((v: unknown) => _take(NodeRequestBody.fromJson(v)))(o['body']);
+      return Result.Ok(new NodeRequest(id, to, from, body));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class KnownEntity extends Struct {
@@ -77,6 +100,25 @@ export class KnownEntity extends Struct {
     const entityId = EntityId.decode(reader);
     const head = Clock.decode(reader);
     return new KnownEntity(entityId, head);
+  }
+
+  toJSON(): unknown {
+    return {
+      'entity_id': this.entityId,
+      'head': this.head,
+    };
+  }
+
+  static fromJson(value: unknown): Result<KnownEntity, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const head = ((v: unknown) => _take(Clock.fromJson(v)))(o['head']);
+      return Result.Ok(new KnownEntity(entityId, head));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -116,6 +158,29 @@ export class CausalAssertion extends Struct {
     const relation = CausalRelation.decode(reader);
     return new CausalAssertion(entityId, subject, other, relation);
   }
+
+  toJSON(): unknown {
+    return {
+      'entity_id': this.entityId,
+      'subject': this.subject,
+      'other': this.other,
+      'relation': this.relation,
+    };
+  }
+
+  static fromJson(value: unknown): Result<CausalAssertion, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const subject = ((v: unknown) => _take(Clock.fromJson(v)))(o['subject']);
+      const other = ((v: unknown) => _take(Clock.fromJson(v)))(o['other']);
+      const relation = ((v: unknown) => _take(CausalRelation.fromJson(v)))(o['relation']);
+      return Result.Ok(new CausalAssertion(entityId, subject, other, relation));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class CausalAssertionFragment extends Struct {
@@ -145,6 +210,25 @@ export class CausalAssertionFragment extends Struct {
     const relation = CausalRelation.decode(reader);
     const attestations = AttestationSet.decode(reader);
     return new CausalAssertionFragment(relation, attestations);
+  }
+
+  toJSON(): unknown {
+    return {
+      'relation': this.relation,
+      'attestations': this.attestations,
+    };
+  }
+
+  static fromJson(value: unknown): Result<CausalAssertionFragment, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const relation = ((v: unknown) => _take(CausalRelation.fromJson(v)))(o['relation']);
+      const attestations = ((v: unknown) => _take(AttestationSet.fromJson(v)))(o['attestations']);
+      return Result.Ok(new CausalAssertionFragment(relation, attestations));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -184,6 +268,27 @@ export class EntityDelta extends Struct {
     const content = DeltaContent.decode(reader);
     return new EntityDelta(entityId, collection, content);
   }
+
+  toJSON(): unknown {
+    return {
+      'entity_id': this.entityId,
+      'collection': this.collection,
+      'content': this.content,
+    };
+  }
+
+  static fromJson(value: unknown): Result<EntityDelta, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const collection = ((v: unknown) => _take(CollectionId.fromJson(v)))(o['collection']);
+      const content = ((v: unknown) => _take(DeltaContent.fromJson(v)))(o['content']);
+      return Result.Ok(new EntityDelta(entityId, collection, content));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class NodeResponse extends Struct {
@@ -221,6 +326,29 @@ export class NodeResponse extends Struct {
     const to = EntityId.decode(reader);
     const body = NodeResponseBody.decode(reader);
     return new NodeResponse(requestId, from, to, body);
+  }
+
+  toJSON(): unknown {
+    return {
+      'request_id': this.requestId,
+      'from': this.from,
+      'to': this.to,
+      'body': this.body,
+    };
+  }
+
+  static fromJson(value: unknown): Result<NodeResponse, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const requestId = ((v: unknown) => _take(RequestId.fromJson(v)))(o['request_id']);
+      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
+      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
+      const body = ((v: unknown) => _take(NodeResponseBody.fromJson(v)))(o['body']);
+      return Result.Ok(new NodeResponse(requestId, from, to, body));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -320,6 +448,46 @@ export class CausalRelation extends Enum<CausalRelationV> {
       default: throw new Error(`Unknown CausalRelation variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Equal: () => 'Equal',
+      StrictDescends: () => 'StrictDescends',
+      StrictAscends: () => 'StrictAscends',
+      DivergedSince: (v) => ({ 'DivergedSince': { 'meet': v.meet, 'subject': v.subject, 'other': v.other } }),
+      Disjoint: (v) => ({ 'Disjoint': { 'gca': v.gca, 'subject_root': v.subjectRoot, 'other_root': v.otherRoot } }),
+      BudgetExceeded: (v) => ({ 'BudgetExceeded': { 'subject': v.subject, 'other': v.other } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<CausalRelation, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Equal': return Result.Ok(new CausalRelation('Equal', {}));
+          case 'StrictDescends': return Result.Ok(new CausalRelation('StrictDescends', {}));
+          case 'StrictAscends': return Result.Ok(new CausalRelation('StrictAscends', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('DivergedSince' in o) {
+        const p = o['DivergedSince'];
+        return Result.Ok(new CausalRelation('DivergedSince', { meet: ((v: unknown) => _take(Clock.fromJson(v)))((p as Record<string, unknown>)['meet']), subject: ((v: unknown) => _take(Clock.fromJson(v)))((p as Record<string, unknown>)['subject']), other: ((v: unknown) => _take(Clock.fromJson(v)))((p as Record<string, unknown>)['other']) }));
+      }
+      if ('Disjoint' in o) {
+        const p = o['Disjoint'];
+        return Result.Ok(new CausalRelation('Disjoint', { gca: ((v: unknown) => (v == null ? null : ((v) => _take(Clock.fromJson(v)))(v)))((p as Record<string, unknown>)['gca']), subjectRoot: ((v: unknown) => _take(EventId.fromJson(v)))((p as Record<string, unknown>)['subject_root']), otherRoot: ((v: unknown) => _take(EventId.fromJson(v)))((p as Record<string, unknown>)['other_root']) }));
+      }
+      if ('BudgetExceeded' in o) {
+        const p = o['BudgetExceeded'];
+        return Result.Ok(new CausalRelation('BudgetExceeded', { subject: ((v: unknown) => _take(Clock.fromJson(v)))((p as Record<string, unknown>)['subject']), other: ((v: unknown) => _take(Clock.fromJson(v)))((p as Record<string, unknown>)['other']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `CausalRelation` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type DeltaContentV = {
@@ -383,6 +551,36 @@ export class DeltaContent extends Enum<DeltaContentV> {
       default: throw new Error(`Unknown DeltaContent variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      StateSnapshot: (v) => ({ 'StateSnapshot': { 'state': v.state } }),
+      EventBridge: (v) => ({ 'EventBridge': { 'events': v.events } }),
+      StateAndRelation: (v) => ({ 'StateAndRelation': { 'state': v.state, 'relation': v.relation } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<DeltaContent, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('StateSnapshot' in o) {
+        const p = o['StateSnapshot'];
+        return Result.Ok(new DeltaContent('StateSnapshot', { state: ((v: unknown) => _take(StateFragment.fromJson(v)))((p as Record<string, unknown>)['state']) }));
+      }
+      if ('EventBridge' in o) {
+        const p = o['EventBridge'];
+        return Result.Ok(new DeltaContent('EventBridge', { events: ((v: unknown) => (v as unknown[]).map((v) => _take(EventFragment.fromJson(v))))((p as Record<string, unknown>)['events']) }));
+      }
+      if ('StateAndRelation' in o) {
+        const p = o['StateAndRelation'];
+        return Result.Ok(new DeltaContent('StateAndRelation', { state: ((v: unknown) => _take(StateFragment.fromJson(v)))((p as Record<string, unknown>)['state']), relation: ((v: unknown) => _take(CausalAssertionFragment.fromJson(v)))((p as Record<string, unknown>)['relation']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `DeltaContent` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type NodeRequestBodyV = {
@@ -434,8 +632,8 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
       CommitTransaction: (v) => `CommitTransaction { id: ${v.id}, events: ${v.events} }`,
       Get: (v) => `Get { collection: ${v.collection.debug()}, ids: ${v.ids} }`,
       GetEvents: (v) => `GetEvents { collection: ${v.collection.debug()}, eventIds: ${v.eventIds} }`,
-      Fetch: (v) => `Fetch { collection: ${v.collection.debug()}, selection: ${v.selection}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
-      SubscribeQuery: (v) => `SubscribeQuery { queryId: ${v.queryId}, collection: ${v.collection.debug()}, selection: ${v.selection}, version: ${String(v.version)}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
+      Fetch: (v) => `Fetch { collection: ${v.collection.debug()}, selection: ${v.selection.debug()}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
+      SubscribeQuery: (v) => `SubscribeQuery { queryId: ${v.queryId}, collection: ${v.collection.debug()}, selection: ${v.selection.debug()}, version: ${String(v.version)}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
     });
   }
 
@@ -506,6 +704,46 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
         return new NodeRequestBody('SubscribeQuery', { queryId, collection, selection, version, knownMatches });
       }
       default: throw new Error(`Unknown NodeRequestBody variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      CommitTransaction: (v) => ({ 'CommitTransaction': { 'id': v.id, 'events': v.events } }),
+      Get: (v) => ({ 'Get': { 'collection': v.collection, 'ids': v.ids } }),
+      GetEvents: (v) => ({ 'GetEvents': { 'collection': v.collection, 'event_ids': v.eventIds } }),
+      Fetch: (v) => ({ 'Fetch': { 'collection': v.collection, 'selection': v.selection, 'known_matches': v.knownMatches } }),
+      SubscribeQuery: (v) => ({ 'SubscribeQuery': { 'query_id': v.queryId, 'collection': v.collection, 'selection': v.selection, 'version': v.version, 'known_matches': v.knownMatches } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeRequestBody, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('CommitTransaction' in o) {
+        const p = o['CommitTransaction'];
+        return Result.Ok(new NodeRequestBody('CommitTransaction', { id: ((v: unknown) => _take(TransactionId.fromJson(v)))((p as Record<string, unknown>)['id']), events: ((v: unknown) => (v as unknown[]).map((v) => _take(Attested.fromJson(v))))((p as Record<string, unknown>)['events']) }));
+      }
+      if ('Get' in o) {
+        const p = o['Get'];
+        return Result.Ok(new NodeRequestBody('Get', { collection: ((v: unknown) => _take(CollectionId.fromJson(v)))((p as Record<string, unknown>)['collection']), ids: ((v: unknown) => (v as unknown[]).map((v) => _take(EntityId.fromJson(v))))((p as Record<string, unknown>)['ids']) }));
+      }
+      if ('GetEvents' in o) {
+        const p = o['GetEvents'];
+        return Result.Ok(new NodeRequestBody('GetEvents', { collection: ((v: unknown) => _take(CollectionId.fromJson(v)))((p as Record<string, unknown>)['collection']), eventIds: ((v: unknown) => (v as unknown[]).map((v) => _take(EventId.fromJson(v))))((p as Record<string, unknown>)['event_ids']) }));
+      }
+      if ('Fetch' in o) {
+        const p = o['Fetch'];
+        return Result.Ok(new NodeRequestBody('Fetch', { collection: ((v: unknown) => _take(CollectionId.fromJson(v)))((p as Record<string, unknown>)['collection']), selection: ((v: unknown) => _take(Selection.fromJson(v)))((p as Record<string, unknown>)['selection']), knownMatches: ((v: unknown) => (v as unknown[]).map((v) => _take(KnownEntity.fromJson(v))))((p as Record<string, unknown>)['known_matches']) }));
+      }
+      if ('SubscribeQuery' in o) {
+        const p = o['SubscribeQuery'];
+        return Result.Ok(new NodeRequestBody('SubscribeQuery', { queryId: ((v: unknown) => _take(QueryId.fromJson(v)))((p as Record<string, unknown>)['query_id']), collection: ((v: unknown) => _take(CollectionId.fromJson(v)))((p as Record<string, unknown>)['collection']), selection: ((v: unknown) => _take(Selection.fromJson(v)))((p as Record<string, unknown>)['selection']), version: ((v: unknown) => v as number)((p as Record<string, unknown>)['version']), knownMatches: ((v: unknown) => (v as unknown[]).map((v) => _take(KnownEntity.fromJson(v))))((p as Record<string, unknown>)['known_matches']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeRequestBody` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }
@@ -630,6 +868,57 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
         return new NodeResponseBody('Error', { _0 });
       }
       default: throw new Error(`Unknown NodeResponseBody variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      CommitComplete: (v) => ({ 'CommitComplete': { 'id': v.id } }),
+      Fetch: (v) => ({ 'Fetch': v._0 }),
+      Get: (v) => ({ 'Get': v._0 }),
+      GetEvents: (v) => ({ 'GetEvents': v._0 }),
+      QuerySubscribed: (v) => ({ 'QuerySubscribed': { 'query_id': v.queryId, 'deltas': v.deltas } }),
+      Success: () => 'Success',
+      Error: (v) => ({ 'Error': v._0 }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeResponseBody, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Success': return Result.Ok(new NodeResponseBody('Success', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('CommitComplete' in o) {
+        const p = o['CommitComplete'];
+        return Result.Ok(new NodeResponseBody('CommitComplete', { id: ((v: unknown) => _take(TransactionId.fromJson(v)))((p as Record<string, unknown>)['id']) }));
+      }
+      if ('Fetch' in o) {
+        const p = o['Fetch'];
+        return Result.Ok(new NodeResponseBody('Fetch', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(EntityDelta.fromJson(v))))(p) }));
+      }
+      if ('Get' in o) {
+        const p = o['Get'];
+        return Result.Ok(new NodeResponseBody('Get', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(Attested.fromJson(v))))(p) }));
+      }
+      if ('GetEvents' in o) {
+        const p = o['GetEvents'];
+        return Result.Ok(new NodeResponseBody('GetEvents', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(Attested.fromJson(v))))(p) }));
+      }
+      if ('QuerySubscribed' in o) {
+        const p = o['QuerySubscribed'];
+        return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: ((v: unknown) => _take(QueryId.fromJson(v)))((p as Record<string, unknown>)['query_id']), deltas: ((v: unknown) => (v as unknown[]).map((v) => _take(EntityDelta.fromJson(v))))((p as Record<string, unknown>)['deltas']) }));
+      }
+      if ('Error' in o) {
+        const p = o['Error'];
+        return Result.Ok(new NodeResponseBody('Error', { _0: ((v: unknown) => v as string)(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeResponseBody` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }

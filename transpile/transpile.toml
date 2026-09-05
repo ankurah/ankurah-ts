@@ -2,6 +2,22 @@
 rust_source = "../ankurah-ts-support"
 ts_target = ".."
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Crate scope
+#
+# The port's environment is the browser and React Native/Expo, so this table
+# names exactly the crates that have a place in it, and what TypeScript package
+# each becomes. A crate the transpiler is pointed at that is not named here is a
+# hard error: a silent skip would let a whole crate fall out of the port with
+# nothing said.
+#
+# Out of scope, and why: `storage-postgres` (tokio-postgres over a TCP server
+# socket), `storage-sled` (an embedded store over the local filesystem),
+# `websocket-server` (an axum listener; the port is a client), `websocket-client`
+# (the tokio client — `websocket-client-wasm` is the one the port keeps, because
+# Bun's `WebSocket` and the browser's are the same API the wasm client already
+# targets), and `derive` (proc macros that run at Rust compile time; the port
+# owes their outputs, not their bodies).
 [crates]
 ankql = "ankql"
 "ankurah-proto" = "proto"
@@ -9,26 +25,310 @@ ankql = "ankql"
 "ankurah-core" = "core"
 "ankurah-storage-common" = "storage-common"
 "ankurah-storage-sqlite" = "storage-sqlite"
-"ankurah-storage-postgres" = "storage-postgres"
 "ankurah-storage-indexeddb-wasm" = "storage-indexeddb"
-"ankurah-websocket-client" = "connector-websocket"
-"ankurah-websocket-server" = "connector-websocket-server"
+"ankurah-websocket-client-wasm" = "connector-websocket"
 "ankurah-connector-local-process" = "connector-local"
 "ankurah" = "ankurah"
 
-[features]
-# Features enabled for transpilation. cfg() expressions are evaluated against this.
-# JS/TS is single-threaded, so we use the singlethread codepath.
-enabled = ["singlethread"]
+# ──────────────────────────────────────────────────────────────────────────────
+# Conditional compilation
+#
+# Rust decides `#[cfg]` from the build. The port has one build: the browser/Expo
+# one, which is `cargo build -p ankurah --features wasm`. `[cfg]` fixes the
+# target and profile predicates; `[features.<crate>]` carries Cargo's resolved
+# feature set for that crate in that build. A predicate nothing here decides is
+# a diagnostic, and the item it gates is kept rather than dropped in silence.
+[cfg]
+target_arch = "wasm32"
+target_os = "unknown"
+target_family = "wasm"
+# TypeScript has no release/debug split of its own. True keeps IndexedDB's
+# runtime prefix-guard disable hook and the collection-boundary test that is the
+# only thing exercising it.
+debug_assertions = true
+# `#[cfg(test)] mod tests` is read for its `#[test]` functions by a separate
+# path; as a predicate on an ordinary item, the port is not a test build.
+test = false
+
+# Cargo's resolved feature sets. These are not hand-picked: they are what Cargo
+# turns on for the wasm build. A departure is a [[feature_overrides]] entry.
+[features.ankurah]
+enabled = ["wasm", "derive"]
+
+[features.ankurah-core]
+enabled = ["wasm"]
+
+[features.ankurah-proto]
+enabled = ["wasm"]
+
+[features.ankurah-signals]
+enabled = ["tokio", "reactive-graph", "singlethread", "wasm"]
+
+[features.ankql]
+enabled = ["wasm"]
+
+[features.ankurah-storage-common]
+enabled = []
+
+[features.ankurah-storage-sqlite]
+enabled = []
+
+[features.ankurah-storage-indexeddb-wasm]
+enabled = []
+
+[features.ankurah-websocket-client-wasm]
+enabled = []
+
+[features.ankurah-connector-local-process]
+enabled = []
+
+# The one recorded class of departure from Cargo's resolved set: a feature that
+# is on by default and pulls an out-of-family framework into the port. Turning it
+# off is a decision, so it is written down with its reason rather than left as a
+# quietly shorter feature list.
+[[feature_overrides]]
+crate = "ankurah-signals"
+feature = "reactive-graph"
+state = "off"
+reason = """
+`reactive-graph` is a signals default, and signals/src/reactive_graph.rs forwards
+CurrentObserver::track into Leptos's reactive_graph dependency tracker. Leptos is
+a Rust UI framework with no counterpart in the port; packages/react is the port's
+own reactivity bridge. Nothing outside signals/src/lib.rs's `pub use` names
+ReactiveGraphObserver, so the file leaves and the re-export leaves with it."""
 
 [excluded_files]
-# Feature-gated or out-of-scope files
+# A file whose items are not in the port at all. Its types do not exist here, so
+# nothing may resolve through them.
 files = [
+  # Feature-gated off: postgres wire types behind `feature = "postgres"`.
   "proto/src/postgres.rs",
+  # wasm-bindgen ABI. Its seven conversions are `to_base64`/`from_base64` round
+  # trips that id.provided.ts and clock.provided.ts already implement, so
+  # transpiling it would produce a second copy of each.
+  "proto/src/wasm.rs",
+  # Features off: react, react-native (uniffi bindings) and jsvalue.
   "signals/src/react.rs",
   "signals/src/react_native.rs",
   "signals/src/jsvalue.rs",
+  # The [[feature_overrides]] entry above.
+  "signals/src/reactive_graph.rs",
+  # Tsify generates .d.ts from Rust. The port has the TypeScript already.
+  "core/src/model/tsify.rs",
 ]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Items excluded one at a time
+#
+# `cfg(feature = "wasm")` is TRUE in the port's build, and most of what it gates
+# is wasm-bindgen glue: code whose only job is carrying a Rust value across the
+# Rust↔JS ABI. In the port there is no ABI to cross — the values are already
+# JavaScript — so "the cfg is true" and "the item belongs in the port" come
+# apart here, and each item is decided by hand.
+#
+# Not on this list, deliberately: the `cfg_attr(feature = "wasm", wasm_bindgen)`
+# gates, which are attribute-only (the item is emitted and the attribute
+# dropped), and ankql/src/conversion.rs and core/src/value/wasm.rs, which are the
+# port's own `Value ↔ native JS` conversions under another name and transpile
+# against `JsValue` declared in the std surface.
+#
+# `item` names one item: `impl <Trait> for <Type>`, `impl <Type>`, `fn <name>`,
+# `fn <Type>::<name>`, `type <Trait>::<name>`, or `mod <name>`. An entry whose
+# file was read and which matched nothing is an error — the config must not go
+# stale against the corpus without saying so.
+[[excluded_items]]
+file = "core/src/property/value/json.rs"
+item = "impl WasmDescribe for Json"
+reason = "wasm-bindgen ABI description; nothing describes a value to JavaScript here"
+
+[[excluded_items]]
+file = "core/src/property/value/json.rs"
+item = "impl IntoWasmAbi for Json"
+reason = "wasm-bindgen ABI"
+
+[[excluded_items]]
+file = "core/src/property/value/json.rs"
+item = "impl FromWasmAbi for Json"
+reason = "wasm-bindgen ABI"
+
+[[excluded_items]]
+file = "core/src/error.rs"
+item = "impl From<MutationError> for JsValue"
+reason = "an error crossing the ABI; in the port the error class is the value"
+
+[[excluded_items]]
+file = "core/src/error.rs"
+item = "impl From<RetrievalError> for JsValue"
+reason = "an error crossing the ABI; in the port the error class is the value"
+
+[[excluded_items]]
+file = "core/src/property/traits.rs"
+item = "impl From<PropertyError> for JsValue"
+reason = "an error crossing the ABI; in the port the error class is the value"
+
+[[excluded_items]]
+file = "core/src/policy.rs"
+item = "impl From<AccessDenied> for JsValue"
+reason = "an error crossing the ABI; in the port the error class is the value"
+
+[[excluded_items]]
+file = "ankql/src/error.rs"
+item = "impl From<ParseError> for JsValue"
+reason = "an error crossing the ABI; in the port the error class is the value"
+
+[[excluded_items]]
+file = "core/src/model.rs"
+item = "fn wasm_prop"
+reason = "called by derive-generated bindings, and the derive crate is out of scope"
+
+[[excluded_items]]
+file = "core/src/model.rs"
+item = "fn js_preprocess_ref_field"
+reason = "called by derive-generated bindings, and the derive crate is out of scope"
+
+[[excluded_items]]
+file = "core/src/model.rs"
+item = "fn js_resultset_map"
+reason = "called by derive-generated bindings, and the derive crate is out of scope"
+
+[[excluded_items]]
+file = "core/src/model.rs"
+item = "fn js_livequery_subscribe"
+reason = "called by derive-generated bindings, and the derive crate is out of scope"
+
+[[excluded_items]]
+file = "core/src/model.rs"
+item = "type Model::RefWrapper"
+reason = "the monomorphized wrapper a derive generates for the ABI; same provenance as the four js_ helpers"
+
+[[excluded_items]]
+file = "core/src/context.rs"
+item = "fn Context::js_node_id"
+reason = "`#[wasm_bindgen(js_name = \"node_id\")]` renames a method the plain impl already defines"
+
+[[excluded_items]]
+file = "core/src/transaction.rs"
+item = "fn Transaction::js_commit"
+reason = "`#[wasm_bindgen(js_name = \"commit\")]` renames a method the plain impl already defines"
+
+[[excluded_items]]
+file = "core/src/property/value/lww.rs"
+item = "mod ffi"
+reason = "the body is `impl_provided_wrapper_types!`, a derive-crate macro that reads a .ron file"
+
+[[excluded_items]]
+file = "core/src/property/value/yrs.rs"
+item = "mod ffi"
+reason = "the body is `impl_provided_wrapper_types!`, a derive-crate macro that reads a .ron file"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Provided modules
+#
+# A module whose TypeScript is written by hand. The criterion is one of: a macro
+# the engine will not expand, out-of-family code, a platform binding, or a file
+# whose shape has no TypeScript correspondence. The engine reads such a file for
+# its DECLARATIONS — the types it defines are part of the crate and everything
+# else resolves through them — writes nothing over it, and re-exports it from
+# the module index the way Rust's `mod`/`pub use` do.
+#
+# `module` is the TypeScript module the hand-written file is, relative to the
+# package's src/ and without the extension. This replaces the old [hardcode]
+# list, which had no way to say what the hand-written file was called and so
+# needed [cross_crate_types] to reach the types it declared.
+
+[[provided]]
+file = "ankql/src/grammar.rs"
+module = "grammar"
+reason = "a pest grammar compiled by a proc macro; its ten tests use pest's own `parses_to!`"
+
+[[provided]]
+file = "ankql/src/parser.rs"
+module = "parser"
+reason = "walks `Pairs<Rule>` out of the pest parse tree"
+
+[[provided]]
+file = "core/src/util/mod.rs"
+module = "util/index"
+reason = "five `#[macro_export] macro_rules!` whose bodies are tracing calls with ANSI escapes"
+
+[[provided]]
+file = "core/src/util/cast.rs"
+module = "util/cast"
+reason = "`into!` and `create!`, which the facade re-exports as public API"
+
+[[provided]]
+file = "core/src/util/ivec.rs"
+module = "util/ivec"
+reason = """
+a hand-rolled inline vector over raw pointer writes: eight `unsafe` blocks whose
+semantics (a growable element buffer) survive the port and whose mechanism does
+not. Transpiling it would silently turn pointer arithmetic into array writes,
+which changes what the code IS; the provided file's header names the divergence."""
+
+[[provided]]
+file = "storage/sqlite/src/connection.rs"
+module = "connection"
+reason = """
+the sqlite driver boundary. bb8 pooling and `spawn_blocking` collapse to direct
+calls against a synchronous `SqliteDriver`, which storage-sqlite-expo and
+storage-sqlite-node implement; the provided file's header states that."""
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/database.rs"
+module = "database"
+reason = "the IndexedDB open/upgrade/versionchange dance, which is browser-shaped"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/error.rs"
+module = "error"
+reason = "unwrapping a `js_sys::Error` out of a rejected request"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/statics.rs"
+module = "statics"
+reason = "one `lazy_static!` block, a macro the engine will not expand"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/util/cb_future.rs"
+module = "util/cb_future"
+reason = "a hand-written `Future` over IndexedDB request events; in TypeScript a Promise wrapper"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/util/cb_stream.rs"
+module = "util/cb_stream"
+reason = "a hand-written `Stream` over cursor events; in TypeScript an async iterator"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/util/cb_race.rs"
+module = "util/cb_race"
+reason = "races two callback futures"
+
+[[provided]]
+file = "storage/indexeddb-wasm/src/util/navigator_lock.rs"
+module = "util/navigator_lock"
+reason = "a Web Locks API binding around the schema upgrade"
+
+[[provided]]
+file = "connectors/websocket-client-wasm/src/connection.rs"
+module = "connection"
+reason = "the browser WebSocket binding: four `Closure::wrap` handlers, detached on drop"
+
+[[provided]]
+file = "connectors/websocket-client-wasm/src/connection_state.rs"
+module = "connection_state"
+reason = "`#[derive(WasmSignal)]` from the out-of-scope derive crate, plus `strum::Display`"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TypeScript-only modules a package's index re-exports
+#
+# The port carries a few modules with no Rust counterpart, because what they do
+# is a crate in Rust: `bincode`'s reader and writer are the clearest case. No
+# `pub mod` in the corpus can name them, so the module index is told here, and
+# consumers reach them from the package root the way they reach everything else.
+[[extra_exports]]
+file = "proto/src/lib.rs"
+module = "codec"
+reason = "the bincode reader and writer; `bincode` is a crate in Rust and a module here"
 
 [name_overrides]
 fmt = "toString"
@@ -77,27 +377,11 @@ source_crate = "yrs"
 target_module = "@ankurah/base/yrs-compat"
 types = { "Doc" = "YrsDoc", "Text" = "YrsText", "Map" = "YrsMap" }
 
-[hardcode]
-# Files with no syntactic correspondence — transpiler preserves existing TS
-files = [
-  "ankql/src/parser.rs",
-  "ankql/src/grammar.rs",
-  # TODO: transpilable if we add .chunks()/.fold() iterator translations
-  "proto/src/human_id.rs",
-  # Complex recursive tree-walking methods, pattern matching on multiple variants
-  # TODO: transpilable with better body translation for recursive enums
-  "ankql/src/ast.rs",
-  "ankql/src/selection/sql.rs",
-  "ankql/src/lib.rs",
-  "signals/src/lib.rs",
-]
-
-[cross_crate_types]
-# Types from other crates accessed via module-level imports (use ankql::ast)
-# TODO: auto-detect from use statements + type path analysis
-Selection = "@ankurah/ankql"
-
-
+# [cross_crate_types] is gone. It named `Selection` as reachable only through
+# `@ankurah/ankql` because ankql/src/ast.rs was in [hardcode] and its types were
+# therefore not registered. ast.rs transpiles now, so ankql's own files reach
+# `Selection` where it is declared, and the entry had started making the crate
+# import itself.
 
 [managed_files]
 # Phase 3: files the transpiler owns (start empty, grow gradually)

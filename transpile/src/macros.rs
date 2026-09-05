@@ -34,6 +34,14 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
             // A `Vec<u8>` is a `Uint8Array` in the port, so the position the
             // literal stands in decides which of the two is written.
             let want = t.expectation_at(at);
+            // `vec![v; n]` is the repeat form: n copies of one value, not a
+            // list. It has no comma to split on, so it used to fall through to
+            // "not expressions the engine could read" and the token stream went
+            // out verbatim — `[0u8 ; array . length () as usize]`, which is not
+            // TypeScript.
+            if let Some(written) = repeated(&mac.tokens, t, at, want.as_ref()) {
+                return written;
+            }
             if let Ok(args) = parse_exprs_from_tokens(&mac.tokens) {
                 let translated: Vec<String> =
                     args.iter().map(|e| t.moved_value(e)).collect();
@@ -47,6 +55,22 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 format!("[{}]", mac.tokens)
             }
         }
+        // `rusqlite::params![a, b, c]` is a parameter list, and the provided
+        // driver takes one as an array. The macro builds a `[&dyn ToSql; N]`,
+        // which erases to exactly the values it was handed.
+        "params" => match parse_exprs_from_tokens(&mac.tokens) {
+            Ok(args) => {
+                let written: Vec<String> = args.iter().map(|e| t.moved_value(e)).collect();
+                format!("[{}]", written.join(", "))
+            }
+            Err(_) => {
+                t.fallback(
+                    at,
+                    "the contents of this `params!` are not expressions the engine could read",
+                );
+                format!("[{}]", mac.tokens)
+            }
+        },
         "format" => formatted(&mac.tokens, t, at, &name),
         "println" | "eprintln" | "print" | "eprint" => {
             format!("console.log({})", formatted(&mac.tokens, t, at, &name))
@@ -654,4 +678,43 @@ pub async fn f(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) ->
             said
         );
     }
+}
+
+
+/// `vec![value; count]` — the repeat form.
+///
+/// `Array(n).fill(v)` puts the same value in every slot, which is what Rust
+/// does for a `Copy` element and is not what it does for anything else: Rust
+/// clones. A non-primitive element is therefore reported rather than written,
+/// because sharing one object across every slot is a different program.
+fn repeated(
+    tokens: &proc_macro2::TokenStream,
+    t: &crate::body::BodyTranslator,
+    at: proc_macro2::Span,
+    want: Option<&crate::ty::Ty>,
+) -> Option<String> {
+    let text = tokens.to_string();
+    let (value, count) = text.split_once(';')?;
+    let value: syn::Expr = syn::parse_str(value.trim()).ok()?;
+    let count: syn::Expr = syn::parse_str(count.trim()).ok()?;
+    let element = t.moved_value(&value);
+    let n = t.expr(&count);
+    let bytes = matches!(&value, syn::Expr::Lit(l) if matches!(&l.lit, syn::Lit::Int(_)))
+        && want.is_some_and(|w| t.expects_bytes(w));
+    if bytes {
+        // A zero-filled `Uint8Array` is what `new Uint8Array(n)` already is.
+        return Some(if element == "0" {
+            format!("new Uint8Array({})", n)
+        } else {
+            format!("new Uint8Array({}).fill({})", n, element)
+        });
+    }
+    if !matches!(&value, syn::Expr::Lit(_) | syn::Expr::Path(_)) {
+        t.fallback(
+            at,
+            "this `vec![v; n]` repeats a value the port would share rather than clone, \
+             so the copies would be one object",
+        );
+    }
+    Some(format!("Array({}).fill({})", n, element))
 }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -18,6 +18,7 @@ mod emit_impls;
 mod extract;
 mod imports;
 mod infer;
+mod json_module;
 mod macros;
 mod match_expr;
 mod name_map;
@@ -25,6 +26,7 @@ mod native_types;
 mod operators;
 mod ownership;
 mod registry;
+mod siblings;
 #[cfg(test)]
 mod testing;
 mod trace;
@@ -102,6 +104,7 @@ fn main() -> Result<()> {
                     .unwrap_or_default(),
                 file: extract::extract(&file)?,
                 declarations_only: false,
+                hand_written: false,
             }];
             let mut surface = registry::Surface::default();
             let registry = registry::build_registry(&mut parsed, &mut surface, &[], &sink);
@@ -185,6 +188,37 @@ fn batch_generate(
         .with_context(|| format!("Failed to create output dir {}", out_dir.display()))?;
 
     let sink = diag::DiagSink::new();
+    // Every path in transpile.toml is written the way the corpus lays the crate
+    // out — `storage/sqlite/src/connection.rs` — so the file being read is named
+    // that way too, not by the TypeScript package it becomes.
+    let corpus_prefix = corpus_prefix_for(src_dir, crate_name, config);
+
+    // The port's crate scope is `[crates]`, and a crate of the corpus outside it
+    // is a hard error: a silent skip is how a whole crate falls out of the port
+    // with nothing said. A source tree that is not the corpus — a golden, a unit
+    // fixture — is not a crate of the port, and the scope has nothing to say
+    // about it; the run reports that it stood aside rather than passing quietly.
+    if let Some(cfg) = config {
+        let from_corpus = corpus_prefix != format!("{crate_name}/src");
+        if from_corpus && !cfg.is_in_scope(crate_name) {
+            bail!(
+                "`{}` is a crate of the corpus and is not in the port's crate scope. \
+                 transpile.toml's [crates] table has: {}. Add it there with the TypeScript \
+                 package it becomes, or transpile one of those.",
+                crate_name,
+                cfg.packages_in_scope().join(", ")
+            );
+        }
+        if !from_corpus && !cfg.is_in_scope(crate_name) {
+            eprintln!(
+                "  scope: `{}` is not under {} and is not in [crates]; the crate-scope check \
+                 does not apply",
+                crate_name,
+                cfg.paths.rust_source.display()
+            );
+        }
+    }
+    let features = config.map(|c| c.features_for_package(crate_name));
 
     // Phase 1: Parse all files and build type→file map
     let mut parsed_files: Vec<registry::ExtractedFile> = Vec::new();
@@ -200,30 +234,35 @@ fn batch_generate(
         let relative = rs_path.strip_prefix(src_dir).unwrap_or(rs_path);
         let rel_str = relative.display().to_string();
 
-        // Skip excluded files
-        if rel_str.contains("wasm") || rel_str.contains("uniffi") {
-            continue;
-        }
-        // An excluded file is cfg-gated for a platform the port does not build,
-        // so its types do not exist here at all. A hardcoded file is different:
-        // its TypeScript is hand-written, so nothing may be emitted for it, but
-        // the types it declares are part of the crate and other files resolve
-        // through them.
+        // An excluded file is not in the port at all, so its types do not exist
+        // here. A provided module is different: its TypeScript is hand-written,
+        // so nothing may be emitted over it, but the types it declares are part
+        // of the crate and other files resolve through them.
         let mut declarations_only = false;
+        let mut excluded_here: Vec<&config::ExcludedItem> = Vec::new();
+        let full_path = format!("{}/{}", corpus_prefix, rel_str);
         if let Some(cfg) = config {
-            let full_path = format!("{}/src/{}", crate_name, rel_str);
             if cfg.is_excluded_file(&full_path) {
                 eprintln!("  SKIP {} (excluded)", rel_str);
                 continue;
             }
-            if cfg.is_hardcoded(&full_path) {
-                eprintln!("  DECLARATIONS ONLY {} (hardcoded)", rel_str);
+            if let Some(provided) = cfg.provided_module(&full_path) {
+                eprintln!(
+                    "  PROVIDED {} → {} ({})",
+                    rel_str,
+                    provided.module,
+                    first_line(&provided.reason)
+                );
                 declarations_only = true;
             }
+            excluded_here = cfg.excluded_items_in(&full_path);
         }
 
-        let features = config.map(|c| &c.features);
-        let mut rust_file = match extract::extract_with_features(rs_path, features) {
+        let extract_cfg = extract::ExtractCfg {
+            features: features.as_ref(),
+            excluded: &excluded_here,
+        };
+        let mut rust_file = match extract::extract_with_cfg(rs_path, extract_cfg) {
             Ok(f) => f,
             Err(e) => {
                 // A file the parser cannot read is a hole in the crate, not a
@@ -245,15 +284,62 @@ fn batch_generate(
         // and the diagnostics use.
         rust_file.path = rel_str.clone();
 
-        // Register all types defined in this file. A hardcoded file's types
-        // are not added here: its TypeScript is hand-written and reached
-        // through [cross_crate_types], not through a generated import.
+        // A `#[cfg]` nothing decided, and an `[[excluded_items]]` entry that
+        // named nothing in the file it points at, are both reported here, where
+        // the file that raised them is still in hand.
+        sink.set_file(&rel_str);
+        diag::pending::drain(&sink);
+        let hit = extract::take_exclusions_hit();
+        for entry in &excluded_here {
+            if !hit.contains(&entry.written) {
+                sink.push(diag::Diag {
+                    file: rel_str.clone(),
+                    line: 0,
+                    col: 0,
+                    message: format!(
+                        "transpile.toml excludes `{}` from this file and there is no such item; \
+                         the config has gone stale against the corpus",
+                        entry.written
+                    ),
+                });
+            }
+        }
+
+        // Register all types defined in this file. A provided module's types go
+        // in too, named by the hand-written TypeScript module they live in, so
+        // an import of one resolves the same way an emitted type's does.
         let ts_module = rs_to_ts_module(&rel_str);
         if declarations_only {
+            if let Some(provided) = config.and_then(|c| c.provided_module(&full_path)) {
+                let module = format!("./{}", provided.module);
+                for name in rust_file
+                    .structs
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .chain(rust_file.enums.iter().map(|e| e.name.clone()))
+                    .chain(rust_file.traits.iter().map(|t| t.name.clone()))
+                    // A provided module's public functions are part of what it
+                    // offers: ankql's parser is one, and `parse_selection` is
+                    // what every caller of it names.
+                    .chain(
+                        rust_file
+                            .functions
+                            .iter()
+                            .filter(|f| f.is_pub)
+                            .map(|f| f.ts_name.clone()),
+                    )
+                {
+                    type_to_file.insert(name, module.clone());
+                }
+            }
             parsed_files.push(registry::ExtractedFile {
                 path: rel_str,
                 file: rust_file,
                 declarations_only,
+                // Everything read this way in THIS crate is a `[[provided]]`
+                // module: its members are whatever the person who wrote the
+                // file wrote.
+                hand_written: true,
             });
             continue;
         }
@@ -265,6 +351,14 @@ fn batch_generate(
         }
         for t in &rust_file.traits {
             type_to_file.insert(t.name.clone(), ts_module.clone());
+        }
+        // A module-level `pub fn` is a name every caller imports, exactly as a
+        // type is. Without it a call to one resolved to nothing at run time —
+        // `generateSelectionSql is not defined` in ankql's own test suite.
+        for f in rust_file.functions.iter().filter(|f| f.is_pub) {
+            type_to_file
+                .entry(f.ts_name.clone())
+                .or_insert_with(|| ts_module.clone());
         }
         // Register inline module symbols (types go in type_to_file, functions tracked separately)
         for (mod_name, sub_file) in &rust_file.inline_modules {
@@ -284,6 +378,7 @@ fn batch_generate(
             path: rel_str,
             file: rust_file,
             declarations_only,
+            hand_written: declarations_only,
         });
     }
 
@@ -291,6 +386,61 @@ fn batch_generate(
     // listing. Sort it, so the registry and the diagnostics are the same on
     // every machine.
     parsed_files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut sibling_idents: Vec<String> = Vec::new();
+    // Phase 1b: the in-family crates this one depends on, read for their
+    // declarations. Their types then have real ids here rather than foreign
+    // ones, and the import map sends them to their own package.
+    if let Some(cfg) = config {
+        if let Some(cargo_name) = cfg.cargo_crate_for_package(crate_name) {
+            let root = std::fs::canonicalize(&cfg.paths.rust_source)
+                .unwrap_or_else(|_| cfg.paths.rust_source.clone());
+            let located = siblings::locate(cfg);
+            for sibling in siblings::dependencies_of(cfg, &located, &cargo_name) {
+                sibling_idents.push(sibling.ident.clone());
+                let files = siblings::declarations(&sibling, cfg, &root)?;
+                eprintln!(
+                    "  sibling {} ({} files) → {}",
+                    sibling.ident,
+                    files.len(),
+                    sibling.package
+                );
+                for entry in &files {
+                    for name in entry
+                        .file
+                        .structs
+                        .iter()
+                        .map(|s| s.name.clone())
+                        .chain(entry.file.enums.iter().map(|e| e.name.clone()))
+                        .chain(entry.file.traits.iter().map(|t| t.name.clone()))
+                    {
+                        // This crate's own declarations win: a name it declares
+                        // is its own, whatever a sibling calls the same thing.
+                        type_to_file
+                            .entry(name)
+                            .or_insert_with(|| sibling.package.clone());
+                    }
+                }
+                parsed_files.extend(files);
+            }
+            parsed_files.sort_by(|a, b| a.path.cmp(&b.path));
+        }
+    }
+
+    // A `pub mod x;` whose file the port leaves out declares a module that is
+    // not there. The declaration is still in the parent — `#[cfg(feature =
+    // "wasm")] pub mod wasm;` is live under the port's feature set even though
+    // wasm.rs is excluded by item — so the parent's re-export has to go with the
+    // file, or `index.ts` names a module nothing writes.
+    if let Some(cfg) = config {
+        for entry in parsed_files.iter_mut() {
+            let parent = entry.path.clone();
+            entry.file.mod_decls.retain(|(name, _)| {
+                let child = child_file_of(&parent, name);
+                !cfg.is_excluded_file(&format!("{}/{}", corpus_prefix, child))
+            });
+        }
+    }
 
     // Add cross-crate type mappings from config
     if let Some(cfg) = config {
@@ -311,7 +461,13 @@ fn batch_generate(
                 surface_dir.display()
             );
         }
-        registry::build_registry(&mut parsed_files, surface, &crate_names, &sink)
+        registry::build_registry_with_siblings(
+            &mut parsed_files,
+            surface,
+            &crate_names,
+            &sibling_idents,
+            &sink,
+        )
     });
     mark_hand_written_types(&mut registry, &parsed_files, config);
     let registry = registry;
@@ -388,7 +544,11 @@ fn batch_generate(
             std::fs::create_dir_all(parent)?;
         }
 
-        let crate_path = format!("{}/src/{}", crate_name, rel_str);
+        // The corpus path, which is what `transpile.toml` writes and what the
+        // MIRRORS header should name: `storage/sqlite/src/engine.rs`, not the
+        // TypeScript package's `storage-sqlite/src/engine.rs`, which is not a
+        // path in the Rust repository at all.
+        let crate_path = format!("{}/{}", corpus_prefix, rel_str);
         let current_module = rs_to_ts_module(rel_str);
         // Emission is the last place that asks the engine a question — a derive
         // hook wanting a field's `Debug`, a format string wanting a type — so
@@ -453,6 +613,7 @@ fn batch_generate(
 
     println!("\nGenerated {} files in {}", file_count, out_dir.display());
     eprintln!("  {} types with no declaration", registry.undeclared_reported());
+    report_cfg_decisions(crate_name);
     sink.print_summary();
     // A line the diagnostics-budget test parses. Everything above it is for a
     // person reading a run; this is for the harness.
@@ -465,6 +626,120 @@ fn batch_generate(
         surface_diags
     );
     Ok(())
+}
+
+/// Where the crate being transpiled sits under the corpus, so a path in
+/// `transpile.toml` — `storage/sqlite/src/connection.rs` — names the same file
+/// the walk is reading. `batch` is handed the `src` directory, so the answer is
+/// that path relative to `[paths] rust_source`; when the two share no prefix
+/// (a test corpus, a scratch tree) the crate's own name stands in.
+fn corpus_prefix_for(src_dir: &Path, crate_name: &str, config: Option<&config::Config>) -> String {
+    let fallback = format!("{crate_name}/src");
+    let Some(cfg) = config else { return fallback };
+    let root = std::fs::canonicalize(&cfg.paths.rust_source)
+        .unwrap_or_else(|_| cfg.paths.rust_source.clone());
+    let here = std::fs::canonicalize(src_dir).unwrap_or_else(|_| src_dir.to_path_buf());
+    match here.strip_prefix(&root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
+        // The source directory is not under the corpus, so where this crate
+        // sits there cannot be read off it and the crate's own name stands in.
+        // Every `[[provided]]`, `[[excluded_items]]` and `[excluded_files]`
+        // entry is matched against that spelling, so a crate whose directory is
+        // not its package name — `storage/sqlite` for `storage-sqlite` — would
+        // match none of them, which is worth saying out loud.
+        _ => {
+            eprintln!(
+                "  corpus: {} is not under {}, so this crate is named `{}` for the purpose of \
+                 transpile.toml's per-file entries",
+                here.display(),
+                root.display(),
+                fallback
+            );
+            fallback
+        }
+    }
+}
+
+/// A `&mut` parameter whose type JavaScript copies.
+///
+/// `fn render(buffer: &mut String, ..)` grows the caller's string in Rust. A
+/// JavaScript string, number, boolean or bigint is passed by value, so what the
+/// body assigns to the parameter the caller never sees, and the function
+/// silently produces nothing — ankql's SQL renderer threads one through six
+/// recursive helpers and answered `''` for every query.
+///
+/// There is no shape in the port that fixes this: the parameter would have to
+/// become a return value or a holder object, and either is a change to what the
+/// function means. So it is reported at the signature.
+fn report_mut_primitive_params(file: &types::RustFile, sink: &diag::DiagSink) {
+    let functions = file
+        .functions
+        .iter()
+        .chain(file.impls.iter().flat_map(|i| i.methods.iter()));
+    for func in functions {
+        for param in &func.params {
+            let Some(rust_ty) = &param.rust_ty else { continue };
+            let syn::Type::Reference(reference) = rust_ty else { continue };
+            if reference.mutability.is_none() {
+                continue;
+            }
+            if !matches!(param.ty.as_str(), "string" | "number" | "boolean" | "bigint") {
+                continue;
+            }
+            sink.push(diag::Diag::at(
+                &sink.file(),
+                syn::spanned::Spanned::span(rust_ty),
+                format!(
+                    "`{}` takes `{}` by `&mut`, and JavaScript passes a `{}` by value, so what \
+                     this function writes to it the caller never sees",
+                    func.name, param.name, param.ty
+                ),
+            ));
+        }
+    }
+}
+
+/// Where `mod x;` written in `parent` puts x's file, crate-relative. A crate
+/// root or a `mod.rs` keeps its children beside it; any other module keeps them
+/// in a directory named after itself.
+fn child_file_of(parent: &str, child: &str) -> String {
+    let dir = parent.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let stem = parent.rsplit('/').next().unwrap_or(parent).trim_end_matches(".rs");
+    match (dir, stem) {
+        ("", "lib") | ("", "mod") => format!("{child}.rs"),
+        ("", other) => format!("{other}/{child}.rs"),
+        (dir, "lib") | (dir, "mod") => format!("{dir}/{child}.rs"),
+        (dir, other) => format!("{dir}/{other}/{child}.rs"),
+    }
+}
+
+/// The first line of a multi-line reason, for a one-line progress message.
+fn first_line(reason: &str) -> &str {
+    reason.trim().lines().next().unwrap_or("").trim()
+}
+
+/// What the run decided every `#[cfg]` predicate it met to be. The crate
+/// inventory's claim is that every predicate the corpus writes is decided; this
+/// is the line a run answers it with.
+fn report_cfg_decisions(crate_name: &str) {
+    let rows = cfg::decisions();
+    if rows.is_empty() {
+        return;
+    }
+    let undecided = rows.iter().filter(|(_, a, _)| a.is_none()).count();
+    eprintln!(
+        "  cfg: {} predicates decided, {} undecided",
+        rows.len() - undecided,
+        undecided
+    );
+    for (predicate, answer, sites) in &rows {
+        let verdict = match answer {
+            Some(true) => "true",
+            Some(false) => "false",
+            None => "UNDECIDED",
+        };
+        eprintln!("CFG\t{}\t{}\t{}\t{}", crate_name, predicate, verdict, sites);
+    }
 }
 
 /// The names this crate answers to in a written path: the TypeScript package
@@ -483,7 +758,7 @@ fn mark_hand_written_types(
     config: Option<&config::Config>,
 ) {
     let mut ids = Vec::new();
-    for entry in files.iter().filter(|e| e.declarations_only) {
+    for entry in files.iter().filter(|e| e.hand_written) {
         let Some(module) = registry.modules().lookup_file(&entry.path) else {
             continue;
         };
@@ -632,7 +907,7 @@ fn report_member_collisions(file: &types::RustFile, sink: &diag::DiagSink) {
         }
         for m in &imp.methods {
             let emitted = match &trait_name {
-                Some(trait_name) => emit::trait_method_name(trait_name, &type_args, m),
+                Some(trait_name) => emit::trait_method_name(trait_name, &type_args, m, &imp.target_type),
                 None => m.ts_name.clone(),
             };
             let taken = RUNTIME_MEMBERS.contains(&emitted.as_str())
@@ -667,6 +942,7 @@ fn translate_module(
         .collect();
     let consts = resolve_module_consts(registry, module, &file.consts, sink);
     report_member_collisions(file, sink);
+    report_mut_primitive_params(file, sink);
     // The module-level functions this file's impls become, asked for once with
     // the run's sink so that a name two impls would take is reported here and
     // nowhere else.
@@ -740,7 +1016,7 @@ fn translate_module(
         }
     }
 
-    for func in &mut file.test_functions {
+    for func in file.test_helpers.iter_mut().chain(file.test_functions.iter_mut()) {
         translate_fn_body(
             func,
             "Self",

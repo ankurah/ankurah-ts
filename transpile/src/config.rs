@@ -1,21 +1,41 @@
 //! Configuration parsing — reads transpile.toml
+//!
+//! The file answers four questions the engine cannot work out for itself: which
+//! crates the port has (`[crates]`), what build it is being transpiled for
+//! (`[cfg]`, `[features.*]`, `[[feature_overrides]]`), what is deliberately not
+//! in the port (`[excluded_files]`, `[[excluded_items]]`), and which modules are
+//! written by hand (`[[provided]]`, `[provided_impls]`).
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::{Context, Result, bail};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+
+mod items;
+pub use items::ItemSelector;
 
 #[derive(Debug)]
 pub struct Config {
     pub paths: PathsConfig,
+    /// Cargo crate name → TypeScript package name. The port's whole scope.
     pub crates: HashMap<String, String>,
     pub excluded_files: Vec<String>,
+    /// Items excluded one at a time, with the reason each is out.
+    pub excluded_items: Vec<ExcludedItem>,
+    /// Modules whose TypeScript is written by hand.
+    pub provided_modules: Vec<ProvidedModule>,
+    /// TypeScript-only modules a module index re-exports.
+    pub extra_exports: Vec<ProvidedModule>,
     pub name_overrides: HashMap<String, String>,
     pub provided_impls: HashMap<String, ProvidedImpl>,
-    pub hardcode_files: Vec<String>,
     /// Types from other crates that need explicit import mapping
     pub cross_crate_types: HashMap<String, String>,
-    /// Feature flags for conditional compilation (#[cfg(feature = "...")]).
-    pub features: crate::cfg::CfgFeatures,
+    /// Target and profile predicates, the same for every crate in one build.
+    cfg_key_values: BTreeMap<String, String>,
+    cfg_flags: BTreeMap<String, bool>,
+    /// Cargo's resolved feature set per Cargo crate name.
+    crate_features: HashMap<String, Vec<String>>,
+    /// The recorded departures from Cargo's resolved set.
+    pub feature_overrides: Vec<FeatureOverride>,
 }
 
 #[derive(Debug)]
@@ -32,24 +52,74 @@ pub struct ProvidedImpl {
     pub methods: Option<Vec<String>>,
 }
 
+/// One item the port leaves out, named the way the corpus writes it.
+#[derive(Debug, Clone)]
+pub struct ExcludedItem {
+    /// Corpus-relative path, e.g. `core/src/model.rs`.
+    pub file: String,
+    pub selector: ItemSelector,
+    pub written: String,
+    pub reason: String,
+}
+
+/// One module whose TypeScript is hand-written.
+#[derive(Debug, Clone)]
+pub struct ProvidedModule {
+    /// Corpus-relative path, e.g. `ankql/src/parser.rs`.
+    pub file: String,
+    /// The TypeScript module it is, relative to the package's `src/`, without
+    /// the extension — what the module index re-exports from.
+    pub module: String,
+    pub reason: String,
+}
+
+/// A feature Cargo resolves one way and the port takes the other, with the
+/// reason. The only sanctioned class is a feature pulling an out-of-family
+/// framework into the port.
+#[derive(Debug, Clone)]
+pub struct FeatureOverride {
+    pub krate: String,
+    pub feature: String,
+    /// `true` = forced on, `false` = forced off.
+    pub state: bool,
+    pub reason: String,
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
 
-        let table: toml::Table = content.parse()
+        let table: toml::Table = content
+            .parse()
             .with_context(|| "Failed to parse transpile.toml")?;
+
+        if table.contains_key("hardcode") {
+            bail!(
+                "transpile.toml still has a [hardcode] table. It was replaced by [[provided]], \
+                 which also names the TypeScript module the hand-written file is, so the \
+                 module index can re-export it."
+            );
+        }
 
         let paths = if let Some(paths) = table.get("paths").and_then(|v| v.as_table()) {
             PathsConfig {
-                rust_source: PathBuf::from(paths.get("rust_source")
-                    .and_then(|v| v.as_str()).unwrap_or("../ankurah-ts-support")),
-                ts_target: PathBuf::from(paths.get("ts_target")
-                    .and_then(|v| v.as_str()).unwrap_or("..")),
+                rust_source: locate_corpus(
+                    paths
+                        .get("rust_source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("../ankurah-ts-support"),
+                ),
+                ts_target: PathBuf::from(
+                    paths
+                        .get("ts_target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(".."),
+                ),
             }
         } else {
             PathsConfig {
-                rust_source: PathBuf::from("../ankurah-ts-support"),
+                rust_source: locate_corpus("../ankurah-ts-support"),
                 ts_target: PathBuf::from(".."),
             }
         };
@@ -57,45 +127,96 @@ impl Config {
         let crates = parse_string_map(table.get("crates"));
         let name_overrides = parse_string_map(table.get("name_overrides"));
 
-        let features = if let Some(ft) = table.get("features").and_then(|v| v.as_table()) {
-            let enabled = ft.get("enabled").and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
-            crate::cfg::CfgFeatures::new(enabled)
-        } else {
-            crate::cfg::CfgFeatures::new(vec![])
-        };
+        let (cfg_key_values, cfg_flags) = parse_cfg_table(table.get("cfg"));
+        let crate_features = parse_crate_features(table.get("features"))?;
+        let feature_overrides = parse_feature_overrides(table.get("feature_overrides"))?;
+        for over in &feature_overrides {
+            if !crates.contains_key(&over.krate) {
+                bail!(
+                    "[[feature_overrides]] names crate `{}`, which is not in [crates]",
+                    over.krate
+                );
+            }
+        }
 
-        let excluded_files = if let Some(ef) = table.get("excluded_files").and_then(|v| v.as_table()) {
-            ef.get("files").and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
+        let excluded_files = string_list(table.get("excluded_files"), "files");
+        let excluded_items = parse_excluded_items(table.get("excluded_items"))?;
+        let provided_modules = parse_provided_modules(table.get("provided"))?;
+        let extra_exports = parse_provided_modules(table.get("extra_exports"))?;
         let provided_impls = parse_provided_impls(table.get("provided_impls"));
-
-        let hardcode_files = if let Some(hc) = table.get("hardcode").and_then(|v| v.as_table()) {
-            hc.get("files").and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
         let cross_crate_types = parse_string_map(table.get("cross_crate_types"));
 
         Ok(Config {
             paths,
             crates,
             excluded_files,
+            excluded_items,
+            provided_modules,
+            extra_exports,
             name_overrides,
             provided_impls,
-            hardcode_files,
             cross_crate_types,
-            features,
+            cfg_key_values,
+            cfg_flags,
+            crate_features,
+            feature_overrides,
         })
+    }
+
+    /// The cfg configuration for one Cargo crate: its resolved feature set with
+    /// the recorded overrides applied, plus the build's target and profile
+    /// predicates.
+    pub fn features_for_crate(&self, cargo_crate: &str) -> crate::cfg::CfgFeatures {
+        let mut enabled: Vec<String> = self
+            .crate_features
+            .get(cargo_crate)
+            .cloned()
+            .unwrap_or_default();
+        for over in &self.feature_overrides {
+            if over.krate != cargo_crate {
+                continue;
+            }
+            if over.state {
+                if !enabled.iter().any(|f| f == &over.feature) {
+                    enabled.push(over.feature.clone());
+                }
+            } else {
+                enabled.retain(|f| f != &over.feature);
+            }
+        }
+        crate::cfg::CfgFeatures::new(enabled)
+            .with_key_values(self.cfg_key_values.clone())
+            .with_flags(self.cfg_flags.clone())
+    }
+
+    /// The cfg configuration for the TypeScript package name `batch` is given.
+    pub fn features_for_package(&self, package: &str) -> crate::cfg::CfgFeatures {
+        match self.cargo_crate_for_package(package) {
+            Some(krate) => self.features_for_crate(&krate),
+            None => crate::cfg::CfgFeatures::new(Vec::new())
+                .with_key_values(self.cfg_key_values.clone())
+                .with_flags(self.cfg_flags.clone()),
+        }
+    }
+
+    /// The Cargo crate a TypeScript package name comes from.
+    pub fn cargo_crate_for_package(&self, package: &str) -> Option<String> {
+        self.crates
+            .iter()
+            .find(|(_, pkg)| pkg.as_str() == package)
+            .map(|(krate, _)| krate.clone())
+    }
+
+    /// Is this TypeScript package name in the port's scope at all? `batch`
+    /// refuses a crate that is not: a silent skip would drop a whole crate.
+    pub fn is_in_scope(&self, package: &str) -> bool {
+        self.crates.values().any(|pkg| pkg == package)
+    }
+
+    pub fn packages_in_scope(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.crates.values().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Check if a fully qualified Rust type has a provided impl
@@ -121,22 +242,88 @@ impl Config {
         self.excluded_files.iter().any(|f| path.ends_with(f))
     }
 
-    /// Check if a file is hardcoded (no generation)
+    /// The `[[provided]]` entry for a corpus-relative file path, if it has one.
+    pub fn provided_module(&self, path: &str) -> Option<&ProvidedModule> {
+        self.provided_modules.iter().find(|p| path.ends_with(&p.file))
+    }
+
+    /// The TypeScript-only modules this file's index re-exports.
+    pub fn extra_exports_in(&self, path: &str) -> Vec<&ProvidedModule> {
+        self.extra_exports
+            .iter()
+            .filter(|e| path.ends_with(&e.file))
+            .collect()
+    }
+
+    /// Is this file's TypeScript hand-written? (The old `[hardcode]` question.)
     pub fn is_hardcoded(&self, path: &str) -> bool {
-        self.hardcode_files.iter().any(|f| path.contains(f))
+        self.provided_module(path).is_some()
+    }
+
+    /// The `[[excluded_items]]` entries that name items in this file.
+    pub fn excluded_items_in(&self, path: &str) -> Vec<&ExcludedItem> {
+        self.excluded_items
+            .iter()
+            .filter(|e| path.ends_with(&e.file))
+            .collect()
     }
 
     /// Get the import module path for a provided type (e.g., "./id.provided")
     pub fn provided_import_module(&self, rust_fqn: &str) -> Option<String> {
-        self.provided_impls.get(rust_fqn).map(|p| {
-            format!("./{}", p.path)
-        })
+        self.provided_impls
+            .get(rust_fqn)
+            .map(|p| format!("./{}", p.path))
     }
 
     /// Map Rust crate name to TS package
     pub fn crate_to_package(&self, crate_name: &str) -> Option<String> {
-        self.crates.get(crate_name).map(|pkg| format!("@ankurah/{}", pkg))
+        self.crates
+            .get(crate_name)
+            .map(|pkg| format!("@ankurah/{}", pkg))
     }
+}
+
+/// Where the Rust corpus is.
+///
+/// `[paths] rust_source` is written relative to the transpiler's directory, and
+/// it is right in the main checkout and wrong in every git worktree — a worktree
+/// sits two directories deeper, so `../ankurah-ts-support` names nothing. Every
+/// path in this file is then matched against a fallback spelling of the crate's
+/// directory, and a `[[provided]]` or `[[excluded_items]]` entry for a crate
+/// whose directory does not match its package name silently matches nothing.
+/// So the configured path is used when it exists, and otherwise a directory of
+/// that name is looked for above this one, which finds the corpus from the main
+/// checkout and from a worktree alike.
+fn locate_corpus(configured: &str) -> PathBuf {
+    let configured = PathBuf::from(configured);
+    if configured.join("proto/src").is_dir() {
+        return configured;
+    }
+    let name = configured
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("ankurah-ts-support"));
+    let here = std::env::current_dir().unwrap_or_default();
+    for ancestor in here.ancestors() {
+        let candidate = ancestor.join(&name);
+        if candidate.join("proto/src").is_dir() {
+            return candidate;
+        }
+    }
+    configured
+}
+
+fn string_list(value: Option<&toml::Value>, key: &str) -> Vec<String> {
+    value
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get(key))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_string_map(value: Option<&toml::Value>) -> HashMap<String, String> {
@@ -151,38 +338,203 @@ fn parse_string_map(value: Option<&toml::Value>) -> HashMap<String, String> {
     map
 }
 
+/// `[cfg]`: string values are name-value predicates, booleans are bare flags.
+fn parse_cfg_table(
+    value: Option<&toml::Value>,
+) -> (BTreeMap<String, String>, BTreeMap<String, bool>) {
+    let mut kvs = BTreeMap::new();
+    let mut flags = BTreeMap::new();
+    if let Some(table) = value.and_then(|v| v.as_table()) {
+        for (k, v) in table {
+            match v {
+                toml::Value::String(s) => {
+                    kvs.insert(k.clone(), s.clone());
+                }
+                toml::Value::Boolean(b) => {
+                    flags.insert(k.clone(), *b);
+                }
+                _ => {}
+            }
+        }
+    }
+    (kvs, flags)
+}
+
+/// `[features.<crate>] enabled = [..]`, with the old flat
+/// `[features] enabled = [..]` still read as the fallback for every crate.
+fn parse_crate_features(value: Option<&toml::Value>) -> Result<HashMap<String, Vec<String>>> {
+    let mut per_crate = HashMap::new();
+    let Some(table) = value.and_then(|v| v.as_table()) else {
+        return Ok(per_crate);
+    };
+    for (key, v) in table {
+        match v {
+            toml::Value::Table(inner) => {
+                let enabled = inner
+                    .get("enabled")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                per_crate.insert(key.clone(), enabled);
+            }
+            toml::Value::Array(_) if key == "enabled" => {
+                bail!(
+                    "transpile.toml has a crate-wide `[features] enabled`. Features are \
+                     Cargo's resolved set PER CRATE now: write `[features.<cargo-crate>]`."
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(per_crate)
+}
+
+fn parse_feature_overrides(value: Option<&toml::Value>) -> Result<Vec<FeatureOverride>> {
+    let mut out = Vec::new();
+    let Some(array) = value.and_then(|v| v.as_array()) else {
+        return Ok(out);
+    };
+    for entry in array {
+        let t = entry
+            .as_table()
+            .context("[[feature_overrides]] entries are tables")?;
+        let krate = required_str(t, "crate", "feature_overrides")?;
+        let feature = required_str(t, "feature", "feature_overrides")?;
+        let state = match required_str(t, "state", "feature_overrides")?.as_str() {
+            "on" => true,
+            "off" => false,
+            other => bail!("[[feature_overrides]] state is `on` or `off`, not `{other}`"),
+        };
+        let reason = required_str(t, "reason", "feature_overrides")?;
+        out.push(FeatureOverride {
+            krate,
+            feature,
+            state,
+            reason,
+        });
+    }
+    Ok(out)
+}
+
+fn parse_excluded_items(value: Option<&toml::Value>) -> Result<Vec<ExcludedItem>> {
+    let mut out = Vec::new();
+    let Some(array) = value.and_then(|v| v.as_array()) else {
+        return Ok(out);
+    };
+    for entry in array {
+        let t = entry
+            .as_table()
+            .context("[[excluded_items]] entries are tables")?;
+        let file = required_str(t, "file", "excluded_items")?;
+        let written = required_str(t, "item", "excluded_items")?;
+        let reason = required_str(t, "reason", "excluded_items")?;
+        let selector = ItemSelector::parse(&written).with_context(|| {
+            format!("[[excluded_items]] item = \"{written}\" in {file} is not an item selector")
+        })?;
+        out.push(ExcludedItem {
+            file,
+            selector,
+            written,
+            reason,
+        });
+    }
+    Ok(out)
+}
+
+fn parse_provided_modules(value: Option<&toml::Value>) -> Result<Vec<ProvidedModule>> {
+    let mut out = Vec::new();
+    let Some(array) = value.and_then(|v| v.as_array()) else {
+        return Ok(out);
+    };
+    for entry in array {
+        let t = entry.as_table().context("[[provided]] entries are tables")?;
+        let file = required_str(t, "file", "provided")?;
+        let reason = required_str(t, "reason", "provided")?;
+        let module = match t.get("module").and_then(|v| v.as_str()) {
+            Some(m) => m.to_string(),
+            // The module a file becomes, if the entry does not say: strip the
+            // crate prefix and the extension, `mod`/`lib` being `index`.
+            None => default_module_for(&file),
+        };
+        out.push(ProvidedModule {
+            file,
+            module,
+            reason,
+        });
+    }
+    Ok(out)
+}
+
+/// `ankql/src/parser.rs` → `parser`; `core/src/util/mod.rs` → `util/index`.
+fn default_module_for(file: &str) -> String {
+    let after_src = file.split_once("/src/").map(|(_, r)| r).unwrap_or(file);
+    let stem = after_src.trim_end_matches(".rs");
+    match stem.rsplit_once('/') {
+        Some((dir, "mod")) => format!("{dir}/index"),
+        _ if stem == "mod" || stem == "lib" => "index".to_string(),
+        _ => stem.to_string(),
+    }
+}
+
+fn required_str(t: &toml::Table, key: &str, table: &str) -> Result<String> {
+    t.get(key)
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .with_context(|| format!("[[{table}]] entries need a `{key}`"))
+}
+
 fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, ProvidedImpl> {
     let mut map = HashMap::new();
     if let Some(table) = value.and_then(|v| v.as_table()) {
         for (k, v) in table {
             if let Some(impl_table) = v.as_table() {
-                let module = impl_table.get("module")
+                let module = impl_table
+                    .get("module")
                     .and_then(|v| v.as_str())
                     .unwrap_or("provided")
                     .to_string();
-                let path = impl_table.get("path")
+                let path = impl_table
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let methods = impl_table.get("methods")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                let methods = impl_table.get("methods").and_then(|v| v.as_array()).map(
+                    |arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    },
+                );
 
-                map.insert(k.clone(), ProvidedImpl { module, path, methods });
+                map.insert(
+                    k.clone(),
+                    ProvidedImpl {
+                        module,
+                        path,
+                        methods,
+                    },
+                );
             }
         }
     }
     map
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn config() -> Config {
+        Config::load(Path::new("transpile.toml")).unwrap()
+    }
+
     #[test]
     fn test_load_config() {
-        let config = Config::load(Path::new("transpile.toml")).unwrap();
+        let config = config();
         assert_eq!(config.crates.get("ankql"), Some(&"ankql".to_string()));
         assert_eq!(config.crates.get("ankurah-proto"), Some(&"proto".to_string()));
         assert!(config.is_provided("ankurah_proto::data::EventId"));
@@ -190,12 +542,118 @@ mod tests {
         assert!(config.is_provided("ankurah_proto::auth::Attested"));
         assert!(config.is_provided("ankurah_proto::transaction::TransactionId"));
         assert!(!config.is_provided("ankurah_proto::collection::CollectionId"));
-        assert_eq!(config.provided_import_module("ankurah_proto::id::EntityId"),
-            Some("./id.provided".to_string()));
-        assert_eq!(config.provided_import_module("ankurah_proto::data::EventId"),
-            Some("./id.provided".to_string()));
-        assert!(config.is_hardcoded("ankql/src/parser.rs"));
-        assert!(config.is_hardcoded("ankql/src/ast.rs"));
+        assert_eq!(
+            config.provided_import_module("ankurah_proto::id::EntityId"),
+            Some("./id.provided".to_string())
+        );
         assert!(config.is_excluded_file("proto/src/postgres.rs"));
+    }
+
+    #[test]
+    fn crate_scope_is_the_environment_table() {
+        let config = config();
+        let mut packages = config.packages_in_scope();
+        packages.sort();
+        assert_eq!(
+            packages,
+            vec![
+                "ankql",
+                "ankurah",
+                "connector-local",
+                "connector-websocket",
+                "core",
+                "proto",
+                "signals",
+                "storage-common",
+                "storage-indexeddb",
+                "storage-sqlite",
+            ]
+        );
+        assert!(!config.is_in_scope("storage-postgres"));
+        assert!(!config.is_in_scope("connector-websocket-server"));
+        assert!(config.is_in_scope("connector-websocket"));
+        assert_eq!(
+            config.cargo_crate_for_package("connector-websocket"),
+            Some("ankurah-websocket-client-wasm".to_string())
+        );
+    }
+
+    #[test]
+    fn signals_resolves_tokio_and_drops_reactive_graph() {
+        let config = config();
+        let signals = config.features_for_crate("ankurah-signals");
+        // The step-7 ruling: the tokio feature is a signals default, so
+        // `impl IntoBroadcastListener for UnboundedSender` exists.
+        assert!(signals.is_enabled("tokio"));
+        assert!(signals.is_enabled("singlethread"));
+        assert!(signals.is_enabled("wasm"));
+        // Cargo resolves reactive-graph ON; the recorded override takes it off.
+        assert!(!signals.is_enabled("reactive-graph"));
+        assert!(!signals.is_enabled("multithread"));
+        let over = config
+            .feature_overrides
+            .iter()
+            .find(|o| o.feature == "reactive-graph")
+            .expect("the override is recorded");
+        assert!(over.reason.contains("Leptos"));
+    }
+
+    #[test]
+    fn per_crate_features_differ() {
+        let config = config();
+        assert!(config.features_for_crate("ankurah-core").is_enabled("wasm"));
+        assert!(
+            !config
+                .features_for_crate("ankurah-storage-common")
+                .is_enabled("wasm")
+        );
+        assert!(
+            config
+                .features_for_package("connector-websocket")
+                .enabled_names()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn provided_modules_replace_the_hardcode_list() {
+        let config = config();
+        let parser = config
+            .provided_module("ankql/src/parser.rs")
+            .expect("ankql's parser is provided");
+        assert_eq!(parser.module, "parser");
+        assert!(config.is_hardcoded("ankql/src/grammar.rs"));
+        // The three files the step-8 rulings take OFF the list.
+        assert!(!config.is_hardcoded("ankql/src/ast.rs"));
+        assert!(!config.is_hardcoded("proto/src/human_id.rs"));
+        assert!(!config.is_hardcoded("ankql/src/selection/sql.rs"));
+        assert_eq!(
+            config
+                .provided_module("core/src/util/mod.rs")
+                .map(|p| p.module.as_str()),
+            Some("util/index")
+        );
+    }
+
+    #[test]
+    fn excluded_items_name_the_wasm_abi_glue() {
+        let config = config();
+        let in_model = config.excluded_items_in("core/src/model.rs");
+        assert_eq!(in_model.len(), 5, "four js_ helpers and RefWrapper");
+        let in_error = config.excluded_items_in("core/src/error.rs");
+        assert_eq!(in_error.len(), 2);
+        assert!(in_error.iter().all(|e| e.reason.contains("ABI")));
+        assert!(config.excluded_items_in("core/src/context.rs").len() == 1);
+    }
+
+    #[test]
+    fn default_module_names() {
+        assert_eq!(default_module_for("ankql/src/parser.rs"), "parser");
+        assert_eq!(default_module_for("core/src/util/mod.rs"), "util/index");
+        assert_eq!(default_module_for("core/src/lib.rs"), "index");
+        assert_eq!(
+            default_module_for("storage/indexeddb-wasm/src/util/cb_future.rs"),
+            "util/cb_future"
+        );
     }
 }

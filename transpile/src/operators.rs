@@ -249,7 +249,7 @@ impl BodyTranslator<'_> {
             })
             .unwrap_or_default();
         let member =
-            crate::emit::impl_method_name(op.trait_name, op.rust_method, &op.ts_method, &args);
+            crate::emit::impl_method_name(op.trait_name, op.rust_method, &op.ts_method, &args, "");
         drop(tc);
         Some(match op.trait_name {
             "PartialEq" => {

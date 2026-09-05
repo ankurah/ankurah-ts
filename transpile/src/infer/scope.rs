@@ -170,22 +170,28 @@ impl ScopeStack {
 
     /// Would a `let` of this name here be a redeclaration JavaScript refuses?
     ///
-    /// Two places conflict: the block the `let` lands in, and the parameter list
-    /// of the function or closure it is inside — `(x) => { let x = ... }` is a
-    /// syntax error even though the parameters are not written in the block.
-    /// Every block in between is a nested scope, where a fresh declaration is
-    /// exactly what shadowing means and is legal.
+    /// Every scope out to and including the enclosing function or closure
+    /// counts. A Rust scope is not always an emitted brace: a match arm pushes
+    /// one scope for the pattern's names and another for the arm's body block,
+    /// and emission writes ONE arrow-function body for both — so
+    /// `P::And(left, right) => { let left = left.norm(cols); .. }` put two
+    /// `const left` in one block and the file did not parse. The scope frames
+    /// alone cannot say which of them ends up as a brace, and this is the side
+    /// to be wrong on: a fresh name where JavaScript would have allowed the
+    /// shadow costs a rename that every later use follows, while a missed one
+    /// costs a file.
+    ///
+    /// The function or closure's parameters count for a second reason, whatever
+    /// the blocks in between: `(x) => { let x = ... }` is a syntax error even
+    /// though the parameters are not written in the block.
     pub fn redeclares(&self, name: &str) -> bool {
         let holds = |scope: &Scope| scope.bindings.contains_key(name) || scope.untyped.contains(name);
-        let mut frames = self.scopes.iter().rev();
-        if let Some(innermost) = frames.next() {
-            if holds(innermost) {
+        for scope in self.scopes.iter().rev() {
+            if holds(scope) {
                 return true;
             }
-        }
-        for scope in frames {
             if matches!(scope.kind, ScopeKind::Fn | ScopeKind::Closure) {
-                return holds(scope);
+                return false;
             }
         }
         false

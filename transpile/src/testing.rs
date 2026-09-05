@@ -35,8 +35,9 @@ impl Fixture {
             .iter()
             .map(|(path, src)| ExtractedFile {
                 path: path.to_string(),
-                file: extract::extract_source(path, src, None).expect("parses"),
+                file: extract::extract_source(path, src, extract::ExtractCfg::default()).expect("parses"),
                 declarations_only: false,
+                hand_written: false,
             })
             .collect();
         let reg = std_surface::with_cached(&surface_dir(), |surface| {

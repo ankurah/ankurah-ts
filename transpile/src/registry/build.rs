@@ -23,10 +23,19 @@ use crate::types::{FieldInfo, FnInfo, ImplInfo, RustFile, TraitInfo, VisInfo};
 pub struct ExtractedFile {
     pub path: String,
     pub file: RustFile,
-    /// Hardcoded files are read for their declarations only. Their TypeScript
-    /// is hand-written, so nothing may be emitted for them, but the types they
-    /// declare are part of the crate and other files resolve through them.
+    /// Read for its declarations only: nothing is emitted for it, but the types
+    /// it declares are part of what everything else resolves through. Two kinds
+    /// of file are read this way — a `[[provided]]` module, whose TypeScript
+    /// somebody wrote, and an in-family crate loaded because this one depends
+    /// on it.
     pub declarations_only: bool,
+    /// Of those two, the first: a module whose members are whatever the person
+    /// who wrote the file wrote, so a hook must not call a method it did not
+    /// emit. A sibling crate's file is NOT this — its TypeScript is emitted by
+    /// its own run — and marking one as such silently dropped every impl
+    /// written for one of its types (`impl From<EntityId> for ankql::ast::Expr`
+    /// vanished from proto with nothing said).
+    pub hand_written: bool,
 }
 
 /// What pass two learned, applied to the registry once pass two is done
@@ -93,6 +102,17 @@ pub fn build_registry(
     crate_names: &[String],
     sink: &DiagSink,
 ) -> TypeRegistry {
+    build_registry_with_siblings(files, surface, crate_names, &[], sink)
+}
+
+/// The same, told which of the files belong to other in-family crates.
+pub fn build_registry_with_siblings(
+    files: &mut [ExtractedFile],
+    surface: &mut Surface,
+    crate_names: &[String],
+    siblings: &[String],
+    sink: &DiagSink,
+) -> TypeRegistry {
     let primary = crate_names.first().cloned().unwrap_or_default();
     let mut reg = TypeRegistry::new(&primary);
     for name in crate_names.iter().skip(1) {
@@ -114,6 +134,18 @@ pub fn build_registry(
                 path
             ),
         });
+    }
+
+    // An in-family crate read for its declarations arrives under a directory
+    // named for the crate — `ankql/ast.rs` — so its module is `crate::ankql::
+    // ast`, and the crate's own name is recorded as a root a path can start at.
+    for entry in files.iter().filter(|e| e.declarations_only) {
+        if let Some((head, _)) = entry.path.split_once('/') {
+            if siblings.iter().any(|s| s == head) {
+                let root = reg.modules_mut().module_for_file(&format!("{}/lib.rs", head));
+                reg.add_sibling_crate(head, root);
+            }
+        }
     }
 
     for entry in files.iter() {
@@ -145,7 +177,55 @@ pub fn build_registry(
     // what the blanket index needs to know which methods each blanket offers.
     reg.index_blankets();
 
+    crate::emit::set_contested_conversions(contested_conversions(&reg));
+
     reg
+}
+
+/// Which conversion statics two impls of one type would both take.
+///
+/// `RetrievalError` has `From<bincode::Error>`, `From<crate::selection::filter::
+/// Error>` and `From<anyhow::Error>`; all three name `fromError` from the leaf
+/// alone, and emission wrote one and dropped two. The answer is a fact about a
+/// type's SIBLING impls, which neither the class being written nor the call site
+/// being named can see from the impl in its hand — so it is computed once here,
+/// over the whole impl table, and both halves read it.
+///
+/// Keyed by the self type's own leaf name, which is what both halves have.
+fn contested_conversions(
+    reg: &TypeRegistry,
+) -> std::collections::HashSet<(String, String)> {
+    let mut seen: std::collections::HashMap<(String, String), usize> = Default::default();
+    for i in 0..reg.impls().len() {
+        let def = reg.impl_def(crate::registry::ImplId(i as u32));
+        let Some(implemented) = def.trait_ref.as_ref() else {
+            continue;
+        };
+        let trait_name = reg
+            .name_of(implemented.id)
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        if !matches!(trait_name.as_str(), "From" | "TryFrom") {
+            continue;
+        }
+        let Some(source) = def.trait_args_written.first() else {
+            continue;
+        };
+        let Some(self_id) = def.self_ty.peel_refs().id() else {
+            continue;
+        };
+        let self_name = reg.name_of(self_id);
+        let self_leaf = self_name.rsplit("::").next().unwrap_or(&self_name).to_string();
+        let leaf = source.rsplit("::").next().unwrap_or(source);
+        let base = if trait_name == "From" { "from" } else { "tryFrom" };
+        *seen.entry((self_leaf, format!("{}{}", base, leaf))).or_default() += 1;
+    }
+    seen.into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(key, _)| key)
+        .collect()
 }
 
 /// Write what pass two learned into the registry.
@@ -778,7 +858,7 @@ fn resolve_impl(
         bounds,
         self_ty,
         trait_ref,
-        trait_args_written: imp.trait_type_args(),
+        trait_args_written: imp.trait_type_arg_paths(),
         assoc_types,
         methods,
     })

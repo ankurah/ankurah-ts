@@ -983,6 +983,14 @@ impl<'a> BodyTranslator<'a> {
     /// `Vec<u8>` and `[u8; N]` are a `Uint8Array` in the port, and a plain
     /// JavaScript array compares unequal to one — which is what
     /// `assert_eq!(bytes, [1, 2, 3])` was failing on.
+    /// Does this position want a `Uint8Array` rather than an array?
+    pub(crate) fn expects_bytes(&self, expected: &crate::ty::Ty) -> bool {
+        match &self.types {
+            Some(tc) => crate::infer::expected::expects_bytes(tc.borrow().registry, expected),
+            None => false,
+        }
+    }
+
     pub(crate) fn sequence_literal(
         &self,
         items: Vec<String>,
@@ -1570,6 +1578,15 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Struct(s) => {
+                // `Predicate::Comparison { left, operator, right }` builds an
+                // enum VARIANT, not a struct, and the port builds one the way
+                // every other construction of that enum does. Writing it as a
+                // constructor produced `new Predicate.Comparison(a, b, c)`,
+                // where `Predicate.Comparison` is not a constructor and the
+                // field names were thrown away with the braces.
+                if let Some(built) = self.struct_variant_literal(s) {
+                    return built;
+                }
                 let mut name = Self::path_static(&s.path);
                 if name == "Self" { name = self.self_type.to_string(); }
                 // A field's declared type is what its initialiser has to be, so
@@ -1750,10 +1767,20 @@ impl<'a> BodyTranslator<'a> {
             let params: Vec<&str> =
                 shadow_params.iter().map(|(n, _, _)| n.as_str()).collect();
             let args: Vec<&str> = shadow_params.iter().map(|(_, v, _)| v.as_str()).collect();
-            format!("(({}) => {{\n{}}})({})", params.join(", "), indent(&body), args.join(", "))
+            iife(
+                &format!("({})", params.join(", ")),
+                &body,
+                &args.join(", "),
+                crate::control_flow::awaiting::block_awaits(&block.block),
+            )
         } else {
             let body = self.translate_block(&block.block);
-            format!("(() => {{\n{}}})()", indent(&body))
+            iife(
+                "()",
+                &body,
+                "",
+                crate::control_flow::awaiting::block_awaits(&block.block),
+            )
         }
     }
 
@@ -1798,7 +1825,12 @@ impl<'a> BodyTranslator<'a> {
                  `continue` cannot leave, so the jump is written where it does not run",
             );
         }
-        format!("(() => {{\n{}}})()", indent(&format!("{}\n", body)))
+        iife(
+            "()",
+            &format!("{}\n", body),
+            "",
+            crate::control_flow::awaiting::awaits(expr),
+        )
     }
 
     /// A name for a value the emitted code has to hold on to.
@@ -2168,13 +2200,30 @@ impl<'a> BodyTranslator<'a> {
                         self.fallback(
                             syn::spanned::Spanned::span(or),
                             "the alternatives of this pattern bind their names from \
-                             different places, which the translator cannot write as one test",
+                             different places, which the translator cannot write as one test, \
+                             so the arm is written as one that never matches",
                         );
-                        ("true".to_string(), String::new())
+                        // NOT `true`: an arm whose test cannot be written and
+                        // which is taken anyway runs a body naming the very
+                        // bindings the alternatives disagreed about. ankql's
+                        // `(Expr::Path(path), _) | (_, Expr::Path(path))` came
+                        // out as an unconditional `return columns.includes(
+                        // path.property())` with `path` bound nowhere, so the
+                        // suite died on a ReferenceError instead of on the
+                        // engine's own report.
+                        ("false".to_string(), String::new())
                     }
                 }
             }
-            // A plain name binds whatever it was given, and always matches.
+            // A plain name binds whatever it was given, and always matches —
+            // except `None`, which syn hands over as an identifier because it
+            // is written without a path, and which Rust resolves to `Option`'s
+            // empty case rather than to a binding (binding it is an error, not
+            // a shadow). Reading it as a name made every `None` arm a
+            // catch-all that ran for a value that was there.
+            syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => {
+                (format!("{} == null", subject), String::new())
+            }
             syn::Pat::Ident(_) => {
                 let var = Self::pat_static(pat);
                 ("true".to_string(), format!("const {} = {};\n", var, subject))
@@ -2385,6 +2434,14 @@ impl<'a> BodyTranslator<'a> {
                 format!("path qualifiers {} are dropped by name", dropped.join(", ")),
             );
         }
+        // A path through another in-family crate — `ankql::ast::Expr::Literal`
+        // — names a type this file imports by its leaf, because the port
+        // flattens a crate's module tree into a package's exports. Keeping the
+        // qualifiers wrote `ankql.ast.Expr`, and nothing called `ankql` exists
+        // in the emitted module.
+        if let Some(trimmed) = self.through_sibling_crate(path) {
+            return trimmed;
+        }
         // `ParseError::Empty` is a value, and building it is what every other
         // construction of that enum does. Written as a member of the class it
         // named a static nothing declares.
@@ -2421,6 +2478,64 @@ impl<'a> BodyTranslator<'a> {
             return written;
         }
         Self::path_static(path)
+    }
+
+    /// `Enum::Variant { field: .. }` built the way the port builds a variant.
+    fn struct_variant_literal(&self, s: &syn::ExprStruct) -> Option<String> {
+        let segments: Vec<String> =
+            s.path.segments.iter().map(|seg| seg.ident.to_string()).collect();
+        if segments.len() < 2 {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let (owner, variant) = tc.borrow().variant_of_emitted_enum(&segments)?;
+        let want = self.struct_field_types(s);
+        let fields: Vec<String> = s
+            .fields
+            .iter()
+            .map(|f| {
+                let member = crate::infer::member_name(&f.member);
+                let ty = want.iter().find(|(name, _)| *name == member).map(|(_, t)| t);
+                let value = self.expecting(&f.expr, ty, || self.moved_value(&f.expr));
+                format!("{}: {}", name_map::to_camel_case(&member), value)
+            })
+            .collect();
+        Some(format!("new {}('{}', {{ {} }})", owner, variant, fields.join(", ")))
+    }
+
+    /// A path whose first segment names another in-family crate, written the
+    /// way this file reaches it: from the type onwards, since that is what the
+    /// import brings in.
+    fn through_sibling_crate(&self, path: &syn::Path) -> Option<String> {
+        if path.segments.len() < 2 {
+            return None;
+        }
+        let head = path.segments.first()?.ident.to_string();
+        let tc = self.types.as_ref()?;
+        if tc.borrow().registry.sibling_crate(&head).is_none() {
+            return None;
+        }
+        let rest: Vec<&syn::PathSegment> = path
+            .segments
+            .iter()
+            .skip_while(|seg| !seg.ident.to_string().chars().next().is_some_and(|c| c.is_uppercase()))
+            .collect();
+        if rest.is_empty() {
+            // Every segment is a module name: the path names a free function
+            // of that crate, which the import map brings in by its own name.
+            return path.segments.last().map(|s| crate::name_map::to_camel_case(&s.ident.to_string()));
+        }
+        let mut trimmed = syn::Path {
+            leading_colon: None,
+            segments: syn::punctuated::Punctuated::new(),
+        };
+        for seg in rest {
+            trimmed.segments.push(seg.clone());
+        }
+        Some(
+            self.unit_variant(&trimmed)
+                .unwrap_or_else(|| Self::path_static(&trimmed)),
+        )
     }
 
     /// A unit enum variant written as a path, built the way one is built.
@@ -2722,15 +2837,60 @@ fn is_mut_binding(pat: &syn::Pat) -> bool {
     }
 }
 
+/// A block written as an immediately-called arrow function.
+///
+/// JavaScript's `await` belongs to the nearest function, so a block that awaits
+/// becomes an `async` arrow and the call is awaited where it stands — otherwise
+/// the value is a promise nobody unwrapped, and TypeScript refuses the `await`
+/// inside outright.
+fn iife(params: &str, body: &str, args: &str, awaits: bool) -> String {
+    if awaits {
+        format!("await (async {} => {{\n{}}})({})", params, indent(body), args)
+    } else {
+        format!("({} => {{\n{}}})({})", params, indent(body), args)
+    }
+}
+
+/// One text value as a single-quoted TypeScript literal.
+///
+/// Rust's `'\''` and `"a\\b"` and `'\0'` are ordinary values by the time syn
+/// hands them over — a quote, a backslash, a NUL — and writing them back out
+/// between quotes without escaping them again produced `'''`, `'a\b'` and a raw
+/// NUL in the middle of a source file. ankql's SQL renderer, which escapes SQL
+/// quotes by writing `'\''`, is where that showed: 106 parse errors from one
+/// unescaped character.
+pub fn quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            // A lone surrogate or a control character has no printable form;
+            // `\u{..}` is what both TypeScript and Rust write.
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// A literal as the port writes it, or `None` where the port has no spelling
 /// for that literal form and the site has to say so.
 fn translate_lit(lit: &syn::Lit) -> Option<String> {
     Some(match lit {
-        syn::Lit::Str(s) => format!("'{}'", s.value().replace('\'', "\\'")),
+        syn::Lit::Str(s) => quoted(&s.value()),
         syn::Lit::Int(i) => i.base10_digits().to_string(),
         syn::Lit::Float(f) => f.base10_digits().to_string(),
         syn::Lit::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
-        syn::Lit::Char(c) => format!("'{}'", c.value()),
+        syn::Lit::Char(c) => quoted(&c.value().to_string()),
         syn::Lit::Byte(b) => format!("{}", b.value()),
         // `b"abc"` is a `&[u8; 3]`, and the port writes a byte sequence as a
         // `Uint8Array`. It used to come out as a comment, which is not an
@@ -2826,5 +2986,33 @@ fn translate_binop(op: &syn::BinOp) -> &'static str {
         syn::BinOp::ShlAssign(_) => "<<=",
         syn::BinOp::ShrAssign(_) => ">>=",
         _ => "/* unknown op */",
+    }
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use super::quoted;
+
+    #[test]
+    fn a_quote_and_a_backslash_are_escaped_again() {
+        // ankql's SQL renderer writes `buffer.push('\'')` to open a quoted
+        // string and `push_str("''")` to escape one inside it.
+        assert_eq!(quoted("'"), r"'\''");
+        assert_eq!(quoted("''"), r"'\'\''");
+        assert_eq!(quoted(r"a\b"), r"'a\\b'");
+    }
+
+    #[test]
+    fn control_characters_keep_their_escape() {
+        assert_eq!(quoted("\0"), r"'\0'");
+        assert_eq!(quoted("\n"), r"'\n'");
+        assert_eq!(quoted("\t"), r"'\t'");
+        assert_eq!(quoted("\u{1}"), r"'\u{1}'");
+    }
+
+    #[test]
+    fn ordinary_text_is_left_alone() {
+        assert_eq!(quoted("hello"), "'hello'");
+        assert_eq!(quoted("héllo →"), "'héllo →'");
     }
 }

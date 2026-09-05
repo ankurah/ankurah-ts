@@ -10,6 +10,7 @@ pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
 pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
 pub(crate) mod iterator; // Iterator trait methods on arrays
+mod js_value; // serde_json::Value / JsValue → unknown
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
@@ -91,6 +92,8 @@ pub fn translate_method(
         JsShape::Set(_) => set::translate(receiver, rust_method, args),
         JsShape::Rc(name) => arc::translate(&name, receiver, rust_method, args),
         JsShape::Str => string::translate(receiver, rust_method, args),
+        // `serde_json::Value` and `JsValue`: the value JavaScript already holds.
+        JsShape::Unknown => js_value::translate(receiver, rust_method, args),
         JsShape::Number => number::translate(receiver, rust_method, args),
         // `Box<T>` and `&T` are the value they hold.
         JsShape::SameAs(inner) => translate_method(reg, &inner, receiver, rust_method, args),

@@ -222,7 +222,13 @@ fn file_module_path(rel_path: &str) -> Vec<String> {
         Some("mod") => {
             segments.pop();
         }
-        Some("lib") | Some("main") if segments.len() == 1 => segments.clear(),
+        // A `lib.rs` is a crate root: at the top it is `crate`, and one level
+        // down it is an in-family crate read for its declarations, which arrive
+        // under a directory named for the crate. Deeper than that it is an
+        // ordinary file that happens to be called `lib.rs`.
+        Some("lib") | Some("main") if segments.len() <= 2 => {
+            segments.pop();
+        }
         _ => {}
     }
     segments
@@ -235,9 +241,14 @@ mod tests {
     #[test]
     fn file_paths_become_module_paths() {
         assert!(file_module_path("lib.rs").is_empty());
+        // A sibling crate read for its declarations: its root is the crate's
+        // own name, not a module called `lib` under it.
+        assert_eq!(file_module_path("ankql/lib.rs"), vec!["ankql"]);
+        assert_eq!(file_module_path("ankql/ast.rs"), vec!["ankql", "ast"]);
         assert_eq!(file_module_path("signal.rs"), vec!["signal"]);
         assert_eq!(file_module_path("signal/memo.rs"), vec!["signal", "memo"]);
         assert_eq!(file_module_path("selection/mod.rs"), vec!["selection"]);
+        // Deeper than a crate root, `lib.rs` is an ordinary file name.
         assert_eq!(file_module_path("a/b/lib.rs"), vec!["a", "b", "lib"]);
     }
 

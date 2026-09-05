@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/auth.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { Attested } from './auth.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 export { Attested };
@@ -31,6 +31,18 @@ export class AuthData extends Struct {
   static decode(reader: BincodeReader): AuthData {
     const _0 = reader.readByteVec();
     return new AuthData(_0);
+  }
+
+  toJSON(): unknown {
+    return Array.from(this._0);
+  }
+
+  static fromJson(value: unknown): Result<AuthData, JsonError> {
+    try {
+      return Result.Ok(new AuthData(((v: unknown) => new Uint8Array(v as number[]))(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -66,6 +78,18 @@ export class Attestation extends Struct {
   static decode(reader: BincodeReader): Attestation {
     const _0 = reader.readByteVec();
     return new Attestation(_0);
+  }
+
+  toJSON(): unknown {
+    return Array.from(this._0);
+  }
+
+  static fromJson(value: unknown): Result<Attestation, JsonError> {
+    try {
+      return Result.Ok(new Attestation(((v: unknown) => new Uint8Array(v as number[]))(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -118,6 +142,19 @@ export class AttestationSet extends Struct {
     const _0 = reader.readVec((r) => Attestation.decode(r));
     return new AttestationSet(_0);
   }
+
+  toJSON(): unknown {
+    return this._0;
+  }
+
+  static fromJson(value: unknown): Result<AttestationSet, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      return Result.Ok(new AttestationSet(((v: unknown) => (v as unknown[]).map((v) => _take(Attestation.fromJson(v))))(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class Principal extends Struct {
@@ -135,6 +172,18 @@ export class Principal extends Struct {
 
   static decode(reader: BincodeReader): Principal {
     return new Principal();
+  }
+
+  toJSON(): unknown {
+    return null;
+  }
+
+  static fromJson(value: unknown): Result<Principal, JsonError> {
+    try {
+      return Result.Ok(new Principal());
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 

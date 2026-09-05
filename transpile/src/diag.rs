@@ -208,6 +208,13 @@ pub mod pending {
         PARKED.with(|p| p.borrow_mut().push((line, col, message)));
     }
 
+    /// Throw away everything parked so far. A sibling crate's declarations are
+    /// read for their types alone, and what its files could not say belongs to
+    /// that crate's own run, not to this one's count.
+    pub fn discard() {
+        PARKED.with(|p| p.borrow_mut().clear());
+    }
+
     /// Move everything parked so far into `sink`, which knows the file.
     pub fn drain(sink: &DiagSink) {
         let file = sink.file();

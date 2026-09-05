@@ -88,7 +88,41 @@ impl TypeRegistry {
             followed: HashSet::new(),
             asked: HashSet::new(),
         };
-        self.resolve_path(from, ns, segments, &mut walk)
+        let found = self.resolve_path(from, ns, segments, &mut walk)?;
+        if found.is_some() {
+            return Ok(found);
+        }
+        // A bare name this crate does not declare may be one an in-family crate
+        // exports: `use ankql::ast::Expr;` then `Expr::Literal(..)`. The import
+        // map already sends such a name to that crate's package, and the two
+        // halves have to agree or the emitted call names a class the file
+        // imports and the engine calls foreign.
+        self.sibling_export(ns, segments)
+    }
+
+    /// A name exported by an in-family crate, where nothing here declares one.
+    fn sibling_export(&self, ns: Ns, segments: &[String]) -> Found {
+        let [name] = segments else { return Ok(None) };
+        let mut found = None;
+        for root in self.sibling_crate_roots() {
+            let mut walk = Walk {
+                from: root,
+                followed: HashSet::new(),
+                asked: HashSet::new(),
+            };
+            // The crate's root re-exports are its surface, and its own modules
+            // are searched under them the way `pub use` makes them reachable.
+            if let Ok(Some(def)) = self.resolve_path(root, ns, segments, &mut walk) {
+                if found.is_none() {
+                    found = Some(def);
+                }
+            } else if let Some(def) = self.sibling_module_scan(root, ns, name) {
+                if found.is_none() {
+                    found = Some(def);
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// Resolve a written type path.
@@ -128,7 +162,12 @@ impl TypeRegistry {
         }
 
         if head == "crate" || self.names_this_crate(head) {
-            return self.resolve_path(self.crate_root(), ns, rest, walk);
+            return self.resolve_path(self.crate_root_of(module), ns, rest, walk);
+        }
+        // An in-family crate loaded for its declarations. Rust puts an extern
+        // crate's name in the root namespace, reachable from anywhere.
+        if let Some(root) = self.sibling_crate(head) {
+            return self.resolve_path(root, ns, rest, walk);
         }
         if head == "self" {
             return self.resolve_path(module, ns, rest, walk);
@@ -304,7 +343,10 @@ impl TypeRegistry {
             return Some(module);
         };
         if head == "crate" || self.names_this_crate(head) {
-            return self.resolve_module_path(self.crate_root(), rest, walk);
+            return self.resolve_module_path(self.crate_root_of(module), rest, walk);
+        }
+        if let Some(root) = self.sibling_crate(head) {
+            return self.resolve_module_path(root, rest, walk);
         }
         if head == "self" {
             return self.resolve_module_path(module, rest, walk);

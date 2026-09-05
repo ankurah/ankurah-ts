@@ -45,6 +45,12 @@ pub enum Form {
     Number,
     Boolean,
     Never,
+    /// The value is whatever JavaScript already holds. `serde_json::Value` is a
+    /// parsed JSON document — object, array, string, number, boolean or null —
+    /// and JavaScript has one of those without a wrapper; `wasm_bindgen::
+    /// JsValue` is "some JavaScript value", which is the same statement. Both
+    /// are `unknown`, and what a `match` on one asks is written as a type guard.
+    Unknown,
 }
 
 /// Where the port keeps the value inside a wrapper. A type with no entry is not
@@ -71,7 +77,7 @@ const ACCESSORS: [(&str, Accessor); 13] = [
 ];
 
 /// What each declared type is written as.
-const FORMS: [(&str, Form); 18] = [
+const FORMS: [(&str, Form); 20] = [
     ("std::vec::Vec", Form::VecOrBytes),
     ("std::option::Option", Form::Nullable),
     ("std::result::Result", Form::Result),
@@ -94,6 +100,8 @@ const FORMS: [(&str, Form); 18] = [
     ("std::sync::atomic::AtomicU64", Form::Number),
     ("std::sync::atomic::AtomicBool", Form::Boolean),
     ("std::convert::Infallible", Form::Never),
+    ("serde_json::Value", Form::Unknown),
+    ("wasm_bindgen::JsValue", Form::Unknown),
 ];
 
 /// What dropping a value of a declared std type has to release.

@@ -133,6 +133,7 @@ fn named_shape(reg: &TypeRegistry, id: crate::ty::TypeId, args: &[Ty]) -> JsShap
         Form::Number => JsShape::Number,
         Form::Boolean => JsShape::Boolean,
         Form::Never => JsShape::Never,
+        Form::Unknown => JsShape::Unknown,
     }
 }
 

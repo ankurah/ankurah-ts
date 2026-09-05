@@ -25,12 +25,15 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Where the base package sits under a checkout when nothing overrides it.
-const BASE_UNDER_ROOT: &str = ".claude/worktrees/async-layer/packages/base";
+/// Where the base package sits under a checkout when nothing overrides it. The
+/// runtime lives in the checkout the transpiler is being built in, so a golden
+/// run exercises the base that ships beside this engine; before the async-layer
+/// branch merged, this pointed into that worktree instead.
+const BASE_UNDER_ROOT: &str = "packages/base";
 
 /// Where the TypeScript compiler sits under a checkout when nothing overrides
 /// it. Its `node_modules` also carries the `@types/bun` the drivers need.
-const TSC_UNDER_ROOT: &str = ".claude/worktrees/async-layer/node_modules/.bin/tsc";
+const TSC_UNDER_ROOT: &str = "node_modules/.bin/tsc";
 
 /// Text that means the runtime found an ownership problem, whatever bun made of
 /// the exit code. `BUG:` opens every fatal, the leak registry's included;
@@ -90,7 +93,24 @@ const TEXT_ONLY: [(&str, &str); 5] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-const TYPECHECK_DEBT: [(&str, &[&str], &str); 2] = [
+const TYPECHECK_DEBT: [(&str, &[&str], &str); 5] = [
+    (
+        "enum_payload",
+        &["enum_payload/input.ts:TS2724"],
+        "the JSON half of `#[derive(Serialize, Deserialize)]` answers `Result<T, JsonError>`, \
+         and `@ankurah/base` at this checkout does not export `JsonError` yet. The base agent's \
+         report of 2026-09-04 lands it; this line goes with that branch, together with `tracing`'s",
+    ),
+    (
+        "option_result_fields",
+        &["option_result_fields/input.ts:TS2724"],
+        "the same missing `JsonError`",
+    ),
+    (
+        "struct_bincode",
+        &["struct_bincode/input.ts:TS2724"],
+        "the same missing `JsonError`",
+    ),
     (
         "tracing",
         &["tracing/input.ts:TS2305"],
@@ -420,7 +440,7 @@ fn write(path: &Path, contents: &str, name: &str) {
 }
 
 /// The runtime the emitted goldens import. `ANKURAH_BASE_PATH` overrides;
-/// otherwise look for the async-layer worktree beside one of our own ancestors,
+/// otherwise look for `packages/base` in one of our own ancestors,
 /// which finds it from the main checkout and from a git worktree alike. A
 /// missing package is a failure and never a skip: a golden run that quietly did
 /// not happen is the thing this test exists to prevent.

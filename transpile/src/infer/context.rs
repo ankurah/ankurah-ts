@@ -1495,6 +1495,22 @@ impl<'a> TypeContext<'a> {
         Some((self.registry.name_of(id), variant))
     }
 
+    /// The enum and variant a path names, where the path names a variant of an
+    /// enum this crate emits a class for — whether or not it carries fields.
+    ///
+    /// `unit_variant_of_emitted_enum` answers only for a variant with no
+    /// payload, because a path in expression position is a VALUE only then. A
+    /// struct-variant LITERAL — `Predicate::Comparison { left, .. }` — names a
+    /// variant that does carry fields and is built the same way.
+    pub fn variant_of_emitted_enum(&self, segments: &[String]) -> Option<(String, String)> {
+        let (id, variant) = self.registry.lookup_variant(self.module, segments)?;
+        let ty = Ty::Named { id, args: Vec::new() };
+        if !crate::emit_impls::has_emitted_class(self.registry, &ty) {
+            return None;
+        }
+        Some((self.registry.name_of(id), variant))
+    }
+
     /// Is this the `Result` the transpiler emits a real `unwrap` for?
     ///
     /// A `LockResult` is not, even though it is a `Result`: the port's

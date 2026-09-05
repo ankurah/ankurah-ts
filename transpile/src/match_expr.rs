@@ -4,6 +4,7 @@
 //! and enum match (variants → .match({}) pattern).
 
 mod catch_all;
+mod option_chain;
 
 use crate::name_map;
 use crate::body::{translate_pat, indent, BodyTranslator};
@@ -15,8 +16,8 @@ pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator
     if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Returning) {
         return written;
     }
-    if is_option_match(&match_expr.arms) {
-        return translate_option_match_returning(&scrutinee, match_expr, t);
+    if is_option_match_typed(match_expr, t) {
+        return option_chain::translate(&scrutinee, match_expr, t, Position::Returning);
     }
     if is_result_match(&match_expr.arms) {
         return translate_result_match(&scrutinee, match_expr, t, Position::Returning);
@@ -62,73 +63,6 @@ fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String 
     }
 }
 
-/// Option match with return in each branch
-fn translate_option_match_returning(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let arms = &match_expr.arms;
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
-    let takes = t.match_takes(match_expr);
-    let mut some_arm = None;
-    let mut none_arm = None;
-
-    for arm in arms {
-        let arm_type = match &arm.pat {
-            syn::Pat::TupleStruct(ts) => ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
-            syn::Pat::Ident(ident) => ident.ident.to_string(),
-            syn::Pat::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
-            syn::Pat::Wild(_) => "_".to_string(),
-            _ => String::new(),
-        };
-
-        match arm_type.as_str() {
-            "Some" => {
-                let var_name = if let syn::Pat::TupleStruct(ts) = &arm.pat {
-                    ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string())
-                } else { "v".to_string() };
-                let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
-                let owned = option_payload_owned(&var_name, arm, takes, t);
-                // An arm whose body is an `if`, a `match` or a block of its own
-                // is written as statements with the `return` on its tail. The
-                // `return <body>` this used to write put a `return` in front of
-                // a run of statements, which does not parse — and one of those
-                // stopped the compiler reading the rest of the file.
-                some_arm = Some((var_name, arm_body(&arm.body, t, Position::Returning), owned));
-            }
-            "None" | "_" => { none_arm = Some(arm_body(&arm.body, t, Position::Returning)); }
-            _ => {}
-        }
-    }
-
-    match (some_arm, none_arm) {
-        (Some((var, some_body, owned)), Some(none_body)) => {
-            let taken = t.wrap_bindings(&owned, format!("{}\n", some_body));
-            format!(
-                "if ({} != null) {{\n  const {} = {};\n{}}} else {{\n{}}}",
-                scrutinee,
-                var,
-                scrutinee,
-                indent(&taken),
-                indent(&format!("{}\n", none_body))
-            )
-        }
-        (Some((var, some_body, owned)), None) => {
-            let taken = t.wrap_bindings(&owned, format!("{}\n", some_body));
-            format!("if ({} != null) {{\n  const {} = {};\n{}}}",
-                scrutinee, var, scrutinee, indent(&taken))
-        }
-        (None, Some(none_body)) => {
-            format!("if ({} == null) {{\n{}}}", scrutinee, indent(&format!("{}\n", none_body)))
-        }
-        _ => {
-            t.report_match_gap(
-                match_expr,
-                "this `Option` match names neither `Some` nor `None`, so nothing was written \
-                 for it",
-            );
-            format!("undefined /* match {} */;", scrutinee)
-        }
-    }
-}
-
 /// Translate a match expression
 pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
     let scrutinee = scrutinee_of(match_expr, t);
@@ -136,8 +70,8 @@ pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> Strin
     if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Statement) {
         return written;
     }
-    if is_option_match(&match_expr.arms) {
-        return translate_option_match(&scrutinee, match_expr, t);
+    if is_option_match_typed(match_expr, t) {
+        return option_chain::translate(&scrutinee, match_expr, t, Position::Statement);
     }
     if is_result_match(&match_expr.arms) {
         return translate_result_match(&scrutinee, match_expr, t, Position::Statement);
@@ -447,6 +381,25 @@ fn subject_of(scrutinee: &str, t: &BodyTranslator) -> (String, String) {
     (subject, declaration)
 }
 
+/// Is this a match on an `Option`?
+///
+/// The subject's type answers it where the engine has one: `ConnectionState`
+/// has a variant literally called `None`, and reading the arm names alone sent
+/// its match down the `T | null` path, which wrote `if (this._0 == null)` for a
+/// variant test and put an `if` where the `return` wanted a value.
+fn is_option_match_typed(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> bool {
+    // `resolve_expr_type`, not `scrutinee_type`: the latter reports a subject it
+    // cannot type, and the paths below ask the same question again, so asking it
+    // here too counted one gap twice.
+    if let (Ok(ty), Some(reg)) = (t.resolve_expr_type(&match_expr.expr), t.registry()) {
+        if let Some(id) = ty.peel_refs().id() {
+            return reg.name_of(id) == "Option";
+        }
+    }
+    // No type for the subject: the arm names are all there is to go on.
+    is_option_match(&match_expr.arms)
+}
+
 fn is_option_match(arms: &[syn::Arm]) -> bool {
     arms.iter().any(|arm| {
         match &arm.pat {
@@ -461,80 +414,6 @@ fn is_option_match(arms: &[syn::Arm]) -> bool {
             _ => false,
         }
     })
-}
-
-fn translate_option_match(scrutinee: &str, match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let arms = &match_expr.arms;
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
-    let takes = t.match_takes(match_expr);
-    let mut some_arm = None;
-    let mut none_arm = None;
-
-    for arm in arms {
-        let arm_type = match &arm.pat {
-            syn::Pat::TupleStruct(ts) => ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
-            syn::Pat::Ident(ident) => ident.ident.to_string(),
-            syn::Pat::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
-            syn::Pat::Wild(_) => "_".to_string(),
-            _ => String::new(),
-        };
-
-        match arm_type.as_str() {
-            "Some" => {
-                let var_name = if let syn::Pat::TupleStruct(ts) = &arm.pat {
-                    ts.elems.first().map(translate_pat).unwrap_or_else(|| "v".to_string())
-                } else {
-                    "v".to_string()
-                };
-                let _arm = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
-                let owned = option_payload_owned(&var_name, arm, takes, t);
-                let body = t.wrap_bindings(&owned, t.expr(&arm.body));
-                some_arm = Some((var_name, body));
-            }
-            "None" | "_" => {
-                none_arm = Some(t.expr(&arm.body));
-            }
-            _ => {}
-        }
-    }
-
-    match (some_arm, none_arm) {
-        (Some((var, some_body)), Some(none_body)) => {
-            format!("if ({} != null) {{\n  const {} = {};\n{}\n}} else {{\n{}\n}}",
-                scrutinee, var, scrutinee, indent(&some_body), indent(&none_body))
-        }
-        (Some((var, some_body)), None) => {
-            format!("if ({} != null) {{\n  const {} = {};\n{}\n}}",
-                scrutinee, var, scrutinee, indent(&some_body))
-        }
-        (None, Some(none_body)) => {
-            format!("if ({} == null) {{\n{}\n}}", scrutinee, indent(&none_body))
-        }
-        _ => format!("/* match {} */", scrutinee),
-    }
-}
-
-/// What the `Some` arm of an `Option` match owns.
-///
-/// `Option<T>` is `T | null` in the port, so the payload is the scrutinee
-/// itself and the binding is another name for it. Where the match consumes —
-/// `match value { Some(p) => .. }` on a value the block owns — the arm owns `p`
-/// for its own length and has to release it however the arm is left, exactly as
-/// an enum arm does. Without this the payload was never dropped and nothing
-/// said so.
-fn option_payload_owned(
-    var: &str,
-    arm: &syn::Arm,
-    takes: crate::ownership::scrutinee::Takes,
-    t: &BodyTranslator,
-) -> Vec<crate::ownership::Owned> {
-    if takes != crate::ownership::scrutinee::Takes::Payload || var == "_" {
-        return Vec::new();
-    }
-    t.claim_bindings(
-        std::slice::from_ref(&var.to_string()),
-        std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
-    )
 }
 
 fn is_result_match(arms: &[syn::Arm]) -> bool {
@@ -749,6 +628,9 @@ fn enum_match_over(
     // JavaScript keeps the last of those, so the arm the source wrote first
     // never ran.
     let mut written: Vec<String> = Vec::new();
+    // An arm that awaits makes the whole match a promise, and the value the
+    // match stands for is what the caller wanted, so the call is awaited.
+    let mut any_async = false;
     for arm in written_arms.iter().copied() {
         // An `|` pattern writes one body for several variants; each gets its own
         // arm with the same body, bound through its own payload.
@@ -781,6 +663,7 @@ fn enum_match_over(
                 continue;
             }
             written.push(variant.clone());
+            let fields = name_refutable_fields(case, fields, t, match_expr);
             let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
             // Where the enum handed its payload over, the arm owns what the
             // pattern named and releases it however the arm is left.
@@ -825,14 +708,59 @@ fn enum_match_over(
             // its drop flag here — the same line the enclosing block would have
             // written had the arm been a statement of it.
             let flags = t.flag_sets_for(&arm.body);
+            let is_async = crate::control_flow::awaiting::awaits(&arm.body);
+            any_async |= is_async;
             out.push_str(&render_arm(
-                &variant, &fields, &body, &flags, &owned, &lifted, t, produces,
+                &variant, &fields, &body, &flags, &owned, &lifted, t, produces, is_async,
             ));
         }
     }
 
     out.push_str("})");
-    out
+    if any_async { format!("await ({})", out) } else { out }
+}
+
+/// Give a payload slot that ASKS something a name of its own.
+///
+/// `SqliteError::Rusqlite(rusqlite::Error::QueryReturnedNoRows)` names a variant
+/// and then tests inside it. The runtime's `.match({..})` dispatches on the
+/// outer variant alone and has nowhere to fall through to, so the inner test
+/// cannot be made here — and writing the pattern where the binding's name
+/// belongs produced `const rusqlite.Error.QueryReturnedNoRows = v._0;`, which
+/// is not a declaration: 123 parse errors in storage-sqlite's engine.ts alone.
+/// The slot gets a fresh name and the arm says what it no longer tests.
+fn name_refutable_fields(
+    pat: &syn::Pat,
+    fields: Vec<(String, String)>,
+    t: &BodyTranslator,
+    match_expr: &syn::ExprMatch,
+) -> Vec<(String, String)> {
+    let subpats: Vec<&syn::Pat> = match pat {
+        syn::Pat::TupleStruct(ts) => ts.elems.iter().collect(),
+        syn::Pat::Struct(st) => st.fields.iter().map(|f| &*f.pat).collect(),
+        _ => return fields,
+    };
+    fields
+        .into_iter()
+        .enumerate()
+        .map(|(i, (local, accessor))| {
+            match subpats.get(i) {
+                Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
+                    t.report_match_gap(
+                        match_expr,
+                        format!(
+                            "this arm tests inside the payload of `{}`, and the runtime's match dispatches \
+                             on the variant alone with no later arm to fall through to, so the \
+                             inner test is not made and the arm runs for every `{}`",
+                            accessor, accessor
+                        ),
+                    );
+                    (t.fresh_temp(), accessor)
+                }
+                _ => (local, accessor),
+            }
+        })
+        .collect()
 }
 
 /// The variant a pattern names and the payload slots it takes out of it, as
@@ -875,6 +803,7 @@ fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)>)> {
 /// handed. They used to be substituted into the rendered TypeScript by walking
 /// its characters, which could not tell a binding from the same word inside a
 /// string literal or a comment, and knew nothing of a name shadowed further in.
+#[allow(clippy::too_many_arguments)]
 fn render_arm(
     variant: &str,
     fields: &[(String, String)],
@@ -884,13 +813,18 @@ fn render_arm(
     lifted: &[crate::ownership::Hoist],
     t: &BodyTranslator,
     produces: bool,
+    is_async: bool,
 ) -> String {
     // The arm's parameter must not collide with a name the pattern binds.
     let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
+    // An arm is an arrow function, and JavaScript's `await` belongs to the
+    // nearest one — so an arm that awaits is `async`, and the whole `.match`
+    // is awaited where it stands.
+    let keyword = if is_async { "async " } else { "" };
     let head = if fields.is_empty() {
-        format!("  {}: () => ", variant)
+        format!("  {}: {}() => ", variant, keyword)
     } else {
-        format!("  {}: ({}) => ", variant, param)
+        format!("  {}: {}({}) => ", variant, keyword, param)
     };
     let mut bindings = String::from(flags);
     for (local, accessor) in fields {

@@ -40,9 +40,11 @@ line = 25
 file = "proto/src/id.rs"
 line = 121
 
-[[closure]]
-file = "signals/src/reactive_graph.rs"
-line = 83
+# Removed 2026-09-04, engine step 8: signals/src/reactive_graph.rs left the port.
+# `reactive-graph` is a signals default feature that Cargo resolves ON, and the
+# file forwards CurrentObserver::track into Leptos's dependency tracker — an
+# out-of-family framework the port does not have. transpile.toml records the
+# feature override; with the file gone there is no closure at that line to type.
 
 [[closure]]
 file = "signals/src/broadcast.rs"

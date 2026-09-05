@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/peering.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
 import { EntityState } from './data';
@@ -54,6 +54,27 @@ export class Presence extends Struct {
     const durable = reader.readBool();
     const systemRoot = reader.readOption((r) => Attested.decode(r, (r2: BincodeReader) => EntityState.decode(r2)));
     return new Presence(nodeId, durable, systemRoot);
+  }
+
+  toJSON(): unknown {
+    return {
+      'node_id': this.nodeId,
+      'durable': this.durable,
+      'system_root': this.systemRoot,
+    };
+  }
+
+  static fromJson(value: unknown): Result<Presence, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const nodeId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['node_id']);
+      const durable = ((v: unknown) => v as boolean)(o['durable']);
+      const systemRoot = ((v: unknown) => (v == null ? null : ((v) => _take(Attested.fromJson(v)))(v)))(o['system_root']);
+      return Result.Ok(new Presence(nodeId, durable, systemRoot));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 

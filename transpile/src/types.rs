@@ -36,8 +36,19 @@ pub struct RustFile {
     pub consts: Vec<ConstInfo>,
     /// Test functions from #[cfg(test)] mod tests { ... }
     pub test_functions: Vec<FnInfo>,
+    /// The ordinary functions a `#[cfg(test)] mod tests` declares beside its
+    /// tests. `ankql/src/ast.rs`'s `nullify_columns` is one, and every one of
+    /// that file's nine tests calls it: reading only the `#[test]` functions
+    /// emitted a suite whose every case failed on `nullifyColumns is not
+    /// defined`.
+    pub test_helpers: Vec<FnInfo>,
     /// Raw TS declarations to emit at module level (e.g., thread_local → const)
     pub module_decls: Vec<String>,
+    /// `mod x;` declarations with no body, and how each is written. Rust's
+    /// `pub mod x;` is what puts `x`'s names in the crate's surface, so the
+    /// emitted module index re-exports it; a private `mod x;` is reachable only
+    /// from inside the crate and re-exports nothing.
+    pub mod_decls: Vec<(String, VisInfo)>,
     /// Inline modules extracted as separate files.
     /// (module_name, RustFile) — emitted to parent_dir/module_name.ts
     pub inline_modules: Vec<(String, RustFile)>,
@@ -62,7 +73,9 @@ impl RustFile {
             type_aliases: Vec::new(),
             consts: Vec::new(),
             test_functions: Vec::new(),
+            test_helpers: Vec::new(),
             module_decls: Vec::new(),
+            mod_decls: Vec::new(),
             assigned_fields: std::collections::HashSet::new(),
             inline_modules: Vec::new(),
         }
@@ -90,6 +103,10 @@ pub struct StructInfo {
 #[derive(Debug)]
 pub struct FieldInfo {
     pub name: Option<String>,
+    /// The field's name as Rust writes it. The emitted property is camelCase,
+    /// and serde's JSON key is the Rust spelling, so the two are kept apart.
+    /// `None` for a tuple field, which serde writes by position.
+    pub rust_name: Option<String>,
     /// The Rust type as written — what the engine resolves, and what emission
     /// falls back to when it refused.
     pub rust_ty: syn::Type,
@@ -101,6 +118,11 @@ pub struct FieldInfo {
     /// `impl From<this field's type> for the enum`, and the registry has to
     /// know it as one so a `?` can find it.
     pub is_from: bool,
+    /// `#[serde(with = "json_as_bytes")]` — the module serde routes this
+    /// field's two halves through, which changes the bytes on the wire. Read as
+    /// the module's own name, so the codec can look up a hook for it by
+    /// identity rather than expanding what the module writes.
+    pub serde_with: Option<String>,
 }
 
 #[derive(Debug)]
@@ -260,6 +282,52 @@ impl ImplInfo {
 
     /// The trait's type arguments, in the TypeScript spelling emission puts in
     /// an `implements` clause and in a disambiguated method name.
+    /// The trait's type arguments as WRITTEN PATHS: `From<bincode::Error>` is
+    /// `["bincode::Error"]`. `trait_type_args` gives the leaf alone, which is
+    /// what names the emitted method most of the time and is not enough where
+    /// two impls of one type convert from two `Error`s.
+    pub fn trait_type_arg_paths(&self) -> Vec<String> {
+        let Some(path) = &self.trait_path else {
+            return Vec::new();
+        };
+        let Some(segment) = path.segments.last() else {
+            return Vec::new();
+        };
+        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+            return Vec::new();
+        };
+        args.args
+            .iter()
+            .filter_map(|a| match a {
+                // The TypeScript spelling, with the module segments the source
+                // wrote in front of it. The spelling is what every other
+                // question about the type is asked of — is it a primitive, does
+                // it carry arguments — and the qualifier is the one thing that
+                // tells `bincode::Error` from `anyhow::Error`.
+                syn::GenericArgument::Type(ty) => {
+                    let spelled = crate::name_map::map_type(ty);
+                    let qualifier = match ty {
+                        syn::Type::Path(p) if p.path.segments.len() > 1 => p
+                            .path
+                            .segments
+                            .iter()
+                            .take(p.path.segments.len() - 1)
+                            .map(|s| s.ident.to_string())
+                            .collect::<Vec<_>>()
+                            .join("::"),
+                        _ => String::new(),
+                    };
+                    Some(if qualifier.is_empty() {
+                        spelled
+                    } else {
+                        format!("{}::{}", qualifier, spelled)
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn trait_type_args(&self) -> Vec<String> {
         let Some(path) = &self.trait_path else {
             return Vec::new();

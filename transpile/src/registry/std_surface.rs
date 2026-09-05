@@ -166,7 +166,7 @@ impl Surface {
                     continue;
                 }
             };
-            match extract::extract_source(&rel, &content, None) {
+            match extract::extract_source(&rel, &content, crate::extract::ExtractCfg::default()) {
                 Ok(file) => {
                     let Some(module) = module_of(&rel) else {
                         surface.unparsed.push((

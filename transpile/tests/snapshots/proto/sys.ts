@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/sys.rs
-import { Enum } from '@ankurah/base';
+import { Enum, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type ItemV = {
@@ -51,6 +51,33 @@ export class Item extends Enum<ItemV> {
         return new Item('Other', {});
       }
       default: return new Item('Other', {});
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      SysRoot: () => 'SysRoot',
+      Collection: (v) => ({ 'Collection': { 'name': v.name } }),
+      Other: () => 'Other',
+    });
+  }
+
+  static fromJson(value: unknown): Result<Item, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'SysRoot': return Result.Ok(new Item('SysRoot', {}));
+          case 'Other': return Result.Ok(new Item('Other', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('Collection' in o) {
+        const p = o['Collection'];
+        return Result.Ok(new Item('Collection', { name: ((v: unknown) => v as string)((p as Record<string, unknown>)['name']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Item` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -62,6 +62,29 @@ export class Event extends Struct {
     const parent = Clock.decode(reader);
     return new Event(collection, entityId, operations, parent);
   }
+
+  toJSON(): unknown {
+    return {
+      'collection': this.collection,
+      'entity_id': this.entityId,
+      'operations': this.operations,
+      'parent': this.parent,
+    };
+  }
+
+  static fromJson(value: unknown): Result<Event, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const collection = ((v: unknown) => _take(CollectionId.fromJson(v)))(o['collection']);
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const operations = ((v: unknown) => _take(OperationSet.fromJson(v)))(o['operations']);
+      const parent = ((v: unknown) => _take(Clock.fromJson(v)))(o['parent']);
+      return Result.Ok(new Event(collection, entityId, operations, parent));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class EventFragment extends Struct {
@@ -115,6 +138,27 @@ export class EventFragment extends Struct {
     const attestations = AttestationSet.decode(reader);
     return new EventFragment(operations, parent, attestations);
   }
+
+  toJSON(): unknown {
+    return {
+      'operations': this.operations,
+      'parent': this.parent,
+      'attestations': this.attestations,
+    };
+  }
+
+  static fromJson(value: unknown): Result<EventFragment, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const operations = ((v: unknown) => _take(OperationSet.fromJson(v)))(o['operations']);
+      const parent = ((v: unknown) => _take(Clock.fromJson(v)))(o['parent']);
+      const attestations = ((v: unknown) => _take(AttestationSet.fromJson(v)))(o['attestations']);
+      return Result.Ok(new EventFragment(operations, parent, attestations));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class StateFragment extends Struct {
@@ -162,6 +206,25 @@ export class StateFragment extends Struct {
     const state = State.decode(reader);
     const attestations = AttestationSet.decode(reader);
     return new StateFragment(state, attestations);
+  }
+
+  toJSON(): unknown {
+    return {
+      'state': this.state,
+      'attestations': this.attestations,
+    };
+  }
+
+  static fromJson(value: unknown): Result<StateFragment, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const state = ((v: unknown) => _take(State.fromJson(v)))(o['state']);
+      const attestations = ((v: unknown) => _take(AttestationSet.fromJson(v)))(o['attestations']);
+      return Result.Ok(new StateFragment(state, attestations));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -249,6 +312,22 @@ export class Operation extends Struct {
     const diff = reader.readByteVec();
     return new Operation(diff);
   }
+
+  toJSON(): unknown {
+    return {
+      'diff': Array.from(this.diff),
+    };
+  }
+
+  static fromJson(value: unknown): Result<Operation, JsonError> {
+    try {
+      const o = value as Record<string, unknown>;
+      const diff = ((v: unknown) => new Uint8Array(v as number[]))(o['diff']);
+      return Result.Ok(new Operation(diff));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class EntityState extends Struct {
@@ -294,6 +373,27 @@ export class EntityState extends Struct {
     const state = State.decode(reader);
     return new EntityState(entityId, collection, state);
   }
+
+  toJSON(): unknown {
+    return {
+      'entity_id': this.entityId,
+      'collection': this.collection,
+      'state': this.state,
+    };
+  }
+
+  static fromJson(value: unknown): Result<EntityState, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const collection = ((v: unknown) => _take(CollectionId.fromJson(v)))(o['collection']);
+      const state = ((v: unknown) => _take(State.fromJson(v)))(o['state']);
+      return Result.Ok(new EntityState(entityId, collection, state));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class State extends Struct {
@@ -337,6 +437,25 @@ export class State extends Struct {
     const stateBuffers = StateBuffers.decode(reader);
     const head = Clock.decode(reader);
     return new State(stateBuffers, head);
+  }
+
+  toJSON(): unknown {
+    return {
+      'state_buffers': this.stateBuffers,
+      'head': this.head,
+    };
+  }
+
+  static fromJson(value: unknown): Result<State, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const stateBuffers = ((v: unknown) => _take(StateBuffers.fromJson(v)))(o['state_buffers']);
+      const head = ((v: unknown) => _take(Clock.fromJson(v)))(o['head']);
+      return Result.Ok(new State(stateBuffers, head));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 

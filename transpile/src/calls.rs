@@ -105,7 +105,7 @@ impl BodyTranslator<'_> {
                     Some(ty) => format!(
                         "(() => {{ const _r = new BincodeReader({}); return {}; }})()",
                         args[0],
-                        crate::bincode_module::decode_expr_with(&ty, "_r")
+                        crate::bincode_module::decode_expr_with(&ty, "_r", None)
                     ),
                     None => {
                         self.fallback(

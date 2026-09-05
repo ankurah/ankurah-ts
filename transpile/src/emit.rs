@@ -217,6 +217,17 @@ pub fn emit_enum(
     if crate::bincode_module::has_serde_derive(&e.derives) {
         out.push('\n');
         out.push_str(&crate::bincode_module::generate_enum_codec(reg, e));
+        // The human-readable half of the same derive. A type whose fields have
+        // no JSON spelling gets neither method rather than half a pair, and
+        // says why.
+        match crate::json_module::enum_json(reg, e) {
+            Ok(json) if emitted.insert("toJSON".to_string()) => {
+                out.push('\n');
+                out.push_str(&json);
+            }
+            Ok(_) => {}
+            Err(reason) => crate::diag::pending::park_at(0, 0, format!("`{}`: {}", e.name, reason)),
+        }
     }
 
     out.push_str("}\n\n");
@@ -433,7 +444,7 @@ fn emit_trait_methods(
                 continue;
             }
             let ret_override = trait_method_mapping(trait_name, &method.name).and_then(|m| m.1);
-            let ts_name = trait_method_name(trait_name, type_args, method);
+            let ts_name = trait_method_name(trait_name, type_args, method, self_type);
             // `Drop` declares `onDrop` protected, so the override has to say so.
             let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
             if emitted.insert(ts_name.clone()) {
@@ -711,6 +722,13 @@ fn emit_struct_bincode(
         } else {
             out.push_str(&crate::bincode_module::generate_tuple_struct_codec(reg, s));
         }
+        match crate::json_module::struct_json(reg, s) {
+            Ok(json) => {
+                out.push('\n');
+                out.push_str(&json);
+            }
+            Err(reason) => crate::diag::pending::park_at(0, 0, format!("`{}`: {}", s.name, reason)),
+        }
     }
 }
 
@@ -973,22 +991,98 @@ pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_
     if !matches!(trait_name, "From" | "TryFrom" | "TryInto" | "Into") {
         return base_name.to_string();
     }
+    // The argument arrives as the path the source wrote — `bincode::Error`,
+    // `String`, `crate::property::PropertyError` — because that is what tells
+    // two conversions of one type apart. The primitive question is about the
+    // TYPE, so it is asked of the leaf's TypeScript spelling.
     let source = &type_args[0];
+    let leaf = source.rsplit("::").next().unwrap_or(source);
+    let as_ts = crate::name_map::map_type_name(leaf);
 
-    if source.ends_with("[]") || source.starts_with("Map<") || source.starts_with("Set<")
-        || source.contains("Uint8Array")
-        || matches!(source.as_str(), "string" | "boolean" | "number" | "bigint")
+    if as_ts.ends_with("[]") || as_ts.starts_with("Map<") || as_ts.starts_with("Set<")
+        || as_ts.contains("Uint8Array")
+        || matches!(as_ts, "string" | "boolean" | "number" | "bigint")
     {
         return base_name.to_string();
     }
 
-    if source.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+    if leaf.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
         && !source.contains('<') && !source.contains(',') && !source.contains(' ')
     {
-        return format!("from{}", source);
+        // The leaf alone unless it is contested: `RetrievalError` converts from
+        // three different `Error`s and one `fromError` cannot be all three.
+        let plain = format!("from{}", leaf);
+        if !is_contested(_self_type, &plain) {
+            return plain;
+        }
+        return format!("from{}", qualified_source(source));
     }
 
     base_name.to_string()
+}
+
+thread_local! {
+    /// `(self type, unqualified static)` pairs that more than one impl of that
+    /// type would take. Filled once per run, from the whole impl table, because
+    /// the answer is a fact about a type's SIBLING impls and neither half of
+    /// emission can see them from the impl in its hand.
+    static CONTESTED: std::cell::RefCell<std::collections::HashSet<(String, String)>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Record which conversion statics two impls of one type would both take.
+pub fn set_contested_conversions(pairs: std::collections::HashSet<(String, String)>) {
+    CONTESTED.with(|c| *c.borrow_mut() = pairs);
+}
+
+fn is_contested(self_type: &str, method: &str) -> bool {
+    let leaf = self_type.split('<').next().unwrap_or(self_type);
+    CONTESTED.with(|c| c.borrow().contains(&(leaf.to_string(), method.to_string())))
+}
+
+/// The source type's name as a conversion static spells it.
+///
+/// A leaf alone is not enough where one type converts from several types that
+/// share it: `RetrievalError` has `From<bincode::Error>`,
+/// `From<crate::selection::filter::Error>` and `From<anyhow::Error>`, all three
+/// of which named `fromError`, and emission kept the first and dropped two.
+/// The segment in front of the leaf tells them apart — `fromBincodeError`,
+/// `fromFilterError`, `fromAnyhowError` — and it is dropped where it says
+/// nothing the leaf does not already say (`crate::property::PropertyError`
+/// stays `fromPropertyError`) or where it is only a position in the crate
+/// (`crate`, `self`, `super`).
+///
+/// One rule, read by both halves: the class's static is written from the impl's
+/// written path and so is every call site's name for it.
+pub(crate) fn qualified_source(written: &str) -> String {
+    let mut segments = written.split("::").filter(|s| !s.is_empty());
+    let leaf = written.rsplit("::").next().unwrap_or(written).to_string();
+    let qualifier = {
+        let all: Vec<&str> = segments.by_ref().collect();
+        if all.len() < 2 {
+            None
+        } else {
+            all.get(all.len() - 2).copied()
+        }
+    };
+    let Some(qualifier) = qualifier else {
+        return leaf;
+    };
+    if matches!(qualifier, "crate" | "self" | "super" | "std" | "core" | "alloc") {
+        return leaf;
+    }
+    let lower_leaf = leaf.to_lowercase();
+    if lower_leaf.contains(&qualifier.to_lowercase()) {
+        return leaf;
+    }
+    let mut out = String::new();
+    let mut chars = qualifier.chars();
+    if let Some(first) = chars.next() {
+        out.extend(first.to_uppercase());
+        out.push_str(chars.as_str());
+    }
+    out.push_str(&leaf);
+    out
 }
 
 /// For static methods, merge class-level type params into the method's own generics.
@@ -1065,8 +1159,9 @@ pub(crate) fn trait_method_name(
     trait_name: &str,
     type_args: &[String],
     method: &FnInfo,
+    self_type: &str,
 ) -> String {
-    impl_method_name(trait_name, &method.name, &method.ts_name, type_args)
+    impl_method_name(trait_name, &method.name, &method.ts_name, type_args, self_type)
 }
 
 /// The same, for a caller that has the trait's method by name rather than an
@@ -1077,6 +1172,7 @@ pub(crate) fn impl_method_name(
     rust_method: &str,
     ts_method: &str,
     type_args: &[String],
+    self_type: &str,
 ) -> String {
     // For known Rust traits (Display, Clone, etc.), apply name mapping. For
     // unknown or domain traits, the method's own TypeScript name stands.
@@ -1084,7 +1180,7 @@ pub(crate) fn impl_method_name(
         Some((mapped, _)) => mapped.to_string(),
         None => ts_method.to_string(),
     };
-    disambiguate_trait_method(&base, trait_name, type_args, "")
+    disambiguate_trait_method(&base, trait_name, type_args, self_type)
 }
 
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {

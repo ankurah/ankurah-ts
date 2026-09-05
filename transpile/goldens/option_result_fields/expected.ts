@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_result_fields/src/input.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Slot extends Struct {
@@ -38,6 +38,24 @@ export class Slot extends Struct {
     const name = reader.readOption((r) => r.readString());
     const count = reader.readOption((r) => r.readU32());
     return new Slot(name, count);
+  }
+
+  toJSON(): unknown {
+    return {
+      'name': this.name,
+      'count': this.count,
+    };
+  }
+
+  static fromJson(value: unknown): Result<Slot, JsonError> {
+    try {
+      const o = value as Record<string, unknown>;
+      const name = ((v: unknown) => v as string | null)(o['name']);
+      const count = ((v: unknown) => v as number | null)(o['count']);
+      return Result.Ok(new Slot(name, count));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
