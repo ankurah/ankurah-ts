@@ -1,235 +1,218 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-// Rust: mod json_as_bytes — SKIP: serde-specific custom serializer, not needed in TS
-// Rust: fn serialize (json_as_bytes) — SKIP: serde-specific
-// Rust: fn deserialize (json_as_bytes) — SKIP: serde-specific
-
-import { Struct, Enum } from '@ankurah/base';
-import { ParseError, SqlGenerationError } from './error.ts';
-import { generateSelectionSql } from './selection/sql.ts';
-
-// ── Expr ──────────────────────────────────────────────────────────────
-
-type ExprV = {
-  Literal: { literal: Literal };
-  Path: { path: PathExpr };
-  Predicate: { predicate: Predicate };
-  InfixExpr: { left: Expr; operator: InfixOperator; right: Expr };
-  ExprList: { exprs: Expr[] };
-  Placeholder: {};
-};
-
-export class Expr extends Enum<ExprV> {
-  static Literal(literal: Literal): Expr { return new Expr('Literal', { literal }); }
-  static Path(path: PathExpr): Expr { return new Expr('Path', { path }); }
-  static Predicate(predicate: Predicate): Expr { return new Expr('Predicate', { predicate }); }
-  static InfixExpr(left: Expr, operator: InfixOperator, right: Expr): Expr { return new Expr('InfixExpr', { left, operator, right }); }
-  static ExprList(exprs: Expr[]): Expr { return new Expr('ExprList', { exprs }); }
-  static Placeholder(): Expr { return new Expr('Placeholder', {}); }
-
-  // Rust: fn populate_recursive
-  populateRecursive(values: Iterator<Expr>): Expr {
-    return this.match({
-      Placeholder: () => {
-        const next = values.next();
-        if (next.done) {
-          throw new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' });
-        }
-        return next.value;
-      },
-      Literal: () => this,
-      Path: () => this,
-      Predicate: (v) => Expr.Predicate(v.predicate.populateRecursive(values)),
-      InfixExpr: (v) => {
-        const left = v.left.populateRecursive(values);
-        try {
-          const right = v.right.populateRecursive(values);
-          return Expr.InfixExpr(left, v.operator, right);
-        } catch (e) {
-          left.drop();
-          throw e;
-        }
-      },
-      ExprList: (v) => {
-        const results: Expr[] = [];
-        try {
-          for (const e of v.exprs) {
-            results.push(e.populateRecursive(values));
-          }
-          return Expr.ExprList(results);
-        } catch (e) {
-          for (const r of results) r.drop();
-          throw e;
-        }
-      },
-    });
-  }
-}
-
-// ── Literal ───────────────────────────────────────────────────────────
-
-type LiteralV = {
-  I16: { value: number };
-  I32: { value: number };
-  I64: { value: bigint };
-  F64: { value: number };
-  Bool: { value: boolean };
-  String: { value: string };
-  EntityId: { value: Uint8Array };
-  Object: { value: Uint8Array };
-  Binary: { value: Uint8Array };
-  Json: { value: unknown };
-};
-
-export class Literal extends Enum<LiteralV> {
-  static I16(value: number): Literal { return new Literal('I16', { value }); }
-  static I32(value: number): Literal { return new Literal('I32', { value }); }
-  static I64(value: bigint): Literal { return new Literal('I64', { value }); }
-  static F64(value: number): Literal { return new Literal('F64', { value }); }
-  static Bool(value: boolean): Literal { return new Literal('Bool', { value }); }
-  static String(value: string): Literal { return new Literal('String', { value }); }
-  static EntityId(value: Uint8Array): Literal { return new Literal('EntityId', { value }); }
-  static Object(value: Uint8Array): Literal { return new Literal('Object', { value }); }
-  static Binary(value: Uint8Array): Literal { return new Literal('Binary', { value }); }
-  static Json(value: unknown): Literal { return new Literal('Json', { value }); }
-}
-
-// ── PathExpr ──────────────────────────────────────────────────────────
+import { Struct, Enum, Result, JsonError, dropOwned } from '@ankurah/base';
+import { BincodeReader, BincodeWriter } from './codec';
+import { ParseError } from './error';
+import { generateSelectionSql } from './selection/sql';
 
 export class PathExpr extends Struct {
-  steps: string[];
+  readonly steps: string[];
 
   constructor(steps: string[]) {
     super();
     this.steps = steps;
   }
 
-  // Rust: fn simple
-  /** Create a single-step path */
   static simple(name: string): PathExpr {
     return new PathExpr([name]);
   }
 
-  // Rust: fn is_simple
-  /** Check if this is a single-step path */
   isSimple(): boolean {
     return this.steps.length === 1;
   }
 
-  // Rust: fn first
-  /** Get the first step (always exists) */
   first(): string {
     return this.steps[0];
   }
 
-  // Rust: fn property
-  /** Get the property name (last step) */
   property(): string {
-    return this.steps[this.steps.length - 1];
+    return this.steps.at(-1);
   }
 
-  // Rust: fn fmt
-  override toString(): string {
-    return this.steps.join('.');
+  toString(): string {
+    return `${this.steps.join('.')}`;
+  }
+
+  equals(other: PathExpr): boolean {
+    { if (this.steps.length !== other.steps.length) return false; for (let i = 0; i < this.steps.length; i++) { if (this.steps[i] !== other.steps[i]) return false; } }
+    return true;
+  }
+
+  clone(): PathExpr {
+    return new PathExpr([...this.steps]);
+  }
+
+  debug(): string {
+    return `PathExpr { steps: ${`[${Array.from(this.steps).map((e) => JSON.stringify(e)).join(', ')}]`} }`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    writer.writeVec(this.steps, (w, item) => w.writeString(item));
+  }
+
+  static decode(reader: BincodeReader): PathExpr {
+    const steps = reader.readVec((r) => r.readString());
+    return new PathExpr(steps);
+  }
+
+  toJSON(): unknown {
+    return {
+      'steps': this.steps,
+    };
+  }
+
+  static fromJson(value: unknown): Result<PathExpr, JsonError> {
+    try {
+      const o = value as Record<string, unknown>;
+      const steps = ((v: unknown) => v as string[])(o['steps']);
+      return Result.Ok(new PathExpr(steps));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
-// ── Selection ─────────────────────────────────────────────────────────
-
 export class Selection extends Struct {
-  predicate: Predicate;
-  orderBy: OrderByItem[] | null;
-  /** Rust: `Option<u64>` — a 64-bit count, so a bigint here. `LIMIT 0` is a real
-   *  limit of zero and is not the same thing as `null`. */
-  limit: bigint | null;
+  readonly predicate: Predicate;
+  readonly orderBy: OrderByItem[] | null;
+  readonly limit: bigint | null;
 
-  constructor(
-    predicate: Predicate,
-    orderBy: OrderByItem[] | null = null,
-    limit: bigint | null = null,
-  ) {
+  constructor(predicate: Predicate, orderBy: OrderByItem[] | null, limit: bigint | null) {
     super();
     this.predicate = predicate;
     this.orderBy = orderBy;
     this.limit = limit;
   }
 
-  // Rust: fn from
-  /** Backward compatibility: From<Predicate> for Selection */
-  static fromPredicate(predicate: Predicate): Selection {
-    return new Selection(predicate, null, null);
-  }
-
-  // Rust: fn fmt
-  override toString(): string {
-    let result = this.predicate.toString();
-    if (this.orderBy) {
-      result += ' ORDER BY ';
-      result += this.orderBy
-        .map((item) => item.toString())
-        .join(', ');
-    }
-    if (this.limit !== null) {
-      result += ` LIMIT ${this.limit}`;
-    }
-    return result;
-  }
-
-  // Rust: fn assume_null
-  /**
-   * Transform the selection to assume the given columns are NULL.
-   * This filters out ORDER BY items that reference missing columns.
-   */
   assumeNull(columns: string[]): Selection {
-    let orderBy = this.orderBy
-      ? this.orderBy.filter((item) => {
-          const colName = item.path.property();
-          return !columns.includes(colName);
-        })
-      : null;
-    // If all ORDER BY items were filtered out, set to null
-    if (orderBy && orderBy.length === 0) orderBy = null;
-
-    return new Selection(
-      assumeNull(this.predicate, columns),
-      orderBy,
-      this.limit,
-    );
+    const orderBy = this.orderBy.asRef() != null ? ((items) => {
+      return [...[...items].filter((item) => {
+        const colName = item.path.property();
+        return !columns.includes(colName);
+      })];
+    })(this.orderBy.asRef()!) : null;
+    const orderBy_1 = orderBy.andThen((v) => v.isEmpty() ? null : v);
+    return new Selection(this.predicate.assumeNull(columns), orderBy_1, this.limit);
   }
 
-  // Rust: fn referenced_columns
-  /**
-   * Collect all column names referenced in this selection (WHERE + ORDER BY).
-   * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
-   * not the JSON path step (`territory`).
-   */
   referencedColumns(): string[] {
-    const columns = referencedColumns(this.predicate);
-    if (this.orderBy) {
-      for (const item of this.orderBy) {
-        const col = item.path.first();
-        if (!columns.includes(col)) {
-          columns.push(col);
+    let columns = this.predicate.referencedColumns();
+    {
+      const _v = this.orderBy;
+      if (_v != null) {
+        const orderBy = _v;
+        const _seq0 = orderBy;
+        let _at1 = 0;
+        try {
+          while (_at1 < _seq0.length) {
+            const item = _seq0[_at1++];
+            try {
+              const col = item.path.first();
+              if (!columns.includes(col)) {
+                columns.push(col);
+              }
+            } finally {
+              item.drop();
+            }
+          }
+        } finally {
+          dropOwned(_seq0.slice(_at1));
         }
       }
     }
     return columns;
   }
 
-  // TODO: proper bincode serde when ankql is transpiled
-  encode(writer: any): void {
-    throw new Error('Selection.encode not yet implemented');
+  toString(): string {
+    let _result = '';
+    _result += `${this.predicate}`;
+    {
+      const _v = this.orderBy;
+      if (_v != null) {
+        const orderBy = _v;
+        try {
+          _result += ' ORDER BY ';
+          for (const [i, item] of [...orderBy].entries()) {
+            if (i > 0) {
+              _result += ', ';
+            }
+            _result += `${item}`;
+          }
+        } finally {
+          dropOwned(orderBy);
+        }
+      }
+    }
+    {
+      const _v1 = this.limit;
+      if (_v1 != null) {
+        const limit = _v1;
+        _result += ` LIMIT ${limit}`;
+      }
+    }
+    return _result;
   }
 
-  static decode(reader: any): Selection {
-    throw new Error('Selection.decode not yet implemented');
+  static fromPredicate(predicate: Predicate): Selection {
+    return new Selection(predicate, null, null);
+  }
+
+  equals(other: Selection): boolean {
+    if (!this.predicate.equals(other.predicate)) return false;
+    if (this.orderBy === null && other.orderBy === null) { /* both null, ok */ }
+    else if (this.orderBy === null || other.orderBy === null) return false;
+    else { if (this.orderBy.length !== other.orderBy.length) return false; for (let i = 0; i < this.orderBy.length; i++) { if (!this.orderBy[i].equals(other.orderBy[i])) return false; } }
+    if (this.limit === null && other.limit === null) { /* both null, ok */ }
+    else if (this.limit === null || other.limit === null) return false;
+    else if (this.limit !== other.limit) return false;
+    return true;
+  }
+
+  clone(): Selection {
+    return new Selection(this.predicate.clone(), this.orderBy != null ? this.orderBy.map(e => e.clone()) : null, this.limit);
+  }
+
+  debug(): string {
+    return `Selection { predicate: ${this.predicate.debug()}, orderBy: ${(this.orderBy === null ? 'None' : `Some(${`[${Array.from(this.orderBy).map((e) => e.debug()).join(', ')}]`})`)}, limit: ${(this.limit === null ? 'None' : `Some(${String(this.limit)})`)} }`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.predicate.encode(writer);
+    writer.writeOption(this.orderBy, (w, v) => w.writeVec(v, (w, item) => item.encode(w)));
+    writer.writeOption(this.limit, (w, v) => w.writeU64(v));
+  }
+
+  static decode(reader: BincodeReader): Selection {
+    const predicate = Predicate.decode(reader);
+    const orderBy = reader.readOption((r) => r.readVec((r) => OrderByItem.decode(r)));
+    const limit = reader.readOption((r) => r.readU64());
+    return new Selection(predicate, orderBy, limit);
+  }
+
+  toJSON(): unknown {
+    return {
+      'predicate': this.predicate,
+      'order_by': this.orderBy,
+      'limit': (this.limit == null ? null : ((x) => Number(x))(this.limit)),
+    };
+  }
+
+  static fromJson(value: unknown): Result<Selection, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const predicate = ((v: unknown) => _take(Predicate.fromJson(v)))(o['predicate']);
+      const orderBy = ((v: unknown) => (v == null ? null : ((v) => (v as unknown[]).map((v) => _take(OrderByItem.fromJson(v))))(v)))(o['order_by']);
+      const limit = ((v: unknown) => (v == null ? null : ((v) => BigInt(v as number))(v)))(o['limit']);
+      return Result.Ok(new Selection(predicate, orderBy, limit));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
-// ── OrderByItem ───────────────────────────────────────────────────────
-
 export class OrderByItem extends Struct {
-  path: PathExpr;
-  direction: OrderDirection;
+  readonly path: PathExpr;
+  readonly direction: OrderDirection;
 
   constructor(path: PathExpr, direction: OrderDirection) {
     super();
@@ -237,206 +220,1173 @@ export class OrderByItem extends Struct {
     this.direction = direction;
   }
 
-  // Rust: fn fmt
-  override toString(): string {
-    const dir = this.direction.is('Asc') ? 'ASC' : 'DESC';
-    return `${this.path.toString()} ${dir}`;
+  toString(): string {
+    return `${this.path} ${this.direction.match({
+      Asc: () => 'ASC',
+      Desc: () => 'DESC',
+    })}`;
+  }
+
+  equals(other: OrderByItem): boolean {
+    if (!this.path.equals(other.path)) return false;
+    if (!this.direction.equals(other.direction)) return false;
+    return true;
+  }
+
+  clone(): OrderByItem {
+    return new OrderByItem(this.path.clone(), this.direction.clone());
+  }
+
+  debug(): string {
+    return `OrderByItem { path: ${this.path.debug()}, direction: ${this.direction.debug()} }`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.path.encode(writer);
+    this.direction.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): OrderByItem {
+    const path = PathExpr.decode(reader);
+    const direction = OrderDirection.decode(reader);
+    return new OrderByItem(path, direction);
+  }
+
+  toJSON(): unknown {
+    return {
+      'path': this.path,
+      'direction': this.direction,
+    };
+  }
+
+  static fromJson(value: unknown): Result<OrderByItem, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const path = ((v: unknown) => _take(PathExpr.fromJson(v)))(o['path']);
+      const direction = ((v: unknown) => _take(OrderDirection.fromJson(v)))(o['direction']);
+      return Result.Ok(new OrderByItem(path, direction));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
-// ── OrderDirection ────────────────────────────────────────────────────
+export type ExprV = {
+  Literal: { _0: Literal };
+  Path: { _0: PathExpr };
+  Predicate: { _0: Predicate };
+  InfixExpr: { left: Expr; operator: InfixOperator; right: Expr };
+  ExprList: { _0: Expr[] };
+  Placeholder: {};
+};
 
-type OrderDirectionV = {
+export class Expr extends Enum<ExprV> {
+
+  populateRecursive<I, V, E>(values: I): Result<Expr, ParseError> {
+    return this.intoMatch({
+      Placeholder: () => {
+        const _r0 = value.tryInto().mapErr((e) => e);
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        const _v = values.next();
+        if (_v != null) {
+          const value = _v;
+          Result.Ok(_r0.unwrap())
+        } else {
+          Result.Err(new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' }))
+        }
+      },
+      Literal: (v) => {
+        const lit = v._0;
+        return Result.Ok(new Expr('Literal', { _0: lit }));
+      },
+      Path: (v) => {
+        const path = v._0;
+        return Result.Ok(new Expr('Path', { _0: path }));
+      },
+      Predicate: (v) => {
+        const pred = v._0;
+        const _r1 = pred.populateRecursive(values);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        return Result.Ok(new Expr('Predicate', { _0: _r1.unwrap() }));
+      },
+      InfixExpr: (v) => {
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        const _r2 = left.populateRecursive(values);
+        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        const _r3 = right.populateRecursive(values);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
+      },
+      ExprList: (v) => {
+        const exprs = v._0;
+        let _moved4 = false;
+        try {
+          let populatedExprs = [];
+          _moved4 = true;
+          const _seq6 = exprs;
+          let _at7 = 0;
+          try {
+            while (_at7 < _seq6.length) {
+              const expr = _seq6[_at7++];
+              const _r5 = expr.populateRecursive(values);
+              if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+              populatedExprs.push(_r5.unwrap());
+            }
+          } finally {
+            dropOwned(_seq6.slice(_at7));
+          }
+          return Result.Ok(new Expr('ExprList', { _0: populatedExprs }));
+        } finally {
+          if (!_moved4) dropOwned(exprs);
+        }
+      },
+    });
+  }
+
+  static from(s: string): Expr {
+    return new Expr('Literal', { _0: new Literal('String', { _0: s }) });
+  }
+
+  static fromLiteral(lit: Literal): Expr {
+    return new Expr('Literal', { _0: lit });
+  }
+
+  clone(): Expr {
+    return this.match({
+      Literal: (v) => new Expr('Literal', { _0: v._0.clone() }),
+      Path: (v) => new Expr('Path', { _0: v._0.clone() }),
+      Predicate: (v) => new Expr('Predicate', { _0: v._0.clone() }),
+      InfixExpr: (v) => new Expr('InfixExpr', { left: v.left.clone(), operator: v.operator.clone(), right: v.right.clone() }),
+      ExprList: (v) => new Expr('ExprList', { _0: v._0.map(e => e.clone()) }),
+      Placeholder: () => new Expr('Placeholder', {}),
+    });
+  }
+
+  equals(other: Expr): boolean {
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Literal: (v) => `Literal(${v._0.debug()})`,
+      Path: (v) => `Path(${v._0.debug()})`,
+      Predicate: (v) => `Predicate(${v._0.debug()})`,
+      InfixExpr: (v) => `InfixExpr { left: ${v.left.debug()}, operator: ${v.operator.debug()}, right: ${v.right.debug()} }`,
+      ExprList: (v) => `ExprList(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      Placeholder: () => 'Placeholder',
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Literal: (v) => {
+        writer.writeVariant(0);
+        v._0.encode(writer);
+      },
+      Path: (v) => {
+        writer.writeVariant(1);
+        v._0.encode(writer);
+      },
+      Predicate: (v) => {
+        writer.writeVariant(2);
+        v._0.encode(writer);
+      },
+      InfixExpr: (v) => {
+        writer.writeVariant(3);
+        v.left.encode(writer);
+        v.operator.encode(writer);
+        v.right.encode(writer);
+      },
+      ExprList: (v) => {
+        writer.writeVariant(4);
+        writer.writeVec(v._0, (w, item) => item.encode(w));
+      },
+      Placeholder: (v) => {
+        writer.writeVariant(5);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): Expr {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const _0 = Literal.decode(reader);
+        return new Expr('Literal', { _0 });
+      }
+      case 1: {
+        const _0 = PathExpr.decode(reader);
+        return new Expr('Path', { _0 });
+      }
+      case 2: {
+        const _0 = Predicate.decode(reader);
+        return new Expr('Predicate', { _0 });
+      }
+      case 3: {
+        const left = Expr.decode(reader);
+        const operator = InfixOperator.decode(reader);
+        const right = Expr.decode(reader);
+        return new Expr('InfixExpr', { left, operator, right });
+      }
+      case 4: {
+        const _0 = reader.readVec((r) => Expr.decode(r));
+        return new Expr('ExprList', { _0 });
+      }
+      case 5: {
+        return new Expr('Placeholder', {});
+      }
+      default: throw new Error(`Unknown Expr variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Literal: (v) => ({ 'Literal': v._0 }),
+      Path: (v) => ({ 'Path': v._0 }),
+      Predicate: (v) => ({ 'Predicate': v._0 }),
+      InfixExpr: (v) => ({ 'InfixExpr': { 'left': v.left, 'operator': v.operator, 'right': v.right } }),
+      ExprList: (v) => ({ 'ExprList': v._0 }),
+      Placeholder: () => 'Placeholder',
+    });
+  }
+
+  static fromJson(value: unknown): Result<Expr, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Placeholder': return Result.Ok(new Expr('Placeholder', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('Literal' in o) {
+        const p = o['Literal'];
+        return Result.Ok(new Expr('Literal', { _0: ((v: unknown) => _take(Literal.fromJson(v)))(p) }));
+      }
+      if ('Path' in o) {
+        const p = o['Path'];
+        return Result.Ok(new Expr('Path', { _0: ((v: unknown) => _take(PathExpr.fromJson(v)))(p) }));
+      }
+      if ('Predicate' in o) {
+        const p = o['Predicate'];
+        return Result.Ok(new Expr('Predicate', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))(p) }));
+      }
+      if ('InfixExpr' in o) {
+        const p = o['InfixExpr'];
+        return Result.Ok(new Expr('InfixExpr', { left: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['left']), operator: ((v: unknown) => _take(InfixOperator.fromJson(v)))((p as Record<string, unknown>)['operator']), right: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['right']) }));
+      }
+      if ('ExprList' in o) {
+        const p = o['ExprList'];
+        return Result.Ok(new Expr('ExprList', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(Expr.fromJson(v))))(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Expr` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
+}
+
+export type LiteralV = {
+  I16: { _0: number };
+  I32: { _0: number };
+  I64: { _0: bigint };
+  F64: { _0: number };
+  Bool: { _0: boolean };
+  String: { _0: string };
+  EntityId: { _0: Ulid };
+  Object: { _0: Uint8Array };
+  Binary: { _0: Uint8Array };
+  Json: { _0: unknown };
+};
+
+export class Literal extends Enum<LiteralV> {
+
+  clone(): Literal {
+    return this.match({
+      I16: (v) => new Literal('I16', { _0: v._0 }),
+      I32: (v) => new Literal('I32', { _0: v._0 }),
+      I64: (v) => new Literal('I64', { _0: v._0 }),
+      F64: (v) => new Literal('F64', { _0: v._0 }),
+      Bool: (v) => new Literal('Bool', { _0: v._0 }),
+      String: (v) => new Literal('String', { _0: v._0 }),
+      EntityId: (v) => new Literal('EntityId', { _0: v._0.clone() }),
+      Object: (v) => new Literal('Object', { _0: new Uint8Array(v._0) }),
+      Binary: (v) => new Literal('Binary', { _0: new Uint8Array(v._0) }),
+      Json: (v) => new Literal('Json', { _0: v._0.clone() }),
+    });
+  }
+
+  equals(other: Literal): boolean {
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      I16: (v) => `I16(${String(v._0)})`,
+      I32: (v) => `I32(${String(v._0)})`,
+      I64: (v) => `I64(${String(v._0)})`,
+      F64: (v) => `F64(${String(v._0)})`,
+      Bool: (v) => `Bool(${String(v._0)})`,
+      String: (v) => `String(${JSON.stringify(v._0)})`,
+      EntityId: (v) => `EntityId(${v._0})`,
+      Object: (v) => `Object(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
+      Binary: (v) => `Binary(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
+      Json: (v) => `Json(${v._0})`,
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      I16: (v) => {
+        writer.writeVariant(0);
+        writer.writeI16(v._0);
+      },
+      I32: (v) => {
+        writer.writeVariant(1);
+        writer.writeI32(v._0);
+      },
+      I64: (v) => {
+        writer.writeVariant(2);
+        writer.writeI64(v._0);
+      },
+      F64: (v) => {
+        writer.writeVariant(3);
+        writer.writeF64(v._0);
+      },
+      Bool: (v) => {
+        writer.writeVariant(4);
+        writer.writeBool(v._0);
+      },
+      String: (v) => {
+        writer.writeVariant(5);
+        writer.writeString(v._0);
+      },
+      EntityId: (v) => {
+        writer.writeVariant(6);
+        v._0.encode(writer);
+      },
+      Object: (v) => {
+        writer.writeVariant(7);
+        writer.writeByteVec(v._0);
+      },
+      Binary: (v) => {
+        writer.writeVariant(8);
+        writer.writeByteVec(v._0);
+      },
+      Json: (v) => {
+        writer.writeVariant(9);
+        writer.writeByteVec(new TextEncoder().encode(JSON.stringify(v._0)));
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): Literal {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const _0 = reader.readI16();
+        return new Literal('I16', { _0 });
+      }
+      case 1: {
+        const _0 = reader.readI32();
+        return new Literal('I32', { _0 });
+      }
+      case 2: {
+        const _0 = reader.readI64();
+        return new Literal('I64', { _0 });
+      }
+      case 3: {
+        const _0 = reader.readF64();
+        return new Literal('F64', { _0 });
+      }
+      case 4: {
+        const _0 = reader.readBool();
+        return new Literal('Bool', { _0 });
+      }
+      case 5: {
+        const _0 = reader.readString();
+        return new Literal('String', { _0 });
+      }
+      case 6: {
+        const _0 = Ulid.decode(reader);
+        return new Literal('EntityId', { _0 });
+      }
+      case 7: {
+        const _0 = reader.readByteVec();
+        return new Literal('Object', { _0 });
+      }
+      case 8: {
+        const _0 = reader.readByteVec();
+        return new Literal('Binary', { _0 });
+      }
+      case 9: {
+        const _0 = JSON.parse(new TextDecoder().decode(reader.readByteVec()));
+        return new Literal('Json', { _0 });
+      }
+      default: throw new Error(`Unknown Literal variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      I16: (v) => ({ 'I16': v._0 }),
+      I32: (v) => ({ 'I32': v._0 }),
+      I64: (v) => ({ 'I64': Number(v._0) }),
+      F64: (v) => ({ 'F64': v._0 }),
+      Bool: (v) => ({ 'Bool': v._0 }),
+      String: (v) => ({ 'String': v._0 }),
+      EntityId: (v) => ({ 'EntityId': v._0 }),
+      Object: (v) => ({ 'Object': Array.from(v._0) }),
+      Binary: (v) => ({ 'Binary': Array.from(v._0) }),
+      Json: (v) => ({ 'Json': Array.from(new TextEncoder().encode(JSON.stringify(v._0))) }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<Literal, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('I16' in o) {
+        const p = o['I16'];
+        return Result.Ok(new Literal('I16', { _0: ((v: unknown) => v as number)(p) }));
+      }
+      if ('I32' in o) {
+        const p = o['I32'];
+        return Result.Ok(new Literal('I32', { _0: ((v: unknown) => v as number)(p) }));
+      }
+      if ('I64' in o) {
+        const p = o['I64'];
+        return Result.Ok(new Literal('I64', { _0: ((v: unknown) => BigInt(v as number))(p) }));
+      }
+      if ('F64' in o) {
+        const p = o['F64'];
+        return Result.Ok(new Literal('F64', { _0: ((v: unknown) => v as number)(p) }));
+      }
+      if ('Bool' in o) {
+        const p = o['Bool'];
+        return Result.Ok(new Literal('Bool', { _0: ((v: unknown) => v as boolean)(p) }));
+      }
+      if ('String' in o) {
+        const p = o['String'];
+        return Result.Ok(new Literal('String', { _0: ((v: unknown) => v as string)(p) }));
+      }
+      if ('EntityId' in o) {
+        const p = o['EntityId'];
+        return Result.Ok(new Literal('EntityId', { _0: ((v: unknown) => _take(Ulid.fromJson(v)))(p) }));
+      }
+      if ('Object' in o) {
+        const p = o['Object'];
+        return Result.Ok(new Literal('Object', { _0: ((v: unknown) => new Uint8Array(v as number[]))(p) }));
+      }
+      if ('Binary' in o) {
+        const p = o['Binary'];
+        return Result.Ok(new Literal('Binary', { _0: ((v: unknown) => new Uint8Array(v as number[]))(p) }));
+      }
+      if ('Json' in o) {
+        const p = o['Json'];
+        return Result.Ok(new Literal('Json', { _0: ((v: unknown) => JSON.parse(new TextDecoder().decode(new Uint8Array(v as number[]))))(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Literal` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
+}
+
+export type OrderDirectionV = {
   Asc: {};
   Desc: {};
 };
 
 export class OrderDirection extends Enum<OrderDirectionV> {
-  static Asc(): OrderDirection { return new OrderDirection('Asc', {}); }
-  static Desc(): OrderDirection { return new OrderDirection('Desc', {}); }
+
+  clone(): OrderDirection {
+    return new OrderDirection(this.type, { ...this.value });
+  }
+
+  equals(other: OrderDirection): boolean {
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Asc: () => 'Asc',
+      Desc: () => 'Desc',
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Asc: (v) => {
+        writer.writeVariant(0);
+      },
+      Desc: (v) => {
+        writer.writeVariant(1);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): OrderDirection {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        return new OrderDirection('Asc', {});
+      }
+      case 1: {
+        return new OrderDirection('Desc', {});
+      }
+      default: throw new Error(`Unknown OrderDirection variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Asc: () => 'Asc',
+      Desc: () => 'Desc',
+    });
+  }
+
+  static fromJson(value: unknown): Result<OrderDirection, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Asc': return Result.Ok(new OrderDirection('Asc', {}));
+          case 'Desc': return Result.Ok(new OrderDirection('Desc', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      return Result.Err(JsonError.custom('no variant of `OrderDirection` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
-// ── Predicate ─────────────────────────────────────────────────────────
-
-type PredicateV = {
+export type PredicateV = {
   Comparison: { left: Expr; operator: ComparisonOperator; right: Expr };
-  IsNull: { expr: Expr };
-  And: { left: Predicate; right: Predicate };
-  Or: { left: Predicate; right: Predicate };
-  Not: { predicate: Predicate };
+  IsNull: { _0: Expr };
+  And: { _0: Predicate; _1: Predicate };
+  Or: { _0: Predicate; _1: Predicate };
+  Not: { _0: Predicate };
   True: {};
   False: {};
   Placeholder: {};
 };
 
 export class Predicate extends Enum<PredicateV> {
-  static Comparison(left: Expr, operator: ComparisonOperator, right: Expr): Predicate { return new Predicate('Comparison', { left, operator, right }); }
-  static IsNull(expr: Expr): Predicate { return new Predicate('IsNull', { expr }); }
-  static And(left: Predicate, right: Predicate): Predicate { return new Predicate('And', { left, right }); }
-  static Or(left: Predicate, right: Predicate): Predicate { return new Predicate('Or', { left, right }); }
-  static Not(predicate: Predicate): Predicate { return new Predicate('Not', { predicate }); }
-  static True(): Predicate { return new Predicate('True', {}); }
-  static False(): Predicate { return new Predicate('False', {}); }
-  static Placeholder(): Predicate { return new Predicate('Placeholder', {}); }
 
-  // Rust: fn fmt (Display for Predicate)
-  /** The predicate's SQL — or, when SQL generation refuses it, the refusal in the
-   *  SQL's place. Display swallows the error rather than propagating it, which is why
-   *  a selection holding a placeholder prints "SQL Error: ..." and is not valid SQL. */
-  override toString(): string {
-    try {
-      return generateSelectionSql(this);
-    } catch (e) {
-      const rendered = `SQL Error: ${e}`;
-      if (e instanceof SqlGenerationError) e.drop();
-      return rendered;
-    }
-  }
-
-  // Rust: fn walk
-  /** Recursively walk a predicate tree and accumulate results using a closure */
-  walk<T>(accumulator: T, visitor: (acc: T, pred: Predicate) => T): T {
-    let result = visitor(accumulator, this);
+  walk<T, F>(accumulator: T, visitor: F): T {
+    const accumulator_1 = visitor(accumulator, this);
     return this.match({
       And: (v) => {
-        result = v.left.walk(result, visitor);
-        return v.right.walk(result, visitor);
+        const left = v._0;
+        const right = v._1;
+        const accumulator_2 = left.walk(accumulator_1, visitor);
+        return right.walk(accumulator_2, visitor);
       },
       Or: (v) => {
-        result = v.left.walk(result, visitor);
-        return v.right.walk(result, visitor);
+        const left = v._0;
+        const right = v._1;
+        const accumulator_2 = left.walk(accumulator_1, visitor);
+        return right.walk(accumulator_2, visitor);
       },
-      Not: (v) => v.predicate.walk(result, visitor),
-      Comparison: () => result,
-      IsNull: () => result,
-      True: () => result,
-      False: () => result,
-      Placeholder: () => result,
+      Not: (v) => {
+        const inner = v._0;
+        return inner.walk(accumulator_1, visitor);
+      },
+      Comparison: () => {
+        return accumulator_1;
+      },
+      IsNull: () => {
+        return accumulator_1;
+      },
+      True: () => {
+        return accumulator_1;
+      },
+      False: () => {
+        return accumulator_1;
+      },
+      Placeholder: () => {
+        return accumulator_1;
+      },
     });
   }
 
-  // Rust: fn referenced_columns
-  /**
-   * Collect all column names referenced in this predicate.
-   * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
-   * not the JSON path step (`territory`).
-   */
   referencedColumns(): string[] {
-    return this.walk<string[]>([], (cols, pred) => {
-      if (pred.is('Comparison')) {
-        const v = pred.value as PredicateV['Comparison'];
-        for (const expr of [v.left, v.right]) {
-          if (expr.is('Path')) {
-            const path = (expr.value as ExprV['Path']).path;
-            const col = path.first();
-            if (!cols.includes(col)) {
-              cols.push(col);
+    return this.walk([], (cols, pred) => {
+      pred.match({
+        Comparison: (v) => {
+          const left = v.left;
+          const right = v.right;
+          for (const expr of [left, right]) {
+            {
+              const _v = expr;
+              if (_v.is('Path')) {
+                const { _0: path } = _v.value;
+                const col = path.first().toString();
+                if (!cols.includes(col)) {
+                  cols.push(col);
+                }
+              }
             }
           }
-        }
-      } else if (pred.is('IsNull')) {
-        const v = pred.value as PredicateV['IsNull'];
-        if (v.expr.is('Path')) {
-          const path = (v.expr.value as ExprV['Path']).path;
-          const col = path.first();
-          if (!cols.includes(col)) {
-            cols.push(col);
+        },
+        IsNull: (v) => {
+          const expr = v._0;
+          {
+            const _v1 = expr;
+            if (_v1.is('Path')) {
+              const { _0: path } = _v1.value;
+              const col = path.first().toString();
+              if (!cols.includes(col)) {
+                cols.push(col);
+              }
+            }
           }
-        }
-      }
+        },
+      })
       return cols;
     });
   }
 
-  // Rust: fn assume_null
-  /** Clones the predicate tree and evaluates comparisons involving missing columns as if they were NULL */
   assumeNull(columns: string[]): Predicate {
-    return assumeNull(this, columns);
-  }
-
-  // Rust: fn populate
-  /** Populate placeholders in the predicate with actual values */
-  populate(values: Iterable<Expr>): Predicate {
-    const iter = values[Symbol.iterator]();
-    const result = this.populateRecursive(iter);
-    // Check if there are any unused values
-    const next = iter.next();
-    if (!next.done) {
-      result.drop(); // Clean up the populated result before throwing
-      throw new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' });
-    }
-    return result;
-  }
-
-  // Rust: fn populate_recursive
-  populateRecursive(values: Iterator<Expr>): Predicate {
     return this.match({
       Comparison: (v) => {
-        const left = v.left.populateRecursive(values);
-        try {
-          const right = v.right.populateRecursive(values);
-          return Predicate.Comparison(left, v.operator, right);
-        } catch (e) {
-          left.drop();
-          throw e;
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        const hasNullPath = (() => {
+          const _v1 = [left, right];
+          if (false) {
+            return columns.includes(path.property().toString());
+          } else {
+            return false;
+          }
+        })();
+        if (hasNullPath) {
+          return operator.match({
+            Equal: () => new Predicate('False', {}),
+            NotEqual: () => new Predicate('False', {}),
+            GreaterThan: () => new Predicate('False', {}),
+            GreaterThanOrEqual: () => new Predicate('False', {}),
+            LessThan: () => new Predicate('False', {}),
+            LessThanOrEqual: () => new Predicate('False', {}),
+            In: () => new Predicate('False', {}),
+            Between: () => new Predicate('False', {}),
+          });
+        } else {
+          return new Predicate('Comparison', { left: left.clone(), operator: operator.clone(), right: right.clone() });
         }
       },
+      IsNull: (v) => {
+        const expr = v._0;
+        return expr.match({
+          Path: (v) => {
+            const path = v._0;
+            const isNull = columns.includes(path.property().toString());
+            if (isNull) {
+              return new Predicate('True', {});
+            } else {
+              return new Predicate('IsNull', { _0: expr.clone() });
+            }
+          },
+        });
+      },
       And: (v) => {
-        const left = v.left.populateRecursive(values);
+        const left = v._0;
+        const right = v._1;
+        let _moved0 = false;
+        const left_1 = left.assumeNull(columns);
         try {
-          const right = v.right.populateRecursive(values);
-          return Predicate.And(left, right);
-        } catch (e) {
-          left.drop();
-          throw e;
+          let _moved1 = false;
+          const right_1 = right.assumeNull(columns);
+          try {
+            const _v2 = [left_1, right_1];
+            if (((_v2[0].is('False'))) || ((_v2[1].is('False')))) {
+              return new Predicate('False', {});
+            } else if ((_v2[0].is('True')) && (_v2[1].is('True'))) {
+              return new Predicate('True', {});
+            } else if (false) {
+              return p.clone();
+            } else {
+              _moved0 = true;
+              _moved1 = true;
+              return new Predicate('And', { _0: left_1, _1: right_1 });
+            }
+          } finally {
+            if (!_moved1) right_1.drop();
+          }
+        } finally {
+          if (!_moved0) left_1.drop();
         }
       },
       Or: (v) => {
-        const left = v.left.populateRecursive(values);
+        const left = v._0;
+        const right = v._1;
+        let _moved2 = false;
+        const left_1 = left.assumeNull(columns);
         try {
-          const right = v.right.populateRecursive(values);
-          return Predicate.Or(left, right);
-        } catch (e) {
-          left.drop();
-          throw e;
+          let _moved3 = false;
+          const right_1 = right.assumeNull(columns);
+          try {
+            const _v3 = [left_1, right_1];
+            if (((_v3[0].is('True'))) || ((_v3[1].is('True')))) {
+              return new Predicate('True', {});
+            } else if ((_v3[0].is('False')) && (_v3[1].is('False'))) {
+              return new Predicate('False', {});
+            } else if (false) {
+              return p.clone();
+            } else {
+              _moved2 = true;
+              _moved3 = true;
+              return new Predicate('Or', { _0: left_1, _1: right_1 });
+            }
+          } finally {
+            if (!_moved3) right_1.drop();
+          }
+        } finally {
+          if (!_moved2) left_1.drop();
         }
       },
-      Not: (v) => Predicate.Not(v.predicate.populateRecursive(values)),
-      IsNull: (v) => Predicate.IsNull(v.expr.populateRecursive(values)),
-      True: () => Predicate.True(),
-      False: () => Predicate.False(),
-      Placeholder: () => { throw new ParseError('InvalidPredicate', { _0: 'Placeholder must be transformed before population' }); },
+      Not: (v) => {
+        const pred = v._0;
+        let _moved4 = false;
+        const inner = pred.assumeNull(columns);
+        try {
+          return inner.match({
+            True: () => new Predicate('False', {}),
+            False: () => new Predicate('True', {}),
+            Comparison: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+            IsNull: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+            And: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+            Or: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+            Not: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+            Placeholder: () => {
+              _moved4 = true;
+              return new Predicate('Not', { _0: inner });
+            },
+          });
+        } finally {
+          if (!_moved4) inner.drop();
+        }
+      },
+      True: () => new Predicate('True', {}),
+      False: () => new Predicate('False', {}),
+      Placeholder: () => new Predicate('Placeholder', {}),
     });
+  }
+
+  populate<I, V, E>(values: I): Result<Predicate, ParseError> {
+    let valuesIter = values.intoIter();
+    const _r0 = this.populateRecursive(valuesIter);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
+    const result = _r0.unwrap();
+    try {
+      if (valuesIter.next() != null) {
+        return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
+      }
+      _moved1 = true;
+      return Result.Ok(result);
+    } finally {
+      if (!_moved1) result.drop();
+    }
+  }
+
+  populateRecursive<I, V, E>(values: I): Result<Predicate, ParseError> {
+    return this.intoMatch({
+      Comparison: (v) => {
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        const _r0 = left.populateRecursive(values);
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        const _r1 = right.populateRecursive(values);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        return Result.Ok(new Predicate('Comparison', { left: _r0.unwrap(), operator: operator, right: _r1.unwrap() }));
+      },
+      And: (v) => {
+        const left = v._0;
+        const right = v._1;
+        let _moved2 = false;
+        let _moved3 = false;
+        try {
+          try {
+            _moved2 = true;
+            _moved3 = true;
+            const _r4 = left.populateRecursive(values);
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            const _r5 = right.populateRecursive(values);
+            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+            return Result.Ok(new Predicate('And', { _0: _r4.unwrap(), _1: _r5.unwrap() }));
+          } finally {
+            if (!_moved3) dropOwned(right);
+          }
+        } finally {
+          if (!_moved2) dropOwned(left);
+        }
+      },
+      Or: (v) => {
+        const left = v._0;
+        const right = v._1;
+        let _moved6 = false;
+        let _moved7 = false;
+        try {
+          try {
+            _moved6 = true;
+            _moved7 = true;
+            const _r8 = left.populateRecursive(values);
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            const _r9 = right.populateRecursive(values);
+            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+            return Result.Ok(new Predicate('Or', { _0: _r8.unwrap(), _1: _r9.unwrap() }));
+          } finally {
+            if (!_moved7) dropOwned(right);
+          }
+        } finally {
+          if (!_moved6) dropOwned(left);
+        }
+      },
+      Not: (v) => {
+        const pred = v._0;
+        const _r10 = pred.populateRecursive(values);
+        if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+        return Result.Ok(new Predicate('Not', { _0: _r10.unwrap() }));
+      },
+      IsNull: (v) => {
+        const expr = v._0;
+        const _r11 = expr.populateRecursive(values);
+        if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+        return Result.Ok(new Predicate('IsNull', { _0: _r11.unwrap() }));
+      },
+      True: () => Result.Ok(new Predicate('True', {})),
+      False: () => Result.Ok(new Predicate('False', {})),
+      Placeholder: () => Result.Err(new ParseError('InvalidPredicate', { _0: 'Placeholder must be transformed before population' })),
+    });
+  }
+
+  toString(): string {
+    const _v = generateSelectionSql(this, null);
+    if (_v.isOk()) {
+      const sql = _v.unwrap();
+      return `${sql}`;
+    } else {
+      const e = _v.unwrapErr();
+      try {
+        return `SQL Error: ${e}`;
+      } finally {
+        e.drop();
+      }
+    }
+  }
+
+  clone(): Predicate {
+    return this.match({
+      Comparison: (v) => new Predicate('Comparison', { left: v.left.clone(), operator: v.operator.clone(), right: v.right.clone() }),
+      IsNull: (v) => new Predicate('IsNull', { _0: v._0.clone() }),
+      And: (v) => new Predicate('And', { _0: v._0.clone(), _1: v._1.clone() }),
+      Or: (v) => new Predicate('Or', { _0: v._0.clone(), _1: v._1.clone() }),
+      Not: (v) => new Predicate('Not', { _0: v._0.clone() }),
+      True: () => new Predicate('True', {}),
+      False: () => new Predicate('False', {}),
+      Placeholder: () => new Predicate('Placeholder', {}),
+    });
+  }
+
+  equals(other: Predicate): boolean {
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Comparison: (v) => `Comparison { left: ${v.left.debug()}, operator: ${v.operator.debug()}, right: ${v.right.debug()} }`,
+      IsNull: (v) => `IsNull(${v._0.debug()})`,
+      And: (v) => `And(${v._0.debug()}, ${v._1.debug()})`,
+      Or: (v) => `Or(${v._0.debug()}, ${v._1.debug()})`,
+      Not: (v) => `Not(${v._0.debug()})`,
+      True: () => 'True',
+      False: () => 'False',
+      Placeholder: () => 'Placeholder',
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Comparison: (v) => {
+        writer.writeVariant(0);
+        v.left.encode(writer);
+        v.operator.encode(writer);
+        v.right.encode(writer);
+      },
+      IsNull: (v) => {
+        writer.writeVariant(1);
+        v._0.encode(writer);
+      },
+      And: (v) => {
+        writer.writeVariant(2);
+        v._0.encode(writer);
+        v._1.encode(writer);
+      },
+      Or: (v) => {
+        writer.writeVariant(3);
+        v._0.encode(writer);
+        v._1.encode(writer);
+      },
+      Not: (v) => {
+        writer.writeVariant(4);
+        v._0.encode(writer);
+      },
+      True: (v) => {
+        writer.writeVariant(5);
+      },
+      False: (v) => {
+        writer.writeVariant(6);
+      },
+      Placeholder: (v) => {
+        writer.writeVariant(7);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): Predicate {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        const left = Expr.decode(reader);
+        const operator = ComparisonOperator.decode(reader);
+        const right = Expr.decode(reader);
+        return new Predicate('Comparison', { left, operator, right });
+      }
+      case 1: {
+        const _0 = Expr.decode(reader);
+        return new Predicate('IsNull', { _0 });
+      }
+      case 2: {
+        const _0 = Predicate.decode(reader);
+        const _1 = Predicate.decode(reader);
+        return new Predicate('And', { _0, _1 });
+      }
+      case 3: {
+        const _0 = Predicate.decode(reader);
+        const _1 = Predicate.decode(reader);
+        return new Predicate('Or', { _0, _1 });
+      }
+      case 4: {
+        const _0 = Predicate.decode(reader);
+        return new Predicate('Not', { _0 });
+      }
+      case 5: {
+        return new Predicate('True', {});
+      }
+      case 6: {
+        return new Predicate('False', {});
+      }
+      case 7: {
+        return new Predicate('Placeholder', {});
+      }
+      default: throw new Error(`Unknown Predicate variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Comparison: (v) => ({ 'Comparison': { 'left': v.left, 'operator': v.operator, 'right': v.right } }),
+      IsNull: (v) => ({ 'IsNull': v._0 }),
+      And: (v) => ({ 'And': [v._0, v._1] }),
+      Or: (v) => ({ 'Or': [v._0, v._1] }),
+      Not: (v) => ({ 'Not': v._0 }),
+      True: () => 'True',
+      False: () => 'False',
+      Placeholder: () => 'Placeholder',
+    });
+  }
+
+  static fromJson(value: unknown): Result<Predicate, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'True': return Result.Ok(new Predicate('True', {}));
+          case 'False': return Result.Ok(new Predicate('False', {}));
+          case 'Placeholder': return Result.Ok(new Predicate('Placeholder', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('Comparison' in o) {
+        const p = o['Comparison'];
+        return Result.Ok(new Predicate('Comparison', { left: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['left']), operator: ((v: unknown) => _take(ComparisonOperator.fromJson(v)))((p as Record<string, unknown>)['operator']), right: ((v: unknown) => _take(Expr.fromJson(v)))((p as Record<string, unknown>)['right']) }));
+      }
+      if ('IsNull' in o) {
+        const p = o['IsNull'];
+        return Result.Ok(new Predicate('IsNull', { _0: ((v: unknown) => _take(Expr.fromJson(v)))(p) }));
+      }
+      if ('And' in o) {
+        const p = o['And'];
+        return Result.Ok(new Predicate('And', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[1]) }));
+      }
+      if ('Or' in o) {
+        const p = o['Or'];
+        return Result.Ok(new Predicate('Or', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => _take(Predicate.fromJson(v)))((p as unknown[])[1]) }));
+      }
+      if ('Not' in o) {
+        const p = o['Not'];
+        return Result.Ok(new Predicate('Not', { _0: ((v: unknown) => _take(Predicate.fromJson(v)))(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Predicate` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
-// ── ComparisonOperator ────────────────────────────────────────────────
-
-type ComparisonOperatorV = {
-  Equal: {};         // =
-  NotEqual: {};      // <> or !=
-  GreaterThan: {};   // >
-  GreaterThanOrEqual: {}; // >=
-  LessThan: {};      // <
-  LessThanOrEqual: {}; // <=
-  In: {};            // IN
-  Between: {};       // BETWEEN
+export type ComparisonOperatorV = {
+  Equal: {};
+  NotEqual: {};
+  GreaterThan: {};
+  GreaterThanOrEqual: {};
+  LessThan: {};
+  LessThanOrEqual: {};
+  In: {};
+  Between: {};
 };
 
 export class ComparisonOperator extends Enum<ComparisonOperatorV> {
-  static Equal(): ComparisonOperator { return new ComparisonOperator('Equal', {}); }
-  static NotEqual(): ComparisonOperator { return new ComparisonOperator('NotEqual', {}); }
-  static GreaterThan(): ComparisonOperator { return new ComparisonOperator('GreaterThan', {}); }
-  static GreaterThanOrEqual(): ComparisonOperator { return new ComparisonOperator('GreaterThanOrEqual', {}); }
-  static LessThan(): ComparisonOperator { return new ComparisonOperator('LessThan', {}); }
-  static LessThanOrEqual(): ComparisonOperator { return new ComparisonOperator('LessThanOrEqual', {}); }
-  static In(): ComparisonOperator { return new ComparisonOperator('In', {}); }
-  static Between(): ComparisonOperator { return new ComparisonOperator('Between', {}); }
+
+  clone(): ComparisonOperator {
+    return new ComparisonOperator(this.type, { ...this.value });
+  }
+
+  equals(other: ComparisonOperator): boolean {
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Equal: () => 'Equal',
+      NotEqual: () => 'NotEqual',
+      GreaterThan: () => 'GreaterThan',
+      GreaterThanOrEqual: () => 'GreaterThanOrEqual',
+      LessThan: () => 'LessThan',
+      LessThanOrEqual: () => 'LessThanOrEqual',
+      In: () => 'In',
+      Between: () => 'Between',
+    });
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Equal: (v) => {
+        writer.writeVariant(0);
+      },
+      NotEqual: (v) => {
+        writer.writeVariant(1);
+      },
+      GreaterThan: (v) => {
+        writer.writeVariant(2);
+      },
+      GreaterThanOrEqual: (v) => {
+        writer.writeVariant(3);
+      },
+      LessThan: (v) => {
+        writer.writeVariant(4);
+      },
+      LessThanOrEqual: (v) => {
+        writer.writeVariant(5);
+      },
+      In: (v) => {
+        writer.writeVariant(6);
+      },
+      Between: (v) => {
+        writer.writeVariant(7);
+      },
+    });
+  }
+
+  static decode(reader: BincodeReader): ComparisonOperator {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        return new ComparisonOperator('Equal', {});
+      }
+      case 1: {
+        return new ComparisonOperator('NotEqual', {});
+      }
+      case 2: {
+        return new ComparisonOperator('GreaterThan', {});
+      }
+      case 3: {
+        return new ComparisonOperator('GreaterThanOrEqual', {});
+      }
+      case 4: {
+        return new ComparisonOperator('LessThan', {});
+      }
+      case 5: {
+        return new ComparisonOperator('LessThanOrEqual', {});
+      }
+      case 6: {
+        return new ComparisonOperator('In', {});
+      }
+      case 7: {
+        return new ComparisonOperator('Between', {});
+      }
+      default: throw new Error(`Unknown ComparisonOperator variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Equal: () => 'Equal',
+      NotEqual: () => 'NotEqual',
+      GreaterThan: () => 'GreaterThan',
+      GreaterThanOrEqual: () => 'GreaterThanOrEqual',
+      LessThan: () => 'LessThan',
+      LessThanOrEqual: () => 'LessThanOrEqual',
+      In: () => 'In',
+      Between: () => 'Between',
+    });
+  }
+
+  static fromJson(value: unknown): Result<ComparisonOperator, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Equal': return Result.Ok(new ComparisonOperator('Equal', {}));
+          case 'NotEqual': return Result.Ok(new ComparisonOperator('NotEqual', {}));
+          case 'GreaterThan': return Result.Ok(new ComparisonOperator('GreaterThan', {}));
+          case 'GreaterThanOrEqual': return Result.Ok(new ComparisonOperator('GreaterThanOrEqual', {}));
+          case 'LessThan': return Result.Ok(new ComparisonOperator('LessThan', {}));
+          case 'LessThanOrEqual': return Result.Ok(new ComparisonOperator('LessThanOrEqual', {}));
+          case 'In': return Result.Ok(new ComparisonOperator('In', {}));
+          case 'Between': return Result.Ok(new ComparisonOperator('Between', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      return Result.Err(JsonError.custom('no variant of `ComparisonOperator` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
-// ── InfixOperator ─────────────────────────────────────────────────────
-
-type InfixOperatorV = {
+export type InfixOperatorV = {
   Add: {};
   Subtract: {};
   Multiply: {};
@@ -444,156 +1394,84 @@ type InfixOperatorV = {
 };
 
 export class InfixOperator extends Enum<InfixOperatorV> {
-  static Add(): InfixOperator { return new InfixOperator('Add', {}); }
-  static Subtract(): InfixOperator { return new InfixOperator('Subtract', {}); }
-  static Multiply(): InfixOperator { return new InfixOperator('Multiply', {}); }
-  static Divide(): InfixOperator { return new InfixOperator('Divide', {}); }
-}
 
-// ── Free functions (mirror Rust impl methods for external callers) ───
+  clone(): InfixOperator {
+    return new InfixOperator(this.type, { ...this.value });
+  }
 
-// Rust: fn walk — SKIP: free function wrapper, Rust fn is the impl method above
-/** Recursively walk a predicate tree and accumulate results using a visitor */
-export function walkPredicate<T>(
-  pred: Predicate,
-  acc: T,
-  visitor: (acc: T, pred: Predicate) => T,
-): T {
-  return pred.walk(acc, visitor);
-}
+  equals(other: InfixOperator): boolean {
+    return true;
+  }
 
-// Rust: fn referenced_columns — SKIP: free function wrapper, Rust fn is the impl method above
-/**
- * Collect all column names referenced in this predicate.
- * For JSON paths like `licensing.territory`, returns the column name (`licensing`),
- * not the JSON path step (`territory`).
- */
-export function referencedColumns(pred: Predicate): string[] {
-  return pred.referencedColumns();
-}
+  debug(): string {
+    return this.match({
+      Add: () => 'Add',
+      Subtract: () => 'Subtract',
+      Multiply: () => 'Multiply',
+      Divide: () => 'Divide',
+    });
+  }
 
-// Rust: fn assume_null
-/**
- * Clones the predicate tree and evaluates comparisons involving missing columns
- * as if they were NULL.
- */
-export function assumeNull(pred: Predicate, columns: string[]): Predicate {
-  return pred.match({
-    Comparison: (v) => {
-      const hasNullPath = (() => {
-        if (v.left.is('Path') && columns.includes((v.left.value as ExprV['Path']).path.property())) return true;
-        if (v.right.is('Path') && columns.includes((v.right.value as ExprV['Path']).path.property())) return true;
-        return false;
-      })();
+  encode(writer: BincodeWriter): void {
+    this.match({
+      Add: (v) => {
+        writer.writeVariant(0);
+      },
+      Subtract: (v) => {
+        writer.writeVariant(1);
+      },
+      Multiply: (v) => {
+        writer.writeVariant(2);
+      },
+      Divide: (v) => {
+        writer.writeVariant(3);
+      },
+    });
+  }
 
-      if (hasNullPath) {
-        // Any comparison with NULL is false in SQL semantics
-        return Predicate.False();
+  static decode(reader: BincodeReader): InfixOperator {
+    const variant = reader.readVariant();
+    switch (variant) {
+      case 0: {
+        return new InfixOperator('Add', {});
       }
-      return Predicate.Comparison(v.left, v.operator, v.right);
-    },
-    IsNull: (v) => {
-      if (v.expr.is('Path')) {
-        const path = (v.expr.value as ExprV['Path']).path;
-        if (columns.includes(path.property())) {
-          return Predicate.True();
+      case 1: {
+        return new InfixOperator('Subtract', {});
+      }
+      case 2: {
+        return new InfixOperator('Multiply', {});
+      }
+      case 3: {
+        return new InfixOperator('Divide', {});
+      }
+      default: throw new Error(`Unknown InfixOperator variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Add: () => 'Add',
+      Subtract: () => 'Subtract',
+      Multiply: () => 'Multiply',
+      Divide: () => 'Divide',
+    });
+  }
+
+  static fromJson(value: unknown): Result<InfixOperator, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Add': return Result.Ok(new InfixOperator('Add', {}));
+          case 'Subtract': return Result.Ok(new InfixOperator('Subtract', {}));
+          case 'Multiply': return Result.Ok(new InfixOperator('Multiply', {}));
+          case 'Divide': return Result.Ok(new InfixOperator('Divide', {}));
         }
       }
-      return Predicate.IsNull(v.expr);
-    },
-    And: (v) => {
-      const left = assumeNull(v.left, columns);
-      const right = assumeNull(v.right, columns);
-
-      if (left.is('False') || right.is('False')) { left.drop(); right.drop(); return Predicate.False(); }
-      if (left.is('True') && right.is('True')) { left.drop(); right.drop(); return Predicate.True(); }
-      if (left.is('True')) { left.drop(); return right; }
-      if (right.is('True')) { right.drop(); return left; }
-      return Predicate.And(left, right);
-    },
-    Or: (v) => {
-      const left = assumeNull(v.left, columns);
-      const right = assumeNull(v.right, columns);
-
-      if (left.is('True') || right.is('True')) { left.drop(); right.drop(); return Predicate.True(); }
-      if (left.is('False') && right.is('False')) { left.drop(); right.drop(); return Predicate.False(); }
-      if (left.is('False')) { left.drop(); return right; }
-      if (right.is('False')) { right.drop(); return left; }
-      return Predicate.Or(left, right);
-    },
-    Not: (v) => {
-      const inner = assumeNull(v.predicate, columns);
-      if (inner.is('True')) { inner.drop(); return Predicate.False(); }
-      if (inner.is('False')) { inner.drop(); return Predicate.True(); }
-      return Predicate.Not(inner);
-    },
-    True: () => Predicate.True(),
-    False: () => Predicate.False(),
-    Placeholder: () => Predicate.Placeholder(),
-  });
+      const o = value as Record<string, unknown>;
+      return Result.Err(JsonError.custom('no variant of `InfixOperator` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
-// Rust: fn populate — SKIP: free function wrapper, Rust fn is the impl method above
-/** Populate placeholders in the predicate with actual values */
-export function populatePredicate(pred: Predicate, values: Iterable<Expr>): Predicate {
-  return pred.populate(values);
-}
-
-// ── Expr conversion helpers (mirrors Rust From impls) ────────────────
-
-// Rust: fn from (From<String> for Expr)
-export function exprFromString(s: string): Expr {
-  return Expr.Literal(Literal.String(s));
-}
-
-// Rust: fn from (From<i64> for Expr)
-export function exprFromI64(i: bigint): Expr {
-  return Expr.Literal(Literal.I64(i));
-}
-
-// Rust: fn from (From<f64> for Expr)
-export function exprFromF64(f: number): Expr {
-  return Expr.Literal(Literal.F64(f));
-}
-
-// Rust: fn from (From<bool> for Expr)
-export function exprFromBool(b: boolean): Expr {
-  return Expr.Literal(Literal.Bool(b));
-}
-
-// Rust: fn from (From<Literal> for Expr)
-export function exprFromLiteral(lit: Literal): Expr {
-  return Expr.Literal(lit);
-}
-
-// Rust: fn from (From<Vec<T>> for Expr, From<[T;N]> for Expr, From<&[T]> for Expr, From<&[T;N]> for Expr) — SKIP: generic From trait pattern not applicable in TS [E4]
-// Divergence: In TS, use Expr.ExprList(items) directly.
-
-// ── Expr to Predicate conversion (mirrors Rust TryFrom<Expr> for Predicate) ──
-
-// Rust: fn try_from (TryFrom<Expr> for Predicate)
-export function exprToPredicate(expr: Expr): Predicate {
-  const result = expr.match({
-    Predicate: (v) => {
-      // Move inner predicate out before dropping the Expr wrapper
-      const pred = v.predicate;
-      (v as any).predicate = null; // detach so drop() won't cascade into it
-      return pred;
-    },
-    Placeholder: () => Predicate.Placeholder(),
-    Literal: (v) => {
-      if (v.literal.is('Bool')) {
-        return (v.literal.value as LiteralV['Bool']).value ? Predicate.True() : Predicate.False();
-      }
-      throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' });
-    },
-    Path: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
-    InfixExpr: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
-    ExprList: () => { throw new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }); },
-  });
-  expr.drop(); // Drop the consumed Expr wrapper (Rust: implicit drop on move)
-  return result;
-}
-
-// Rust: impl std::fmt::Display for Predicate — see Predicate.toString() above, which
-// calls generate_selection_sql the same way the Rust Display does.

@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
-  private _0: string;
+  _0: string;
 
   constructor(_0: string) {
     super();
@@ -11,7 +11,7 @@ export class CollectionId extends Struct {
   }
 
   static fixedName(name: string): CollectionId {
-    return new CollectionId(name.toString());
+    return new CollectionId(name);
   }
 
   asStr(): string {
@@ -19,11 +19,15 @@ export class CollectionId extends Struct {
   }
 
   static from(val: string): CollectionId {
-    return new CollectionId(val.toString());
+    return new CollectionId(val);
   }
 
   equalsStr(other: string): boolean {
     return this._0 === other;
+  }
+
+  asRef(): string {
+    return this._0;
   }
 
   toString(): string {
@@ -36,11 +40,17 @@ export class CollectionId extends Struct {
   }
 
   compareTo(other: CollectionId): number {
-    throw new Error('TODO');
+    let c = this._0 < other._0 ? -1 : this._0 > other._0 ? 1 : 0;
+    if (c !== 0) return c;
+    return 0;
   }
 
   clone(): CollectionId {
     return new CollectionId(this._0);
+  }
+
+  debug(): string {
+    return `CollectionId(${JSON.stringify(this._0)})`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -50,6 +60,26 @@ export class CollectionId extends Struct {
   static decode(reader: BincodeReader): CollectionId {
     const _0 = reader.readString();
     return new CollectionId(_0);
+  }
+
+  toJSON(): unknown {
+    return this._0;
+  }
+
+  static fromJson(value: unknown): Result<CollectionId, JsonError> {
+    try {
+      return Result.Ok(new CollectionId(((v: unknown) => v as string)(value)));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
+}
+
+export function String_fromCollectionId(collectionId: CollectionId): string {
+  try {
+    return collectionId._0;
+  } finally {
+    collectionId.drop();
   }
 }
 

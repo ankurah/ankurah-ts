@@ -55,24 +55,16 @@ function ulidString(bytes: Uint8Array): string {
 
 // ── ankql AST shapes ────────────────────────────────────────────────────────
 //
-// The ankql AST enums carry named fields in TypeScript (`{value: …}`,
-// `{literal: …}`) where Rust has positional ones, so the tuple/newtype shape
-// cannot be read off the object. These tables say which Rust shape each variant
-// really has. Every other enum in the port names its positional fields `_0`,
-// `_1`, … and needs no entry.
-
-const NEWTYPE_VARIANTS: Record<string, Record<string, string>> = {
-  Literal: {
-    I16: 'value', I32: 'value', I64: 'value', F64: 'value', Bool: 'value',
-    String: 'value', EntityId: 'value', Object: 'value', Binary: 'value', Json: 'value',
-  },
-  Expr: { Literal: 'literal', Path: 'path', Predicate: 'predicate', ExprList: 'exprs' },
-  Predicate: { IsNull: 'expr', Not: 'predicate' },
-};
-
-const TUPLE_VARIANTS: Record<string, Record<string, string[]>> = {
-  Predicate: { And: ['left', 'right'], Or: ['left', 'right'] },
-};
+// The two tables that used to stand here named the ankql AST's positional
+// payloads `value`, `literal`, `path`, `left`, `right` — the names the March hand
+// port gave them. A Rust tuple variant's payload is `_0`, `_1`, which is what
+// ast.ts is emitted with, so every enum in the port now goes down the generic
+// positional path below and no table is needed.
+//
+// What does NOT follow from the naming is `Literal`'s two payloads that serde
+// writes as something other than the field's own JS shape — those are serde
+// attributes on the Rust type, so they survive the tables and are applied to the
+// positional payload instead.
 
 /** Variants whose payload serializes as something other than the field's own JS shape. */
 function literalPayload(variant: string, value: unknown): unknown {
@@ -133,20 +125,12 @@ export function toSerde(v: unknown): unknown {
 
     if (keys.length === 0) return variant;
 
-    const newtypeField = NEWTYPE_VARIANTS[className]?.[variant];
-    if (newtypeField !== undefined) {
-      return { [variant]: className === 'Literal' ? literalPayload(variant, payload[newtypeField]) : toSerde(payload[newtypeField]) };
-    }
-
-    const tupleFields = TUPLE_VARIANTS[className]?.[variant];
-    if (tupleFields !== undefined) {
-      return { [variant]: tupleFields.map((f) => toSerde(payload[f])) };
-    }
-
     // Positional payloads are named _0, _1, … by the transpiler.
     if (keys.every((k) => /^_\d+$/.test(k))) {
       const ordered = keys.slice().sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
-      if (ordered.length === 1) return { [variant]: toSerde(payload[ordered[0]]) };
+      if (ordered.length === 1) {
+        return { [variant]: className === 'Literal' ? literalPayload(variant, payload[ordered[0]]) : toSerde(payload[ordered[0]]) };
+      }
       return { [variant]: ordered.map((k) => toSerde(payload[k])) };
     }
 

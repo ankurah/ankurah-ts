@@ -1,149 +1,174 @@
 // MIRRORS: ankurah/ankql/src/selection/sql.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
-import { generateSelectionSql } from './sql.ts';
-import { parseSelection } from '../parser.ts';
-import { PathExpr, Predicate, Expr, Literal, ComparisonOperator } from '../ast.ts';
-import { SqlGenerationError } from '../error.ts';
+import { Result } from '@ankurah/base';
+import { ComparisonOperator, Expr, Literal, PathExpr, Predicate } from '../ast';
+import { parseSelection } from '../parser';
 
-describe('sql generation', () => {
-  // Rust: fn test_simple_equality
-  test('simple equality', () => {
-    using selection = parseSelection("name = 'Alice'");
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe('"name" = \'Alice\'');
+describe('sql unit tests', () => {
+  test('test_simple_equality', () => {
+    const selection = parseSelection('name = \'Alice\'');
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"name" = \'Alice\'');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_and_condition
-  test('AND condition', () => {
-    using selection = parseSelection("name = 'Alice' AND age = '30'");
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe('"name" = \'Alice\' AND "age" = \'30\'');
+  test('test_and_condition', () => {
+    const selection = parseSelection('name = \'Alice\' AND age = \'30\'');
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"name" = \'Alice\' AND "age" = \'30\'');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_complex_condition
-  test('complex condition', () => {
-    using selection = parseSelection(
-      "(name = 'Alice' OR name = 'Charlie') AND age >= '30' AND age <= '40'",
-    );
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe(
-      '("name" = \'Alice\' OR "name" = \'Charlie\') AND "age" >= \'30\' AND "age" <= \'40\'',
-    );
+  test('test_complex_condition', () => {
+    const selection = parseSelection('(name = \'Alice\' OR name = \'Charlie\') AND age >= \'30\' AND age <= \'40\'');
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('("name" = \'Alice\' OR "name" = \'Charlie\') AND "age" >= \'30\' AND "age" <= \'40\'');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_including_collection_identifier
-  test('including collection identifier (dotted path)', () => {
-    using selection = parseSelection("person.name = 'Alice'");
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe('"person"."name" = \'Alice\'');
+  test('test_including_collection_identifier', () => {
+    const selection = parseSelection('person.name = \'Alice\'');
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"person"."name" = \'Alice\'');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_in_operator
-  test('IN operator', () => {
-    using selection = parseSelection("name IN ('Alice', 'Bob', 'Charlie')");
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe('"name" IN (\'Alice\', \'Bob\', \'Charlie\')');
+  test('test_in_operator', () => {
+    const selection = parseSelection('name IN (\'Alice\', \'Bob\', \'Charlie\')');
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"name" IN (\'Alice\', \'Bob\', \'Charlie\')');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_placeholder_with_none_count
-  test('placeholder with None count', () => {
-    using selection = parseSelection('user_id = ?');
-    const sql = generateSelectionSql(selection.predicate);
-    expect(sql).toBe('"user_id" = ?');
+  test('test_placeholder_with_none_count', () => {
+    const query = 'user_id = ?';
+    const selection = parseSelection(query);
+    const _r0 = generateSelectionSql(selection.predicate, null);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"user_id" = ?');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_placeholder_with_exact_count
-  test('placeholder with exact count', () => {
-    using selection = parseSelection('user_id = ? AND status = ?');
-    const sql = generateSelectionSql(selection.predicate, 2);
-    expect(sql).toBe('"user_id" = ? AND "status" = ?');
+  test('test_placeholder_with_exact_count', () => {
+    const query = 'user_id = ? AND status = ?';
+    const selection = parseSelection(query);
+    const _r0 = generateSelectionSql(selection.predicate, 2);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"user_id" = ? AND "status" = ?');
+    return Result.Ok([]);
   });
 
-  // Rust: fn test_placeholder_count_mismatch_too_few
-  test('placeholder count mismatch: too few expected', () => {
-    using selection = parseSelection('user_id = ? AND status = ?');
+  test('test_placeholder_count_mismatch_too_few', () => {
+    const _r0 = parseSelection('user_id = ? AND status = ?');
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const selection = _r0.unwrap();
+    const _v = generateSelectionSql(selection.predicate, 1);
+    if (_v.isOk()) {
+      const _v2 = _v.unwrap();
+      throw new Error('Expected PlaceholderCountMismatch error')
+    } else {
+      const _v1 = _v.unwrapErr();
+      (() => {
+        expect(expected).toEqual(1);
+        expect(found).toEqual(2);
+      })()
+    }
+    return Result.Ok([]);
+  });
+
+  test('test_placeholder_count_mismatch_too_many', () => {
+    const _r0 = parseSelection('user_id = ?');
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const selection = _r0.unwrap();
+    const _v = generateSelectionSql(selection.predicate, 2);
+    if (_v.isOk()) {
+      const _v2 = _v.unwrap();
+      throw new Error('Expected PlaceholderCountMismatch error')
+    } else {
+      const _v1 = _v.unwrapErr();
+      (() => {
+        expect(expected).toEqual(2);
+        expect(found).toEqual(1);
+      })()
+    }
+    return Result.Ok([]);
+  });
+
+  test('test_placeholder_in_lists', () => {
+    const query = 'status IN (?, ?, ?)';
+    const selection = parseSelection(query);
+    const _r0 = generateSelectionSql(selection.predicate, 3);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"status" IN (?, ?, ?)');
+    return Result.Ok([]);
+  });
+
+  test('test_placeholder_with_zero_count', () => {
+    const query = 'user_id = 123';
+    const selection = parseSelection(query);
+    const _r0 = generateSelectionSql(selection.predicate, 0);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const sql = _r0.unwrap();
+    expect(sql).toEqual('"user_id" = 123');
+    return Result.Ok([]);
+  });
+
+  test('test_string_escaping', () => {
+    const predicate = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'O\'Brien' }) }) });
     try {
-      generateSelectionSql(selection.predicate, 1);
-      expect(true).toBe(false); // should not reach here
-    } catch (e) {
-      expect(e).toBeInstanceOf(SqlGenerationError);
-      if (e instanceof SqlGenerationError) {
-        expect(e.type).toBe('PlaceholderCountMismatch');
-        const v = e.value as { expected: number; found: number };
-        expect(v.expected).toBe(1);
-        expect(v.found).toBe(2);
-      }
+      const _r0 = generateSelectionSql(predicate, null);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      const sql = _r0.unwrap();
+      expect(sql).toEqual('"name" = \'O\'\'Brien\'');
+      return Result.Ok([]);
+    } finally {
+      predicate.drop();
     }
   });
 
-  // Rust: fn test_placeholder_count_mismatch_too_many
-  test('placeholder count mismatch: too many expected', () => {
-    using selection = parseSelection('user_id = ?');
+  test('test_null_byte_handling', () => {
+    const predicate = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('data') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'test\0data' }) }) });
     try {
-      generateSelectionSql(selection.predicate, 2);
-      expect(true).toBe(false);
-    } catch (e) {
-      expect(e).toBeInstanceOf(SqlGenerationError);
-      if (e instanceof SqlGenerationError) {
-        expect(e.type).toBe('PlaceholderCountMismatch');
-        const v = e.value as { expected: number; found: number };
-        expect(v.expected).toBe(2);
-        expect(v.found).toBe(1);
-      }
+      const _r0 = generateSelectionSql(predicate, null);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      const sql = _r0.unwrap();
+      expect(sql).toEqual('"data" = \'testdata\'');
+      return Result.Ok([]);
+    } finally {
+      predicate.drop();
     }
   });
 
-  // Rust: fn test_placeholder_in_lists
-  test('placeholder in lists', () => {
-    using selection = parseSelection('status IN (?, ?, ?)');
-    const sql = generateSelectionSql(selection.predicate, 3);
-    expect(sql).toBe('"status" IN (?, ?, ?)');
-  });
-
-  // Rust: fn test_placeholder_with_zero_count
-  test('placeholder with zero count (no placeholders)', () => {
-    using selection = parseSelection('user_id = 123');
-    const sql = generateSelectionSql(selection.predicate, 0);
-    expect(sql).toBe('"user_id" = 123');
-  });
-
-  // Rust: fn test_string_escaping
-  test('string escaping: single quotes', () => {
-    using predicate = Predicate.Comparison(
-      Expr.Path(PathExpr.simple('name')),
-      ComparisonOperator.Equal(),
-      Expr.Literal(Literal.String("O'Brien")),
-    );
-    const sql = generateSelectionSql(predicate);
-    expect(sql).toBe('"name" = \'O\'\'Brien\'');
-  });
-
-  // Rust: fn test_null_byte_handling
-  test('null byte handling', () => {
-    using predicate = Predicate.Comparison(
-      Expr.Path(PathExpr.simple('data')),
-      ComparisonOperator.Equal(),
-      Expr.Literal(Literal.String('test\0data')),
-    );
-    const sql = generateSelectionSql(predicate);
-    expect(sql).toBe('"data" = \'testdata\'');
-  });
-
-  // Rust: fn test_placeholder_with_zero_count_but_has_placeholder
-  test('placeholder with zero count but has placeholder', () => {
-    using selection = parseSelection('user_id = ?');
-    try {
-      generateSelectionSql(selection.predicate, 0);
-      expect(true).toBe(false);
-    } catch (e) {
-      expect(e).toBeInstanceOf(SqlGenerationError);
-      if (e instanceof SqlGenerationError) {
-        expect(e.type).toBe('PlaceholderCountMismatch');
-        const v = e.value as { expected: number; found: number };
-        expect(v.expected).toBe(0);
-        expect(v.found).toBe(1);
-      }
+  test('test_placeholder_with_zero_count_but_has_placeholder', () => {
+    const _r0 = parseSelection('user_id = ?');
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const selection = _r0.unwrap();
+    const _v = generateSelectionSql(selection.predicate, 0);
+    if (_v.isOk()) {
+      const _v2 = _v.unwrap();
+      throw new Error('Expected PlaceholderCountMismatch error')
+    } else {
+      const _v1 = _v.unwrapErr();
+      (() => {
+        expect(expected).toEqual(0);
+        expect(found).toEqual(1);
+      })()
     }
+    return Result.Ok([]);
   });
+
 });

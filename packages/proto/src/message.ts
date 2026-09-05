@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/message.rs
-import { Enum } from '@ankurah/base';
+import { Enum, Result, JsonError } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AuthData } from './auth';
 import { EntityId } from './id';
@@ -17,8 +17,21 @@ export class Message extends Enum<MessageV> {
 
   toString(): string {
     return this.match({
-      Presence: (v) => `Presence: ${v._0}`,
-      PeerMessage: (v) => `PeerMessage: ${v._0}`,
+      Presence: (v) => {
+        const presence = v._0;
+        return `Presence: ${presence}`;
+      },
+      PeerMessage: (v) => {
+        const nodeMessage = v._0;
+        return `PeerMessage: ${nodeMessage}`;
+      },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Presence: (v) => `Presence(${v._0.debug()})`,
+      PeerMessage: (v) => `PeerMessage(${v._0.debug()})`,
     });
   }
 
@@ -49,6 +62,31 @@ export class Message extends Enum<MessageV> {
       default: throw new Error(`Unknown Message variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Presence: (v) => ({ 'Presence': v._0 }),
+      PeerMessage: (v) => ({ 'PeerMessage': v._0 }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<Message, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('Presence' in o) {
+        const p = o['Presence'];
+        return Result.Ok(new Message('Presence', { _0: ((v: unknown) => _take(Presence.fromJson(v)))(p) }));
+      }
+      if ('PeerMessage' in o) {
+        const p = o['PeerMessage'];
+        return Result.Ok(new Message('PeerMessage', { _0: ((v: unknown) => _take(NodeMessage.fromJson(v)))(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `Message` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type NodeMessageV = {
@@ -63,11 +101,37 @@ export class NodeMessage extends Enum<NodeMessageV> {
 
   toString(): string {
     return this.match({
-      Request: (v) => `Request: ${v.request}`,
-      Response: (v) => `Response: ${v._0}`,
-      Update: (v) => `Update: ${v._0}`,
-      UpdateAck: (v) => `UpdateAck: ${v._0}`,
-      UnsubscribeQuery: (v) => `Unsubscribe: ${v.from} ${v.queryId}`,
+      Request: (v) => {
+        const request = v.request;
+        return `Request: ${request}`;
+      },
+      Response: (v) => {
+        const response = v._0;
+        return `Response: ${response}`;
+      },
+      Update: (v) => {
+        const update = v._0;
+        return `Update: ${update}`;
+      },
+      UpdateAck: (v) => {
+        const updateAck = v._0;
+        return `UpdateAck: ${updateAck}`;
+      },
+      UnsubscribeQuery: (v) => {
+        const from = v.from;
+        const queryId = v.queryId;
+        return `Unsubscribe: ${from} ${queryId}`;
+      },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Request: (v) => `Request { auth: ${`[${Array.from(v.auth).map((e) => e.debug()).join(', ')}]`}, request: ${v.request.debug()} }`,
+      Response: (v) => `Response(${v._0.debug()})`,
+      Update: (v) => `Update(${v._0.debug()})`,
+      UpdateAck: (v) => `UpdateAck(${v._0.debug()})`,
+      UnsubscribeQuery: (v) => `UnsubscribeQuery { from: ${v.from}, queryId: ${v.queryId} }`,
     });
   }
 
@@ -124,6 +188,46 @@ export class NodeMessage extends Enum<NodeMessageV> {
         return new NodeMessage('UnsubscribeQuery', { from, queryId });
       }
       default: throw new Error(`Unknown NodeMessage variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Request: (v) => ({ 'Request': { 'auth': v.auth, 'request': v.request } }),
+      Response: (v) => ({ 'Response': v._0 }),
+      Update: (v) => ({ 'Update': v._0 }),
+      UpdateAck: (v) => ({ 'UpdateAck': v._0 }),
+      UnsubscribeQuery: (v) => ({ 'UnsubscribeQuery': { 'from': v.from, 'query_id': v.queryId } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeMessage, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('Request' in o) {
+        const p = o['Request'];
+        return Result.Ok(new NodeMessage('Request', { auth: ((v: unknown) => (v as unknown[]).map((v) => _take(AuthData.fromJson(v))))((p as Record<string, unknown>)['auth']), request: ((v: unknown) => _take(NodeRequest.fromJson(v)))((p as Record<string, unknown>)['request']) }));
+      }
+      if ('Response' in o) {
+        const p = o['Response'];
+        return Result.Ok(new NodeMessage('Response', { _0: ((v: unknown) => _take(NodeResponse.fromJson(v)))(p) }));
+      }
+      if ('Update' in o) {
+        const p = o['Update'];
+        return Result.Ok(new NodeMessage('Update', { _0: ((v: unknown) => _take(NodeUpdate.fromJson(v)))(p) }));
+      }
+      if ('UpdateAck' in o) {
+        const p = o['UpdateAck'];
+        return Result.Ok(new NodeMessage('UpdateAck', { _0: ((v: unknown) => _take(NodeUpdateAck.fromJson(v)))(p) }));
+      }
+      if ('UnsubscribeQuery' in o) {
+        const p = o['UnsubscribeQuery'];
+        return Result.Ok(new NodeMessage('UnsubscribeQuery', { from: ((v: unknown) => _take(EntityId.fromJson(v)))((p as Record<string, unknown>)['from']), queryId: ((v: unknown) => _take(QueryId.fromJson(v)))((p as Record<string, unknown>)['query_id']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeMessage` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }

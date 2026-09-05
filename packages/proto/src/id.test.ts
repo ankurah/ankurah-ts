@@ -6,23 +6,17 @@ import { BincodeWriter, BincodeReader } from './codec';
 
 describe('id unit tests', () => {
   test('test_entity_id_json_serialization', () => {
-    // Rust serde_json uses custom Serialize → base64url no-pad
-    using id = EntityId.fromBytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    const base64 = id.toBase64();
-    expect(base64).toEqual('AQIDBAUGBwgJCgsMDQ4PEA');
-    using roundTrip = EntityId.fromBase64(base64);
-    expect(id.equals(roundTrip)).toBe(true);
+    const id = EntityId.fromBytes(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+    const json = JSON.stringify(id);
+    expect(json).toEqual('"AQIDBAUGBwgJCgsMDQ4PEA"');
+    expect(id).toEqual(EntityId.fromJson(JSON.parse(json)).unwrap());
   });
 
   test('test_entity_id_bincode_serialization', () => {
-    // Rust bincode uses custom Serialize → raw 16 bytes
-    using id = EntityId.fromBytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    const writer = new BincodeWriter();
-    id.encode(writer);
-    const bytes = writer.finish();
-    expect(Array.from(bytes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    const reader = new BincodeReader(bytes);
-    using decoded = EntityId.decode(reader);
-    expect(id.equals(decoded)).toBe(true);
+    const id = EntityId.fromBytes(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+    const bytes = (() => { const _w = new BincodeWriter(); id.encode(_w); return _w.finish(); })();
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+    expect(id).toEqual((() => { const _r = new BincodeReader(bytes); return EntityId.decode(_r); })());
   });
+
 });

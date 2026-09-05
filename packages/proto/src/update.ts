@@ -1,9 +1,10 @@
 // MIRRORS: ankurah/proto/src/update.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError } from '@ankurah/base';
 import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
+import { Attested } from './auth';
 import { CollectionId } from './collection';
-import { EventFragment, StateFragment } from './data';
+import { EntityState, EventFragment, State, StateFragment } from './data';
 import { EntityId } from './id';
 import { QueryId } from './subscription';
 export { UpdateId };
@@ -26,8 +27,15 @@ export class SubscriptionUpdateItem extends Struct {
     let _result = '';
     _result += `${this.collection}/${this.entityId}: `;
     _result += this.content.match({
-      EventOnly: (v) => `Events(${v._0.length})`,
-      StateAndEvent: (v) => `State+Events(${v._0}, ${v._1.length})`,
+      EventOnly: (v) => {
+        const events = v._0;
+        return `Events(${events.length})`;
+      },
+      StateAndEvent: (v) => {
+        const state = v._0;
+        const events = v._1;
+        return `State+Events(${state}, ${events.length})`;
+      },
     })
     if (!(this.predicateRelevance.length === 0)) {
       _result += ` predicates:${this.predicateRelevance.length}`;
@@ -37,6 +45,10 @@ export class SubscriptionUpdateItem extends Struct {
 
   clone(): SubscriptionUpdateItem {
     return new SubscriptionUpdateItem(this.entityId.clone(), this.collection.clone(), this.content.clone(), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
+  }
+
+  debug(): string {
+    return `SubscriptionUpdateItem { entityId: ${this.entityId}, collection: ${this.collection.debug()}, content: ${this.content.debug()}, predicateRelevance: ${this.predicateRelevance} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -73,6 +85,10 @@ export class NodeUpdate extends Struct {
     return `Update ${this.id} from ${this.from}->${this.to}: ${this.body}`;
   }
 
+  debug(): string {
+    return `NodeUpdate { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.id.encode(writer);
     this.from.encode(writer);
@@ -86,6 +102,29 @@ export class NodeUpdate extends Struct {
     const to = EntityId.decode(reader);
     const body = NodeUpdateBody.decode(reader);
     return new NodeUpdate(id, from, to, body);
+  }
+
+  toJSON(): unknown {
+    return {
+      'id': this.id,
+      'from': this.from,
+      'to': this.to,
+      'body': this.body,
+    };
+  }
+
+  static fromJson(value: unknown): Result<NodeUpdate, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const id = ((v: unknown) => _take(UpdateId.fromJson(v)))(o['id']);
+      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
+      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
+      const body = ((v: unknown) => _take(NodeUpdateBody.fromJson(v)))(o['body']);
+      return Result.Ok(new NodeUpdate(id, from, to, body));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -107,6 +146,10 @@ export class NodeUpdateAck extends Struct {
     return `UpdateAck(${this.id})`;
   }
 
+  debug(): string {
+    return `NodeUpdateAck { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.id.encode(writer);
     this.from.encode(writer);
@@ -121,6 +164,29 @@ export class NodeUpdateAck extends Struct {
     const body = NodeUpdateAckBody.decode(reader);
     return new NodeUpdateAck(id, from, to, body);
   }
+
+  toJSON(): unknown {
+    return {
+      'id': this.id,
+      'from': this.from,
+      'to': this.to,
+      'body': this.body,
+    };
+  }
+
+  static fromJson(value: unknown): Result<NodeUpdateAck, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const id = ((v: unknown) => _take(UpdateId.fromJson(v)))(o['id']);
+      const from = ((v: unknown) => _take(EntityId.fromJson(v)))(o['from']);
+      const to = ((v: unknown) => _take(EntityId.fromJson(v)))(o['to']);
+      const body = ((v: unknown) => _take(NodeUpdateAckBody.fromJson(v)))(o['body']);
+      return Result.Ok(new NodeUpdateAck(id, from, to, body));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type NodeUpdateBodyV = {
@@ -131,7 +197,16 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
 
   toString(): string {
     return this.match({
-      SubscriptionUpdate: (v) => `SubscriptionUpdate [${[...v.items].map((i) => `${i}`).join(', ')}]`,
+      SubscriptionUpdate: (v) => {
+        const items = v.items;
+        return `SubscriptionUpdate [${[...items].map((i) => `${i}`).join(', ')}]`;
+      },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      SubscriptionUpdate: (v) => `SubscriptionUpdate { items: ${`[${Array.from(v.items).map((e) => e.debug()).join(', ')}]`} }`,
     });
   }
 
@@ -154,6 +229,26 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
       default: throw new Error(`Unknown NodeUpdateBody variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      SubscriptionUpdate: (v) => ({ 'SubscriptionUpdate': { 'items': v.items } }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeUpdateBody, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('SubscriptionUpdate' in o) {
+        const p = o['SubscriptionUpdate'];
+        return Result.Ok(new NodeUpdateBody('SubscriptionUpdate', { items: ((v: unknown) => (v as unknown[]).map((v) => _take(SubscriptionUpdateItem.fromJson(v))))((p as Record<string, unknown>)['items']) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeUpdateBody` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type UpdateContentV = {
@@ -164,9 +259,16 @@ export type UpdateContentV = {
 export class UpdateContent extends Enum<UpdateContentV> {
 
   intoParts(): [StateFragment | null, EventFragment[] | null] {
-    return this.match({
-      EventOnly: (v) => [null, v._0] as any,
-      StateAndEvent: (v) => [v._0, v._1] as any,
+    return this.intoMatch({
+      EventOnly: (v) => {
+        const events = v._0;
+        return [null, events] as any;
+      },
+      StateAndEvent: (v) => {
+        const state = v._0;
+        const events = v._1;
+        return [state, events] as any;
+      },
     });
   }
 
@@ -174,6 +276,13 @@ export class UpdateContent extends Enum<UpdateContentV> {
     return this.match({
       EventOnly: (v) => new UpdateContent('EventOnly', { _0: v._0.map(e => e.clone()) }),
       StateAndEvent: (v) => new UpdateContent('StateAndEvent', { _0: v._0.clone(), _1: v._1.map(e => e.clone()) }),
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      EventOnly: (v) => `EventOnly(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      StateAndEvent: (v) => `StateAndEvent(${v._0.debug()}, ${`[${Array.from(v._1).map((e) => e.debug()).join(', ')}]`})`,
     });
   }
 
@@ -206,6 +315,31 @@ export class UpdateContent extends Enum<UpdateContentV> {
       default: throw new Error(`Unknown UpdateContent variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      EventOnly: (v) => ({ 'EventOnly': v._0 }),
+      StateAndEvent: (v) => ({ 'StateAndEvent': [v._0, v._1] }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<UpdateContent, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      if ('EventOnly' in o) {
+        const p = o['EventOnly'];
+        return Result.Ok(new UpdateContent('EventOnly', { _0: ((v: unknown) => (v as unknown[]).map((v) => _take(EventFragment.fromJson(v))))(p) }));
+      }
+      if ('StateAndEvent' in o) {
+        const p = o['StateAndEvent'];
+        return Result.Ok(new UpdateContent('StateAndEvent', { _0: ((v: unknown) => _take(StateFragment.fromJson(v)))((p as unknown[])[0]), _1: ((v: unknown) => (v as unknown[]).map((v) => _take(EventFragment.fromJson(v))))((p as unknown[])[1]) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `UpdateContent` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type MembershipChangeV = {
@@ -222,6 +356,14 @@ export class MembershipChange extends Enum<MembershipChangeV> {
 
   equals(other: MembershipChange): boolean {
     return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Initial: () => 'Initial',
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
   }
 
   encode(writer: BincodeWriter): void {
@@ -253,6 +395,30 @@ export class MembershipChange extends Enum<MembershipChangeV> {
       default: throw new Error(`Unknown MembershipChange variant: ${variant}`);
     }
   }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Initial: () => 'Initial',
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
+  }
+
+  static fromJson(value: unknown): Result<MembershipChange, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Initial': return Result.Ok(new MembershipChange('Initial', {}));
+          case 'Add': return Result.Ok(new MembershipChange('Add', {}));
+          case 'Remove': return Result.Ok(new MembershipChange('Remove', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      return Result.Err(JsonError.custom('no variant of `MembershipChange` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export type NodeUpdateAckBodyV = {
@@ -264,8 +430,18 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
 
   toString(): string {
     return this.match({
-      Success: () => `Success`,
-      Error: (v) => `Error: ${v._0}`,
+      Success: () => 'Success',
+      Error: (v) => {
+        const e = v._0;
+        return `Error: ${e}`;
+      },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Success: () => 'Success',
+      Error: (v) => `Error(${JSON.stringify(v._0)})`,
     });
   }
 
@@ -292,6 +468,31 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
         return new NodeUpdateAckBody('Error', { _0 });
       }
       default: throw new Error(`Unknown NodeUpdateAckBody variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      Success: () => 'Success',
+      Error: (v) => ({ 'Error': v._0 }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeUpdateAckBody, JsonError> {
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Success': return Result.Ok(new NodeUpdateAckBody('Success', {}));
+        }
+      }
+      const o = value as Record<string, unknown>;
+      if ('Error' in o) {
+        const p = o['Error'];
+        return Result.Ok(new NodeUpdateAckBody('Error', { _0: ((v: unknown) => v as string)(p) }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeUpdateAckBody` matches this JSON'));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
     }
   }
 }

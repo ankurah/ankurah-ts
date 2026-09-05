@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct } from '@ankurah/base';
+import { Struct, Result, JsonError } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -24,7 +24,7 @@ export class Event extends Struct {
   }
 
   isEntityCreate(): boolean {
-    return this.parent.length === 0;
+    return this.parent.isEmpty();
   }
 
   id(): EventId {
@@ -32,11 +32,20 @@ export class Event extends Struct {
   }
 
   toString(): string {
-    return `Event(${this.id().toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    const _t0 = this.id();
+    try {
+      return `Event(${_t0.toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations.deref()].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+    } finally {
+      _t0.drop();
+    }
   }
 
   clone(): Event {
     return new Event(this.collection.clone(), this.entityId.clone(), this.operations.clone(), this.parent.clone());
+  }
+
+  debug(): string {
+    return `Event { collection: ${this.collection.debug()}, entityId: ${this.entityId}, operations: ${this.operations.debug()}, parent: ${this.parent} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -53,6 +62,29 @@ export class Event extends Struct {
     const parent = Clock.decode(reader);
     return new Event(collection, entityId, operations, parent);
   }
+
+  toJSON(): unknown {
+    return {
+      'collection': this.collection,
+      'entity_id': this.entityId,
+      'operations': this.operations,
+      'parent': this.parent,
+    };
+  }
+
+  static fromJson(value: unknown): Result<Event, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const collection = ((v: unknown) => _take(CollectionId.fromJson(v)))(o['collection']);
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const operations = ((v: unknown) => _take(OperationSet.fromJson(v)))(o['operations']);
+      const parent = ((v: unknown) => _take(Clock.fromJson(v)))(o['parent']);
+      return Result.Ok(new Event(collection, entityId, operations, parent));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class EventFragment extends Struct {
@@ -68,7 +100,11 @@ export class EventFragment extends Struct {
   }
 
   static from(attested: Attested<Event>): EventFragment {
-    return new EventFragment(attested.payload.operations, attested.payload.parent, attested.attestations);
+    try {
+      return new EventFragment(attested.payload.takeField('operations'), attested.payload.takeField('parent'), attested.takeField('attestations'));
+    } finally {
+      attested.drop();
+    }
   }
 
   toString(): string {
@@ -86,6 +122,10 @@ export class EventFragment extends Struct {
     return new EventFragment(this.operations.clone(), this.parent.clone(), this.attestations.clone());
   }
 
+  debug(): string {
+    return `EventFragment { operations: ${this.operations.debug()}, parent: ${this.parent}, attestations: ${this.attestations.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.operations.encode(writer);
     this.parent.encode(writer);
@@ -97,6 +137,27 @@ export class EventFragment extends Struct {
     const parent = Clock.decode(reader);
     const attestations = AttestationSet.decode(reader);
     return new EventFragment(operations, parent, attestations);
+  }
+
+  toJSON(): unknown {
+    return {
+      'operations': this.operations,
+      'parent': this.parent,
+      'attestations': this.attestations,
+    };
+  }
+
+  static fromJson(value: unknown): Result<EventFragment, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const operations = ((v: unknown) => _take(OperationSet.fromJson(v)))(o['operations']);
+      const parent = ((v: unknown) => _take(Clock.fromJson(v)))(o['parent']);
+      const attestations = ((v: unknown) => _take(AttestationSet.fromJson(v)))(o['attestations']);
+      return Result.Ok(new EventFragment(operations, parent, attestations));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -111,11 +172,15 @@ export class StateFragment extends Struct {
   }
 
   static from(attested: Attested<EntityState>): StateFragment {
-    return new StateFragment(attested.payload.state, attested.attestations);
+    try {
+      return new StateFragment(attested.payload.takeField('state'), attested.takeField('attestations'));
+    } finally {
+      attested.drop();
+    }
   }
 
   toString(): string {
-    return `StateFragment(state ${this.state} attestations: ${this.attestations.length})`;
+    return `StateFragment(state ${this.state} attestations: ${this.attestations.deref().length})`;
   }
 
   equals(other: StateFragment): boolean {
@@ -128,6 +193,10 @@ export class StateFragment extends Struct {
     return new StateFragment(this.state.clone(), this.attestations.clone());
   }
 
+  debug(): string {
+    return `StateFragment { state: ${this.state.debug()}, attestations: ${this.attestations.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.state.encode(writer);
     this.attestations.encode(writer);
@@ -137,6 +206,25 @@ export class StateFragment extends Struct {
     const state = State.decode(reader);
     const attestations = AttestationSet.decode(reader);
     return new StateFragment(state, attestations);
+  }
+
+  toJSON(): unknown {
+    return {
+      'state': this.state,
+      'attestations': this.attestations,
+    };
+  }
+
+  static fromJson(value: unknown): Result<StateFragment, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const state = ((v: unknown) => _take(State.fromJson(v)))(o['state']);
+      const attestations = ((v: unknown) => _take(AttestationSet.fromJson(v)))(o['attestations']);
+      return Result.Ok(new StateFragment(state, attestations));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -152,6 +240,10 @@ export class OperationSet extends Struct {
     return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
+  deref(): Map<string, Operation[]> {
+    return this._0;
+  }
+
   equals(other: OperationSet): boolean {
     { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; } }
     return true;
@@ -159,6 +251,10 @@ export class OperationSet extends Struct {
 
   clone(): OperationSet {
     return new OperationSet(new Map(Array.from(this._0.entries()).map(([k, v]) => [k, v])));
+  }
+
+  debug(): string {
+    return `OperationSet(${this._0})`;
   }
 
   get size(): number {
@@ -204,6 +300,10 @@ export class Operation extends Struct {
     return new Operation(new Uint8Array(this.diff));
   }
 
+  debug(): string {
+    return `Operation { diff: ${`[${Array.from(this.diff).map((e) => String(e)).join(', ')}]`} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     writer.writeByteVec(this.diff);
   }
@@ -211,6 +311,22 @@ export class Operation extends Struct {
   static decode(reader: BincodeReader): Operation {
     const diff = reader.readByteVec();
     return new Operation(diff);
+  }
+
+  toJSON(): unknown {
+    return {
+      'diff': Array.from(this.diff),
+    };
+  }
+
+  static fromJson(value: unknown): Result<Operation, JsonError> {
+    try {
+      const o = value as Record<string, unknown>;
+      const diff = ((v: unknown) => new Uint8Array(v as number[]))(o['diff']);
+      return Result.Ok(new Operation(diff));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -241,6 +357,10 @@ export class EntityState extends Struct {
     return new EntityState(this.entityId.clone(), this.collection.clone(), this.state.clone());
   }
 
+  debug(): string {
+    return `EntityState { entityId: ${this.entityId}, collection: ${this.collection.debug()}, state: ${this.state.debug()} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.entityId.encode(writer);
     this.collection.encode(writer);
@@ -252,6 +372,27 @@ export class EntityState extends Struct {
     const collection = CollectionId.decode(reader);
     const state = State.decode(reader);
     return new EntityState(entityId, collection, state);
+  }
+
+  toJSON(): unknown {
+    return {
+      'entity_id': this.entityId,
+      'collection': this.collection,
+      'state': this.state,
+    };
+  }
+
+  static fromJson(value: unknown): Result<EntityState, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const entityId = ((v: unknown) => _take(EntityId.fromJson(v)))(o['entity_id']);
+      const collection = ((v: unknown) => _take(CollectionId.fromJson(v)))(o['collection']);
+      const state = ((v: unknown) => _take(State.fromJson(v)))(o['state']);
+      return Result.Ok(new EntityState(entityId, collection, state));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
   }
 }
 
@@ -266,7 +407,7 @@ export class State extends Struct {
   }
 
   toString(): string {
-    return `State(${this.head} buffers ${[...this.stateBuffers].map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
+    return `State(${this.head} buffers ${[...this.stateBuffers.deref()].map(([backend, buf]) => `${backend} => ${buf.length}b`).join(' ')})`;
   }
 
   equals(other: State): boolean {
@@ -283,6 +424,10 @@ export class State extends Struct {
     return new State(StateBuffers.default(), Clock.default());
   }
 
+  debug(): string {
+    return `State { stateBuffers: ${this.stateBuffers.debug()}, head: ${this.head} }`;
+  }
+
   encode(writer: BincodeWriter): void {
     this.stateBuffers.encode(writer);
     this.head.encode(writer);
@@ -293,6 +438,25 @@ export class State extends Struct {
     const head = Clock.decode(reader);
     return new State(stateBuffers, head);
   }
+
+  toJSON(): unknown {
+    return {
+      'state_buffers': this.stateBuffers,
+      'head': this.head,
+    };
+  }
+
+  static fromJson(value: unknown): Result<State, JsonError> {
+    try {
+      const _take = <T,>(r: Result<T, JsonError>): T => { if (r.isErr()) throw r.unwrapErr(); return r.unwrap(); };
+      const o = value as Record<string, unknown>;
+      const stateBuffers = ((v: unknown) => _take(StateBuffers.fromJson(v)))(o['state_buffers']);
+      const head = ((v: unknown) => _take(Clock.fromJson(v)))(o['head']);
+      return Result.Ok(new State(stateBuffers, head));
+    } catch (e) {
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
 }
 
 export class StateBuffers extends Struct {
@@ -301,6 +465,10 @@ export class StateBuffers extends Struct {
   constructor(_0: Map<string, Uint8Array>) {
     super();
     this._0 = _0;
+  }
+
+  deref(): Map<string, Uint8Array> {
+    return this._0;
   }
 
   equals(other: StateBuffers): boolean {
@@ -314,6 +482,10 @@ export class StateBuffers extends Struct {
 
   static default(): StateBuffers {
     return new StateBuffers(new Map());
+  }
+
+  debug(): string {
+    return `StateBuffers(${this._0})`;
   }
 
   get size(): number {

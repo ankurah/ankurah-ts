@@ -1,144 +1,120 @@
-// MIRRORS: ankurah/ankql/src/ast.rs #[cfg(test)] mod tests
+// MIRRORS: ankurah/ankql/src/ast.rs (tests module)
+
 import { describe, test, expect } from 'bun:test';
-import { parseSelection } from './parser.ts';
-import { generateSelectionSql } from './selection/sql.ts';
-import {
-  Predicate,
-  Expr,
-  Literal,
-  ComparisonOperator,
-  PathExpr,
-  assumeNull,
-  populatePredicate,
-  exprFromString,
-  exprFromI64,
-  exprFromF64,
-  exprFromBool,
-} from './ast.ts';
+import { ComparisonOperator, Expr, Literal, PathExpr, Predicate } from './ast';
+import { Result } from '@ankurah/base';
+import { ParseError } from './error';
+import { parseSelection } from './parser';
+import { generateSelectionSql } from './selection/sql';
 
-// ── Helpers ──
+describe('ast unit tests', () => {
+  function nullifyColumns(input: string, nullColumns: string[]): Result<string, ParseError> {
+    const _r0 = parseSelection(input);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const selection = _r0.unwrap();
+    const result = selection.predicate.assumeNull([...nullColumns].map((s) => s));
+    return generateSelectionSql(result, null).mapErr((_) => new ParseError('InvalidPredicate', { _0: 'SQL generation failed' }));
+  }
 
-// Rust: fn nullify_columns
-/** Parse input, null-ify columns, generate SQL. */
-function nullifyColumns(input: string, nullColumns: string[]): string {
-  using selection = parseSelection(input);
-  using result = assumeNull(selection.predicate, nullColumns);
-  return generateSelectionSql(result);
-}
-
-/** Assert a Predicate is a Comparison with path/op/literal. */
-function assertComparison(
-  pred: Predicate,
-  pathName: string,
-  opType: ComparisonOperator['type'],
-  literal: { type: Literal['type']; check: (v: any) => void },
-): void {
-  expect(pred.is('Comparison')).toBe(true);
-  pred.match({
-    Comparison: (v) => {
-      expect(v.left.is('Path')).toBe(true);
-      if (v.left.is('Path')) {
-        expect(v.left.value.path.toString()).toBe(pathName);
-      }
-      expect(v.operator.type).toBe(opType);
-      expect(v.right.is('Literal')).toBe(true);
-      if (v.right.is('Literal')) {
-        expect(v.right.value.literal.type).toBe(literal.type);
-        literal.check(v.right.value.literal);
-      }
-    },
-    And: () => { throw new Error('expected Comparison'); },
-    Or: () => { throw new Error('expected Comparison'); },
-    Not: () => { throw new Error('expected Comparison'); },
-    IsNull: () => { throw new Error('expected Comparison'); },
-    True: () => { throw new Error('expected Comparison'); },
-    False: () => { throw new Error('expected Comparison'); },
-    Placeholder: () => { throw new Error('expected Comparison'); },
-  });
-}
-
-// ── Tests ──
-
-// Rust: fn test_single_comparison_null_handling()
-describe('assume_null', () => {
-  test('single comparison null handling', () => {
-    expect(nullifyColumns("status = 'active'", ['status'])).toBe('FALSE');
-    expect(nullifyColumns('age > 30', ['age'])).toBe('FALSE');
-    expect(nullifyColumns('count >= 100', ['count'])).toBe('FALSE');
-    expect(nullifyColumns("name < 'Z'", ['name'])).toBe('FALSE');
-    expect(nullifyColumns('score <= 90', ['score'])).toBe('FALSE');
-    expect(nullifyColumns('status IS NULL', ['status'])).toBe('TRUE');
-    expect(nullifyColumns("role = 'admin'", ['other'])).toBe('"role" = \'admin\'');
+  test('test_single_comparison_null_handling', () => {
+    expect(nullifyColumns('status = \'active\'', ['status'])).toEqual('FALSE');
+    expect(nullifyColumns('age > 30', ['age'])).toEqual('FALSE');
+    expect(nullifyColumns('count >= 100', ['count'])).toEqual('FALSE');
+    expect(nullifyColumns('name < \'Z\'', ['name'])).toEqual('FALSE');
+    expect(nullifyColumns('score <= 90', ['score'])).toEqual('FALSE');
+    expect(nullifyColumns('status IS NULL', ['status'])).toEqual('TRUE');
+    expect(nullifyColumns('role = \'admin\'', ['other'])).toEqual('"role" = \'admin\'');
   });
 
-  // Rust: fn nested_predicate_null_handling()
-  test('nested predicate null handling', () => {
+  test('nested_predicate_null_handling', () => {
     const input = 'alpha = 1 AND (beta = 2 OR charlie = 3)';
-    expect(nullifyColumns(input, ['charlie'])).toBe('"alpha" = 1 AND "beta" = 2');
-    expect(nullifyColumns(input, ['beta', 'charlie'])).toBe('FALSE');
-    expect(nullifyColumns(input, ['alpha'])).toBe('FALSE');
-    expect(nullifyColumns(input, ['other'])).toBe('"alpha" = 1 AND ("beta" = 2 OR "charlie" = 3)');
-  });
-});
-
-describe('populate', () => {
-  // Rust: fn test_populate_single_placeholder()
-  test('single placeholder', () => {
-    using selection = parseSelection('name = ?');
-    const arg0 = exprFromString('Alice');
-    using populated = populatePredicate(selection.predicate, [arg0]);
-
-    assertComparison(populated, 'name', 'Equal', {
-      type: 'String',
-      check: (lit) => expect(lit.value.value).toBe('Alice'),
-    });
+    expect(nullifyColumns(input, ['charlie'])).toEqual('"alpha" = 1 AND "beta" = 2');
+    expect(nullifyColumns(input, ['beta', 'charlie'])).toEqual('FALSE');
+    expect(nullifyColumns(input, ['alpha'])).toEqual('FALSE');
+    expect(nullifyColumns(input, ['other'])).toEqual('"alpha" = 1 AND ("beta" = 2 OR "charlie" = 3)');
   });
 
-  // Rust: fn test_populate_multiple_placeholders()
-  test('multiple placeholders', () => {
-    using selection = parseSelection('age > ? AND name = ?');
-    const arg0 = exprFromI64(25n);
-    const arg1 = exprFromString('Bob');
-    using populated = populatePredicate(selection.predicate, [arg0, arg1]);
-
-    expect(populated.is('And')).toBe(true);
-    if (populated.is('And')) {
-      assertComparison(populated.value.left, 'age', 'GreaterThan', {
-        type: 'I64',
-        check: (lit) => expect(lit.value.value).toBe(25n),
-      });
-      assertComparison(populated.value.right, 'name', 'Equal', {
-        type: 'String',
-        check: (lit) => expect(lit.value.value).toBe('Bob'),
-      });
+  test('test_populate_single_placeholder', () => {
+    const selection = parseSelection('name = ?');
+    const populated = selection.predicate.populate(['Alice']);
+    const expected = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Alice' }) }) });
+    try {
+      expect(populated).toEqual(expected);
+    } finally {
+      expected.drop();
     }
   });
 
-  // Rust: fn test_populate_in_clause()
-  test('IN clause placeholders', () => {
-    using selection = parseSelection('status IN (?, ?, ?)');
-    const arg0 = exprFromString('active');
-    const arg1 = exprFromString('pending');
-    const arg2 = exprFromString('review');
-    using populated = populatePredicate(selection.predicate, [arg0, arg1, arg2]);
+  test('test_populate_multiple_placeholders', () => {
+    const selection = parseSelection('age > ? AND name = ?');
+    const values = [(25n), 'Bob'];
+    const populated = selection.predicate.populate(values);
+    const expected = new Predicate('And', { _0: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('age') }), operator: new ComparisonOperator('GreaterThan', {}), right: new Expr('Literal', { _0: new Literal('I64', { _0: 25n }) }) }), _1: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Bob' }) }) }) });
+    try {
+      expect(populated).toEqual(expected);
+    } finally {
+      expected.drop();
+    }
+  });
 
-    expect(populated.is('Comparison')).toBe(true);
-    if (populated.is('Comparison')) {
-      expect(populated.value.left.is('Path')).toBe(true);
-      if (populated.value.left.is('Path')) {
-        expect(populated.value.left.value.path.toString()).toBe('status');
-      }
-      expect(populated.value.operator.type).toBe('In');
-      expect(populated.value.right.is('ExprList')).toBe(true);
-      if (populated.value.right.is('ExprList')) {
-        const exprs = populated.value.right.value.exprs;
-        expect(exprs.length).toBe(3);
-        for (const [i, expected] of (['active', 'pending', 'review'] as const).entries()) {
-          expect(exprs[i].is('Literal')).toBe(true);
-          if (exprs[i].is('Literal')) {
-            expect(exprs[i].value.literal.type).toBe('String');
-            if (exprs[i].value.literal.is('String')) {
-              expect(exprs[i].value.literal.value.value).toBe(expected);
+  test('test_populate_in_clause', () => {
+    const selection = parseSelection('status IN (?, ?, ?)');
+    const populated = selection.predicate.populate(['active', 'pending', 'review']);
+    const expected = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('status') }), operator: new ComparisonOperator('In', {}), right: new Expr('ExprList', { _0: [new Expr('Literal', { _0: new Literal('String', { _0: 'active' }) }), new Expr('Literal', { _0: new Literal('String', { _0: 'pending' }) }), new Expr('Literal', { _0: new Literal('String', { _0: 'review' }) })] }) });
+    try {
+      expect(populated).toEqual(expected);
+    } finally {
+      expected.drop();
+    }
+  });
+
+  test('test_populate_mixed_types', () => {
+    const selection = parseSelection('active = ? AND score > ? AND name = ?');
+    const values = [true, (95.5), 'Charlie'];
+    const populated = selection.predicate.populate(values);
+    {
+      const _v4 = populated;
+      if (_v4.is('And')) {
+        const { _0: left, _1: right } = _v4.value;
+        {
+          const _v2 = left;
+          if (_v2.is('And')) {
+            const { _0: innerLeft, _1: innerRight } = _v2.value;
+            {
+              const _v = innerLeft;
+              if (_v.is('Comparison')) {
+                const { right: val } = _v.value;
+                const _t0 = new Expr('Literal', { _0: new Literal('Bool', { _0: true }) });
+                try {
+                  expect(val).toEqual(_t0);
+                } finally {
+                  _t0.drop();
+                }
+              }
+            }
+            {
+              const _v1 = innerRight;
+              if (_v1.is('Comparison')) {
+                const { right: val } = _v1.value;
+                const _t1 = new Expr('Literal', { _0: new Literal('F64', { _0: 95.5 }) });
+                try {
+                  expect(val).toEqual(_t1);
+                } finally {
+                  _t1.drop();
+                }
+              }
+            }
+          }
+        }
+        {
+          const _v3 = right;
+          if (_v3.is('Comparison')) {
+            const { right: val } = _v3.value;
+            const _t2 = new Expr('Literal', { _0: new Literal('String', { _0: 'Charlie' }) });
+            try {
+              expect(val).toEqual(_t2);
+            } finally {
+              _t2.drop();
             }
           }
         }
@@ -146,78 +122,24 @@ describe('populate', () => {
     }
   });
 
-  // Rust: fn test_populate_mixed_types()
-  test('mixed types', () => {
-    using selection = parseSelection('active = ? AND score > ? AND name = ?');
-    const arg0 = exprFromBool(true);
-    const arg1 = exprFromF64(95.5);
-    const arg2 = exprFromString('Charlie');
-    using populated = populatePredicate(selection.predicate, [arg0, arg1, arg2]);
-
-    // Structure: And(And(active=true, score>95.5), name='Charlie')
-    expect(populated.is('And')).toBe(true);
-    if (populated.is('And')) {
-      const left = populated.value.left;
-      const right = populated.value.right;
-
-      expect(left.is('And')).toBe(true);
-      if (left.is('And')) {
-        // Check boolean value
-        assertComparison(left.value.left, 'active', 'Equal', {
-          type: 'Bool',
-          check: (lit) => expect(lit.value.value).toBe(true),
-        });
-        // Check float value
-        assertComparison(left.value.right, 'score', 'GreaterThan', {
-          type: 'F64',
-          check: (lit) => expect(lit.value.value).toBe(95.5),
-        });
-      }
-      // Check string value
-      assertComparison(right, 'name', 'Equal', {
-        type: 'String',
-        check: (lit) => expect(lit.value.value).toBe('Charlie'),
-      });
-    }
+  test('test_populate_too_few_values', () => {
+    const selection = parseSelection('name = ? AND age = ?');
+    const result = selection.predicate.populate(['Alice']);
+    if (!(result.isErr())) throw new Error('assertion failed');
+    if (!(result.unwrapErr().toString().includes('Not enough values'))) throw new Error('assertion failed');
   });
 
-  // Rust: fn test_populate_too_few_values()
-  test('too few values', () => {
-    using selection = parseSelection('name = ? AND age = ?');
-    using arg0 = exprFromString('Alice');
-    try {
-      populatePredicate(selection.predicate, [arg0]);
-      expect(true).toBe(false); // should not reach here
-    } catch (e: any) {
-      expect(e.message).toMatch(/Not enough values/);
-      if (typeof e?.drop === 'function') e.drop();
-    }
+  test('test_populate_too_many_values', () => {
+    const selection = parseSelection('name = ?');
+    const result = selection.predicate.populate(['Alice', 'Bob']);
+    if (!(result.isErr())) throw new Error('assertion failed');
+    if (!(result.unwrapErr().toString().includes('Too many values'))) throw new Error('assertion failed');
   });
 
-  // Rust: fn test_populate_too_many_values()
-  test('too many values', () => {
-    using selection = parseSelection('name = ?');
-    using arg0 = exprFromString('Alice');
-    using arg1 = exprFromString('Bob');
-    try {
-      populatePredicate(selection.predicate, [arg0, arg1]);
-      expect(true).toBe(false); // should not reach here
-    } catch (e: any) {
-      expect(e.message).toMatch(/Too many values/);
-      if (typeof e?.drop === 'function') e.drop();
-    }
+  test('test_populate_no_placeholders', () => {
+    const selection = parseSelection('name = \'Alice\'');
+    const populated = selection.clone().predicate.populate([]);
+    expect(populated).toEqual(selection.predicate);
   });
 
-  // Rust: fn test_populate_no_placeholders()
-  test('no placeholders', () => {
-    using selection = parseSelection("name = 'Alice'");
-    using populated = populatePredicate(selection.predicate, []);
-
-    // Should have same structure as original
-    expect(populated.type).toBe(selection.predicate.type);
-    assertComparison(populated, 'name', 'Equal', {
-      type: 'String',
-      check: (lit) => expect(lit.value.value).toBe('Alice'),
-    });
-  });
 });

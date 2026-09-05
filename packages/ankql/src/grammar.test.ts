@@ -5,9 +5,16 @@
 
 import { describe, test, expect } from 'bun:test';
 import { parseSelection } from './parser.ts';
-import { PathExpr } from './ast.ts';
+import type { PathExpr, Selection } from './ast.ts';
 
 // ── Helpers ──
+
+/** Rust's `parse_selection(..).unwrap()`; the parser answers a Result. */
+function parse(query: string): Selection {
+  const result = parseSelection(query);
+  expect(result.isOk()).toBe(true);
+  return result.unwrap();
+}
 
 /** Assert a predicate is a Comparison with the given path/op/path or path/op/literal shape. */
 function assertComparisonPaths(
@@ -19,10 +26,10 @@ function assertComparisonPaths(
   expect(pred.type).toBe('Comparison');
   const v = pred.value;
   expect(v.left.is('Path')).toBe(true);
-  expect(v.left.value.path.toString()).toBe(leftPath);
+  expect(v.left.value._0.toString()).toBe(leftPath);
   expect(v.operator.type).toBe(op);
   expect(v.right.is('Path')).toBe(true);
-  expect(v.right.value.path.toString()).toBe(rightPath);
+  expect(v.right.value._0.toString()).toBe(rightPath);
 }
 
 function assertComparisonLiteral(
@@ -35,11 +42,11 @@ function assertComparisonLiteral(
   expect(pred.type).toBe('Comparison');
   const v = pred.value;
   expect(v.left.is('Path')).toBe(true);
-  expect(v.left.value.path.toString()).toBe(pathName);
+  expect(v.left.value._0.toString()).toBe(pathName);
   expect(v.operator.type).toBe(op);
   expect(v.right.is('Literal')).toBe(true);
-  expect(v.right.value.literal.type).toBe(litType);
-  expect(v.right.value.literal.value.value).toBe(litValue);
+  expect(v.right.value._0.type).toBe(litType);
+  expect(v.right.value._0.value._0).toBe(litValue);
 }
 
 function assertOrderByItem(
@@ -56,13 +63,13 @@ function assertOrderByItem(
 describe('grammar (parser output equivalence)', () => {
   // Rust: fn test_literal_comparison()
   test('literal comparison: a=1', () => {
-    using selection = parseSelection('a=1');
+    using selection = parse('a=1');
     assertComparisonLiteral(selection.predicate, 'a', 'Equal', 'I32', 1);
   });
 
   // Rust: fn test_path_comparison()
   test('path comparison: a.foo = b.foo', () => {
-    using selection = parseSelection('a.foo = b.foo');
+    using selection = parse('a.foo = b.foo');
     assertComparisonPaths(selection.predicate, 'a.foo', 'Equal', 'b.foo');
   });
 
@@ -71,31 +78,31 @@ describe('grammar (parser output equivalence)', () => {
     // Or(And(a.foo = b.foo, a.bar > 1), b.bar > 1) — not because AND binds tighter,
     // which it does not, but because folding this text left to right lands there
     // anyway. `a = 1 OR b = 2 AND c = 3` is where the two disagree.
-    using selection = parseSelection('a.foo = b.foo AND a.bar > 1 OR b.bar > 1');
+    using selection = parse('a.foo = b.foo AND a.bar > 1 OR b.bar > 1');
     expect(selection.predicate.is('Or')).toBe(true);
     if (selection.predicate.is('Or')) {
-      expect(selection.predicate.value.left.is('And')).toBe(true);
-      expect(selection.predicate.value.right.is('Comparison')).toBe(true);
+      expect(selection.predicate.value._0.is('And')).toBe(true);
+      expect(selection.predicate.value._1.is('Comparison')).toBe(true);
     }
   });
 
   // Rust: fn test_boolean_expression_parenthetical()
   test('parenthetical: (a.foo = b.foo AND a.bar > 1) OR b.bar > 1', () => {
-    using selection = parseSelection('(a.foo = b.foo AND a.bar > 1) OR b.bar > 1');
+    using selection = parse('(a.foo = b.foo AND a.bar > 1) OR b.bar > 1');
     expect(selection.predicate.is('Or')).toBe(true);
     if (selection.predicate.is('Or')) {
-      const left = selection.predicate.value.left;
+      const left = selection.predicate.value._0;
       expect(left.is('And')).toBe(true);
       if (left.is('And')) {
-        expect(left.value.left.is('Comparison')).toBe(true);
-        expect(left.value.right.is('Comparison')).toBe(true);
+        expect(left.value._0.is('Comparison')).toBe(true);
+        expect(left.value._1.is('Comparison')).toBe(true);
       }
     }
   });
 
   // Rust: fn test_order_by_clause_basic()
   test('ORDER BY basic', () => {
-    using selection = parseSelection('true ORDER BY name');
+    using selection = parse('true ORDER BY name');
     expect(selection.predicate.is('True')).toBe(true);
     expect(selection.orderBy).not.toBeNull();
     expect(selection.orderBy!.length).toBe(1);
@@ -104,7 +111,7 @@ describe('grammar (parser output equivalence)', () => {
 
   // Rust: fn test_order_by_clause_with_direction()
   test('ORDER BY with direction', () => {
-    using selection = parseSelection('true ORDER BY name DESC');
+    using selection = parse('true ORDER BY name DESC');
     expect(selection.orderBy).not.toBeNull();
     expect(selection.orderBy!.length).toBe(1);
     assertOrderByItem(selection.orderBy![0], 'name', 'Desc');
@@ -112,14 +119,14 @@ describe('grammar (parser output equivalence)', () => {
 
   // Rust: fn test_limit_clause()
   test('LIMIT clause', () => {
-    using selection = parseSelection('true LIMIT 10');
+    using selection = parse('true LIMIT 10');
     expect(selection.predicate.is('True')).toBe(true);
     expect(selection.limit).toBe(10n);
   });
 
   // Rust: fn test_order_by_and_limit()
   test('ORDER BY and LIMIT', () => {
-    using selection = parseSelection("status = 'active' ORDER BY name ASC LIMIT 5");
+    using selection = parse("status = 'active' ORDER BY name ASC LIMIT 5");
     expect(selection.predicate.is('Comparison')).toBe(true);
     expect(selection.orderBy).not.toBeNull();
     expect(selection.orderBy!.length).toBe(1);
@@ -129,7 +136,7 @@ describe('grammar (parser output equivalence)', () => {
 
   // Rust: fn test_order_by_multiple_items()
   test('ORDER BY multiple items', () => {
-    using selection = parseSelection('true ORDER BY name ASC, created_at DESC,id');
+    using selection = parse('true ORDER BY name ASC, created_at DESC,id');
     expect(selection.orderBy).not.toBeNull();
     expect(selection.orderBy!.length).toBe(3);
     assertOrderByItem(selection.orderBy![0], 'name', 'Asc');
@@ -141,24 +148,24 @@ describe('grammar (parser output equivalence)', () => {
   test('pathological cases: keywords as identifiers', () => {
     // "limit" as column name
     {
-      using s1 = parseSelection('limit = 1');
+      using s1 = parse('limit = 1');
       expect(s1.predicate.is('Comparison')).toBe(true);
       if (s1.predicate.is('Comparison')) {
         expect(s1.predicate.value.left.is('Path')).toBe(true);
         if (s1.predicate.value.left.is('Path')) {
-          expect(s1.predicate.value.left.value.path.toString()).toBe('limit');
+          expect(s1.predicate.value.left.value._0.toString()).toBe('limit');
         }
       }
     }
 
     // "order" as column name + ORDER BY
     {
-      using s2 = parseSelection('order = 1 ORDER BY name');
+      using s2 = parse('order = 1 ORDER BY name');
       expect(s2.predicate.is('Comparison')).toBe(true);
       if (s2.predicate.is('Comparison')) {
         expect(s2.predicate.value.left.is('Path')).toBe(true);
         if (s2.predicate.value.left.is('Path')) {
-          expect(s2.predicate.value.left.value.path.toString()).toBe('order');
+          expect(s2.predicate.value.left.value._0.toString()).toBe('order');
         }
       }
       expect(s2.orderBy).not.toBeNull();
@@ -188,7 +195,7 @@ describe('grammar (parser output equivalence)', () => {
     ];
 
     for (const input of testCases) {
-      using _selection = parseSelection(input);
+      using _selection = parse(input);
     }
   });
 });

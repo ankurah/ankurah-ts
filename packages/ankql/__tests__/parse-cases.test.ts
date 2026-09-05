@@ -24,12 +24,17 @@
 // variant itself is the distinction worth implementing — `SyntaxError` means the
 // grammar refused the text, every other variant means the grammar accepted it and
 // AST construction then refused it.
+//
+// `parse_selection` and `generate_selection_sql` both answer a `Result`, so every
+// case below asks the answer `isOk()` / `isErr()` rather than catching a throw.
 
 import { describe, test, expect } from 'bun:test';
 
 import { parseSelection } from '../src/parser';
 import { generateSelectionSql } from '../src/selection/sql';
 import { BincodeWriter } from '../src/codec';
+import type { Selection } from '../src/ast';
+import type { ParseError } from '../src/error';
 
 import { readSidecar, toHex } from '../../proto/__tests__/support/fixtures';
 import { toSerde } from '../../proto/__tests__/support/serde';
@@ -68,13 +73,14 @@ function render(value: unknown): string {
   return JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v));
 }
 
-/** Capture what a call threw, so the assertion can be about the error itself. */
-function capture<T>(fn: () => T): { value?: T; error?: unknown; threw: boolean } {
-  try {
-    return { value: fn(), threw: false };
-  } catch (error) {
-    return { error, threw: true };
+/** The Selection an accept case must parse to, with the Err reported rather than swallowed. */
+function accepted(query: string): Selection {
+  const result = parseSelection(query);
+  if (result.isErr()) {
+    using error = result.unwrapErr();
+    throw new Error(`expected ${caseName(query)} to parse, got ${String(error)}`);
   }
+  return result.unwrap();
 }
 
 test('the fixture case counts match', () => {
@@ -87,7 +93,8 @@ test('the fixture case counts match', () => {
 describe('parse: AST matches the fixture', () => {
   for (const c of cases.accept) {
     test(`${caseName(c.query)} — ${c.note}`, () => {
-      expect(toSerde(parseSelection(c.query))).toEqual(c.ast_json as any);
+      using selection = accepted(c.query);
+      expect(toSerde(selection)).toEqual(c.ast_json as any);
     });
   }
 });
@@ -97,7 +104,7 @@ describe('parse: AST matches the fixture', () => {
 describe('bincode: AST encoding matches the fixture hex', () => {
   for (const c of cases.accept) {
     test(`${caseName(c.query)} — ${c.note}`, () => {
-      const selection = parseSelection(c.query);
+      using selection = accepted(c.query);
       const writer = new BincodeWriter();
       selection.encode(writer);
       expect(toHex(writer.finish())).toBe(c.ast_bincode_hex);
@@ -110,20 +117,24 @@ describe('bincode: AST encoding matches the fixture hex', () => {
 describe('SQL: generate_selection_sql matches the fixture', () => {
   for (const c of cases.accept) {
     test(`${caseName(c.query)} — ${c.note}`, () => {
-      const selection = parseSelection(c.query);
-      const result = capture(() => generateSelectionSql(selection.predicate));
+      using selection = accepted(c.query);
+      const result = generateSelectionSql(selection.predicate, null);
 
       if (c.predicate_sql_error !== null) {
         // The fixture says SQL generation fails here, with this text.
-        if (!result.threw) {
-          throw new Error(`expected SQL generation to fail with ${JSON.stringify(c.predicate_sql_error)}, got ${render(result.value)}`);
+        if (result.isOk()) {
+          throw new Error(`expected SQL generation to fail with ${JSON.stringify(c.predicate_sql_error)}, got ${render(result.unwrap())}`);
         }
-        expect(String(result.error)).toBe(c.predicate_sql_error);
+        using error = result.unwrapErr();
+        expect(String(error)).toBe(c.predicate_sql_error);
         return;
       }
 
-      if (result.threw) throw result.error;
-      expect(result.value).toBe(c.predicate_sql as string);
+      if (result.isErr()) {
+        using error = result.unwrapErr();
+        throw new Error(`expected SQL, got ${String(error)}`);
+      }
+      expect(result.unwrap()).toBe(c.predicate_sql as string);
     });
   }
 });
@@ -133,7 +144,8 @@ describe('SQL: Display for Selection matches roundtrip_sql', () => {
     test(`${caseName(c.query)} — ${c.note}`, () => {
       // Rust's `Display for Predicate` swallows generation errors and prints
       // "SQL Error: …" in their place, so `roundtrip_sql` is not always valid SQL.
-      expect(parseSelection(c.query).toString()).toBe(c.roundtrip_sql);
+      using selection = accepted(c.query);
+      expect(selection.toString()).toBe(c.roundtrip_sql);
     });
   }
 });
@@ -143,14 +155,13 @@ describe('SQL: Display for Selection matches roundtrip_sql', () => {
 describe('reject: the parser refuses, with the fixture variant', () => {
   for (const c of cases.reject) {
     test(`${caseName(c.query)} — ${c.note}`, () => {
-      const result = capture(() => parseSelection(c.query));
-      if (!result.threw) {
-        throw new Error(
-          `expected ${c.error_variant}, but the query parsed to ${render(toSerde(result.value))}`,
-        );
+      const result = parseSelection(c.query);
+      if (result.isOk()) {
+        using selection = result.unwrap();
+        throw new Error(`expected ${c.error_variant}, but the query parsed to ${render(toSerde(selection))}`);
       }
-      const variant = (result.error as { type?: string })?.type;
-      expect(variant).toBe(c.error_variant);
+      using error = result.unwrapErr();
+      expect(error.type).toBe(c.error_variant as ParseError['type']);
     });
   }
 });
@@ -161,9 +172,13 @@ describe('reject: the error text matches the fixture', () => {
     // deliberately does not pin. The variant check above still covers those.
     if (c.error_message === null) continue;
     test(`${caseName(c.query)} — ${c.note}`, () => {
-      const result = capture(() => parseSelection(c.query));
-      if (!result.threw) throw new Error(`expected an error, but the query parsed`);
-      expect(String(result.error)).toBe(c.error_message as string);
+      const result = parseSelection(c.query);
+      if (result.isOk()) {
+        using selection = result.unwrap();
+        throw new Error(`expected an error, but the query parsed to ${render(toSerde(selection))}`);
+      }
+      using error = result.unwrapErr();
+      expect(String(error)).toBe(c.error_message as string);
     });
   }
 });

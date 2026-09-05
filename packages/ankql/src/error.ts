@@ -10,18 +10,25 @@ export type ParseErrorV = {
 };
 
 export class ParseError extends Enum<ParseErrorV> {
-  get message(): string {
+
+  debug(): string {
     return this.match({
-      SyntaxError: (v) => v._0,
-      EmptyExpression: () => 'Empty expression',
-      UnexpectedRule: (v) => `Expected ${v.expected}, got ${v.got}`,
-      InvalidPredicate: (v) => v._0,
-      MissingOperand: (v) => v._0,
+      SyntaxError: (v) => `SyntaxError(${JSON.stringify(v._0)})`,
+      EmptyExpression: () => 'EmptyExpression',
+      UnexpectedRule: (v) => `UnexpectedRule { expected: ${JSON.stringify(v.expected)}, got: ${v.got} }`,
+      InvalidPredicate: (v) => `InvalidPredicate(${JSON.stringify(v._0)})`,
+      MissingOperand: (v) => `MissingOperand(${JSON.stringify(v._0)})`,
     });
   }
 
   override toString(): string {
-    return `${super.toString()}: ${this.message}`;
+    return this.match({
+      SyntaxError: (v) => `Syntax error: ${v._0}`,
+      EmptyExpression: () => 'Empty expression',
+      UnexpectedRule: (v) => `Expected ${v.expected}, got ${v.got}`,
+      InvalidPredicate: (v) => `Invalid predicate: ${v._0}`,
+      MissingOperand: (v) => `Missing ${v._0} operand`,
+    });
   }
 }
 
@@ -32,16 +39,21 @@ export type SqlGenerationErrorV = {
 };
 
 export class SqlGenerationError extends Enum<SqlGenerationErrorV> {
-  get message(): string {
+
+  debug(): string {
     return this.match({
-      PlaceholderCountMismatch: (v) => `Expected ${v.expected} placeholders, found ${v.found}`,
-      InvalidExpression: (v) => v._0,
-      UnsupportedOperator: (v) => v._0,
+      PlaceholderCountMismatch: (v) => `PlaceholderCountMismatch { expected: ${String(v.expected)}, found: ${String(v.found)} }`,
+      InvalidExpression: (v) => `InvalidExpression(${JSON.stringify(v._0)})`,
+      UnsupportedOperator: (v) => `UnsupportedOperator(${JSON.stringify(v._0)})`,
     });
   }
 
   override toString(): string {
-    return `${super.toString()}: ${this.message}`;
+    return this.match({
+      PlaceholderCountMismatch: (v) => `Placeholder count mismatch: expected ${v.expected}, found ${v.found}`,
+      InvalidExpression: (v) => `Invalid expression: ${v._0}`,
+      UnsupportedOperator: (v) => `Unsupported operator: ${v._0}`,
+    });
   }
 }
 
