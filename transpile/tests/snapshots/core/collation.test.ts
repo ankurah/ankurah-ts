@@ -2,6 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { F64_isMaximum, F64_isMinimum, F64_predecessorBytes, F64_successorBytes, F64_toBytes, I64_isMaximum, I64_isMinimum, I64_predecessorBytes, I64_successorBytes, RangeBound, Str_isMaximum, Str_isMinimum, Str_predecessorBytes, Str_successorBytes, Str_toBytes } from './collation';
+import { unsupported } from '@ankurah/base';
 import { Literal } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 
@@ -19,8 +20,8 @@ describe('collation unit tests', () => {
 
   test('test_integer_collation', () => {
     const n = 42n;
-    expect(i64.fromBeBytes((I64_successorBytes(n) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()).tryInto())).toEqual(43n);
-    expect(i64.fromBeBytes((I64_predecessorBytes(n) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()).tryInto())).toEqual(41n);
+    expect(unsupported('`i64::from_be_bytes` is a function Rust puts on a primitive type, and the port writes that type as a JavaScript primitive, which has no members and no spelling for this one')).toEqual(43n);
+    expect(unsupported('`i64::from_be_bytes` is a function Rust puts on a primitive type, and the port writes that type as a JavaScript primitive, which has no members and no spelling for this one')).toEqual(41n);
     if (!(!I64_isMinimum(n))) throw new Error('assertion failed');
     if (!(!I64_isMaximum(n))) throw new Error('assertion failed');
     if (!((I64_successorBytes(9223372036854775807n) == null))) throw new Error('assertion failed');

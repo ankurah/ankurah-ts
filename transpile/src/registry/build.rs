@@ -574,7 +574,6 @@ const DERIVED: [(&str, &str); 9] = [
 /// alongside, in `thiserror_from_impls`.
 const THISERROR_DERIVED: [&str; 2] = ["std::error::Error", "std::fmt::Display"];
 
-
 /// Does this derive list make the type readable from JSON?
 ///
 /// `#[derive(Deserialize)]` is what `json_module` writes a `static fromJson`

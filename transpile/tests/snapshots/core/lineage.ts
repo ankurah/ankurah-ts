@@ -240,9 +240,9 @@ class Comparison<G extends GetEvents> extends Struct {
     const fromSubject = this.subjectFrontier.remove(id);
     const fromOther = this.otherFrontier.remove(id);
     const [isCommon, origins] = (() => {
-      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default()).value;
-      nodeState.markSeenFrom(fromSubject, fromOther);
-      if (fromSubject && !this.originalOtherEvents.has(id) && !nodeState.isCommon()) {
+      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default());
+      nodeState.value.markSeenFrom(fromSubject, fromOther);
+      if (fromSubject && !this.originalOtherEvents.has(id) && !nodeState.value.isCommon()) {
         {
           const _v = this.subjectEventAccumulator;
           if (_v != null) {
@@ -252,9 +252,9 @@ class Comparison<G extends GetEvents> extends Struct {
         }
       }
       if (fromOther && this.originalOtherEvents.has(id)) {
-        nodeState.origins.add(id.clone());
+        nodeState.value.origins.add(id.clone());
       }
-      return [nodeState.isCommon(), nodeState.origins.clone()];
+      return [nodeState.value.isCommon(), nodeState.value.origins.clone()];
     })();
     if (isCommon && this.meetCandidates.insert(id.clone())) {
       this.anyCommon = true;
@@ -262,16 +262,16 @@ class Comparison<G extends GetEvents> extends Struct {
         this.outstandingHeads.delete(h);
       }
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default()).value;
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
         if (fromOther) {
-          parentState.origins.augment(origins);
+          parentState.value.origins.augment(origins);
         }
-        parentState.commonChildCount = checkedAdd(parentState.commonChildCount, 1, 'usize');
+        parentState.value.commonChildCount = checkedAdd(parentState.value.commonChildCount, 1, 'usize');
       }
     } else if (fromOther) {
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default()).value;
-        parentState.origins.augment(origins);
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
+        parentState.value.origins.augment(origins);
       }
     }
     if (fromSubject) {

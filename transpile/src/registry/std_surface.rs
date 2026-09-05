@@ -453,7 +453,6 @@ mod tests {
     }
 }
 
-
 /// Build the `core` and `alloc` roots out of what those crates really export.
 ///
 /// Every declaration lives under `std` in this surface, because that is where

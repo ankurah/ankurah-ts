@@ -137,13 +137,18 @@ pub fn translate_entry(
             match crate::derives::default_value::default_value(reg, value) {
                 Ok(default) => format!("{}.orDefault(() => {})", receiver, default),
                 Err(why) => {
+                    // Passing this through wrote `orDefault()` with no thunk,
+                    // which invokes `undefined` the first time a key is unseen:
+                    // a reported gap whose emission runs is the one thing R12
+                    // does not allow.
+                    let message =
+                        format!("`or_default()` needs the value type's default, and {}", why);
                     return Some(MethodTranslation::Refused {
-                        message: format!(
-                            "`or_default()` needs the value type's default, and {}",
-                            why
-                        ),
-                        fallback: Box::new(MethodTranslation::Passthrough),
-                    })
+                        fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(
+                            &message,
+                        ))),
+                        message,
+                    });
                 }
             }
         }
@@ -151,6 +156,16 @@ pub fn translate_entry(
     };
     let written = if reads_as_value { format!("{}.value", finished) } else { finished };
     Some(MethodTranslation::Expr(written))
+}
+
+/// Is this type the `Entry` of one of the two maps the port writes as one
+/// runtime container? Asked at a `let`, which has to bind the write-through
+/// slot a finisher answers rather than the value in it.
+pub(crate) fn is_entry_type(reg: &TypeRegistry, ty: &Ty) -> bool {
+    match ty.peel_refs() {
+        Ty::Named { id, .. } => is_entry(reg, *id),
+        _ => false,
+    }
 }
 
 /// Is this the `Entry` of one of the two maps the port writes as one runtime

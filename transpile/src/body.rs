@@ -352,10 +352,6 @@ impl<'a> BodyTranslator<'a> {
 
     // ── Matches: what the arms do to the subject ────────────────────
 
-
-
-
-
     // ── Expression translation ──────────────────────────────────────
 
     pub fn expr(&self, expr: &syn::Expr) -> String {
@@ -548,25 +544,14 @@ impl<'a> BodyTranslator<'a> {
                             &rust_method,
                             &found,
                         );
-                        // An impl written for a type with no emitted class is a
-                        // module-level function, and the receiver is its first
-                        // argument.
-                        if let Some(free) = crate::emit_impls::free_call(tc_ref.registry, &found) {
-                            drop(tc_ref);
-                            return self.render_free_call(&free, &recv, &args, call);
+                        // Three calls the receiver's own class does not carry,
+                        // each written somewhere other than
+                        // `receiver.method(..)`.
+                        drop(tc_ref);
+                        if let Some(written) = self.call_written_elsewhere(&found, &recv, &args, call) {
+                            return written;
                         }
-                        // A call through an open bound: the receiver is a type
-                        // parameter, so the engine reached the trait's own
-                        // declaration and no impl. Where the trait's impls are
-                        // emitted as module-level functions, the class the
-                        // receiver will be has no such method and
-                        // `subject.members()` is a call on `undefined`.
-                        if let Some(name) = self.open_bound_call(&tc_ref, &found, call) {
-                            drop(tc_ref);
-                            let mut written = vec![recv];
-                            written.extend(args.iter().cloned());
-                            return format!("{}({})", name, written.join(", "));
-                        }
+                        let tc_ref = tc.borrow();
                         let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
                         let bind_receiver = |written: &str| match named_early {
                             // Already named above, in Rust's evaluation order.
@@ -624,17 +609,16 @@ impl<'a> BodyTranslator<'a> {
                     &args,
                     &arg_exprs,
                     Some(&call.receiver),
-                    !self.discards(call),
+                    self.position_of(call),
                 )
             }
 
             syn::Expr::Call(call) => {
-                // `drop(x)` runs x's glue where the source says, and what that
-                // costs is the glue engine's answer, not always `.drop()`: a
-                // `Vec<Owned>` is a JavaScript array and has no method of its
-                // own.
-                if let Some(released) = self.explicit_drop(call) {
-                    return released;
+                // `drop(x)` runs x's glue where the source says — not always
+                // `.drop()` — and a call of a primitive's function the port has
+                // no spelling for is ONE hole, the call and its arguments.
+                if let Some(written) = self.explicit_drop(call).or_else(|| self.primitive_call_hole(call)) {
+                    return written;
                 }
                 // `(move || …)()` is created, called and dropped in the one
                 // expression, so what it captured is released inside it.
@@ -831,9 +815,13 @@ impl<'a> BodyTranslator<'a> {
                     }
                     _ => None,
                 };
+                // A VALUE position, like an index operand: `-{ if .. }` put a
+                // statement where an operand stood.
                 let e = match &want {
-                    Some(ty) => self.expecting(&unary.expr, Some(ty), || self.expr(&unary.expr)),
-                    None => self.expr(&unary.expr),
+                    Some(ty) => {
+                        self.expecting(&unary.expr, Some(ty), || self.expr_value(&unary.expr))
+                    }
+                    None => self.expr_value(&unary.expr),
                 };
                 match &unary.op {
                     syn::UnOp::Not(_) => {
@@ -1002,8 +990,8 @@ impl<'a> BodyTranslator<'a> {
             // `continue 'outer`. A bare `break` leaves the innermost loop, which
             // is a different program wherever the source named an outer one.
             syn::Expr::Break(brk) => {
-                if crate::control_flow::sentinel::jump_leaves_the_lift(self, &brk.label) {
-                    return crate::control_flow::sentinel::jump_marker("break", &brk.label);
+                if let Some(marker) = crate::control_flow::sentinel::lifted_break(self, brk) {
+                    return marker;
                 }
                 // `break n` in a loop whose value the code around it wanted:
                 // the value is what the loop produces, so it is assigned to the
@@ -1027,7 +1015,7 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Continue(cont) => {
                 if crate::control_flow::sentinel::jump_leaves_the_lift(self, &cont.label) {
-                    return crate::control_flow::sentinel::jump_marker("continue", &cont.label);
+                    return crate::control_flow::sentinel::jump_marker("continue", &cont.label, None);
                 }
                 format!("continue{}", ownership::iteration::target_of(&cont.label))
             }
@@ -1040,25 +1028,8 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Assign(assign) => self.assign(assign),
 
             syn::Expr::Index(idx) => {
-                // `v[a..b]` is a slice, not an index. Emitting the range as an
-                // index expression produced `v[/* range a..b */]`, which does
-                // not parse.
-                if let syn::Expr::Range(range) = &*idx.index {
-                    let from = range
-                        .start
-                        .as_ref()
-                        .map(|e| self.expr(e))
-                        .unwrap_or_else(|| "0".to_string());
-                    let to = range.end.as_ref().map(|e| self.expr(e));
-                    let end = match (&range.limits, to) {
-                        // `..=b` includes the last element.
-                        (syn::RangeLimits::Closed(_), Some(to)) => format!(", {} + 1", to),
-                        (_, Some(to)) => format!(", {}", to),
-                        (_, None) => String::new(),
-                    };
-                    let base = self.expr(&idx.expr);
-                    let base = parenthesise_receiver(&idx.expr, base);
-                    return format!("{}.slice({}{})", base, from, end);
+                if let Some(slice) = self.slice_of(idx) {
+                    return slice;
                 }
                 // `[Owned::new()][0]` reads out of a sequence the expression
                 // itself built, and that sequence is a temporary Rust drops at
@@ -1066,7 +1037,9 @@ impl<'a> BodyTranslator<'a> {
                 let base = self.expr(&idx.expr);
                 let base = self.hoist_produced(&idx.expr, base);
                 let base = parenthesise_receiver(&idx.expr, base);
-                let index = self.expr(&idx.index);
+                // R3: an operand is a VALUE position — `v[if ok {1} else {2}]`
+                // put an `if` STATEMENT between the brackets and did not parse.
+                let index = self.expr_value(&idx.index);
                 if let Some(call) = self.index_through_impl(&idx.expr, &base, &index) {
                     return call;
                 }
@@ -1304,7 +1277,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-
     /// An expression in a position that runs it rather than reading its value.
     ///
     /// A block runs as statements here rather than as an immediately-called
@@ -1316,18 +1288,6 @@ impl<'a> BodyTranslator<'a> {
             _ => self.expr(expr),
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     /// `while let PAT = e { body }` as a loop that tests each turn.
     ///
@@ -1525,7 +1485,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-
     /// Where the diagnostics record stands, for a form the translator may
     /// abandon.
     pub(crate) fn mark(&self) -> usize {
@@ -1539,7 +1498,6 @@ impl<'a> BodyTranslator<'a> {
     }
 
 }
-
 
 /// What a call, a match or an operator takes away from the block that held it.
 mod consumes;

@@ -445,3 +445,123 @@ fn walk_manifests(dir: &Path, out: &mut BTreeMap<String, PathBuf>) {
     }
 }
 
+/// One thing being read while a TypeScript file is scanned.
+///
+/// A template literal's `${..}` is CODE, so the states nest: a string inside an
+/// interpolation inside a template. `Code` carries the brace depth opened since
+/// the frame began, so the `}` that closes an interpolation can be told from
+/// one that closes a block inside it.
+enum Reading {
+    Code(usize),
+    LineComment,
+    BlockComment,
+    Quoted(char),
+}
+
+/// The file with every comment and every string literal blanked out: each of
+/// their characters replaced by a space, every newline kept.
+///
+/// For: a harness check that reads TypeScript with `find` and `contains` is
+/// reading text, and text inside a string literal is not code. A
+/// `const a = "static fromJson(";` satisfied `declared_members`'s
+/// `reads_json` check on its own; a `{` or a `}` inside a string moved the
+/// brace depth that decides where a class ends, so a later class's members were
+/// read as this one's; and the comment scan that ran before did not know about
+/// strings either, so a `//` inside one swallowed the rest of a real line.
+///
+/// Blanked rather than removed, so every offset and every line number the
+/// caller computes still lands where it did. The braces of a `${..}` are kept
+/// for the same reason: they balance, and a scan counting depth must see them.
+/// A regular-expression literal is read as division, which is what every other
+/// simple TypeScript scanner does; nothing in the corpus or the provided files
+/// writes one.
+pub fn code_only(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut stack: Vec<Reading> = vec![Reading::Code(0)];
+    let mut at = 0usize;
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    while at < chars.len() {
+        let ch = chars[at];
+        let next = chars.get(at + 1).copied();
+        match stack.last_mut().expect("the outermost frame is never popped") {
+            Reading::Code(depth) => match (ch, next) {
+                ('/', Some('/')) => {
+                    stack.push(Reading::LineComment);
+                    out.push(' ');
+                    at += 1;
+                }
+                ('/', Some('*')) => {
+                    stack.push(Reading::BlockComment);
+                    out.push(' ');
+                    at += 1;
+                }
+                ('"', _) | ('\'', _) | ('`', _) => {
+                    stack.push(Reading::Quoted(ch));
+                    out.push(ch);
+                    at += 1;
+                }
+                ('{', _) => {
+                    *depth += 1;
+                    out.push(ch);
+                    at += 1;
+                }
+                ('}', _) => {
+                    // A `}` with nothing open in this frame closes the `${..}`
+                    // that opened it, and hands the template back its quote.
+                    if *depth > 0 {
+                        *depth -= 1;
+                    } else if stack.len() > 1 {
+                        stack.pop();
+                    }
+                    out.push(ch);
+                    at += 1;
+                }
+                _ => {
+                    out.push(ch);
+                    at += 1;
+                }
+            },
+            Reading::LineComment => {
+                out.push(blank(ch));
+                at += 1;
+                if ch == '\n' {
+                    stack.pop();
+                }
+            }
+            Reading::BlockComment => {
+                out.push(blank(ch));
+                at += 1;
+                if ch == '*' && next == Some('/') {
+                    out.push(' ');
+                    at += 1;
+                    stack.pop();
+                }
+            }
+            Reading::Quoted(quote) => {
+                let quote = *quote;
+                if ch == '\\' {
+                    out.push(' ');
+                    at += 1;
+                    if at < chars.len() {
+                        out.push(blank(chars[at]));
+                        at += 1;
+                    }
+                } else if ch == quote {
+                    out.push(ch);
+                    at += 1;
+                    stack.pop();
+                } else if quote == '`' && ch == '$' && next == Some('{') {
+                    out.push(' ');
+                    out.push('{');
+                    at += 2;
+                    stack.push(Reading::Code(0));
+                } else {
+                    out.push(blank(ch));
+                    at += 1;
+                }
+            }
+        }
+    }
+    out
+}

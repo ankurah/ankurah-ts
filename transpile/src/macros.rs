@@ -680,7 +680,6 @@ pub async fn f(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) ->
     }
 }
 
-
 /// `vec![value; count]` — the repeat form.
 ///
 /// `Array(n).fill(v)` puts the same value in every slot, which is what Rust

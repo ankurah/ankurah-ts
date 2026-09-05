@@ -224,10 +224,26 @@ export class HashMap<K, V> {
    */
   clone(): HashMap<K, V> {
     this.#guard.assertNotDropped();
-    const copy = new HashMap<K, V>(null, this.#label);
-    for (const entry of this.#table.all()) {
-      copy.set(cloned(entry.key), cloned(entry.value));
+    // The destination used to be built first and filled as the walk went, so a
+    // key or a value whose `clone()` throws left a registered half-built map,
+    // and every pair already in it, to nobody. The pairs are cloned into a
+    // local list, released together if one of them throws, and only a complete
+    // list becomes a map.
+    const pairs: [K, V][] = [];
+    try {
+      for (const entry of this.#table.all()) {
+        // The key goes into the list before its value is cloned, so a throwing
+        // value clone does not orphan the key beside it.
+        const pair: [K, V] = [cloned(entry.key), undefined as never];
+        pairs.push(pair);
+        pair[1] = cloned(entry.value);
+      }
+    } catch (error) {
+      dropOwned(pairs);
+      throw error;
     }
+    const copy = new HashMap<K, V>(null, this.#label);
+    for (const [key, value] of pairs) copy.set(key, value);
     return copy;
   }
 
@@ -483,10 +499,16 @@ export class HashSet<T> {
   /** `#[derive(Clone)]`: a new set holding a clone of every value. */
   clone(): HashSet<T> {
     this.#guard.assertNotDropped();
-    const copy = new HashSet<T>(null, this.#label);
-    for (const entry of this.#table.all()) {
-      copy.add(cloned(entry.key));
+    // Exception-safe for the same reason `HashMap::clone` is.
+    const values: T[] = [];
+    try {
+      for (const entry of this.#table.all()) values.push(cloned(entry.key));
+    } catch (error) {
+      dropOwned(values);
+      throw error;
     }
+    const copy = new HashSet<T>(null, this.#label);
+    for (const value of values) copy.add(value);
     return copy;
   }
 

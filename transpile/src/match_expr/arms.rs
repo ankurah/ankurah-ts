@@ -63,7 +63,6 @@ pub(super) fn declared_in(body: &syn::Expr) -> Vec<String> {
     bound.names
 }
 
-
 /// The same walk, for a key that stands ALONE.
 ///
 /// A variant only one arm names, with no arm below it, has nothing to fall

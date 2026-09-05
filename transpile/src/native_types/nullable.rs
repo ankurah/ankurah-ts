@@ -76,18 +76,36 @@ impl Once<'_> {
     }
 }
 
-/// The used branch of a combinator whose eager argument owns something: the
-/// release first, then the value the branch hands on.
+/// The branch of a combinator that hands on a plain VALUE while releasing what
+/// the call built and never used: the release first, then the value.
 ///
-/// The release stands FIRST because Rust drops the argument whether the branch
-/// returns or panics, and a release written before the branch's own work runs
-/// on both of those paths without a `try`. Nothing the branch does can observe
-/// the difference: the argument was moved into the call, so no other name
-/// reaches it.
+/// Nothing here can observe the order — the value is a name or a constructor
+/// over one, and the thing being released was moved into the call, so no other
+/// name reaches it. The release stands first because Rust drops the argument
+/// whether the branch returns or panics, and a release written before the
+/// branch's own work runs on both of those paths without a `try`.
+///
+/// A branch whose own work is a CALL is `releasing_after`, not this.
 fn releasing(release: &Option<String>, value: String) -> String {
     match release {
         Some(release) => format!("({}, {})", release, value),
         None => value,
+    }
+}
+
+/// The branch whose own work is a CALL: the call runs, and then the release.
+///
+/// R10: `map_or`'s owning default was released BEFORE the closure ran, and Rust
+/// drops it after — the closure is the branch's work and the default outlives
+/// it. A `finally` rather than a comma behind the call, because Rust drops the
+/// default on a panic as well, during the unwind; and it costs an arrow,
+/// because a ternary branch is an expression and a `try` is a statement.
+fn releasing_after(release: &Option<String>, call: String) -> String {
+    match release {
+        Some(release) => {
+            format!("(() => {{ try {{ return {}; }} finally {{ {}; }} }})()", call, release)
+        }
+        None => call,
     }
 }
 
@@ -211,7 +229,7 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
                 None => (args[0].clone(), None),
             };
             let f = callable(once, 1, &args[1], &format!("{}!", subject));
-            let mapped = releasing(&release, f.call);
+            let mapped = releasing_after(&release, f.call);
             format!("({} != null ? {} : {})", subject, mapped, releasing(&f.release, default))
         }
         "map_or_else" if args.len() == 2 => {
@@ -222,8 +240,8 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
             format!(
                 "({} != null ? {} : {})",
                 subject,
-                releasing(&default.release, f.call),
-                releasing(&f.release, default.call)
+                releasing_after(&default.release, f.call),
+                releasing_after(&f.release, default.call)
             )
         }
 
@@ -393,9 +411,14 @@ mod tests {
             expr("o", "ok_or", &["owned()"]),
             "(o != null ? (_e0.drop(), Result.Ok(o!)) : Result.Err(_e0))"
         );
+        // PREMISE CHANGED 2026-09-05 (R10): `map_or`'s branch RUNS the closure,
+        // and Rust drops the default after it rather than before — so the
+        // release is a `finally` around the call rather than a comma in front
+        // of it. `ok_or` above keeps the comma: its branch hands on a value,
+        // not a call, and nothing can observe the order there.
         assert_eq!(
             expr("o", "map_or", &["owned()", "f"]),
-            "(o != null ? (_e0.drop(), (f)(o!)) : _e0)"
+            "(o != null ? (() => { try { return (f)(o!); } finally { _e0.drop(); } })() : _e0)"
         );
         // A place is read where it stands, and the move is still a move: the
         // release is written for it too.

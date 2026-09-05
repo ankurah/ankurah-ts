@@ -342,3 +342,36 @@ fn a_local_handed_out_as_mut_lives_in_a_cell() {
     let ts = f.translated_method("lib.rs", "again");
     assert!(ts.contains("fill(buffer, found);"), "a reborrow hands the cell over:\n{}", ts);
 }
+
+/// R3: an operand is a VALUE position. Asked as an ordinary expression, a
+/// value-position `if` put an `if` STATEMENT between the brackets and inside a
+/// unary operand — output no JavaScript engine will parse, and no diagnostic.
+#[test]
+fn a_value_position_if_inside_an_operand_is_an_expression() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn pick(rows: &Vec<u32>, ok: bool) -> u32 { rows[if ok { 1 } else { 2 }] }\n\
+         pub fn negated(ok: bool) -> i32 { -{ if ok { 1i32 } else { 2i32 } } }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("rows[(ok ? 1 : 2)]"), "{ts}");
+    assert!(ts.contains("-(ok ? 1 : 2)"), "{ts}");
+    assert!(!ts.contains("[if ("), "a statement stands between the brackets:\n{ts}");
+}
+
+/// R8: the position a call stands in is the CALLER's answer, and the path for a
+/// receiver the engine could not resolve used to say "read as a value" whatever
+/// the caller said — so a `*entry(k).or_insert(0) += 1` on that path would have
+/// been written `.value.value`.
+#[test]
+fn an_unresolved_call_written_through_is_not_read_as_a_value() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::collections::HashMap;\n\
+         pub struct Counts { pub m: HashMap<String, u32> }\n\
+         impl Counts { pub fn bump(&mut self, k: String) { \
+         *self.m.entry(k).or_insert(0) += 1; } }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(!ts.contains(".value.value"), "the slot was read twice:\n{ts}");
+}

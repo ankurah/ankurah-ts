@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/operators/src/input.rs
-import { Struct, boolAnd, boolOr, BorrowMut, checkedAdd, checkedDiv, wrappingAdd, wrappingSub, checkedMulOption, saturatingAdd, overflowingAdd } from '@ankurah/base';
+import { Struct, boolAnd, boolOr, BorrowMut, checkedAdd, checkedSub, checkedDiv, wrappingAdd, wrappingSub, checkedMulOption, checkedDivOption, checkedRemOption, saturatingAdd, overflowingAdd } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly id: number;
@@ -290,6 +290,14 @@ export function smaller(a: bigint, b: bigint): bigint {
 }
 
 export function magnitude(v: bigint): bigint {
-  return (($x) => $x < 0n ? -$x : $x)(v);
+  return (($x) => $x < 0n ? checkedSub(0n, $x, 'i64') : $x)(v);
+}
+
+export function divideChecked(a: bigint, b: bigint): bigint | null {
+  return checkedDivOption(a, b, 'i64');
+}
+
+export function remainderChecked(a: bigint, b: bigint): bigint | null {
+  return checkedRemOption(a, b, 'i64');
 }
 

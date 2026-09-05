@@ -111,7 +111,6 @@ pub fn owned_array_loop(
     )
 }
 
-
 /// Does this pattern bind the whole element by reference — `ref item` or
 /// `ref mut item`?
 ///

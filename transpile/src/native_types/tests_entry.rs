@@ -76,3 +76,48 @@ fn a_btree_map_entry_gets_the_value_types_default_too() {
     );
     assert!(ts.contains(".orDefault(() => []).value.push(v)"), "{}", ts);
 }
+
+/// A finisher written from its NAME cannot be one: what it writes needs the
+/// map's value type, and a receiver the engine could not type says nothing
+/// about it. `values.deref_mut().entry(k).or_default()` on core's property
+/// write path emitted `orDefault()` with no thunk, which invokes `undefined`
+/// the first time a key is unseen (R2).
+#[test]
+fn a_finisher_written_from_a_name_is_a_hole() {
+    for method in ["or_insert(0)", "or_insert_with(|| 0)", "or_default()"] {
+        let ts = body(
+            &format!(
+                "pub struct Loose {{ pub any: u8 }}\n\
+                 impl Loose {{ pub fn bump(&self, k: String) {{ \
+                 let m = whatever(); m.entry(k).{method}; }} }}"
+            ),
+            "bump",
+        );
+        assert!(ts.contains("unsupported("), "wanted a hole for `{method}` in:\n{ts}");
+        assert!(!ts.contains("orDefault()"), "the finisher still runs:\n{ts}");
+    }
+}
+
+/// `impl DerefMut<Target = BTreeMap<K, V>>` binds `Deref`'s `Target`, not one
+/// `DerefMut` declares, so the projection was left standing and every call on
+/// the map behind it was written from its name. With the bound read through its
+/// supertrait the map resolves and the finisher is written from the map's value
+/// type — and the `deref_mut()` step itself is the hole, because a bound names
+/// no implementor whose dereference the port could write (R2).
+#[test]
+fn a_bound_answers_a_supertraits_associated_type() {
+    let ts = body(
+        "use std::ops::DerefMut;\n\
+         pub struct Counts;\n\
+         impl Counts {\n\
+             pub fn bump(mut values: impl DerefMut<Target = BTreeMap<String, u32>>, k: String) {\n\
+                 let value = values.deref_mut().entry(k).or_default();\n\
+                 *value += 1;\n\
+             }\n\
+         }\n",
+        "bump",
+    );
+    assert!(ts.contains("unsupported("), "the deref step is not a hole:\n{ts}");
+    assert!(!ts.contains(".derefMut()"), "a bound's deref was written as a call:\n{ts}");
+    assert!(ts.contains(".orDefault(() => 0)"), "the value type's default is missing:\n{ts}");
+}

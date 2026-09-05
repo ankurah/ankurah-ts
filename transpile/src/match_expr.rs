@@ -283,7 +283,6 @@ fn jump_through_a_value(
     reader.trim_end().to_string()
 }
 
-
 /// A match with a guard, written as the if-chain that tries its arms in turn.
 ///
 /// A guard reads the names its own pattern bound, so it cannot be written where
@@ -911,7 +910,6 @@ enum Written {
     /// The arms that name it, to be written as the chain Rust tries.
     Chain { links: Vec<chain::Link>, param: String, has_payload: bool },
 }
-
 
 /// Does this body already read as a run of statements?
 pub(crate) fn is_statements(body: &str) -> bool {

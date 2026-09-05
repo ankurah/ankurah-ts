@@ -492,7 +492,6 @@ impl<'a> Fallback<'a> {
     }
 }
 
-
 /// The TypeScript name of the subject, where the subject is a plain name.
 ///
 /// A subject that is not one cannot be written twice — Rust evaluates it once —

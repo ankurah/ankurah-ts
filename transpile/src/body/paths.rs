@@ -90,10 +90,10 @@ impl BodyTranslator<'_> {
         matches!(call.args.first(), Some(syn::Expr::Tuple(t)) if t.elems.is_empty())
     }
 
-    /// The constant a `<prim>::<CONST>` path names, where the port has one, and
-    /// an R12 hole where it has none — the alternative is the path written out,
-    /// `f64.MIN_POSITIVE`, which names something the file never declares.
-    fn primitive_const(&self, path: &syn::Path) -> Option<String> {
+    /// The item a two-segment path on a primitive names, where the port has a
+    /// spelling, and an R12 hole where it has none — the alternative is the
+    /// path written out, `f64.MIN_POSITIVE`, a name the file never declares.
+    fn primitive_item(&self, path: &syn::Path) -> Option<String> {
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
         match crate::ty::prim_consts::written_or_reason(&segments)? {
             Ok(written) => Some(written),
@@ -143,7 +143,7 @@ impl BodyTranslator<'_> {
             return trimmed;
         }
         // `f64::EPSILON`, `u32::MAX` — see `ty::prim_consts`.
-        if let Some(written) = self.primitive_const(path) {
+        if let Some(written) = self.primitive_item(path) {
             return written;
         }
         // `Ordering::Greater` is the number `1`: the port writes an ordering as

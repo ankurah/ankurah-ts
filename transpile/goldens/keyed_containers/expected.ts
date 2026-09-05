@@ -73,6 +73,11 @@ export class Lists extends Struct {
     this.ordered.entry(k).orDefault(() => []).value.push(v);
   }
 
+  pushNamed(k: Key, v: number): void {
+    const slot = this.byName.entry(k).orDefault(() => []);
+    slot.value.push(v);
+  }
+
   count(k: Key): number {
     const _m0 = this.byName.get(k);
     return (_m0 != null ? ((v) => v.length)(_m0!) : 0);
@@ -101,6 +106,15 @@ export function counted(words: Key[]): HashMap<Key, number> {
   for (const w of words) {
     const _m0 = counts.entry(w.clone()).orInsert(0);
     _m0.value = checkedAdd(_m0.value, 1, 'u32');
+  }
+  return counts;
+}
+
+export function countedByName(words: Key[]): HashMap<Key, number> {
+  const counts = new HashMap<Key, number>();
+  for (const w of words) {
+    const slot = counts.entry(w.clone()).orInsert(0);
+    slot.value = checkedAdd(slot.value, 1, 'u32');
   }
   return counts;
 }

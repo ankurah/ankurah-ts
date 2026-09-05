@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
-import { Struct, invoke, Invocable, HashMap, HashSet } from '@ankurah/base';
+import { Struct, invoke, Invocable, dropOwned, HashMap, HashSet } from '@ankurah/base';
 import { Collatable, Collatable_dispatch_predecessorBytes, Collatable_dispatch_successorBytes, Collatable_dispatch_toBytes } from '../collation';
 import { ComparisonOperator } from '@ankurah/ankql';
 
@@ -22,54 +22,66 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
   }
 
   forEntry<V>(value: V, op: ComparisonOperator, f: Invocable<[T[]], void>): void {
+    let _moved0 = false;
     try {
-      return op.match({
-        Equal: () => {
-          const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
-          invoke(f, entry);
-        },
-        NotEqual: () => {
-          const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
-          invoke(f, entry);
-        },
-        GreaterThan: () => {
-          const entry = this.gt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
-          invoke(f, entry);
-        },
-        LessThan: () => {
-          const entry = this.lt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
-          invoke(f, entry);
-        },
-        GreaterThanOrEqual: () => {
-          {
-            const _v = Collatable_dispatch_predecessorBytes(value);
-            if (_v != null) {
-              const pred = _v;
-              const entry = this.gt.entry(pred).orDefault(() => []).value;
-              invoke(f, entry);
-            } else {
-            const entry = this.gt.entry([]).orDefault(() => []).value;
-            invoke(f, entry);
-          }
-          }
-        },
-        LessThanOrEqual: () => {
-          {
-            const _v1 = Collatable_dispatch_successorBytes(value);
-            if (_v1 != null) {
-              const succ = _v1;
-              const entry = this.lt.entry(succ).orDefault(() => []).value;
-              invoke(f, entry);
+      try {
+        return op.match({
+          Equal: () => {
+            const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+            _moved0 = true;
+            invoke(f, entry.value);
+          },
+          NotEqual: () => {
+            const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+            _moved0 = true;
+            invoke(f, entry.value);
+          },
+          GreaterThan: () => {
+            const entry = this.gt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+            _moved0 = true;
+            invoke(f, entry.value);
+          },
+          LessThan: () => {
+            const entry = this.lt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+            _moved0 = true;
+            invoke(f, entry.value);
+          },
+          GreaterThanOrEqual: () => {
+            {
+              const _v = Collatable_dispatch_predecessorBytes(value);
+              if (_v != null) {
+                const pred = _v;
+                const entry = this.gt.entry(pred).orDefault(() => []);
+                _moved0 = true;
+                invoke(f, entry.value);
+              } else {
+              const entry = this.gt.entry([]).orDefault(() => []);
+              _moved0 = true;
+              invoke(f, entry.value);
             }
-          }
-        },
-        In: () => {
-          throw new Error(`Unsupported operator: ${op.debug()}`)
-        },
-        Between: () => {
-          throw new Error(`Unsupported operator: ${op.debug()}`)
-        },
-      });
+            }
+          },
+          LessThanOrEqual: () => {
+            {
+              const _v1 = Collatable_dispatch_successorBytes(value);
+              if (_v1 != null) {
+                const succ = _v1;
+                const entry = this.lt.entry(succ).orDefault(() => []);
+                _moved0 = true;
+                invoke(f, entry.value);
+              }
+            }
+          },
+          In: () => {
+            throw new Error(`Unsupported operator: ${op.debug()}`)
+          },
+          Between: () => {
+            throw new Error(`Unsupported operator: ${op.debug()}`)
+          },
+        });
+      } finally {
+        if (!_moved0) dropOwned(f);
+      }
     } finally {
       op.drop();
     }

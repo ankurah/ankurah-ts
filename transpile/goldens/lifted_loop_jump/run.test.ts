@@ -8,7 +8,7 @@
 
 import { expect, test } from 'bun:test';
 import { BorrowMut } from '@ankurah/base';
-import { Lit, quote, quoteAll } from './input.ts';
+import { Lit, firstOver, quote, quoteAll } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 const NUL = String.fromCharCode(0);
@@ -64,6 +64,15 @@ test('and the return inside that loop still leaves the function', () => {
   answer.drop();
   expect(out.value).toBe('ab');
   for (const lit of lits) lit.drop();
+});
+
+// Z4: the payload a labelled `break` carries is what the loop produces. The
+// marker used to be handed back before the payload was translated, so the loop
+// answered whatever it had been initialised with — `undefined` here.
+test('a labelled break carries its payload out of the lift', () => {
+  expect(firstOver([[1, 2], [3, 9], [4]], 5)).toBe(9);
+  // Nothing over the limit: the loop's own `break 0` answers.
+  expect(firstOver([[1, 2], [3]], 5)).toBe(0);
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

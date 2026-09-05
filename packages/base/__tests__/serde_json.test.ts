@@ -120,7 +120,7 @@ describe('serde_json::Error', () => {
 // failure is a value the caller owns rather than an exception — and the
 // `JsonError` in it is a tracked value, dropped here as Rust drops it.
 
-import { parse, stringify } from '../src/serde_json.ts';
+import { fromSlice, parse, stringify } from '../src/serde_json.ts';
 
 /** The value a successful parse produced. */
 function parsed(text: string): unknown {
@@ -305,5 +305,79 @@ describe('an unpaired surrogate escape is refused', () => {
   test('and an escaped backslash is not the start of an escape', () => {
     expect(parsed('"\\\\ud800"')).toBe('\\ud800');
     expect(parsed('"a\\\\b"')).toBe('a\\b');
+  });
+});
+
+// Z10: `serde_json::from_slice` reads BYTES, and answers `Err` for every
+// sequence that is not UTF-8. The host's default decoder answers a string with
+// U+FFFD in it instead, so a document Rust refuses used to parse here with a
+// replacement character where the bad bytes were.
+describe('from_slice reads UTF-8 and refuses what is not', () => {
+  /** The value a successful byte read produced. */
+  function read(bytes: number[]): unknown {
+    const answer = fromSlice(Uint8Array.from(bytes));
+    expect(answer.isOk()).toBe(true);
+    return answer.unwrap();
+  }
+
+  /** That a byte read failed, with the error released the way its owner would. */
+  function rejected(bytes: number[]): void {
+    const answer = fromSlice(Uint8Array.from(bytes));
+    expect(answer.isErr()).toBe(true);
+    answer.unwrapErr().drop();
+  }
+
+  test('well-formed UTF-8 parses', () => {
+    expect(read([...new TextEncoder().encode('{"a":1}')])).toEqual({ a: 1 });
+    expect(read([...new TextEncoder().encode('"🚀"')])).toBe('🚀');
+  });
+
+  test('an invalid leading byte is refused', () => {
+    // 0xFF is not a leading byte of any UTF-8 sequence.
+    rejected([0x22, 0xff, 0x22]);
+  });
+
+  test('a missing continuation byte is refused', () => {
+    // 0xC3 starts a two-byte sequence and 0x22 is not a continuation.
+    rejected([0x22, 0xc3, 0x22]);
+  });
+
+  test('a truncated sequence is refused', () => {
+    // 0xE2 0x82 is the first two bytes of a three-byte sequence.
+    rejected([0x22, 0xe2, 0x82]);
+  });
+
+  test('an overlong encoding is refused', () => {
+    // 0xC0 0xAF is `/` written in two bytes, which UTF-8 forbids.
+    rejected([0x22, 0xc0, 0xaf, 0x22]);
+  });
+
+  test('and the integer tokens stay lossless, because the port parses it', () => {
+    expect(read([...new TextEncoder().encode('{"n":9007199254740993}')]))
+      .toEqual({ n: 9007199254740993n });
+  });
+});
+
+// Z11: a lone surrogate cannot be encoded in UTF-8 at all, so Rust can neither
+// hold one in a `String` nor read one out of a document. The ESCAPED form was
+// refused; the raw one was not, and `JSON.parse` hands it straight through.
+describe('a lone surrogate is refused raw as well as escaped', () => {
+  test('a raw unpaired high surrogate in the text is refused', () => {
+    refused('"\ud800"');
+    refused('{"k":"a\udbffb"}');
+  });
+
+  test('a raw unpaired low surrogate is refused', () => {
+    refused('"\udc00"');
+  });
+
+  test('a raw well-formed pair is one code point and passes', () => {
+    expect(parsed('"🚀"')).toBe('🚀');
+  });
+
+  test('and a string carrying one cannot be written back out', () => {
+    unwritable('\ud800');
+    unwritable({ k: '\udfff' });
+    unwritable({ '\ud800': 1 });
   });
 });

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_combinators/src/input.rs
-import { Struct, Result, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Result, checkedAdd, checkedSubOption, HashMap } from '@ankurah/base';
 
 export class Entry extends Struct {
   readonly weight: number;
@@ -69,7 +69,12 @@ export class Registry extends Struct {
 
   entryOr(id: number, spare: Entry): Entry {
     const _m0 = this.entries.get(id);
-    return (_m0 != null ? (spare.drop(), ((e) => new Entry(e.weight))(_m0!)) : spare);
+    return (_m0 != null ? (() => { try { return ((e) => new Entry(e.weight))(_m0!); } finally { spare.drop(); } })() : spare);
+  }
+
+  entryOrStrict(id: number, spare: Entry): Entry {
+    const _m0 = this.entries.get(id);
+    return (_m0 != null ? (() => { try { return ((e) => new Entry((checkedSubOption(e.weight, 1, 'u32') ?? (() => { throw new Error('weight underflow'); })())))(_m0!); } finally { spare.drop(); } })() : spare);
   }
 }
 

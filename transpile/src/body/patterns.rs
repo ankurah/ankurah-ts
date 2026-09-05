@@ -614,7 +614,6 @@ impl<'a> BodyTranslator<'a> {
     }
 }
 
-
 /// An or-pattern whose alternatives bind their names in a form the translator
 /// cannot read back, as the R12 hole it is.
 ///

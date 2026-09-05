@@ -819,7 +819,6 @@ fn a_while_let_binding_is_released_each_turn() {
     assert!(release > loop_at, "inside the loop, not after it:\n{}", ts);
 }
 
-
 // ── Where a condition's temporaries live ──────────────────────────────
 
 #[test]
@@ -952,7 +951,6 @@ fn an_arm_whose_guard_failed_hands_the_subject_to_the_arm_below_it() {
         statement
     );
 }
-
 
 // ── Assignment through a wrapper ──────────────────────────────────────
 

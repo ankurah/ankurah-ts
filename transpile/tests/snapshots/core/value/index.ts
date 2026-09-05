@@ -548,7 +548,7 @@ export class Value extends Enum<ValueV> {
         return new Value('Binary', { _0 });
       }
       case 9: {
-        const _0 = JSON.parse(new TextDecoder().decode(reader.readByteVec()));
+        const _0 = serde_json.fromSlice(reader.readByteVec()).unwrap();
         return new Value('Json', { _0 });
       }
       default: throw new Error(`Unknown Value variant: ${variant}`);

@@ -66,6 +66,14 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
     }
 
     fn consumes_callee(&self, call: &syn::ExprCall) -> bool {
+        // A callee whose bound is `FnOnce` and nothing else is consumed by the
+        // call itself — `invoke` is the helper that says so. The move scan was
+        // never told, so the parameter counted as untouched, and the body was
+        // given no release at all in case the call had taken it: a path that
+        // did not call left the closure and everything it captured to nobody.
+        if self.bound_closure_helper(&call.func) == Some("invoke") {
+            return true;
+        }
         let syn::Expr::Path(path) = call.func.as_ref() else { return false };
         let Some(ident) = path.path.get_ident() else { return false };
         let name = crate::name_map::escape_reserved(&crate::name_map::to_camel_case(&ident.to_string()));

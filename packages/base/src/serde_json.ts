@@ -15,6 +15,7 @@
 
 import { Struct } from './struct.ts';
 import { Result as ResultValue } from './result.ts';
+import { decodeUtf8, unpairedEscapedSurrogate, unpairedSurrogateAt } from './std/utf8.ts';
 
 /**
  * `serde_json::Error`.
@@ -194,6 +195,21 @@ export function parse(text: string): ResultValue<unknown, JsonError> {
  * have produced and could not read back, so it is an error here rather than a
  * token nothing accepts.
  */
+/**
+ * `serde_json::from_slice` — a document read from UTF-8 BYTES.
+ *
+ * The bytes are decoded FATALLY, because serde_json answers `Err` for every
+ * byte sequence that is not UTF-8 and the host's default decoder answers a
+ * string with U+FFFD in it instead: an invalid leading byte, a missing
+ * continuation, a truncated sequence and an overlong encoding all used to parse
+ * here as a document with a replacement character in it.
+ */
+export function fromSlice(bytes: Uint8Array): ResultValue<unknown, JsonError> {
+  const text = decodeUtf8(bytes);
+  if (text === null) return ResultValue.Err(JsonError.custom('invalid utf-8 sequence'));
+  return parse(text);
+}
+
 export function stringify(value: unknown): ResultValue<string, JsonError> {
   try {
     return ResultValue.Ok(write(value));
@@ -218,6 +234,7 @@ function write(value: unknown): string {
     return JSON.stringify(value);
   }
   if (typeof value === 'string' || typeof value === 'boolean') {
+    if (typeof value === 'string') refuseALoneSurrogate(value);
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
@@ -227,11 +244,25 @@ function write(value: unknown): string {
     const parts: string[] = [];
     for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
       if (member === undefined) continue;
+      refuseALoneSurrogate(key);
       parts.push(`${JSON.stringify(key)}:${write(member)}`);
     }
     return `{${parts.join(',')}}`;
   }
   throw new Fault(`a ${typeof value} cannot be written as JSON`, 0);
+}
+
+/**
+ * A string Rust could not have held, and could not be handed.
+ *
+ * `JSON.stringify` writes a lone surrogate as a `\ud800` escape, which is text
+ * no UTF-8 encoder can turn into bytes and which serde_json refuses to read
+ * back — so writing it would produce a document the port itself rejects.
+ */
+function refuseALoneSurrogate(text: string): void {
+  if (unpairedSurrogateAt(text) !== null) {
+    throw new Fault('a lone surrogate cannot be written as JSON', 0);
+  }
 }
 
 /**
@@ -399,7 +430,14 @@ class JsonReader {
         // encoder can write out again; serde_json answers
         // `Err(unexpected end of hex escape)`. The escapes are checked here and
         // decoded by the host, so there is still only one unescaper.
-        this.refuseAnUnpairedSurrogate(quoted);
+        if (unpairedEscapedSurrogate(quoted)) throw this.fail('unexpected end of hex escape');
+        // And a RAW one, which the comment above used to say the host's reader
+        // refuses. It does not: `JSON.parse` hands a lone surrogate straight
+        // through, and serde_json — which reads UTF-8, where a surrogate cannot
+        // be encoded at all — could never have been handed one.
+        if (unpairedSurrogateAt(quoted) !== null) {
+          throw this.fail('invalid unicode code point');
+        }
         try {
           return JSON.parse(quoted) as string;
         } catch {
@@ -414,48 +452,6 @@ class JsonReader {
       this.#at += 1;
     }
     throw this.fail('unterminated string');
-  }
-
-  /**
-   * Refuse a `\uD800`-`\uDFFF` escape that is not half of a pair.
-   *
-   * A surrogate is half a code point. Written alone it is a string JavaScript
-   * holds and no UTF-8 encoder can write, so serde_json refuses it at the
-   * escape — and `JSON.parse` does not, so the port used to accept a document
-   * Rust rejects and then produce text `stringify` could not write back.
-   *
-   * Only ESCAPED surrogates: a raw one in the source text is already refused by
-   * the host's reader, and a well-formed pair is one code point.
-   */
-  private refuseAnUnpairedSurrogate(quoted: string): void {
-    for (let at = 0; at < quoted.length; at++) {
-      if (quoted[at] !== '\\') continue;
-      if (quoted[at + 1] !== 'u') {
-        // Any other escape is two characters; skipping the second keeps a
-        // `\\\\` from being read as the start of an escape.
-        at += 1;
-        continue;
-      }
-      const code = Number.parseInt(quoted.slice(at + 2, at + 6), 16);
-      at += 5;
-      if (!Number.isNaN(code) && code >= 0xd800 && code <= 0xdbff) {
-        // A high surrogate: the next escape has to be its low half.
-        const low = Number.parseInt(quoted.slice(at + 3, at + 7), 16);
-        const paired =
-          quoted[at + 1] === '\\' &&
-          quoted[at + 2] === 'u' &&
-          !Number.isNaN(low) &&
-          low >= 0xdc00 &&
-          low <= 0xdfff;
-        if (!paired) throw this.fail('unexpected end of hex escape');
-        at += 6;
-        continue;
-      }
-      if (!Number.isNaN(code) && code >= 0xdc00 && code <= 0xdfff) {
-        // A low surrogate with no high half in front of it.
-        throw this.fail('unexpected end of hex escape');
-      }
-    }
   }
 
   private literal(word: string): void {

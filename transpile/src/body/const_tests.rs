@@ -89,8 +89,12 @@ fn an_atomic_wraps_at_its_own_width() {
 /// `AtomicU64` is the one atomic whose TypeScript spelling and whose Rust width
 /// disagree: the port writes it as a `number` and Rust holds a `u64`, so a
 /// `u64` width here would put a `bigint` operand beside a `number` place, which
-/// JavaScript refuses to mix. The update stays an ordinary `+=` and the site
-/// says what it does not do.
+/// JavaScript refuses to mix.
+///
+/// PREMISE CHANGED 2026-09-05 (R5): the update used to stay an ordinary `+=`,
+/// which is exactly the pair JavaScript refuses — `WIDE + 1n` on a `number`
+/// place — under a message with eighteen spaces in the middle of it. A reported
+/// gap whose emission runs is what R12 forbids, so the site is a hole.
 #[test]
 fn a_sixty_four_bit_atomic_says_it_does_not_wrap() {
     let mut f = crate::testing::Fixture::build(&[(
@@ -100,9 +104,12 @@ fn a_sixty_four_bit_atomic_says_it_does_not_wrap() {
          pub fn a() -> u64 { WIDE.fetch_add(1, Ordering::SeqCst) }",
     )]);
     let ts = f.emitted("lib.rs");
-    assert!(ts.contains("WIDE = WIDE + 1"), "{ts}");
+    assert!(ts.contains("unsupported("), "{ts}");
+    assert!(!ts.contains("WIDE = WIDE +"), "the update still runs:\n{ts}");
     assert!(
-        f.messages().iter().any(|m| m.contains("does not wrap where Rust does")),
+        f.messages()
+            .iter()
+            .any(|m| m.contains("wraps at a width the port does not write the atomic as")),
         "{:?}",
         f.messages()
     );
@@ -160,4 +167,29 @@ fn a_const_in_a_pattern_is_a_comparison() {
 fn a_name_that_is_not_a_const_still_binds() {
     let ts = emitted("pub fn pick(n: u32) -> u32 { match n { other => other + 1 } }");
     assert!(ts.contains("const other = n;"), "{ts}");
+}
+
+/// D5's tail: `i64::from_be_bytes` and `u8::from_str_radix` are two-segment
+/// paths on a primitive too, and the port writes that primitive as a JavaScript
+/// number, which has no such member. Written out, `i64.fromBeBytes(..)` names
+/// something the emitted file never declares — a `ReferenceError` with no
+/// diagnostic at all, at two live sites in core's `collation.test.ts`.
+#[test]
+fn a_function_on_a_primitive_is_a_hole_like_a_constant_with_no_spelling() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn a(bytes: [u8; 8]) -> i64 { i64::from_be_bytes(bytes) }\n\
+         pub fn b() -> f64 { f64::EPSILON }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(!ts.contains("i64.fromBeBytes"), "the path is still written out:\n{ts}");
+    assert!(ts.contains("unsupported("), "{ts}");
+    assert!(ts.contains("Number.EPSILON"), "a constant the port has stopped resolving:\n{ts}");
+    assert!(
+        f.messages()
+            .iter()
+            .any(|m| m.contains("`i64::from_be_bytes` is a function Rust puts on a primitive")),
+        "{:?}",
+        f.messages()
+    );
 }

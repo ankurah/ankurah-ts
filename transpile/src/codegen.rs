@@ -1,5 +1,6 @@
 //! Top-level TS code generation — orchestrates imports, emission, and output
 
+mod const_order;
 mod surface;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -297,16 +298,6 @@ fn named_import(line: &str) -> Option<(String, Vec<String>)> {
     Some((module.to_string(), names))
 }
 
-/// Generate TypeScript skeleton from extracted Rust file
-/// `config` is optional — when provided, skips types/methods listed in provided_impls
-/// Every name `@ankurah/base` exports that emitted code can write.
-///
-/// One table, read by both import passes — a file's own declarations and its
-/// test file's — so that a symbol the emitter starts writing cannot be imported
-/// in one and left undeclared in the other. The match is on whole words:
-/// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
-/// std's `Mutex` into a file that only ever names tokio's.
-///
 /// Does the program write through this `static`, so that the emitted binding
 /// has to be reassignable?
 ///
@@ -314,79 +305,6 @@ fn named_import(line: &str) -> Option<(String, Vec<String>)> {
 /// — is written by assigning to the binding, because the port has no wrapper
 /// object to write into. A `static` of an object type is not: the writes go
 /// through the object, and the binding never moves.
-
-/// The consts and statics of a file, ordered so that each stands after the ones
-/// its initialiser names.
-///
-/// Rust's items are order-independent; JavaScript's `const` and `let` are not.
-/// `const A = B + 1;` written above `const B = 1;` is
-/// `ReferenceError: Cannot access 'B' before initialization` at module load, so
-/// the whole file fails to load and every import of it with it.
-///
-/// A cycle cannot be written at all — Rust would have refused it too, since a
-/// const's value has to be computable — so one is left in source order and the
-/// names it holds report for themselves at the site that reads them.
-fn in_dependency_order(consts: &[crate::types::ConstInfo]) -> Vec<&crate::types::ConstInfo> {
-    let names: Vec<&str> = consts.iter().map(|c| c.name.as_str()).collect();
-    let mut done = vec![false; consts.len()];
-    let mut out: Vec<&crate::types::ConstInfo> = Vec::new();
-    // One pass per const at most: each pass emits every const whose remaining
-    // dependencies are already out, and a pass that emits nothing has only a
-    // cycle left, which goes out in source order.
-    for _ in 0..consts.len() {
-        let mut moved = false;
-        for (at, c) in consts.iter().enumerate() {
-            if done[at] {
-                continue;
-            }
-            let waiting = names.iter().enumerate().any(|(other, name)| {
-                other != at && !done[other] && names_the_const(c, name)
-            });
-            if waiting {
-                continue;
-            }
-            done[at] = true;
-            out.push(c);
-            moved = true;
-        }
-        if !moved {
-            break;
-        }
-    }
-    for (at, c) in consts.iter().enumerate() {
-        if !done[at] {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Does this const's initialiser name the given const?
-///
-/// The written TypeScript, read as identifiers: a const's initialiser is one
-/// expression and the names in it are the values it needs before it can be
-/// evaluated. Matching the whole identifier, so `BASE` does not find `BASELINE`.
-fn names_the_const(c: &crate::types::ConstInfo, name: &str) -> bool {
-    let Some(init) = &c.init_ts else { return false };
-    let bytes = init.as_bytes();
-    let mut from = 0;
-    while let Some(at) = init[from..].find(name) {
-        let start = from + at;
-        let end = start + name.len();
-        let before_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
-        let after_ok = end == bytes.len() || !is_ident_byte(bytes[end]);
-        if before_ok && after_ok {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-fn is_ident_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-}
-
 fn writes_through(c: &crate::types::ConstInfo) -> bool {
     let Some(syn::Type::Path(path)) = c.rust_ty.as_ref() else {
         return false;
@@ -398,7 +316,7 @@ fn writes_through(c: &crate::types::ConstInfo) -> bool {
     name.starts_with("Atomic") || name == "Cell"
 }
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 81] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 83] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -436,7 +354,7 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 81] = [
     // families Rust offers for saying what should happen instead.
     "checkedAdd", "checkedSub", "checkedMul", "checkedDiv", "checkedRem",
     "wrappingAdd", "wrappingSub", "wrappingMul",
-    "checkedAddOption", "checkedSubOption", "checkedMulOption",
+    "checkedAddOption", "checkedSubOption", "checkedMulOption", "checkedDivOption", "checkedRemOption",
     "saturatingAdd", "saturatingSub", "saturatingMul",
     "overflowingAdd", "overflowingSub", "overflowingMul",
     // The keyed containers a `HashMap`/`HashSet` becomes, and the hash a
@@ -1111,7 +1029,7 @@ fn generate_declarations(
         let export = if t.is_pub { "export " } else { "" };
         out.push_str(&format!("{}type {} = {};\n\n", export, t.name, t.ty));
     }
-    for c in in_dependency_order(&file.consts) {
+    for c in const_order::in_dependency_order(&file.consts) {
         // Skip consts that have a module_decl (e.g., thread_local constants)
         let has_decl = file.module_decls.iter().any(|d| d.contains(&c.name));
         if has_decl { continue; }
@@ -1760,53 +1678,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod const_order_tests {
-    use crate::testing::Fixture;
-
-    /// Rust's items are order-independent; JavaScript's `const` is not. `const
-    /// A = B + 1;` written above `const B = 1;` is `ReferenceError: Cannot
-    /// access 'B' before initialization` at module load, so the whole file
-    /// fails to load and every import of it with it.
-    #[test]
-    fn a_const_stands_after_the_ones_its_initialiser_names() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub const A: i32 = B + 1;\npub const B: i32 = 1;\npub const C: i32 = A + B;",
-        )]);
-        let ts = f.emitted("lib.rs");
-        let at = |name: &str| ts.find(&format!("const {}:", name)).expect(name);
-        assert!(at("B") < at("A"), "B stands before A:\n{ts}");
-        assert!(at("A") < at("C"), "A stands before C:\n{ts}");
-    }
-
-    /// A name that is a PREFIX of another is not a dependency: `BASE` does not
-    /// find `BASELINE`.
-    #[test]
-    fn a_prefix_of_another_name_is_not_a_dependency() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub const BASELINE: i32 = 1;\npub const BASE: i32 = 2;\n\
-             pub const USES: i32 = BASELINE;",
-        )]);
-        let ts = f.emitted("lib.rs");
-        let at = |name: &str| ts.find(&format!("const {}:", name)).expect(name);
-        assert!(at("BASELINE") < at("USES"), "{ts}");
-        // BASE depends on nothing, so it keeps its source position relative to
-        // BASELINE.
-        assert!(at("BASELINE") < at("BASE"), "{ts}");
-    }
-
-    /// A cycle cannot be written at all — Rust would have refused it, since a
-    /// const's value has to be computable — so one is left in source order
-    /// rather than looping.
-    #[test]
-    fn a_cycle_is_left_in_source_order() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub const A: i32 = B;\npub const B: i32 = A;",
-        )]);
-        let ts = f.emitted("lib.rs");
-        assert!(ts.contains("const A:") && ts.contains("const B:"), "{ts}");
-    }
-}

@@ -168,10 +168,9 @@ fn serde_with(module: &str, value: &str, wr: &str) -> Option<(String, String)> {
                 "{}.writeByteVec(new TextEncoder().encode(JSON.stringify({})))",
                 wr, value
             ),
-            format!(
-                "JSON.parse(new TextDecoder().decode({}.readByteVec()))",
-                wr
-            ),
+            // A FATAL decode and the port's own parse: the host's answered
+            // U+FFFD for bad bytes and a rounded double past 2^53.
+            format!("serde_json.fromSlice({}.readByteVec()).unwrap()", wr),
         )),
         _ => None,
     }

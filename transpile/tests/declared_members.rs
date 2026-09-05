@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::{collect_files_with_ext, run_batch, support_tree, transpile_dir, TempDir};
+use common::{code_only, collect_files_with_ext, run_batch, support_tree, transpile_dir, TempDir};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,11 @@ fn every_from_json_call_names_a_declared_static() {
         let out = TempDir::new(&format!("declared-members-{package}"));
         run_batch(&src, out.path(), &package);
         let files = collect_files_with_ext(out.path(), Some("ts"));
+
+        // Read as CODE, not as text: a `.fromJson(` inside a string literal is
+        // not a call and a `static fromJson(` inside one is not a declaration.
+        let files: BTreeMap<String, String> =
+            files.into_iter().map(|(name, text)| (name, code_only(&text))).collect();
 
         // Every class this crate's own output declares the static on.
         let mut emitted: BTreeSet<String> = BTreeSet::new();
@@ -79,6 +84,43 @@ fn every_from_json_call_names_a_declared_static() {
         missing.len(),
         missing.join("\n  ")
     );
+}
+
+/// Z13: this check reads TypeScript, and text inside a string literal is not
+/// code. Every one of these used to pass the scan.
+#[test]
+fn a_member_named_inside_a_string_does_not_declare_it() {
+    let file = "export class Wrong {\n  readonly a = \"static fromJson( { }\";\n}\n\
+                export class Right {\n  static fromJson(v: unknown) { return v; }\n  \
+                toJSON() { return 1; }\n}\n";
+    let wrong = declared_members_of(file, "Wrong").expect("Wrong is declared");
+    assert!(!wrong.contains("static fromJson("), "a string satisfied the check:\n{wrong}");
+    assert!(!wrong.contains("toJSON("), "a brace in a string ended the class late:\n{wrong}");
+    let right = declared_members_of(file, "Right").expect("Right is declared");
+    assert!(right.contains("static fromJson("), "{right}");
+    assert!(right.contains("toJSON("), "{right}");
+}
+
+/// A `//` inside a string used to swallow the rest of a real line, and a
+/// `.fromJson(` inside one used to count as a call. Offsets and line counts are
+/// preserved, because callers slice by them.
+#[test]
+fn a_comment_marker_inside_a_string_is_not_a_comment() {
+    let code = code_only("const url = \"http://x\"; A.fromJson(v);\n");
+    assert!(code.contains("A.fromJson("), "the rest of the line was eaten:\n{code}");
+    assert!(from_json_receivers(&code_only("const s = \"B.fromJson(\";\n")).is_empty());
+    let text = "a\n\"b\"\n// c\n";
+    assert_eq!(code_only(text).len(), text.len());
+    assert_eq!(code_only(text).lines().count(), text.lines().count());
+}
+
+/// A template's `${..}` is CODE: a call written inside one is a call, and its
+/// braces balance so a scan counting depth still sees them.
+#[test]
+fn a_template_interpolation_is_code() {
+    let code = code_only("const s = `x ${A.fromJson(v)} y`;\n");
+    assert_eq!(from_json_receivers(&code), vec!["A".to_string()]);
+    assert!(code.contains("{") && code.contains("}"), "{code}");
 }
 
 /// The classes `[provided_impls]` says have a hand-written `fromJson`, verified
@@ -146,17 +188,17 @@ fn provided_types_declaring_from_json() -> BTreeSet<String> {
     out
 }
 
-
 /// The body of one `export class` in a provided file, or `None` where the file
 /// declares no class of that name.
 ///
 /// Brace depth from the class's own `{`, so a nested class or an object literal
-/// inside a method does not end it early. Line comments and block comments are
-/// dropped first, so a member named only in a comment does not satisfy a check
-/// — which is the whole point of reading the file rather than trusting the
-/// entry.
+/// inside a method does not end it early. The file is read as CODE first
+/// (`common::code_only`), so a member named only in a comment or inside a
+/// string does not satisfy a check — which is the whole point of reading the
+/// file rather than trusting the entry — and a brace inside a string does not
+/// end the class early.
 fn declared_members_of(text: &str, class: &str) -> Option<String> {
-    let text = without_comments(text);
+    let text = code_only(text);
     let head = format!("export class {}", class);
     // The class name has to END there: `export class Entity` must not match
     // `export class EntityId`.
@@ -184,33 +226,6 @@ fn declared_members_of(text: &str, class: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// The file with its comments removed, so a member named in one does not
-/// satisfy a check.
-fn without_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let bytes: Vec<char> = text.chars().collect();
-    let mut at = 0usize;
-    while at < bytes.len() {
-        if bytes[at] == '/' && at + 1 < bytes.len() && bytes[at + 1] == '/' {
-            while at < bytes.len() && bytes[at] != '\n' {
-                at += 1;
-            }
-            continue;
-        }
-        if bytes[at] == '/' && at + 1 < bytes.len() && bytes[at + 1] == '*' {
-            at += 2;
-            while at + 1 < bytes.len() && !(bytes[at] == '*' && bytes[at + 1] == '/') {
-                at += 1;
-            }
-            at = (at + 2).min(bytes.len());
-            continue;
-        }
-        out.push(bytes[at]);
-        at += 1;
-    }
-    out
 }
 
 /// Where the hand-written file for a `[provided_impls]` entry lives: the

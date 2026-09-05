@@ -126,7 +126,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-
     /// Report a shape with no lowering AND write the hole that stands where its
     /// output would have gone (R12).
     ///

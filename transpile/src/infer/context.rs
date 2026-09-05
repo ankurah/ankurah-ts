@@ -1315,9 +1315,6 @@ impl<'a> TypeContext<'a> {
 
 }
 
-
-
-
 /// The type-parameter names still standing in a type.
 ///
 /// A call whose result is one of them — `Into::into` returning its trait's `T`,

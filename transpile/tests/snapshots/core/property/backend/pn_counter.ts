@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/pn_counter.rs
-import { Struct, Result, Arc, RwLock, HashMap } from '@ankurah/base';
+import { Struct, Result, Arc, RwLock, unsupported, HashMap } from '@ankurah/base';
 import { Clock, Operation } from '@ankurah/proto';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Value } from '../../value/index';
@@ -32,7 +32,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   }
 
   static addRaw(values: DerefMut, propertyName: PropertyName, amount: PNValue): void {
-    const value = values.derefMut().entry(propertyName).orDefault();
+    const value = unsupported('`or_default()` needs the value type\'s default, and `PNValue` is not declared, so it has no default');
     value.value += amount;
   }
 

@@ -9,7 +9,7 @@
 // second clone leaked.
 
 import { expect, test } from 'bun:test';
-import { Bag, Key, Lists, built, counted, ordered, tagged } from './input.ts';
+import { Bag, Key, Lists, built, counted, countedByName, ordered, tagged } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('from builds a map a rebuilt key can look up', () => {
@@ -57,6 +57,34 @@ test('entry counts, and reads the place once', () => {
   b.drop();
   counts.drop();
   for (const w of words) w.drop();
+});
+
+// R1: the same count with the slot bound to a NAME. Bound to the value in the
+// slot, `*slot += 1` wrote `slot.value` on a number: the count never reached
+// the map and every word came back 0 — or, under strict mode, a TypeError.
+test('a finisher bound to a name still writes through into the map', () => {
+  const words = [new Key('a'), new Key('b'), new Key('a')];
+  const counts = countedByName(words);
+  const a = new Key('a');
+  const b = new Key('b');
+  expect(counts.get(a)).toBe(2);
+  expect(counts.get(b)).toBe(1);
+  a.drop();
+  b.drop();
+  counts.drop();
+  for (const w of words) w.drop();
+});
+
+// And read as a VALUE through the same binding: Rust's auto-deref calls `push`
+// on the `Vec` the slot points at.
+test('a finisher bound to a name reads through the slot', () => {
+  const l = Lists.new();
+  l.pushNamed(new Key('a'), 1);
+  l.pushNamed(new Key('a'), 2);
+  const ask = new Key('a');
+  expect(l.count(ask)).toBe(2);
+  ask.drop();
+  l.drop();
 });
 
 // The three ways of finishing an entry that the counter above does not use.

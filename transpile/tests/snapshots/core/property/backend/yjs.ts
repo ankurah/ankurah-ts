@@ -94,8 +94,8 @@ export class YrsBackend extends Struct implements PropertyBackend {
   fieldBroadcastId(fieldName: PropertyName): BroadcastId {
     let fieldBroadcasts = this.fieldBroadcasts.lock();
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default()).value;
-      return broadcast.id();
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+      return broadcast.value.id();
     } finally {
       fieldBroadcasts.drop();
     }
@@ -209,8 +209,8 @@ export class YrsBackend extends Struct implements PropertyBackend {
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard {
     let fieldBroadcasts = this.fieldBroadcasts.lock();
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default()).value;
-      const _t0 = broadcast.reference();
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+      const _t0 = broadcast.value.reference();
       try {
         return ListenerGuard.from(_t0.listen(listener));
       } finally {

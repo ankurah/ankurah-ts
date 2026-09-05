@@ -73,7 +73,6 @@ pub fn pattern_names(pat: &syn::Pat) -> Vec<String> {
     bound_names(pat)
 }
 
-
 /// Is this identifier written the way Rust writes a `const`?
 ///
 /// At least one letter, and no lowercase one. A binding is `snake_case` and a
@@ -352,7 +351,6 @@ pub(crate) fn references_var(expr: &syn::Expr, name: &str) -> bool {
     }
 }
 
-
 /// What the position wants of a shift's left operand: everything it wants of
 /// the shift, because a shift hands back the type of the value it shifted.
 pub(crate) fn shift_expectation<'e>(
@@ -397,9 +395,6 @@ pub(crate) fn translate_binop(op: &syn::BinOp) -> &'static str {
         _ => "/* unknown op */",
     }
 }
-
-
-
 
 #[cfg(test)]
 mod literal_tests {

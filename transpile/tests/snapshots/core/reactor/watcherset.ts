@@ -179,13 +179,13 @@ export class WatcherSet extends Struct {
             try {
               try {
                 const propertyPath = PropertyPath.fromPath(path);
-                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default()).value;
+                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
                 return op.match({
                   Add: () => {
-                    index.add((literal).clone(), operator.clone(), watcherId);
+                    index.value.add((literal).clone(), operator.clone(), watcherId);
                   },
                   Remove: () => {
-                    index.remove((literal).clone(), operator.clone(), watcherId);
+                    index.value.remove((literal).clone(), operator.clone(), watcherId);
                   },
                 });
               } finally {
@@ -218,13 +218,13 @@ export class WatcherSet extends Struct {
         throw new Error('unimplemented');
       },
       True: () => {
-        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet()).value;
+        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet());
         return op.match({
           Add: () => {
-            set.add(watcherId);
+            set.value.add(watcherId);
           },
           Remove: () => {
-            set.delete(watcherId);
+            set.value.delete(watcherId);
           },
         });
       },

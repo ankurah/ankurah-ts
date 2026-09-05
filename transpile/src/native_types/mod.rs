@@ -11,7 +11,7 @@ mod bytes; // Vec<u8>/[u8] → Uint8Array
 pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
 pub(crate) mod iterator; // Iterator trait methods on arrays
 mod js_value; // serde_json::Value / JsValue → unknown
-mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
+pub(crate) mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 pub mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
 pub(crate) mod ordering; // std::cmp::Ordering → -1 | 0 | 1
@@ -197,7 +197,6 @@ pub fn translate_method_using(
     }
 }
 
-
 /// The integer width an atomic holds, where the receiver is one.
 ///
 /// An atomic IS the value it holds here, and `fetch_add` is a read-modify-write
@@ -242,6 +241,24 @@ fn inner_of(reg: &TypeRegistry, ty: &Ty) -> Option<(Ty, String)> {
 /// Handles methods that are unambiguous regardless of type, plus common
 /// fallbacks for methods that are almost always the same translation.
 pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> MethodTranslation {
+    // The three ways Rust finishes a `map.entry(k)` are the one family this
+    // table must not answer. What a finisher writes needs the map's value type
+    // — `or_default` needs that type's default, which TypeScript has no way to
+    // read — so a receiver the engine could not type says nothing a finisher
+    // can be written from. Written from the name, `orDefault()` invoked
+    // `undefined` on the first unseen key, on core's property write path.
+    if matches!(rust_method, "or_insert" | "or_insert_with" | "or_default") {
+        let message = format!(
+            "`{}` finishes a `map.entry(..)`, and this receiver is not an `Entry` the engine \
+             could type, so neither what the map holds nor its default is known here",
+            rust_method
+        );
+        return MethodTranslation::Refused {
+            fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+            message,
+        };
+    }
+
     // Type-erased conversions work without knowing the receiver type
     if let Some(result) = conversion::translate(receiver, rust_method, args) {
         return MethodTranslation::Expr(result);

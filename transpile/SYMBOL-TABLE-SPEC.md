@@ -696,9 +696,13 @@ addressed by the step that found it.
   Rust does, and integer division truncates towards zero as Rust does.
   `wrapping_*`, `checked_*`, `saturating_*` and `overflowing_*` map to FREE
   helpers of the same shape — `wrappingAdd(x, 1, 'u8')` — because a JavaScript
-  number has no methods of those names; the width comes from the resolved
-  receiver type, and a receiver the engine could not type refuses the call
-  rather than guessing one. Floats are untouched — Rust's `f64` arithmetic is
+  number has no methods of those names. The `checked_*` helpers answer
+  `T | null`, which is how the port writes the `Option` Rust answers, and
+  `checkedDivOption` and `checkedRemOption` answer `None` on exactly the two
+  cases their panicking siblings raise on: a zero divisor, and `MIN` over `-1`,
+  whose quotient the type cannot hold. The width comes from the resolved
+  receiver type, and a receiver the engine could not type is a HOLE rather than
+  a guess, because the answer differs by width. Floats are untouched — Rust's `f64` arithmetic is
   IEEE and so is JavaScript's.
 
   R13: `usize` and `isize` are 32-bit here, because the port's target is wasm32.
@@ -798,14 +802,18 @@ addressed by the step that found it.
     a capture the engine could not type is left out of what the closure owns,
     and the closure is reported rather than given an incomplete list silently.
   - **A closure the emitter cannot see the call site of.** A `move` closure over
-    droppable values is an `OwnedClosure`, which is never callable as a function;
-    the emitter rewrites the call sites it can see and reports the ones it
-    cannot, because the callee that receives the closure still writes `f(x)`.
-    Three shapes it does see now: a closure bound to a local (`.call`/
+    droppable values is an `OwnedClosure`, which is never callable as a function,
+    so every call on one is written through a helper that tells the two shapes
+    apart. Three shapes reach a helper: a closure bound to a local (`.call`/
     `.callOnce`), a parameter with a callable bound (R10's `invoke`/`invokeRef`),
     and — since 2026-09-05 — an argument to an `Option` combinator or to
     `retain`, which is named once, reached through the helper its bound calls
     for, and released by the branch that does not call it.
+    (Rewritten 2026-09-05, Z14: this bullet used to say the callee that receives
+    a closure "still writes `f(x)`", which the emitter has not done since R10.)
+    What is left is a callee whose parameter the engine cannot read AS a
+    callable — a type it could not resolve, or one that is not a bound at all —
+    where the call is written plainly and reported.
   - **`?` across two error types calls the `From` impl the engine resolved**
     (step 5). What is left is named at each site: a conversion whose source or
     target is still a type parameter, which Rust decides per instantiation and
@@ -824,13 +832,18 @@ addressed by the step that found it.
     not released.** The engine hands back the future's own type there, and
     releasing that would drop a value the await already moved.
   - **A loop over an owned sequence the runtime does not write as an array
-    releases neither what an early exit left behind nor the CONTAINER.** Rust's
-    `IntoIter` takes the sequence by value: it drops the elements it never
-    handed out, and it drops the emptied sequence itself when the loop ends. A
-    `Vec` is an array and the emitter can name both; a `HashMap` or an adaptor
-    is not, and releasing the map after the loop would release the keys and
-    values the loop has already taken — the runtime has no way to empty one
-    without them. The `borrowed_iteration` golden records the leak by name.
+    releases the CONTAINER for nobody, and does not release what an early exit
+    left behind.** Rust's `IntoIter` takes the sequence by value: it drops the
+    elements it never handed out, and it drops the emptied sequence itself when
+    the loop ends. The elements the loop DID hand out are released per turn — it
+    is the two the loop never touches that are not. A `Vec` is an array and the
+    emitter can name both; a `HashMap` or an adaptor is not, and releasing the
+    map after the loop would release the keys and values the loop has already
+    taken, because the runtime has no way to empty one without them. The
+    `borrowed_iteration` golden records the leak by name.
+    (Made precise 2026-09-05: the bullet used to say "neither what an early exit
+    left behind nor the CONTAINER", which read as though the elements handed out
+    were not released either.)
   - **A macro the emitter does not expand releases nothing it was handed.** The
     macro becomes `undefined` with the source in a comment beside it, so a value
     passed into one goes with it. It is `undefined` rather than the comment
@@ -939,6 +952,10 @@ addressed by the step that found it.
   pairs the alternatives up cannot parse. That one refuses: the TEST is still
   written, so a value the pattern does not match reaches the arms below it, and
   the branch's first statement is the refusal. No corpus site reaches it.
+  A SECOND case is open and not refused: alternatives that name the same
+  VARIANT — `Both::Two(t, _) | Both::Two(_, t)` — claim the binding once per
+  alternative, so the arm writes `t.drop()` in two nested `finally`s and drops
+  it twice. Pre-existing; no corpus site reaches it either.
 
 - **A dynamic shift past the width is JavaScript's masking, not Rust's panic.**
   `x << n` with `n` a value rather than a literal is `x << (n & 31)` in

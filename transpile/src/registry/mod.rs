@@ -40,7 +40,6 @@ pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
 pub use resolve_type::{resolve_type, TypeEnv};
 pub use std_surface::Surface;
 
-
 /// The Rust path of the trait every dereference goes through. The engine names
 /// it structurally — the deref chain is not a list of types but a search of the
 /// impl table — so the path is written here rather than looked up by leaf name.
@@ -721,7 +720,6 @@ impl TypeRegistry {
     pub fn mark_reads_json(&mut self, id: TypeId) {
         self.reads_json.insert(id);
     }
-
 
     /// Does a `static fromJson` exist on this type's emitted class?
     ///

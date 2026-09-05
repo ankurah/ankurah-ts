@@ -90,6 +90,19 @@ test("map_or's default is released on the path that runs the closure", () => {
   r.drop();
 });
 
+// R10: Rust drops the default AFTER the closure has run, and on a panic as well
+// — so the release is a `finally` around the call rather than a comma in front
+// of it. A comma BEHIND the call would get the order right and abandon the
+// default whenever the closure throws, which is what this asserts.
+test("map_or's default is released even when the closure panics", () => {
+  const r = Registry.new();
+  r.put(1, 0); // a weight of 0: `checked_sub(1)` is `None` and `expect` panics
+  const spare = new Entry(9);
+  expect(() => r.entryOrStrict(1, spare)).toThrow('weight underflow');
+  expect(spare.isDropped).toBe(true);
+  r.drop();
+});
+
 test('nothing leaked and nothing was dropped twice', async () => {
   await expectNoOwnershipReports();
 });

@@ -9,6 +9,7 @@
 //! one.
 
 use crate::name_map;
+use crate::native_types;
 
 use super::{turbofish_type, turbofish_written, BodyTranslator};
 
@@ -53,9 +54,6 @@ impl BodyTranslator<'_> {
         }
         (receiver, member)
     }
-
-
-
 
     /// A call written as the module-level function its impl was emitted as.
     ///
@@ -140,6 +138,151 @@ impl BodyTranslator<'_> {
     /// written in core while `Clock` itself is declared in proto, so the method
     /// is `Clock_members(self)` and the class carries nothing called `members`.
     /// One such impl is called by name; several go through the dispatcher.
+    /// `v[a..b]`, which is a SLICE and not an index.
+    ///
+    /// Emitting the range as an index expression produced `v[/* range a..b */]`,
+    /// which does not parse. Both ends are value positions, like any operand.
+    pub(crate) fn slice_of(&self, idx: &syn::ExprIndex) -> Option<String> {
+        let syn::Expr::Range(range) = &*idx.index else { return None };
+        let from = range
+            .start
+            .as_ref()
+            .map(|e| self.expr_value(e))
+            .unwrap_or_else(|| "0".to_string());
+        let end = match (&range.limits, range.end.as_ref().map(|e| self.expr_value(e))) {
+            // `..=b` includes the last element.
+            (syn::RangeLimits::Closed(_), Some(to)) => format!(", {} + 1", to),
+            (_, Some(to)) => format!(", {}", to),
+            (_, None) => String::new(),
+        };
+        let base = self.expr(&idx.expr);
+        let base = crate::body::parenthesise_receiver(&idx.expr, base);
+        Some(format!("{}.slice({}{})", base, from, end))
+    }
+
+    /// A call of a two-segment path on a primitive the port has no spelling
+    /// for — `i64::from_be_bytes(bytes)` — as ONE hole.
+    ///
+    /// The hole has to stand where the CALL stands, not where the callee does:
+    /// `unsupported(..)` answers `never`, and TypeScript refuses to call a
+    /// `never`, so a hole written into the callee position left the emitted
+    /// file failing to typecheck at a line that was already refused.
+    pub(crate) fn primitive_call_hole(&self, call: &syn::ExprCall) -> Option<String> {
+        let syn::Expr::Path(path) = call.func.as_ref() else { return None };
+        let segments: Vec<String> =
+            path.path.segments.iter().map(|s| s.ident.to_string()).collect();
+        match crate::ty::prim_consts::written_or_reason(&segments)? {
+            Ok(_) => None,
+            Err(why) => Some(self.hole(syn::spanned::Spanned::span(call), why)),
+        }
+    }
+
+    /// What the position a call stands in says about its answer: is the answer
+    /// used at all, and is it read as a VALUE rather than written through by a
+    /// `*`?
+    ///
+    /// Both questions are the CALLER's, and the unresolved path used to answer
+    /// the second one "yes" whatever the caller said: a
+    /// `*entry(k).or_insert(0) += 1` whose receiver did not resolve would have
+    /// been written `.value.value` (R8).
+    pub(crate) fn position_of(&self, call: &syn::ExprMethodCall) -> native_types::Position {
+        native_types::Position {
+            used: !self.discards(call),
+            reads_as_value: !self.is_written_through(call),
+        }
+    }
+
+    /// Is this initialiser one of the three ways Rust finishes a
+    /// `map.entry(k)`?
+    ///
+    /// For: a finisher answers `&mut V`, and a `let` that binds one binds the
+    /// write-through slot itself — `let slot = map.entry(k).or_insert(0);
+    /// *slot += 1` stores into the map, and a name bound to the number it held
+    /// cannot. Every read of such a name goes through the slot, which is what
+    /// holding it in a cell already writes.
+    pub(crate) fn finishes_an_entry(&self, expr: &syn::Expr) -> bool {
+        let syn::Expr::MethodCall(call) = expr else {
+            return false;
+        };
+        if !matches!(
+            call.method.to_string().as_str(),
+            "or_insert" | "or_insert_with" | "or_default"
+        ) {
+            return false;
+        }
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        let Ok(receiver) = tc.resolve_expr(&call.receiver) else {
+            return false;
+        };
+        crate::native_types::map::is_entry_type(tc.registry, &receiver)
+    }
+
+    /// A call the receiver's own class does not carry.
+    ///
+    /// For: `receiver.method(..)` is only the right shape when the emitted
+    /// class declares the method. An impl written for a type with no emitted
+    /// class became module-level functions and takes its receiver first; a
+    /// `Deref` step answered by a bound has no one spelling at all; and a call
+    /// through an open bound whose impls are module-level functions goes
+    /// through their dispatcher. Each answers the text to write instead.
+    pub(crate) fn call_written_elsewhere(
+        &self,
+        found: &crate::registry::MethodResolution,
+        recv: &str,
+        args: &[String],
+        call: &syn::ExprMethodCall,
+    ) -> Option<String> {
+        let tc = self.types.as_ref()?;
+        let tc_ref = tc.borrow();
+        if let Some(free) = crate::emit_impls::free_call(tc_ref.registry, found) {
+            drop(tc_ref);
+            return Some(self.render_free_call(&free, recv, args, call));
+        }
+        if let Some(what) = self.bound_deref(&tc_ref, found) {
+            drop(tc_ref);
+            return Some(self.hole(syn::spanned::Spanned::span(call), what));
+        }
+        let name = self.open_bound_call(&tc_ref, found, call)?;
+        drop(tc_ref);
+        let mut written = vec![recv.to_string()];
+        written.extend(args.iter().cloned());
+        Some(format!("{}({})", name, written.join(", ")))
+    }
+
+    /// A `Deref` or `DerefMut` call the engine answered from a BOUND rather
+    /// than from an impl.
+    ///
+    /// For: how a value is dereferenced is a fact about the port's runtime, and
+    /// the port spells it differently for each implementor — `Arc` keeps its
+    /// value in a field, a lock guard is read through one, and a crate's own
+    /// `impl Deref` is a method the emitted class carries. A bound names no
+    /// implementor, so there is no one call to write: `values.derefMut()` on a
+    /// write guard is a `TypeError`, and it stood on core's property write
+    /// path.
+    pub(crate) fn bound_deref(
+        &self,
+        tc: &crate::infer::TypeContext<'_>,
+        found: &crate::registry::MethodResolution,
+    ) -> Option<String> {
+        let crate::registry::Callee::TraitObject(trait_id, method) = &found.callee else {
+            return None;
+        };
+        if !matches!(method.as_str(), "deref" | "deref_mut") {
+            return None;
+        }
+        let trait_name = tc.registry.name_of(*trait_id);
+        if !matches!(trait_name.as_str(), "Deref" | "DerefMut") {
+            return None;
+        }
+        Some(format!(
+            "`{}` here is a `{}` step taken through a bound, and the port writes each \
+             implementor's dereference differently — a field on `Arc`, nothing at all on a lock \
+             guard, a method on a crate's own class — so no one call stands for all of them",
+            method, trait_name
+        ))
+    }
+
     pub(crate) fn open_bound_call(
         &self,
         tc: &crate::infer::TypeContext<'_>,
@@ -356,4 +499,38 @@ impl BodyTranslator<'_> {
             .collect()
     }
 
+}
+
+/// Every local this block hands out as `&mut`, by the name the emitter writes.
+///
+/// A `&mut` to a class is already a reference in JavaScript and needs no cell;
+/// the decision about the TYPE is made where the local is declared, which is
+/// the only place the type is known. This is the syntactic half: which names
+/// are borrowed mutably at all.
+pub(crate) fn cells_wanted(block: &syn::Block) -> Vec<String> {
+    struct Borrows {
+        names: Vec<String>,
+    }
+    impl syn::visit::Visit<'_> for Borrows {
+        fn visit_expr_reference(&mut self, node: &syn::ExprReference) {
+            if node.mutability.is_some() {
+                if let syn::Expr::Path(path) = &*node.expr {
+                    if path.path.segments.len() == 1 {
+                        let name = crate::name_map::escape_reserved(&crate::name_map::to_camel_case(
+                            &path.path.segments[0].ident.to_string(),
+                        ));
+                        if !self.names.contains(&name) {
+                            self.names.push(name);
+                        }
+                    }
+                }
+            }
+            syn::visit::visit_expr_reference(self, node);
+        }
+        // A closure's own body borrows in its own scope.
+        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
+    }
+    let mut borrows = Borrows { names: Vec::new() };
+    syn::visit::Visit::visit_block(&mut borrows, block);
+    borrows.names
 }

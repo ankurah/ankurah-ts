@@ -39,6 +39,18 @@ pub fn counted(words: &Vec<Key>) -> HashMap<Key, u32> {
     counts
 }
 
+/// R1: a finisher bound to a NAME is the write-through slot itself, not the
+/// value in it. Bound to the value, `*slot += 1` wrote `slot.value` on a
+/// number, and the count never reached the map.
+pub fn counted_by_name(words: &Vec<Key>) -> HashMap<Key, u32> {
+    let mut counts: HashMap<Key, u32> = HashMap::new();
+    for w in words {
+        let slot = counts.entry(w.clone()).or_insert(0);
+        *slot += 1;
+    }
+    counts
+}
+
 /// The three ways of finishing an entry that the counter above does not use.
 /// Each reads the place as a VALUE: `or_insert` answers a `&mut V`, and
 /// `.push(..)` is a call on the `Vec` it points at, which the runtime's
@@ -71,6 +83,13 @@ impl Lists {
     /// `orDefault(undefined)` invokes `undefined` on the first unseen key.
     pub fn push_ordered(&mut self, k: String, v: u32) {
         self.ordered.entry(k).or_default().push(v);
+    }
+
+    /// The same slot bound to a name and read as a value: Rust's auto-deref
+    /// calls `push` on the `Vec` the slot points at.
+    pub fn push_named(&mut self, k: Key, v: u32) {
+        let slot = self.by_name.entry(k).or_default();
+        slot.push(v);
     }
 
     pub fn count(&self, k: &Key) -> usize {

@@ -283,8 +283,6 @@ impl Config {
         names
     }
 
-
-
     /// Check if a file should be excluded
     pub fn is_excluded_file(&self, path: &str) -> bool {
         self.excluded_files.iter().any(|f| path.ends_with(f))

@@ -55,3 +55,26 @@ pub fn quote_all(lits: &Vec<Lit>, out: &mut String) -> Result<usize, Refusal> {
     }
     Ok(out.len())
 }
+
+/// Z4: a labelled `break` carrying a PAYLOAD, written inside a lifted body.
+/// The payload is what the loop produces, and the marker used to be handed back
+/// before it was even translated — so the loop answered whatever it had been
+/// initialised with, and every caller read that instead.
+pub fn first_over(rows: &Vec<Vec<u32>>, limit: u32) -> u32 {
+    'outer: loop {
+        for row in rows {
+            for cell in row {
+                let scaled = -{
+                    if *cell > limit {
+                        break 'outer *cell;
+                    }
+                    0i32
+                };
+                if scaled < -100 {
+                    break 'outer 0;
+                }
+            }
+        }
+        break 0;
+    }
+}

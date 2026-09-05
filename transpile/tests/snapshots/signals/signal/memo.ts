@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/memo.rs
-import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, dropOwned } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -34,33 +34,40 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   withCached<R>(f: (arg0: Output) => R): R {
-    const _m0 = (() => {
-      {
-        const guard = this.cached.value.read();
-        try {
-          {
-            const _v = guard.value;
-            if (_v != null) {
-              const value = _v;
-              return { $jump: 'return', $value: invoke(f, value) };
-            }
-          }
-        } finally {
-          guard.drop();
-        }
-      }
-    })();
-    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-    (_m0 as any);
-    let guard = this.cached.value.write();
+    let _moved0 = false;
     try {
-      if ((guard.value == null)) {
-        const output = this.source.with((input) => (this.transform)(input));
-        guard.value = output;
+      const _m1 = (() => {
+        {
+          const guard = this.cached.value.read();
+          try {
+            {
+              const _v = guard.value;
+              if (_v != null) {
+                const value = _v;
+                _moved0 = true;
+                return { $jump: 'return', $value: invoke(f, value) };
+              }
+            }
+          } finally {
+            guard.drop();
+          }
+        }
+      })();
+      if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+      (_m1 as any);
+      let guard = this.cached.value.write();
+      try {
+        if ((guard.value == null)) {
+          const output = this.source.with((input) => (this.transform)(input));
+          guard.value = output;
+        }
+        _moved0 = true;
+        return invoke(f, (guard.value ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()));
+      } finally {
+        guard.drop();
       }
-      return invoke(f, (guard.value ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()));
     } finally {
-      guard.drop();
+      if (!_moved0) dropOwned(f);
     }
   }
 

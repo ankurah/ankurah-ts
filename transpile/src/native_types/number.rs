@@ -55,11 +55,29 @@ fn explicit_family(method: &str) -> Option<&'static str> {
         "checked_add" => "checkedAddOption",
         "checked_sub" => "checkedSubOption",
         "checked_mul" => "checkedMulOption",
+        // Z7: these two were declared in the std surface and never lowered, so
+        // `v.checked_rem(d)` came out as `v.checkedRem(d)` — a method no number
+        // has, on every width.
+        "checked_div" => "checkedDivOption",
+        "checked_rem" => "checkedRemOption",
         "overflowing_add" => "overflowingAdd",
         "overflowing_sub" => "overflowingSub",
         "overflowing_mul" => "overflowingMul",
         _ => return None,
     })
+}
+
+/// A call whose answer needs a width the engine could not resolve.
+///
+/// R12: what stands here otherwise is a guess — `+=` where Rust wraps,
+/// `Math.round` where Rust rounds the other way, a `wrappingAdd` method no
+/// number has. Each of those RUNS and answers something Rust would not, so the
+/// site says what it could not settle and the emitted file throws there.
+fn no_width(message: String) -> MethodTranslation {
+    MethodTranslation::Refused {
+        fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+        message,
+    }
 }
 
 pub fn translate(
@@ -79,14 +97,11 @@ pub fn translate(
             )),
             // Without the width the helper cannot answer: `wrapping_add` on a
             // `u8` and on a `u32` are two different results.
-            None => MethodTranslation::Refused {
-                message: format!(
-                    "`{}` needs the integer width, and the engine could not resolve the \
-                     receiver's type",
-                    method
-                ),
-                fallback: Box::new(MethodTranslation::Passthrough),
-            },
+            None => no_width(format!(
+                "`{}` needs the integer width, and the engine could not resolve the \
+                 receiver's type",
+                method
+            )),
         };
     }
     let result = match method {
@@ -143,11 +158,27 @@ pub fn translate(
         // and `Math.min`/`Math.max` become `NaN` where Rust ignores a `NaN`
         // operand. The rule is stated once, in `@ankurah/base`.
         "round" if args.is_empty() => return float_helper("floatRound", "round", &[receiver], width),
-        "abs" if args.is_empty() => match bigint_backed(width) {
+        "abs" if args.is_empty() => match (bigint_backed(width), width) {
             // `Math.abs` converts its argument to a number, which throws on a
-            // `bigint`. Written out, each operand is read once.
-            true => format!("(($x) => $x < 0n ? -$x : $x)({})", receiver),
-            false => format!("Math.abs({})", receiver),
+            // `bigint`. Written out, each operand is read once — and the
+            // negation goes through the width's own helper, because `i64::MIN`
+            // has no positive: Rust's debug build panics there, and an
+            // unbounded `-$x` answered a number one wider than the type holds
+            // (Z8, R7). The helper says "subtract" where Rust says "negate";
+            // the value it raises at is exactly Rust's.
+            (true, Some(prim)) => format!(
+                "(($x) => $x < 0n ? checkedSub(0n, $x, '{}') : $x)({})",
+                crate::operators::primitives::width_name(prim),
+                receiver
+            ),
+            (true, None) => {
+                return no_width(
+                    "`abs()` on a width the port holds in a `bigint` has no positive for that \
+                     width's `MIN`, and the engine could not resolve which width this is"
+                        .to_string(),
+                )
+            }
+            _ => format!("Math.abs({})", receiver),
         },
         "sqrt" if args.is_empty() => format!("Math.sqrt({})", receiver),
         "signum" if args.is_empty() => {
@@ -189,7 +220,6 @@ pub fn translate(
     MethodTranslation::Expr(result)
 }
 
-
 /// One atomic read-modify-write: the old value out, the wrapped new value in.
 ///
 /// The width is the atomic's own. Without one the helper cannot answer, so the
@@ -202,12 +232,6 @@ fn atomic_rmw(
     operand: &str,
     width: Option<crate::ty::Prim>,
 ) -> MethodTranslation {
-    let plain = format!(
-        "(() => {{ const _v = {r}; {r} = {r} {op} {n}; return _v; }})()",
-        r = receiver,
-        op = operator,
-        n = operand
-    );
     match width {
         Some(prim) => MethodTranslation::Expr(format!(
             "(() => {{ const _v = {r}; {r} = {h}({r}, {n}, '{w}'); return _v; }})()",
@@ -218,13 +242,23 @@ fn atomic_rmw(
         )),
         // The one atomic that reaches here with no width is `AtomicU64`, whose
         // TypeScript spelling and whose Rust width disagree — see
-        // `native_types::atomic_width`.
-        None => MethodTranslation::Refused {
-            message:
-                "this atomic wraps at a width the port does not write it as, so the update is                  an ordinary `+=` and does not wrap where Rust does"
-                    .to_string(),
-            fallback: Box::new(MethodTranslation::Expr(plain)),
-        },
+        // `native_types::atomic_width`. An ordinary `+=` was written instead,
+        // which does not wrap where Rust does, and on a `u64` it put a `bigint`
+        // operand beside a `number` place, which JavaScript refuses to mix.
+        None => no_width(format!(
+            "`{}` on this atomic wraps at a width the port does not write the atomic as, so \
+             neither the wrap nor the operand's own type can be written here",
+            operator_name(operator)
+        )),
+    }
+}
+
+/// The Rust method an atomic read-modify-write came from, for the refusal to
+/// name.
+fn operator_name(operator: &str) -> &'static str {
+    match operator {
+        "-" => "fetch_sub",
+        _ => "fetch_add",
     }
 }
 
@@ -267,16 +301,13 @@ fn float_helper(
     match width {
         Some(prim) if prim.is_integer() => MethodTranslation::Expr(math),
         Some(_) => MethodTranslation::Expr(format!("{}({})", helper, operands.join(", "))),
-        None => MethodTranslation::Refused {
-            message: format!(
-                "`{}` answers one thing for an integer and another for a float — half away from \
-                 zero rather than half up, a signum with no zero, a `NaN` operand ignored rather \
-                 than spreading — and the engine could not resolve the receiver's type, so which \
-                 of the two this is was not decided",
-                method
-            ),
-            fallback: Box::new(MethodTranslation::Expr(math)),
-        },
+        None => no_width(format!(
+            "`{}` answers one thing for an integer and another for a float — half away from \
+             zero rather than half up, a signum with no zero, a `NaN` operand ignored rather \
+             than spreading — and the engine could not resolve the receiver's type, so which \
+             of the two this is was not decided",
+            method
+        )),
     }
 }
 
@@ -322,6 +353,15 @@ mod tests {
             widened("x", "overflowing_add", &["y"], Some(Prim::U64)),
             "overflowingAdd(x, y, 'u64')"
         );
+        // Z7: the two that can refuse for a reason other than overflow.
+        assert_eq!(
+            widened("x", "checked_div", &["d"], Some(Prim::I32)),
+            "checkedDivOption(x, d, 'i32')"
+        );
+        assert_eq!(
+            widened("x", "checked_rem", &["d"], Some(Prim::U64)),
+            "checkedRemOption(x, d, 'u64')"
+        );
     }
 
     /// Every integer width takes the free helper, not only the ones the port
@@ -356,13 +396,20 @@ mod tests {
         use crate::ty::Prim;
         assert_eq!(widened("a", "min", &["b"], Some(Prim::U64)), "(($a, $b) => $a < $b ? $a : $b)(a, b)");
         assert_eq!(widened("a", "max", &["b"], Some(Prim::I128)), "(($a, $b) => $a > $b ? $a : $b)(a, b)");
-        assert_eq!(widened("v", "abs", &[], Some(Prim::I64)), "(($x) => $x < 0n ? -$x : $x)(v)");
+        // PREMISE CHANGED 2026-09-05 (Z8): the negation used to be a bare
+        // `-$x`, which is unbounded — `i64::MIN.abs()` answered a number one
+        // wider than an `i64` holds where Rust's debug build panics.
+        assert_eq!(
+            widened("v", "abs", &[], Some(Prim::I64)),
+            "(($x) => $x < 0n ? checkedSub(0n, $x, 'i64') : $x)(v)"
+        );
         assert_eq!(
             widened("v", "signum", &[], Some(Prim::I64)),
             "(($x) => $x < 0n ? -1n : $x > 0n ? 1n : 0n)(v)"
         );
         // A width the port writes as a `number` keeps the `Math.*` call.
         assert_eq!(widened("a", "min", &["b"], Some(Prim::I32)), "Math.min(a, b)");
+        assert_eq!(widened("v", "abs", &[], Some(Prim::I128)), "(($x) => $x < 0n ? checkedSub(0n, $x, 'i128') : $x)(v)");
     }
 
     /// Without the width the helper cannot answer, so the call is refused
@@ -416,12 +463,42 @@ mod tests {
         // is whether the receiver is a `bigint` at all.
         assert_eq!(widened("n", "signum", &[], Some(Prim::I32)), "Math.sign(n)");
 
+        // PREMISE CHANGED 2026-09-05 (R5): the fallback used to be
+        // `Math.round(n)`, which RUNS and answers −2 where Rust answers −3.
+        // A reported gap whose emission runs is what R12 forbids.
         match translate("n", "round", &[], None) {
             MethodTranslation::Refused { message, fallback } => {
                 assert!(message.contains("could not resolve the receiver's type"), "{}", message);
-                assert!(matches!(*fallback, MethodTranslation::Expr(ref ts) if ts == "Math.round(n)"));
+                assert!(matches!(*fallback, MethodTranslation::Expr(ref ts) if ts.starts_with("unsupported(")));
             }
             _ => panic!("an untyped receiver is reported, not decided"),
+        }
+    }
+
+    /// R5: a call whose answer needs a width the engine could not resolve emits
+    /// a hole, not a guess. The atomic one wrote `this.c + 1n` on a `number`
+    /// field — a `bigint` beside a `number`, which JavaScript refuses to mix —
+    /// under a message with eighteen spaces in the middle of it.
+    #[test]
+    fn a_width_the_engine_could_not_resolve_is_a_hole() {
+        for (method, args) in [
+            ("fetch_add", vec!["1"]),
+            ("fetch_sub", vec!["1"]),
+            ("wrapping_add", vec!["1"]),
+            ("checked_div", vec!["1"]),
+            ("round", vec![]),
+        ] {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let MethodTranslation::Refused { message, fallback } =
+                translate("this.c", method, &args, None)
+            else {
+                panic!("`{method}` was not refused without a width");
+            };
+            assert!(!message.contains("  "), "the message is mangled: {message}");
+            let MethodTranslation::Expr(ts) = *fallback else {
+                panic!("`{method}`'s fallback is not an expression");
+            };
+            assert!(ts.starts_with("unsupported("), "`{method}` still runs: {ts}");
         }
     }
 }

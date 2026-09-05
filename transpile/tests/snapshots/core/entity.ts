@@ -153,20 +153,26 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   }
 
   tryMutate<E>(expectedHead: Clock, body: Invocable<[EntityInnerState], Result<void, E>>): Result<boolean, E> {
-    let state = this.deref().state.write();
+    let _moved0 = false;
     try {
-      if (!state.value.head.equals(expectedHead)) {
-        const _a0 = state.value.head.clone();
-        expectedHead.value.drop();
-        expectedHead.value = _a0;
-        return Result.Ok(false);
+      let state = this.deref().state.write();
+      try {
+        if (!state.value.head.equals(expectedHead)) {
+          const _a1 = state.value.head.clone();
+          expectedHead.value.drop();
+          expectedHead.value = _a1;
+          return Result.Ok(false);
+        }
+        _moved0 = true;
+        const _r2 = invoke(body, state);
+        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        _r2.drop();
+        return Result.Ok(true);
+      } finally {
+        state.drop();
       }
-      const _r1 = invoke(body, state);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-      _r1.drop();
-      return Result.Ok(true);
     } finally {
-      state.drop();
+      if (!_moved0) dropOwned(body);
     }
   }
 

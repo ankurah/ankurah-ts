@@ -28,7 +28,7 @@ impl BodyTranslator<'_> {
     /// back to the name when it knows nothing. The std-surface step is what
     /// empties this path out; the fail-loud step deletes it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn translate_unresolved_call_using(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], arg_exprs: &[syn::Expr], receiver_expr: Option<&syn::Expr>, used: bool) -> String {
+    pub(crate) fn translate_unresolved_call_using(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], arg_exprs: &[syn::Expr], receiver_expr: Option<&syn::Expr>, at: native_types::Position) -> String {
         if let (Some(receiver_expr), Some(tc)) = (receiver_expr, &self.types) {
             let tc_ref = tc.borrow();
             if let Ok(receiver_ty) = tc_ref.resolve_expr(receiver_expr) {
@@ -61,13 +61,17 @@ impl BodyTranslator<'_> {
                     bind_eager: &bind_eager,
                     bind_closure: &bind_closure,
                 };
+                // R8: the position is the CALLER's answer, and this path used
+                // to hardcode "read as a value". A
+                // `*entry(k).or_insert(0) += 1` whose receiver did not resolve
+                // would have been written `.value.value`.
                 let translated = native_types::translate_method_using(
                     tc_ref.registry,
                     &target,
                     &receiver,
                     rust_method,
                     args,
-                    native_types::Position { used, reads_as_value: true },
+                    at,
                     &once,
                 );
                 drop(tc_ref);

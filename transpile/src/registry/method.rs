@@ -240,7 +240,6 @@ impl<'a> Probe<'a> {
         self
     }
 
-
     // ── The deref chain ────────────────────────────────────────────────
 
     /// One hop: `&T` to `T`, or through the `Deref` impl written for it.
@@ -1096,8 +1095,6 @@ impl TypeRegistry {
         self.impls().len()
     }
 }
-
-
 
 /// Does this bound still name a type nothing has filled in?
 ///

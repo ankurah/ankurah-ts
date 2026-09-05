@@ -15,12 +15,24 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 3
+"core" = 6
 "proto" = 0
 "signals" = 0
 "storage-common" = 0
 "storage-indexeddb" = 0
 "storage-sqlite" = 0
+
+[[hole]]
+crate = "core"
+file = "collation.test.ts"
+calls = 2
+refusal = "`i64::from_be_bytes` is a function Rust puts on a primitive type, and the port writes that type as a JavaScript primitive, which has no members and no spelling for this one"
+
+[[hole]]
+crate = "core"
+file = "property/backend/pn_counter.ts"
+calls = 1
+refusal = "`or_default()` needs the value type's default, and `PNValue` is not declared, so it has no default"
 
 [[hole]]
 crate = "core"

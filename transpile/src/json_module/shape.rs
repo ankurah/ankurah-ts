@@ -40,7 +40,6 @@ impl Shape {
     }
 }
 
-
 /// Is `v` an array of BYTES?
 ///
 /// One predicate, because two places read one: the ordinary `Vec<u8>` field and
@@ -68,7 +67,7 @@ pub(super) fn of_field(
             // byte 49 and this answered `Ok(1)` where serde answers `Err`.
             read: format!(
                 "({bytes} \
-                 ? serde_json.parse(new TextDecoder().decode(new Uint8Array(v as number[]))) \
+                 ? serde_json.fromSlice(new Uint8Array(v as number[])) \
                  : Result.Err(JsonError.custom('expected an array of bytes')))",
                 bytes = BYTE_ARRAY
             ),
@@ -364,7 +363,6 @@ fn article(prim: crate::ty::Prim) -> String {
     let article = if name.starts_with('i') { "an" } else { "a" };
     format!("{article} {name}")
 }
-
 
 /// Is this field a `char`, rather than one of the other Rust types the port
 /// writes as a `string`?

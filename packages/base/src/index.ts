@@ -56,6 +56,8 @@ export {
   checkedAddOption,
   checkedSubOption,
   checkedMulOption,
+  checkedDivOption,
+  checkedRemOption,
   saturatingAdd,
   saturatingSub,
   saturatingMul,

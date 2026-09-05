@@ -42,7 +42,7 @@ export function cloned<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
   const own = (value as { clone?: unknown }).clone;
   if (typeof own === 'function') return own.call(value) as T;
-  if (Array.isArray(value)) return value.map((element) => cloned(element)) as T;
+  if (Array.isArray(value)) return clonedSequence(value) as T;
   // A typed array is copied through its own constructor, which is what the
   // emitter writes for a `Vec<u8>` field (`new Uint8Array(x)`).
   if (ArrayBuffer.isView(value)) {
@@ -50,6 +50,26 @@ export function cloned<T>(value: T): T {
     return new make(value);
   }
   return value;
+}
+
+/**
+ * A sequence cloned element by element, exception-safely.
+ *
+ * For: a clone can throw — a `clone()` that panics, a value the runtime refuses
+ * to clone at all — and what has already been cloned belongs to nobody, because
+ * the caller never received the array. `map` left every earlier element to the
+ * garbage collector, which is what the leak check reports. The elements are
+ * built into a local list and released together if one of them throws.
+ */
+function clonedSequence<T>(value: T[]): T[] {
+  const made: T[] = [];
+  try {
+    for (const element of value) made.push(cloned(element));
+  } catch (error) {
+    dropOwned(made);
+    throw error;
+  }
+  return made;
 }
 
 /** One entry. A plain record: it is the table's, and nothing else names it. */

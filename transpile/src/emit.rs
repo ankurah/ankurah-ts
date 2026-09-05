@@ -1106,7 +1106,6 @@ fn is_phantom_field(reg: &TypeRegistry, f: &FieldInfo) -> bool {
     f.ts_ty(reg).contains("PhantomData")
 }
 
-
 pub(crate) fn disambiguate_trait_method(
     base_name: &str,
     trait_name: &str,
@@ -1373,7 +1372,6 @@ pub(crate) fn impl_method_name(
     disambiguate_trait_method(&base, trait_name, type_args, self_type, self_id)
 }
 
-
 /// Does this method's whole body call the name it is being emitted under?
 ///
 /// `fn partial_cmp(&self, o) -> Option<Ordering> { Some(self.cmp(o)) }` and
@@ -1381,7 +1379,6 @@ pub(crate) fn impl_method_name(
 /// forwarding one reads `return this.compareTo(other)` — a method that calls
 /// itself and never returns. The question is asked of the TRANSLATED body,
 /// because that is where the two names have become one.
-
 
 fn forwards_to_itself(method: &FnInfo, ts_name: &str) -> bool {
     let Some(body) = method.body_ts.as_deref() else { return false };

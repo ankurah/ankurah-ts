@@ -212,6 +212,47 @@ export function checkedMulOption(
   return option(BigInt(a as never) * BigInt(b as never), width, typeof a === 'bigint');
 }
 
+/**
+ * `a.checked_div(b)` — `None` where Rust's `/` would panic.
+ *
+ * Two cases answer `None`, and they are the two `checkedDiv` panics on: a zero
+ * divisor, and `MIN / -1`, whose quotient the type cannot hold. Everything else
+ * is the truncating quotient. Declared in the std surface and never lowered,
+ * `v.checked_div(d)` came out as `v.checkedDiv(d)` — a method no number has.
+ */
+export function checkedDivOption(a: number, b: number, width: string): number | null;
+export function checkedDivOption(a: bigint, b: bigint, width: string): bigint | null;
+export function checkedDivOption(
+  a: number | bigint,
+  b: number | bigint,
+  width: string,
+): number | bigint | null {
+  const [x, y] = [BigInt(a as never), BigInt(b as never)];
+  if (y === 0n) return null;
+  return option(x / y, width, typeof a === 'bigint');
+}
+
+/**
+ * `a.checked_rem(b)` — `None` where Rust's `%` would panic.
+ *
+ * The same two cases. `MIN % -1` is mathematically 0, which every range holds,
+ * so this one says the case itself rather than leaving it to the range check —
+ * exactly as `checkedRem` does for the panicking form.
+ */
+export function checkedRemOption(a: number, b: number, width: string): number | null;
+export function checkedRemOption(a: bigint, b: bigint, width: string): bigint | null;
+export function checkedRemOption(
+  a: number | bigint,
+  b: number | bigint,
+  width: string,
+): number | bigint | null {
+  const [x, y] = [BigInt(a as never), BigInt(b as never)];
+  if (y === 0n) return null;
+  const [low] = range(width);
+  if (y === -1n && x === low) return null;
+  return option(x % y, width, typeof a === 'bigint');
+}
+
 /** `a.saturating_add(b)` — the nearer bound where it would overflow. */
 export function saturatingAdd(a: number, b: number, width: string): number;
 export function saturatingAdd(a: bigint, b: bigint, width: string): bigint;

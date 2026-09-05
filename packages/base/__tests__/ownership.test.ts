@@ -2179,6 +2179,8 @@ import {
   checkedRem,
   checkedSub,
   checkedAddOption,
+  checkedDivOption,
+  checkedRemOption,
   overflowingAdd,
   saturatingAdd,
   saturatingSub,
@@ -2263,6 +2265,28 @@ describe('the four families say what should happen instead', () => {
   test('checked answers None', () => {
     expect(checkedAddOption(1, 2, 'u8')).toBe(3);
     expect(checkedAddOption(255, 1, 'u8')).toBe(null);
+  });
+
+  // Z7: `checked_div` and `checked_rem` were declared in the std surface and
+  // never lowered, so `v.checked_rem(d)` came out as `v.checkedRem(d)` — a
+  // method no number has. They answer `None` on exactly the two cases their
+  // panicking siblings panic on: a zero divisor, and `MIN` over `-1`, whose
+  // quotient the type cannot hold.
+  test('checked division and remainder answer None where Rust panics', () => {
+    expect(checkedDivOption(7, 2, 'u8')).toBe(3);
+    expect(checkedDivOption(-7, 2, 'i8')).toBe(-3);
+    expect(checkedDivOption(1, 0, 'u8')).toBe(null);
+    expect(checkedDivOption(-128, -1, 'i8')).toBe(null);
+    expect(checkedDivOption(-9223372036854775808n, -1n, 'i64')).toBe(null);
+    expect(checkedDivOption(7n, 2n, 'u64')).toBe(3n);
+
+    expect(checkedRemOption(7, 2, 'u8')).toBe(1);
+    // Rust's remainder takes the DIVIDEND's sign, which is what `%` does here.
+    expect(checkedRemOption(-7, 2, 'i8')).toBe(-1);
+    expect(checkedRemOption(1, 0, 'u8')).toBe(null);
+    // Mathematically 0, which every range holds, so the case says itself.
+    expect(checkedRemOption(-128, -1, 'i8')).toBe(null);
+    expect(checkedRemOption(7n, 2n, 'i64')).toBe(1n);
   });
 
   test('saturating stops at the bound', () => {

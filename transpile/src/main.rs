@@ -1282,8 +1282,8 @@ fn translate_module_consts(
         };
         translator.pop_scope();
         diag::pending::drain(sink);
+        // `c.init` is KEPT: codegen orders the consts by what each one READS.
         c.init_ts = Some(written);
-        c.init = None;
     }
 }
 

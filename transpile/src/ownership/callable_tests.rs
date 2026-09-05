@@ -92,3 +92,27 @@ fn the_callable_spelling_reaches_a_reference_parameter() {
         );
     }
 }
+
+/// R4: the call consumes it, but the call is not on every path. A body that may
+/// not call at all is given the release; a body that calls in one branch is
+/// given the flag; a body that calls straight through is given nothing, because
+/// `invoke` already released it.
+#[test]
+fn an_fn_once_parameter_not_called_on_every_path_is_still_released() {
+    let never = body(
+        "pub fn take<F: FnOnce(u32) -> u32>(f: F, n: u32) -> u32 { n }",
+        "take",
+    );
+    assert!(never.contains("dropOwned(f)"), "nothing released it:\n{never}");
+
+    let sometimes = body(
+        "pub fn take<F: FnOnce(u32) -> u32>(f: F, n: u32, run: bool) -> u32 { \
+         if run { f(n) } else { n } }",
+        "take",
+    );
+    assert!(sometimes.contains("invoke(f, n)"), "{sometimes}");
+    assert!(
+        sometimes.contains("dropOwned(f)") && sometimes.contains("_moved"),
+        "the branch that does not call leaks:\n{sometimes}"
+    );
+}

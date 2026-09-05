@@ -862,3 +862,69 @@ The flag is set AFTER the value is built and before it is returned, so a
 constructor that raised would still leave the fields to the `finally` — which is
 what Rust's unwind does. A reader with nothing to release writes neither the bag
 nor the `finally`.
+
+## The arithmetic helpers own nothing, and the two that can refuse say so
+
+`@ankurah/base`'s `ops.ts` holds the integer arithmetic every emitted body goes
+through, and none of it participates in ownership: the operands are numbers and
+`bigint`s, which have no drop glue, and the helpers return fresh values. They
+are listed here because emitted code calls them constantly and a reader looking
+for who releases what should find the answer rather than nothing.
+
+`checkedAdd` and its four siblings PANIC where Rust's debug build panics.
+`checkedAddOption` and its siblings answer the `Option` Rust's `checked_*`
+methods answer, which the port writes as `T | null` — a value that owns nothing,
+so a discarded `None` releases nothing and a `?` across one carries nothing.
+`checkedDivOption` and `checkedRemOption` answer `null` on exactly the two cases
+`checkedDiv` and `checkedRem` raise on: a zero divisor, and `MIN` over `-1`,
+whose quotient the type cannot hold.
+
+| Rust | TypeScript |
+|---|---|
+| `a.checked_div(b)` | `checkedDivOption(a, b, 'i32')` — `null` for a zero divisor and for `MIN / -1` |
+| `a.checked_rem(b)` | `checkedRemOption(a, b, 'i32')` — the same two |
+| `a / b` on integers | `checkedDiv(a, b, 'i32')` — raises where Rust panics |
+
+## A clone that throws part-way releases what it had already cloned
+
+`#[derive(Clone)]` on a container clones every element, and an element's own
+`clone()` can throw — a panic inside it, or the runtime refusing to clone a
+value that declares no `clone()`. Whatever has been cloned by then belongs to
+nobody: the caller never received the new container, so no emitted `finally`
+names it and the only thing that notices is the leak check, long after.
+
+So the runtime's container clones build into a LOCAL list, release the whole
+list if any element throws, and only then construct the container and fill it.
+The destination is built last on purpose: a `HashMap` registers itself with the
+drop registry when it is constructed, so a destination built first and filled as
+the walk went left a registered half-built map behind as well as the pairs in
+it. A map clones each key into the list before cloning its value, so a throwing
+value clone does not orphan the key beside it.
+
+| Rust | TypeScript |
+|---|---|
+| `map.clone()` where an element panics | every clone made so far is dropped, no map is built, and the panic passes out |
+| `vec.clone()` where an element panics | every clone made so far is dropped, and the panic passes out |
+
+## Text crossing into the port is UTF-8, and carries no lone surrogate
+
+Rust's `String` and `str` are UTF-8: every byte sequence in one is valid UTF-8,
+and no code point in one is a surrogate, because a surrogate cannot be encoded
+in UTF-8 at all. A JavaScript string is a sequence of UTF-16 code units and
+holds a lone surrogate happily, `TextDecoder` replaces an invalid byte sequence
+with U+FFFD rather than refusing it, and `JSON.parse` and `JSON.stringify` both
+pass a lone surrogate straight through. So each of those checks is the port's to
+make, and `packages/base/src/std/utf8.ts` is where the two of them live.
+
+`serde_json.fromSlice(bytes)` is `serde_json::from_slice`: the bytes are decoded
+fatally and an invalid sequence answers `Err`, where the host's decoder answered
+a document with a replacement character in it. It owns nothing the caller does
+not already own — the `JsonError` in an `Err` is the caller's, as it is for
+`parse`.
+
+| Rust | TypeScript |
+|---|---|
+| `serde_json::from_slice(&bytes)` | `serde_json.fromSlice(bytes)` |
+| bytes that are not UTF-8 | `Err(invalid utf-8 sequence)`, not a U+FFFD |
+| a document carrying a lone surrogate, raw or escaped | `Err`, as serde_json answers |
+| a `String` carrying a lone surrogate, written out | `Err`, because Rust could not have held it |

@@ -90,7 +90,7 @@ export function mapOrElseCapture(value: number | null, token: Token, other: Toke
     token.drop();
     return checkedAdd(n, m, 'u32');
   }, undefined, true);
-  return (value != null ? (dropOwned(_m0), invoke(_m1, value!)) : (dropOwned(_m1), invoke(_m0)));
+  return (value != null ? (() => { try { return invoke(_m1, value!); } finally { dropOwned(_m0); } })() : (() => { try { return invoke(_m0); } finally { dropOwned(_m1); } })());
 }
 
 export function okOrElseCapture(value: number | null, token: Token): Result<number, number> {

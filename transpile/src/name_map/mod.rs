@@ -6,6 +6,7 @@
 //! dispatched on cannot drift apart.
 
 mod emit_ty;
+pub mod rust_spelling;
 pub mod shape;
 pub mod system_shapes;
 

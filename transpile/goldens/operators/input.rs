@@ -289,6 +289,20 @@ pub fn smaller(a: u64, b: u64) -> u64 {
     a.min(b)
 }
 
+/// Z8: `i64::MIN` has no positive, and Rust's debug build panics rather than
+/// answering a number one wider than the type holds. An unbounded `-$x` did
+/// answer it.
 pub fn magnitude(v: i64) -> i64 {
     v.abs()
+}
+
+/// Z7: `checked_div` and `checked_rem` are declared in the std surface and were
+/// never lowered, so `v.checked_rem(d)` came out as a method no number has.
+/// Each answers `None` on the two cases its panicking sibling raises on.
+pub fn divide_checked(a: i64, b: i64) -> Option<i64> {
+    a.checked_div(b)
+}
+
+pub fn remainder_checked(a: i64, b: i64) -> Option<i64> {
+    a.checked_rem(b)
 }

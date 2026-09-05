@@ -636,3 +636,62 @@ describe('a field written as a type parameter', () => {
     expect(() => derivedClone(new Bare())).toThrow('declares no clone()');
   });
 });
+
+// Z9: a clone that throws part-way used to leave everything it had already
+// cloned — and, for a map, the half-built destination too — owned by nobody.
+// Nothing in the emitted code ever received them, so nothing releases them and
+// the leak check reports each one.
+describe('a container clone that throws leaves nothing behind', () => {
+  /** A value whose `clone()` throws once a set number of clones have been made. */
+  class Fragile extends Struct {
+    /** Every clone this class has handed out, so a test can ask what became of them. */
+    static made: Fragile[] = [];
+    static failAfter = Infinity;
+    constructor(readonly n: number) { super(`Fragile(${n})`); }
+    hash(): string { return String(this.n); }
+    equals(other: Fragile): boolean { return other.n === this.n; }
+    clone(): Fragile {
+      if (Fragile.made.length >= Fragile.failAfter) throw new Error('clone failed');
+      const copy = new Fragile(this.n);
+      Fragile.made.push(copy);
+      return copy;
+    }
+  }
+
+  /** Every clone made before the throw was released, and there were some. */
+  function everyCloneWasReleased(count: number): void {
+    expect(Fragile.made.length).toBe(count);
+    expect(Fragile.made.filter((c) => !c.isDropped)).toEqual([]);
+  }
+
+  test('a sequence releases the elements it had already cloned', () => {
+    Fragile.made = [];
+    Fragile.failAfter = 2;
+    const source = [new Fragile(1), new Fragile(2), new Fragile(3)];
+    expect(() => derivedClone(source)).toThrow('clone failed');
+    everyCloneWasReleased(2);
+    for (const element of source) element.drop();
+  });
+
+  test('a map releases the pairs it had already cloned, and builds no map at all', () => {
+    Fragile.made = [];
+    Fragile.failAfter = 3;
+    const map = new HashMap<Fragile, Fragile>();
+    map.set(new Fragile(1), new Fragile(10));
+    map.set(new Fragile(2), new Fragile(20));
+    expect(() => map.clone()).toThrow('clone failed');
+    everyCloneWasReleased(3);
+    map.drop();
+  });
+
+  test('a set releases the values it had already cloned', () => {
+    Fragile.made = [];
+    Fragile.failAfter = 1;
+    const set = new HashSet<Fragile>();
+    set.add(new Fragile(1));
+    set.add(new Fragile(2));
+    expect(() => set.clone()).toThrow('clone failed');
+    everyCloneWasReleased(1);
+    set.drop();
+  });
+});

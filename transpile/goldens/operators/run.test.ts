@@ -7,7 +7,7 @@
 
 import { expect, test } from 'bun:test';
 import { BorrowMut } from '@ankurah/base';
-import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, bump, chargeNegated, checks, combined, different, dividedByNegativeOne, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, magnitude, negated, overflows, same, saturateIsize, saturateU64, saturates, shift64, shiftAssign32, shiftAssign8, shifted, shifts, smaller, toF32, toI64, toU64, wrapI64, wrapU128, wraps, complemented as complemented_ } from './input.ts';
+import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, bump, chargeNegated, checks, combined, different, divideChecked, dividedByNegativeOne, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, magnitude, negated, overflows, remainderChecked, same, saturateIsize, saturateU64, saturates, shift64, shiftAssign32, shiftAssign8, shifted, shifts, smaller, toF32, toI64, toU64, wrapI64, wrapU128, wraps, complemented as complemented_ } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('== compares values, not references', () => {
@@ -192,6 +192,28 @@ test('min and abs on a bigint width do not go through Math', () => {
   expect(smaller(9n, 3n)).toBe(3n);
   expect(magnitude(-5n)).toBe(5n);
   expect(magnitude(5n)).toBe(5n);
+});
+
+// Z8: `i64::MIN` has no positive. An unbounded `-$x` answered
+// `9223372036854775808n`, which no `i64` holds, where Rust's debug build
+// panics — the same rule R7 puts on `+`, `-` and `*`.
+test('abs at MIN panics rather than answering a number the type cannot hold', () => {
+  const min = -(2n ** 63n);
+  expect(() => magnitude(min)).toThrow('overflow');
+  expect(magnitude(min + 1n)).toBe(2n ** 63n - 1n);
+});
+
+// Z7: both were declared in the std surface and never lowered, so
+// `a.checked_rem(b)` came out as `a.checkedRem(b)` — a method no number has.
+test('checked division and remainder answer None where Rust panics', () => {
+  expect(divideChecked(7n, 2n)).toBe(3n);
+  expect(divideChecked(-7n, 2n)).toBe(-3n);
+  expect(divideChecked(1n, 0n)).toBe(null);
+  expect(divideChecked(-(2n ** 63n), -1n)).toBe(null);
+  expect(remainderChecked(7n, 2n)).toBe(1n);
+  expect(remainderChecked(-7n, 2n)).toBe(-1n);
+  expect(remainderChecked(1n, 0n)).toBe(null);
+  expect(remainderChecked(-(2n ** 63n), -1n)).toBe(null);
 });
 
 test('nothing leaked and nothing was reported', async () => {

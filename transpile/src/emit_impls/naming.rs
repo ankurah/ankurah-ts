@@ -125,7 +125,6 @@ pub fn resolve_conversion_names(reg: &TypeRegistry) -> ConversionNames {
     out
 }
 
-
 /// Two impls that differ only by a `&` on a source the port gives no class to
 /// are ONE emitted method, and the site says so.
 ///
@@ -241,7 +240,6 @@ fn candidates(reg: &TypeRegistry) -> Vec<Candidate> {
     out
 }
 
-
 /// The name this impl takes when nothing contests it.
 ///
 /// A source whose spelling carries type arguments — `Attested<Event>` — has no
@@ -319,8 +317,20 @@ fn capitalised(name: &str) -> String {
     }
 }
 
+/// The last segment of a path, where the `::` belongs to the PATH and not to a
+/// generic argument inside it.
+///
+/// The leaf of `a::b::C` is `C`; the leaf of `Vec<a::Item>` is the whole
+/// spelling, because `Vec` carries no qualifier of its own and the `a::` is
+/// the ARGUMENT's. Split naively, `Vec<left::Item>` had the leaf `Item>` and
+/// the qualifier `Vec<left`, and the conversion was named `fromVec<leftItem>`
+/// — a method name with a type-parameter list in the middle of it.
 fn leaf(path: &str) -> String {
-    path.rsplit("::").next().unwrap_or(path).to_string()
+    let outer = path.split_once('<').map(|(head, _)| head).unwrap_or(path);
+    match outer.rsplit_once("::") {
+        Some((_, last)) => format!("{}{}", last, &path[outer.len()..]),
+        None => path.to_string(),
+    }
 }
 
 thread_local! {
@@ -376,6 +386,25 @@ mod source_tests {
         assert!(ts.contains("static fromVecU32("), "{ts}");
         assert!(ts.contains("static fromVecI32("), "{ts}");
         assert!(ts.contains("static fromU32("), "{ts}");
+    }
+
+    /// Z5: and the module qualifier reaches all the way down too. Inside a
+    /// generic argument it is the only thing telling two source types apart,
+    /// and it was dropped: `From<Vec<a::Item>>` and `From<Vec<b::Item>>` were
+    /// one identity, one static and one body, with the other lost silently.
+    #[test]
+    fn two_generic_sources_that_differ_only_by_module_are_two_conversions() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub mod a { pub struct Item; }
+             pub mod b { pub struct Item; }
+             pub struct T(pub String);
+             impl From<Vec<a::Item>> for T { fn from(v: Vec<a::Item>) -> Self { T(String::new()) } }
+             impl From<Vec<b::Item>> for T { fn from(v: Vec<b::Item>) -> Self { T(String::new()) } }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("static fromVecAItem("), "{ts}");
+        assert!(ts.contains("static fromVecBItem("), "{ts}");
     }
 
     /// `From<&str>` and `From<String>` are still ONE conversion: `str` is

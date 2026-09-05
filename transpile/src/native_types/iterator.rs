@@ -3,7 +3,6 @@
 //! Rust iterator combinators map to JS array methods.
 //! These apply when the receiver is already an array (post .iter()).
 
-
 pub fn translate(receiver: &str, method: &str, args: &[String]) -> Option<String> {
     let result = match method {
         // Renamed methods

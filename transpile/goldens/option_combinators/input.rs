@@ -75,4 +75,14 @@ impl Registry {
     pub fn entry_or(&self, id: u32, spare: Entry) -> Entry {
         self.entries.get(&id).map_or(spare, |e| Entry { weight: e.weight })
     }
+
+    /// R10: Rust drops the default AFTER the closure has run — and on a panic
+    /// as well, during the unwind. Released in front of the call, the drop ran
+    /// first; released behind it with a comma, a panicking closure would
+    /// abandon it. A `finally` is the one shape that is both.
+    pub fn entry_or_strict(&self, id: u32, spare: Entry) -> Entry {
+        self.entries
+            .get(&id)
+            .map_or(spare, |e| Entry { weight: e.weight.checked_sub(1).expect("weight underflow") })
+    }
 }

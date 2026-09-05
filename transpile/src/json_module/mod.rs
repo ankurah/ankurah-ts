@@ -227,7 +227,6 @@ pub fn enum_json(reg: &TypeRegistry, info: &EnumInfo) -> Result<String, String> 
         &info.type_params,
         &Read {
             statements: body,
-            owned: Vec::new(),
             owns: owns_anything,
         },
         &input,
@@ -239,9 +238,12 @@ pub fn enum_json(reg: &TypeRegistry, info: &EnumInfo) -> Result<String, String> 
 /// something the reader has to release when it does not return one.
 struct Read {
     statements: String,
-    owned: Vec<String>,
     /// Did anything the body read own something? The prologue and the `finally`
     /// are written only where it did.
+    ///
+    /// The NAMES were carried here too and nothing ever read them: the values
+    /// go into the runtime bag as they are decoded (`$built.push(..)`), and the
+    /// `finally` releases the bag rather than a list the emitter kept.
     owns: bool,
 }
 
@@ -287,7 +289,6 @@ fn write_value(body: &Body, receiver: &str) -> String {
 fn read_body(body: &Body, owner: &str, source: &str, record: &str) -> Read {
     let mut out = Read {
         statements: String::new(),
-        owned: Vec::new(),
         owns: false,
     };
     match body {
@@ -361,7 +362,6 @@ fn read_member(out: &mut Read, member: &Member, source: &str) {
     // field with nobody.
     if member.shape.owns {
         out.statements.push_str(&format!("{}.push({});\n", BAG, member.ts_name));
-        out.owned.push(member.ts_name.clone());
         out.owns = true;
     }
 }
@@ -429,7 +429,6 @@ fn reader(
     out
 }
 
-
 /// The names the reader's own body declares, so the parameter and the record
 /// it casts to can be given names none of them takes.
 ///
@@ -458,7 +457,6 @@ fn free_name(plain: &str, taken: &[String]) -> String {
         plain.to_string()
     }
 }
-
 
 /// The successful return, with the bag marked handed on where there is one.
 ///

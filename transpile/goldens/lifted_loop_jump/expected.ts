@@ -62,3 +62,30 @@ export function quoteAll(lits: Lit[], out: BorrowMut<string>): Result<number, Re
   return Result.Ok(out.value.length);
 }
 
+export function firstOver(rows: number[][], limit: number): number {
+  let _lv0;
+  outer: while (true) {
+    for (const row of rows) {
+      for (const cell of row) {
+        const _m1 = (() => {
+          {
+            if (cell > limit) {
+              return { $jump: 'break', $label: 'outer', $value: cell };
+            }
+            return 0;
+          }
+        })();
+        if ((_m1 as any)?.$jump === 'break' && (_m1 as any)?.$label === 'outer') { _lv0 = (_m1 as any).$value; break outer; };
+        const scaled = -(_m1 as any);
+        if (scaled < -100) {
+          _lv0 = 0;
+          break outer;
+        }
+      }
+    }
+    _lv0 = 0;
+    break outer;
+  }
+  return _lv0;
+}
+

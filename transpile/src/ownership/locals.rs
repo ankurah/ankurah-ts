@@ -74,7 +74,6 @@ impl<'a> BodyTranslator<'a> {
         owned
     }
 
-
     /// A callable parameter the body OWNS, and therefore owes a release.
     ///
     /// `fn f<F: Fn(u32) -> u32>(f: F)` takes `f` by value and drops it at the
@@ -88,11 +87,17 @@ impl<'a> BodyTranslator<'a> {
     /// of that function's branches and is left alone, and an `OwnedClosure` has
     /// a `drop()` for it to find.
     ///
-    /// Three parameters are NOT this. One written `&F` or `&mut F` is somebody
-    /// else's. One whose bound is `FnOnce` alone is consumed by its call, and
-    /// `invoke` releases it there — a second release would be a double drop.
-    /// And a parameter whose type is not a callable bound at all is an ordinary
+    /// Two parameters are NOT this. One written `&F` or `&mut F` is somebody
+    /// else's, and one whose type is not a callable bound at all is an ordinary
     /// value, already answered by `drops_of`.
+    ///
+    /// A parameter whose bound is `FnOnce` alone IS this, even though `invoke`
+    /// releases it where the call runs: the call is not on every path.
+    /// `fn run(f: impl FnOnce() -> u32, take: bool) { if take { f() } }` leaked
+    /// the closure and everything it captured whenever `take` was false. The
+    /// parameter is claimed, and the move scan — which now counts an `invoke`
+    /// call as the move it is — decides between releasing it, skipping it
+    /// behind a flag, and not writing a release at all (R4).
     fn callable_by_value(&self, ty: &crate::ty::Ty) -> ownership::Drops {
         if matches!(ty, crate::ty::Ty::Ref { .. }) {
             return ownership::Drops::Unknown;
@@ -100,9 +105,6 @@ impl<'a> BodyTranslator<'a> {
         let Some(tc) = &self.types else { return ownership::Drops::Unknown };
         let tc = tc.borrow();
         if crate::infer::expected::fn_shape(tc.registry, ty, &tc.param_bounds).is_none() {
-            return ownership::Drops::Unknown;
-        }
-        if crate::infer::expected::consumed_by_the_call(tc.registry, ty, &tc.param_bounds) {
             return ownership::Drops::Unknown;
         }
         ownership::Drops::Cascade

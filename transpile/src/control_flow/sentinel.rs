@@ -19,10 +19,22 @@
 use crate::body::BodyTranslator;
 
 /// What a lifted body hands back in place of a `break` or a `continue`.
-pub(crate) fn jump_marker(kind: &str, label: &Option<syn::Lifetime>) -> String {
+///
+/// A `break` may carry a PAYLOAD — `break 'outer 7` — and that payload is what
+/// the loop produces. It travels out as `$value` beside the marker, exactly as
+/// a `return`'s does; written without it the marker was returned before the
+/// payload was even translated, and the loop answered whatever it was
+/// initialised with.
+pub(crate) fn jump_marker(kind: &str, label: &Option<syn::Lifetime>, value: Option<&str>) -> String {
+    let carried = match value {
+        Some(value) => format!(", $value: {}", value),
+        None => String::new(),
+    };
     match label {
-        Some(label) => format!("return {{ $jump: '{}', $label: '{}' }}", kind, label.ident),
-        None => format!("return {{ $jump: '{}' }}", kind),
+        Some(label) => {
+            format!("return {{ $jump: '{}', $label: '{}'{} }}", kind, label.ident, carried)
+        }
+        None => format!("return {{ $jump: '{}'{} }}", kind, carried),
     }
 }
 
@@ -33,6 +45,20 @@ pub(crate) fn jump_marker(kind: &str, label: &Option<syn::Lifetime>) -> String {
 /// performs the real `return` before anything looks at it.
 pub(crate) fn return_marker(value: &str) -> String {
     format!("return {{ $jump: 'return', $value: {} }}", value)
+}
+
+/// The marker a `break` written inside a LIFTED body hands back, where it has
+/// to hand one back at all.
+///
+/// The payload travels with it: `break 'outer 7` is what the loop produces, and
+/// returning the marker before translating the 7 threw the 7 away — the loop
+/// then answered whatever it had been initialised with.
+pub(crate) fn lifted_break(t: &BodyTranslator, brk: &syn::ExprBreak) -> Option<String> {
+    if !jump_leaves_the_lift(t, &brk.label) {
+        return None;
+    }
+    let carried = brk.expr.as_ref().map(|value| t.expr_value(value));
+    Some(jump_marker("break", &brk.label, carried.as_deref()))
 }
 
 /// Does a `break`/`continue` written HERE have to travel out as a sentinel?
@@ -191,9 +217,22 @@ pub(crate) fn reader(t: &BodyTranslator, held: &str, handed: Handed<'_>) -> Stri
             // out still — so the sentinel travels on whole.
             format!("return {held}", held = held)
         } else {
-            match &label {
+            let jump = match &label {
                 Some(name) => format!("{word} {name}", word = word, name = name),
                 None => word.to_string(),
+            };
+            // A `break` leaving a loop whose VALUE the code around it wanted
+            // carries the payload the loop produces, and the reader is the only
+            // place that can store it: the loop's holder is in scope here and
+            // is not inside the arrow that handed the marker back.
+            match value_loop_for(t, &lifetime).filter(|_| word == "break") {
+                Some((loop_held, _)) => format!(
+                    "{{ {loop_held} = ({held} as any).$value; {jump}; }}",
+                    loop_held = loop_held,
+                    held = held,
+                    jump = jump
+                ),
+                None => jump,
             }
         };
         out.push_str(&format!("if ({matched}) {performed};\n", matched = matched, performed = performed));

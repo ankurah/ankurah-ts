@@ -62,7 +62,6 @@ pub struct Site {
     pub span: proc_macro2::Span,
 }
 
-
 /// Reads the one thing the syntax cannot say: whether a method call takes its
 /// receiver by value. `Result::unwrap`, `Option::take` and the `into_*` family
 /// all do, and the impl table knows which.
@@ -700,7 +699,6 @@ fn collect_pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
         _ => {}
     }
 }
-
 
 /// Can this statement leave the block it stands in, before the statements below
 /// it run?

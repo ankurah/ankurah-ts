@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -658,7 +658,7 @@ export class Literal extends Enum<LiteralV> {
         return new Literal('Binary', { _0 });
       }
       case 9: {
-        const _0 = JSON.parse(new TextDecoder().decode(reader.readByteVec()));
+        const _0 = serde_json.fromSlice(reader.readByteVec()).unwrap();
         return new Literal('Json', { _0 });
       }
       default: throw new Error(`Unknown Literal variant: ${variant}`);

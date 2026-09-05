@@ -486,8 +486,6 @@ pub fn decisions() -> Vec<(String, Answer, usize)> {
     })
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

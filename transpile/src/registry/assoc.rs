@@ -8,6 +8,15 @@ use super::impls::{head_of, ImplId};
 use super::method::MAX_BOUND_DEPTH;
 use super::Probe;
 use crate::ty::{TraitRef, Ty};
+
+/// What a bound says about an associated name it declares.
+pub(super) enum BoundAssoc {
+    /// The site wrote what the name is: `DerefMut<Target = BTreeMap<K, V>>`.
+    Bound(Ty),
+    /// Something in the bound's chain declares the name and nothing here says
+    /// what it is.
+    Open,
+}
 impl Probe<'_> {
     // ── Associated types ───────────────────────────────────────────────
 
@@ -90,10 +99,10 @@ impl Probe<'_> {
             .collect()
     }
 
-    /// The bound on a `dyn Trait` or a bounded parameter that declares this
-    /// associated name.
-    pub(super) fn declaring_bound(&self, base: &Ty, name: &str) -> Option<TraitRef> {
-        let bounds: Vec<TraitRef> = match base {
+    /// The traits a `dyn Trait`, an `impl Trait` or a bounded parameter is
+    /// required to implement here.
+    fn bounds_of(&self, base: &Ty) -> Vec<TraitRef> {
+        match base {
             Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => traits.clone(),
             Ty::Param(param) => self
                 .param_bounds
@@ -101,13 +110,60 @@ impl Probe<'_> {
                 .filter(|(p, _)| p == param)
                 .map(|(_, t)| t.clone())
                 .collect(),
-            _ => return None,
-        };
-        bounds.into_iter().find(|b| {
-            self.reg
-                .trait_def(b.id)
-                .is_some_and(|d| d.assoc_types.iter().any(|a| a == name))
-        })
+            _ => Vec::new(),
+        }
+    }
+
+    /// What a bound on a `dyn Trait` or a bounded parameter says about one
+    /// associated name.
+    ///
+    /// The name a bound answers for need not be declared by the trait the site
+    /// wrote: `impl DerefMut<Target = BTreeMap<K, V>>` writes `Target` on
+    /// `DerefMut`, which declares no associated type of its own — `Deref`
+    /// declares it, and Rust resolves the binding through the supertrait.
+    /// Asking only the written trait left `<impl DerefMut>::Target` standing,
+    /// and every call on the map behind it was written from its name alone.
+    pub(super) fn bound_assoc(&self, base: &Ty, name: &str) -> Option<BoundAssoc> {
+        self.bounds_of(base)
+            .iter()
+            .find_map(|bound| self.assoc_through(bound, name, &mut Vec::new()))
+    }
+
+    fn assoc_through(
+        &self,
+        of: &TraitRef,
+        name: &str,
+        seen: &mut Vec<crate::ty::TypeId>,
+    ) -> Option<BoundAssoc> {
+        if seen.contains(&of.id) {
+            return None;
+        }
+        seen.push(of.id);
+        // A binding written at the site answers first, wherever in the chain
+        // the name is declared — that is what the site wrote it to say.
+        if let Some((_, ty)) = of.bindings.iter().find(|(n, _)| n == name) {
+            return Some(BoundAssoc::Bound(ty.clone()));
+        }
+        let def = self.reg.trait_def(of.id)?;
+        let declares = def.assoc_types.iter().any(|a| a == name);
+        // The supertraits are written in terms of this trait's parameters, so
+        // they are instantiated with what stood at them before the search goes
+        // on — the same walk `trait_method_of` takes for a method.
+        let mut subst = crate::ty::bind_params(&def.generics, &of.args);
+        for (assoc, ty) in &of.bindings {
+            subst.insert(assoc.clone(), ty.clone());
+        }
+        let supers: Vec<TraitRef> = def
+            .supertraits
+            .iter()
+            .map(|t| t.substitute(&subst))
+            .collect();
+        for supertrait in &supers {
+            if let Some(found) = self.assoc_through(supertrait, name, seen) {
+                return Some(found);
+            }
+        }
+        declares.then_some(BoundAssoc::Open)
     }
 
     /// The type an impl supplies for one associated name.
@@ -115,13 +171,12 @@ impl Probe<'_> {
         // A projection on a trait object or on a bounded parameter is answered
         // by whichever bound declares the name — `Self::Item` inside a trait's
         // own default body means that trait's `Item`.
-        if let Some(bound) = self.declaring_bound(base, name) {
-            if let Some(bound_ty) = bound.bindings.iter().find(|(n, _)| n == name) {
-                return Some(bound_ty.1.clone());
-            }
+        match self.bound_assoc(base, name) {
+            Some(BoundAssoc::Bound(ty)) => return Some(ty),
             // The trait declares it but the use site did not bind it, so there
             // is no type to give: leaving the projection standing says so.
-            return None;
+            Some(BoundAssoc::Open) => return None,
+            None => {}
         }
         let mut found: Option<Ty> = None;
         let ids: Vec<ImplId> = match trait_ {

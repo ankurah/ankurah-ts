@@ -40,7 +40,7 @@ impl BodyTranslator<'_> {
         // writes as a JavaScript VALUE has to live in a cell, because the
         // callee's writes have nowhere else to go. Read before anything is
         // translated, so the `let` that introduces it declares the cell.
-        *self.cell_candidates.borrow_mut() = cells_wanted(block);
+        *self.cell_candidates.borrow_mut() = super::places::cells_wanted(block);
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
         self.pop_scope();
@@ -69,7 +69,6 @@ impl BodyTranslator<'_> {
         }
         format!("{}{}", declarations, out)
     }
-
 
     pub fn translate_block(&self, block: &syn::Block) -> String {
         // A Rust block is a scope: a `let` inside it shadows what is outside and
@@ -256,13 +255,7 @@ impl BodyTranslator<'_> {
         out
     }
 
-
-
-
-
-
     // ── Statement translation ───────────────────────────────────────
-
 
     pub(crate) fn stmt(&self, stmt: &syn::Stmt) -> String {
         match stmt {
@@ -420,6 +413,7 @@ impl BodyTranslator<'_> {
         // this line has already closed.
         let bound_closure = as_move_closure(&init.expr)
             .filter(|closure| !self.owned_captures(closure).is_empty());
+        let entry_slot = self.finishes_an_entry(&init.expr);
         // What the `let` wrote for itself is what its initialiser has to
         // produce (spec 4.6): `let f: Box<dyn Fn(u32)> = |x| ..` types `x`, and
         // `let n: u8 = 1` writes a byte rather than the `i32` a bare literal
@@ -438,8 +432,10 @@ impl BodyTranslator<'_> {
                 ownership::closures::Placement::Bound,
                 annotation.as_ref(),
             ),
-            None => self.expecting(&init.expr, annotation.as_ref(), || {
-                self.moved_value(&init.expr)
+            None => self.expecting(&init.expr, annotation.as_ref(), || match entry_slot {
+                // R1: the `let` answers the same question the `*` does.
+                true => self.through_place(&init.expr, || self.moved_value(&init.expr)),
+                false => self.moved_value(&init.expr),
             }),
         };
 
@@ -487,12 +483,21 @@ impl BodyTranslator<'_> {
                     )),
                     None => false,
                 });
-        if wants_a_cell {
+        // A finisher the engine had to REFUSE wrote a hole, not a slot, and
+        // reading `.value` off a hole says nothing the hole does not already.
+        let entry_slot = entry_slot && !expr.contains("unsupported(");
+        if wants_a_cell || entry_slot {
             // `freshen` hands out a NEW name each time it is asked, so the
             // rename is computed once, here, and not again below.
             let name = self.freshened_pattern(&local.pat, &shadowing);
             self.hold_in_a_cell(&name);
-            return format!("const {} = new BorrowMut({});\n", name, expr);
+            // A finisher already answers the runtime's write-through slot; a
+            // value local needs one built around it.
+            let held = match entry_slot {
+                true => expr,
+                false => format!("new BorrowMut({})", expr),
+            };
+            return format!("const {} = {};\n", name, held);
         }
 
         // A name the enclosing block-as-expression already threaded in as a
@@ -527,42 +532,6 @@ impl BodyTranslator<'_> {
         format!("{}{} {} = {};\n", flag, keyword, emitted, expr)
     }
 
-
-}
-
-
-/// Every local this block hands out as `&mut`, by the name the emitter writes.
-///
-/// A `&mut` to a class is already a reference in JavaScript and needs no cell;
-/// the decision about the TYPE is made where the local is declared, which is
-/// the only place the type is known. This is the syntactic half: which names
-/// are borrowed mutably at all.
-fn cells_wanted(block: &syn::Block) -> Vec<String> {
-    struct Borrows {
-        names: Vec<String>,
-    }
-    impl syn::visit::Visit<'_> for Borrows {
-        fn visit_expr_reference(&mut self, node: &syn::ExprReference) {
-            if node.mutability.is_some() {
-                if let syn::Expr::Path(path) = &*node.expr {
-                    if path.path.segments.len() == 1 {
-                        let name = crate::name_map::escape_reserved(&crate::name_map::to_camel_case(
-                            &path.path.segments[0].ident.to_string(),
-                        ));
-                        if !self.names.contains(&name) {
-                            self.names.push(name);
-                        }
-                    }
-                }
-            }
-            syn::visit::visit_expr_reference(self, node);
-        }
-        // A closure's own body borrows in its own scope.
-        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
-    }
-    let mut borrows = Borrows { names: Vec::new() };
-    syn::visit::Visit::visit_block(&mut borrows, block);
-    borrows.names
 }
 
 #[cfg(test)]

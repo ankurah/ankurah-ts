@@ -1,4 +1,5 @@
-//! A primitive's associated constants — `f64::EPSILON`, `u32::MAX`.
+//! A primitive's associated items — the constants `f64::EPSILON` and
+//! `u32::MAX`, and the functions `i64::from_be_bytes` and `u8::from_str_radix`.
 //!
 //! For: Rust puts these on the type, and the port writes the type as a
 //! JavaScript primitive, which has no members of its own. Left alone, the path
@@ -69,18 +70,40 @@ pub fn type_of_path(segments: &[String]) -> Option<Prim> {
 /// decides by the naming convention rustc warns on either side of, which is the
 /// same convention fixpass5's §3.5 reads a `const` pattern by.
 pub fn parse(segments: &[String]) -> Option<(Prim, String)> {
-    let [prim, konst] = segments else { return None };
-    if !konst.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
-        return None;
-    }
-    Some((Prim::from_rust_name(prim)?, konst.clone()))
+    let (prim, item) = split(segments)?;
+    is_screaming(&item).then_some((prim, item))
+}
+
+/// The primitive and the item name a two-segment path on a primitive names.
+fn split(segments: &[String]) -> Option<(Prim, String)> {
+    let [prim, item] = segments else { return None };
+    Some((Prim::from_rust_name(prim)?, item.clone()))
+}
+
+/// The naming convention rustc warns on either side of, which is how the port
+/// tells a constant from a function on a primitive.
+fn is_screaming(item: &str) -> bool {
+    item.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// The written constant a path names, or the reason the port has none.
 ///
 /// `None` where the path does not name a primitive's constant at all.
 pub fn written_or_reason(segments: &[String]) -> Option<Result<String, String>> {
-    let (prim, konst) = parse(segments)?;
+    let (prim, item) = split(segments)?;
+    // An associated FUNCTION — `i64::from_be_bytes`, `u8::from_str_radix` — is
+    // the same gap as a constant the port has no spelling for, and it was the
+    // one half left writing the path out: `i64.fromBeBytes(..)` names something
+    // the emitted file never declares, and nothing said so.
+    if !is_screaming(&item) {
+        return Some(Err(format!(
+            "`{}::{}` is a function Rust puts on a primitive type, and the port writes that \
+             type as a JavaScript primitive, which has no members and no spelling for this one",
+            prim.rust_name(),
+            item
+        )));
+    }
+    let konst = item;
     Some(match written(prim, &konst) {
         Some(text) => Ok(text),
         None => Err(format!(

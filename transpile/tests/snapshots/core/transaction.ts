@@ -55,7 +55,7 @@ export class Transaction extends Drop {
   }
 
   getTrxEntity(id: EntityId): Entity | null {
-    return this.entities.iter().find((e) => e.id === id);
+    return this.entities.iter().find((e) => e.deref().id.equals(id));
   }
 
   async get<M extends Model>(id: EntityId): Promise<Result<MutableBorrow<Mutable>, RetrievalError>> {
