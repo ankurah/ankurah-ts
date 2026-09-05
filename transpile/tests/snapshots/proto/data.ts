@@ -287,7 +287,7 @@ export class OperationSet extends Struct {
   }
 
   equals(other: OperationSet): boolean {
-    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; } }
+    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; if (!v.equals(_w)) return false; } }
     return true;
   }
 
@@ -566,7 +566,7 @@ export class StateBuffers extends Struct {
   }
 
   equals(other: StateBuffers): boolean {
-    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; } }
+    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; if (!v.equals(_w)) return false; } }
     return true;
   }
 

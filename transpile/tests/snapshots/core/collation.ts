@@ -2,7 +2,6 @@
 import { Enum, checkedAdd, checkedSub } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { Json } from './property/value/json';
-import { EntityId } from '@ankurah/proto';
 
 export type RangeBoundV = {
   Included: { _0: T };
@@ -21,6 +20,17 @@ export class RangeBound<T> extends Enum<RangeBoundV> {
   }
 
   equals(other: RangeBound<T>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Included': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Excluded': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -99,7 +109,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
     F64: (v) => {
       const f = v._0;
       const bits = (() => {
-        if (f.isNan()) {
+        if (Number.isNaN(f)) {
           return u64.MAX;
         } else {
           const bits = f.toBits();
@@ -175,7 +185,7 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     },
     F64: (v) => {
       const f = v._0;
-      if (f.isNan() || (f.isInfinite() && f > 0.0)) {
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f > 0.0)) {
         return null;
       } else {
         const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
@@ -276,7 +286,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     },
     F64: (v) => {
       const f = v._0;
-      if (f.isNan() || (f.isInfinite() && f < 0.0)) {
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f < 0.0)) {
         return null;
       } else {
         const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
@@ -496,7 +506,7 @@ export function I64_isMaximum(self: bigint): boolean {
 
 export function F64_toBytes(self: number): Uint8Array {
   const bits = (() => {
-    if (self.isNan()) {
+    if (Number.isNaN(self)) {
       return u64.MAX;
     } else {
       const bits = self.toBits();
@@ -511,7 +521,7 @@ export function F64_toBytes(self: number): Uint8Array {
 }
 
 export function F64_successorBytes(self: number): Uint8Array | null {
-  if (self.isNan() || (self.isInfinite() && self > 0.0)) {
+  if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self > 0.0)) {
     return null;
   } else {
     const bits = self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits());
@@ -521,7 +531,7 @@ export function F64_successorBytes(self: number): Uint8Array | null {
 }
 
 export function F64_predecessorBytes(self: number): Uint8Array | null {
-  if (self.isNan() || (self.isInfinite() && self < 0.0)) {
+  if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self < 0.0)) {
     return null;
   } else {
     const bits = self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits());

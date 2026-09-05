@@ -1,10 +1,8 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
 import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, OrderByItem, OrderDirection, Predicate, Selection } from '@ankurah/ankql';
-import { EntityId } from '@ankurah/core';
+import { EntityId, Comparison, Json, Value } from '@ankurah/core';
 import { SqliteError } from './error';
-import { ComparisonOperator, Expr, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
-import { Comparison, Json, Value } from '@ankurah/core';
 import { EntityId } from '@ankurah/proto';
 
 export class SplitPredicate extends Struct {
@@ -72,7 +70,7 @@ export class SqlBuilder extends Struct {
         return Result.Ok([this.sql, this.params]);
       }
       const fieldsClause = [...this.fields].map((field) => `"${field.replace('"', '""')}"`).join(', ');
-      const table = this.tableName;
+      const table = (this.tableName ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
       const sql = `SELECT ${fieldsClause} FROM "${table.replace('"', '""')}" WHERE ${this.sql}`;
       return Result.Ok([sql, this.params]);
     } finally {

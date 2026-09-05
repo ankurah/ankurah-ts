@@ -618,7 +618,6 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
                     name,
                     ty: name_map::map_type(&pat.ty),
                     rust_ty: Some((*pat.ty).clone()),
-                    is_self: false,
                 })
             }
         }

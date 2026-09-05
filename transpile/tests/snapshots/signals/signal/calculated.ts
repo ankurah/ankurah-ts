@@ -53,16 +53,16 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
 
   get(): T {
     CurrentObserver.track(this);
-    return this._0.value.value.with((opt) => opt.asRef().clone());
+    return this._0.value.value.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
   }
 
   peek(): T {
-    return this._0.value.value.with((opt) => opt.asRef().clone());
+    return this._0.value.value.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
   }
 
   with<R>(f: (arg0: T) => R): R {
     CurrentObserver.track(this);
-    return this._0.value.value.with((opt) => f(opt.asRef()));
+    return this._0.value.value.with((opt) => f((opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
   }
 
   getReadcell(): ReadValueCell<T | null> {
@@ -86,7 +86,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const roValue = this._0.value.value.readvalue();
     const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
-      const current = roValue.with((opt) => opt.asRef().clone());
+      const current = roValue.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
       listener_1(current);
     })));
     return SubscriptionGuard.new(subscription);

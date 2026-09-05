@@ -25,7 +25,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
   }
 
   async fetchGap(collectionId: CollectionId, selection: Selection, lastEntity: Entity | null, gapSize: number): Promise<Result<Entity[], RetrievalError>> {
-    const _r0 = this.weakNode.upgrade().okOrElse(() => RetrievalError.storage(io.Error.other('Node has been dropped, cannot fill gap')));
+    const _r0 = this.weakNode.upgrade() != null ? Result.Ok(this.weakNode.upgrade()!) : Result.Err((() => RetrievalError.storage(io.Error.other('Node has been dropped, cannot fill gap')))());
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     let _moved1 = false;
     const nodeInner = _r0.unwrap();
@@ -56,12 +56,12 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
             const gapPredicate = (_m3 as any);
             try {
               _moved4 = true;
-              return new ankql.ast.Selection(gapPredicate, selection.orderBy.clone(), BigInt(gapSize));
+              return new Selection(gapPredicate, selection.orderBy.clone(), BigInt(gapSize));
             } finally {
               if (!_moved4) gapPredicate.drop();
             }
           } else {
-          return new ankql.ast.Selection(selection.predicate.clone(), selection.orderBy.clone(), BigInt(gapSize));
+          return new Selection(selection.predicate.clone(), selection.orderBy.clone(), BigInt(gapSize));
         }
         }
       })();

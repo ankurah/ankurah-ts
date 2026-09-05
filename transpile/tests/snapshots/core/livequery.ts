@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/livequery.rs
 import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, Notify, tokio, spawn } from '@ankurah/base';
-import { CollectionId } from '@ankurah/proto';
-import { BroadcastId, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
+import { BroadcastId, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard, CurrentObserver } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
 import { Entity } from './entity';
 import { RetrievalError } from './error';
@@ -16,8 +16,6 @@ import { ReactorUpdate } from './reactor/update';
 import { EntityResultSet, ResultSet } from './resultset';
 import { spawn } from './task';
 import { Selection } from '@ankurah/ankql';
-import { Attested, CollectionId, EntityId, Event, QueryId } from '@ankurah/proto';
-import { BroadcastId, CurrentObserver, Get, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 
 export class EntityLiveQuery extends Struct implements PreNotifyHook {
   _0: Arc<Inner>;
@@ -46,7 +44,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
         try {
           const resultset = EntityResultSet.empty();
           try {
-            const queryId = proto.QueryId.new();
+            const queryId = QueryId.new();
             let _moved5 = false;
             const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
             try {

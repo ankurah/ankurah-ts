@@ -1,14 +1,12 @@
 // MIRRORS: ankurah/core/src/property/backend/lww.rs
 import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, HashMap } from '@ankurah/base';
 import { Operation } from '@ankurah/proto';
-import { Listener } from '@ankurah/signals';
+import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
 import { BincodeReader, BincodeWriter } from './codec';
 import { MutationError, RetrievalError, StateError } from '../../error';
-import { PropertyBackend } from './index';
-import { LWW } from '../value/lww';
 import { Value } from '../../value/index';
-import { Operation } from '@ankurah/proto';
-import { Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
+import { LWW } from '../value/lww';
+import { PropertyBackend } from './index';
 
 class ValueEntry extends Struct {
   value: Value | null;
@@ -55,7 +53,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
   get(propertyName: PropertyName): Value | null {
     const values = this.values.read();
     try {
-      return values.value.get(propertyName).andThen((entry) => entry.value.clone());
+      return values.value.get(propertyName) != null ? ((entry) => entry.value.clone())(values.value.get(propertyName)!) : null;
     } finally {
       values.drop();
     }

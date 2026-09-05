@@ -2,7 +2,6 @@
 import { Enum, Result } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { Expr, Literal, ParseError } from '@ankurah/ankql';
-import { EntityId } from '@ankurah/proto';
 
 export type QueryValueV = {
   String: { _0: string };

@@ -1,12 +1,10 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
 import { Result, AnyhowError, dropOwned, tracing, checkedAdd } from '@ankurah/base';
-import { Value } from '@ankurah/core';
+import { Value, Json } from '@ankurah/core';
 import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
 import { Object } from './util/object';
-import { Json, Value } from '@ankurah/core';
 import { EntityId } from '@ankurah/proto';
-import { CanonicalRange, KeyBounds, ScanDirection } from '@ankurah/storage-common';
 
 function nextUpperBound(value: Value): [Value, boolean] | null {
   return value.match({
@@ -25,10 +23,10 @@ function nextUpperBound(value: Value): [Value, boolean] | null {
     },
     F64: (_v) => {
       const v = _v._0;
-      if (v.isNan() || v.isInfinite()) {
+      if (Number.isNaN(v) || (!Number.isFinite(v) && !Number.isNaN(v))) {
         return null;
       } else {
-        const epsilon = f64.EPSILON.max(v.abs() * f64.EPSILON);
+        const epsilon = f64.EPSILON.max(Math.abs(v) * f64.EPSILON);
         return [new Value('F64', { _0: v + epsilon }), true];
       }
     },
@@ -234,7 +232,7 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
             const [nextValue, isOpen] = _v1;
             let _moved0 = false;
             try {
-              let upperTuple = eqPrefixValues.slice(0, eqPrefixLen).toVec();
+              let upperTuple = eqPrefixValues.slice(0, eqPrefixLen).slice();
               {
                 const _v = upperTuple.lastMut();
                 if (_v != null) {
@@ -348,7 +346,7 @@ function valuesToJsArray(values: Value[]): Result<string, Error> {
       },
       F64: (v) => {
         const x = v._0;
-        if (x.fract() === 0.0) {
+        if ((x - Math.trunc(x)) === 0.0) {
           result.pushStr(`${x}`);
         } else {
           result.pushStr(x.toString());

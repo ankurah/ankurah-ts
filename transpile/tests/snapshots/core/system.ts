@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/system.rs
 import { Struct, Result, Arc, RwLock, AnyhowError, serde_json, dropOwned, tracing, HashMap, Notify, spawn } from '@ankurah/base';
-import { Attested, Clock, CollectionId, EntityState } from '@ankurah/proto';
+import { Attested, Clock, CollectionId, EntityState, Event, Item } from '@ankurah/proto';
 import { CollectionSet } from './collectionset';
 import { Entity, WeakEntitySet } from './entity';
 import { MutationError, RetrievalError } from './error';
@@ -14,7 +14,6 @@ import { StorageCollectionWrapper } from './storage';
 import { spawn } from './task';
 import { Value } from './value/index';
 import { Predicate, Selection } from '@ankurah/ankql';
-import { Attested, Clock, CollectionId, EntityState, Event, Item } from '@ankurah/proto';
 
 export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> extends Struct {
   _0: Arc<Inner<SE, PA>>;
@@ -43,7 +42,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
   root(): Attested<EntityState> | null {
     const _t0 = this._0.value.root.read();
     try {
-      return _t0.value.asRef() != null ? ((r) => r.clone())(_t0.value.asRef()!) : null;
+      return _t0.value != null ? ((r) => r.clone())(_t0.value!) : null;
     } finally {
       _t0.drop();
     }
@@ -113,7 +112,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
             lwwBackend.value.set('item', _r3.unwrap());
             const _r4 = systemEntity.generateCommitEvent();
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            const _r5 = _r4.unwrap().okOr(AnyhowError.msg('Expected event'));
+            const _r5 = _r4.unwrap() != null ? Result.Ok(_r4.unwrap()!) : Result.Err(AnyhowError.msg('Expected event'));
             if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
             let _moved6 = false;
             const event = _r5.unwrap();
@@ -328,7 +327,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
         let rootState = null;
         const retriever = LocalRetriever.new(storage.clone());
         try {
-          const _t1 = new ankql.ast.Selection(new Predicate('True', {}), null, null);
+          const _t1 = new Selection(new Predicate('True', {}), null, null);
           try {
             const _r2 = await storage.deref().value.fetchStates(_t1);
             if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
@@ -348,7 +347,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                       const _v1 = lwwBackend.value.get('item');
                       if (_v1 != null) {
                         const value = _v1;
-                        const item = proto.sys.Item.fromValue(value).expect('Invalid sys item');
+                        const item = Item.fromValue(value).expect('Invalid sys item');
                         try {
                           {
                             const _v = item;

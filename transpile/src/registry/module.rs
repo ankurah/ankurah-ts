@@ -129,6 +129,15 @@ impl ModuleTree {
         id
     }
 
+    /// Every module in the tree, so a question about the port's FLATTENED
+    /// surface can be asked of the crate rather than of one scope. The port
+    /// writes a crate as one package — `export * from './ast'` — so a name any
+    /// module declares is a name the emitted file can write, whatever the Rust
+    /// scope it was written in could see.
+    pub fn ids(&self) -> impl Iterator<Item = ModuleId> + '_ {
+        (0..self.modules.len() as u32).map(ModuleId)
+    }
+
     pub fn crate_root(&self) -> ModuleId {
         self.crate_root
     }

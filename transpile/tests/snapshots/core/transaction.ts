@@ -1,12 +1,11 @@
 // MIRRORS: ankurah/core/src/transaction.rs
 import { Struct, Drop, Result, Arc, RwLock, HashSet } from '@ankurah/base';
-import { EntityId } from '@ankurah/proto';
+import { EntityId, TransactionId } from '@ankurah/proto';
 import { TContext } from './context';
 import { Entity } from './entity';
 import { MutationError, RetrievalError } from './error';
 import { Model, Mutable, MutableBorrow } from './indexel';
 import { AccessDenied } from './policy';
-import { EntityId, TransactionId } from '@ankurah/proto';
 
 export class Transaction extends Drop {
   dyncontext: Arc<TContext>;
@@ -25,7 +24,7 @@ export class Transaction extends Drop {
   }
 
   static new(dyncontext: Arc<TContext>): Transaction {
-    return new Transaction(dyncontext, proto.TransactionId.new(), AppendOnlyVec.new(), Arc.new(AtomicBool.new(true)), new RwLock(new HashSet()));
+    return new Transaction(dyncontext, TransactionId.new(), AppendOnlyVec.new(), Arc.new(AtomicBool.new(true)), new RwLock(new HashSet()));
   }
 
   addEntity(entity: Entity): Entity {

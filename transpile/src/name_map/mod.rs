@@ -171,6 +171,14 @@ pub fn map_type(ty: &syn::Type) -> String {
                         })
                         .collect();
 
+                    // Every argument was a lifetime, which the port erases:
+                    // `Self::Iter<'_>` has an argument list in Rust and none
+                    // here. Writing the brackets anyway produced `Iter<>`,
+                    // which a JavaScript engine refuses to parse — the one
+                    // emitted file in the port that would not load at all.
+                    if inner_types.is_empty() {
+                        return mapped.to_string();
+                    }
                     match name.as_str() {
                         "Vec" if inner_types.len() == 1 => {
                             if inner_types[0] == "number" && is_u8_vec(ty) {
@@ -225,11 +233,13 @@ pub fn map_type(ty: &syn::Type) -> String {
             format!("[{}]", types.join(", "))
         }
         syn::Type::Slice(slice) => {
-            let inner = map_type(&slice.elem);
-            if inner == "number" {
+            // ONLY `[u8]`. A `Uint8Array` truncates what it is given to a byte,
+            // so `[i16]` written as one turns `-1` into `255`, and its methods
+            // are not an array's, so `[u32]` written as one has no `push`.
+            if is_u8(&slice.elem) {
                 "Uint8Array".to_string()
             } else {
-                format!("{}[]", inner)
+                format!("{}[]", map_type(&slice.elem))
             }
         }
         syn::Type::ImplTrait(impl_trait) => {
@@ -253,12 +263,11 @@ pub fn map_type(ty: &syn::Type) -> String {
             "unknown".to_string()
         }
         syn::Type::Array(arr) => {
-            let inner = map_type(&arr.elem);
-            if inner == "number" {
-                // [u8; N] → Uint8Array
+            // `[u8; N]` and nothing else — see the slice arm above.
+            if is_u8(&arr.elem) {
                 "Uint8Array".to_string()
             } else {
-                format!("{}[]", inner)
+                format!("{}[]", map_type(&arr.elem))
             }
         }
         syn::Type::Never(_) => "never".to_string(),
@@ -331,6 +340,11 @@ fn map_trait_bound(trait_bound: &syn::TraitBound) -> Option<String> {
     }
 }
 
+/// Is this written type `u8`? The one element type the port writes as bytes.
+fn is_u8(ty: &syn::Type) -> bool {
+    matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "u8"))
+}
+
 /// Check if a Vec<T> is Vec<u8> (should map to Uint8Array)
 fn is_u8_vec(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty {
@@ -378,6 +392,38 @@ mod tests {
         assert_eq!(to_camel_case("fetch_from_peer"), "fetchFromPeer");
         assert_eq!(to_camel_case("id"), "id");
         assert_eq!(to_camel_case("next_entity_id"), "nextEntityId");
+    }
+
+    /// An argument list whose every argument is a LIFETIME is no argument list
+    /// here: the port erases lifetimes. `Self::Iter<'_>` was written `Iter<>`,
+    /// which a JavaScript engine refuses to parse — `core/util/iterable.ts` was
+    /// the one emitted file in the whole port that would not load at all.
+    #[test]
+    fn an_argument_list_of_only_lifetimes_is_no_list() {
+        for written in ["Iter<'_>", "Iter<'a>", "Cow<'a>"] {
+            let ty: syn::Type = syn::parse_str(written).unwrap();
+            let out = map_type(&ty);
+            assert!(!out.contains('<'), "{} became {}", written, out);
+        }
+        // A type argument beside a lifetime still stands.
+        let ty: syn::Type = syn::parse_str("Iter<'a, T>").unwrap();
+        assert_eq!(map_type(&ty), "Iter<T>");
+    }
+
+    /// A `Uint8Array` truncates every value it is given to a byte and does not
+    /// carry an array's methods, so only the element type Rust calls a byte is
+    /// written as one. `entity_offsets: IVec<usize, 8>` was a `Uint8Array`,
+    /// where an offset past 255 becomes a different number entirely.
+    #[test]
+    fn only_a_slice_of_bytes_is_written_as_bytes() {
+        let bytes: syn::Type = syn::parse_str("&[u8]").unwrap();
+        assert_eq!(map_type(&bytes), "Uint8Array");
+        let array: syn::Type = syn::parse_str("[u8; 32]").unwrap();
+        assert_eq!(map_type(&array), "Uint8Array");
+        for written in ["&[usize]", "&[i16]", "&[u32]", "&[f64]", "[usize; 8]"] {
+            let ty: syn::Type = syn::parse_str(written).unwrap();
+            assert_eq!(map_type(&ty), "number[]", "{} is not bytes", written);
+        }
     }
 
     #[test]

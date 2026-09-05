@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/util/object.rs
 import { Struct, Result, AnyhowError } from '@ankurah/base';
 import { MutationError, RetrievalError } from '@ankurah/core';
-import { MutationError, RetrievalError } from '@ankurah/core';
 
 export class Object extends Struct {
   obj: SendWrapper<unknown>;

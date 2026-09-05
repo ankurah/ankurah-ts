@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/core/src/property/backend/yrs.rs
 import { Struct, Result, Arc, Mutex, OwnedClosure, HashMap, HashSet } from '@ankurah/base';
 import { MutationError, RetrievalError, StateError } from '../../error';
-import { PropertyBackend } from './index';
 import { Transaction } from '../../transaction';
 import { Value } from '../../value/index';
+import { PropertyBackend } from './index';
 import { Operation } from '@ankurah/proto';
 import { Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
 
@@ -115,7 +115,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
 
   fork(): Arc<PropertyBackend> {
     const stateBuffer = this.toStateBuffer().unwrap();
-    const backend = YrsBackend.Self.fromStateBuffer(stateBuffer).unwrap();
+    const backend = YrsBackend.fromStateBuffer(stateBuffer).unwrap();
     return Arc.new(backend);
   }
 
@@ -154,10 +154,10 @@ export class YrsBackend extends Struct implements PropertyBackend {
   static fromStateBuffer(stateBuffer: Uint8Array): Result<YrsBackend, RetrievalError> {
     const doc = yrs.Doc.new();
     let txn = doc.transactMut();
-    const _r0 = yrs.Update.decodeV2(stateBuffer).mapErr((e) => RetrievalError.FailedUpdate(e));
+    const _r0 = yrs.Update.decodeV2(stateBuffer).mapErr((e) => new RetrievalError('FailedUpdate', { _0: e }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const update = _r0.unwrap();
-    const _r1 = txn.applyUpdate(update).mapErr((e) => RetrievalError.FailedUpdate(e));
+    const _r1 = txn.applyUpdate(update).mapErr((e) => new RetrievalError('FailedUpdate', { _0: e }));
     if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
     _r1.drop();
     txn.commit();

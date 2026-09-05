@@ -615,6 +615,62 @@ mod tests {
         assert!(over.reason.contains("Leptos"));
     }
 
+    /// Cargo's own rules for what counts as a feature, which decide whether a
+    /// `#[cfg(feature = "x")]` is answered or left undecided.
+    #[test]
+    fn a_declared_feature_set_is_the_table_plus_default_plus_implicit_dependencies() {
+        let manifest: toml::Table = r#"
+            [package]
+            name = "thing"
+            [features]
+            wasm = ["dep:wasm-bindgen"]
+            [dependencies]
+            wasm-bindgen = { version = "0.2", optional = true }
+            tracing = { version = "0.1", optional = true }
+            serde = "1.0"
+        "#
+        .parse()
+        .unwrap();
+        let mut declared = features_declared_by(&manifest);
+        declared.sort();
+        assert_eq!(
+            declared,
+            vec![
+                // The table's own.
+                "default".to_string(),
+                // An optional dependency nothing names as `dep:` IS a feature.
+                "tracing".to_string(),
+                "wasm".to_string(),
+            ],
+            "`wasm-bindgen` is named `dep:wasm-bindgen` by `wasm`, which is how a crate says the \
+             dependency is not a feature of its own; `serde` is not optional; `default` is \
+             declared whether or not the table says so"
+        );
+    }
+
+    /// The corpus as it stands, so a crate that starts declaring a feature the
+    /// port has an opinion about moves this test.
+    #[test]
+    fn the_corpus_declares_what_the_config_names() {
+        let config = config();
+        let declared = declared_features(&config.crates, &config.paths.rust_source);
+        let ankql = declared.get("ankql").expect("ankql is in [crates] and has a Cargo.toml");
+        assert!(ankql.contains(&"wasm".to_string()));
+        assert!(ankql.contains(&"default".to_string()));
+        assert!(
+            !ankql.contains(&"wasm-bindgen".to_string()),
+            "ankql's only optional dependency is named `dep:wasm-bindgen` by its `wasm` feature"
+        );
+        // `Config::load` already refuses a `[features.<crate>]` naming anything
+        // absent from these lists; this is the list it checks against.
+        for (krate, named) in &config.crate_features {
+            let Some(declared) = declared.get(krate) else { continue };
+            for feature in named {
+                assert!(declared.contains(feature), "[features.{krate}] names `{feature}`");
+            }
+        }
+    }
+
     #[test]
     fn per_crate_features_differ() {
         let config = config();
@@ -687,6 +743,50 @@ mod tests {
 ///
 /// An empty answer means the corpus was not where `[paths] rust_source` says,
 /// which is what a unit fixture looks like; nothing is checked then.
+
+/// Every feature ONE `Cargo.toml` declares, the way Cargo counts them.
+///
+/// Three sources, and a port that reads only the first gets the answer wrong:
+/// the `[features]` table; `default`, which Cargo declares whether or not the
+/// table names it; and every OPTIONAL dependency, which Cargo turns into an
+/// implicit feature of the same name — unless some feature already names it as
+/// `dep:x`, which is exactly how a crate says "this dependency is not a feature
+/// of mine". `#[cfg(feature = "x")]` naming something absent from this list is
+/// a question nothing answers, so getting the list wrong turns a typo into a
+/// silently dropped item.
+fn features_declared_by(table: &toml::Table) -> Vec<String> {
+    let features = table.get("features").and_then(|f| f.as_table());
+    let mut declared: Vec<String> = features.map(|f| f.keys().cloned().collect()).unwrap_or_default();
+    if !declared.iter().any(|f| f == "default") {
+        declared.push("default".to_string());
+    }
+    let mut explicit_deps: Vec<String> = Vec::new();
+    if let Some(features) = features {
+        for value in features.values() {
+            let Some(list) = value.as_array() else { continue };
+            for item in list {
+                let Some(text) = item.as_str() else { continue };
+                if let Some(dep) = text.strip_prefix("dep:") {
+                    explicit_deps.push(dep.to_string());
+                }
+            }
+        }
+    }
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(deps) = table.get(section).and_then(|d| d.as_table()) else { continue };
+        for (dep, spec) in deps {
+            let optional = spec.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
+            if !optional || explicit_deps.iter().any(|d| d == dep) {
+                continue;
+            }
+            if !declared.iter().any(|f| f == dep) {
+                declared.push(dep.clone());
+            }
+        }
+    }
+    declared
+}
+
 fn declared_features(
     crates: &HashMap<String, String>,
     rust_source: &Path,
@@ -711,44 +811,7 @@ fn declared_features(
         if !crates.contains_key(name) {
             continue;
         }
-        let features = table.get("features").and_then(|f| f.as_table());
-        let mut declared: Vec<String> = features
-            .map(|f| f.keys().cloned().collect())
-            .unwrap_or_default();
-        // Cargo declares `default` whether or not the table names it.
-        if !declared.iter().any(|f| f == "default") {
-            declared.push("default".to_string());
-        }
-        // A dependency named as `dep:x` by some feature is not itself a
-        // feature; every other optional dependency is.
-        let mut explicit_deps: Vec<String> = Vec::new();
-        if let Some(features) = features {
-            for value in features.values() {
-                let Some(list) = value.as_array() else { continue };
-                for item in list {
-                    let Some(text) = item.as_str() else { continue };
-                    if let Some(dep) = text.strip_prefix("dep:") {
-                        explicit_deps.push(dep.to_string());
-                    }
-                }
-            }
-        }
-        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-            let Some(deps) = table.get(section).and_then(|d| d.as_table()) else { continue };
-            for (dep, spec) in deps {
-                let optional = spec
-                    .get("optional")
-                    .and_then(|o| o.as_bool())
-                    .unwrap_or(false);
-                if !optional || explicit_deps.iter().any(|d| d == dep) {
-                    continue;
-                }
-                if !declared.iter().any(|f| f == dep) {
-                    declared.push(dep.clone());
-                }
-            }
-        }
-        out.insert(name.to_string(), declared);
+        out.insert(name.to_string(), features_declared_by(&table));
     }
     out
 }

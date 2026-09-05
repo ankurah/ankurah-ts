@@ -1,11 +1,9 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
 import { Struct, dropOwned, HashSet } from '@ankurah/base';
-import { ComparisonOperator, Expr, Predicate } from '@ankurah/ankql';
-import { IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
+import { ComparisonOperator, Expr, Predicate, Literal, OrderByItem, Selection } from '@ankurah/ankql';
+import { IndexKeyPart, KeySpec, Value, ValueType, Comparison } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
 import { Endpoint, KeyBoundComponent, KeyBounds, KeyDatum, OrderByComponents, Plan, ScanDirection } from './types';
-import { ComparisonOperator, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
-import { Comparison, IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
 
 export class PlannerConfig extends Struct {
   readonly supportsDescIndexes: boolean;
@@ -117,7 +115,7 @@ export class Planner extends Struct {
         if (!inequalities.isEmpty()) {
           for (const [field, ] of inequalities) {
             {
-              const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy.asDeref());
+              const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy);
               if (_v3 != null) {
                 const plan = _v3;
                 plans.push(plan);
@@ -257,7 +255,7 @@ export class Planner extends Struct {
                   firstDir.drop();
                 }
               } else {
-                return OrderByComponents.new(orderBy.toVec(), []);
+                return OrderByComponents.new(orderBy.slice(), []);
               }
             })();
             try {
@@ -504,9 +502,9 @@ export class Planner extends Struct {
       const _m3 = (() => {
         const _v = bounds;
         if (_v != null) {
+          const bounds = _v;
           let _moved2 = false;
           try {
-            const bounds = _v;
             {
               if (this.isEmptyBounds(bounds)) {
                 return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
@@ -588,9 +586,9 @@ export class Planner extends Struct {
     const _m1 = (() => {
       const _v = bounds;
       if (_v != null) {
+        const bounds = _v;
         let _moved0 = false;
         try {
-          const bounds = _v;
           {
             if (this.isEmptyBounds(bounds)) {
               return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
@@ -944,7 +942,7 @@ export class Planner extends Struct {
                   Desc: () => new ScanDirection('Reverse', {}),
                 });
                 const presort = [firstItem.clone()];
-                const spill = orderItems.slice(1).toVec();
+                const spill = orderItems.slice(1).slice();
                 return [direction, OrderByComponents.new(presort, spill)];
               } else {
                 return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.clone())];

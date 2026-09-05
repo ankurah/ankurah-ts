@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
 import { Struct, Result, Arc, dropOwned, tracing, checkedAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
-import { Filterable, MutationError, RetrievalError, StorageCollection } from '@ankurah/core';
-import { Attested, EntityState, EventId, State } from '@ankurah/proto';
-import { OrderByComponents, Plan, ValueSetStream } from '@ankurah/storage-common';
+import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, State, Value } from '@ankurah/core';
+import { Attested, EntityState, EventId, State, CollectionId, EntityId, Event } from '@ankurah/proto';
+import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig } from '@ankurah/storage-common';
 import { Database } from './database';
 import { IdbValue } from './idb_value';
 import { planBoundsToIdbRange, scanDirectionToCursorDirection } from './planner_integration';
@@ -12,9 +12,6 @@ import { cbStream } from './util/cb_stream';
 import { Object } from './util/object';
 import { Result_JsValue_require } from './util/require';
 import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
-import { Comparison, Filterable, MutationError, RetrievalError, State, StorageCollection, Value } from '@ankurah/core';
-import { Attested, CollectionId, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
-import { HasEntityId, OrderByComponents, Planner, PlannerConfig } from '@ankurah/storage-common';
 
 export class IndexedDBBucket extends Struct implements StorageCollection {
   db: Database;
@@ -276,7 +273,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         try {
           const plans = planner.plan(amendedSelection, 'id');
           try {
-            const _r0 = plans[0].okOrElse(() => new RetrievalError('StorageError', { _0: 'No plan generated' }));
+            const _r0 = plans[0] != null ? Result.Ok(plans[0]!) : Result.Err((() => new RetrievalError('StorageError', { _0: 'No plan generated' }))());
             if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
             const plan = _r0.unwrap();
             const _m8 = await (async () => {
@@ -471,7 +468,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
                 const _r10 = eventObj.get(ATTESTATIONS_KEY);
                 if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-                const event = new Attested(new ankurahProto.Event(this.collectionId.clone(), _r7.unwrap(), _r8.unwrap(), _r9.unwrap()), _r10.unwrap());
+                const event = new Attested(new Event(this.collectionId.clone(), _r7.unwrap(), _r8.unwrap(), _r9.unwrap()), _r10.unwrap());
                 events.push(event);
               } finally {
                 eventObj.drop();
@@ -538,7 +535,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
             const _r11 = eventObj.get(ATTESTATIONS_KEY);
             if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
-            const event = new Attested(new ankurahProto.Event(this.collectionId.clone(), _r8.unwrap(), _r9.unwrap(), _r10.unwrap()), _r11.unwrap());
+            const event = new Attested(new Event(this.collectionId.clone(), _r8.unwrap(), _r9.unwrap(), _r10.unwrap()), _r11.unwrap());
             events.push(event);
             const _r12 = cursor.continue().require('Failed to advance cursor');
             if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
@@ -723,6 +720,6 @@ function extractAllFields(entityObj: Object, entityState: EntityState): Result<v
 
 export function addCollection(selection: Selection, collectionId: CollectionId): Selection {
   const collectionComparison = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('__collection') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: collectionId.toString() }) }) });
-  return new ankql.ast.Selection(new Predicate('And', { _0: collectionComparison, _1: selection.predicate.clone() }), selection.orderBy.clone(), selection.limit);
+  return new Selection(new Predicate('And', { _0: collectionComparison, _1: selection.predicate.clone() }), selection.orderBy.clone(), selection.limit);
 }
 

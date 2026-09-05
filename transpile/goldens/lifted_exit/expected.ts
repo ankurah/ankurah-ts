@@ -29,6 +29,7 @@ export class ApplyError extends Enum<ApplyErrorV> {
   }
 
   equals(other: ApplyError): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

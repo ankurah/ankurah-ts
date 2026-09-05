@@ -72,7 +72,7 @@ class TestEvent extends Struct {
   equals(other: TestEvent): boolean {
     if (!this.id.equals(other.id)) return false;
     if (!this.collection.equals(other.collection)) return false;
-    { if (this.changes.size !== other.changes.size) return false; for (const [k, v] of this.changes) { if (!other.changes.has(k)) return false; } }
+    { if (this.changes.size !== other.changes.size) return false; for (const [k, v] of this.changes) { if (!other.changes.has(k)) return false; const _w = other.changes.get(k)!; if (_w !== v) return false; } }
     return true;
   }
 

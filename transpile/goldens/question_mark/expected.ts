@@ -50,6 +50,7 @@ export class ParseError extends Enum<ParseErrorV> {
   }
 
   equals(other: ParseError): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

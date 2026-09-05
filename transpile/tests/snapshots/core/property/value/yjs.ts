@@ -1,12 +1,11 @@
 // MIRRORS: ankurah/core/src/property/value/yrs.rs
 import { Struct, Result, Arc, OwnedClosure } from '@ankurah/base';
-import { Listener, ListenerGuard, Signal } from '@ankurah/signals';
+import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
 import { MutationError } from '../../error';
 import { YrsBackend } from '../backend/yrs';
 import { FromActiveType, FromEntity, InitializeWith, PropertyError } from '../traits';
 import { fromActive } from './pn_counter';
-import { BroadcastId, ListenerGuard, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 
 export class YrsString<Projected extends Clone> extends Struct implements FromEntity, InitializeWith<string>, InitializeWith<string | null>, Signal, Subscribe<string> {
   readonly propertyName: PropertyName;
@@ -74,7 +73,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
   }
 
   static initializeWith<Projected>(entity: Entity, propertyName: PropertyName, value: string): YrsString<Projected> {
-    const newString = YrsString.Self.fromEntity(propertyName, entity);
+    const newString = YrsString.fromEntity(propertyName, entity);
     newString.insert(0, value).unwrap();
     return newString;
   }
@@ -141,7 +140,7 @@ export function Cow_Str_fromActive<Projected>(active: YrsString<Projected>): Res
     const _v = active.value();
     if (_v != null) {
       const value = _v;
-      return Result.Ok(Cow.Self.from(value));
+      return Result.Ok(Cow.from(value));
     } else {
       return Result.Err(new PropertyError('Missing', {}));
     }

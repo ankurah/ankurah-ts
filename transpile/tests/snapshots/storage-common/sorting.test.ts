@@ -71,7 +71,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   equals(other: TestItem): boolean {
-    { if (this.values.size !== other.values.size) return false; for (const [k, v] of this.values) { if (!other.values.has(k)) return false; } }
+    { if (this.values.size !== other.values.size) return false; for (const [k, v] of this.values) { if (!other.values.has(k)) return false; const _w = other.values.get(k)!; if (!v.equals(_w)) return false; } }
     return true;
   }
 

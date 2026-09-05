@@ -124,14 +124,31 @@ fn direct_dependencies(dir: Option<&PathBuf>) -> Vec<String> {
     out
 }
 
-/// Read one sibling's declarations. The files come back named `<ident>/<path>`,
-/// which is the module path a written `ankql::ast::Selection` looks up, and are
-/// marked declarations-only so nothing is emitted for them.
-pub fn declarations(
-    sibling: &Sibling,
-    config: &Config,
-    corpus_root: &Path,
-) -> Result<Vec<crate::registry::ExtractedFile>> {
+/// What reading one sibling produced: its declarations, and the files that
+/// could not be read.
+pub struct Load {
+    pub files: Vec<crate::registry::ExtractedFile>,
+    /// One line per file the parser refused, named the way this run names it.
+    /// A sibling file that does not parse is a hole in what THIS crate can
+    /// resolve — every type it declared becomes a foreign name here — so the
+    /// run that needs it is the run that says so.
+    pub failures: Vec<String>,
+}
+
+/// Read one sibling's declarations, under that crate's own config.
+///
+/// The files come back named `<ident>/<path>`, which is the module path a
+/// written `ankql::ast::Selection` looks up, and are marked declarations-only so
+/// nothing is emitted for them.
+///
+/// A sibling is read under exactly the rules its own run uses: an
+/// `[excluded_files]` entry is not in the port at all, an `[[excluded_items]]`
+/// entry is not in the crate, and a `[[provided]]` module's members are whoever
+/// wrote that TypeScript. Reading a sibling by a laxer rule than its own crate
+/// gives two different answers about one crate in one registry: an excluded
+/// item resolves here and nowhere else, and a provided type's methods look
+/// emitted when they are hand-written.
+pub fn declarations(sibling: &Sibling, config: &Config, corpus_root: &Path) -> Result<Load> {
     let features = config.features_for_crate(&sibling.cargo_name);
     let prefix = sibling
         .src
@@ -139,6 +156,7 @@ pub fn declarations(
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| format!("{}/src", sibling.cargo_name));
     let mut out = Vec::new();
+    let mut failures = Vec::new();
     for entry in walkdir::WalkDir::new(&sibling.src)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -150,26 +168,129 @@ pub fn declarations(
             .unwrap_or(entry.path())
             .display()
             .to_string();
-        if config.is_excluded_file(&format!("{}/{}", prefix, relative)) {
+        let full_path = format!("{}/{}", prefix, relative);
+        if config.is_excluded_file(&full_path) {
             continue;
         }
+        let excluded_here = config.excluded_items_in(&full_path);
         let cfg = crate::extract::ExtractCfg {
             features: Some(&features),
-            excluded: &[],
+            excluded: &excluded_here,
         };
-        let Ok(mut file) = crate::extract::extract_with_cfg(entry.path(), cfg) else {
-            continue;
+        let named = format!("{}/{}", sibling.ident, relative);
+        let mut file = match crate::extract::extract_with_cfg(entry.path(), cfg) {
+            Ok(file) => file,
+            Err(e) => {
+                crate::extract::take_exclusions_hit();
+                crate::diag::pending::discard();
+                failures.push(format!("{}: {:#}", named, e));
+                continue;
+            }
         };
         // Every diagnostic a sibling raises belongs to that crate's own run.
         crate::extract::take_exclusions_hit();
         crate::diag::pending::discard();
-        file.path = format!("{}/{}", sibling.ident, relative);
+        file.path = named.clone();
         out.push(crate::registry::ExtractedFile {
-            path: file.path.clone(),
+            path: named,
             file,
             declarations_only: true,
-            hand_written: false,
+            // A `[[provided]]` module's TypeScript is hand-written in that
+            // crate's package too, and its members are whatever the person who
+            // wrote the file wrote — here as much as there.
+            hand_written: config.provided_module(&full_path).is_some(),
         });
     }
-    Ok(out)
+    Ok(Load { files: out, failures })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn corpus() -> (Config, BTreeMap<String, PathBuf>, PathBuf) {
+        let config = Config::load(Path::new("transpile.toml")).unwrap();
+        let root = std::fs::canonicalize(&config.paths.rust_source)
+            .unwrap_or_else(|_| config.paths.rust_source.clone());
+        let located = locate(&config);
+        (config, located, root)
+    }
+
+    fn ankql_as_a_sibling() -> (Config, Load) {
+        let (config, located, root) = corpus();
+        // ankurah-core depends on ankql, so this is how core's run reads it.
+        let sibling = dependencies_of(&config, &located, "ankurah-core")
+            .into_iter()
+            .find(|s| s.cargo_name == "ankql")
+            .expect("ankurah-core depends on ankql");
+        let load = declarations(&sibling, &config, &root).unwrap();
+        (config, load)
+    }
+
+    /// A crate read as a dependency is the same crate it is when it is the one
+    /// being transpiled: same files, same items, same hand-written members.
+    /// Two answers about one crate in one registry is a name that resolves here
+    /// and nowhere else.
+    #[test]
+    fn a_sibling_is_read_under_its_own_crate_s_rules() {
+        let (config, load) = ankql_as_a_sibling();
+        assert!(!load.files.is_empty(), "ankql has sources");
+        assert!(
+            load.failures.is_empty(),
+            "the corpus parses today; these did not: {:?}",
+            load.failures
+        );
+
+        // `[[provided]]`: `ankql/src/grammar.rs` is a pest grammar whose
+        // TypeScript somebody wrote, so its members are hand-written here too.
+        let grammar = load
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("grammar.rs"))
+            .expect("ankql declares grammar.rs");
+        assert!(grammar.hand_written, "a `[[provided]]` module's members are hand-written");
+        assert!(grammar.declarations_only, "nothing is emitted for a sibling");
+        let ordinary = load
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("ast.rs"))
+            .expect("ankql declares ast.rs");
+        assert!(!ordinary.hand_written, "an ordinary module is emitted by its own crate's run");
+
+        // `[[excluded_items]]`: `impl From<ParseError> for JsValue` is an error
+        // crossing the wasm ABI and is not in the port. Read without the
+        // exclusion it is a declaration here and in no other run of ankql.
+        let error_rs = load
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("error.rs"))
+            .expect("ankql declares error.rs");
+        assert!(
+            !error_rs.file.impls.iter().any(|i| i.target_type.contains("JsValue")),
+            "the excluded impl is out of the crate, however the crate is read"
+        );
+        // The exclusion is real: the config still names it, so a future config
+        // that drops the entry moves this test rather than passing quietly.
+        assert!(
+            config
+                .excluded_items_in("ankql/src/error.rs")
+                .iter()
+                .any(|e| e.written.contains("JsValue")),
+            "the config excludes that impl"
+        );
+    }
+
+    /// `[excluded_files]` is a file the port does not have at all.
+    #[test]
+    fn a_sibling_does_not_carry_a_file_the_port_excludes() {
+        let (config, load) = ankql_as_a_sibling();
+        for file in &load.files {
+            let relative = file.path.splitn(2, '/').nth(1).unwrap_or(&file.path);
+            assert!(
+                !config.is_excluded_file(&format!("ankql/src/{}", relative)),
+                "{} is excluded and was read as a sibling anyway",
+                file.path
+            );
+        }
+    }
 }

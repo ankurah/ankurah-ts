@@ -17,7 +17,7 @@ export function Result_JsValue_require<T>(self: Result<T, unknown>, err: string)
 }
 
 export function Option_require<T>(self: T | null, err: string): Result<T, Error> {
-  const _r0 = self.okOr(AnyhowError.msg(`${err} is None`));
+  const _r0 = self != null ? Result.Ok(self!) : Result.Err(AnyhowError.msg(`${err} is None`));
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   return Result.Ok(_r0.unwrap());
 }

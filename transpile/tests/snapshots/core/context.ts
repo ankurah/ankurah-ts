@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/context.rs
 import { Struct, Result, Arc, dropOwned, tracing, dropUnbound } from '@ankurah/base';
-import { Attested, Clock, CollectionId, EntityState } from '@ankurah/proto';
+import { Attested, Clock, CollectionId, EntityState, EntityId, KnownEntity, NodeRequestBody } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
 import { MutationError, RetrievalError } from './error';
@@ -13,7 +13,6 @@ import { EphemeralNodeRetriever, GetEvents } from './retrieval';
 import { StorageCollectionWrapper, StorageEngine } from './storage';
 import { Transaction } from './transaction';
 import { Selection } from '@ankurah/ankql';
-import { Attested, Clock, CollectionId, EntityId, EntityState, KnownEntity, NodeRequestBody } from '@ankurah/proto';
 import { Get } from '@ankurah/signals';
 
 export class Context extends Struct {
@@ -407,7 +406,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
   async fetchFromPeer(collectionId: CollectionId, selection: Selection): Promise<Result<Entity[], RetrievalError>> {
     let _moved0 = false;
     try {
-      const _r1 = this.node.getDurablePeerRandom().okOr(new RetrievalError('NoDurablePeers', {}));
+      const _r1 = this.node.getDurablePeerRandom() != null ? Result.Ok(this.node.getDurablePeerRandom()!) : Result.Err(new RetrievalError('NoDurablePeers', {}));
       if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
       const peerId = _r1.unwrap();
       const _r2 = await this.node.fetchEntitiesFromLocal(collectionId, selection);
@@ -417,7 +416,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         const knownMatches = [...knownMatchedEntities].map((entity) => {
           const _t3 = entity.head();
           try {
-            return new proto.KnownEntity(entity.id(), _t3.clone());
+            return new KnownEntity(entity.id(), _t3.clone());
           } finally {
             _t3.drop();
           }

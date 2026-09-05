@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/connectors/local-process/src/lib.rs
 import { Struct, Drop, Result, JoinHandle, tokio, mpsc, Sender, Receiver } from '@ankurah/base';
 import { Node, PeerSender, PolicyAgent, SendError, StorageEngine, WeakNode } from '@ankurah/core';
-import { Node, PeerSender, SendError, WeakNode } from '@ankurah/core';
 import { EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
 export class LocalProcessSender extends Struct implements PeerSender {
@@ -55,10 +54,10 @@ export class LocalProcessConnection<SE1 extends StorageEngine, PA1 extends Polic
   static async new<SE1, PA1, SE2, PA2>(node1: Node<SE1, PA1>, node2: Node<SE2, PA2>): Promise<Result<LocalProcessConnection<SE1, PA1, SE2, PA2>, Error>> {
     const [node1Tx, node1Rx] = mpsc.channel(1024);
     const [node2Tx, node2Rx] = mpsc.channel(1024);
-    node1.registerPeer(new proto.Presence(node2.deref().value.id, node2.deref().value.durable, node2.deref().value.system.root()), new LocalProcessSender(node2Tx, node2.deref().value.id));
-    node2.registerPeer(new proto.Presence(node1.deref().value.id, node1.deref().value.durable, node1.deref().value.system.root()), new LocalProcessSender(node1Tx, node1.deref().value.id));
-    const receiver1Task = LocalProcessConnection.Self.setupReceiver(node1.clone(), node1Rx);
-    const receiver2Task = LocalProcessConnection.Self.setupReceiver(node2.clone(), node2Rx);
+    node1.registerPeer(new Presence(node2.deref().value.id, node2.deref().value.durable, node2.deref().value.system.root()), new LocalProcessSender(node2Tx, node2.deref().value.id));
+    node2.registerPeer(new Presence(node1.deref().value.id, node1.deref().value.durable, node1.deref().value.system.root()), new LocalProcessSender(node1Tx, node1.deref().value.id));
+    const receiver1Task = LocalProcessConnection.setupReceiver(node1.clone(), node1Rx);
+    const receiver2Task = LocalProcessConnection.setupReceiver(node2.clone(), node2Rx);
     return Result.Ok(new LocalProcessConnection(receiver1Task, receiver2Task, node1.weak(), node2.weak(), node1.deref().value.id, node2.deref().value.id));
   }
 

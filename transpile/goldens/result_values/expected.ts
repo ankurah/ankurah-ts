@@ -12,6 +12,7 @@ export class WireError extends Enum<WireErrorV> {
   }
 
   equals(other: WireError): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

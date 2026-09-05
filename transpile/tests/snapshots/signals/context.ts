@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/signals/src/context.rs
 import { Struct, Arc } from '@ankurah/base';
-import { Observer } from './observer';
 import { current, pop, remove, set, track } from './context/stack';
+import { Observer } from './observer';
 
 export class CurrentObserver extends Struct {
 

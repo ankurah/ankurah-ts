@@ -88,6 +88,7 @@ pub fn emit_struct(
     emit_derive_methods(
         out, reg, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields, Some(ordering),
         Some(crate::derives::hashing::struct_hash(reg, s)),
+        None,
     );
     // The derives that write code rather than only proving an impl: Debug's
     // `debug()`, and thiserror's `toString`/`from`. `emitted` keeps a
@@ -215,6 +216,7 @@ pub fn emit_enum(
     emit_derive_methods(
         out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[], Some(ordering),
         Some(crate::derives::hashing::enum_hash(reg, e)),
+        Some(crate::derives::equality::enum_equals(reg, e, &format!("{}{}", e.name, strip_generic_defaults(&e.generics)))),
     );
     // `emitted` already holds every method a written impl put on the class, so a
     // hand-written `Display` keeps its `toString` and the derive does not write
@@ -456,6 +458,32 @@ fn emit_trait_methods(
                 method.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>().join(","),
                 method.return_type
             );
+            // R9: a body that does nothing but call the very name it is being
+            // emitted under is a CYCLE, not an implementation.
+            // `impl PartialOrd for HeapItem` writes
+            // `fn partial_cmp(&self, o) -> Option<Ordering> { Some(self.cmp(o)) }`,
+            // and `cmp` and `partial_cmp` are one method here: whichever the
+            // source wrote first took the name, and when that was the
+            // forwarding one, `compareTo` called itself. Every TopK heap
+            // comparison overflowed the stack, and `equals`, written as
+            // `compareTo(o) === 0`, went down with it. The forwarding body is
+            // not written; the one with something in it keeps the name.
+            if forwards_to_itself(method, &ts_name) {
+                crate::diag::pending::park(
+                    method
+                        .body_ast
+                        .as_ref()
+                        .map(syn::spanned::Spanned::span)
+                        .unwrap_or_else(proc_macro2::Span::call_site),
+                    format!(
+                        "`{}::{}` for `{}` is written as a call to `{}`, which is the name it \
+                         is emitted under here, so writing it would be a method that calls \
+                         itself; the impl that has a body of its own keeps the name",
+                        trait_name, method.name, self_type, ts_name
+                    ),
+                );
+                continue;
+            }
             if !emitted.contains(&ts_name) {
                 emitted.insert(ts_name.clone());
                 signatures.insert(ts_name.clone(), signature);
@@ -523,6 +551,11 @@ fn emit_derive_methods(
     fields: &[crate::types::FieldInfo],
     ordering_of: Option<(String, Vec<crate::derives::Gap>)>,
     hash_of: Option<String>,
+    // An enum's `equals`, which has no fields of its own to compare: it
+    // switches on the variant and compares the payload, the way its
+    // `compareTo` already does. Handed in ready-made, because an enum's
+    // variants are not this function's business.
+    equality_of: Option<String>,
 ) {
     let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
     let field_names: Vec<&str> = fields.iter()
@@ -535,7 +568,9 @@ fn emit_derive_methods(
 
     if derive_set.contains("PartialEq") || derive_set.contains("Eq") {
         if emitted.insert("equals".to_string()) {
-            if field_names.is_empty() {
+            if let Some(variants) = equality_of {
+                out.push_str(&variants);
+            } else if field_names.is_empty() {
                 out.push_str(&format!("\n  equals(other: {}): boolean {{\n    return true;\n  }}\n", full_type));
             } else {
                 // Generate field-by-field equality with null safety
@@ -719,37 +754,80 @@ fn is_primitive_ts_type(ty: &str) -> bool {
 }
 
 /// Generate an equality check expression for a field
-fn emit_field_eq(name: &str, ty: &str) -> String {
+/// One field compared for equality, by the two places it is read from.
+///
+/// `mine` and `theirs` are written expressions, not names, so the same rules
+/// serve a struct's `this.x`/`other.x` and an enum payload's
+/// `(this.value as any)._0`.
+pub(crate) fn field_eq_at(mine: &str, theirs: &str, ty: &str) -> String {
     if is_primitive_ts_type(ty) {
-        format!("if (this.{} !== other.{}) return false;", name, name)
+        format!("if ({} !== {}) return false;", mine, theirs)
     } else if ty == "Uint8Array" {
-        // Byte-by-byte comparison
         format!(
-            "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
-            n = name
+            "{{ if ({m}.length !== {o}.length) return false; for (let i = 0; i < {m}.length; i++) {{ if ({m}[i] !== {o}[i]) return false; }} }}",
+            m = mine, o = theirs
         )
     } else if ty.starts_with("HashMap<") {
-        // Map comparison — check size and key-value equality
+        // Size, keys AND VALUES. Comparing size and keys alone answered `true`
+        // for two maps that agree about which keys they hold and about nothing
+        // else — proto's `data.ts` compared two `HashMap<PropertyName, Value>`
+        // that way, and a derived `equals` that ignores half the map is a wrong
+        // answer wherever the type is a HashMap key.
+        let value_ty = map_value_ty(ty);
+        let compare = if is_primitive_ts_type(&value_ty) {
+            "if (_w !== v) return false;".to_string()
+        } else {
+            format!("if (!{}) return false;", eq_call("v", "_w", &value_ty))
+        };
         format!(
-            "{{ if (this.{n}.size !== other.{n}.size) return false; for (const [k, v] of this.{n}) {{ if (!other.{n}.has(k)) return false; }} }}",
-            n = name
+            "{{ if ({m}.size !== {o}.size) return false; for (const [k, v] of {m}) {{ if (!{o}.has(k)) return false; const _w = {o}.get(k)!; {c} }} }}",
+            m = mine, o = theirs, c = compare
         )
     } else if ty.ends_with("[]") {
-        let inner = &ty[..ty.len()-2];
-        if is_primitive_ts_type(inner) {
-            format!(
-                "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
-                n = name
-            )
+        let inner = &ty[..ty.len() - 2];
+        let compare = if is_primitive_ts_type(inner) {
+            format!("if ({}[i] !== {}[i]) return false;", mine, theirs)
         } else {
-            format!(
-                "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (!this.{n}[i].equals(other.{n}[i])) return false; }} }}",
-                n = name
-            )
-        }
+            format!("if (!{}) return false;", eq_call(&format!("{}[i]", mine), &format!("{}[i]", theirs), inner))
+        };
+        format!(
+            "{{ if ({m}.length !== {o}.length) return false; for (let i = 0; i < {m}.length; i++) {{ {c} }} }}",
+            m = mine, o = theirs, c = compare
+        )
     } else {
-        format!("if (!this.{}.equals(other.{})) return false;", name, name)
+        format!("if (!{}) return false;", eq_call(mine, theirs, ty))
     }
+}
+
+/// Two values of one type compared. A `Uint8Array` and an array have no
+/// `equals`, so a nested one is compared elementwise where it stands.
+fn eq_call(mine: &str, theirs: &str, ty: &str) -> String {
+    if is_primitive_ts_type(ty) {
+        format!("{} === {}", mine, theirs)
+    } else {
+        format!("{}.equals({})", mine, theirs)
+    }
+}
+
+/// `V` of a written `HashMap<K, V>`, at the top level of the argument list.
+fn map_value_ty(ty: &str) -> String {
+    let Some(inner) = ty.strip_prefix("HashMap<").and_then(|r| r.strip_suffix('>')) else {
+        return "unknown".to_string();
+    };
+    let mut depth = 0usize;
+    for (at, ch) in inner.char_indices() {
+        match ch {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return inner[at + 1..].trim().to_string(),
+            _ => {}
+        }
+    }
+    "unknown".to_string()
+}
+
+fn emit_field_eq(name: &str, ty: &str) -> String {
+    field_eq_at(&format!("this.{}", name), &format!("other.{}", name), ty)
 }
 
 fn emit_struct_bincode(
@@ -914,7 +992,6 @@ fn resolve_self_type(ty: &str, self_type: &str) -> String {
 
 fn format_params(params: &[ParamInfo]) -> String {
     params.iter()
-        .filter(|p| !p.is_self)
         .map(|p| format!("{}: {}", p.name, param_spelling(p)))
         .collect::<Vec<_>>()
         .join(", ")
@@ -922,7 +999,7 @@ fn format_params(params: &[ParamInfo]) -> String {
 
 fn format_params_filtered(params: &[ParamInfo], self_type: &str) -> String {
     params.iter()
-        .filter(|p| !p.is_self && !is_rust_only_type(&p.ty))
+        .filter(|p| !is_rust_only_type(&p.ty))
         .map(|p| format!("{}: {}", p.name, resolve_self_type(&param_spelling(p), self_type)))
         .collect::<Vec<_>>()
         .join(", ")
@@ -1318,6 +1395,21 @@ pub(crate) fn impl_method_name(
     disambiguate_trait_method(&base, trait_name, type_args, self_type, self_id)
 }
 
+
+/// Does this method's whole body call the name it is being emitted under?
+///
+/// `fn partial_cmp(&self, o) -> Option<Ordering> { Some(self.cmp(o)) }` and
+/// `fn cmp(&self, o) -> Ordering` are one method in TypeScript, so the
+/// forwarding one reads `return this.compareTo(other)` — a method that calls
+/// itself and never returns. The question is asked of the TRANSLATED body,
+/// because that is where the two names have become one.
+fn forwards_to_itself(method: &FnInfo, ts_name: &str) -> bool {
+    let Some(body) = method.body_ts.as_deref() else { return false };
+    let statements: Vec<&str> = body.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let [only] = statements[..] else { return false };
+    only.contains(&format!("this.{}(", ts_name))
+}
+
 fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'static str, Option<&'static str>)> {
     match (trait_name, rust_method_name) {
         // `impl Drop for T` is the type's own cleanup, and `AkObject.drop()` is
@@ -1339,5 +1431,60 @@ fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'s
         ("FromStr", "from_str") => Some(("fromStr", None)),
         ("IntoIterator", "into_iter") => Some(("iter", None)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+
+    fn method(body: &str) -> FnInfo {
+        FnInfo {
+            name: "partial_cmp".to_string(),
+            ts_name: "compareTo".to_string(),
+            is_pub: true,
+            vis: crate::types::VisInfo::Public,
+            is_async: false,
+            is_static: false,
+            self_kind: None,
+            self_receiver: None,
+            has_default_body: false,
+            params: Vec::new(),
+            return_type: "number".to_string(),
+            rust_return: None,
+            generics: String::new(),
+            type_params: Vec::new(),
+            syn_generics: syn::Generics::default(),
+            is_test: false,
+            body_ast: None,
+            body_ts: Some(body.to_string()),
+        }
+    }
+
+    /// `Ord::cmp` and `PartialOrd::partial_cmp` are ONE method here, so an impl
+    /// written `Some(self.cmp(other))` becomes `return this.compareTo(other)` —
+    /// a method that calls itself. Whichever the source wrote first took the
+    /// name, and when that was the forwarding one every comparison overflowed
+    /// the stack: storage-common's `HeapItem` is written exactly that way, so
+    /// every TopK heap comparison did, and `equals` — `compareTo(o) === 0` —
+    /// went down with it.
+    #[test]
+    fn a_body_that_is_only_a_call_to_its_own_name_is_a_cycle() {
+        assert!(forwards_to_itself(&method("return this.compareTo(other);"), "compareTo"));
+        assert!(forwards_to_itself(&method("  return this.compareTo(other);  "), "compareTo"));
+    }
+
+    #[test]
+    fn a_body_with_something_in_it_is_not_a_cycle() {
+        // The Ord body itself: it calls a FIELD's comparison, not its own name.
+        assert!(!forwards_to_itself(&method("return this.n.compareTo(other.n);"), "compareTo"));
+        // More than one statement is a body, whatever it calls.
+        assert!(!forwards_to_itself(
+            &method("const a = this.key();\nreturn this.compareTo(other);"),
+            "compareTo"
+        ));
+        // A different name is a different method.
+        assert!(!forwards_to_itself(&method("return this.partialCompareTo(other);"), "compareTo"));
+        assert!(!forwards_to_itself(&method(""), "compareTo"));
     }
 }

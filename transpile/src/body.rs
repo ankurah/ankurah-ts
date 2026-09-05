@@ -108,6 +108,16 @@ pub fn translate_pat(pat: &syn::Pat) -> String {
 }
 
 /// Indent each line by 2 spaces
+/// The text of an R12 hole: what an emitted file carries where the port has no
+/// lowering for a Rust shape.
+///
+/// One spelling, in one place, so a hole is greppable in emitted output and the
+/// harness can hold a ledger of them. `unsupported` answers `never`, so this
+/// stands wherever the expression it replaces stood.
+pub fn hole_text(what: &str) -> String {
+    format!("unsupported({})", quoted(what))
+}
+
 pub fn indent(s: &str) -> String {
     s.lines()
         .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
@@ -378,8 +388,32 @@ impl<'a> BodyTranslator<'a> {
                         // The call still resolved — `unwrap` on a `LockResult`
                         // is `Result::unwrap` and hands back the guard — so it
                         // is recorded before the runtime's own answer is
-                        // written, which is nothing at all.
+                        // written.
                         self.record_resolution(call, &rust_method);
+                        // On an `Option` these PANIC when there is nothing
+                        // there, and the port writes `Option<T>` as `T | null`:
+                        // written as the identity, `steps.last().expect("..")`
+                        // handed the `null` on and the message was thrown away,
+                        // so a `None` became a value read further down instead
+                        // of a stop. `??` reads exactly null and undefined,
+                        // which is what "nothing there" is here, and it reads
+                        // the receiver once.
+                        let nullable = self
+                            .resolve_expr_type(&call.receiver)
+                            .ok()
+                            .is_some_and(|ty| self.is_nullable(&ty));
+                        if nullable {
+                            let message = match (rust_method.as_str(), args.first()) {
+                                ("expect", Some(text)) => text.clone(),
+                                _ => crate::body::quoted(
+                                    "called `Option::unwrap()` on a `None` value",
+                                ),
+                            };
+                            return format!(
+                                "({} ?? (() => {{ throw new Error({}); }})())",
+                                receiver, message
+                            );
+                        }
                         return receiver.to_string();
                     }
                 }
@@ -891,7 +925,14 @@ impl<'a> BodyTranslator<'a> {
                 if let Some(built) = self.struct_variant_literal(s) {
                     return built;
                 }
-                let mut name = Self::path_static(&s.path);
+                // `proto::Presence { .. }` where `proto` is this file's name
+                // for `ankurah_proto`: the port flattens a crate into a
+                // package, so the type is imported by its leaf and the
+                // qualifier names nothing here.
+                let mut name = self
+                    .through_sibling_crate(&s.path)
+                    .or_else(|| self.through_local_module(&s.path))
+                    .unwrap_or_else(|| Self::path_static(&s.path));
                 if name == "Self" { name = self.self_type.to_string(); }
                 self.struct_literal(s, &name)
             }
@@ -1221,13 +1262,29 @@ impl<'a> BodyTranslator<'a> {
     /// A pattern match tests its subject and then takes it apart, and the
     /// subject has to be the *same* value both times: `if let Some(x) =
     /// c.step().await?` that writes the call twice calls it twice.
+    /// A name for a value the translator needs to hold, which no binding in
+    /// scope already answers to.
+    ///
+    /// The counter alone would hand out `_v` to a body that declares its own
+    /// `let _v`, and the emitted `const _v = ..` would shadow it for the rest
+    /// of the block — the Rust name still read, and reading the wrong value.
+    /// The type context knows every local in scope, so a candidate it already
+    /// knows is passed over. Where the context is busy (the translator asks for
+    /// a temporary in the middle of resolving something) the counter stands on
+    /// its own, which is what it always did.
     pub fn fresh_temp(&self) -> String {
-        let n = self.temporaries.get();
-        self.temporaries.set(n + 1);
-        if n == 0 {
-            "_v".to_string()
-        } else {
-            format!("_v{}", n)
+        loop {
+            let n = self.temporaries.get();
+            self.temporaries.set(n + 1);
+            let candidate = if n == 0 { "_v".to_string() } else { format!("_v{}", n) };
+            let taken = self
+                .types
+                .as_ref()
+                .and_then(|tc| tc.try_borrow().ok().map(|tc| tc.lookup(&candidate).is_some()))
+                .unwrap_or(false);
+            if !taken {
+                return candidate;
+            }
         }
     }
 

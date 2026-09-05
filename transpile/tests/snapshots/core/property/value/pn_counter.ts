@@ -23,7 +23,7 @@ export class PNCounter<I extends Into<PNValue> & From<PNValue> & Copy & Clone> e
   }
 
   backend(): Arc<PNBackend> {
-    return this.backend.upgrade();
+    return (this.backend.upgrade() ?? (() => { throw new Error('Expected `PN` property backend to exist'); })());
   }
 
   add(amount: PNValue): void {
@@ -51,7 +51,7 @@ export class PNCounter<I extends Into<PNValue> & From<PNValue> & Copy & Clone> e
   }
 
   static initializeWith<I>(entity: Entity, propertyName: PropertyName, value: I): PNCounter<I> {
-    const new_ = PNCounter.Self.fromEntity(propertyName, entity);
+    const new_ = PNCounter.fromEntity(propertyName, entity);
     try {
       new_.add(value);
       return new_;

@@ -2,7 +2,6 @@
 import { Struct, Enum, HashMap, HashSet } from '@ankurah/base';
 import { KeySpec, Value, ValueType } from '@ankurah/core';
 import { OrderByItem, Predicate } from '@ankurah/ankql';
-import { KeySpec, Value, ValueType } from '@ankurah/core';
 
 export class OrderByComponents extends Struct {
   readonly presort: OrderByItem[];
@@ -149,6 +148,24 @@ export class Plan extends Enum<PlanV> {
   }
 
   equals(other: Plan): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Index': {
+        if (!(this.value as any).indexSpec.equals((other.value as any).indexSpec)) return false;
+        if (!(this.value as any).scanDirection.equals((other.value as any).scanDirection)) return false;
+        if (!(this.value as any).bounds.equals((other.value as any).bounds)) return false;
+        if (!(this.value as any).remainingPredicate.equals((other.value as any).remainingPredicate)) return false;
+        if (!(this.value as any).orderBySpill.equals((other.value as any).orderBySpill)) return false;
+        break;
+      }
+      case 'TableScan': {
+        if (!(this.value as any).bounds.equals((other.value as any).bounds)) return false;
+        if (!(this.value as any).scanDirection.equals((other.value as any).scanDirection)) return false;
+        if (!(this.value as any).remainingPredicate.equals((other.value as any).remainingPredicate)) return false;
+        if (!(this.value as any).orderBySpill.equals((other.value as any).orderBySpill)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -173,6 +190,7 @@ export class ScanDirection extends Enum<ScanDirectionV> {
   }
 
   equals(other: ScanDirection): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 
@@ -227,6 +245,21 @@ export class KeyDatum extends Enum<KeyDatumV> {
   }
 
   equals(other: KeyDatum): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Val': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'NegInfinity': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'PosInfinity': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -264,6 +297,22 @@ export class Endpoint extends Enum<EndpointV> {
   }
 
   equals(other: Endpoint): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'UnboundedLow': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'UnboundedHigh': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Value': {
+        if (!(this.value as any).datum.equals((other.value as any).datum)) return false;
+        if ((this.value as any).inclusive !== (other.value as any).inclusive) return false;
+        break;
+      }
+    }
     return true;
   }
 

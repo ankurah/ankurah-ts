@@ -167,11 +167,21 @@ fn leaves_the_loop(
         if position == Position::Returning {
             return None;
         }
-        // Already inside a lifted body that carries exits out. The arm's
-        // sentinel travels through this match's value into the enclosing
-        // arrow, where the test that performs the return already stands, so a
-        // second test here would read a value nobody put there.
-        if t.jump_as_value.get() {
+        // Already inside a lifted body that carries exits out, AND this match's
+        // value is what that body hands back: the arm's sentinel travels
+        // through it into the enclosing arrow, where the test that performs
+        // the return already stands, so a second test here would read a value
+        // nobody put there.
+        //
+        // In STATEMENT position it travels nowhere: the value is discarded on
+        // the spot. ankql's `generate_expr_sql` writes `match expr { .. }`
+        // inside a `for` inside an arm, every branch of it `return Err(..)`,
+        // and the sentinel each one produced was dropped where it stood — the
+        // error never left the function, and the `Result.Err` and its payload
+        // leaked. So the test is written here too, and it hands the sentinel
+        // ON rather than unwrapping it, because a `return` here leaves the arm
+        // and not the function.
+        if t.jump_as_value.get() && position != Position::Statement {
             return None;
         }
     }
@@ -250,10 +260,19 @@ fn jump_through_a_value(
         .iter()
         .any(|arm| leaves_the_function(&arm.body))
     {
-        out.push_str(&format!(
-            "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
-            held = held
-        ));
+        // Inside a lifted arm a `return` leaves the ARM, so the sentinel is
+        // handed on whole for the test outside to unwrap. Unwrapping it here
+        // would hand the enclosing arrow a plain `Result.Err`, which the test
+        // above it does not recognise as an exit — and the error would be read
+        // as the match's value.
+        out.push_str(&if previous {
+            format!("if (({held} as any)?.$jump === 'return') return {held};\n", held = held)
+        } else {
+            format!(
+                "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
+                held = held
+            )
+        });
     }
     for kind in kinds {
         let (word, label) = match kind.split_once('#') {
@@ -1318,4 +1337,52 @@ fn as_arm_value(body: &str, bindings: &str, produces: bool) -> String {
         "{{\n{}  }}",
         indent(&indent(&format!("{}{}\n", bindings, tail)))
     )
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use crate::testing::Fixture;
+
+    /// A `?` or a `return` inside a match that stands as a STATEMENT within a
+    /// lifted arm has nowhere to travel: the arm hands its own value back
+    /// through the sentinel, and a statement's value is discarded on the spot.
+    /// So the test is written after the nested match too — and it hands the
+    /// sentinel ON rather than unwrapping it, because a `return` there leaves
+    /// the arm and not the function. Without it ankql's `generate_expr_sql`
+    /// dropped every `Err` its inner match produced, and the `Result.Err` and
+    /// its payload leaked.
+    #[test]
+    fn a_nested_statement_match_hands_its_exit_on() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: usize }\n\
+             pub enum Inner { Good, Bad }\n\
+             pub enum Outer { One(Token), Two }\n\
+             pub fn run(o: Outer, inner: &Inner, out: &mut String) -> Result<(), String> {\n\
+               match o {\n\
+                 Outer::One(t) => {\n\
+                   match inner {\n\
+                     Inner::Good => { out.push('g'); }\n\
+                     Inner::Bad => { return Err(\"bad\".to_string()); }\n\
+                   }\n\
+                   out.push('1');\n\
+                   drop(t);\n\
+                 }\n\
+                 Outer::Two => { out.push('2'); }\n\
+               }\n\
+               Ok(())\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "run");
+        // The inner match's sentinel is tested, and passed on whole.
+        assert!(
+            ts.contains("?.$jump === 'return') return _m1;")
+                || ts.contains("?.$jump === 'return') return _m0;"),
+            "the nested match's exit is handed on:\n{}",
+            ts
+        );
+        // The outer one unwraps it, because there the `return` is the
+        // function's.
+        assert!(ts.contains("$jump === 'return') return (_m2 as any).$value;"), "{}", ts);
+    }
 }

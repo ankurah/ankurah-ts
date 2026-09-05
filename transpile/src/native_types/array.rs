@@ -63,6 +63,13 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         ),
 
         // Iterator entry points — these convert to array operations
+        // `to_vec` and `to_owned` on a slice COPY it, which is what
+        // `Array.prototype.slice()` with no arguments does. A `[usize]` used to
+        // be written as a `Uint8Array`, whose `slice` this borrowed; now that
+        // only `[u8]` is bytes, an ordinary array owes the same answer, and
+        // `parentIds.toVec()` — a method no array has — was what it gave.
+        "to_vec" | "to_owned" => format!("{}.slice()", receiver),
+
         "iter" | "into_iter" => format!("[...{}]", receiver),
         "values" => format!("[...{}]", receiver),
 
@@ -76,4 +83,23 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         },
     };
     MethodTranslation::Expr(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `to_vec`/`to_owned` on a slice COPY it. While every numeric slice was
+    /// written as a `Uint8Array` these borrowed that type's translation; once
+    /// only `[u8]` was bytes, six emitted sites read `xs.toVec()`, which no
+    /// JavaScript array has.
+    #[test]
+    fn to_vec_on_an_array_is_a_copy() {
+        for method in ["to_vec", "to_owned"] {
+            match translate("xs", method, &[]) {
+                MethodTranslation::Expr(ts) => assert_eq!(ts, "xs.slice()"),
+                _ => panic!("{method} has no expression translation"),
+            }
+        }
+    }
 }

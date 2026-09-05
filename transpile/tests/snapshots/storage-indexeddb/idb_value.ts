@@ -1,8 +1,7 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/idb_value.rs
 import { Struct, Result, tracing } from '@ankurah/base';
-import { Value } from '@ankurah/core';
+import { Value, Json } from '@ankurah/core';
 import { Object } from './util/object';
-import { Json, Value } from '@ankurah/core';
 import { EntityId } from '@ankurah/proto';
 
 export class IdbValue extends Struct {

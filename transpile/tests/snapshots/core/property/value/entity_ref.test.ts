@@ -13,7 +13,7 @@ describe('entity_ref unit tests', () => {
   test('test_ref_roundtrip', () => {
     const id = EntityId.new();
     const r = new Ref(id.clone());
-    const value = r.intoValue().unwrap();
+    const value = (r.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
     if (!(value.is('EntityId'))) throw new Error('assertion failed');
     const recovered = Ref.fromValue(value);
     try {

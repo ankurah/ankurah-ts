@@ -21,7 +21,7 @@ class TestEntity extends Struct implements AbstractEntity {
   static new(id: number, data: HashMap<string, Value>): TestEntity {
     let idBytes = Array(16).fill(0);
     idBytes[15] = id;
-    return new TestEntity(proto.EntityId.fromBytes(idBytes), proto.CollectionId.fixedName('test'), Arc.new(new Mutex(data)));
+    return new TestEntity(EntityId.fromBytes(idBytes), CollectionId.fixedName('test'), Arc.new(new Mutex(data)));
   }
 
   collection(): CollectionId {

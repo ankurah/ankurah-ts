@@ -35,6 +35,29 @@ pub fn translate(
         .collect();
     let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
 
+    // A CONSUMING match whose arm tests inside the payload has no lowering
+    // here, and what the chain writes for one is wrong in two ways at once: the
+    // names it binds out of the payload are never detached from the value they
+    // came out of, so releasing that value drops them a second time; and no arm
+    // releases the value at all, because the chain claims only the names each
+    // arm bound. `Some(Payload::Held(token)) => sink(token)` handed `token` on
+    // and leaked the `Payload` it came out of.
+    //
+    // `Option<T>` is `T | null`, so the value under test IS the payload: the
+    // right lowering is the consuming enum match, which detaches the payload
+    // and marks the enum moved. Until the arm chain can test inside a payload
+    // and own it in Rust's arm order, this is a hole (R12) rather than an arm
+    // that runs and answers something Rust would not.
+    if takes == crate::ownership::scrutinee::Takes::Payload
+        && match_expr.arms.iter().any(|arm| tests_inside_the_payload(&arm.pat))
+    {
+        return t.hole(
+            syn::spanned::Spanned::span(match_expr),
+            "an arm of this consuming `Option` match tests inside the payload, and the port \
+             cannot both take a name out of that payload and release what is left of it here",
+        ) + ";";
+    }
+
     let mut branches: Vec<(String, String)> = Vec::new();
     let mut otherwise: Option<String> = None;
     // Rust's match is exhaustive, so if control reaches the last arm's test that
@@ -57,7 +80,17 @@ pub fn translate(
         let (test, bind) = t.pattern_test(&subject, &arm.pat);
         let _entered = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
         let owned = payload_owned(&arm.pat, arm, takes, t);
-        let body = t.wrap_bindings(&owned, format!("{}{}\n", bind, arm_body(&arm.body, t, position)));
+        // The binding stands OUTSIDE the `try`, because the `finally` that
+        // releases it is a sibling of that block and cannot see a `const`
+        // declared inside it. Written the other way — `try { const value = old;
+        // .. } finally { value.drop(); }` — every arm that owned what it bound
+        // threw `ReferenceError: value is not defined` on the way out, and then
+        // leaked the value it was trying to release.
+        let body = format!(
+            "{}{}",
+            bind,
+            t.wrap_bindings(&owned, format!("{}\n", arm_body(&arm.body, t, position)))
+        );
         if test == "true" {
             otherwise = Some(body);
         } else {
@@ -120,4 +153,106 @@ fn payload_owned(
         &names,
         std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
     )
+}
+
+/// Does this arm's pattern look INSIDE the `Option`'s payload?
+///
+/// `Some(p)` and `Some(_)` take the payload as it stands; `Some(Payload::Held(t))`
+/// and `Some(Wrap { n })` test what is in it and bind out of it, which is the
+/// shape the chain has no ownership lowering for.
+fn tests_inside_the_payload(pat: &syn::Pat) -> bool {
+    let syn::Pat::TupleStruct(ts) = pat else { return false };
+    if ts.path.segments.last().map(|s| s.ident.to_string()).as_deref() != Some("Some") {
+        return false;
+    }
+    let Some(inner) = ts.elems.first() else { return false };
+    !matches!(inner, syn::Pat::Wild(_) | syn::Pat::Ident(syn::PatIdent { subpat: None, .. }))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    const ENUM: &str = "pub struct Token { pub n: usize }\n\
+                        pub enum Payload { Held(Token), Free }\n\
+                        pub fn sink(token: Token) -> usize { token.n }\n\
+                        pub fn hold(p: Payload) -> usize { 7 }\n";
+
+    fn built(src: &str) -> Fixture {
+        Fixture::build(&[("lib.rs", &format!("{}{}", ENUM, src))])
+    }
+
+    /// A `finally` is a SIBLING of the `try` beside it, so a `const` declared
+    /// inside the block is not a name the release can see. Written the other
+    /// way this threw `ReferenceError: bounds is not defined` on the way out of
+    /// every arm that owned what it bound — live at storage-common's
+    /// `planner.rs`, where the release read `if (!_moved2) bounds.drop()`.
+    #[test]
+    fn a_binding_the_arm_releases_is_declared_outside_the_try() {
+        let mut f = built(
+            "pub fn read(slot: Option<Payload>) -> usize {\n\
+               match slot { Some(p) => 1, None => 0 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "read");
+        let bind = ts.find("const p = slot;").unwrap_or_else(|| panic!("{}", ts));
+        let opened = ts.find("try {").unwrap_or_else(|| panic!("{}", ts));
+        assert!(bind < opened, "the binding stands before the try that releases it:\n{}", ts);
+        assert!(ts.contains("p.drop();"), "{}", ts);
+    }
+
+    /// The payload handed on whole owes nothing: no release, and so no `try`.
+    #[test]
+    fn a_payload_handed_on_leaves_nothing_to_release() {
+        let mut f = built(
+            "pub fn whole(slot: Option<Payload>) -> usize {\n\
+               match slot { Some(p) => hold(p), None => 0 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "whole");
+        assert!(ts.contains("const p = slot;"), "{}", ts);
+        assert!(!ts.contains("try {"), "nothing is owed, so nothing is wrapped:\n{}", ts);
+    }
+
+    /// An arm that tests inside the payload has no lowering here: the name it
+    /// binds out of the payload is never detached from it, and no arm releases
+    /// what is left. It is a hole, not an arm that runs (R12).
+    #[test]
+    fn an_arm_that_tests_inside_a_consumed_payload_is_a_hole() {
+        let mut f = built(
+            "pub fn nested(slot: Option<Payload>) -> usize {\n\
+               match slot {\n\
+                 Some(Payload::Held(token)) => sink(token),\n\
+                 Some(Payload::Free) => 1,\n\
+                 None => 0,\n\
+               }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "nested");
+        assert!(ts.contains("unsupported("), "{}", ts);
+        assert!(!ts.contains("slot.value"), "no arm of it is written at all:\n{}", ts);
+        assert!(
+            f.messages().iter().any(|m| m.contains("tests inside the payload")),
+            "and the gap is reported: {:?}",
+            f.messages()
+        );
+    }
+
+    /// A BORROWING match of the same shape is untouched: nothing is taken out
+    /// of the payload, so there is nothing to detach and nothing to release.
+    #[test]
+    fn an_arm_that_tests_inside_a_borrowed_payload_is_still_written() {
+        let mut f = built(
+            "pub fn peek(slot: &Option<Payload>) -> usize {\n\
+               match slot {\n\
+                 Some(Payload::Held(token)) => token.n,\n\
+                 Some(Payload::Free) => 1,\n\
+                 None => 0,\n\
+               }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "peek");
+        assert!(!ts.contains("unsupported("), "{}", ts);
+        assert!(ts.contains("is('Held')"), "{}", ts);
+    }
 }

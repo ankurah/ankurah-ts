@@ -8,8 +8,8 @@ import { EntityId } from '@ankurah/proto';
 describe('collation unit tests', () => {
   test('test_string_collation', () => {
     const s = 'hello';
-    if (!(Str_successorBytes(s) > Str_toBytes(s))) throw new Error('assertion failed');
-    if (!(Str_predecessorBytes(s) < Str_toBytes(s))) throw new Error('assertion failed');
+    if (!((Str_successorBytes(s) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) > Str_toBytes(s))) throw new Error('assertion failed');
+    if (!((Str_predecessorBytes(s) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) < Str_toBytes(s))) throw new Error('assertion failed');
     if (!(!Str_isMinimum(s))) throw new Error('assertion failed');
     if (!(!Str_isMaximum(s))) throw new Error('assertion failed');
     const empty = '';
@@ -19,8 +19,8 @@ describe('collation unit tests', () => {
 
   test('test_integer_collation', () => {
     const n = 42n;
-    expect(i64.fromBeBytes(I64_successorBytes(n).tryInto())).toEqual(43n);
-    expect(i64.fromBeBytes(I64_predecessorBytes(n).tryInto())).toEqual(41n);
+    expect(i64.fromBeBytes((I64_successorBytes(n) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()).tryInto())).toEqual(43n);
+    expect(i64.fromBeBytes((I64_predecessorBytes(n) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()).tryInto())).toEqual(41n);
     if (!(!I64_isMinimum(n))) throw new Error('assertion failed');
     if (!(!I64_isMaximum(n))) throw new Error('assertion failed');
     if (!(i64.MAX.successorBytes() == null)) throw new Error('assertion failed');
@@ -31,8 +31,8 @@ describe('collation unit tests', () => {
 
   test('test_float_collation', () => {
     const f = 1.0;
-    if (!(F64_successorBytes(f) > F64_toBytes(f))) throw new Error('assertion failed');
-    if (!(F64_predecessorBytes(f) < F64_toBytes(f))) throw new Error('assertion failed');
+    if (!((F64_successorBytes(f) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) > F64_toBytes(f))) throw new Error('assertion failed');
+    if (!((F64_predecessorBytes(f) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) < F64_toBytes(f))) throw new Error('assertion failed');
     if (!(!F64_isMinimum(f))) throw new Error('assertion failed');
     if (!(!F64_isMaximum(f))) throw new Error('assertion failed');
     if (!(f64.INFINITY.isMaximum())) throw new Error('assertion failed');
@@ -59,13 +59,13 @@ describe('collation unit tests', () => {
   });
 
   test('test_literal_i16_collation', () => {
-    const lit = ast.Literal.I16(100);
+    const lit = new ast.Literal('I16', { _0: 100 });
     if (!(lit.successorBytes() > lit.toBytes())) throw new Error('assertion failed');
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const maxLit = ast.Literal.I16(i16.MAX);
-    const minLit = ast.Literal.I16(i16.MIN);
+    const maxLit = new ast.Literal('I16', { _0: i16.MAX });
+    const minLit = new ast.Literal('I16', { _0: i16.MIN });
     if (!(maxLit.successorBytes() == null)) throw new Error('assertion failed');
     if (!(minLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(maxLit.isMaximum())) throw new Error('assertion failed');
@@ -73,13 +73,13 @@ describe('collation unit tests', () => {
   });
 
   test('test_literal_i32_collation', () => {
-    const lit = ast.Literal.I32(1000);
+    const lit = new ast.Literal('I32', { _0: 1000 });
     if (!(lit.successorBytes() > lit.toBytes())) throw new Error('assertion failed');
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const maxLit = ast.Literal.I32(i32.MAX);
-    const minLit = ast.Literal.I32(i32.MIN);
+    const maxLit = new ast.Literal('I32', { _0: i32.MAX });
+    const minLit = new ast.Literal('I32', { _0: i32.MIN });
     if (!(maxLit.successorBytes() == null)) throw new Error('assertion failed');
     if (!(minLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(maxLit.isMaximum())) throw new Error('assertion failed');
@@ -88,38 +88,38 @@ describe('collation unit tests', () => {
 
   test('test_literal_entity_id_collation', () => {
     const ulid = Ulid.new();
-    const lit = ast.Literal.EntityId(ulid);
+    const lit = new ast.Literal('EntityId', { _0: ulid });
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
     const minUlid = Ulid.fromBytes(Array(16).fill(0));
-    const minLit = ast.Literal.EntityId(minUlid);
+    const minLit = new ast.Literal('EntityId', { _0: minUlid });
     if (!(minLit.isMinimum())) throw new Error('assertion failed');
     if (!(minLit.predecessorBytes() == null)) throw new Error('assertion failed');
     const maxUlid = Ulid.fromBytes(Array(16).fill(255));
-    const maxLit = ast.Literal.EntityId(maxUlid);
+    const maxLit = new ast.Literal('EntityId', { _0: maxUlid });
     if (!(maxLit.isMaximum())) throw new Error('assertion failed');
     if (!(maxLit.successorBytes() == null)) throw new Error('assertion failed');
   });
 
   test('test_literal_binary_collation', () => {
-    const lit = ast.Literal.Binary([1, 2, 3]);
+    const lit = new ast.Literal('Binary', { _0: [1, 2, 3] });
     if (!(lit.successorBytes() > lit.toBytes())) throw new Error('assertion failed');
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const emptyLit = ast.Literal.Binary([]);
+    const emptyLit = new ast.Literal('Binary', { _0: [] });
     if (!(emptyLit.isMinimum())) throw new Error('assertion failed');
     if (!(emptyLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(!emptyLit.isMaximum())) throw new Error('assertion failed');
   });
 
   test('test_literal_object_collation', () => {
-    const lit = ast.Literal.Object([10, 20, 30]);
+    const lit = new ast.Literal('Object', { _0: [10, 20, 30] });
     if (!(lit.successorBytes() > lit.toBytes())) throw new Error('assertion failed');
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const emptyLit = ast.Literal.Object([]);
+    const emptyLit = new ast.Literal('Object', { _0: [] });
     if (!(emptyLit.isMinimum())) throw new Error('assertion failed');
     if (!(emptyLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(!emptyLit.isMaximum())) throw new Error('assertion failed');

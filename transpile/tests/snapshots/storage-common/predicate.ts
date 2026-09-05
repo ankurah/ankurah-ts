@@ -7,7 +7,7 @@ export class ConjunctFinder extends Struct {
 
   static find(predicate: Predicate): Predicate[] {
     let conjuncts = [];
-    ConjunctFinder.Self.extractConjuncts(predicate, conjuncts);
+    ConjunctFinder.extractConjuncts(predicate, conjuncts);
     return conjuncts;
   }
 
@@ -16,8 +16,8 @@ export class ConjunctFinder extends Struct {
       And: (v) => {
         const left = v._0;
         const right = v._1;
-        ConjunctFinder.Self.extractConjuncts(left, conjuncts);
-        ConjunctFinder.Self.extractConjuncts(right, conjuncts);
+        ConjunctFinder.extractConjuncts(left, conjuncts);
+        ConjunctFinder.extractConjuncts(right, conjuncts);
       },
       Or: (v) => {
         conjuncts.push(predicate.clone());

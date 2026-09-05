@@ -25,7 +25,7 @@ export function Value_toBytes(self: Value): Uint8Array {
     F64: (v) => {
       const f = v._0;
       const bits = (() => {
-        if (f.isNan()) {
+        if (Number.isNaN(f)) {
           return u64.MAX;
         } else {
           const bits = f.toBits();
@@ -95,7 +95,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
     },
     F64: (v) => {
       const f = v._0;
-      if (f.isNan() || (f.isInfinite() && f > 0.0)) {
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f > 0.0)) {
         return null;
       } else {
         const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
@@ -167,7 +167,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     },
     F64: (v) => {
       const f = v._0;
-      if (f.isNan() || (f.isInfinite() && f < 0.0)) {
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f < 0.0)) {
         return null;
       } else {
         const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());

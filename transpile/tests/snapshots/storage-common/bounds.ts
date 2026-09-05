@@ -2,7 +2,6 @@
 import { dropOwned, checkedAdd } from '@ankurah/base';
 import { Value } from '@ankurah/core';
 import { CanonicalRange, KeyBounds } from './types';
-import { Value } from '@ankurah/core';
 
 export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] {
   let lowerTuple = [];

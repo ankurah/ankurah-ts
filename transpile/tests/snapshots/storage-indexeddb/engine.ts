@@ -5,7 +5,6 @@ import { IndexedDBBucket } from './collection';
 import { Database } from './database';
 import { cbFuture } from './util/cb_future';
 import { Result_JsValue_require } from './util/require';
-import { MutationError, RetrievalError, StorageCollection, StorageEngine } from '@ankurah/core';
 import { CollectionId } from '@ankurah/proto';
 
 export class IndexedDBStorageEngine extends Struct implements StorageEngine {

@@ -21,7 +21,7 @@ class TestEntity extends Struct implements AbstractEntity {
   static new(id: number, properties: HashMap<string, Value>): TestEntity {
     let idBytes = Array(16).fill(0);
     idBytes[15] = id;
-    return new TestEntity(proto.EntityId.fromBytes(idBytes), proto.CollectionId.fixedName('test'), properties);
+    return new TestEntity(EntityId.fromBytes(idBytes), CollectionId.fixedName('test'), properties);
   }
 
   collection(): CollectionId {
@@ -177,7 +177,7 @@ describe('resultset unit tests', () => {
           expect(resultset.len()).toEqual(1);
           const _t0 = resultset.read();
           try {
-            expect(_t0.iterEntities().next()._0).toEqual(entity1.id);
+            expect((_t0.iterEntities().next() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())._0).toEqual(entity1.id);
           } finally {
             _t0.drop();
           }

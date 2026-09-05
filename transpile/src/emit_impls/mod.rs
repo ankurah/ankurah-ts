@@ -294,7 +294,6 @@ fn write(
         method
             .params
             .iter()
-            .filter(|p| !p.is_self)
             .map(|p| format!("{}: {}", crate::name_map::to_camel_case(&p.name), p.ty)),
     );
     let ret = if method.return_type.is_empty() {

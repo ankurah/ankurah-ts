@@ -408,14 +408,32 @@ fn batch_generate(
             let located = siblings::locate(cfg);
             for sibling in siblings::dependencies_of(cfg, &located, &cargo_name) {
                 sibling_idents.push(sibling.ident.clone());
-                let files = siblings::declarations(&sibling, cfg, &root)?;
+                let loaded = siblings::declarations(&sibling, cfg, &root)?;
                 eprintln!(
                     "  sibling {} ({} files) → {}",
                     sibling.ident,
-                    files.len(),
+                    loaded.files.len(),
                     sibling.package
                 );
-                for entry in &files {
+                // A sibling file the parser refused is a hole in what THIS
+                // crate can resolve: every type it declared is a foreign name
+                // here. It was passed over in silence, so a crate could lose a
+                // dependency's declarations and emit against nothing.
+                for failure in &loaded.failures {
+                    eprintln!("  SIBLING PARSE FAILURE {}", failure);
+                    sink.set_file("");
+                    sink.push(diag::Diag {
+                        file: String::new(),
+                        line: 0,
+                        col: 0,
+                        message: format!(
+                            "the in-family crate `{}` has a file this run could not read, so the \
+                             types it declares resolve to nothing here: {}",
+                            sibling.ident, failure
+                        ),
+                    });
+                }
+                for entry in &loaded.files {
                     for name in entry
                         .file
                         .structs
@@ -431,7 +449,7 @@ fn batch_generate(
                             .or_insert_with(|| sibling.package.clone());
                     }
                 }
-                parsed_files.extend(files);
+                parsed_files.extend(loaded.files);
             }
             parsed_files.sort_by(|a, b| a.path.cmp(&b.path));
         }
@@ -804,7 +822,14 @@ fn mark_hand_written_types(
     if let Some(cfg) = config {
         for fqn in cfg.provided_impls.keys() {
             // `ankurah_proto::id::EntityId` — the crate name, then the module
-            // path the registry knows the type by.
+            // path the registry knows the type by. Read WITHOUT the crate name
+            // this is the path inside the crate being transpiled, which is the
+            // only crate whose impls this run emits. A SIBLING's provided type
+            // is deliberately not marked here: "hand-written" stops an impl on
+            // the type being emitted at all, and an impl THIS crate writes for a
+            // sibling's type is this crate's own code — core's
+            // `impl OrderedCollation for EntityId` has to be emitted, as the
+            // module-level functions an impl away from its class becomes.
             let segments: Vec<String> = fqn.split("::").skip(1).map(|s| s.to_string()).collect();
             if segments.is_empty() {
                 continue;
@@ -1250,7 +1275,6 @@ fn translate_fn_body(
         let typed_params: Vec<(String, ty::Ty)> = func
             .params
             .iter()
-            .filter(|p| !p.is_self)
             .filter_map(|p| {
                 let syn_ty = p.rust_ty.as_ref()?;
                 match tc.resolve_written_type(syn_ty) {
@@ -1274,7 +1298,7 @@ fn translate_fn_body(
         // so a signature only moves where the syntax was wrong. A type the
         // engine could not name keeps what it had, which is where it stood
         // before.
-        for param in func.params.iter_mut().filter(|p| !p.is_self) {
+        for param in func.params.iter_mut() {
             let Some(written) = param.rust_ty.as_ref() else {
                 continue;
             };
@@ -1306,7 +1330,6 @@ fn translate_fn_body(
         let mut owned_params: Vec<(String, ty::Ty)> = func
             .params
             .iter()
-            .filter(|p| !p.is_self)
             .filter(|p| !matches!(p.rust_ty, Some(syn::Type::Reference(_))))
             .filter_map(|p| {
                 let syn_ty = p.rust_ty.as_ref()?;

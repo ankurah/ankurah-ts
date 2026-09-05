@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
 import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing } from '@ankurah/base';
-import { Attested } from '@ankurah/proto';
+import { Attested, CollectionId, EntityId, EntityState, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
 import { Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../entity';
 import { SubscriptionError } from '../error';
@@ -9,8 +9,6 @@ import { ReactorSubscription, ReactorSubscriptionId } from '../reactor/subscript
 import { MembershipChange, ReactorUpdateItem } from '../reactor/update';
 import { expandStates } from '../util/expand_states';
 import { Selection } from '@ankurah/ankql';
-import { Attested, CollectionId, EntityId, EntityState, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
-import { SubscriptionGuard } from '@ankurah/signals';
 
 export class SubscriptionHandler extends Struct {
   _peerId: EntityId;
@@ -185,7 +183,7 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
       try {
         _moved2 = true;
         let _moved3 = false;
-        const content = new proto.UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
+        const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
         try {
           const predicateRelevance = [...item.predicateRelevance].map(([predId, membership]) => {
             const protoMembership = membership.match({
@@ -196,7 +194,7 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
             return [predId, protoMembership];
           });
           _moved3 = true;
-          return new proto.SubscriptionUpdateItem(item.entity.id(), item.entity.collection().clone(), content, predicateRelevance);
+          return new SubscriptionUpdateItem(item.entity.id(), item.entity.collection().clone(), content, predicateRelevance);
         } finally {
           if (!_moved3) content.drop();
         }

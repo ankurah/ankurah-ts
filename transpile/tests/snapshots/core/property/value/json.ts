@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/core/src/property/value/json.rs
 import { Struct, Result, JsonError, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
+import { Value } from '../../value/index';
 import { Property } from '../index';
 import { PropertyError } from '../traits';
-import { Value } from '../../value/index';
 
 export class Json extends Struct implements Property {
   readonly _0: unknown;

@@ -1,9 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/filtering.rs
 import { Struct, Result } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
-import { Filterable } from '@ankurah/core';
-import { Predicate } from '@ankurah/ankql';
-import { Context } from '@ankurah/core';
+import { Filterable, Context } from '@ankurah/core';
 import { Item } from '@ankurah/proto';
 
 export class FilteredStream<I> extends Struct {

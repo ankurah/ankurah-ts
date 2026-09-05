@@ -75,6 +75,7 @@ export class SlotError extends Enum<SlotErrorV> {
   }
 
   equals(other: SlotError): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

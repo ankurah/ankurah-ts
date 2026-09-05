@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/entity.rs
 import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, dropOwned, tracing, dropUnbound, checkedAdd, HashMap } from '@ankurah/base';
-import { Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State } from '@ankurah/proto';
+import { Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
 import { LineageError, MutationError, RetrievalError, StateError } from './error';
 import { View } from './indexel';
 import { compare, compareUnstoredEvent } from './lineage';
@@ -9,7 +9,6 @@ import { AbstractEntity } from './reactor';
 import { State } from './reactor/subscription_state';
 import { Filterable } from './selection/filter';
 import { Value } from './value/index';
-import { Clock, CollectionId, EntityId, EntityState, Event, Operation, OperationSet, StateBuffers } from '@ankurah/proto';
 import { Broadcast } from '@ankurah/signals';
 
 export class Entity extends Struct implements AbstractEntity, Filterable {

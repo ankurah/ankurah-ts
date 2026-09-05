@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/peer_subscription/client_relay.rs
 import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
-import { CollectionId } from '@ankurah/proto';
+import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
 import { SendError } from '../connector';
 import { ApplyError, MutationError, RequestError, RetrievalError, StateError } from '../error';
 import { ContextData, Node } from '../node';
@@ -11,7 +11,6 @@ import { EphemeralNodeRetriever, GetEvents } from '../retrieval';
 import { spawn } from '../task';
 import { SafeSet } from '../util/safeset';
 import { ParseError, Predicate, Selection } from '@ankurah/ankql';
-import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
 import { Get } from '@ankurah/signals';
 
 export class Content<CD extends ContextData> extends Struct {
@@ -645,14 +644,14 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
   let _moved0 = false;
   try {
     try {
-      const _r1 = self.upgrade().okOrElse(() => new RetrievalError('Other', { _0: 'Node has been dropped' }));
+      const _r1 = self.upgrade() != null ? Result.Ok(self.upgrade()!) : Result.Err((() => new RetrievalError('Other', { _0: 'Node has been dropped' }))());
       if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
       const node = _r1.unwrap();
       try {
         const _r2 = await node.fetchEntitiesFromLocal(collectionId, selection);
         if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
         let _moved3 = false;
-        const knownMatches = [..._r2.unwrap()].map((entity) => new ankurahProto.KnownEntity(entity.id(), entity.head()));
+        const knownMatches = [..._r2.unwrap()].map((entity) => new KnownEntity(entity.id(), entity.head()));
         try {
           _moved3 = true;
           const _r4 = await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches })).mapErr((e) => new RetrievalError('RequestError', { _0: e }));
@@ -723,7 +722,7 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
 }
 
 export async function WeakNode_peerUnsubscribe<SE extends StorageEngine, PA extends PolicyAgent>(self: WeakNode<SE, PA>, peerId: EntityId, queryId: QueryId): Promise<Result<void, AnyhowError>> {
-  const _r0 = self.upgrade().okOrElse(() => AnyhowError.msg('Node has been dropped'));
+  const _r0 = self.upgrade() != null ? Result.Ok(self.upgrade()!) : Result.Err((() => AnyhowError.msg('Node has been dropped'))());
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const node = _r0.unwrap();
   try {

@@ -3,14 +3,14 @@ import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, dropUnboun
 import { Entity } from '../entity';
 import { ContextData, Node } from '../node';
 import { AbstractEntity, ChangeNotification } from '../reactor';
+import { EntityResultSet } from '../resultset';
+import { evaluatePredicate } from '../selection/filter';
+import { spawn } from '../task';
 import { CandidateChanges } from './candidate_changes';
 import { GapFetcher, QueryGapFetcher } from './fetch_gap';
 import { ReactorSubscriptionId } from './subscription';
 import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './update';
 import { WatcherChange, WatcherOp, WatcherSet } from './watcherset';
-import { EntityResultSet } from '../resultset';
-import { evaluatePredicate } from '../selection/filter';
-import { spawn } from '../task';
 import { Predicate, Selection } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 import { Broadcast } from '@ankurah/signals';
@@ -220,7 +220,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         try {
           const state = stateGuard.value;
           try {
-            const _r1 = state.queries.get(queryId).okOrElse(() => AnyhowError.msg('Query not found for update'));
+            const _r1 = state.queries.get(queryId) != null ? Result.Ok(state.queries.get(queryId)!) : Result.Err((() => AnyhowError.msg('Query not found for update'))());
             if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
             const queryState = _r1.unwrap();
             const isFirstUpdate = queryState.selection == null;
@@ -229,7 +229,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
               const _r2 = selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null.transpose();
               if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
               queryState.resultset.orderBy(_r2.unwrap());
-              if (isFirstUpdate || oldSelection.asRef() != null ? ((s) => s.limit)(oldSelection.asRef()!) : null !== selection.limit) {
+              if (isFirstUpdate || oldSelection != null ? ((s) => s.limit)(oldSelection!) : null !== selection.limit) {
                 queryState.resultset.limit(selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null);
               }
               let _moved3 = false;
@@ -285,7 +285,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                   }
                 })();
                 if (shouldUpdateWatchers) {
-                  const oldPred = oldSelection.asRef() != null ? ((s) => s.predicate)(oldSelection.asRef()!) : null;
+                  const oldPred = oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null;
                   this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
                 }
                 if (!(newlyAdded.length === 0)) {
@@ -407,7 +407,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 })();
                 const entitySubscribed = state.entitySubscriptions.has(entityId);
                 if (matches || didMatch || entitySubscribed) {
-                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().toVec(), []));
+                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().slice(), []));
                   {
                     const _v4 = membershipChange;
                     if (_v4 != null) {
@@ -425,7 +425,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             const entity = change.entity();
             const entityId = AbstractEntity.id(entity);
             if (state.entitySubscriptions.has(entityId)) {
-              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().toVec(), []));
+              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().slice(), []));
             }
           }
           let _moved3 = false;
@@ -476,7 +476,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     const gapData = (() => {
       const state = this.deref().state.lock();
       try {
-        return state.value.queries.get(queryId).andThen((queryState) => this.extractGapData(queryId, queryState));
+        return state.value.queries.get(queryId) != null ? ((queryState) => this.extractGapData(queryId, queryState))(state.value.queries.get(queryId)!) : null;
       } finally {
         state.drop();
       }
@@ -487,7 +487,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     }
     const [queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize] = _v;
     resultset.clearGapDirty();
-    const gapFilledEntities = await Subscription.Self.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+    const gapFilledEntities = await Subscription.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
     if (!(gapFilledEntities.length === 0)) {
       this.addEntityWatchers(queryId_1, [...gapFilledEntities].map((e) => AbstractEntity.id(e)));
       entities.push(...gapFilledEntities);
@@ -498,7 +498,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     const gapData = (() => {
       const state = this.deref().state.lock();
       try {
-        return state.value.queries.get(queryId).andThen((queryState) => this.extractGapData(queryId, queryState));
+        return state.value.queries.get(queryId) != null ? ((queryState) => this.extractGapData(queryId, queryState))(state.value.queries.get(queryId)!) : null;
       } finally {
         state.drop();
       }
@@ -509,7 +509,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     }
     const [queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize] = _v;
     resultset.clearGapDirty();
-    const gapFilledEntities = await Subscription.Self.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+    const gapFilledEntities = await Subscription.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
     if (!(gapFilledEntities.length === 0)) {
       this.addEntityWatchers(queryId_1, [...gapFilledEntities].map((e) => AbstractEntity.id(e)));
       for (const entity of gapFilledEntities) {
@@ -524,7 +524,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         try {
           try {
             tracing.debug(`Gap filling for query ${queryId} - need ${gapSize} entities`);
-            const _v = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity.asRef(), gapSize);
+            const _v = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity, gapSize);
             if (_v.isOk()) {
               const gapEntities = _v.unwrap();
               if (!(gapEntities.length === 0)) {
@@ -586,7 +586,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             dropOwned(_seq1.slice(_at2));
           }
           const gapFillFutures = [...gapsToFill].map(([queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize]) => {
-            return Subscription.Self.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+            return Subscription.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
           });
           const gapResults = await future.joinAll(gapFillFutures);
           const _seq4 = gapResults;
@@ -640,7 +640,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
       const gapSize = checkedSub(limit, currentLen, 'usize');
       const lastEntity = resultset.lastEntity();
       let _moved1 = false;
-      const selection = queryState.selection.clone();
+      const selection = (queryState.selection.clone() ?? (() => { throw new Error('extract_gap_data called before update_query'); })());
       try {
         _moved1 = true;
         return [queryId, queryState.gapFetcher.clone(), queryState.collectionId.clone(), selection, resultset.clone(), lastEntity, gapSize];
@@ -659,7 +659,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
           try {
             tracing.debug(`Gap filling for query ${queryId} - need ${gapSize} entities`);
             const gapItems = await (async () => {
-              const _v1 = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity.asRef(), gapSize);
+              const _v1 = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity, gapSize);
               if (_v1.isOk()) {
                 const gapEntities = _v1.unwrap();
                 if (!(gapEntities.length === 0)) {

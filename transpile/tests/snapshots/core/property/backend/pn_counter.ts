@@ -1,10 +1,9 @@
 // MIRRORS: ankurah/core/src/property/backend/pn_counter.rs
 import { Struct, Result, Arc, RwLock, HashMap } from '@ankurah/base';
-import { Clock } from '@ankurah/proto';
-import { MutationError, RetrievalError, StateError } from '../../error';
-import { PropertyBackend } from './index';
-import { Value } from '../../value/index';
 import { Clock, Operation } from '@ankurah/proto';
+import { MutationError, RetrievalError, StateError } from '../../error';
+import { Value } from '../../value/index';
+import { PropertyBackend } from './index';
 
 export class PNBackend extends Struct implements PropertyBackend {
   values: Arc<RwLock<HashMap<PropertyName, PNValue>>>;
@@ -29,7 +28,7 @@ export class PNBackend extends Struct implements PropertyBackend {
 
   add(propertyName: PropertyName, amount: PNValue): void {
     const values = this.values.value.write();
-    PNBackend.Self.addRaw(values, propertyName, amount);
+    PNBackend.addRaw(values, propertyName, amount);
   }
 
   static addRaw(values: DerefMut, propertyName: PropertyName, amount: PNValue): void {
@@ -126,7 +125,7 @@ export class PNBackend extends Struct implements PropertyBackend {
       let values = this.values.value.write();
       try {
         for (const [property, diff] of diffs) {
-          PNBackend.Self.addRaw(values.value, property, diff);
+          PNBackend.addRaw(values.value, property, diff);
         }
       } finally {
         values.drop();

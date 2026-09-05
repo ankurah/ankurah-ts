@@ -1,6 +1,8 @@
 //! Top-level TS code generation — orchestrates imports, emission, and output
 
-use std::collections::{HashMap, HashSet};
+mod surface;
+
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::registry::TypeRegistry;
 use crate::types::*;
@@ -116,15 +118,21 @@ pub fn generate_ts_with_imports_configured(
         }
     }
 
-    // Build import lines
-    let mut import_lines = String::new();
-    let mut sorted_modules: Vec<&String> = imports_by_module.keys().collect();
-    sorted_modules.sort();
-    for module in sorted_modules {
-        let mut types = imports_by_module[module].clone();
-        types.sort();
-        let import_path = relative_import_path(current_module, module);
-        import_lines.push_str(&format!("import {{ {} }} from '{}';\n", types.join(", "), import_path));
+    // Build import lines, ONE per module specifier.
+    //
+    // Several Rust modules reach the same TypeScript module: `ankurah_core::
+    // policy`, `ankurah_core::node` and `ankurah_core::connector` are all
+    // `@ankurah/core`, because a crate is one package here. Written one line per
+    // RUST module that gave the specifier twice — `import { Node, PeerSender,
+    // PolicyAgent, .. } from '@ankurah/core'` immediately followed by
+    // `import { Node, PeerSender, .. } from '@ankurah/core'` — which is eight
+    // `TS2300` duplicate identifiers in connector-local alone, and every one of
+    // them a name the file genuinely needs.
+    let mut by_specifier: std::collections::BTreeMap<String, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for (module, types) in &imports_by_module {
+        let specifier = relative_import_path(current_module, module);
+        by_specifier.entry(specifier).or_default().extend(types.iter().cloned());
     }
 
     // Import functions from inline modules.
@@ -150,32 +158,143 @@ pub fn generate_ts_with_imports_configured(
             }
         }
         if !found.is_empty() {
-            found.sort();
             let import_path = relative_import_path(current_module, &sub_module);
-            import_lines.push_str(&format!("import {{ {} }} from '{}';\n",
-                found.join(", "), import_path));
+            by_specifier.entry(import_path).or_default().extend(found);
         }
     }
 
-    // Replace the TODO imports line
-    if import_lines.is_empty() {
-        base.lines()
-            .filter(|l| !l.starts_with("// TODO imports:"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n"
-    } else {
-        let mut result = String::new();
-        for line in base.lines() {
-            if line.starts_with("// TODO imports:") {
-                result.push_str(&import_lines);
-            } else {
-                result.push_str(line);
-                result.push('\n');
+    // Replace the TODO imports line, and merge every named import by the module
+    // it names.
+    //
+    // Two passes write import lines: this one, from the types the file's text
+    // refers to, and `generate_ts_inner`, from the `use` statements the file
+    // wrote. Both reach the same package — a crate is ONE TypeScript module
+    // here, so `use ankurah_core::node::Node` and `use ankurah_core::
+    // connector::PeerSender` are both `@ankurah/core` — and each wrote its own
+    // line. connector-local's emitted file opened with two
+    // `import { .. } from '@ankurah/core'` lines sharing four names: eight
+    // `TS2300` duplicate identifiers, which was every own-file error that
+    // package had.
+    merge_named_imports(&base, &by_specifier)
+}
+
+/// One `import { .. } from '<module>'` per module, everything else untouched.
+///
+/// `written` is the file as the emitters left it and `extra` the names this
+/// pass resolved. Named imports are collected from both, merged per module and
+/// written back where the first import stood; a namespace import, a side-effect
+/// import and every other line keep their place and their order.
+fn merge_named_imports(
+    written: &str,
+    extra: &std::collections::BTreeMap<String, BTreeSet<String>>,
+) -> String {
+    // Per module, the names in the order they were first written. The order is
+    // the emitter's — `Struct, Enum, Result, ..`, the base primitives first —
+    // and sorting it would rewrite every emitted file and every golden for
+    // nothing.
+    let mut names: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut body = String::new();
+    let mut marker: Option<usize> = None;
+    let mut add = |names: &mut std::collections::BTreeMap<String, Vec<String>>, module: &str, name: String| {
+        let list = names.entry(module.to_string()).or_default();
+        if !list.contains(&name) {
+            list.push(name);
+        }
+    };
+    for line in written.lines() {
+        if line.starts_with("// TODO imports:") {
+            marker.get_or_insert(body.len());
+            continue;
+        }
+        match named_import(line) {
+            Some((module, imported)) => {
+                marker.get_or_insert(body.len());
+                if !order.contains(&module) {
+                    order.push(module.clone());
+                }
+                for name in imported {
+                    add(&mut names, &module, name);
+                }
+            }
+            None => {
+                body.push_str(line);
+                body.push('\n');
             }
         }
-        result
     }
+    for (module, imported) in extra {
+        if !order.contains(module) {
+            order.push(module.clone());
+        }
+        for name in imported {
+            add(&mut names, module, name.clone());
+        }
+    }
+
+    // One name from two modules is a `TS2300` duplicate identifier, and the
+    // file will not compile: `entity.ts` imports `State` from `@ankurah/proto`
+    // and from `./reactor/subscription_state`, because Rust told the two apart
+    // by the path each was written with and this pass wrote both bare. Said out
+    // loud rather than emitted in silence.
+    let mut seen: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for (module, imported) in &names {
+        for name in imported {
+            seen.entry(name.as_str()).or_default().push(module.as_str());
+        }
+    }
+    for (name, modules) in seen {
+        if modules.len() > 1 {
+            crate::diag::pending::park_at(
+                0,
+                0,
+                format!(
+                    "`{}` is imported from {} at once, and TypeScript has one name here where \
+                     Rust had two paths",
+                    name,
+                    modules.join(" and ")
+                ),
+            );
+        }
+    }
+
+    let mut lines = String::new();
+    for module in &order {
+        let Some(imported) = names.get(module) else { continue };
+        if imported.is_empty() {
+            continue;
+        }
+        let joined: Vec<&str> = imported.iter().map(String::as_str).collect();
+        let _ = std::fmt::Write::write_fmt(
+            &mut lines,
+            format_args!("import {{ {} }} from '{}';\n", joined.join(", "), module),
+        );
+    }
+    match marker {
+        Some(at) => {
+            let mut out = String::with_capacity(body.len() + lines.len());
+            out.push_str(&body[..at]);
+            out.push_str(&lines);
+            out.push_str(&body[at..]);
+            out
+        }
+        None => format!("{lines}{body}"),
+    }
+}
+
+/// The module and the names an `import { A, B } from 'm';` line brings in.
+fn named_import(line: &str) -> Option<(String, Vec<String>)> {
+    let rest = line.strip_prefix("import {")?;
+    let (inside, after) = rest.split_once('}')?;
+    let module = after.split_once('\'')?.1.split_once('\'')?.0;
+    let names = inside
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some((module.to_string(), names))
 }
 
 /// Generate TypeScript skeleton from extracted Rust file
@@ -188,7 +307,7 @@ pub fn generate_ts_with_imports_configured(
 /// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
 /// std's `Mutex` into a file that only ever names tokio's.
 ///
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 70] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 71] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -204,6 +323,8 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 70] = [
     // What a consuming match arm releases the payload it took no name for
     // with, and Rust's two eager boolean operators.
     "dropUnbound", "boolAnd", "boolOr",
+    // R12: the hole an emitted file carries where the port has no lowering.
+    "unsupported",
     // C1: the cell a `&mut` to a JavaScript VALUE is passed in.
     "BorrowMut",
     // R7: arithmetic on a fixed-width integer PANICS on overflow, as the
@@ -467,15 +588,25 @@ fn public_reexports(
     // for a crate whose root is nothing but `pub mod` lines — ankql's — was a
     // header and a blank line, and the package exported nothing at all.
     let mut whole_modules: Vec<String> = Vec::new();
+    // Which module each `export * from './m'` flattens, so the ambiguity pass
+    // below can ask what names it brings. A `[[provided]]` module is somebody's
+    // hand-written TypeScript and the registry does not hold its names, so it
+    // is left out of that question.
+    let mut star_modules: Vec<(String, crate::registry::ModuleId)> = Vec::new();
     for (name, vis) in &file.mod_decls {
         if *vis != crate::types::VisInfo::Public {
             continue;
         }
-        let target = provided_child_module(corpus_path, name, config)
-            .unwrap_or_else(|| child_module(&file.path, name));
+        let provided = provided_child_module(corpus_path, name, config);
+        let target = provided.clone().unwrap_or_else(|| child_module(&file.path, name));
         let line = format!("export * from '{}';\n", target);
         if !out.contains(&line) {
             out.push(line);
+            if provided.is_none() {
+                if let Some(child) = children.get(name) {
+                    star_modules.push((target.clone(), *child));
+                }
+            }
             whole_modules.push(target);
         }
     }
@@ -562,11 +693,14 @@ fn public_reexports(
                 continue;
             }
             let line = match (&binding.local, &binding.path[..]) {
-                (None, [name]) if children.contains_key(name) => format!(
-                    "export * from '{}';\n",
-                    provided_child_module(corpus_path, name, config)
-                        .unwrap_or_else(|| child_module(&file.path, name))
-                ),
+                (None, [name]) if children.contains_key(name) => {
+                    let provided = provided_child_module(corpus_path, name, config);
+                    let target = provided.clone().unwrap_or_else(|| child_module(&file.path, name));
+                    if provided.is_none() && !star_modules.iter().any(|(t, _)| *t == target) {
+                        star_modules.push((target.clone(), children[name]));
+                    }
+                    format!("export * from '{}';\n", target)
+                }
                 (Some(local), [name, ..]) if children.contains_key(name) => {
                     let target = provided_child_module(corpus_path, name, config)
                         .unwrap_or_else(|| child_module(&file.path, name));
@@ -585,7 +719,109 @@ fn public_reexports(
             }
         }
     }
+    out.extend(disambiguate_stars(reg, file, &star_modules));
     out
+}
+
+/// The explicit re-exports that keep a name two star exports both offer.
+///
+/// `export * from './broadcast'` and `export * from './signal'` both offering
+/// `ListenerGuard` means JavaScript exports it from NEITHER — an ambiguous star
+/// export is dropped silently, so `@ankurah/signals` had no `ListenerGuard` at
+/// all in either spelling. An explicit export shadows every star export of that
+/// name, so writing one settles it: the module Rust itself reaches unqualified
+/// from the crate root (`pub use signal::*`) keeps the bare name, and every
+/// other module keeps its own under a module qualifier. Where Rust reaches
+/// none of them unqualified there is no bare name to award, so all of them are
+/// qualified and the report says the bare spelling is gone.
+fn disambiguate_stars(
+    reg: &TypeRegistry,
+    file: &RustFile,
+    star_modules: &[(String, crate::registry::ModuleId)],
+) -> Vec<String> {
+    use crate::codegen::surface;
+    if star_modules.len() < 2 {
+        return Vec::new();
+    }
+    let surfaces: Vec<(String, std::collections::BTreeMap<String, crate::registry::Def>)> = star_modules
+        .iter()
+        .map(|(specifier, id)| (specifier.clone(), surface::star_surface(reg, *id)))
+        .collect();
+
+    // Which specifier, if any, Rust reaches this name through UNQUALIFIED from
+    // the crate root. `pub mod broadcast;` is not such a reach: it makes the
+    // name reachable only as `broadcast::ListenerGuard`.
+    let mut unqualified: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for u in &file.uses {
+        if u.vis != crate::types::VisInfo::Public {
+            continue;
+        }
+        for binding in &u.bindings {
+            let Some(head) = binding.path.first() else { continue };
+            let Some((specifier, _)) = star_modules
+                .iter()
+                .find(|(t, _)| t.rsplit('/').next() == Some(head.as_str()))
+            else {
+                continue;
+            };
+            match (&binding.local, &binding.path[..]) {
+                // `pub use signal::ListenerGuard;` — this one name.
+                (Some(local), [_, ..]) => {
+                    unqualified.insert(local.clone(), specifier.clone());
+                }
+                // `pub use signal::*;` — everything the module offers.
+                (None, [_]) => {
+                    for name in surface::star_surface(reg, star_modules.iter().find(|(t, _)| t == specifier).unwrap().1).into_keys() {
+                        unqualified.entry(name).or_insert_with(|| specifier.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut lines = Vec::new();
+    for found in surface::ambiguities(&surfaces, |name| unqualified.get(name).cloned()) {
+        for specifier in &found.modules {
+            if found.bare.as_deref() == Some(specifier.as_str()) {
+                lines.push(format!("export {{ {} }} from '{}';\n", found.name, specifier));
+            } else {
+                lines.push(format!(
+                    "export {{ {} as {} }} from '{}';\n",
+                    found.name,
+                    found.alias(specifier),
+                    specifier
+                ));
+            }
+        }
+        let where_bare = match &found.bare {
+            Some(m) => format!("`{}` keeps the bare name because the crate root reaches it there unqualified", m),
+            None => format!(
+                "the crate root reaches none of them unqualified, so `{}` is not exported bare at all",
+                found.name
+            ),
+        };
+        crate::diag::pending::park_at(
+            0,
+            0,
+            format!(
+                "`{}` is declared in {}, and the port flattens a crate's modules into one package \
+                 surface, where two star exports of one name export it from neither. Each keeps \
+                 its own name qualified by its module ({}); {}",
+                found.name,
+                found.modules.join(" and "),
+                found
+                    .modules
+                    .iter()
+                    .filter(|m| found.bare.as_deref() != Some(m.as_str()))
+                    .map(|m| found.alias(m))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                where_bare
+            ),
+        );
+    }
+    lines
 }
 
 /// The package a `pub use` of another crate re-exports from, where the head of
@@ -1030,7 +1266,6 @@ pub fn generate_test_ts_with_imports(
         let params: Vec<String> = f
             .params
             .iter()
-            .filter(|p| !p.is_self)
             .map(|p| format!("{}: {}", crate::name_map::to_camel_case(&p.name), p.ty))
             .collect();
         let ret = if f.return_type.is_empty() { "void".to_string() } else { f.return_type.clone() };
@@ -1063,6 +1298,35 @@ pub fn generate_test_ts_with_imports(
         } else {
             "    throw new Error('TODO');".to_string()
         };
+        // `#[test] fn t() -> anyhow::Result<()>` fails when it answers `Err`,
+        // and Rust's harness is what reads that answer. A bun test callback
+        // has no such reader: it returns the `Result` to nobody, the failure
+        // is swallowed and the test passes — twenty callbacks in the emitted
+        // corpus ended `return Result.Ok([])`, and every `?` in one returned an
+        // `Err` that meant nothing. So the body becomes a function and the
+        // callback unwraps what it answers: `unwrap()` consumes the `Result`,
+        // so nothing leaks, and throws on `Err`, which is what fails a test.
+        let returns_a_result = f
+            .return_type
+            .split('<')
+            .next()
+            .is_some_and(|head| head.trim() == "Result");
+        if returns_a_result {
+            let inner = body
+                .lines()
+                .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
+                .collect::<Vec<_>>()
+                .join("\n");
+            out.push_str(&format!(
+                "  test('{}', {}() => {{\n    {}({}() => {{\n{}\n    }})().unwrap();\n  }});\n\n",
+                test_name,
+                async_kw,
+                if f.is_async { "await " } else { "" },
+                async_kw,
+                inner
+            ));
+            continue;
+        }
         out.push_str(&format!("  test('{}', {}() => {{\n{}\n  }});\n\n",
             test_name, async_kw, body));
     }
@@ -1226,4 +1490,103 @@ fn names_word(text: &str, word: &str) -> bool {
         from = end;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn extra(pairs: &[(&str, &[&str])]) -> std::collections::BTreeMap<String, BTreeSet<String>> {
+        pairs
+            .iter()
+            .map(|(m, ns)| (m.to_string(), ns.iter().map(|n| n.to_string()).collect()))
+            .collect()
+    }
+
+    /// `#[test] fn t() -> anyhow::Result<()>` FAILS when it answers `Err`, and
+    /// Rust's harness is what reads that answer. A bun test callback has no
+    /// such reader: it returns the `Result` to nobody and the failure is
+    /// swallowed. Twenty emitted callbacks ended `return Result.Ok([])`, and
+    /// every `?` in one produced an `Err` that meant nothing.
+    #[test]
+    fn a_test_that_answers_a_result_is_unwrapped_at_the_boundary() {
+        let f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "pub fn parse(s: &str) -> Result<usize, String> { Ok(s.len()) }\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+               use super::*;\n\
+               #[test]\n\
+               fn answers_a_result() -> Result<(), String> {\n\
+                 let n = parse(\"ab\")?;\n\
+                 assert_eq!(n, 2);\n\
+                 Ok(())\n\
+               }\n\
+               #[test]\n\
+               fn answers_nothing() {\n\
+                 assert_eq!(parse(\"ab\").unwrap(), 2);\n\
+               }\n\
+             }",
+        )]);
+        let ts = generate_test_ts_with_imports(&f.reg, &f.files[0].file, "lib.rs", &HashMap::new(), "index")
+            .expect("the file declares tests");
+        let answering = ts
+            .split("test('answers_a_result'")
+            .nth(1)
+            .expect("the Result-answering test is emitted");
+        let answering = answering.split("test('").next().unwrap();
+        assert!(answering.contains("})().unwrap();"), "{}", answering);
+        let plain = ts.split("test('answers_nothing'").nth(1).expect("the other test is emitted");
+        assert!(!plain.contains("})().unwrap();"), "a test that answers nothing is left alone:\n{}", plain);
+    }
+
+    /// A crate is ONE TypeScript module, so several Rust modules reach the same
+    /// specifier and two passes both write a line for it: connector-local's
+    /// emitted file opened with two `import { .. } from '@ankurah/core'` lines
+    /// sharing four names, which is eight `TS2300` duplicate identifiers and
+    /// was every own-file error that package had.
+    #[test]
+    fn one_import_line_per_module() {
+        let written = "// MIRRORS: x\n\
+                       import { Node, PolicyAgent } from '@ankurah/core';\n\
+                       import { Node, SendError } from '@ankurah/core';\n\
+                       \n\
+                       export class A {}\n";
+        let out = merge_named_imports(written, &extra(&[("@ankurah/core", &["WeakNode"])]));
+        assert_eq!(out.matches("from '@ankurah/core'").count(), 1, "{}", out);
+        assert!(out.contains("import { Node, PolicyAgent, SendError, WeakNode } from '@ankurah/core';"), "{}", out);
+        assert!(out.contains("export class A {}"), "{}", out);
+    }
+
+    /// The merged block stands where the first import stood, so the file still
+    /// opens with its `// MIRRORS:` line and the code keeps its order.
+    #[test]
+    fn the_merged_block_stands_where_the_imports_did() {
+        let written = "// MIRRORS: x\nimport { A } from './a';\nexport const b = 1;\n";
+        let out = merge_named_imports(written, &extra(&[]));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "// MIRRORS: x");
+        assert_eq!(lines[1], "import { A } from './a';");
+        assert_eq!(lines[2], "export const b = 1;");
+    }
+
+    /// A namespace import and a side-effect import are not named imports and
+    /// keep their own lines.
+    #[test]
+    fn only_named_imports_are_merged() {
+        let written = "import * as proto from '@ankurah/proto';\nimport './side-effect';\nimport { A } from './a';\n";
+        let out = merge_named_imports(written, &extra(&[]));
+        assert!(out.contains("import * as proto from '@ankurah/proto';"), "{}", out);
+        assert!(out.contains("import './side-effect';"), "{}", out);
+        assert!(out.contains("import { A } from './a';"), "{}", out);
+    }
+
+    #[test]
+    fn a_named_import_line_is_read_as_its_module_and_names() {
+        let (module, names) = named_import("import { A, B as C } from './x';").unwrap();
+        assert_eq!(module, "./x");
+        assert_eq!(names, vec!["A".to_string(), "B as C".to_string()]);
+        assert!(named_import("import * as m from './x';").is_none());
+        assert!(named_import("export { A } from './x';").is_none());
+    }
 }

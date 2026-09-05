@@ -321,7 +321,7 @@ export class Value extends Enum<ValueV> {
         },
         EntityId: (v) => {
           const ulid = v._0;
-          return new Value('EntityId', { _0: proto.EntityId.fromUlid(ulid) });
+          return new Value('EntityId', { _0: EntityId.fromUlid(ulid) });
         },
         Object: (v) => {
           const object = v._0;
@@ -369,7 +369,7 @@ export class Value extends Enum<ValueV> {
       },
       EntityId: (v) => {
         const ulid = v._0;
-        return new Value('EntityId', { _0: proto.EntityId.fromUlid(ulid) });
+        return new Value('EntityId', { _0: EntityId.fromUlid(ulid) });
       },
       Object: (v) => {
         const object = v._0;
@@ -402,6 +402,49 @@ export class Value extends Enum<ValueV> {
   }
 
   equals(other: Value): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'I16': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'I32': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'I64': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'F64': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'Bool': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'String': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'EntityId': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Object': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Binary': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Json': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -548,6 +591,7 @@ export class ValueType extends Enum<ValueTypeV> {
   }
 
   equals(other: ValueType): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

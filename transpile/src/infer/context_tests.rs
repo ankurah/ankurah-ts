@@ -180,11 +180,19 @@ fn reaching_through_a_refcell_guard_emits_the_accessor() {
     // The borrow guard is a value the statement produced and nothing binds, so
     // the ownership emission gives it a name and releases it; Rust drops it at
     // the end of the same statement.
+    //
+    // PREMISE CHANGED (2026-09-05): this used to expect `return _t0.value.at(-1)`,
+    // because `unwrap` on anything that is not a `Result` was written as the
+    // identity. `Option::unwrap` PANICS when there is nothing there, and
+    // writing it as the identity handed the `null` on to be read further down —
+    // `PathExpr::property` answered `undefined` for an empty path instead of
+    // stopping. The `??` reads exactly null and undefined, which is what
+    // "nothing there" is here, and it reads the receiver once.
     assert_eq!(
         body.trim(),
         "const _t0 = this.entries.borrow();\n\
          try {\n  \
-           return _t0.value.at(-1);\n\
+           return (_t0.value.at(-1) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());\n\
          } finally {\n  \
            _t0.drop();\n\
          }",

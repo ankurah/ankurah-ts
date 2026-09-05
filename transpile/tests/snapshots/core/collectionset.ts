@@ -3,7 +3,6 @@ import { Struct, Result, Arc, RwLock, dropOwned, HashMap, AsyncRwLock } from '@a
 import { CollectionId } from '@ankurah/proto';
 import { MutationError, RetrievalError } from './error';
 import { StorageCollectionWrapper } from './storage';
-import { CollectionId } from '@ankurah/proto';
 
 export class CollectionSet<SE extends StorageEngine> extends Struct {
   _0: Arc<Inner<SE>>;

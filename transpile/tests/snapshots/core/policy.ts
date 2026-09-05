@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/policy.rs
 import { Struct, Enum, Result, tracing, HashMap, HashSet } from '@ankurah/base';
 import { ParseError, Predicate } from '@ankurah/ankql';
-import { Attested } from '@ankurah/proto';
+import { Attested, Attestation, AuthData, CausalAssertion, CollectionId, EntityId, EntityState, Event, NodeRequest } from '@ankurah/proto';
 import { Entity } from './entity';
 import { ValidationError } from './error';
 import { ContextData, Node, NodeInner } from './node';
@@ -9,8 +9,6 @@ import { PropertyError } from './property/traits';
 import { State } from './reactor/subscription_state';
 import { StorageEngine } from './storage';
 import { Iterable_dispatch_iterable } from './util/iterable';
-import { ParseError, Predicate } from '@ankurah/ankql';
-import { Attestation, Attested, AuthData, CausalAssertion, CollectionId, EntityId, EntityState, Event, NodeRequest } from '@ankurah/proto';
 
 export class PermissiveAgent extends Struct implements PolicyAgent {
 

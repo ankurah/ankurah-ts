@@ -3,7 +3,7 @@ import { HashSet } from '@ankurah/base';
 import { Iter } from './ivec';
 
 export interface Iterable<T> {
-  iterable(): Iter<>;
+  iterable(): Iter;
 }
 
 export function iterable<T>(self: T): Iter {

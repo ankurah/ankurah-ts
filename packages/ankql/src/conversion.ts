@@ -5,7 +5,7 @@ import { ParseError } from './error';
 import { parseSelection } from './parser';
 
 export function Predicate_tryFrom(value: string): Result<Predicate, ParseError> {
-  const _r0 = parser.parseSelection(value);
+  const _r0 = parseSelection(value);
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const _t1 = _r0.unwrap();
   try {
@@ -16,7 +16,7 @@ export function Predicate_tryFrom(value: string): Result<Predicate, ParseError> 
 }
 
 export function Selection_tryFrom(value: string): Result<Selection, ParseError> {
-  return parser.parseSelection(value);
+  return parseSelection(value);
 }
 
 export function Predicate_tryFromExpr(value: Expr): Result<Predicate, ParseError> {
@@ -53,31 +53,31 @@ export function Predicate_tryFromExpr(value: Expr): Result<Predicate, ParseError
 
 export function Expr_tryFromJsValue(value: unknown): Result<Expr, ParseError> {
   if ((value === null) || (value === undefined)) {
-    return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('String', { _0: 'NULL_IMPROBABLE_VALUE' }) }));
+    return Result.Ok(new Expr('Literal', { _0: new Literal('String', { _0: 'NULL_IMPROBABLE_VALUE' }) }));
   }
   {
     const _v = (typeof value === 'string' ? value : null);
     if (_v != null) {
       const s = _v;
-      return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('String', { _0: s }) }));
+      return Result.Ok(new Expr('Literal', { _0: new Literal('String', { _0: s }) }));
     }
   }
   {
     const _v1 = (typeof value === 'boolean' ? value : null);
     if (_v1 != null) {
       const b = _v1;
-      return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('Bool', { _0: b }) }));
+      return Result.Ok(new Expr('Literal', { _0: new Literal('Bool', { _0: b }) }));
     }
   }
   {
     const _v2 = (typeof value === 'number' ? value : null);
     if (_v2 != null) {
       const n = _v2;
-      if (n.fract() === 0.0) {
+      if ((n - Math.trunc(n)) === 0.0) {
         const nInt = (($v) => $v < -9223372036854775808n ? -9223372036854775808n : $v > 9223372036854775807n ? 9223372036854775807n : $v)(BigInt(Math.min(Math.max(Math.trunc(n) || 0, -9223372036854775808), 9223372036854775807)));
-        return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('I64', { _0: nInt }) }));
+        return Result.Ok(new Expr('Literal', { _0: new Literal('I64', { _0: nInt }) }));
       } else {
-        return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('F64', { _0: n }) }));
+        return Result.Ok(new Expr('Literal', { _0: new Literal('F64', { _0: n }) }));
       }
     }
   }

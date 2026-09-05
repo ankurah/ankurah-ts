@@ -1,15 +1,14 @@
 // MIRRORS: ankurah/core/src/property/value/entity_ref.rs
-import { Struct, Result, HashMap, HashSet } from '@ankurah/base';
-import { EntityId } from '@ankurah/proto';
+import { Struct, Result, unsupported, HashMap, HashSet } from '@ankurah/base';
+import { EntityId, DecodeError } from '@ankurah/proto';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Context } from '../../context';
 import { RetrievalError } from '../../error';
 import { Model, View } from '../../indexel';
+import { Value } from '../../value/index';
 import { Property } from '../index';
 import { PropertyError } from '../traits';
-import { Value } from '../../value/index';
 import { Expr } from '@ankurah/ankql';
-import { DecodeError, EntityId } from '@ankurah/proto';
 
 export class Ref<T extends Model> extends Struct implements Property {
   id: EntityId;
@@ -78,18 +77,7 @@ export class Ref<T extends Model> extends Struct implements Property {
   }
 
   static fromValue<T>(value: Value | null): Result<Ref<T>, PropertyError> {
-    if (value != null && (value.is('EntityId'))) {
-      const { _0: id } = value.value;
-      return Result.Ok(new Ref(id));
-    } else if (value != null && (value.is('String'))) {
-      const { _0: s } = value.value;
-      return EntityId.fromBase64(s).map(Ref.new).mapErr((e) => new PropertyError('InvalidValue', { value: s, ty: `Ref (${e})` }));
-    } else if (value != null) {
-      const other = value;
-      return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
-    } else {
-      return Result.Err(new PropertyError('Missing', {}));
-    }
+    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
   }
 
   equals(other: Ref<T>): boolean {

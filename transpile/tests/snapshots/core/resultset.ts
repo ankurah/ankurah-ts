@@ -7,7 +7,6 @@ import { encodeTupleValuesWithKeySpec } from './indexing/encoding';
 import { KeySpec } from './indexing/key_spec';
 import { AbstractEntity } from './reactor';
 import { EntityId } from '@ankurah/proto';
-import { Broadcast, BroadcastId, CurrentObserver, Get, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 
 export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct implements Signal {
   _0: Arc<Inner<E>>;
@@ -443,12 +442,12 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   add(entity: E): boolean {
-    const guard = this.guard.asMut();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     const id = entity.id();
     if (guard.value.index.has(id)) {
       return false;
     }
-    const sortKey = guard.value.keySpec.asRef() != null ? ((keySpec) => ResultSetWrite.Self.computeSortKey(entity, keySpec))(guard.value.keySpec.asRef()!) : null;
+    const sortKey = guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null;
     const entry = new EntityEntry(entity, sortKey, false);
     const pos = guard.value.order.binarySearchBy((existing) => {
       const _v = [existing.sortKey, entry.sortKey];
@@ -495,12 +494,12 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   remove(id: EntityId): boolean {
-    const guard = this.guard.asMut();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     {
       const _v = guard.value.index.remove(id);
       if (_v != null) {
         const idx = _v;
-        if (guard.value.limit.isSomeAnd((limit) => guard.value.order.length === limit)) {
+        if (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!)) {
           guard.value.gapDirty = true;
         }
         guard.value.order.splice(idx, 1)[0];
@@ -516,16 +515,16 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   contains(id: EntityId): boolean {
-    return this.guard.asRef().value.index.has(id);
+    return (this.guard ?? (() => { throw new Error('write guard already dropped'); })()).value.index.has(id);
   }
 
   iterEntities(): [EntityId, E][] {
-    const guard = this.guard.asRef();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     return [...guard.value.order].map((entry) => [entry.entity.id(), entry.entity]);
   }
 
   markAllDirty(): void {
-    const guard = this.guard.asMut();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     const _seq0 = guard.value.order;
     let _at1 = 0;
     try {
@@ -544,10 +543,10 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   retainDirty<F>(shouldRetain: F): EntityId[] {
-    const guard = this.guard.asMut();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     let removedIds = [];
     let i = 0;
-    const wasAtLimit = guard.value.limit.isSomeAnd((limit) => guard.value.order.length === limit);
+    const wasAtLimit = guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!);
     while (i < guard.value.order.length) {
       if (guard.value.order[i].dirty) {
         const shouldKeep = shouldRetain(guard.value.order[i].entity);
@@ -558,7 +557,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
             if (_v != null) {
               const keySpec = _v;
               try {
-                guard.value.order[i].sortKey = ResultSetWrite.Self.computeSortKey(guard.value.order[i].entity, keySpec);
+                guard.value.order[i].sortKey = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
               } finally {
                 keySpec.drop();
               }
@@ -589,7 +588,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     }
     if (!(removedIds.length === 0)) {
       this.changed = true;
-      if ((!guard.value.gapDirty) && wasAtLimit && guard.value.limit.isSomeAnd((limit) => guard.value.order.length < limit)) {
+      if ((!guard.value.gapDirty) && wasAtLimit && guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!)) {
         guard.value.gapDirty = true;
       }
     }
@@ -597,11 +596,11 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   replaceAll(entities: E[]): void {
-    const guard = this.guard.asMut();
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     guard.value.order.length = 0;
     guard.value.index.clear();
     for (const entity of entities) {
-      const sortKey = guard.value.keySpec.asRef() != null ? ((keySpec) => ResultSetWrite.Self.computeSortKey(entity, keySpec))(guard.value.keySpec.asRef()!) : null;
+      const sortKey = guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null;
       const entry = new EntityEntry(entity, sortKey, false);
       guard.value.order.push(entry);
     }
@@ -786,14 +785,14 @@ class IVec extends Enum<IVecV> {
     if (bytes.length <= 16) {
       let data = Array(16).fill(0);
       data.slice(0, bytes.length).copyFromSlice(bytes);
-      return IVec.Self.Small(data);
+      return IVec.Small(data);
     } else {
-      return IVec.Self.Large(bytes.slice());
+      return IVec.Large(bytes.slice());
     }
   }
 
   static from(vec: Uint8Array): IVec {
-    return IVec.Self.fromSlice(vec);
+    return IVec.fromSlice(vec);
   }
 
   clone(): IVec {
@@ -801,6 +800,17 @@ class IVec extends Enum<IVecV> {
   }
 
   equals(other: IVec): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Small': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Large': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+    }
     return true;
   }
 

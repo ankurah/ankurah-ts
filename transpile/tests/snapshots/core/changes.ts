@@ -5,7 +5,6 @@ import { Entity } from './entity';
 import { MutationError } from './error';
 import { ChangeNotification } from './reactor';
 import { ResultSet } from './resultset';
-import { Attested, Event } from '@ankurah/proto';
 
 export class EntityChange extends Struct implements ChangeNotification {
   entity: Entity;
@@ -314,6 +313,7 @@ export class ChangeKind extends Enum<ChangeKindV> {
   }
 
   equals(other: ChangeKind): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

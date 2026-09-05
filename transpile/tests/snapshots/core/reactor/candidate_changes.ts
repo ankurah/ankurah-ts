@@ -2,7 +2,6 @@
 import { Struct, Arc, HashMap } from '@ankurah/base';
 import { QueryId } from '@ankurah/proto';
 import { IVec } from '../resultset';
-import { QueryId } from '@ankurah/proto';
 
 export class CandidateChanges<C> extends Struct {
   changes: Arc<C[]>;
@@ -56,9 +55,9 @@ export class CandidateChanges<C> extends Struct {
 export class QueryCandidate<C> extends Struct {
   readonly queryId: QueryId;
   changes: Arc<C[]>;
-  offsets: Uint8Array;
+  offsets: number[];
 
-  constructor(queryId: QueryId, changes: Arc<C[]>, offsets: Uint8Array) {
+  constructor(queryId: QueryId, changes: Arc<C[]>, offsets: number[]) {
     super();
     this.queryId = queryId;
     this.changes = changes;

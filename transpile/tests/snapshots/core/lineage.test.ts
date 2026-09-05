@@ -12,7 +12,7 @@ class TestClock extends Struct implements TClock {
     this.members = members;
   }
 
-  members(): Uint8Array {
+  members(): number[] {
     return this.members;
   }
 

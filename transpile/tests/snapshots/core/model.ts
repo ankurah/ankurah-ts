@@ -85,7 +85,7 @@ export abstract class Mutable {
         Primary: () => inner.clone(),
       });
     })();
-    return Mutable.Self.View.fromEntity(newInner);
+    return Mutable.fromEntity(newInner);
   }
 }
 

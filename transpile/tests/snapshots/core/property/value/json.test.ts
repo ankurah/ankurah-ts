@@ -8,7 +8,7 @@ describe('json unit tests', () => {
   test('test_json_roundtrip', () => {
     const original = Json.object([['name', 'test'], ['count', 42], ['nested', undefined /* json!({ "inner" : "value" }) */]]);
     try {
-      const value = original.intoValue().unwrap();
+      const value = (original.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
       const recovered = Json.fromValue(value).unwrap();
       try {
         expect(original).toEqual(recovered);
@@ -36,7 +36,7 @@ describe('json unit tests', () => {
     const json = Json.null();
     try {
       if (!(json.isNull())) throw new Error('assertion failed');
-      const value = json.intoValue().unwrap();
+      const value = (json.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
       const recovered = Json.fromValue(value).unwrap();
       try {
         if (!(recovered.isNull())) throw new Error('assertion failed');

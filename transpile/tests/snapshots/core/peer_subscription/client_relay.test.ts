@@ -86,7 +86,7 @@ class MockMessageSender<CD extends ContextData> extends Struct implements TNode<
   async peerUnsubscribe(peerId: EntityId, queryId: QueryId): Promise<Result<void, AnyhowError>> {
     const _t0 = this.sentRequests.value.lock();
     try {
-      _t0.value.push([peerId, queryId, CollectionId.from('unsubscribe'), new ankql.ast.Selection(new Predicate('True', {}), null, null)]);
+      _t0.value.push([peerId, queryId, CollectionId.from('unsubscribe'), new Selection(new Predicate('True', {}), null, null)]);
     } finally {
       _t0.drop();
     }
@@ -135,7 +135,7 @@ class MockLiveQuery extends Struct implements RemoteQuerySubscriber {
 
 describe('client_relay unit tests', () => {
   function createTestSelection(): Selection {
-    return new ankql.ast.Selection(new Predicate('True', {}), null, null);
+    return new Selection(new Predicate('True', {}), null, null);
   }
 
   function createTestCollectionId(): CollectionId {

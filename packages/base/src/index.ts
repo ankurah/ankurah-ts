@@ -1,6 +1,9 @@
 // TS-ONLY: Rust ownership primitives for the ankurah port (see E11)
 
 export { AkObject, dropOwned, dropUnbound, type Slot } from './object.ts';
+// R12: a Rust shape with no lowering emits a HOLE here rather than the nearest
+// thing the engine can write, so no reported gap can run as wrong code.
+export { unsupported, UnsupportedShape } from './unsupported.ts';
 export { Struct } from './struct.ts';
 export { Enum } from './enum.ts';
 export { Result } from './result.ts';

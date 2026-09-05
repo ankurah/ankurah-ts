@@ -1514,9 +1514,22 @@ impl<'a> TypeContext<'a> {
             return false;
         }
         segments.push(variant.to_string());
+        if self.registry.lookup_variant(self.module, &segments).is_some() {
+            return true;
+        }
+        // The emitted name is the LEAF, because the port flattens a crate's
+        // module tree into a package's exports: `ast::Literal::I64` is written
+        // `Literal.I64` and imported from `./ast`. A module that says only
+        // `use crate::ast;` has no `Literal` in scope, so asking from there
+        // answers no — and the call was then written as an associated function
+        // of a class, not as the variant it is. The crate root is where the
+        // flattened surface lives, so it is asked second.
+        let root = self.registry.crate_root_of(self.module);
         self.registry
-            .lookup_variant(self.module, &segments)
-            .is_some()
+            .modules()
+            .ids()
+            .filter(|m| self.registry.modules().is_within(*m, root))
+            .any(|m| m != self.module && self.registry.lookup_variant(m, &segments).is_some())
     }
 
     /// The enum and variant a path names, where it names a *unit* variant of an

@@ -18,7 +18,7 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
   }
 
   static new<T>(): ComparisonIndex<T> {
-    return ComparisonIndex.Self.default();
+    return ComparisonIndex.default();
   }
 
   forEntry<F, V>(value: V, op: ComparisonOperator, f: F): void {

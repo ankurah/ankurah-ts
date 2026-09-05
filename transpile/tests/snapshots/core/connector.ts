@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/core/src/connector.rs
 import { Enum, Result, timeout } from '@ankurah/base';
-import { Attested, EntityState } from '@ankurah/proto';
-import { Attested, EntityId, EntityState, NodeMessage, Presence } from '@ankurah/proto';
+import { Attested, EntityState, EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
 export type SendErrorV = {
   ConnectionClosed: {};

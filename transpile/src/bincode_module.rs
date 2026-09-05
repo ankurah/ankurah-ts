@@ -428,38 +428,108 @@ fn field_codec(reg: &TypeRegistry, field: &crate::types::FieldInfo, value: &str,
     pair
 }
 
-/// A field whose codec falls through to `<Type>.decode(reader)` when nothing
-/// emits a class called `<Type>`.
+/// A field whose codec calls `<Type>.decode` where nothing emits a class called
+/// `<Type>`.
 ///
 /// The fallthrough is right for a type this crate declares and wrong for a
 /// declared system type — `ulid::Ulid` is `pub struct Ulid(pub u128)` in the
 /// surface and has no TypeScript at all, so `Ulid.decode(reader)` is a
-/// `ReferenceError` the moment the variant is read. It used to be emitted with
+/// `ReferenceError` the moment the field is read. It used to be emitted with
 /// nothing said.
+///
+/// Every `<Type>.decode(` in the field's codec is asked, not only the whole of
+/// it: `Vec<Ulid>` decodes as `reader.readVec((r) => Ulid.decode(r))`, and a
+/// check that matched the top-level shape alone said nothing about it. The same
+/// `ReferenceError`, one wrapper further in.
 fn report_if_unwritable(
     reg: &TypeRegistry,
     field: &crate::types::FieldInfo,
     owner: &str,
     decode: &str,
 ) {
-    let Some(head) = decode.split('.').next() else { return };
-    if !decode.ends_with(".decode(reader)") || head.is_empty() {
-        return;
-    }
-    // The question is about the type the NAME stands for, and emission erases
-    // the wrappers on the way there: `Box<Expr>` is written `Expr`, and `Expr`
-    // is this crate's own.
-    let Some(mut ty) = field.ty.clone() else { return };
-    loop {
-        match crate::name_map::shape::js_shape(reg, &ty) {
-            crate::name_map::shape::JsShape::SameAs(inner) => ty = inner,
-            _ => break,
+    let Some(ty) = field.ty.clone() else { return };
+    let mut asked: Vec<String> = Vec::new();
+    // The whole field's own codec, asked as it always was: the emitted head is
+    // what a reader will call, whatever the port's spelling of the type is.
+    if let Some(head) = decode.strip_suffix(".decode(reader)") {
+        if head.chars().next().is_some_and(|c| c.is_uppercase())
+            && !crate::codegen::BASE_RUNTIME_SYMBOLS.contains(&head)
+        {
+            let mut peeled = ty.peel_refs().clone();
+            while let crate::name_map::shape::JsShape::SameAs(inner) =
+                crate::name_map::shape::js_shape(reg, &peeled)
+            {
+                peeled = inner.peel_refs().clone();
+            }
+            if peeled.id().is_some_and(|id| id.is_foreign() || reg.is_system(id)) {
+                asked.push(head.to_string());
+                report_missing_decoder(owner, field, head);
+            }
         }
     }
-    let Some(id) = ty.peel_refs().id() else { return };
-    if !id.is_foreign() && !reg.is_system(id) {
-        return;
+    for inner in named_types_within(reg, &ty) {
+        let written = crate::name_map::map_ty(reg, &inner);
+        // Only the types whose codec IS a call to a class of their own name.
+        // A `String` decodes through the reader and names no class.
+        if !decode_expr(&written, Some(&inner)).contains(&format!("{}.decode(", written)) {
+            continue;
+        }
+        let Some(id) = inner.peel_refs().id() else { continue };
+        if !id.is_foreign() && !reg.is_system(id) {
+            continue;
+        }
+        if asked.contains(&written) {
+            continue;
+        }
+        asked.push(written.clone());
+        report_missing_decoder(owner, field, &written);
     }
+}
+
+/// Every named type inside this one, the wrappers peeled: `Vec<Option<Ulid>>`
+/// answers `Ulid` as well as itself.
+///
+/// The question — does the port emit a class of that name — used to be asked of
+/// the field's whole type alone, so `Vec<Ulid>`, which decodes as
+/// `reader.readVec((r) => Ulid.decode(r))`, said nothing. The same
+/// `ReferenceError`, one wrapper further in.
+fn named_types_within(reg: &TypeRegistry, ty: &Ty) -> Vec<Ty> {
+    let mut out = Vec::new();
+    let mut queue = vec![ty.clone()];
+    let mut seen = 0usize;
+    while let Some(next) = queue.pop() {
+        seen += 1;
+        // A type that refers to itself would walk forever; the corpus's deepest
+        // is three, and this is a diagnostic, not a proof.
+        if seen > 64 {
+            break;
+        }
+        // A wrapper the port ERASES — `Box<Expr>` is written `Expr` — is not
+        // the type the emitted name stands for. Following it to the end first
+        // keeps the name and the declaration the same type, which is the whole
+        // question here: `Box<Expr>` reported `Expr.decode` as missing because
+        // it asked `Box`'s declaration about `Expr`'s name.
+        let mut peeled = next.peel_refs().clone();
+        while let crate::name_map::shape::JsShape::SameAs(inner) =
+            crate::name_map::shape::js_shape(reg, &peeled)
+        {
+            peeled = inner.peel_refs().clone();
+        }
+        match &peeled {
+            Ty::Named { args, .. } => {
+                out.push(peeled.clone());
+                queue.extend(args.iter().cloned());
+            }
+            Ty::Slice(elem) | Ty::Array { elem, .. } => queue.push((**elem).clone()),
+            Ty::Tuple(elems) => queue.extend(elems.iter().cloned()),
+            Ty::Ref { inner, .. } => queue.push((**inner).clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn report_missing_decoder(owner: &str, field: &crate::types::FieldInfo, head: &str) {
     crate::diag::pending::park_at(
         0,
         0,
@@ -604,6 +674,43 @@ mod tests {
             .find(|e| e.name == name)
             .expect("enum");
         generate_enum_codec(&f.reg, info)
+    }
+
+    /// A `<Type>.decode` call with nothing behind it is a `ReferenceError` the
+    /// moment a value is read, and it is one wherever the call sits. The
+    /// question used to be asked of the field's whole codec, so `Vec<Ulid>` —
+    /// which decodes as `reader.readVec((r) => Ulid.decode(r))` — said nothing:
+    /// the same fault, one wrapper further in.
+    #[test]
+    fn a_decoder_that_names_nothing_is_reported_inside_a_wrapper_too() {
+        let f = Fixture::build(&[(
+            "lib.rs",
+            "use serde::{Serialize, Deserialize};\n\
+             use ulid::Ulid;\n\
+             #[derive(Serialize, Deserialize)] pub struct Bare { pub id: Ulid }\n\
+             #[derive(Serialize, Deserialize)] pub struct Many { pub ids: Vec<Ulid> }\n\
+             #[derive(Serialize, Deserialize)] pub struct Ours { pub one: Bare }\n",
+        )]);
+        for info in &f.files[0].file.structs {
+            let _ = generate_struct_codec(&f.reg, info);
+        }
+        crate::diag::pending::drain(&f.sink);
+        let said = f.messages();
+        assert!(
+            said.iter().any(|m| m.contains("`Bare`'s `id`") && m.contains("`Ulid.decode`")),
+            "the plain field: {:?}",
+            said
+        );
+        assert!(
+            said.iter().any(|m| m.contains("`Many`'s `ids`") && m.contains("`Ulid.decode`")),
+            "the same type inside a `Vec`: {:?}",
+            said
+        );
+        assert!(
+            !said.iter().any(|m| m.contains("`Ours`") && m.contains(".decode`")),
+            "a type this crate emits is not reported: {:?}",
+            said
+        );
     }
 
     /// `#[serde(other)]` says what a decoder does with a tag it does not know.

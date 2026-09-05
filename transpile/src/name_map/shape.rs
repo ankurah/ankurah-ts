@@ -14,8 +14,11 @@ use crate::ty::{Prim, TraitRef, Ty};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsShape {
-    /// `Uint8Array`: `Vec<u8>`, and — a wart kept from the syntactic mapping —
-    /// any slice or array whose element is written as a number.
+    /// `Uint8Array`: `Vec<u8>`, `[u8]`, `[u8; N]`. ONLY `u8`. A `Uint8Array`
+    /// truncates every value it is given to a byte, so `[i16]` written as one
+    /// turns `-1` into `255` and `[f64]` turns `1.5` into `1`; and its methods
+    /// are not an array's, so `[u32]` written as one has no `push`. Only the
+    /// element type Rust itself calls a byte is bytes.
     Bytes,
     Array(Ty),
     Nullable(Ty),
@@ -63,7 +66,7 @@ pub fn js_shape(reg: &TypeRegistry, ty: &Ty) -> JsShape {
         Ty::Tuple(elems) => JsShape::Tuple(elems.clone()),
         Ty::Prim(p) => prim_shape(*p),
         Ty::Slice(elem) | Ty::Array { elem, .. } => {
-            if js_shape(reg, elem) == JsShape::Number {
+            if matches!(**elem, Ty::Prim(Prim::U8)) {
                 JsShape::Bytes
             } else {
                 JsShape::Array((**elem).clone())

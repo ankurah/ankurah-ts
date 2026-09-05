@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/core/src/reactor/update.rs
 import { Struct, Enum } from '@ankurah/base';
-import { Attested, Event } from '@ankurah/proto';
-import { QueryId } from '@ankurah/proto';
+import { Attested, Event, QueryId } from '@ankurah/proto';
 
 export class ReactorUpdate<E = Entity, Ev = Attested<Event>> extends Struct {
   readonly items: ReactorUpdateItem<E, Ev>[];
@@ -70,6 +69,7 @@ export class MembershipChange extends Enum<MembershipChangeV> {
   }
 
   equals(other: MembershipChange): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Diag {
     pub file: String,
     pub line: usize,
@@ -53,6 +53,17 @@ impl Diag {
 pub struct DiagSink {
     file: RefCell<String>,
     diags: RefCell<Vec<Diag>>,
+    /// Every diagnostic already recorded, so one gap is reported once.
+    ///
+    /// The translator reads a body more than once — the type map, the emitter
+    /// and the import scan each walk it — and a gap it hits was filed once per
+    /// walk: `ankql/src/ast.rs:346:12: method `next` resolved through trait
+    /// `StreamExt`` stood in the run three times. The count is meant to be a
+    /// coverage measure, how much of a crate the engine cannot type, and
+    /// counting one site three times measures the emitter's passes instead.
+    /// Kept in step with `diags` through `rewind`, so an abandoned translation
+    /// gives back the right to report again.
+    seen: RefCell<HashSet<Diag>>,
     /// Messages already filed once, per domain: the declared surface and the
     /// crate are counted apart and must not silence each other.
     once: RefCell<HashSet<(bool, String)>>,
@@ -73,6 +84,9 @@ impl DiagSink {
     }
 
     pub fn push(&self, diag: Diag) {
+        if !self.seen.borrow_mut().insert(diag.clone()) {
+            return;
+        }
         self.diags.borrow_mut().push(diag);
     }
 
@@ -118,7 +132,11 @@ impl DiagSink {
     }
 
     pub fn rewind(&self, mark: usize) {
-        self.diags.borrow_mut().truncate(mark);
+        let mut diags = self.diags.borrow_mut();
+        let mut seen = self.seen.borrow_mut();
+        for diag in diags.drain(mark..) {
+            seen.remove(&diag);
+        }
     }
 
     /// How many diagnostics are about the crate being transpiled, and how many
@@ -242,6 +260,46 @@ mod tests {
         assert_eq!(diags[0].line, 1);
         assert_eq!(diags[0].col, 1);
         assert_eq!(diags[0].message, "raw pointer");
+    }
+
+    /// One gap is one diagnostic. The translator walks a body more than once
+    /// — the type map, the emitter and the import scan each read it — and a
+    /// gap it hits was filed once per walk, so the count measured the
+    /// emitter's passes as much as the engine's coverage.
+    #[test]
+    fn one_gap_at_one_site_is_reported_once() {
+        let ty: syn::Type = syn::parse_str("Ulid").unwrap();
+        let span = syn::spanned::Spanned::span(&ty);
+        let sink = DiagSink::new();
+        sink.set_file("proto/src/id.rs");
+        sink.report(span, "method `next` resolved through trait `StreamExt`");
+        sink.report(span, "method `next` resolved through trait `StreamExt`");
+        sink.report(span, "method `next` resolved through trait `StreamExt`");
+        assert_eq!(sink.len(), 1);
+        // A DIFFERENT gap at the same site is a different diagnostic, and a
+        // different site with the same words is another one.
+        sink.report(span, "obligation deferred: `I: Iterator`");
+        sink.set_file("proto/src/clock.rs");
+        sink.report(span, "method `next` resolved through trait `StreamExt`");
+        assert_eq!(sink.len(), 3);
+    }
+
+    /// An abandoned translation gives back the right to report: the emitter
+    /// writes a form out before it can tell whether the form fits, and rewinds
+    /// when it does not. Without taking the rewound diagnostics off the record
+    /// of what has been said, the attempt would silence the real report that
+    /// the second form makes at the same place.
+    #[test]
+    fn a_rewound_attempt_may_report_again() {
+        let ty: syn::Type = syn::parse_str("Ulid").unwrap();
+        let span = syn::spanned::Spanned::span(&ty);
+        let sink = DiagSink::new();
+        sink.set_file("proto/src/id.rs");
+        let mark = sink.mark();
+        sink.report(span, "the branch needs a statement");
+        sink.rewind(mark);
+        sink.report(span, "the branch needs a statement");
+        assert_eq!(sink.len(), 1);
     }
 
     #[test]

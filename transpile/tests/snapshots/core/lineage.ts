@@ -41,7 +41,7 @@ export class EventAccumulator<Event extends Clone> extends Struct {
   }
 
   isAtLimit(): boolean {
-    return this.maximum.mapOr(false, (max) => this.events.length >= max);
+    return this.maximum != null ? ((max) => this.events.length >= max)(this.maximum!) : false;
   }
 
   clone(): EventAccumulator<Event> {
@@ -175,7 +175,7 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   static new<G, C extends TClock>(getter: G, subject: C, other: C, budget: number): Comparison<G> {
-    return Comparison.Self.newWithAccumulator(getter, subject, other, budget, null);
+    return Comparison.newWithAccumulator(getter, subject, other, budget, null);
   }
 
   static newWithAccumulator<G, C extends TClock>(getter: G, subject: C, other: C, budget: number, subjectEventAccumulator: EventAccumulator<Attested<Event>> | null): Comparison<G> {
@@ -310,7 +310,7 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   computeNotDescendsOrdering(): Ordering<Id> {
-    const meet = [...[...this.meetCandidates].filter((id) => this.states.get(id).mapOr(0, (state) => state.commonChildCount) === 0)];
+    const meet = [...[...this.meetCandidates].filter((id) => this.states.get(id) != null ? ((state) => state.commonChildCount)(this.states.get(id)!) : 0 === 0)];
     if (this.headOverlap) {
       return new Ordering('PartiallyDescends', { meet: meet });
     } else {
@@ -331,6 +331,22 @@ export type OrderingV = {
 export class Ordering<Id> extends Enum<OrderingV> {
 
   equals(other: Ordering<Id>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'NotDescends': {
+        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!(this.value as any).meet[i].equals((other.value as any).meet[i])) return false; } }
+        break;
+      }
+      case 'PartiallyDescends': {
+        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!(this.value as any).meet[i].equals((other.value as any).meet[i])) return false; } }
+        break;
+      }
+      case 'BudgetExceeded': {
+        if (!(this.value as any).subjectFrontier.equals((other.value as any).subjectFrontier)) return false;
+        if (!(this.value as any).otherFrontier.equals((other.value as any).otherFrontier)) return false;
+        break;
+      }
+    }
     return true;
   }
 

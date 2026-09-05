@@ -1,12 +1,11 @@
 // MIRRORS: ankurah/core/src/property/value/lww.rs
 import { Struct, Result, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
-import { Listener, ListenerGuard, Signal } from '@ankurah/signals';
+import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
+import { Value } from '../../value/index';
 import { LWWBackend } from '../backend/lww';
 import { Property_dispatch_intoValue } from '../index';
 import { FromActiveType, FromEntity, InitializeWith, PropertyError } from '../traits';
-import { Value } from '../../value/index';
-import { BroadcastId, ListenerGuard, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 
 export class LWW<T extends Property & Clone> extends Struct implements FromEntity, InitializeWith<T>, Signal, Subscribe<T> {
   readonly propertyName: PropertyName;
@@ -56,7 +55,7 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
   }
 
   static initializeWith<T>(entity: Entity, propertyName: PropertyName, value: T): LWW<T> {
-    const new_ = LWW.Self.fromEntity(propertyName, entity);
+    const new_ = LWW.fromEntity(propertyName, entity);
     try {
       new_.set(value).unwrap();
       return new_;

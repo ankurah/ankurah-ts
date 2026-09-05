@@ -461,6 +461,7 @@ export class MembershipChange extends Enum<MembershipChangeV> {
   }
 
   equals(other: MembershipChange): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

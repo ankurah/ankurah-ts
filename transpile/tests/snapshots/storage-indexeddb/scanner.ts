@@ -1,10 +1,9 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/scanner.rs
 import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
-import { RetrievalError } from '@ankurah/core';
+import { RetrievalError, Value } from '@ankurah/core';
 import { IdbValue } from './idb_value';
 import { CBStream, cbStream } from './util/cb_stream';
 import { Object } from './util/object';
-import { RetrievalError, Value } from '@ankurah/core';
 
 export class IdbIndexScanner extends Struct {
   index: IdbIndex;

@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/node.rs
 import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, tracing, dropUnbound, HashMap, oneshot, spawn } from '@ankurah/base';
-import { Attested, CollectionId, EntityState } from '@ankurah/proto';
+import { Attested, CollectionId, EntityState, Clock, DeltaContent, EntityDelta, EntityId, Event, NodeMessage, NodeRequest, NodeRequestBody, NodeResponse, NodeResponseBody, NodeUpdate, NodeUpdateAck, NodeUpdateAckBody, NodeUpdateBody, Presence, QueryId, RequestId, StateFragment, TransactionId, UpdateId } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { CollectionSet } from './collectionset';
 import { PeerSender, SendError } from './connector';
@@ -23,7 +23,6 @@ import { Iterable_dispatch_iterable } from './util/iterable';
 import { SafeMap } from './util/safemap';
 import { SafeSet } from './util/safeset';
 import { ParseError, Predicate, Selection } from '@ankurah/ankql';
-import { Attested, Clock, CollectionId, DeltaContent, EntityDelta, EntityId, EntityState, Event, NodeMessage, NodeRequest, NodeRequestBody, NodeResponse, NodeResponseBody, NodeUpdate, NodeUpdateAck, NodeUpdateAckBody, NodeUpdateBody, Presence, QueryId, RequestId, StateFragment, TransactionId, UpdateId } from '@ankurah/proto';
 import { Get } from '@ankurah/signals';
 
 export class PeerState extends Struct {
@@ -64,7 +63,7 @@ export class MatchArgs extends Struct {
   }
 
   static fromPredicate(val: Predicate): MatchArgs {
-    return new MatchArgs(new ankql.ast.Selection(val, null, null), true);
+    return new MatchArgs(new Selection(val, null, null), true);
   }
 
   static fromSelection(val: Selection): MatchArgs {
@@ -84,7 +83,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
     try {
       const collections = CollectionSet.new(engine.clone());
       const entityset = Default.default();
-      const id = proto.EntityId.new();
+      const id = EntityId.new();
       const reactor = Reactor.new();
       undefined /* notice_info!("Node {id:#} created as ephemeral") */;
       const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), false);
@@ -109,7 +108,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   static newDurable<SE, PA>(engine: Arc<SE>, policyAgent: PA): Node<SE, PA> {
     const collections = CollectionSet.new(engine);
     const entityset = Default.default();
-    const id = proto.EntityId.new();
+    const id = EntityId.new();
     const reactor = Reactor.new();
     undefined /* notice_info!("Node {id:#} created as durable") */;
     const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), true);
@@ -204,17 +203,17 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   async request<C>(nodeId: EntityId, cdata: C, requestBody: NodeRequestBody): Promise<Result<NodeResponseBody, RequestError>> {
     const [responseTx, responseRx] = oneshot.channel();
     let _moved0 = false;
-    const requestId = proto.RequestId.new();
+    const requestId = RequestId.new();
     try {
       let _moved1 = false;
-      const request = new proto.NodeRequest(requestId.clone(), nodeId, this.deref().value.id, requestBody);
+      const request = new NodeRequest(requestId.clone(), nodeId, this.deref().value.id, requestBody);
       try {
         const _r2 = this.deref().value.policyAgent.signRequest(this, cdata, request);
         if (_r2.isErr()) return Result.Err(RequestError.fromAccessDenied(_r2.unwrapErr()));
         let _moved3 = false;
         const auth = _r2.unwrap();
         try {
-          const _r4 = this.deref().value.peerConnections.get(nodeId).okOr(new RequestError('PeerNotConnected', {}));
+          const _r4 = this.deref().value.peerConnections.get(nodeId) != null ? Result.Ok(this.deref().value.peerConnections.get(nodeId)!) : Result.Err(new RequestError('PeerNotConnected', {}));
           if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
           const connection = _r4.unwrap();
           try {
@@ -248,7 +247,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
       tracing.debug(`${this}.send_update(${nodeId}, ${notification})`);
       const [responseTx, _responseRx] = oneshot.channel();
       let _moved1 = false;
-      const id = proto.UpdateId.new();
+      const id = UpdateId.new();
       try {
         const _v = this.deref().value.peerConnections.get(nodeId);
         if (!(_v != null)) {
@@ -260,7 +259,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         _moved1 = true;
         _moved0 = true;
         let _moved2 = false;
-        const notification_1 = new proto.NodeMessage('Update', { _0: new proto.NodeUpdate(id, this.deref().value.id, nodeId, notification) });
+        const notification_1 = new NodeMessage('Update', { _0: new NodeUpdate(id, this.deref().value.id, nodeId, notification) });
         try {
           _moved2 = true;
           const _v1 = connection.value.sendMessage(notification_1);
@@ -321,13 +320,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                       return new NodeUpdateAckBody('Success', {});
                     } else {
                       const e = _v2.unwrapErr();
-                      return new proto.NodeUpdateAckBody('Error', { _0: e.toString() });
+                      return new NodeUpdateAckBody('Error', { _0: e.toString() });
                     }
                   })();
                   try {
                     _moved1 = true;
                     _moved2 = true;
-                    const _r3 = sender.sendMessage(new proto.NodeMessage('UpdateAck', { _0: new proto.NodeUpdateAck(id, from, to, body) }));
+                    const _r3 = sender.sendMessage(new NodeMessage('UpdateAck', { _0: new NodeUpdateAck(id, from, to, body) }));
                     if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
                     _r3.drop();
                   } finally {
@@ -384,12 +383,12 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                         return result;
                       } else {
                         const e = _v8.unwrapErr();
-                        return new proto.NodeResponseBody('Error', { _0: e.toString() });
+                        return new NodeResponseBody('Error', { _0: e.toString() });
                       }
                     } else {
                       const e = _v7.unwrapErr();
                       try {
-                        return new proto.NodeResponseBody('Error', { _0: e.toString() });
+                        return new NodeResponseBody('Error', { _0: e.toString() });
                       } finally {
                         e.drop();
                       }
@@ -398,7 +397,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   try {
                     _moved5 = true;
                     _moved6 = true;
-                    const _result = sender.sendMessage(new proto.NodeMessage('Response', { _0: new proto.NodeResponse(requestId, this.deref().value.id, from, body) }));
+                    const _result = sender.sendMessage(new NodeMessage('Response', { _0: new NodeResponse(requestId, this.deref().value.id, from, body) }));
                   } finally {
                     if (!_moved6) body.drop();
                   }
@@ -418,7 +417,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         const response = v._0;
         try {
           tracing.debug(`Node ${this.deref().value.id} received response ${response}`);
-          const _r7 = this.deref().value.peerConnections.get(response.from).okOr(new RequestError('PeerNotConnected', {}));
+          const _r7 = this.deref().value.peerConnections.get(response.from) != null ? Result.Ok(this.deref().value.peerConnections.get(response.from)!) : Result.Err(new RequestError('PeerNotConnected', {}));
           if (_r7.isErr()) return { $jump: 'return', $value: Result.Err(_r7.unwrapErr()) };
           const connection = _r7.unwrap();
           try {
@@ -482,7 +481,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               } else {
                 const e = _v.unwrapErr();
                 try {
-                  return Result.Ok(new proto.NodeResponseBody('Error', { _0: e.toString() }));
+                  return Result.Ok(new NodeResponseBody('Error', { _0: e.toString() }));
                 } finally {
                   e.drop();
                 }
@@ -559,7 +558,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     } finally {
                       dropOwned(_seq15.slice(_at16));
                     }
-                    return Result.Ok(new proto.NodeResponseBody('Fetch', { _0: deltas }));
+                    return Result.Ok(new NodeResponseBody('Fetch', { _0: deltas }));
                   } finally {
                     if (!_moved10) dropOwned(expandedStates);
                   }
@@ -617,7 +616,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               } finally {
                 dropOwned(_seq21.slice(_at22));
               }
-              return Result.Ok(new proto.NodeResponseBody('Get', { _0: states }));
+              return Result.Ok(new NodeResponseBody('Get', { _0: states }));
             } finally {
               storageCollection.drop();
             }
@@ -669,7 +668,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                 } finally {
                   dropOwned(_seq28.slice(_at29));
                 }
-                return Result.Ok(new proto.NodeResponseBody('GetEvents', { _0: events }));
+                return Result.Ok(new NodeResponseBody('GetEvents', { _0: events }));
               } finally {
                 storageCollection.drop();
               }
@@ -692,7 +691,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           try {
             try {
               try {
-                const _r33 = this.deref().value.peerConnections.get(request.from).okOrElse(() => AnyhowError.msg(`Peer ${request.from} not connected`));
+                const _r33 = this.deref().value.peerConnections.get(request.from) != null ? Result.Ok(this.deref().value.peerConnections.get(request.from)!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))());
                 if (_r33.isErr()) return Result.Err(_r33.unwrapErr());
                 const peerState = _r33.unwrap();
                 try {
@@ -753,7 +752,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   async relayToRequiredPeers(cdata: ContextData, id: TransactionId, events: Attested<Event>[]): Promise<Result<void, MutationError>> {
     try {
       for (const peerId of this.getDurablePeers()) {
-        const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.toVec() }));
+        const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.slice() }));
         if (_v.isOk()) {
           const _v2 = _v.unwrap();
           {
@@ -914,7 +913,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               {
                 _moved1 = true;
                 const eventFragments = [...attestedEvents].map((e) => e);
-                return Result.Ok(new proto.EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
+                return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
               }
             } finally {
               if (!_moved1) dropOwned(attestedEvents);
@@ -927,10 +926,10 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         }
       }
       let _moved2 = false;
-      const stateFragment = new proto.StateFragment(state, attestations);
+      const stateFragment = new StateFragment(state, attestations);
       try {
         _moved2 = true;
-        return Result.Ok(new proto.EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment })));
+        return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment })));
       } finally {
         if (!_moved2) stateFragment.drop();
       }
@@ -972,7 +971,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   nextEntityId(): EntityId {
-    return proto.EntityId.new();
+    return EntityId.new();
   }
 
   context(data: ContextData): Result<Context, AnyhowError> {
@@ -988,7 +987,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   async getFromPeer(collectionId: CollectionId, ids: EntityId[], cdata: ContextData): Promise<Result<void, RetrievalError>> {
-    const _r0 = this.getDurablePeerRandom().okOr(new RetrievalError('NoDurablePeers', {}));
+    const _r0 = this.getDurablePeerRandom() != null ? Result.Ok(this.getDurablePeerRandom()!) : Result.Err(new RetrievalError('NoDurablePeers', {}));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const peerId = _r0.unwrap();
     const _r1 = await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids })).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));

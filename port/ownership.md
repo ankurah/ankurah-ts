@@ -642,3 +642,29 @@ which is the defect this rule exists to remove.
 
 `BorrowMut` is `nonOwning`: it is a borrow, the value inside belongs to
 somebody else, and dropping the cell releases nothing.
+
+## A shape with no lowering is a hole, never the nearest thing
+
+A Rust shape the transpiler cannot translate used to be reported to whoever ran
+the transpiler and emitted anyway, as whatever the engine could write for it: a
+consuming arm whose guard was dropped ran for the whole variant, an arm that
+tests inside a payload ran for every value of it, a struct literal lost its
+`..rest`. Each of those is code that RUNS and answers something Rust would not,
+and a wrong answer at run time is a bug nobody traces back to a line printed
+during a build weeks earlier.
+
+So a known-wrong emission is written as a call to `unsupported('<the shape>')`
+from `@ankurah/base`. It throws `UnsupportedShape`, naming the Rust shape it is
+standing on, and its return type is `never`, so the hole stands wherever the
+expression it replaces stood — an arm's value, a return, an argument — and
+TypeScript narrows around it exactly as it did.
+
+The diagnostic does not go away: it is still what tells the port's authors which
+gaps are open, and the hole is what the running program does when it reaches
+one. A hole is not an error anything catches, and nothing in the port handles
+`UnsupportedShape`: it is the port saying this path was never translated.
+
+| Rust | TypeScript |
+|---|---|
+| a shape the engine reports and cannot write | `unsupported('a consuming match arm with a guard')` |
+| that hole reached at run time | `UnsupportedShape: the port has no translation for this: …` |

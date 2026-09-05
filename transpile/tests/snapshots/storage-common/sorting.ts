@@ -1,9 +1,8 @@
 // MIRRORS: ankurah/storage/common/src/sorting.rs
 import { Struct, dropOwned, checkedAdd } from '@ankurah/base';
-import { Filterable, Value } from '@ankurah/core';
+import { Filterable, Value, Context } from '@ankurah/core';
 import { OrderByComponents } from './types';
 import { OrderByItem } from '@ankurah/ankql';
-import { Context, Filterable, Value } from '@ankurah/core';
 import { Item } from '@ankurah/proto';
 
 export class SortedStream<S extends Unpin & Stream> extends Struct {
@@ -49,7 +48,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
       while (true) {
         const _m0 = (() => {
           {
-            const _v2 = this_.inner.asMut();
+            const _v2 = this_.inner;
             if (!(_v2 != null)) {
               return { $jump: 'break' };
             }
@@ -91,7 +90,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
       }
       const _m1 = (() => {
         {
-          const _v5 = this_.inner.asMut();
+          const _v5 = this_.inner;
           if (!(_v5 != null)) {
             return { $jump: 'return', $value: new Poll('Ready', { _0: null }) };
           }
@@ -205,7 +204,48 @@ class HeapItem<T extends Filterable> extends Struct {
   }
 
   compareTo(other: HeapItem<T>): number {
-    return this.compareTo(other);
+    const _seq8 = this.orderBy;
+    let _at9 = 0;
+    try {
+      while (_at9 < _seq8.length) {
+        const orderItem = _seq8[_at9++];
+        try {
+          const propertyName = orderItem.path.property();
+          const selfVal = this.item.value(propertyName);
+          const otherVal = other.item.value(propertyName);
+          const cmp = (() => {
+            const _v1 = [selfVal, otherVal, orderItem.direction];
+            if ((_v1[0] == null) && (_v1[1] == null)) {
+              return 0;
+            } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
+              return -1;
+            } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Asc'))) {
+              return 1;
+            } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Desc'))) {
+              return 1;
+            } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Desc'))) {
+              return -1;
+            } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
+              const s = _v1[0];
+              const o = _v1[1];
+              return s.compareTo(o) ?? 0;
+            } else {
+              const s = _v1[0];
+              const o = _v1[1];
+              return o.compareTo(s) ?? 0;
+            }
+          })();
+          if (cmp !== 0) {
+            return cmp;
+          }
+        } finally {
+          orderItem.drop();
+        }
+      }
+    } finally {
+      dropOwned(_seq8.slice(_at9));
+    }
+    return 0;
   }
 }
 
@@ -263,7 +303,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
         while (true) {
           const _m1 = (() => {
             {
-              const _v2 = this_.inner.asMut();
+              const _v2 = this_.inner;
               if (!(_v2 != null)) {
                 return { $jump: 'break' };
               }
@@ -324,7 +364,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
       }
       const _m2 = (() => {
         {
-          const _v6 = this_.inner.asMut();
+          const _v6 = this_.inner;
           if (!(_v6 != null)) {
             return { $jump: 'return', $value: new Poll('Ready', { _0: null }) };
           }

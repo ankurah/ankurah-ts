@@ -45,7 +45,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       {
         let subscriptions = this._0.value.subscriptions.lock();
         try {
-          const _r0 = subscriptions.value.remove(subId).okOr(new SubscriptionError('SubscriptionNotFound', {}));
+          const _r0 = subscriptions.value.remove(subId) != null ? Result.Ok(subscriptions.value.remove(subId)!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {}));
           if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
           return _r0.unwrap();
         } finally {
@@ -80,7 +80,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       {
         const subscriptions = this._0.value.subscriptions.lock();
         try {
-          const _r0 = subscriptions.value.get(subscriptionId).okOr(new SubscriptionError('SubscriptionNotFound', {}));
+          const _r0 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {}));
           if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
           return _r0.unwrap();
         } finally {
@@ -171,7 +171,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
               {
                 const subscriptions = this._0.value.subscriptions.lock();
                 try {
-                  const _r1 = subscriptions.value.get(subscriptionId).okOrElse(() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`));
+                  const _r1 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
                   if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
                   return _r1.unwrap();
                 } finally {
@@ -221,7 +221,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _r1 = subscriptions.value.get(subscriptionId).okOrElse(() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`));
+              const _r1 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
               if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
               return _r1.unwrap();
             } finally {
@@ -332,7 +332,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _r0 = subscriptions.value.get(subscriptionId).okOrElse(() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`));
+              const _r0 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
               if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
               return _r0.unwrap();
             } finally {

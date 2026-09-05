@@ -14,15 +14,15 @@
 total = 66
 
 [proto]
-total = 204
+total = 170
 
 [proto.by_cause]
-"obligation deferred: X (the subject is still a type parameter)" = 52
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand, so it has no emitted X to call" = 45
+"obligation deferred: X (the subject is still a type parameter)" = 21
 "no field X on X" = 14
-"method X resolved through trait X, which is not in scope here" = 12
 "X is guessed to be a constructor from its capitalisation" = 11
 "X does not name a value here" = 10
+"method X resolved through trait X, which is not in scope here" = 9
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 9
 "X is bound here but the engine could not type it" = 8
 "X is lowered as a X without the engine having named what it tests" = 7
@@ -45,29 +45,29 @@ total = 204
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 205
+total = 172
 
 [ankql.by_cause]
-"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 51
-"obligation deferred: X (the subject is still a type parameter)" = 42
-"X is bound here but the engine could not type it" = 22
+"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 48
+"obligation deferred: X (the subject is still a type parameter)" = 25
+"X is bound here but the engine could not type it" = 19
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 14
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 11
-"method X resolved through trait X, which is not in scope here" = 7
-"no method X on X" = 7
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 6
-"X has a type the engine cannot say owns anything, so nothing releases it" = 5
-"X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 5
+"no method X on X" = 6
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 5
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
-"X does not dereference" = 4
 "X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 4
+"X has a type the engine cannot say owns anything, so nothing releases it" = 4
+"X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 4
+"method X resolved through trait X, which is not in scope here" = 3
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two impls differ in something the naming scheme does not write down" = 2
+"X does not dereference" = 2
 "X does not name a function here" = 2
-"X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 2
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 2
 "an arm of this match names no variant, and the arms it stands for cannot be listed because the engine could not type the subject, so it is not written and the emitted match is not exhaustive" = 2
 "X is lowered as a X without the engine having named what it tests" = 1
+"X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 1
 "X's X prints under Debug as whatever its X says, because X is not declared" = 1
 "X's message prints X with X, and it prints as whatever its X says, because X is not declared" = 1
 "a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 1
@@ -77,69 +77,70 @@ total = 205
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [signals]
-total = 267
+total = 255
 
 [signals.by_cause]
-"X is bound here but the engine could not type it" = 128
+"X is bound here but the engine could not type it" = 120
 "X does not name a function here" = 28
 "this closure takes X by value and the engine could not type it, so it is left out of what the closure owns" = 17
-"obligation deferred: X (the subject is still a type parameter)" = 11
 "X has a type the engine cannot say owns anything, so nothing releases it" = 9
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 9
 "this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 9
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 7
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 7
 "X is guessed to be a constructor from its capitalisation" = 6
+"obligation deferred: X (the subject is still a type parameter)" = 6
 "path qualifiers std, sync, atomic are dropped by name" = 6
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 5
 "path qualifiers std, sync are dropped by name" = 5
 "this closure owns X, X and is written as an X, so it is invoked as X and released by whoever holds it" = 4
 "path qualifiers std, marker are dropped by name" = 3
 "X between X and X resolves through X, and no impl in the table performs it" = 2
-"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 2
 "no method X on X" = 2
 "the callee is not a path, so nothing names what it calls" = 2
 "X between X and X resolves through X, and the impl is the declared surface's, so the comparison is the runtime's own and X supplies none" = 1
 "X does not name a value here" = 1
+"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 1
+"X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 1
+"X is declared in ./broadcast and ./signal, and the port flattens a crate's modules into one package surface, where two star exports of one name export it from neither. Each keeps its own name qualified by its module (broadcast_ListenerGuard)" = 1
 "method X resolved through trait X, which is not in scope here" = 1
 "path qualifiers std are dropped by name" = 1
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 2576
+total = 2306
 
 [core.by_cause]
-"X is bound here but the engine could not type it" = 658
-"obligation deferred: X (the subject is still a type parameter)" = 412
-"X does not name a function here" = 216
-"method X resolved through trait X, which is not in scope here" = 87
+"X is bound here but the engine could not type it" = 636
+"obligation deferred: X (the subject is still a type parameter)" = 255
+"X does not name a function here" = 214
 "no method X on X" = 80
-"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 68
+"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 67
 "X has a type the engine cannot say owns anything, so nothing releases it" = 64
 "X does not name a value here" = 52
 "no X impl reaches X with the index written here" = 48
-"X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 47
+"X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 46
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 43
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 40
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 39
-"X for X has no run-time test the dispatcher can make, because the impl for X is written for a type the port has no class to test against" = 36
 "this X is written as a JSON literal rather than as one expression, and the hook reads the expression form only, so the value is X" = 36
-"path qualifiers std are dropped by name" = 32
+"method X resolved through trait X, which is not in scope here" = 34
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 31
+"path qualifiers std are dropped by name" = 31
 "no field X on X" = 30
-"X has no expected type here, so what it converts to is not said and the value stands as it is" = 27
-"the range types in X are not declared, so X is written as X" = 27
+"X has no expected type here, so what it converts to is not said and the value stands as it is" = 26
+"the range types in X are not declared, so X is written as X" = 23
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 22
 "X is lowered as a X without the engine having named what it tests" = 22
-"X is guessed to be a constructor from its capitalisation" = 20
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 19
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 19
+"X is guessed to be a constructor from its capitalisation" = 18
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 18
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 18
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 16
-"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 15
 "path qualifiers std, sync are dropped by name" = 14
 "X between X and X resolves through X, and no impl in the table performs it" = 12
+"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 12
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 12
 "X converts the error from X to X through X, and more than one X impl for X is emitted as X, so the call could not say which" = 11
 "X's X prints under Debug as whatever its X says, because X has no Debug rendering in the port" = 11
@@ -147,7 +148,6 @@ total = 2576
 "no declaration for type X" = 11
 "X carries a pattern that has to be tested, and the port reads a X's payload once, into the binding, so what it tests is not tested" = 10
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 10
-"X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 8
 "X has no declared type" = 8
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "no associated function X on X" = 8
@@ -159,6 +159,8 @@ total = 2576
 "this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 7
 "X converts X to X, which is not a conversion between two numbers" = 6
 "X converts from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 6
+"X for X has no run-time test the dispatcher can make, because the impl for X is written for a type the port has no class to test against" = 6
+"X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 6
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two are written for the same type through a reference and without one, and emission erases the reference, so they are one function here" = 5
 "X converts a X to a X, and no impl converts them" = 5
 "X is a receiver the engine does not model" = 5
@@ -167,9 +169,7 @@ total = 2576
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X does not dereference" = 4
 "X expressions are not typed yet" = 4
-"X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 4
 "X on X is ambiguous between <Vec<u8> as TryInto>::try_into and <T as TryInto>::try_into" = 4
-"X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 4
 "X's X prints under Debug as whatever its X says, because XIX has no Debug rendering in the port" = 4
 "X's X prints under Debug as whatever its X says, because XTX has no Debug rendering in the port" = 4
 "no declaration for trait X" = 4
@@ -178,16 +178,22 @@ total = 2576
 "X between X" = 3
 "X converts from X to X through X, and no impl in the table performs it" = 3
 "X dereferences without a field to assign through" = 3
+"X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 3
 "X is built here and the engine could not name its declaration, so the values are handed to the constructor in the order the literal writes them rather than in the order the fields are declared" = 3
+"X is imported from ./task and @ankurah/base at once, and TypeScript has one name here where Rust had two paths" = 3
+"X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 3
 "X is written without a type that reads itself out of the parsed value — a X is what writes one — so the parse stands alone and hands back a plain object" = 3
 "X's X prints under Debug as whatever its X says, because XRX has no Debug rendering in the port" = 3
+"an arm of this consuming X match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here" = 3
 "path qualifiers std, collections are dropped by name" = 3
 "this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 3
 "X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 2
 "X is emitted as a comment and is handed X, which nothing then releases" = 2
+"X is imported from ../task and @ankurah/base at once, and TypeScript has one name here where Rust had two paths" = 2
 "X is printed with X, and it prints as whatever its X says, because the engine could not type it" = 2
 "X is printed with X, and the port's X has no alternate form, so it is printed the ordinary way" = 2
 "X on X is ambiguous between <&str as TryInto>::try_into and <T as TryInto>::try_into" = 2
+"X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 2
 "X's X prints under Debug as whatever its X says, because XEX has no Debug rendering in the port" = 2
 "X's X prints under Debug as whatever its X says, because XIdX has no Debug rendering in the port" = 2
 "an arm of this X match has a guard, and reading the payload to test it takes the wrapper apart, so the arm below it cannot be tried" = 2
@@ -204,6 +210,7 @@ total = 2576
 "X is called on a value the engine cannot say owns anything, so nothing releases it" = 1
 "X is declared with 2 type argument(s) but 0 written here" = 1
 "X is emitted as a module-level function here and in X, and the import map is keyed by the name alone, so every call to either reaches one of them" = 1
+"X is imported from ./reactor/subscription_state and @ankurah/proto at once, and TypeScript has one name here where Rust had two paths" = 1
 "X is lowered to the runtime's arbiter, but an arm breaks out of the loop, which an arrow function cannot carry — the exit would land on the arrow function rather than where the source wrote it — so the arbitration is written as statements and the select produces no value" = 1
 "X is written without saying which type reads itself out of the bytes, so the reader stands alone" = 1
 "X names the type it tests in a turbofish, which emission does not keep, so the test cannot be written" = 1
@@ -223,7 +230,7 @@ total = 2576
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [storage-common]
-total = 1016
+total = 1012
 
 [storage-common.by_cause]
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 463
@@ -233,16 +240,16 @@ total = 1016
 "X does not name a function here" = 41
 "X has a type the engine cannot say owns anything, so nothing releases it" = 33
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 30
-"obligation deferred: X (the subject is still a type parameter)" = 19
+"obligation deferred: X (the subject is still a type parameter)" = 17
 "X is a receiver the engine does not model" = 10
-"no field X on X" = 10
 "no declaration for type X" = 9
+"no field X on X" = 9
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 7
 "a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 6
 "X does not name a value here" = 5
-"no declaration for trait X" = 5
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
+"no declaration for trait X" = 4
 "no arm of this match has a type the engine could read" = 3
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
 "X between X and X resolves through X, and no impl in the table performs it" = 2
@@ -251,7 +258,7 @@ total = 1016
 "path qualifiers std are dropped by name" = 2
 "path qualifiers std, collections are dropped by name" = 2
 "X does not dereference" = 1
-"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 1
+"X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 1
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 1
 "X is declared with 1 type argument(s) but 0 written here" = 1
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 1
@@ -263,12 +270,12 @@ total = 1016
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 1
 
 [storage-sqlite]
-total = 281
+total = 257
 
 [storage-sqlite.by_cause]
-"obligation deferred: X (the subject is still a type parameter)" = 49
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 35
 "X converts the error from X to X through X, and no impl in the table performs it" = 27
+"obligation deferred: X (the subject is still a type parameter)" = 24
 "X converts the error from X to X through X, and more than one X impl for X is emitted as X, so the call could not say which" = 20
 "X has a type the engine cannot say owns anything, so nothing releases it" = 15
 "X does not name a function here" = 12
@@ -280,16 +287,17 @@ total = 281
 "X is bound here but the engine could not type it" = 7
 "no method X on X" = 7
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 7
-"no declaration for trait X" = 6
 "this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 6
 "X is lowered as a X without the engine having named what it tests" = 5
 "X is written without a type that reads itself out of the parsed value — a X is what writes one — so the parse stands alone and hands back a plain object" = 5
+"no declaration for trait X" = 5
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 4
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 4
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 4
 "X does not name a value here" = 3
 "X converts from two types whose names both spell X, and a class cannot hold both, so only the first is written" = 2
 "X is guessed to be a constructor from its capitalisation" = 2
+"X is imported from @ankurah/core and @ankurah/proto at once, and TypeScript has one name here where Rust had two paths" = 2
 "const generic argument is not modelled outside an array length" = 2
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 2
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 2
@@ -304,14 +312,14 @@ total = 281
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 1
 
 [storage-indexeddb]
-total = 437
+total = 368
 
 [storage-indexeddb.by_cause]
-"obligation deferred: X (the subject is still a type parameter)" = 92
-"X is bound here but the engine could not type it" = 75
+"X is bound here but the engine could not type it" = 74
+"obligation deferred: X (the subject is still a type parameter)" = 41
 "X converts the error from X to X through X, and more than one X impl for X is emitted as X, so the call could not say which" = 30
-"no method X on X" = 25
-"X has no expected type here, so what it converts to is not said and the value stands as it is" = 22
+"no method X on X" = 21
+"X has no expected type here, so what it converts to is not said and the value stands as it is" = 20
 "X is lowered as a X without the engine having named what it tests" = 19
 "X converts from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 13
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 13
@@ -321,16 +329,12 @@ total = 437
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X converts X to X, which is not a conversion between two numbers" = 6
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 6
-"method X resolved through trait X, which is not in scope here" = 6
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 6
 "no arm of this match has a type the engine could read" = 5
-"no declaration for trait X" = 5
 "path qualifiers std, sync, atomic are dropped by name" = 5
 "X has a type the engine cannot say owns anything, so nothing releases it" = 4
-"X here dispatches through a bound the engine cannot close, and no run-time selection among the trait's impls can be written because the trait has fewer than two impls, so nothing has to be chosen" = 4
 "X is guessed to be a constructor from its capitalisation" = 4
-"path qualifiers iter are dropped by name" = 4
-"the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 4
+"no declaration for trait X" = 4
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 4
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 4
 "X does not name a value here" = 3
@@ -339,17 +343,22 @@ total = 437
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 3
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 3
 "X carries a pattern that has to be tested, and the port reads a X's payload once, into the binding, so what it tests is not tested" = 2
-"X converts a X to a X, and the impl that performs it the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 2
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 2
+"X here dispatches through a bound the engine cannot close, and no run-time selection among the trait's impls can be written because the trait has fewer than two impls, so nothing has to be chosen" = 2
 "const generic argument is not modelled outside an array length" = 2
+"method X resolved through trait X, which is not in scope here" = 2
 "no associated function X on X" = 2
+"path qualifiers iter are dropped by name" = 2
+"the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 2
 "this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 2
 "X converts a X to a X, and no impl converts them" = 1
+"X converts a X to a X, and the impl that performs it the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X converts from X and from another source, and both are emitted as X" = 1
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X dereferences without a field to assign through" = 1
 "X expressions are not typed yet" = 1
 "X has no declared type" = 1
+"X is imported from @ankurah/core and @ankurah/proto at once, and TypeScript has one name here where Rust had two paths" = 1
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 1
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand, so it has no emitted X to call" = 1
 "a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 1
@@ -362,19 +371,18 @@ total = 437
 "this store writes through a dereference the engine could not type, so whether the place holds a guard is not decided and the value it held is not released" = 1
 
 [connector-websocket]
-total = 58
+total = 55
 
 [connector-websocket.by_cause]
 "no declaration for type X" = 10
 "X is a receiver the engine does not model" = 9
 "X is declared with 1 type argument(s) but 2 written here" = 8
-"no declaration for trait X" = 5
 "X is bound here but the engine could not type it" = 4
-"no method X on X" = 4
+"no declaration for trait X" = 4
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 3
+"no method X on X" = 3
 "X does not name a function here" = 2
 "const generic argument is not modelled outside an array length" = 2
-"obligation deferred: X (the subject is still a type parameter)" = 2
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 1
 "X has a type the engine cannot say owns anything, so nothing releases it" = 1
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 1
@@ -382,28 +390,29 @@ total = 58
 "X is lowered as a X without the engine having named what it tests" = 1
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 1
 "method X resolved through trait X, which is not in scope here" = 1
+"obligation deferred: X (the subject is still a type parameter)" = 1
 "path qualifiers std are dropped by name" = 1
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 1
 
 [connector-local]
-total = 33
+total = 32
 
 [connector-local.by_cause]
 "no declaration for type X" = 9
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X is a receiver the engine does not model" = 5
-"no declaration for trait X" = 5
+"no declaration for trait X" = 4
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
 "const generic argument is not modelled outside an array length" = 2
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 1
 
 [ankurah]
-total = 38
+total = 37
 
 [ankurah.by_cause]
 "X re-exports X, which is a MODULE of that crate, and the port flattens a crate's modules into its package surface, so there is no name to re-export" = 9
 "no declaration for type X" = 9
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X is a receiver the engine does not model" = 5
-"no declaration for trait X" = 5
+"no declaration for trait X" = 4
 "const generic argument is not modelled outside an array length" = 2

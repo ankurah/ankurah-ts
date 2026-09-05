@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
-import { Result, Ref } from '@ankurah/base';
+import { Result, Ref, unsupported } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
-import { PropertyError } from './traits';
 import { Value } from '../value/index';
+import { PropertyError } from './traits';
 export * from './backend';
 export * from './traits';
 export * from './value';
@@ -41,16 +41,7 @@ export function Cow_Str_intoValue(self: Cow<string>): Result<Value | null, Prope
 }
 
 export function Cow_Str_fromValue(value: Value | null): Result<Cow<string>, PropertyError> {
-  const _v = value;
-  if (_v != null && (_v.is('String'))) {
-    const { _0: value } = _v.value;
-    return Result.Ok(value);
-  } else if (_v != null) {
-    const variant = _v;
-    return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty'.clone() }));
-  } else {
-    return Result.Err(new PropertyError('Missing', {}));
-  }
+  unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
 }
 
 export function Value_from(value: string): Value {

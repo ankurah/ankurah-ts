@@ -30,6 +30,6 @@ export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeErro
 }
 
 export function Vec_EventId_fromClock(clock: Clock): EventId[] {
-  return clock._0.toVec();
+  return clock._0.slice();
 }
 

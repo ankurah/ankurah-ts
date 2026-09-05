@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/node_applier.rs
 import { Struct, Result, OwnedClosure, dropOwned, tracing, dropUnbound } from '@ankurah/base';
-import { Event, EventId } from '@ankurah/proto';
+import { Event, EventId, Attested, CollectionId, EntityDelta, EntityId, EntityState, EventFragment, SubscriptionUpdateItem } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
 import { ApplyError, ApplyErrorItem, MutationError } from './error';
@@ -8,7 +8,6 @@ import { Node } from './node';
 import { EphemeralNodeRetriever } from './retrieval';
 import { StorageCollectionWrapper } from './storage';
 import { ReadyChunks } from './util/ready_chunks';
-import { Attested, CollectionId, EntityDelta, EntityId, EntityState, Event, EventFragment, SubscriptionUpdateItem } from '@ankurah/proto';
 
 export class NodeApplier extends Struct {
 
@@ -33,7 +32,7 @@ export class NodeApplier extends Struct {
         while (_at4 < _seq3.length) {
           const update = _seq3[_at4++];
           const retriever = EphemeralNodeRetriever.new(update.collection.clone(), node, cdata);
-          const _r1 = await NodeApplier.Self.applyUpdate(node, fromPeerId, update, retriever, changes, []);
+          const _r1 = await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, []);
           if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
           _r1.drop();
           const _r2 = await retriever.storeUsedEvents();
@@ -62,7 +61,7 @@ export class NodeApplier extends Struct {
           let _moved1 = false;
           try {
             _moved1 = true;
-            const _r2 = await NodeApplier.Self.saveEvents(node, fromPeerId, entityId, collectionId, eventFragments, collection);
+            const _r2 = await NodeApplier.saveEvents(node, fromPeerId, entityId, collectionId, eventFragments, collection);
             if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
             let _moved3 = false;
             const events = _r2.unwrap();
@@ -120,7 +119,7 @@ export class NodeApplier extends Struct {
           try {
             try {
               _moved12 = true;
-              const _r13 = await NodeApplier.Self.saveEvents(node, fromPeerId, entityId, collectionId, eventFragments, collection);
+              const _r13 = await NodeApplier.saveEvents(node, fromPeerId, entityId, collectionId, eventFragments, collection);
               if (_r13.isErr()) return { $jump: 'return', $value: Result.Err(_r13.unwrapErr()) };
               let _moved14 = false;
               const events = _r13.unwrap();
@@ -134,7 +133,7 @@ export class NodeApplier extends Struct {
                 const [changed, entity] = _r16.unwrap();
                 entities.push(entity.clone());
                 if ((changed != null && (changed === true)) || (changed == null)) {
-                  const _r17 = await NodeApplier.Self.saveState(node, entity, collection);
+                  const _r17 = await NodeApplier.saveState(node, entity, collection);
                   if (_r17.isErr()) return { $jump: 'return', $value: Result.Err(_r17.unwrapErr()) };
                   _r17.drop();
                   _moved14 = true;
@@ -190,7 +189,7 @@ export class NodeApplier extends Struct {
     try {
       _moved1 = true;
       let _moved2 = false;
-      const entityState = new proto.EntityState(entity.id(), entity.collection().clone(), state);
+      const entityState = new EntityState(entity.id(), entity.collection().clone(), state);
       try {
         let _moved3 = false;
         const attestation = node.deref().value.policyAgent.attestState(node, entityState);
@@ -214,7 +213,7 @@ export class NodeApplier extends Struct {
   }
 
   static async applyDeltas<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, deltas: EntityDelta[], retriever: R): Promise<Result<void, ApplyError>> {
-    let readyChunks = ReadyChunks.new([...deltas].map((delta) => NodeApplier.Self.applyDelta(node, fromPeerId, delta, retriever)));
+    let readyChunks = ReadyChunks.new([...deltas].map((delta) => NodeApplier.applyDelta(node, fromPeerId, delta, retriever)));
     let allErrors = [];
     for (;;) {
       const _v1 = await readyChunks.next();
@@ -248,7 +247,7 @@ export class NodeApplier extends Struct {
   static async applyDelta<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, delta: EntityDelta, retriever: R): Promise<Result<EntityChange | null, ApplyErrorItem>> {
     const entityId = delta.entityId;
     const collection = delta.collection.clone();
-    const result = await NodeApplier.Self.applyDeltaInner(node, fromPeerId, delta, retriever);
+    const result = await NodeApplier.applyDeltaInner(node, fromPeerId, delta, retriever);
     return result.mapErr(new OwnedClosure([collection], (cause) => new ApplyErrorItem(entityId, collection, cause)));
   }
 
@@ -271,7 +270,7 @@ export class NodeApplier extends Struct {
               const _r3 = await node.deref().value.entities.withState(retriever, delta.entityId, delta.takeField('collection'), attestedState.payload.state);
               if (_r3.isErr()) return Result.Err(MutationError.fromRetrievalError(_r3.unwrapErr()));
               const [, entity] = _r3.unwrap();
-              const _r4 = await NodeApplier.Self.saveState(node, entity, collection);
+              const _r4 = await NodeApplier.saveState(node, entity, collection);
               if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
               _r4.drop();
               const _r5 = EntityChange.new(entity, []);
@@ -311,7 +310,7 @@ export class NodeApplier extends Struct {
                       event.drop();
                     }
                   }
-                  const _r12 = await NodeApplier.Self.saveState(node, entity, collection);
+                  const _r12 = await NodeApplier.saveState(node, entity, collection);
                   if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
                   _r12.drop();
                   _moved9 = true;

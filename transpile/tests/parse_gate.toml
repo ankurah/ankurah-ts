@@ -7,7 +7,7 @@
 # its line is taken out. Generated: do not hand-edit. Refresh with:
 #     cd transpile && UPDATE_PARSE_GATE=1 cargo test --test parse_gate
 #
-# Total refused: 1
+# Total refused: 0
 
 [ankql]
 refused = []
@@ -22,9 +22,7 @@ refused = []
 refused = []
 
 [core]
-refused = [
-  "util/iterable.ts: Unexpected >",
-]
+refused = []
 
 [proto]
 refused = []

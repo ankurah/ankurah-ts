@@ -1,10 +1,9 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
 import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
-import { ComparisonOperator, Expr, Predicate } from '@ankurah/ankql';
+import { ComparisonOperator, Expr, Predicate, Literal } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { Value_castTo } from '../value/cast';
 import { Value, ValueType } from '../value/index';
-import { Expr, Literal, Predicate } from '@ankurah/ankql';
 
 export class FilterIterator<I extends Iterator> extends Struct {
   iter: I;
@@ -44,6 +43,26 @@ export type ErrorV = {
 export class Error extends Enum<ErrorV> {
 
   equals(other: Error): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'CollectionMismatch': {
+        if ((this.value as any).expected !== (other.value as any).expected) return false;
+        if ((this.value as any).actual !== (other.value as any).actual) return false;
+        break;
+      }
+      case 'PropertyNotFound': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'UnsupportedExpression': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'UnsupportedOperator': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -109,6 +128,17 @@ export class ExprOutput<T> extends Enum<ExprOutputV> {
   }
 
   equals(other: ExprOutput<T>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'List': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if (!(this.value as any)._0[i].equals((other.value as any)._0[i])) return false; } }
+        break;
+      }
+      case 'Value': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -130,6 +160,22 @@ export type FilterResultV = {
 export class FilterResult<R> extends Enum<FilterResultV> {
 
   equals(other: FilterResult<R>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Pass': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Skip': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Error': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -158,7 +204,7 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
       const path = v._0;
       if (path.isSimple()) {
         const name = path.first();
-        const _r0 = item.value(name).okOrElse(() => new Error('PropertyNotFound', { _0: name }));
+        const _r0 = item.value(name) != null ? Result.Ok(item.value(name)!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))());
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         return Result.Ok(new ExprOutput('Value', { _0: _r0.unwrap() }));
       } else {
@@ -167,7 +213,7 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
           const remaining = path.steps.slice(1);
           if (remaining.length === 1) {
             const name = remaining[0];
-            const _r1 = item.value(name).okOrElse(() => new Error('PropertyNotFound', { _0: name }));
+            const _r1 = item.value(name) != null ? Result.Ok(item.value(name)!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))());
             if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
             return Result.Ok(new ExprOutput('Value', { _0: _r1.unwrap() }));
           }
@@ -196,14 +242,14 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
 }
 
 function evaluateSubPath<I extends Filterable>(item: I, propertyName: string, subPath: string[]): Result<ExprOutput<Value>, Error> {
-  const _r0 = item.value(propertyName).okOrElse(() => new Error('PropertyNotFound', { _0: propertyName }));
+  const _r0 = item.value(propertyName) != null ? Result.Ok(item.value(propertyName)!) : Result.Err((() => new Error('PropertyNotFound', { _0: propertyName }))());
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const propertyValue = _r0.unwrap();
   try {
     const path = [...subPath].map((s) => s.asRef());
-    return propertyValue.extractAtPath(path) != null ? (ExprOutput.Value)(propertyValue.extractAtPath(path)!) : null.okOrElse(() => {
+    return propertyValue.extractAtPath(path) != null ? (ExprOutput.Value)(propertyValue.extractAtPath(path)!) : null != null ? Result.Ok(propertyValue.extractAtPath(path) != null ? (ExprOutput.Value)(propertyValue.extractAtPath(path)!) : null!) : Result.Err((() => {
       return new Error('PropertyNotFound', { _0: `Sub-path '${[...subPath].map((s) => s.asRef()).join('.')}' not found in property '${propertyName}'` });
-    });
+    })());
   } finally {
     propertyValue.drop();
   }
@@ -265,10 +311,10 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
               LessThan: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) < 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
               LessThanOrEqual: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) <= 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
               In: () => {
-                const _r14 = leftVal.asValue().okOrElse(() => new Error('PropertyNotFound', { _0: 'Expected single value for IN left operand' }));
+                const _r14 = leftVal.asValue() != null ? Result.Ok(leftVal.asValue()!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected single value for IN left operand' }))());
                 if (_r14.isErr()) return { $jump: 'return', $value: Result.Err(_r14.unwrapErr()) };
                 const value = _r14.unwrap();
-                const _r15 = rightVal.asList().okOrElse(() => new Error('PropertyNotFound', { _0: 'Expected list for IN right operand' }));
+                const _r15 = rightVal.asList() != null ? Result.Ok(rightVal.asList()!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected list for IN right operand' }))());
                 if (_r15.isErr()) return { $jump: 'return', $value: Result.Err(_r15.unwrapErr()) };
                 const list = _r15.unwrap();
                 const _t16 = [...list];

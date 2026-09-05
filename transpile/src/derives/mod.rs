@@ -12,6 +12,7 @@
 
 pub mod debug_derive;
 pub mod default_value;
+pub mod equality;
 pub mod hashing;
 pub mod ordering;
 pub mod debug_fmt;

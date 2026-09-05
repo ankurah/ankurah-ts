@@ -127,6 +127,24 @@ impl<'a> BodyTranslator<'a> {
     }
 
 
+    /// Report a shape with no lowering AND write the hole that stands where its
+    /// output would have gone (R12).
+    ///
+    /// A gap used to be reported and emitted anyway, as the nearest thing the
+    /// engine could write — a consuming arm whose guard was dropped, an arm that
+    /// tests inside a payload, a struct literal that lost its `..rest`. Each of
+    /// those RUNS and answers what Rust would not, and a wrong answer at run
+    /// time is a bug nobody traces to a line printed during a build. So the
+    /// site says what it could not translate and the emitted file carries a
+    /// `unsupported('..')` that stops the program there instead. The returned
+    /// text is an expression: `unsupported` answers `never`, so it stands
+    /// wherever the expression it replaces stood.
+    pub(crate) fn hole(&self, span: proc_macro2::Span, what: impl Into<String>) -> String {
+        let what = what.into();
+        self.fallback(span, what.clone());
+        crate::body::hole_text(&what)
+    }
+
     /// Take a resolved answer, or record the fallback taken instead of it.
     pub(crate) fn or_fallback<T>(&self, result: Result<T, crate::diag::Diag>, instead: &str) -> Option<T> {
         match result {

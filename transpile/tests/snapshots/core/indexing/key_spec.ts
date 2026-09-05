@@ -160,7 +160,7 @@ export class IndexKeyPart extends Struct {
         return [path.steps[0].clone(), null];
       } else {
         const column = path.steps[0].clone();
-        const subPath = path.steps.slice(1).toVec();
+        const subPath = path.steps.slice(1).slice();
         return [column, subPath];
       }
     })();
@@ -195,11 +195,11 @@ export class IndexKeyPart extends Struct {
   }
 
   static ascPath(path: string, valueType: ValueType): IndexKeyPart {
-    return IndexKeyPart.Self.fromFlatPath(path, new IndexDirection('Asc', {}), valueType);
+    return IndexKeyPart.fromFlatPath(path, new IndexDirection('Asc', {}), valueType);
   }
 
   static descPath(path: string, valueType: ValueType): IndexKeyPart {
-    return IndexKeyPart.Self.fromFlatPath(path, new IndexDirection('Desc', {}), valueType);
+    return IndexKeyPart.fromFlatPath(path, new IndexDirection('Desc', {}), valueType);
   }
 
   equals(other: IndexKeyPart): boolean {
@@ -311,6 +311,7 @@ export class IndexDirection extends Enum<IndexDirectionV> {
   }
 
   equals(other: IndexDirection): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 
@@ -389,6 +390,7 @@ export class NullsOrder extends Enum<NullsOrderV> {
   }
 
   equals(other: NullsOrder): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 
@@ -467,6 +469,7 @@ export class IndexSpecMatch extends Enum<IndexSpecMatchV> {
   }
 
   equals(other: IndexSpecMatch): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

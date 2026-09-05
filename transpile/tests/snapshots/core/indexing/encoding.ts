@@ -1,10 +1,10 @@
 // MIRRORS: ankurah/core/src/indexing/encoding.rs
 import { Enum, Result } from '@ankurah/base';
-import { KeySpec } from './key_spec';
 import { Json } from '../property/value/json';
 import { Value_castTo } from '../value/cast';
 import { Value_toBytes } from '../value/collatable';
 import { Value, ValueType } from '../value/index';
+import { KeySpec } from './key_spec';
 import { EntityId } from '@ankurah/proto';
 
 export type IndexErrorV = {

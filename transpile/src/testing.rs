@@ -29,6 +29,59 @@ impl Fixture {
         Fixture::build_named("testcrate", files)
     }
 
+    /// A fixture with in-family crates beside it, the way `batch` reads a
+    /// crate's dependencies: their files are named `<ident>/<path>` and carry
+    /// declarations only, and the registry knows each root as a sibling crate.
+    /// Needed by anything that asks "does this path go through another crate" —
+    /// a one-crate fixture answers no to every such question.
+    pub fn build_with_siblings(
+        crate_name: &str,
+        files: &[(&str, &str)],
+        siblings: &[(&str, &[(&str, &str)])],
+    ) -> Fixture {
+        let sink = DiagSink::new();
+        let mut parsed: Vec<ExtractedFile> = files
+            .iter()
+            .map(|(path, src)| ExtractedFile {
+                path: path.to_string(),
+                file: extract::extract_source(path, src, extract::ExtractCfg::default()).expect("parses"),
+                declarations_only: false,
+                hand_written: false,
+            })
+            .collect();
+        for (ident, sibling_files) in siblings {
+            for (path, src) in *sibling_files {
+                let named = format!("{ident}/{path}");
+                let mut file = extract::extract_source(&named, src, extract::ExtractCfg::default())
+                    .expect("parses");
+                file.path = named.clone();
+                parsed.push(ExtractedFile {
+                    path: named,
+                    file,
+                    declarations_only: true,
+                    hand_written: false,
+                });
+            }
+        }
+        let idents: Vec<String> = siblings.iter().map(|(ident, _)| ident.to_string()).collect();
+        let mut reg = std_surface::with_cached(&surface_dir(), |surface| {
+            crate::registry::build_registry_with_siblings(
+                &mut parsed,
+                surface,
+                &[crate_name.to_string()],
+                &idents,
+                &sink,
+            )
+        });
+        let ours: std::collections::HashSet<ModuleId> = parsed
+            .iter()
+            .filter(|f| !f.declarations_only)
+            .filter_map(|f| reg.modules().lookup_file(&f.path))
+            .collect();
+        crate::registry::narrow_reads_json(&mut reg, &ours);
+        Fixture { reg, sink, files: parsed }
+    }
+
     pub fn build_named(crate_name: &str, files: &[(&str, &str)]) -> Fixture {
         let sink = DiagSink::new();
         let mut parsed: Vec<ExtractedFile> = files

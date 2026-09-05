@@ -1,9 +1,8 @@
 // MIRRORS: ankurah/connectors/websocket-client-wasm/src/client.rs
 import { Struct, Drop, Result, Arc, RefCell, AnyhowError, tracing, checkedAdd, sleep } from '@ankurah/base';
-import { Node, NodeComms } from '@ankurah/core';
+import { Node, NodeComms, Context } from '@ankurah/core';
 import { Connection } from './connection';
 import { ConnectionState } from './connection_state';
-import { Context, Node, NodeComms } from '@ankurah/core';
 import { Mut, Read } from '@ankurah/signals';
 
 export class WebsocketClient extends Struct {
@@ -70,7 +69,7 @@ class ClientInner extends Drop {
         {
           const c = this.connection.borrow();
           try {
-            const _v = c.value.asRef();
+            const _v = c.value;
             if (!(_v != null)) {
               return { $jump: 'return', $value: false };
             }

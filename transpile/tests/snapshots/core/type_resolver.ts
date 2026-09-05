@@ -4,7 +4,6 @@ import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { Comparison } from './lineage';
 import { Json } from './property/value/json';
 import { ValueType } from './value/index';
-import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 
 export class TypeResolver extends Struct {
@@ -58,7 +57,7 @@ export class TypeResolver extends Struct {
       },
       Literal: (v) => {
         const lit = v._0;
-        return TypeResolver.Self.literalType(lit);
+        return TypeResolver.literalType(lit);
       },
       Predicate: () => null,
       InfixExpr: () => null,

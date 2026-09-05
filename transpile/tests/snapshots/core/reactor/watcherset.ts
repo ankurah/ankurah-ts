@@ -276,6 +276,18 @@ class EntityWatcherId extends Enum<EntityWatcherIdV> {
   }
 
   equals(other: EntityWatcherId): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Predicate': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
+        break;
+      }
+      case 'Subscription': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 

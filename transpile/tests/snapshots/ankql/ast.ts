@@ -25,7 +25,7 @@ export class PathExpr extends Struct {
   }
 
   property(): string {
-    return this.steps.at(-1);
+    return (this.steps.at(-1) ?? (() => { throw new Error('PathExpr must have at least one step'); })());
   }
 
   toString(): string {
@@ -91,13 +91,13 @@ export class Selection extends Struct {
   }
 
   assumeNull(columns: string[]): Selection {
-    const orderBy = this.orderBy.asRef() != null ? ((items) => {
+    const orderBy = this.orderBy != null ? ((items) => {
       return [...[...items].filter((item) => {
         const colName = item.path.property();
         return !columns.includes(colName);
       })];
-    })(this.orderBy.asRef()!) : null;
-    const orderBy_1 = orderBy.andThen((v) => v.isEmpty() ? null : v);
+    })(this.orderBy!) : null;
+    const orderBy_1 = orderBy != null ? ((v) => v.isEmpty() ? null : v)(orderBy!) : null;
     return new Selection(this.predicate.assumeNull(columns), orderBy_1, this.limit);
   }
 
@@ -378,6 +378,31 @@ export class Expr extends Enum<ExprV> {
   }
 
   equals(other: Expr): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Literal': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Path': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Predicate': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'InfixExpr': {
+        if (!(this.value as any).left.equals((other.value as any).left)) return false;
+        if (!(this.value as any).operator.equals((other.value as any).operator)) return false;
+        if (!(this.value as any).right.equals((other.value as any).right)) return false;
+        break;
+      }
+      case 'ExprList': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if (!(this.value as any)._0[i].equals((other.value as any)._0[i])) return false; } }
+        break;
+      }
+    }
     return true;
   }
 
@@ -486,6 +511,49 @@ export class Literal extends Enum<LiteralV> {
   }
 
   equals(other: Literal): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'I16': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'I32': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'I64': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'F64': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'Bool': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'String': {
+        if ((this.value as any)._0 !== (other.value as any)._0) return false;
+        break;
+      }
+      case 'EntityId': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'Object': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Binary': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Json': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -609,6 +677,7 @@ export class OrderDirection extends Enum<OrderDirectionV> {
   }
 
   equals(other: OrderDirection): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 
@@ -1010,6 +1079,33 @@ export class Predicate extends Enum<PredicateV> {
   }
 
   equals(other: Predicate): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Comparison': {
+        if (!(this.value as any).left.equals((other.value as any).left)) return false;
+        if (!(this.value as any).operator.equals((other.value as any).operator)) return false;
+        if (!(this.value as any).right.equals((other.value as any).right)) return false;
+        break;
+      }
+      case 'IsNull': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+      case 'And': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
+        break;
+      }
+      case 'Or': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
+        break;
+      }
+      case 'Not': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -1123,6 +1219,7 @@ export class ComparisonOperator extends Enum<ComparisonOperatorV> {
   }
 
   equals(other: ComparisonOperator): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 
@@ -1252,6 +1349,7 @@ export class InfixOperator extends Enum<InfixOperatorV> {
   }
 
   equals(other: InfixOperator): boolean {
+    if (this.type !== other.type) return false;
     return true;
   }
 

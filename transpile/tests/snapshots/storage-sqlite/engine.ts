@@ -1,13 +1,11 @@
 // MIRRORS: ankurah/storage/sqlite/src/engine.rs
 import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, HashSet, AsyncMutex, tokio } from '@ankurah/base';
-import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity } from '@ankurah/core';
+import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, Json, State, Value } from '@ankurah/core';
 import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, StateBuffers } from '@ankurah/proto';
 import { PooledConnection, SqliteConnectionManager } from './connection';
 import { SqliteError } from './error';
 import { SqlBuilder, splitPredicateForSqlite } from './sql_builder';
 import { Predicate, Selection } from '@ankurah/ankql';
-import { Json, MutationError, RetrievalError, State, StorageCollection, StorageEngine, TemporaryEntity, Value } from '@ankurah/core';
-import { Attested, CollectionId, EntityId, EntityState, Event, EventId, StateBuffers } from '@ankurah/proto';
 
 export class SqliteStorageEngine extends Struct implements StorageEngine {
   pool: Pool<SqliteConnectionManager>;
@@ -66,7 +64,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
   }
 
   async collection(collectionId: CollectionId): Promise<Result<Arc<StorageCollection>, RetrievalError>> {
-    if (!SqliteStorageEngine.Self.saneName(collectionId.asStr())) {
+    if (!SqliteStorageEngine.saneName(collectionId.asStr())) {
       return Result.Err(new RetrievalError('InvalidBucketName', {}));
     }
     const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
@@ -309,7 +307,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
                   let _moved6 = false;
                   const sqliteValue = value != null ? ((v) => v)(value!) : null;
                   try {
-                    const isJsonb = sqliteValue.asRef().isSomeAnd((v) => v.isJsonb());
+                    const isJsonb = sqliteValue != null && ((v) => v.isJsonb())(sqliteValue!);
                     if (!this.hasColumn(column)) {
                       {
                         const _v = sqliteValue;
@@ -355,8 +353,8 @@ export class SqliteBucket extends Struct implements StorageCollection {
               columns.push(name);
               values.push((() => {
                 if (value != null) {
+                  const v = value;
                   try {
-                    const v = value;
                     return v.toSql();
                   } finally {
                     v.drop();
@@ -536,7 +534,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           const needsPostFilter = split.needsPostFilter();
           const remainingPredicate = split.remainingPredicate.clone();
           try {
-            const sqlSelection = new ankql.ast.Selection(split.takeField('sqlPredicate'), effectiveSelection.orderBy.clone(), needsPostFilter ? null : effectiveSelection.limit);
+            const sqlSelection = new Selection(split.takeField('sqlPredicate'), effectiveSelection.orderBy.clone(), needsPostFilter ? null : effectiveSelection.limit);
             try {
               let _moved2 = false;
               let builder = SqlBuilder.withFields(['id', 'state_buffer', 'head', 'attestations']);

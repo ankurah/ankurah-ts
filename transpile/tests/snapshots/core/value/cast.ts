@@ -5,7 +5,6 @@ import { PropertyError } from '../property/traits';
 import { Json } from '../property/value/json';
 import { Error } from '../selection/filter';
 import { Value, ValueType } from './index';
-import { EntityId } from '@ankurah/proto';
 
 export type CastErrorV = {
   IncompatibleTypes: { from: ValueType; to: ValueType };
@@ -44,6 +43,24 @@ export class CastError extends Enum<CastErrorV> {
   }
 
   equals(other: CastError): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'IncompatibleTypes': {
+        if (!(this.value as any).from.equals((other.value as any).from)) return false;
+        if (!(this.value as any).to.equals((other.value as any).to)) return false;
+        break;
+      }
+      case 'InvalidFormat': {
+        if ((this.value as any).value !== (other.value as any).value) return false;
+        if (!(this.value as any).targetType.equals((other.value as any).targetType)) return false;
+        break;
+      }
+      case 'NumericOverflow': {
+        if ((this.value as any).value !== (other.value as any).value) return false;
+        if (!(this.value as any).targetType.equals((other.value as any).targetType)) return false;
+        break;
+      }
+    }
     return true;
   }
 
@@ -120,21 +137,21 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('F64', { _0: n }));
   } else if ((_v[0].is('F64')) && (_v[1].is('I16'))) {
     const { _0: n } = _v[0].value;
-    if (n.isFinite() && n >= i16.MIN && n <= i16.MAX) {
+    if (Number.isFinite(n) && n >= i16.MIN && n <= i16.MAX) {
       return Result.Ok(new Value('I16', { _0: n }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I16', {}) }));
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('I32'))) {
     const { _0: n } = _v[0].value;
-    if (n.isFinite() && n >= i32.MIN && n <= i32.MAX) {
+    if (Number.isFinite(n) && n >= i32.MIN && n <= i32.MAX) {
       return Result.Ok(new Value('I32', { _0: n }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I32', {}) }));
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('I64'))) {
     const { _0: n } = _v[0].value;
-    if (n.isFinite() && n >= i64.MIN && n <= i64.MAX) {
+    if (Number.isFinite(n) && n >= i64.MIN && n <= i64.MAX) {
       return Result.Ok(new Value('I64', { _0: n }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I64', {}) }));
@@ -265,7 +282,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
       if (json.is('Number')) {
         const { _0: n } = json.value;
         if (n.isI64()) {
-          return Result.Ok(new Value('I64', { _0: n.asI64() }));
+          return Result.Ok(new Value('I64', { _0: (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) }));
         }
       }
       {
@@ -279,7 +296,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
         const { _0: n } = json.value;
         if (n.isI64()) {
           {
-            const i = n.asI64();
+            const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
             if (i >= i32.MIN && i <= i32.MAX) {
               return Result.Ok(new Value('I32', { _0: Number(BigInt.asIntN(32, i)) }));
             } else {
@@ -300,7 +317,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
         const { _0: n } = json.value;
         if (n.isI64()) {
           {
-            const i = n.asI64();
+            const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
             if (i >= i16.MIN && i <= i16.MAX) {
               return Result.Ok(new Value('I16', { _0: Number(BigInt.asIntN(16, i)) }));
             } else {

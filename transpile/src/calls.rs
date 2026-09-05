@@ -194,9 +194,12 @@ impl BodyTranslator<'_> {
 
         // 7. Self::method() → TypeName.method()
         if func.starts_with("Self.") || func.starts_with("Self::") {
-            let method = func.split("::").last()
-                .or_else(|| func.split('.').last())
-                .unwrap_or(func);
+            // The path may already have been written in TypeScript —
+            // `Self.setupReceiver` — or still be Rust — `Self::setup_receiver`.
+            // Splitting on `::` alone left the whole of the first, so the call
+            // came out `LocalProcessConnection.Self.setupReceiver`.
+            let method = func.rsplit("::").next().unwrap_or(func);
+            let method = method.rsplit('.').next().unwrap_or(method);
             return format!("{}.{}({})", self.self_type, method, args.join(", "));
         }
 

@@ -1,10 +1,9 @@
 // MIRRORS: ankurah/core/src/retrieval.rs
 import { Struct, Result, Arc, Mutex, dropOwned, dropUnbound, HashMap } from '@ankurah/base';
-import { Attested, Clock, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
+import { Attested, Clock, EntityId, EntityState, Event, EventId, CollectionId, NodeRequestBody } from '@ankurah/proto';
 import { MutationError, RetrievalError } from './error';
 import { Node } from './node';
 import { StorageCollectionWrapper } from './storage';
-import { Attested, Clock, CollectionId, EntityId, EntityState, Event, EventId, NodeRequestBody } from '@ankurah/proto';
 import { Get } from '@ankurah/signals';
 
 export class LocalRetriever extends Struct implements GetEvents, Retrieve {
@@ -55,7 +54,7 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
       const _t1 = this._0.value.stagedEvents.lock();
       try {
         {
-          const _v1 = _t1.value.asMut();
+          const _v1 = _t1.value;
           if (_v1 != null) {
             const staged = _v1;
             eventIds_1.retain((id) => {
@@ -214,7 +213,7 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
       const _t1 = this.stagedEvents.lock();
       try {
         {
-          const _v1 = _t1.value.asMut();
+          const _v1 = _t1.value;
           if (_v1 != null) {
             const staged = _v1;
             eventIds_1.retain((id) => {

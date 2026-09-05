@@ -290,7 +290,6 @@ pub struct ParamInfo {
     pub ty: String,
     /// The written type; `None` for the `self` receiver.
     pub rust_ty: Option<syn::Type>,
-    pub is_self: bool,
 }
 
 /// An `impl` block as written.

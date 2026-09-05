@@ -4,8 +4,8 @@ import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, GetReadCell, Peek, Signal, With } from '../signal';
-import { Read } from './read';
 import { ReadValueCell, ValueCell } from '../value';
+import { Read } from './read';
 
 export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {
   value: ValueCell<T>;

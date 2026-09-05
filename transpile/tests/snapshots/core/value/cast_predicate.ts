@@ -6,7 +6,6 @@ import { Comparison } from '../lineage';
 import { CollectionSchema } from '../schema';
 import { Value_castTo } from './cast';
 import { Value, ValueType } from './index';
-import { Expr, Literal, Predicate } from '@ankurah/ankql';
 
 export function castPredicateTypes<S extends CollectionSchema>(predicate: Predicate, schema: S): Result<Predicate, RetrievalError> {
   return predicate.intoMatch({

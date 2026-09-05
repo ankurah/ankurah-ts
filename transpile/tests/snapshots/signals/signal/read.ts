@@ -4,8 +4,8 @@ import { Broadcast, BroadcastId, BroadcastListener, ListenerGuard } from '../bro
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, GetReadCell, Peek, Signal, With } from '../signal';
-import { Memo } from './memo';
 import { ReadValueCell, ValueCell } from '../value';
+import { Memo } from './memo';
 
 export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {
   value: ValueCell<T>;
@@ -54,7 +54,7 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   listen(listener: Listener): ListenerGuard {
     const _t0 = this.broadcast.reference();
     try {
-      return ListenerGuard.new(_t0.listen(BroadcastListener.NotifyOnly(Arc.new(new OwnedClosure([listener], () => listener([]))))));
+      return ListenerGuard.new(_t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => listener([]))) })));
     } finally {
       _t0.drop();
     }
