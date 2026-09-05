@@ -727,7 +727,8 @@ fn callable_inputs(written: &str) -> Vec<String> {
 /// The two do not name types the same way — rust-analyzer writes
 /// `<Vec<u8, Global> as TryInto<EntityId>>::Error` where the engine writes
 /// `DecodeError` — so the comparison is not on the spellings. It is on the
-/// question the emitted code turns on: does this `?` convert at all? A site
+/// question the emitted code turns on: does this `?` convert at all, FROM what,
+/// and did the engine write a call for it? A site
 /// whose two error types differ in nothing but a lifetime is one `From` never
 /// runs at, and the engine has to agree; a site where they really differ is one
 /// the engine has to have seen, because a `?` it passed over in silence hands
@@ -778,6 +779,32 @@ fn engine_matches_the_try_oracle() {
             }
         }
         let converts = strip_lifetimes(&site.from_error) != strip_lifetimes(&site.to_error);
+        // The full record, not only "did the engine see a conversion here":
+        // the SOURCE error type it settled on, and whether it wrote a call for
+        // it. A `?` the engine saw but named the wrong source for converts
+        // through the wrong impl, and a `?` it named right but wrote no call
+        // for hands the error on unconverted — both of which the presence test
+        // alone reads as agreement.
+        if let Some(row) = engine.iter().find(|r| r.file == site.file && r.line == site.line) {
+            let oracle_from = strip_lifetimes(&site.from_error);
+            let engine_from = strip_lifetimes(&row.from);
+            if !is_projection(&site.from_error)
+                && engine_from != "_"
+                && !oracle_from.ends_with(&engine_from)
+                && !engine_from.ends_with(&oracle_from)
+            {
+                wrong.push(format!(
+                    "{}:{} — rust-analyzer converts FROM `{}` and the engine settled on `{}`",
+                    site.file, site.line, site.from_error, row.from
+                ));
+            }
+            if converts && row.written.is_none() {
+                unsettled
+                    .entry(format!("{} (no call written)", site.file))
+                    .and_modify(|n| *n += 1)
+                    .or_insert(1);
+            }
+        }
         if converts && !found {
             wrong.push(format!(
                 "{}:{} — rust-analyzer converts `{}` to `{}` and the engine saw no conversion",
@@ -814,6 +841,11 @@ fn engine_matches_the_try_oracle() {
 /// feature set leaves out (spec 1a). `parser.rs` and `sql.rs` hold their `?`
 /// sites inside `#[cfg(test)]` functions, whose bodies the extractor keeps apart
 /// from the crate's own and never translates.
+/// Fifty-seven rows, forty-seven of them in these four files: fifteen in
+/// `wasm.rs`, fourteen in `sql.rs`, nine each in `postgres.rs` and `parser.rs`.
+/// Every one of the fourteen `sql.rs` rows is at line 254 or later and that
+/// file's `mod tests` opens at 244, which is what makes the reason above true
+/// of the file rather than only of most of it.
 const NOT_READ: [&str; 4] = [
     "proto/src/wasm.rs",
     "proto/src/postgres.rs",

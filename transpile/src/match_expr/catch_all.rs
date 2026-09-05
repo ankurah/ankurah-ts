@@ -79,7 +79,7 @@ fn remaining(
     match_expr: &syn::ExprMatch,
     split: &Split<'_>,
     t: &BodyTranslator,
-) -> Result<(String, Vec<String>), String> {
+) -> Result<Remainder, String> {
     let ty = t
         .scrutinee_type(&match_expr.expr)
         .ok_or_else(|| "the engine could not type the subject".to_string())?;
@@ -95,17 +95,80 @@ fn remaining(
     let crate::registry::TypeKind::Enum { variants } = &def.kind else {
         return Err(format!("`{}` is not an enum", def.name));
     };
+    // A named arm covers its variant only when it matches EVERY value of it.
+    // `Ex::Literal(Lit::I(n))` names `Literal` and matches one shape of it, so
+    // an `Ex::Literal(Lit::S(..))` still has to reach the catch-all; counting
+    // the arm by its variant name alone deleted the catch-all and left that
+    // value with no arm at all (ankql's `conversion.rs`).
     let named: Vec<String> = split
         .named
         .iter()
+        .filter(|arm| arm.guard.is_none() && covers_its_variant(&arm.pat))
         .flat_map(|arm| super::variants_of(&arm.pat))
         .collect();
-    let rest: Vec<String> = variants
+    let rest: Vec<(String, bool)> = variants
         .iter()
-        .map(|v| v.name.clone())
-        .filter(|name| !named.contains(name))
+        .filter(|v| !named.contains(&v.name))
+        .map(|v| (v.name.clone(), !v.fields.is_empty()))
         .collect();
-    Ok((def.name.clone(), rest))
+    // A variant an arm names without covering is written twice if it is left
+    // in: once by that arm, once by the expanded catch-all — and the runtime's
+    // match has one key per variant.
+    let contested: Vec<String> = split
+        .named
+        .iter()
+        .flat_map(|arm| super::variants_of(&arm.pat))
+        .filter(|name| rest.iter().any(|(variant, _)| variant == name))
+        .collect();
+    Ok(Remainder { class: def.name.clone(), rest, contested })
+}
+
+/// The variants an arm of this match names without covering, where a catch-all
+/// stands below it.
+///
+/// Asked before the match is written, because the answer decides which FORM it
+/// takes: the runtime's `.match({..})` has one arm per variant and nowhere to
+/// fall through to, so an arm that tests inside its variant and a catch-all
+/// below it cannot both be written there. Nothing is reported here — asking is
+/// not translating — so the caller's own diagnostics are the only ones.
+pub(super) fn contested(match_expr: &syn::ExprMatch, split: &Split<'_>, t: &BodyTranslator) -> Vec<String> {
+    let mark = t.mark();
+    let answer = remaining(match_expr, split, t).map(|r| r.contested).unwrap_or_default();
+    t.rewind(mark);
+    answer
+}
+
+/// What the catch-all still has to stand for.
+struct Remainder {
+    /// The class the port writes the enum as.
+    class: String,
+    /// The variants no arm named, plus the ones an arm named without covering,
+    /// each with whether it carries a payload at all — a unit variant has
+    /// nothing for an arm to own.
+    rest: Vec<(String, bool)>,
+    /// The variants an arm names but does not cover, which is why they are in
+    /// `rest` at all.
+    contested: Vec<String>,
+}
+
+/// Does this arm match every value of the variant it names?
+///
+/// Only then does it stand for the whole variant. A sub-pattern that asks a
+/// question of the payload — a literal, a nested variant, a range — leaves the
+/// values it does not match to whatever comes after.
+fn covers_its_variant(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::TupleStruct(ts) => ts.elems.iter().all(BodyTranslator::is_irrefutable),
+        syn::Pat::Struct(st) => st.fields.iter().all(|f| BodyTranslator::is_irrefutable(&f.pat)),
+        syn::Pat::Path(_) => true,
+        syn::Pat::Or(or) => or.cases.iter().all(covers_its_variant),
+        syn::Pat::Reference(r) => covers_its_variant(&r.pat),
+        syn::Pat::Paren(p) => covers_its_variant(&p.pat),
+        // A name with a sub-pattern (`x @ Some(_)`) asks whatever the
+        // sub-pattern asks.
+        syn::Pat::Ident(ident) => ident.subpat.as_ref().map(|(_, p)| covers_its_variant(p)).unwrap_or(true),
+        _ => false,
+    }
 }
 
 /// The whole match, with one arm per variant the source left to the catch-all.
@@ -116,7 +179,7 @@ pub(super) fn lower(
     t: &BodyTranslator,
     position: super::Position,
 ) -> String {
-    let (class, rest) = match remaining(match_expr, split, t) {
+    let Remainder { class, rest, contested } = match remaining(match_expr, split, t) {
         Ok(found) => found,
         Err(why) => {
             // Without the variant list there is nothing to write the arm under.
@@ -142,6 +205,33 @@ pub(super) fn lower(
     }
     let takes = t.match_takes(match_expr);
     let consuming = takes == crate::ownership::scrutinee::Takes::Payload;
+
+    let mut rest = rest;
+    if !contested.is_empty() {
+        // An arm that tests INSIDE a variant and a catch-all below it need one
+        // form that can do both: test the payload, and fall through to the next
+        // arm when the test fails. A borrowing match is written as the if-chain
+        // that can, and never reaches here. This one hands its payload to the
+        // arms, which needs `intoMatch` — one arm per variant, with nowhere to
+        // fall through to — so the values the testing arm does not match have
+        // no arm of their own, and that is said rather than passed over.
+        t.report_match_gap(
+            match_expr,
+            format!(
+                "an arm tests inside `{}` and a later arm matches anything, which needs a test \
+                 that can fall through — and this match hands its payload to the arms, which \
+                 needs `intoMatch`, whose one arm per variant has nowhere to fall through to; \
+                 the arm that tests runs for every `{}`",
+                contested.join("`, `"),
+                contested.join("`, `"),
+            ),
+        );
+        rest.retain(|(name, _)| !contested.contains(name));
+        if rest.is_empty() {
+            return super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
+        }
+    }
+
     let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
     // The arms read the subject as well as matching on it, and Rust evaluates
     // it once, so a subject that is not already a name is read into one first.
@@ -152,41 +242,86 @@ pub(super) fn lower(
     };
     let scrutinee = scrutinee.as_str();
 
+    // What the arm calls the whole value: ONE name, either the one the
+    // catch-all bound or — for a `_` arm under `intoMatch` whose body reads the
+    // subject — the subject's own. Adding both wrote `const e` twice for
+    // `match e { .., e => e }`, which no JavaScript engine will load.
+    let bound: Option<String> = match (&split.binds, consuming) {
+        (Some(local), _) => Some(local.clone()),
+        (None, true) => named_subject
+            .clone()
+            .filter(|_| mentions_subject(&split.rest.body, &match_expr.expr)),
+        (None, false) => None,
+    };
+    // A borrowing match whose catch-all binds the subject's OWN name is naming
+    // the value that is already there: `const e = e;` reads the name it is
+    // declaring, which is its temporal dead zone.
+    let declares = match (&bound, &named_subject) {
+        (Some(name), Some(subject)) => consuming || name != subject,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+
+    let _bindings = t.enter_pattern(&split.rest.pat, scrutinee_ty.as_ref());
     // The name the catch-all binds owns the value from here — Rust moved it in
     // — so an arm that only reads it is what releases it, and one that hands it
-    // on sets its flag instead.
-    let _bindings = t.enter_pattern(&split.rest.pat, scrutinee_ty.as_ref());
-    let owned = match &split.binds {
-        Some(local) => t.claim_bindings(
+    // on sets its flag instead. A BORROWED subject was moved by nothing, and
+    // claiming its binding made the arm release a value the caller still owns.
+    // `flag_set_for_subject` is the same question asked from the other side, so
+    // the two halves ask it once.
+    let subject_flag = if consuming { String::new() } else { t.flag_set_for_subject(&match_expr.expr) };
+    let subject_is_owned = consuming || !subject_flag.is_empty();
+    let owned = match &bound {
+        Some(local) if declares && subject_is_owned => t.claim_bindings(
             std::slice::from_ref(local),
             std::slice::from_ref(&syn::Stmt::Expr(split.rest.body.as_ref().clone(), None)),
         ),
-        None => Vec::new(),
+        _ => Vec::new(),
     };
-    let (body, lifted) = t.with_own_hoists(|| super::arm_body(&split.rest.body, t, position));
+    let (body, lifted) = t.with_own_hoists(|| t.statements(&split.rest.body));
+    let body = body.trim_end().to_string();
     drop(_bindings);
-    let body = crate::ownership::hoisted(&format!("{}\n", body.trim_end()), &lifted);
-    let mut flags = match (&split.binds, consuming) {
-        // A consuming match already marks the subject moved wherever it is
-        // written; a borrowing one moves it only where this arm binds it.
-        (Some(_), false) => t.flag_set_for_subject(&match_expr.expr),
-        _ => String::new(),
-    };
-    flags.push_str(&t.flag_sets_for(&split.rest.body));
-    let body = t.wrap_bindings(&owned, body);
 
-    // What the arm has to call the whole value: the name the catch-all bound,
-    // and — where the match consumed the subject and the body reads it — the
-    // subject's own name, which the arm builds again from what it was handed.
-    let mut names: Vec<String> = split.binds.iter().cloned().collect();
-    if consuming {
-        if let Some(name) = named_subject.filter(|_| mentions_subject(&split.rest.body, &match_expr.expr)) {
-            names.push(name);
-        }
-    }
+    let mut flags = if declares { subject_flag } else { String::new() };
+    flags.push_str(&t.flag_sets_for(&split.rest.body));
+    let is_async = crate::control_flow::awaiting::awaits(&split.rest.body);
+    // Does the match hand a value back at all? Asked the same way
+    // `enum_match_over` asks it, and asking is not translating, so what the
+    // resolution cannot say is not reported here.
+    let produces = {
+        let mark = t.mark();
+        let whole = syn::Expr::Match(match_expr.clone());
+        let answer = !matches!(t.resolve_expr_type(&whole), Ok(crate::ty::Ty::Unit));
+        t.rewind(mark);
+        answer
+    };
+    // A consuming arm owns the whole payload from the moment it is called:
+    // `intoMatch` releases nothing of its own on any path out. An arm that
+    // rebuilds the value owns it through the value it built; one that does not
+    // rebuild it owns the payload directly and says so here.
+    let release_rest = if consuming && !declares { "dropUnbound(v, []);\n".to_string() } else { String::new() };
+
+    // One body, however many variants are left to it. The expansion writes the
+    // catch-all's body once per remaining variant, and `core/src/value/index.ts`
+    // had fifteen copies of one six-line body; a local closure is one copy the
+    // arms call. Not where the body awaits — the arms would each have to await
+    // it, and the match with them — and not for a single arm, which would be
+    // one indirection for nothing.
+    // Two lines or fewer is shorter written out than called: the closure and
+    // its declaration cost more than the copies save.
+    let worth_hoisting = rest.len() > 1 && !is_async && body.lines().count() > 2;
+    let hoisted_body = worth_hoisting.then(|| {
+        let inner = t.wrap_bindings(&owned, crate::ownership::hoisted(&super::arm_statements(&body, produces), &lifted));
+        let param = match (&bound, declares) {
+            (Some(name), true) => name.clone(),
+            _ => String::new(),
+        };
+        t.hoist_name(format!("({}) => {{\n{}}}", param, indent(&inner)))
+    });
+
     let mut written = super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
     let mut arms = String::new();
-    for variant in &rest {
+    for (variant, has_payload) in &rest {
         // A borrowing match leaves the enum whole, so the subject *is* the
         // value; a consuming one has only the payload, and the value is that
         // payload back under the variant this arm matched.
@@ -195,19 +330,50 @@ pub(super) fn lower(
         } else {
             scrutinee.to_string()
         };
-        let mut prelude = flags.clone();
-        for name in &names {
-            prelude.push_str(&format!("const {} = {};\n", name, whole));
-        }
-        let head = if consuming && !names.is_empty() {
-            format!("  {}: (v) => ", variant)
-        } else {
-            format!("  {}: () => ", variant)
+        let bindings = match (&bound, declares) {
+            (Some(name), true) => format!("{}const {} = {};\n", flags, name, whole),
+            _ => flags.clone(),
         };
-        arms.push_str(&format!(
-            "{}{{\n{}  }},\n",
-            head,
-            indent(&indent(&format!("{}{}", prelude, body)))
+        // A unit variant's payload is empty, so there is nothing in it to own.
+        let release = if *has_payload { release_rest.clone() } else { String::new() };
+        let takes_payload = consuming && (declares || !release.is_empty());
+        if let Some(rest_body) = &hoisted_body {
+            // The arm is the call. What it owns it settles here — the payload
+            // no name took — and the flags it owes stand before the call.
+            let call = match (&bound, declares) {
+                (Some(_), true) => format!("{}({})", rest_body, whole),
+                _ => format!("{}()", rest_body),
+            };
+            let inner = if release.is_empty() {
+                format!("return {};\n", call)
+            } else {
+                format!("try {{\n  return {};\n}} finally {{\n{}}}\n", call, indent(&release))
+            };
+            let head = if takes_payload {
+                format!("  {}: (v) => ", variant)
+            } else {
+                format!("  {}: () => ", variant)
+            };
+            arms.push_str(&format!(
+                "{}{{\n{}  }},\n",
+                head,
+                indent(&indent(&format!("{}{}", flags, inner)))
+            ));
+            continue;
+        }
+        arms.push_str(&super::render_arm(
+            super::ArmParts {
+                variant,
+                bindings,
+                param: takes_payload.then(|| "v".to_string()),
+                body: &body,
+                owned: &owned,
+                lifted: &lifted,
+                produces,
+                is_async,
+                release_rest: release,
+            },
+            t,
         ));
     }
     // The expanded arms go where the runtime match's own arms end.
@@ -215,6 +381,9 @@ pub(super) fn lower(
         .rfind("})")
         .expect("the runtime match is written with a closing brace");
     written.insert_str(close, &arms);
+    if is_async && !written.starts_with("await ") {
+        written = format!("await ({})", written);
+    }
     written
 }
 
@@ -306,9 +475,10 @@ mod tests {
         assert!(ts.contains("new Outer('Whole', { _0: w })"), "{}", ts);
     }
 
-    /// A `_` arm whose body never names the subject needs no payload at all.
+    /// A `_` arm over a BORROWED enum whose variants carry nothing needs no
+    /// payload: the enum stays whole and there is nothing in it to own.
     #[test]
-    fn a_wildcard_arm_that_reads_nothing_takes_no_payload() {
+    fn a_wildcard_arm_over_a_borrowed_payload_free_enum_takes_no_payload() {
         let mut f = built(
             "pub enum Step { A, B, C, D }\n\
              pub fn rank(s: &Step) -> u32 {\n\
@@ -316,9 +486,91 @@ mod tests {
              }",
         );
         let ts = f.translated_method("lib.rs", "rank");
-        assert!(ts.contains("C: () => {"), "{}", ts);
-        assert!(ts.contains("D: () => {"), "{}", ts);
-        assert_eq!(ts.matches("return 0;").count(), 2, "{}", ts);
+        assert!(ts.contains("C: () => 0,"), "{}", ts);
+        assert!(ts.contains("D: () => 0,"), "{}", ts);
+    }
+
+    /// PREMISE CHANGED 2026-09-04: the test this replaces asserted that a `_`
+    /// arm which reads nothing takes no payload, full stop. Under `intoMatch`
+    /// that is a leak — the payload is handed over and nobody receives it — so
+    /// the rule is now that a CONSUMING arm always takes the payload and owns
+    /// all of it, and only a borrowing arm over a payload-free enum can decline
+    /// it.
+    #[test]
+    fn a_consuming_wildcard_arm_releases_the_payload_it_reads_nothing_of() {
+        let mut f = built(
+            "pub struct Inner;\n\
+             pub enum Step { Taken(Inner), Rest(Inner) }\n\
+             pub fn rank(s: Step) -> u32 {\n\
+               match s { Step::Taken(i) => 1, _ => 0 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "rank");
+        assert!(ts.contains("s.intoMatch({"), "{}", ts);
+        assert!(ts.contains("Rest: (v) => {"), "{}", ts);
+        assert!(ts.contains("dropUnbound(v, []);"), "{}", ts);
+    }
+
+    /// A named arm that ignores its payload owns it just the same: `intoMatch`
+    /// hands the whole thing over and releases nothing of its own.
+    #[test]
+    fn a_named_arm_that_ignores_its_payload_releases_it() {
+        let mut f = built(
+            "pub struct Inner;\n\
+             pub enum Step { Taken(Inner), Rest(Inner) }\n\
+             pub fn rank(s: Step) -> u32 {\n\
+               match s { Step::Taken(_) => 1, Step::Rest(i) => 2 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "rank");
+        assert!(ts.contains("Taken: (v) => {"), "{}", ts);
+        assert!(ts.contains("dropUnbound(v, []);"), "{}", ts);
+    }
+
+    /// A catch-all that binds the scrutinee's own name binds the value once.
+    /// `match e { E::Taken(t) => .., e => e }` wrote `const e` twice, which no
+    /// JavaScript engine will load.
+    #[test]
+    fn a_catch_all_that_shadows_the_subject_declares_it_once() {
+        let mut f = built(
+            "pub struct Inner;\n\
+             pub enum E { Taken(Inner), Rest(Inner) }\n\
+             pub fn keep(e: E) -> E {\n\
+               match e { E::Taken(t) => E::Rest(t), e => e }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "keep");
+        assert_eq!(ts.matches("const e = new E('Rest', v);").count(), 1, "{}", ts);
+    }
+
+    /// A borrowing catch-all that binds the scrutinee's own name declares
+    /// nothing: `const e = e;` reads the name it is declaring.
+    #[test]
+    fn a_borrowing_catch_all_that_shadows_the_subject_declares_nothing() {
+        let mut f = built(
+            "pub enum E { A, B, C }\n\
+             pub fn count(e: &E) -> u32 {\n\
+               match e { E::A => 1, e => 0 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "count");
+        assert!(!ts.contains("const e = e;"), "{}", ts);
+    }
+
+    /// A catch-all that binds a BORROWED subject does not release it: the
+    /// caller still owns it, and the arm dropping it was a double drop.
+    #[test]
+    fn a_catch_all_binding_a_borrowed_subject_releases_nothing() {
+        let mut f = built(
+            "pub struct Inner;\n\
+             pub enum E { A(Inner), B(Inner), C(Inner) }\n\
+             pub struct Holder { pub choice: E }\n\
+             pub fn pick(h: &Holder) -> u32 {\n\
+               match &h.choice { E::A(_) => 1, other => 0 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "pick");
+        assert!(!ts.contains("other.drop()"), "{}", ts);
     }
 
     /// An arm written after the catch-all can never run, and says so.
@@ -368,7 +620,15 @@ mod tests {
         assert!(ts.starts_with("return s.match({"), "{}", ts);
     }
 
-    /// A catch-all that stands for nothing — every variant already named — is
+    /// PREMISE CHANGED 2026-09-04: "every variant is already named" used to be
+    /// read off the variant NAMES alone, so an arm that named a variant and
+    /// tested inside it counted as covering the whole of it and the catch-all
+    /// was deleted — leaving the values that arm does not match with no arm at
+    /// all. An arm covers its variant only when it matches every value of it,
+    /// which is the premise the test below now states, and the refutable case
+    /// is the test after it.
+    ///
+    /// A catch-all that stands for nothing — every variant already covered — is
     /// left out, because Rust cannot reach it either.
     #[test]
     fn a_catch_all_with_nothing_left_to_cover_is_dropped() {
@@ -380,5 +640,46 @@ mod tests {
         );
         let ts = f.translated_method("lib.rs", "rank");
         assert!(!ts.contains("return 0;"), "{}", ts);
+    }
+
+    /// An arm that tests INSIDE its variant does not cover the variant, so the
+    /// catch-all still stands for the values it does not match. The runtime's
+    /// match cannot express "test the payload, and fall through if it fails",
+    /// so a borrowing match goes to the if-chain, which can.
+    #[test]
+    fn an_arm_that_tests_inside_its_variant_does_not_delete_the_catch_all() {
+        let mut f = built(
+            "pub enum Lit { S, I }\n\
+             pub enum Ex { Literal(Lit), Path }\n\
+             pub fn rank(e: &Ex) -> u32 {\n\
+               match e { Ex::Literal(Lit::I) => 7, Ex::Path => 1, _ => 99 }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "rank");
+        assert!(!ts.contains(".match({"), "{}", ts);
+        assert!(ts.contains("99"), "{}", ts);
+        assert!(ts.contains("is('Literal')"), "{}", ts);
+        assert!(ts.contains("is('I')"), "{}", ts);
+    }
+
+    /// The consuming form has no such rewrite — the if-chain reads the payload
+    /// without marking the enum moved — so it says so rather than running the
+    /// testing arm for every value of the variant in silence.
+    #[test]
+    fn a_consuming_match_that_tests_inside_a_variant_is_reported() {
+        let mut f = built(
+            "pub struct Inner;\n\
+             pub enum Lit { S(Inner), I(Inner) }\n\
+             pub enum Ex { Literal(Lit), Path(Inner) }\n\
+             pub fn rank(e: Ex) -> u32 {\n\
+               match e { Ex::Literal(Lit::I(i)) => 7, _ => 99 }\n\
+             }",
+        );
+        let _ = f.translated_method("lib.rs", "rank");
+        assert!(
+            f.messages().iter().any(|m| m.contains("nowhere to fall through to")),
+            "{:?}",
+            f.messages()
+        );
     }
 }

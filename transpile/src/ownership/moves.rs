@@ -83,6 +83,16 @@ pub trait Consumes {
     /// ported types releases both — and the syntax of `+` says nothing about
     /// it, which is why the impl table has to.
     fn consumes_operands(&self, bin: &syn::ExprBinary) -> (bool, bool);
+
+    /// Does calling this closure consume it? A closure whose body hands a
+    /// capture away is an `FnOnce`: Rust lets it run once, and the runtime's
+    /// `callOnce` marks it moved before the body runs.
+    fn consumes_callee(&self, call: &syn::ExprCall) -> bool;
+
+    /// Does the impl behind a unary operator take its operand by value?
+    /// `impl Neg for Weight` is `fn neg(self) -> Weight`, so `-weight` releases
+    /// the weight exactly as `a + b` releases both of its operands.
+    fn consumes_unary_operand(&self, unary: &syn::ExprUnary) -> bool;
 }
 
 pub struct Scan<'c> {
@@ -250,6 +260,9 @@ impl<'c> Scan<'c> {
     fn walk(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
         match expr {
             syn::Expr::Call(call) => {
+                if self.consumes.consumes_callee(call) {
+                    self.moved(&call.func, at, out);
+                }
                 for arg in &call.args {
                     self.moved(arg, at, out);
                     self.walk(arg, at, out);
@@ -357,6 +370,13 @@ impl<'c> Scan<'c> {
                 self.walk(&bin.right, operand, out);
             }
 
+            syn::Expr::Unary(unary) => {
+                if self.consumes.consumes_unary_operand(unary) {
+                    self.moved(&unary.expr, at, out);
+                }
+                self.walk(&unary.expr, at, out);
+            }
+
             syn::Expr::If(if_expr) => {
                 self.walk(&if_expr.cond, at, out);
                 self.nested_block(&if_expr.then_branch.stmts, at, out);
@@ -416,7 +436,6 @@ impl<'c> Scan<'c> {
             syn::Expr::Paren(p) => self.walk(&p.expr, at, out),
             syn::Expr::Group(g) => self.walk(&g.expr, at, out),
             syn::Expr::Reference(r) => self.walk(&r.expr, at, out),
-            syn::Expr::Unary(u) => self.walk(&u.expr, at, out),
             syn::Expr::Cast(c) => self.walk(&c.expr, at, out),
             syn::Expr::Field(f) => self.walk(&f.base, at, out),
             syn::Expr::Index(i) => {

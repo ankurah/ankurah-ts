@@ -172,7 +172,7 @@ export class Selection extends Struct {
   }
 
   debug(): string {
-    return `Selection { predicate: ${this.predicate.debug()}, orderBy: ${(this.orderBy === null ? 'None' : `Some(${`[${Array.from(this.orderBy).map((e) => e.debug()).join(', ')}]`})`)}, limit: ${(this.limit === null ? 'None' : `Some(${String(this.limit)})`)} }`;
+    return `Selection { predicate: ${this.predicate.debug()}, orderBy: ${(($v) => $v === null ? 'None' : `Some(${`[${Array.from($v).map((e) => e.debug()).join(', ')}]`})`)(this.orderBy)}, limit: ${(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.limit)} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -346,12 +346,28 @@ export class Expr extends Enum<ExprV> {
     });
   }
 
-  static from(s: string): Expr {
+  static fromString(s: string): Expr {
     return new Expr('Literal', { _0: new Literal('String', { _0: s }) });
+  }
+
+  static fromBigint(i: bigint): Expr {
+    return new Expr('Literal', { _0: new Literal('I64', { _0: i }) });
+  }
+
+  static fromNumber(f: number): Expr {
+    return new Expr('Literal', { _0: new Literal('F64', { _0: f }) });
+  }
+
+  static fromBoolean(b: boolean): Expr {
+    return new Expr('Literal', { _0: new Literal('Bool', { _0: b }) });
   }
 
   static fromLiteral(lit: Literal): Expr {
     return new Expr('Literal', { _0: lit });
+  }
+
+  static fromT<T>(vec: T[]): Expr {
+    return new Expr('ExprList', { _0: [...vec].map((item) => item) });
   }
 
   clone(): Expr {
@@ -528,7 +544,7 @@ export class Literal extends Enum<LiteralV> {
       I16: (v) => `I16(${String(v._0)})`,
       I32: (v) => `I32(${String(v._0)})`,
       I64: (v) => `I64(${String(v._0)})`,
-      F64: (v) => `F64(${String(v._0)})`,
+      F64: (v) => `F64(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Bool: (v) => `Bool(${String(v._0)})`,
       String: (v) => `String(${JSON.stringify(v._0)})`,
       EntityId: (v) => `EntityId(${v._0})`,
@@ -797,21 +813,11 @@ export class Predicate extends Enum<PredicateV> {
         const inner = v._0;
         return inner.walk(accumulator_1, visitor);
       },
-      Comparison: () => {
-        return accumulator_1;
-      },
-      IsNull: () => {
-        return accumulator_1;
-      },
-      True: () => {
-        return accumulator_1;
-      },
-      False: () => {
-        return accumulator_1;
-      },
-      Placeholder: () => {
-        return accumulator_1;
-      },
+      Comparison: () => accumulator_1,
+      IsNull: () => accumulator_1,
+      True: () => accumulator_1,
+      False: () => accumulator_1,
+      Placeholder: () => accumulator_1,
     });
   }
 

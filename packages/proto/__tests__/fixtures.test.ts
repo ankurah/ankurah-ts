@@ -17,7 +17,7 @@
 // Items carrying `debug` instead of `json` are the three non-finite `f64` cases,
 // which serde_json turns into `null`; those get checks 1, 2 and 4 only.
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, describe, test, expect } from 'bun:test';
 import { existsSync } from 'fs';
 
 import {
@@ -80,6 +80,19 @@ import {
 
 import { fixturePath, listFixtureDir, readFixtureBytes, readSidecar, toHex } from './support/fixtures';
 import { toSerde } from './support/serde';
+
+/**
+ * Release a decoded value.
+ *
+ * Every decoded value here is owned by the test that decoded it, and the
+ * ownership runtime tracks each one until something calls `drop()`. A few
+ * sidecar types decode to a plain number or string, which owns nothing and has
+ * no `drop`, so the call is guarded rather than written per type.
+ */
+function dropIfOwned(value: unknown): void {
+  const owned = value as { drop?: () => void };
+  if (owned && typeof owned.drop === 'function') owned.drop();
+}
 
 const FIXTURE_DIR = 'proto/test_fixtures';
 
@@ -268,6 +281,12 @@ for (const binName of fixtures) {
         const writer = new BincodeWriter();
         codec.encode(writer, value);
         expect(toHex(writer.finish())).toBe(toHex(slice));
+
+        // The decoded value is this test's, so this test releases it. Without
+        // this the suite leaks one tracked value per item, which the registry
+        // only says out loud once a collection happens — and a suite short
+        // enough to finish before the first collection reports nothing.
+        dropIfOwned(value);
       });
     }
   });
@@ -293,7 +312,10 @@ describe('event_id_derivation.bin — Event::id() derivation', () => {
     test(`${idItem.label}: Event::id() recomputes the fixture's EventId`, () => {
       if (!eventItem) throw new Error(`No input event for ${idItem.label}`);
       const event = Event.decode(new BincodeReader(bytes.subarray(eventItem.offset))) as Event;
-      expect(toSerde(event.id())).toEqual(idItem.json as any);
+      const id = event.id();
+      expect(toSerde(id)).toEqual(idItem.json as any);
+      dropIfOwned(id);
+      dropIfOwned(event);
     });
   }
 
@@ -303,4 +325,16 @@ describe('event_id_derivation.bin — Event::id() derivation', () => {
     if (!standard || !other) throw new Error('expected standard_event and collection_is_not_hashed items');
     expect(other.json).toEqual(standard.json as any);
   });
+});
+
+// ── The suite's own ownership check ──────────────────────────────────────────
+//
+// A leak is reported from a FinalizationRegistry, so nothing is said until a
+// collection happens — and a suite that finishes in forty milliseconds can leak
+// every value it decodes and still print nothing. Forcing a collection at the
+// end is what makes this suite's silence worth something; it also means a leak
+// introduced here is reported here rather than in whichever suite happens to
+// run long enough afterwards to trigger the collector.
+afterAll(() => {
+  Bun.gc(true);
 });

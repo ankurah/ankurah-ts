@@ -12,6 +12,7 @@
 
 pub mod debug_derive;
 pub mod default_value;
+pub mod hashing;
 pub mod ordering;
 pub mod debug_fmt;
 pub mod thiserror;
@@ -62,7 +63,7 @@ pub fn enum_members(
         // for every variant at once. The reader takes the variant attributes
         // only, so one written on the type would leave every arm without a
         // message; saying so here is what keeps that from passing unnoticed.
-        if e.variants.iter().all(|v| v.error_format.is_none()) && !e.variants.is_empty() {
+        if e.variants.iter().all(|v| v.error_text.is_none()) && !e.variants.is_empty() {
             gaps.push((
                 e.span,
                 format!(

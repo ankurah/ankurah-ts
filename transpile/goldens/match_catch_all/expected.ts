@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/match_catch_all/src/input.rs
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, dropUnbound } from '@ankurah/base';
 
 export class Inner extends Struct {
   readonly width: number;
@@ -34,6 +34,23 @@ export type WrappedV = {
 };
 
 export class Wrapped extends Enum<WrappedV> {
+}
+
+export type HeldV = {
+  First: { _0: Inner };
+  Second: { _0: Inner };
+  Third: { _0: Inner };
+};
+
+export class Held extends Enum<HeldV> {
+}
+
+export type ReasonV = {
+  Cause: { _0: Cause };
+  Plain: {};
+};
+
+export class Reason extends Enum<ReasonV> {
 }
 
 export function tieBreak(order: Order, fallback: Order): Order {
@@ -89,9 +106,7 @@ export function rank(cause: Cause): number {
       return inner.width;
     },
     Missing: () => 1,
-    Other: () => {
-      return 0;
-    },
+    Other: () => 0,
   });
 }
 
@@ -116,12 +131,8 @@ export function count(cause: Cause): number {
       const inner = v._0;
       return inner.width;
     },
-    Missing: () => {
-      return 1;
-    },
-    Other: () => {
-      return 1;
-    },
+    Missing: () => 1,
+    Other: () => 1,
   });
 }
 
@@ -151,6 +162,131 @@ export function tally(cause: Cause): number {
         rest.drop();
       }
     },
+  });
+}
+
+export function letInit(cause: Cause): number {
+  const picked = (() => {
+    return cause.match({
+      Denied: (v) => {
+        const inner = v._0;
+        return inner.width;
+      },
+      Missing: () => 2,
+      Other: () => 2,
+    });
+  })();
+  return picked + 1;
+}
+
+export function asArgument(cause: Cause): number {
+  return countTwice((() => {
+    return cause.match({
+      Denied: (v) => {
+        const inner = v._0;
+        return inner.width;
+      },
+      Missing: () => 3,
+      Other: () => 3,
+    });
+  })());
+}
+
+function countTwice(n: number): number {
+  return n * 2;
+}
+
+export function ignore(held: Held): number {
+  return held.intoMatch({
+    First: (v) => {
+      const inner = v._0;
+      try {
+        return inner.width;
+      } finally {
+        inner.drop();
+      }
+    },
+    Second: (v) => {
+      try {
+        return 0;
+      } finally {
+        dropUnbound(v, []);
+      }
+    },
+    Third: (v) => {
+      try {
+        return 0;
+      } finally {
+        dropUnbound(v, []);
+      }
+    },
+  });
+}
+
+export function ignoreNamed(held: Held): number {
+  return held.intoMatch({
+    First: (v) => {
+      try {
+        return 1;
+      } finally {
+        dropUnbound(v, []);
+      }
+    },
+    Second: (v) => {
+      const inner = v._0;
+      try {
+        return inner.width;
+      } finally {
+        inner.drop();
+      }
+    },
+    Third: (v) => {
+      try {
+        return 3;
+      } finally {
+        dropUnbound(v, []);
+      }
+    },
+  });
+}
+
+export function refutable(reason: Reason): number {
+  if (reason.is('Cause') && (reason.value._0.is('Missing'))) {
+    return 5;
+  } else {
+    return 6;
+  }
+}
+
+export function sameName(cause: Cause): Cause {
+  return cause.intoMatch({
+    Denied: (v) => {
+      const inner = v._0;
+      return new Cause('Denied', { _0: inner });
+    },
+    Missing: (v) => {
+      const cause = new Cause('Missing', v);
+      return cause;
+    },
+    Other: (v) => {
+      const cause = new Cause('Other', v);
+      return cause;
+    },
+  });
+}
+
+export function unwind(cause: Cause): number {
+  return cause.intoMatch({
+    Denied: (v) => {
+      const inner = v._0;
+      try {
+        throw new Error(`width ${inner.width} is not allowed`)
+      } finally {
+        inner.drop();
+      }
+    },
+    Missing: () => 0,
+    Other: () => 0,
   });
 }
 

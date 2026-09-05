@@ -52,6 +52,16 @@ impl<'a> BodyTranslator<'a> {
             return ownership::scrutinee::Takes::Nothing;
         };
         drop(tc);
+        // `match &x { .. }` matches THROUGH a reference: Rust's match ergonomics
+        // make every binding under it a borrow, and nothing can be moved out of
+        // a `&` at all. The written `&` is the whole answer, and it is asked
+        // here because the resolved type of `&x` does not always come back as a
+        // reference — so an owned `b` matched as `match &b.low` was being
+        // written as `intoMatch`, which hands the payload away and leaves the
+        // enum moved inside a struct its owner still drops.
+        if matches!(subject_expr, syn::Expr::Reference(_)) {
+            return ownership::scrutinee::Takes::Nothing;
+        }
         if !self.owns_place(subject_expr) {
             return ownership::scrutinee::Takes::Nothing;
         }

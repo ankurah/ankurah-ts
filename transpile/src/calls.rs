@@ -65,6 +65,21 @@ impl BodyTranslator<'_> {
         // JavaScript array literal.
         if !self.names_crate_type(callee) {
             if let Some(result) = native_types::translate_static_call(func, args) {
+                // A `BTreeMap` keeps its keys in order and the port has no
+                // ordered container: the runtime's `HashMap` hashes its keys
+                // and iterates in insertion order, so anything that read this
+                // one back in key order reads it in another.
+                if func.starts_with("BTreeMap") || func.starts_with("BTreeSet") {
+                    self.fallback(
+                        span,
+                        format!(
+                            "`{}` keeps its keys in order, and the port's keyed containers \
+                             iterate in insertion order; what reads this back in key order \
+                             reads it in another",
+                            func
+                        ),
+                    );
+                }
                 return result;
             }
         }
@@ -79,14 +94,19 @@ impl BodyTranslator<'_> {
             "serde_json.from_str" | "serde_json::from_str" | "serdeJson.fromStr"
                 if args.len() == 1 =>
             {
-                return match self.read_into_type(callee, span).and_then(class_head) {
+                // Only where the type really has the static. `T.fromJson(..)`
+                // on a `T` that derives no `Deserialize` turns a parse error
+                // into a `TypeError` at the call, with nothing said.
+                let target = self.read_into_type(callee, span);
+                let declares = target.as_ref().is_some_and(|_| self.reads_json(callee, span));
+                return match target.and_then(class_head).filter(|_| declares) {
                     Some(ty) => format!("{}.fromJson(JSON.parse({}))", ty, args[0]),
                     None => {
                         self.fallback(
                             span,
-                            "`serde_json::from_str` is written without a type with a `fromJson` \
-                             of its own to read itself out of the parsed value, so the parse \
-                             stands alone",
+                            "`serde_json::from_str` is written without a type that reads itself \
+                             out of the parsed value — a `#[derive(Deserialize)]` is what writes \
+                             one — so the parse stands alone and hands back a plain object",
                         );
                         format!("JSON.parse({})", args[0])
                     }

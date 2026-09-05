@@ -23,7 +23,7 @@ export class ListenerGuard extends Struct {
     return this._0.broadcastId();
   }
 
-  static from(guard: ListenerGuard<T>): ListenerGuard {
+  static from<T>(guard: ListenerGuard<T>): ListenerGuard {
     return new ListenerGuard(guard);
   }
 }

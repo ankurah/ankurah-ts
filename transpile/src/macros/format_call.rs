@@ -122,8 +122,23 @@ impl Operands for Arguments<'_, '_> {
                     return Some(self.value(expr, needs_type));
                 }
                 // Rust 2021 captures the variable of that name from the
-                // enclosing scope, so the name is an expression in this body.
+                // enclosing scope, so the name is an expression in this body —
+                // and rustc refuses the macro where there is none. A name
+                // nothing in scope answers came out as itself, so the emitted
+                // template read a binding that is not there and the line threw
+                // `ReferenceError` rather than printing.
                 let expr: Expr = syn::parse_str(name).ok()?;
+                if !self.t.names_something(&expr) {
+                    self.t.fallback(
+                        self.at,
+                        format!(
+                            "the format string captures `{}`, and nothing of that name is in \
+                             scope here, so the placeholder is written as `undefined`",
+                            name
+                        ),
+                    );
+                    return Some(("undefined".to_string(), None));
+                }
                 Some(self.value(&expr, needs_type))
             }
         }

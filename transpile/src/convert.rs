@@ -480,15 +480,68 @@ impl BodyTranslator<'_> {
         // The argument's own type is what says which impl this is; a `from`
         // whose argument the engine could not name is left as it was written.
         let from = self.quietly(|| self.resolve_expr_type(argument)).ok()?;
+        let span = syn::spanned::Spanned::span(call);
+        // `Wrapped::from(w)` where `w` is already a `Wrapped` is the value.
+        // Rust's reflexive `impl<T> From<T> for T` is a real impl and there is
+        // no method for it to land on.
+        if from.peel_refs() == &to {
+            return Some(value.to_string());
+        }
+        // A conversion the RUNTIME performs — `String::from(s)`, `u64::from(n)`
+        // — has no emitted class to hang a static on. Looking only in the impl
+        // table found the surface's impl, failed to write a call for it, and
+        // fell through to `String.from(s)`, which is not a function.
+        {
+            let tc = tc.borrow();
+            if let Some(written) = crate::native_types::conversion::between(tc.registry, &from, &to, value) {
+                return Some(written);
+            }
+        }
+        let describe = |ty: &crate::ty::Ty| self.types.as_ref().map(|tc| tc.borrow().registry.describe(ty)).unwrap_or_default();
         let found = {
             let tc = tc.borrow();
-            tc.probe().conversion_impl(trait_path, &from, &to).ok()?
+            tc.probe().conversion_impl(trait_path, &from, &to)
+        };
+        let found = match found {
+            Ok(found) => found,
+            Err(why) => {
+                self.fallback(
+                    span,
+                    format!(
+                        "`{}::{}` converts a `{}` to a `{}`, and {}; the value is written as it \
+                         stands",
+                        owner.join("::"),
+                        method,
+                        describe(&from),
+                        describe(&to),
+                        why
+                    ),
+                );
+                return None;
+            }
         };
         let call = {
             let tc = tc.borrow();
-            crate::emit_impls::conversion_call(tc.registry, found.impl_id, &to).ok()?
+            crate::emit_impls::conversion_call(tc.registry, found.impl_id, &to)
         };
-        Some(format!("{}({})", call.callee, value))
+        match call {
+            Ok(call) => Some(format!("{}({})", call.callee, value)),
+            Err(why) => {
+                self.fallback(
+                    span,
+                    format!(
+                        "`{}::{}` converts a `{}` to a `{}`, and the impl that performs it {}; \
+                         the value is written as it stands",
+                        owner.join("::"),
+                        method,
+                        describe(&from),
+                        describe(&to),
+                        why
+                    ),
+                );
+                None
+            }
+        }
     }
 }
 

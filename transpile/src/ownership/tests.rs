@@ -1281,3 +1281,123 @@ fn a_brace_delimited_macro_written_last_is_the_blocks_value() {
         ts
     );
 }
+
+/// `match &x` matches THROUGH a reference, so nothing moves out of it —
+/// whatever the arms bind, and however deep they bind it. An owned subject
+/// matched this way was written as `intoMatch`, which hands the payload
+/// away and leaves the enum moved inside a struct its owner still drops.
+#[test]
+fn a_match_through_a_reference_borrows_however_deep_it_binds() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Inner;\n\
+         pub enum Datum { Val(Inner), Nil }\n\
+         pub enum End { Value { datum: Datum }, Low }\n\
+         pub struct Bound { pub low: End }\n\
+         pub fn deep(b: Bound) -> u32 {\n\
+           match &b.low { End::Value { datum: Datum::Val(v) } => 1, _ => 3 }\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "deep");
+    assert!(!ts.contains("intoMatch"), "{}", ts);
+}
+
+/// A pattern that goes further in before it binds still moves out of the
+/// subject: `Ex::Literal(Lit::I(i))` takes `i` by value out of the `Lit`,
+/// exactly as `Ex::Path(i)` takes it out of the `Ex`.
+#[test]
+fn a_nested_by_value_binding_moves_the_subject() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Inner;\n\
+         pub enum Lit { S(Inner), I(Inner) }\n\
+         pub enum Ex { Literal(Lit), Path(Inner) }\n\
+         pub fn take(e: Ex) -> Inner {\n\
+           match e { Ex::Literal(Lit::I(i)) => i, Ex::Path(p) => p, Ex::Literal(Lit::S(s)) => s }\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "take");
+    assert!(ts.contains("intoMatch"), "{}", ts);
+}
+
+/// `other if take => { drop(other); .. }` moves the subject into `other` on the
+/// path the guard succeeds on, and on no other. The binding used to alias the
+/// subject without taking the drop over, so the true-guard path released the
+/// same value twice.
+#[test]
+fn a_guarded_bare_name_arm_takes_the_subject_over_when_the_guard_succeeds() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub enum E { A, B }\n\
+         pub fn taken(e: E, take: bool) -> u32 {\n\
+           match e { E::A => 1, other if take => { drop(other); 2 } _ => 3 }\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "taken");
+    // The flag is set inside the guard, so a failed guard leaves the subject
+    // with the block that declared it.
+    let guard = ts.find("if (take) {").expect(&ts);
+    let flag = ts.find("_moved0 = true;").expect(&ts);
+    assert!(flag > guard, "the subject's flag is set before the guard is tested:\n{}", ts);
+}
+
+/// An arm of `intoMatch` is a function, and `break` cannot leave one: `return
+/// break` does not even parse. The arm settles what it owns in its own
+/// `finally` and hands the jump back as a value the caller performs.
+#[test]
+fn a_consuming_arm_that_leaves_the_loop_hands_the_jump_back() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Inner;\n\
+         pub enum E { Payload(Inner), Unit }\n\
+         pub fn scan(items: Vec<E>) -> u32 {\n\
+           let mut n = 0;\n\
+           for e in items {\n\
+             match e { E::Payload(t) => { drop(t); break } E::Unit => n += 1 }\n\
+           }\n\
+           n\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "scan");
+    assert!(ts.contains("return { $jump: 'break' }"), "{}", ts);
+    assert!(ts.contains("$jump === 'break') break;"), "{}", ts);
+    assert!(!ts.contains("return break"), "{}", ts);
+}
+
+/// The same where the match's VALUE is wanted: the jump is performed by the
+/// statement before the value is read. `core/src/reactor/fetch_gap.ts` was one
+/// of the emitted files a JavaScript engine refused to load.
+#[test]
+fn a_value_position_match_that_jumps_performs_the_jump_outside_the_wrapper() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub enum V { A(u32), B }\n\
+         pub fn total(items: Vec<V>) -> u32 {\n\
+           let mut n = 0;\n\
+           for v in items {\n\
+             let each = match v { V::A(x) => x, V::B => continue };\n\
+             n += each;\n\
+           }\n\
+           n\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "total");
+    assert!(ts.contains("$jump === 'continue') continue;"), "{}", ts);
+}
+
+/// Every name a pattern binds shadows on its own: `let [queryId, ..] = ..`
+/// beside a parameter called `queryId` declared it twice, and the module would
+/// not load.
+#[test]
+fn every_shadowing_name_a_pattern_binds_takes_a_fresh_one() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn pick(id: u32, pair: (u32, u32)) -> u32 {\n\
+           let (id, other) = pair;\n\
+           id + other\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "pick");
+    assert!(!ts.contains("const [id,"), "{}", ts);
+    assert!(ts.contains("const [id_1, other] = pair;"), "{}", ts);
+}

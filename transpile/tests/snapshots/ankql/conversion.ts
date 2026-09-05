@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/conversion.rs
-import { Result } from '@ankurah/base';
+import { Result, dropUnbound } from '@ankurah/base';
 import { Expr, Literal, Predicate, Selection } from './ast';
 import { ParseError } from './error';
 import { parseSelection } from './parser';
@@ -26,18 +26,27 @@ export function Predicate_fromExpr(value: Expr): Result<Predicate, ParseError> {
       return Result.Ok(p);
     },
     Placeholder: () => Result.Ok(new Predicate('Placeholder', {})),
-    Literal: (v) => {
-      const _v = v._0;
-      return Result.Ok(new Predicate('True', {}));
+    Literal: (v) => Result.Ok(new Predicate('True', {})),
+    Path: (v) => {
+      try {
+        return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+      } finally {
+        dropUnbound(v, []);
+      }
     },
-    Path: () => {
-      return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+    InfixExpr: (v) => {
+      try {
+        return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+      } finally {
+        dropUnbound(v, []);
+      }
     },
-    InfixExpr: () => {
-      return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
-    },
-    ExprList: () => {
-      return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+    ExprList: (v) => {
+      try {
+        return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+      } finally {
+        dropUnbound(v, []);
+      }
     },
   });
 }
@@ -65,7 +74,7 @@ export function Expr_fromJsValue(value: unknown): Result<Expr, ParseError> {
     if (_v2 != null) {
       const n = _v2;
       if (n.fract() === 0.0) {
-        const nInt = BigInt.asIntN(64, BigInt(Math.trunc(n)));
+        const nInt = (($v) => $v < -9223372036854775808n ? -9223372036854775808n : $v > 9223372036854775807n ? 9223372036854775807n : $v)(BigInt(Math.min(Math.max(Math.trunc(n) || 0, -9223372036854775808), 9223372036854775807)));
         return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('I64', { _0: nInt }) }));
       } else {
         return Result.Ok(new ast.Expr('Literal', { _0: new ast.Literal('F64', { _0: n }) }));

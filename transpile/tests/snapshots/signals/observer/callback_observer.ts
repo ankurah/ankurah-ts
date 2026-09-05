@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/observer/callback_observer.rs
-import { Struct, Arc, Weak, RwLock, OwnedClosure } from '@ankurah/base';
+import { Struct, Arc, Weak, RwLock, OwnedClosure, HashMap } from '@ankurah/base';
 import { BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
@@ -14,7 +14,7 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   static new<F extends Fn>(callback: Arc<F>): CallbackObserver {
-    return new CallbackObserver(Arc.new(new Inner(new OwnedClosure([callback], () => callback()), new RwLock(new Map()))));
+    return new CallbackObserver(Arc.new(new Inner(new OwnedClosure([callback], () => callback()), new RwLock(new HashMap()))));
   }
 
   trigger(): void {
@@ -111,9 +111,9 @@ class SubscriptionEntry extends Struct {
 
 class Inner extends Struct {
   callback: () => void;
-  entries: RwLock<Map<BroadcastId, SubscriptionEntry>>;
+  entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>;
 
-  constructor(callback: () => void, entries: RwLock<Map<BroadcastId, SubscriptionEntry>>) {
+  constructor(callback: () => void, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
     super();
     this.callback = callback;
     this.entries = entries;

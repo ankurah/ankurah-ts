@@ -25,12 +25,6 @@ pub struct ExtractCfg<'a> {
 }
 
 impl<'a> ExtractCfg<'a> {
-    pub fn features(features: Option<&'a crate::cfg::CfgFeatures>) -> Self {
-        ExtractCfg {
-            features,
-            excluded: &[],
-        }
-    }
 }
 
 /// Extract all items from a Rust source file.
@@ -275,15 +269,21 @@ fn is_skipped_cfg_with(attrs: &[syn::Attribute], features: Option<&crate::cfg::C
 /// carrying its own arguments are different lowerings, and returning `None` for
 /// them leaves the caller to say so at the variant rather than rendering the
 /// wrong text.
-fn error_attribute(attrs: &[syn::Attribute]) -> Option<String> {
+fn error_attribute(attrs: &[syn::Attribute]) -> Option<crate::types::ErrorText> {
     for attr in attrs {
         if !attr.path().is_ident("error") {
             continue;
         }
         let list = attr.meta.require_list().ok()?;
+        // `#[error(transparent)]` says this variant's text IS the wrapped
+        // error's. Reading only the string form left it as "no attribute the
+        // engine could read", and the emitted text was the variant's own name.
+        if list.tokens.to_string().trim() == "transparent" {
+            return Some(crate::types::ErrorText::Transparent);
+        }
         return syn::parse2::<syn::LitStr>(list.tokens.clone())
             .ok()
-            .map(|lit| lit.value());
+            .map(|lit| crate::types::ErrorText::Format(lit.value()));
     }
     None
 }
@@ -358,7 +358,7 @@ fn extract_enum(e: &syn::ItemEnum) -> EnumInfo {
             name: v.ident.to_string(),
             fields,
             is_serde_other,
-            error_format: error_attribute(&v.attrs),
+            error_text: error_attribute(&v.attrs),
             span: v.ident.span(),
         }
     }).collect();
@@ -503,7 +503,6 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
                     ty: name_map::map_type(&pat.ty),
                     rust_ty: Some((*pat.ty).clone()),
                     is_self: false,
-                    is_mut_self: false,
                 })
             }
         }
@@ -537,11 +536,22 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
 }
 
 fn extract_impl(i: &syn::ItemImpl, cfg: ExtractCfg) -> ImplInfo {
-    let self_type_name = if let syn::Type::Path(p) = &*i.self_ty {
-        p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    // An impl written for a reference — `impl Add<&R> for &L` — is an impl of
+    // the type behind it as far as emission is concerned: TypeScript erases the
+    // reference, so the method belongs on `L`'s class. Reading only
+    // `Type::Path` left the name empty, and an impl whose target has no name is
+    // hung on no class at all: `impl<'a> Sub<&'a W> for &'a W` was emitted
+    // nowhere, and the operator site found no method to call.
+    fn named_target(ty: &syn::Type) -> String {
+        match ty {
+            syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
+            syn::Type::Reference(r) => named_target(&r.elem),
+            syn::Type::Paren(p) => named_target(&p.elem),
+            syn::Type::Group(g) => named_target(&g.elem),
+            _ => String::new(),
+        }
+    }
+    let self_type_name = named_target(&i.self_ty);
 
     // For TryInto<Target>/Into<Target> where self_ty is a stdlib type,
     // flip the target to the trait's type arg (the actual destination type)
@@ -689,6 +699,12 @@ fn has_from_attr(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("from"))
 }
 
+/// Is this the error the variant wraps? `#[from]` implies `#[source]`, which is
+/// how thiserror reads it.
+fn has_source_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("source") || a.path().is_ident("from"))
+}
+
 /// The module named by `#[serde(with = "..")]`, if the field carries one.
 fn serde_with_attr(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
@@ -716,6 +732,7 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 ty: None,
                 is_pub: is_public(&f.vis),
                 is_from: has_from_attr(&f.attrs),
+                is_source: has_source_attr(&f.attrs),
                 serde_with: serde_with_attr(&f.attrs),
             }
         }).collect(),
@@ -727,6 +744,7 @@ fn extract_fields(fields: &Fields) -> Vec<FieldInfo> {
                 ty: None,
                 is_pub: is_public(&f.vis),
                 is_from: has_from_attr(&f.attrs),
+                is_source: has_source_attr(&f.attrs),
                 serde_with: serde_with_attr(&f.attrs),
             }
         }).collect(),

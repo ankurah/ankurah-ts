@@ -166,6 +166,10 @@ pub struct MethodResolution {
     /// The borrow taken of the receiver before the call. Emission erases it —
     /// a JavaScript method call takes no borrow — and the tests assert it,
     /// because it is what says which step of Rust's probe was taken.
+    /// Which auto-reference the probe took to reach the method. Read by the
+    /// resolution's own tests, which pin the step Rust's probe takes; emission
+    /// writes the receiver from the accessors rather than from this.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub autoref: AutoRef,
     pub callee: Callee,
     /// The impl's parameters, bound to what stood at their positions.

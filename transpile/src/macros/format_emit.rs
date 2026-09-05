@@ -267,4 +267,94 @@ mod tests {
     fn quoting_escapes_what_a_single_quoted_literal_cannot_hold() {
         assert_eq!(quoted("it's\n"), "'it\\'s\\n'");
     }
+
+    /// Every `write!` in a formatter appends, in all four forms it is written
+    /// in. Only `write!(..)?;` used to, so a semicolon-form write was an unused
+    /// string expression and a TAIL write replaced everything before it.
+    #[test]
+    fn every_form_of_write_appends() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "use std::fmt;\n\
+             pub struct P { pub a: String }\n\
+             impl fmt::Display for P {\n\
+               fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n\
+                 write!(f, \"x\")?;\n\
+                 write!(f, \"y\");\n\
+                 write!(f, \"{}\", self.a)\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "fmt");
+        assert_eq!(ts.matches("_result +=").count(), 3, "{}", ts);
+        assert!(ts.trim_end().ends_with("return _result;"), "{}", ts);
+    }
+
+    /// A formatter that writes ONCE composes nothing: the write is the string,
+    /// and an accumulator would be a line that says something untrue.
+    #[test]
+    fn a_single_write_needs_no_accumulator() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "use std::fmt;\n\
+             pub struct P { pub a: String }\n\
+             impl fmt::Display for P {\n\
+               fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, \"{}\", self.a) }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "fmt");
+        assert!(!ts.contains("_result"), "{}", ts);
+    }
+
+    /// So does a `match` whose arms each write once.
+    #[test]
+    fn a_match_of_single_writes_needs_no_accumulator() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "use std::fmt;\n\
+             pub enum E { A, B }\n\
+             impl fmt::Display for E {\n\
+               fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n\
+                 match self { E::A => write!(f, \"a\"), E::B => write!(f, \"b\") }\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "fmt");
+        assert!(!ts.contains("_result"), "{}", ts);
+    }
+
+    /// A placeholder naming an argument the call does not have. The positional
+    /// form was reported; the CAPTURE form was written as the name itself, so
+    /// the emitted template read a binding that is not there.
+    #[test]
+    fn a_placeholder_with_nothing_to_render_is_reported() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "pub fn absent(a: u32) -> String { format!(\"{a} and {b}\") }",
+        )]);
+        let ts = f.translated_method("lib.rs", "absent");
+        assert!(ts.contains("${undefined}"), "{}", ts);
+        assert!(
+            f.messages().iter().any(|m| m.contains("nothing of that name is in scope")),
+            "{:?}",
+            f.messages()
+        );
+    }
+
+    /// Every format flag the corpus does not use is parsed, reported and then
+    /// rendered plainly. That is the fail-loud path, and it stays exact until a
+    /// runtime helper exists to carry the flags.
+    #[test]
+    fn a_format_flag_is_reported_and_rendered_plainly() {
+        for (source, wanted) in [
+            ("pub fn f(n: u32) -> String { format!(\"{:04}\", n) }", "zero padding and width `4`"),
+            ("pub fn f(s: &str) -> String { format!(\"{:>8}\", s) }", "alignment"),
+            ("pub fn f(x: f64) -> String { format!(\"{:.2}\", x) }", "precision"),
+        ] {
+            let mut f = crate::testing::Fixture::build(&[("lib.rs", source)]);
+            let ts = f.translated_method("lib.rs", "f");
+            assert!(!ts.contains("pad"), "{}", ts);
+            assert!(f.messages().iter().any(|m| m.contains(wanted)), "{:?}", f.messages());
+        }
+    }
 }

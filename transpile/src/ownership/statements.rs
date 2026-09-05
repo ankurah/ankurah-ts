@@ -89,8 +89,22 @@ impl<'a> BodyTranslator<'a> {
             return false;
         }
         let Some(tc) = &self.types else { return false };
-        let Ok(ty) = self.quietly(|| self.resolve_expr_type(&unary.expr)) else {
-            return false;
+        let ty = match self.quietly(|| self.resolve_expr_type(&unary.expr)) {
+            Ok(ty) => ty,
+            // A place the engine could not type is one nobody can say holds a
+            // guard, and the answer decides whether the store releases what the
+            // place held. Answering "no" in silence was one of the item-12
+            // fallthroughs: the store is written as an ordinary assignment and
+            // whatever the place held is not released.
+            Err(_) => {
+                self.fallback(
+                    syn::spanned::Spanned::span(place),
+                    "this store writes through a dereference the engine could not type, so \
+                     whether the place holds a guard is not decided and the value it held is \
+                     not released",
+                );
+                return false;
+            }
         };
         ownership::drops_of(&tc.borrow().probe(), &ty) == ownership::Drops::Guard
     }
@@ -194,7 +208,28 @@ impl<'a> BodyTranslator<'a> {
             call.turbofish.as_ref(),
         );
         tc.sink.rewind(mark);
-        let Ok(found) = found else { return false };
+        let found = match found {
+            Ok(found) => found,
+            // A call the engine could not resolve is one nobody can say the
+            // runtime rewrites, and the answer decides whether the statement
+            // releases what the call produced. Answering "no" in silence was
+            // one of the item-12 fallthroughs: `map.insert(k, v);` on an
+            // untyped map released the value the call answered — which for the
+            // runtime's rewrite is the map itself.
+            Err(_) => {
+                drop(tc);
+                self.fallback(
+                    syn::spanned::Spanned::span(call),
+                    format!(
+                        "`{}` is a call the engine could not resolve, so whether the runtime \
+                         writes it as something whose result is not the value Rust returns is \
+                         not decided, and the statement releases what it answered",
+                        call.method
+                    ),
+                );
+                return false;
+            }
+        };
         let args: Vec<String> = call.args.iter().map(|_| "_".to_string()).collect();
         let translated = native_types::translate_method(
             tc.registry,

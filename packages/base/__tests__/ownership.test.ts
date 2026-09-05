@@ -4,6 +4,7 @@ import {
   Struct, Enum, Result, Drop, DropGuard, Arc, Borrow, BorrowMut,
   Mutex, RefCell, RwLock, AsyncMutex, ThreadLocal, disposeSymbol, clearFatalLatch,
   OwnershipFatal, OwnedClosure, AnyhowError, JsonError, HashMap, HashSet,
+  dropUnbound, boolAnd, boolOr,
 } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
@@ -1641,9 +1642,37 @@ describe('Consuming match', () => {
     expect(inner.dropCount).toBe(1);
   });
 
-  test('an arm that throws releases the payload it was given', () => {
-    // Rust's unwind drops the arm's bindings, and after the move nobody else
-    // can.
+  // PREMISE CHANGED 2026-09-04: intoMatch used to drop the payload when an arm
+  // threw, on the reading that Rust's unwind drops the arm's bindings and
+  // nobody else could. That gave a throwing arm TWO unwind owners — its own
+  // `finally`, and this — and an arm that had released a binding on the way out
+  // saw `BUG: … was dropped twice` in place of its own exception. The contract
+  // is now that the arm owns the whole payload from the moment it is called, on
+  // every path out. The two tests below are the two halves of that.
+  test('an arm that throws releases the payload in its own finally, and only once', () => {
+    const inner = new Inner();
+    const value = TestEnum.WithData({ inner });
+    expect(() => value.intoMatch({
+      Empty: () => 0,
+      WithPrimitive: () => 0,
+      // The shape the emitter writes: the arm takes a name out of the payload
+      // and releases it however the arm is left.
+      WithData: (payload) => {
+        const held = payload.inner;
+        try {
+          throw new Error('arm failed');
+        } finally {
+          held.drop();
+        }
+      },
+    })).toThrow('arm failed');
+    expect(inner.dropCount).toBe(1);
+  });
+
+  test('intoMatch itself releases nothing when an arm throws', () => {
+    // The other half: an arm that throws without owning what it was given
+    // leaks the payload. That is reported at the arm, which is where the defect
+    // is, rather than turning into a double drop somewhere innocent.
     const inner = new Inner();
     const value = TestEnum.WithData({ inner });
     expect(() => value.intoMatch({
@@ -1651,6 +1680,44 @@ describe('Consuming match', () => {
       WithPrimitive: () => 0,
       WithData: () => { throw new Error('arm failed'); },
     })).toThrow('arm failed');
+    expect(inner.dropCount).toBe(0);
+    inner.drop();
+  });
+
+  test('dropUnbound releases the payload fields an arm took no name for', () => {
+    // What a `_` arm and a `Taken(_)` arm write in their `finally`: the payload
+    // is the arm's, and the parts with no name still owe a release.
+    const kept = new Inner();
+    const ignored = new Inner();
+    const value = new MovedEnum('V', { inner: kept, spare: ignored } as never);
+    const held = value.intoMatch({
+      V: (payload) => {
+        const taken = (payload as { inner: Inner }).inner;
+        try {
+          return taken;
+        } finally {
+          dropUnbound(payload, ['inner']);
+        }
+      },
+    }) as Inner;
+    expect(held).toBe(kept);
+    expect(kept.dropCount).toBe(0);
+    expect(ignored.dropCount).toBe(1);
+    kept.drop();
+  });
+
+  test('dropUnbound with nothing bound releases the whole payload', () => {
+    const inner = new Inner();
+    const value = new MovedEnum('V', { inner } as never);
+    value.intoMatch({
+      V: (payload) => {
+        try {
+          return 0;
+        } finally {
+          dropUnbound(payload, []);
+        }
+      },
+    });
     expect(inner.dropCount).toBe(1);
   });
 
@@ -1943,5 +2010,50 @@ describe('anyhow::Error', () => {
     expect(owned.dropCount).toBe(0);
     error.drop();
     expect(owned.dropCount).toBe(1);
+  });
+});
+
+// ── Rust's eager boolean operators ───────────────────────────────────────────
+//
+// `&` and `|` on `bool` evaluate both operands. The emitter used to write them
+// as `&&` and `||`, which do not, so an operand with an effect was skipped and
+// the ported program took a path the Rust one does not.
+
+describe('Eager boolean operators', () => {
+  test('boolAnd evaluates both operands even when the left one is false', () => {
+    const touched: string[] = [];
+    const touch = (name: string, answer: boolean): boolean => {
+      touched.push(name);
+      return answer;
+    };
+    expect(boolAnd(touch('left', false), touch('right', true))).toBe(false);
+    expect(touched).toEqual(['left', 'right']);
+  });
+
+  test('boolOr evaluates both operands even when the left one is true', () => {
+    const touched: string[] = [];
+    const touch = (name: string, answer: boolean): boolean => {
+      touched.push(name);
+      return answer;
+    };
+    expect(boolOr(touch('left', true), touch('right', false))).toBe(true);
+    expect(touched).toEqual(['left', 'right']);
+  });
+
+  test('each operand is evaluated exactly once, left to right', () => {
+    let calls = 0;
+    const once = (): boolean => {
+      calls += 1;
+      return true;
+    };
+    expect(boolAnd(once(), once())).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  test('the answers are the answers Rust gives', () => {
+    expect([boolAnd(true, true), boolAnd(true, false), boolAnd(false, true), boolAnd(false, false)])
+      .toEqual([true, false, false, false]);
+    expect([boolOr(true, true), boolOr(true, false), boolOr(false, true), boolOr(false, false)])
+      .toEqual([true, true, true, false]);
   });
 });

@@ -194,4 +194,19 @@ impl Fixture {
             .and_then(|m| m.body_ts.clone())
             .unwrap_or_else(|| panic!("no translated body for `{}`", method))
     }
+
+    /// The whole TypeScript file, for a question about a declaration rather
+    /// than about one body: which methods a class ends up carrying, what the
+    /// imports say.
+    pub fn emitted(&mut self, file: &str) -> String {
+        let module = self.module(file);
+        let entry = self.files.iter_mut().find(|e| e.path == file).expect("file");
+        self.sink.set_file(file);
+        crate::translate_module(&mut entry.file, &self.reg, module, &self.sink);
+        let ts = crate::codegen::generate_ts(&self.reg, &entry.file, file);
+        // Emission has no sink of its own and parks what it has to report; a
+        // batch run drains the park after each file, and so does this.
+        crate::diag::pending::drain(&self.sink);
+        ts
+    }
 }

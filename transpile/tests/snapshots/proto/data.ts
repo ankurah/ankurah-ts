@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result, JsonError } from '@ankurah/base';
+import { Struct, Result, JsonError, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -229,9 +229,9 @@ export class StateFragment extends Struct {
 }
 
 export class OperationSet extends Struct {
-  readonly _0: Map<string, Operation[]>;
+  readonly _0: HashMap<string, Operation[]>;
 
-  constructor(_0: Map<string, Operation[]>) {
+  constructor(_0: HashMap<string, Operation[]>) {
     super();
     this._0 = _0;
   }
@@ -240,7 +240,7 @@ export class OperationSet extends Struct {
     return `OperationSet(${[...this._0].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
   }
 
-  deref(): Map<string, Operation[]> {
+  deref(): HashMap<string, Operation[]> {
     return this._0;
   }
 
@@ -278,7 +278,7 @@ export class OperationSet extends Struct {
   }
 
   static decode(reader: BincodeReader): OperationSet {
-    const _0 = (() => { const _m = new Map(); const _len = reader.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(reader.readString(), reader.readVec((r) => Operation.decode(r))); } return _m; })();
+    const _0 = (() => { const _m = new HashMap(); const _len = reader.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(reader.readString(), reader.readVec((r) => Operation.decode(r))); } return _m; })();
     return new OperationSet(_0);
   }
 }
@@ -294,6 +294,11 @@ export class Operation extends Struct {
   equals(other: Operation): boolean {
     { if (this.diff.length !== other.diff.length) return false; for (let i = 0; i < this.diff.length; i++) { if (this.diff[i] !== other.diff[i]) return false; } }
     return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [keyHash(this.diff)].join('|');
   }
 
   clone(): Operation {
@@ -460,14 +465,14 @@ export class State extends Struct {
 }
 
 export class StateBuffers extends Struct {
-  readonly _0: Map<string, Uint8Array>;
+  readonly _0: HashMap<string, Uint8Array>;
 
-  constructor(_0: Map<string, Uint8Array>) {
+  constructor(_0: HashMap<string, Uint8Array>) {
     super();
     this._0 = _0;
   }
 
-  deref(): Map<string, Uint8Array> {
+  deref(): HashMap<string, Uint8Array> {
     return this._0;
   }
 
@@ -509,7 +514,7 @@ export class StateBuffers extends Struct {
   }
 
   static decode(reader: BincodeReader): StateBuffers {
-    const _0 = (() => { const _m = new Map(); const _len = reader.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(reader.readString(), reader.readByteVec()); } return _m; })();
+    const _0 = (() => { const _m = new HashMap(); const _len = reader.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(reader.readString(), reader.readByteVec()); } return _m; })();
     return new StateBuffers(_0);
   }
 }

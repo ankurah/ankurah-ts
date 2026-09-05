@@ -1,0 +1,43 @@
+# Emitted files a JavaScript engine refuses to load, written by
+# transpile/tests/parse_gate.rs. Each line is one file `bun build` will not
+# produce a module for, with the first error it gave. `tsc` recovers from
+# every one of these and reports the file as parsed, which is why this
+# ledger exists beside the diagnostics budget. Matched EXACTLY in both
+# directions: a new refusal fails, and a refusal that is fixed fails until
+# its line is taken out. Generated: do not hand-edit. Refresh with:
+#     cd transpile && UPDATE_PARSE_GATE=1 cargo test --test parse_gate
+#
+# Total refused: 1
+
+[ankql]
+refused = []
+
+[ankurah]
+refused = []
+
+[connector-local]
+refused = []
+
+[connector-websocket]
+refused = []
+
+[core]
+refused = [
+  "util/iterable.ts: Unexpected >",
+]
+
+[proto]
+refused = []
+
+[signals]
+refused = []
+
+[storage-common]
+refused = []
+
+[storage-indexeddb]
+refused = []
+
+[storage-sqlite]
+refused = []
+

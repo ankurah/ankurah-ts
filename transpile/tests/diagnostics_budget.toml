@@ -46,7 +46,7 @@ total = 203
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 300
+total = 301
 
 [ankql.by_cause]
 "X is bound here but the engine could not type it" = 78
@@ -72,12 +72,13 @@ total = 300
 "X's X prints under Debug as whatever its X says, because X is not declared" = 1
 "X's message prints X with X, and it prints as whatever its X says, because X is not declared" = 1
 "a second arm names X, and the runtime's match dispatches on the variant alone, so only the first of them can run" = 1
+"an arm tests inside X, X and a later arm matches anything, which needs a test that can fall through — and this match hands its payload to the arms, which needs X, whose one arm per variant has nowhere to fall through to" = 1
 "no declaration for type X" = 1
 "this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 1
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [signals]
-total = 265
+total = 267
 
 [signals.by_cause]
 "X is bound here but the engine could not type it" = 128
@@ -94,17 +95,19 @@ total = 265
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 5
 "path qualifiers std, sync are dropped by name" = 5
 "this closure owns X, X and is written as an X, so it is invoked as X and released by whoever holds it" = 4
-"X between X and X resolves through X, and no impl in the table performs it" = 3
 "path qualifiers std, marker are dropped by name" = 3
+"X between X and X resolves through X, and no impl in the table performs it" = 2
+"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 2
 "no method X on X" = 2
 "the callee is not a path, so nothing names what it calls" = 2
+"X between X and X resolves through X, and the impl is the declared surface's, so the comparison is the runtime's own and X supplies none" = 1
 "X does not name a value here" = 1
 "method X resolved through trait X, which is not in scope here" = 1
 "path qualifiers std are dropped by name" = 1
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 2527
+total = 2560
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 728
@@ -112,7 +115,7 @@ total = 2527
 "X does not name a function here" = 224
 "method X resolved through trait X, which is not in scope here" = 87
 "no method X on X" = 85
-"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 63
+"the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 67
 "X has a type the engine cannot say owns anything, so nothing releases it" = 58
 "X does not name a value here" = 52
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 51
@@ -126,14 +129,15 @@ total = 2527
 "the range types in X are not declared, so X is written as X" = 27
 "X is lowered as a X without the engine having named what it tests" = 23
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 21
-"X between X and X resolves through X, and no impl in the table performs it" = 20
 "X is guessed to be a constructor from its capitalisation" = 20
+"X between X and X resolves through X, and no impl in the table performs it" = 19
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 19
+"X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 18
+"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 18
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 16
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 16
-"X between X and X resolves through X, and the impl is the declared surface's, so the comparison is the runtime's own and X supplies none" = 15
+"X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 14
 "path qualifiers std, sync are dropped by name" = 14
-"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 14
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 12
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 12
 "X converts the error from X to X through X, and more than one X impl for X is emitted as X, so the call could not say which" = 11
@@ -150,14 +154,15 @@ total = 2527
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 8
 "X moves a field the runtime writes as a plain value" = 7
 "this X is written as a JSON literal rather than as one expression, and the hook reads the expression form only, so the value is X" = 7
+"this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 7
 "X converts X to X, which is not a conversion between two numbers" = 6
 "X converts from X to X through X, and more than one X impl for X is emitted as X, so the call could not say which" = 6
 "X converts from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 6
 "X is declared with 1 type argument(s) but 0 written here" = 6
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two are written for the same type through a reference and without one, and emission erases the reference, so they are one function here" = 5
+"X converts a X to a X, and no impl converts them" = 5
 "X is a receiver the engine does not model" = 5
-"this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 5
-"this closure owns X and is written as an X, so it is invoked as X and released by whoever holds it" = 5
+"X between X and X resolves through X, and the impl is the declared surface's, so the comparison is the runtime's own and X supplies none" = 4
 "X converts from X to X through X, and no impl in the table performs it" = 4
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X does not dereference" = 4
@@ -171,10 +176,11 @@ total = 2527
 "this closure owns X, X and is written as an X, so it is invoked as X and released by whoever holds it" = 4
 "X between X" = 3
 "X dereferences without a field to assign through" = 3
-"X is written without a type with a X of its own to read itself out of the parsed value, so the parse stands alone" = 3
+"X is written without a type that reads itself out of the parsed value — a X is what writes one — so the parse stands alone and hands back a plain object" = 3
 "X's X prints under Debug as whatever its X says, because XRX has no Debug rendering in the port" = 3
 "path qualifiers std, collections are dropped by name" = 3
 "path qualifiers std, marker are dropped by name" = 3
+"this arm tests inside the payload of X, and the runtime's match dispatches on the variant alone with no later arm to fall through to, so the inner test is not made and the arm runs for every X" = 3
 "X is emitted as a comment and is handed X, which nothing then releases" = 2
 "X is printed with X, and it prints as whatever its X says, because the engine could not type it" = 2
 "X is printed with X, and the port's X has no alternate form, so it is printed the ordinary way" = 2
@@ -182,13 +188,13 @@ total = 2527
 "X's X prints under Debug as whatever its X says, because XEX has no Debug rendering in the port" = 2
 "X's X prints under Debug as whatever its X says, because XIdX has no Debug rendering in the port" = 2
 "an arm of this X match has a guard, and reading the payload to test it takes the wrapper apart, so the arm below it cannot be tried" = 2
+"an arm tests inside X and a later arm matches anything, which needs a test that can fall through — and this match hands its payload to the arms, which needs X, whose one arm per variant has nowhere to fall through to" = 2
 "const generic argument is not modelled outside an array length" = 2
 "path qualifiers core are dropped by name" = 2
 "the alternatives of this pattern bind their names from different places, which the translator cannot write as one test, so the arm is written as one that never matches" = 2
-"this closure hands X away when it runs, so it is not the closure's to drop afterwards" = 2
 "this closure takes X by value and the engine could not type it, so it is left out of what the closure owns" = 2
-"this expression's value is wanted here, and an arm of it leaves the loop around it — the value is computed inside a function, which a X or a X cannot leave, so the jump is written where it does not run" = 2
 "this operand takes a value of its own and leaves the function or awaits, so what it took is declared before the short circuit that decides whether the operand runs at all" = 2
+"this store writes through a dereference the engine could not type, so whether the place holds a guard is not decided and the value it held is not released" = 2
 "X casts a JavaScript value to a type the emitted call does not name, so the value stands as it is and nothing checks it" = 1
 "X converts X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X here tests an X inside a function returning a X, which Rust does not allow, so one of the two types is not what the engine read" = 1

@@ -1225,6 +1225,16 @@ fn translate_fn_body(
         translator.inline_module_names = inline_module_names.to_vec();
         translator.fn_return = returns;
         translator.owns_self = func.self_kind == Some(types::SelfKind::Value);
+        // A `fmt` taking a `Formatter` is a formatter body: its `write!` calls
+        // compose one string, and the `Ok(())` it ends with is that string.
+        translator.formatter = func.name == "fmt"
+            && !body::writes_once_at_the_tail(block)
+            && func.params.iter().any(|p| {
+                p.rust_ty.as_ref().is_some_and(|ty| {
+                    let written = quote::ToTokens::to_token_stream(ty).to_string();
+                    written.contains("Formatter")
+                })
+            });
         func.body_ts = Some(translator.translate_fn_block(block, &owned_params));
         translator.pop_scope();
         // Fallbacks taken on translation paths that carry no sink of their own.
@@ -1246,19 +1256,43 @@ fn names_an_alias(
     module: registry::ModuleId,
     written: &syn::Type,
 ) -> bool {
-    let syn::Type::Path(path) = written else {
-        return false;
-    };
-    let segments: Vec<String> = path
-        .path
-        .segments
-        .iter()
-        .map(|s| s.ident.to_string())
-        .collect();
-    matches!(
-        registry.lookup_type(module, &segments),
-        Ok(Some(registry::Def::Alias(_)))
-    )
+    match written {
+        syn::Type::Path(path) => {
+            let segments: Vec<String> =
+                path.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            if matches!(
+                registry.lookup_type(module, &segments),
+                Ok(Some(registry::Def::Alias(_)))
+            ) {
+                return true;
+            }
+            // An alias UNDER a wrapper is still an alias the port emits:
+            // `Arc<Listener>` and `Vec<Listener>` name one as surely as a bare
+            // `Listener` does, and reading only the outermost name expanded
+            // them into the `Arc<dyn Fn(T)>` the alias stands for.
+            path.path
+                .segments
+                .last()
+                .into_iter()
+                .filter_map(|segment| match &segment.arguments {
+                    syn::PathArguments::AngleBracketed(args) => Some(args),
+                    _ => None,
+                })
+                .flat_map(|args| args.args.iter())
+                .any(|arg| match arg {
+                    syn::GenericArgument::Type(ty) => names_an_alias(registry, module, ty),
+                    _ => false,
+                })
+        }
+        // A reference is erased in emission, so what it points at decides.
+        syn::Type::Reference(r) => names_an_alias(registry, module, &r.elem),
+        syn::Type::Paren(p) => names_an_alias(registry, module, &p.elem),
+        syn::Type::Group(g) => names_an_alias(registry, module, &g.elem),
+        syn::Type::Slice(s) => names_an_alias(registry, module, &s.elem),
+        syn::Type::Array(a) => names_an_alias(registry, module, &a.elem),
+        syn::Type::Tuple(t) => t.elems.iter().any(|e| names_an_alias(registry, module, e)),
+        _ => false,
+    }
 }
 
 /// A written type resolved and read through the impl table, with no diagnostic

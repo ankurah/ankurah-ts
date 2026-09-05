@@ -184,11 +184,7 @@ pub fn generate_ts_with_imports_configured(
 /// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
 /// std's `Mutex` into a file that only ever names tokio's.
 ///
-/// `tracing` is the one name here the runtime does not export yet. The macro
-/// hook emits `tracing.warn(..)` because the alternative is the comment the
-/// port used to emit, which logged nothing at all; the report that goes with
-/// this pass carries the exact API the runtime owes.
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 41] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 47] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -198,6 +194,12 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 41] = [
     "JsonError",
     // The logger every `tracing::` macro writes a call on.
     "tracing",
+    // What a consuming match arm releases the payload it took no name for
+    // with, and Rust's two eager boolean operators.
+    "dropUnbound", "boolAnd", "boolOr",
+    // The keyed containers a `HashMap`/`HashSet` becomes, and the hash a
+    // derived key writes itself with.
+    "HashMap", "HashSet", "keyHash",
     "AsyncMutex", "AsyncMutexGuard",
     "AsyncRwLock", "AsyncRwLockReadGuard", "AsyncRwLockWriteGuard",
     "Notify", "Notified", "TryLockError",
@@ -568,7 +570,7 @@ fn generate_declarations(
     // Organize impl blocks
     let mut inherent_methods: HashMap<String, Vec<&FnInfo>> = HashMap::new();
     let mut trait_impls: HashMap<String, Vec<(&str, &[String])>> = HashMap::new();
-    let mut trait_methods: HashMap<String, Vec<(&str, &[String], &FnInfo)>> = HashMap::new();
+    let mut trait_methods: HashMap<String, Vec<(&str, &[String], &FnInfo, &[String])>> = HashMap::new();
 
     // The trait an impl block names lives on it as the `syn::Path` the source
     // wrote. Emission needs the TypeScript spelling of the name and of each
@@ -612,7 +614,7 @@ fn generate_declarations(
             for method in &imp.methods {
                 trait_methods.entry(imp.target_type.clone())
                     .or_default()
-                    .push((trait_name.as_str(), written_args.as_slice(), method));
+                    .push((trait_name.as_str(), written_args.as_slice(), method, imp.type_params.as_slice()));
             }
         } else {
             inherent_methods.entry(imp.target_type.clone()).or_default().extend(imp.methods.iter());

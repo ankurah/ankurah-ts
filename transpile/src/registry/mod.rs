@@ -29,7 +29,7 @@ use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
 pub use build::{build_registry, build_registry_with_siblings, resolve_bounds, ExtractedFile};
-pub use convert::NoConversion;
+pub use convert::{Conversion, NoConversion};
 pub use impls::ImplId;
 pub use method::{Callee, FieldResolution, MethodResolution, Probe, Undecided};
 pub use module::{AliasId, Def, ModuleId, ModuleTree, Ns, ValueId, Vis};
@@ -191,6 +191,8 @@ pub struct TypeRegistry {
     /// Types whose TypeScript a person wrote: the `[provided_impls]` entries and
     /// everything declared in a `[hardcode]` file. See `mark_hand_written`.
     hand_written: std::collections::HashSet<TypeId>,
+    /// Types whose serde derive writes them a `static fromJson`.
+    reads_json: std::collections::HashSet<TypeId>,
     /// The other in-family crates loaded for their declarations, by the Rust
     /// identifier a path names them with. Each is a child of the crate root,
     /// which is where an extern crate sits in Rust too: `ankql::ast::Selection`
@@ -249,6 +251,7 @@ impl TypeRegistry {
             traits: HashMap::new(),
             foreign: RefCell::new(ForeignTypes::default()),
             hand_written: std::collections::HashSet::new(),
+            reads_json: std::collections::HashSet::new(),
             sibling_crates: HashMap::new(),
             expanding: RefCell::new(Vec::new()),
             shapes: Default::default(),
@@ -402,6 +405,23 @@ impl TypeRegistry {
             type_params: decl.type_params,
         });
         Ok(id)
+    }
+
+    /// Every trait the registry knows, so a run can ask which leaf names two
+    /// of them share.
+    pub fn trait_ids(&self) -> Vec<TypeId> {
+        self.traits.keys().copied().collect()
+    }
+
+    /// Is there an alias of this leaf name anywhere in the crate?
+    ///
+    /// A struct field carries no module of its own, and the port emits an alias
+    /// under its own name, so a field written as `Listener` has to be written
+    /// back as one. Two modules declaring one alias name is a shape the port
+    /// has never had, and a false yes costs only the syntactic spelling, which
+    /// is what the source wrote.
+    pub fn has_alias_named(&self, name: &str) -> bool {
+        self.aliases.iter().any(|alias| alias.name == name)
     }
 
     pub fn declare_alias(&mut self, module: ModuleId, def: AliasDef, vis: Vis) -> AliasId {
@@ -639,6 +659,22 @@ impl TypeRegistry {
     /// Is this type's TypeScript written by hand?
     pub fn is_hand_written(&self, id: TypeId) -> bool {
         self.hand_written.contains(&id)
+    }
+
+    /// Record that this type's `#[derive(Deserialize)]` writes it a
+    /// `static fromJson`.
+    pub fn mark_reads_json(&mut self, id: TypeId) {
+        self.reads_json.insert(id);
+    }
+
+    /// Does a `static fromJson` exist on this type's emitted class?
+    ///
+    /// `serde_json::from_str::<T>(text)` is written as `T.fromJson(JSON.parse(
+    /// text))`, and a `T` with no such static turns a parse error into a
+    /// `TypeError` at the call. Asking here is what makes the emission
+    /// conditional rather than hopeful.
+    pub fn reads_json(&self, id: TypeId) -> bool {
+        self.reads_json.contains(&id)
     }
 }
 

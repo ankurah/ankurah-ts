@@ -57,8 +57,50 @@ export class ParseError extends Enum<ParseErrorV> {
     });
   }
 
+  /** The error this one wraps: Rust's `Error::source`. */
+  source(): unknown {
+    switch (this.type) {
+      case 'Read': return (this.value as any)._0;
+      default: return null;
+    }
+  }
+
   static fromIo(inner: Io): ParseError {
     return new ParseError('Read', { _0: inner });
+  }
+}
+
+export type WrappedV = {
+  Passed: { _0: Io };
+  Said: { _0: string };
+};
+
+export class Wrapped extends Enum<WrappedV> {
+
+  debug(): string {
+    return this.match({
+      Passed: (v) => `Passed(${v._0.debug()})`,
+      Said: (v) => `Said(${JSON.stringify(v._0)})`,
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      Passed: (v) => v._0.toString(),
+      Said: (v) => `said ${v._0}`,
+    });
+  }
+
+  /** The error this one wraps: Rust's `Error::source`. */
+  source(): unknown {
+    switch (this.type) {
+      case 'Passed': return (this.value as any)._0;
+      default: return null;
+    }
+  }
+
+  static fromIo(inner: Io): Wrapped {
+    return new Wrapped('Passed', { _0: inner });
   }
 }
 

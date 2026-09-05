@@ -82,6 +82,10 @@ pub fn fn_name_override(rust_name: &str) -> Option<&'static str> {
         "eq" => Some("equals"),
         "ne" => Some("notEquals"),
         "partial_cmp" => Some("compareTo"),
+        // `Ord::cmp` and `PartialOrd::partial_cmp` answer the same number
+        // here — the port has one ordering method, and an explicit `.cmp(..)`
+        // used to keep its Rust name and reach nothing.
+        "cmp" => Some("compareTo"),
         "clone" => Some("clone"),
         "default" => Some("default"),
         "drop" => Some("drop"),
@@ -186,10 +190,10 @@ pub fn map_type(ty: &syn::Type) -> String {
                             format!("Result<{}, Error>", inner_types[0])
                         }
                         "HashMap" | "BTreeMap" if inner_types.len() == 2 => {
-                            format!("Map<{}, {}>", inner_types[0], inner_types[1])
+                            format!("HashMap<{}, {}>", inner_types[0], inner_types[1])
                         }
                         "HashSet" | "BTreeSet" if inner_types.len() == 1 => {
-                            format!("Set<{}>", inner_types[0])
+                            format!("HashSet<{}>", inner_types[0])
                         }
                         "Box" if inner_types.len() == 1 => {
                             // Box<dyn Trait> → Trait, Box<T> → T
@@ -409,5 +413,43 @@ mod tests {
         assert_eq!(to_camel_case("_sub1"), "_sub1");
         assert_eq!(to_camel_case("_unused_value"), "_unusedValue");
         assert_eq!(to_camel_case("entity_id"), "entityId");
+    }
+}
+
+/// Does this written type name a type alias the port emits under its own name?
+///
+/// A resolved type has no memory of the alias it was written as, so a signature
+/// written from it turns `Listener` into the `Arc<dyn Fn(T)>` the alias stands
+/// for. The question is asked of the SYNTAX, and recursively: `&Listener`,
+/// `Vec<Listener>` and `Arc<Listener>` each name one as surely as a bare
+/// `Listener` does.
+///
+/// A field carries no module of its own, so the alias is looked for by its leaf
+/// name across the crate. Two modules declaring one alias name is a shape the
+/// port has never had, and a false yes costs only the syntactic spelling, which
+/// is what the source wrote.
+pub fn names_an_alias(reg: &crate::registry::TypeRegistry, written: &syn::Type) -> bool {
+    match written {
+        syn::Type::Path(path) => {
+            if let Some(last) = path.path.segments.last() {
+                if reg.has_alias_named(&last.ident.to_string()) {
+                    return true;
+                }
+                if let syn::PathArguments::AngleBracketed(args) = &last.arguments {
+                    return args.args.iter().any(|arg| match arg {
+                        syn::GenericArgument::Type(ty) => names_an_alias(reg, ty),
+                        _ => false,
+                    });
+                }
+            }
+            false
+        }
+        syn::Type::Reference(r) => names_an_alias(reg, &r.elem),
+        syn::Type::Paren(p) => names_an_alias(reg, &p.elem),
+        syn::Type::Group(g) => names_an_alias(reg, &g.elem),
+        syn::Type::Slice(s) => names_an_alias(reg, &s.elem),
+        syn::Type::Array(a) => names_an_alias(reg, &a.elem),
+        syn::Type::Tuple(t) => t.elems.iter().any(|e| names_an_alias(reg, e)),
+        _ => false,
     }
 }

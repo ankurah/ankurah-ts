@@ -1,6 +1,6 @@
 // TS-ONLY: Rust ownership primitives for the ankurah port (see E11)
 
-export { AkObject, dropOwned, type Slot } from './object.ts';
+export { AkObject, dropOwned, dropUnbound, type Slot } from './object.ts';
 export { Struct } from './struct.ts';
 export { Enum } from './enum.ts';
 export { Result } from './result.ts';
@@ -38,6 +38,8 @@ export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
 export { HashMap, HashSet, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
+// Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
+export { boolAnd, boolOr } from './std/ops.ts';
 
 // ── tokio ───────────────────────────────────────────────────────────────
 //

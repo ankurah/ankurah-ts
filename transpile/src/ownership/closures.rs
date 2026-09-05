@@ -82,7 +82,26 @@ impl<'a> BodyTranslator<'a> {
         expected: Option<&crate::ty::Ty>,
     ) -> String {
         use ownership::closures::Placement;
-        let params: Vec<String> = closure.inputs.iter().map(Self::pat_static).collect();
+        // Rust's `|_, _|` says the closure ignores both arguments. TypeScript
+        // has no such spelling: `_` there is a parameter *called* `_`, and two
+        // of them are a duplicate parameter name a JavaScript engine refuses
+        // (`core/src/property/backend/yjs.ts` was one). A run of underscores is
+        // the port's spelling for the nth ignored parameter — a name nothing
+        // emitted can collide with, and one a reader of TypeScript already
+        // reads as "unused".
+        let mut ignored = 0usize;
+        let params: Vec<String> = closure
+            .inputs
+            .iter()
+            .map(|pat| {
+                if Self::binds_nothing(pat) {
+                    ignored += 1;
+                    "_".repeat(ignored)
+                } else {
+                    Self::pat_static(pat)
+                }
+            })
+            .collect();
         let params = params.join(", ");
         // A `move` closure captures everything it names; one written without
         // `move` captures by value only what its body hands away, which Rust
@@ -219,21 +238,12 @@ impl<'a> BodyTranslator<'a> {
         };
         let scan = ownership::Scan::new(self);
         // What the body hands away. Rust moves those into the body when the
-        // closure runs, so the closure no longer has them to drop — and the
-        // runtime's `OwnedClosure` has no way to be told that, because its
-        // captures are private to it and there is no call that transfers them.
-        // Listing one anyway drops it a second time when the closure is
-        // dropped, which the runtime reports as a fatal; leaving it out leaks
-        // it only where the closure is never called, which the leak registry
-        // reports. The fatal is the worse of the two, so the consumed capture
-        // is left out and the site says so. The runtime change that would close
-        // it is a `callOnce` that marks the closure moved before running the
-        // body.
-        let consumed: Vec<String> = scan
-            .moved_captures(closure)
-            .into_iter()
-            .map(|site| site.name)
-            .collect();
+        // closure runs, so the closure no longer has them to drop — and a
+        // closure that does so IS an `FnOnce`, which the runtime now has a call
+        // for: `callOnce` marks the closure moved and transfers the captures
+        // before the body runs, so listing a consumed capture is right and the
+        // second drop the note below feared cannot happen. Where the closure is
+        // never called, its `drop()` releases them, which is Rust's own answer.
         let mut out: Vec<(String, ownership::Drops)> = Vec::new();
         let mut seen: Vec<String> = Vec::new();
         let names = match closure.capture.is_some() {
@@ -281,19 +291,6 @@ impl<'a> BodyTranslator<'a> {
                 continue;
             };
             let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
-            if drops.is_droppable() && consumed.iter().any(|n| *n == site.name) {
-                self.fallback(
-                    site.span,
-                    format!(
-                        "this closure hands `{}` away when it runs, so it is not the closure's \
-                         to drop afterwards; the runtime has no call that transfers a capture, \
-                         so `{}` is left out of what the closure owns and nothing releases it \
-                         if the closure is never called",
-                        site.name, site.name
-                    ),
-                );
-                continue;
-            }
             if drops.is_droppable() {
                 // A shadow is emitted under a fresh identifier, and the capture
                 // list has to name the value the body closes over rather than

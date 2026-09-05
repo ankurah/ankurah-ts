@@ -18,8 +18,12 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
         JsShape::Bytes => "Uint8Array".to_string(),
         JsShape::Array(elem) => format!("{}[]", map_ty(reg, &elem)),
         JsShape::Nullable(inner) => format!("{} | null", map_ty(reg, &inner)),
-        JsShape::Map(k, v) => format!("Map<{}, {}>", map_ty(reg, &k), map_ty(reg, &v)),
-        JsShape::Set(elem) => format!("Set<{}>", map_ty(reg, &elem)),
+        // The runtime's own keyed containers, not JavaScript's `Map` and
+        // `Set`. Those compare keys by IDENTITY, so a `HashMap<EntityId, _>`
+        // answered nothing for every key that was not the very object it had
+        // been stored under — which is every key read back off the wire.
+        JsShape::Map(k, v) => format!("HashMap<{}, {}>", map_ty(reg, &k), map_ty(reg, &v)),
+        JsShape::Set(elem) => format!("HashSet<{}>", map_ty(reg, &elem)),
         JsShape::Result(args) => match args.len() {
             2 => format!(
                 "Result<{}, {}>",

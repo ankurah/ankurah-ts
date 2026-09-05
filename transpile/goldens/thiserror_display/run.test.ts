@@ -5,7 +5,7 @@
 // the class used to declare one name and the `?` site to call another.
 
 import { expect, test } from 'bun:test';
-import { Io, ParseError, Rule, parse, read } from './input.ts';
+import { Io, ParseError, Rule, Wrapped, parse, read } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a message with no fields is the string thiserror renders', () => {
@@ -49,6 +49,21 @@ test('a ? across the conversion calls that same static', () => {
   expect(ok.unwrap()).toBe(7);
   expect(read(source).unwrap()).toBe(3 + 4);
   source.drop();
+});
+
+test('a transparent variant forwards its text to the error it wraps', () => {
+  // The port used to write the variant's own name here, because the attribute
+  // reader saw only the string form of `#[error]`.
+  const wrapped = Wrapped.fromIo(new Io(7));
+  const same = new Io(7);
+  expect(wrapped.toString()).toBe(same.toString());
+  same.drop();
+  expect((wrapped.source() as Io).code).toBe(7);
+  wrapped.drop();
+  const said = new Wrapped('Said', { _0: 'so' });
+  expect(said.toString()).toBe('said so');
+  expect(said.source()).toBe(null);
+  said.drop();
 });
 
 test('nothing leaked and nothing was reported', async () => {

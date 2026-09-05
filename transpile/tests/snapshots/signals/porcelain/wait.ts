@@ -41,7 +41,6 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
     while (true) {
       const _v = await rx.recv();
       if (_v != null) {
-        const _ = _v;
         let _c3;
         const _t2 = self.getReadcell();
         try {
@@ -86,7 +85,6 @@ export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, 
       try {
         const _v1 = await rx.recv();
         if (_v1 != null) {
-          const _ = _v1;
           {
             const _v2 = _t1.with((value) => predicate(value).result());
             if (_v2 != null) {

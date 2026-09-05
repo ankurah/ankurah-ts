@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs
-import { Struct, Arc, RwLock, OwnedClosure } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure, HashMap } from '@ankurah/base';
 import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
@@ -22,9 +22,9 @@ class Inner<T> extends Struct {
   compute: () => T;
   value: ValueCell<T | null>;
   broadcast: Broadcast<void>;
-  entries: RwLock<Map<BroadcastId, SubscriptionEntry>>;
+  entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>;
 
-  constructor(compute: () => T, value: ValueCell<T | null>, broadcast: Broadcast<void>, entries: RwLock<Map<BroadcastId, SubscriptionEntry>>) {
+  constructor(compute: () => T, value: ValueCell<T | null>, broadcast: Broadcast<void>, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
     super();
     this.compute = compute;
     this.value = value;
@@ -42,7 +42,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 
   static new<T, F>(compute: F): Calculated<T> {
-    const inner = Arc.new(new Inner(compute, ValueCell.new(null), Broadcast.new(), new RwLock(new Map())));
+    const inner = Arc.new(new Inner(compute, ValueCell.new(null), Broadcast.new(), new RwLock(new HashMap())));
     trigger(inner);
     return new Calculated(inner);
   }

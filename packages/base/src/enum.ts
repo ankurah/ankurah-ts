@@ -1,5 +1,5 @@
 // TS-ONLY: Base class for ported Rust enums
-import { AkObject, dropOwned } from './object.ts';
+import { AkObject } from './object.ts';
 import { fatalNonExhaustiveMatch } from './drop_registry.ts';
 
 /**
@@ -77,14 +77,15 @@ export class Enum<V extends Record<string, object> = Record<string, object>> ext
     // and this enum, being moved, is never dropped and never a leak.
     this.#payloadMoved = true;
     this.markMoved();
-    try {
-      return arm(payload);
-    } catch (thrown) {
-      // Rust's unwind drops the bindings the arm was given, and nobody else can
-      // own them now.
-      dropOwned(payload);
-      throw thrown;
-    }
+    // ONE UNWIND OWNER, and it is the arm. The arm receives the payload, takes
+    // names out of it and releases the rest in its own `finally`, so it holds
+    // every part of the payload on every path out — including a throw. This
+    // used to drop the payload again on the way past, and an arm that had
+    // already released a binding then saw `BUG: … was dropped twice` in place
+    // of its own exception. An arm that leaves the payload unowned leaks it
+    // rather than being rescued here: a leak is reported at the site that
+    // caused it, where a double drop is reported at the innocent one.
+    return arm(payload);
   }
 
   is<K extends keyof V>(variant: K): this is Enum<V> & { type: K; value: V[K] } {

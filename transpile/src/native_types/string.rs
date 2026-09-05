@@ -47,6 +47,14 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         // `as_str`, `as_mut_str` and `to_string` on a `String` are the string.
         "as_str" | "as_mut_str" => receiver.to_string(),
 
+        // The ordering the port writes as `-1 | 0 | 1`. JavaScript compares two
+        // strings by UTF-16 code unit and Rust compares two `String`s by byte;
+        // the two agree below U+10000 and disagree on an astral character
+        // against one in the surrogate range, which spec 7a records.
+        "cmp" | "partial_cmp" if args.len() == 1 => format!(
+            "(($a, $b) => $a < $b ? -1 : $a > $b ? 1 : 0)({}, {})",
+            receiver, args[0]
+        ),
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)

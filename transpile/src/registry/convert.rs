@@ -24,13 +24,15 @@ pub const FROM_PATH: &str = "std::convert::From";
 pub const TRY_FROM_PATH: &str = "std::convert::TryFrom";
 
 /// The impl that performs one conversion.
-///
-/// The bindings the match made and the bounds it could not decide are checked
-/// and then dropped: nothing that writes a conversion call reads either, and a
-/// field nobody reads is a claim nobody checks.
 #[derive(Debug, Clone)]
 pub struct Conversion {
     pub impl_id: ImplId,
+    /// What the match bound the impl's own parameters to. `impl<T> Add for
+    /// Generic<T> { type Output = Generic<T>; }` says what it answers only in
+    /// terms of `T`, so the answer for `Generic<u32> + Generic<u32>` is
+    /// readable only through this: without it the local a `+` was bound to had
+    /// no type and nothing released what it held.
+    pub args: Subst,
 }
 
 /// Why a conversion could not be written.
@@ -97,7 +99,58 @@ impl Probe<'_> {
         lhs: &Ty,
         rhs: &Ty,
     ) -> Result<Conversion, NoConversion> {
-        self.two_sided_impl(trait_path, lhs, rhs, true)
+        // The operands EXACTLY as they are written first. Rust does not search
+        // operator impls through `Deref` or through a reference — `W + N` with
+        // only `impl Add<N> for N` and `W: Deref<Target = N>` is E0369 — so
+        // `impl Add<&R> for &L` is an impl of its own, and looking it up with
+        // the references peeled off missed it and left the JavaScript `+`
+        // between two objects.
+        let exact = self.two_sided_impl(trait_path, lhs, rhs, true);
+        if exact.is_ok() {
+            return exact;
+        }
+        let peeled = self.two_sided_impl(trait_path, lhs.peel_refs(), rhs.peel_refs(), true);
+        // The exact answer's reason is the one worth reporting when neither
+        // finds anything: it names what was actually written.
+        match (peeled, exact) {
+            (Ok(found), _) => Ok(found),
+            (Err(_), exact) => exact,
+        }
+    }
+
+    /// Every impl of an operator trait whose SELF type is this, whatever it
+    /// takes on the right.
+    ///
+    /// For the move scan, which runs before the block's own `let`s have types:
+    /// the right operand of `left + right` is often a local nothing has met
+    /// yet, and guessing `Rhs = Self` found no impl at all for
+    /// `impl Add<Right> for Left` — so nothing marked `left` moved, `add`
+    /// consumed it, and the block released it again. Where exactly one impl of
+    /// the trait is written for this self type, which side it takes on the
+    /// right cannot change the answer.
+    pub fn operator_impls_by_self(&self, trait_path: &str, lhs: &Ty) -> Vec<Conversion> {
+        let Some(trait_id) = self.reg.system_type(trait_path) else { return Vec::new() };
+        let mut found: Vec<Conversion> = Vec::new();
+        for &id in self.reg.impls().of_trait(trait_id) {
+            let def = self.reg.impl_def(id);
+            let Some(implemented) = def.trait_ref.as_ref() else { continue };
+            if implemented.id != trait_id {
+                continue;
+            }
+            let fresh: Vec<String> = def.generics.iter().map(|g| format!("{}#s{}", g, id.0)).collect();
+            let rename: Subst = def
+                .generics
+                .iter()
+                .cloned()
+                .zip(fresh.iter().map(|f| Ty::Param(f.clone())))
+                .collect();
+            let mut subst = Subst::new();
+            if unify(&fresh, &def.self_ty.substitute(&rename), lhs, &mut subst).is_err() {
+                continue;
+            }
+            found.push(Conversion { impl_id: id, args: Subst::new() });
+        }
+        found
     }
 
     /// The single impl of a trait whose self type is `subject` and whose one
@@ -189,6 +242,6 @@ impl Probe<'_> {
             .filter_map(|(name, f)| subst.get(f).map(|ty| (name.clone(), ty.clone())))
             .collect();
         self.bounds_hold(&def.bounds, &subst)?;
-        Some(Conversion { impl_id: id })
+        Some(Conversion { impl_id: id, args: subst })
     }
 }

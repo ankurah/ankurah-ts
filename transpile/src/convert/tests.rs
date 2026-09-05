@@ -231,3 +231,62 @@ fn to_owned_on_a_primitive_is_the_value() {
     assert!(!ts.contains(".clone()"), "{}", ts);
     assert!(ts.contains("return n;"), "{}", ts);
 }
+
+/// `Target::from(x)` goes through the same three questions `.into()` does: is
+/// it the identity, is it a conversion the runtime performs, and only then is
+/// it an impl. Asking the impl table alone found the surface's
+/// `impl From<&str> for String`, failed to write a call for it, and fell
+/// through to `String.from(s)`, which is not a function.
+#[test]
+fn a_qualified_conversion_goes_through_the_native_table_first() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn text(s: &str) -> String { String::from(s) }",
+    )]);
+    assert_eq!(f.translated_method("lib.rs", "text").trim(), "return s;");
+
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::Arc;\n\
+         pub struct Held { pub n: u32 }\n\
+         pub fn shared(h: Held) -> Arc<Held> { Arc::from(h) }",
+    )]);
+    assert!(f.translated_method("lib.rs", "shared").contains("Arc.new(h)"));
+}
+
+/// And a conversion nothing performs says so, where it used to write a call to
+/// a static that is not there.
+#[test]
+fn a_qualified_conversion_with_no_impl_is_reported() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub struct A { pub n: u32 }\n\
+         pub struct B { pub n: u32 }\n\
+         pub fn convert(a: A) -> B { B::from(a) }",
+    )]);
+    let _ = f.translated_method("lib.rs", "convert");
+    assert!(
+        f.messages().iter().any(|m| m.contains("no impl converts them")),
+        "{:?}",
+        f.messages()
+    );
+}
+
+/// The port emits a type alias under its own name, and a resolved type has no
+/// memory of the alias it was written as. Reading only the OUTERMOST name left
+/// `&Listener`, `Vec<Listener>` and a struct field written as `Listener`
+/// expanded into the `Arc<dyn Fn(T)>` the alias stands for.
+#[test]
+fn an_alias_survives_a_reference_a_wrapper_and_a_field() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::Arc;\n\
+         pub type Listener = Arc<dyn Fn(u32) + Send + Sync>;\n\
+         pub struct Holder { pub one: Listener, pub many: Vec<Listener> }\n\
+         pub fn take(l: &Listener, all: &[Listener]) -> Vec<Listener> { all.to_vec() }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("readonly one: Listener;"), "{}", ts);
+    assert!(ts.contains("readonly many: Listener[];"), "{}", ts);
+    assert!(ts.contains("take(l: Listener, all: Listener[]): Listener[]"), "{}", ts);
+}

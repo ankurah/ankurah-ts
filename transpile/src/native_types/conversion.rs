@@ -57,6 +57,9 @@ pub fn between(reg: &TypeRegistry, from: &Ty, to: &Ty, value: &str) -> Option<St
         // then owns.
         (JsShape::Bytes, JsShape::Bytes) => Some(format!("{}.slice()", value)),
         (JsShape::Array(_), JsShape::Array(_)) => Some(format!("[...{}]", value)),
+        // `Arc::from(v)` and `Rc::from(v)` wrap a value the way `new` does —
+        // `Arc.from` is not a function, and the call raised a `TypeError`.
+        (_, JsShape::Rc(name)) => Some(format!("{}.new({})", name, value)),
         _ => None,
     }
 }

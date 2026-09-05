@@ -110,7 +110,7 @@ fn shape(ts_type: &str, value: &str) -> Result<Shape, String> {
         // string, and the port cannot tell from the TypeScript spelling which
         // of those it has — so it says so rather than writing a codec that is
         // right for some key types and silently wrong for the rest.
-        t if t.starts_with("Map<") || t.starts_with("Set<") => Err(format!(
+        t if t.starts_with("HashMap<") || t.starts_with("HashSet<") => Err(format!(
             "`{}` has no JSON spelling here: a JSON object's keys are strings and serde \
              writes a map that way only when the key does",
             t
@@ -456,6 +456,34 @@ mod tests {
     fn a_type_with_no_json_spelling_is_refused() {
         // A `Map` key can be anything in Rust and only a string in JSON; the
         // port says so rather than writing half a codec.
-        assert!(shape("Map<EntityId, string>", "this.m").is_err());
+        assert!(shape("HashMap<EntityId, string>", "this.m").is_err());
+    }
+
+    /// `serde_json::from_str::<T>(text)` is written as `T.fromJson(..)`, and a
+    /// `T` that derives no `Deserialize` has no such static — the call turned a
+    /// parse error into a `TypeError` with nothing said.
+    #[test]
+    fn from_str_is_written_only_where_the_static_exists() {
+        let source = "use serde::{Serialize, Deserialize};\n\
+                      #[derive(Serialize, Deserialize)]\n\
+                      pub struct Config { pub n: u32 }\n\
+                      pub struct Plain { pub n: u32 }\n";
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            &format!("{}pub fn read(t: &str) -> Result<Config, serde_json::Error> {{ serde_json::from_str::<Config>(t) }}", source),
+        )]);
+        assert!(f.translated_method("lib.rs", "read").contains("Config.fromJson(JSON.parse(t))"));
+
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            &format!("{}pub fn read(t: &str) -> Result<Plain, serde_json::Error> {{ serde_json::from_str::<Plain>(t) }}", source),
+        )]);
+        let ts = f.translated_method("lib.rs", "read");
+        assert!(!ts.contains("fromJson"), "{}", ts);
+        assert!(
+            f.messages().iter().any(|m| m.contains("reads itself out of the parsed value")),
+            "{:?}",
+            f.messages()
+        );
     }
 }

@@ -259,9 +259,9 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str, ty: Option<&Ty>) -> St
                     encode_expr_with("item", inner, "w", elem)),
             }
         }
-        t if t.starts_with("Map<") => {
+        t if t.starts_with("HashMap<") => {
             // BTreeMap: sorted by key in Rust. Encode as length + sorted entries.
-            let inner = &t[4..t.len()-1];
+            let inner = &t[8..t.len()-1];
             let parts: Vec<&str> = inner.splitn(2, ", ").collect();
             if parts.len() == 2 {
                 let k_enc = encode_expr_with("k", parts[0], wr, None);
@@ -395,17 +395,17 @@ pub(crate) fn decode_expr_with(ts_type: &str, rd: &str, ty: Option<&Ty>) -> Stri
                 None => format!("{}.readVec((r) => {})", rd, decode_expr_with(inner, "r", elem)),
             }
         }
-        t if t.starts_with("Map<") => {
-            // BTreeMap: decode as length + entries into Map
-            let inner = &t[4..t.len()-1];
+        t if t.starts_with("HashMap<") => {
+            // BTreeMap: decode as length + entries into the runtime's keyed map.
+            let inner = &t[8..t.len()-1];
             let parts: Vec<&str> = inner.splitn(2, ", ").collect();
             if parts.len() == 2 {
                 let k_dec = decode_expr_with(parts[0], rd, None);
                 let v_dec = decode_expr_with(parts[1], rd, None);
-                format!("(() => {{ const _m = new Map(); const _len = {}.readLength(); for (let _i = 0; _i < _len; _i++) {{ _m.set({}, {}); }} return _m; }})()",
+                format!("(() => {{ const _m = new HashMap(); const _len = {}.readLength(); for (let _i = 0; _i < _len; _i++) {{ _m.set({}, {}); }} return _m; }})()",
                     rd, k_dec, v_dec)
             } else {
-                format!("new Map() /* TODO: Map decode */")
+                format!("new HashMap() /* TODO: Map decode */")
             }
         }
         t if t.ends_with(" | null") => {

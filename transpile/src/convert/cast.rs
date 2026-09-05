@@ -41,7 +41,7 @@ fn repr(prim: Prim) -> Repr {
 
 /// The width in bits, and whether the type is signed. `None` for the floats and
 /// for the two that are not numbers.
-fn width(prim: Prim) -> Option<(u32, bool)> {
+pub(crate) fn width(prim: Prim) -> Option<(u32, bool)> {
     Some(match prim {
         Prim::U8 => (8, false),
         Prim::U16 => (16, false),
@@ -90,20 +90,15 @@ pub fn numeric(from: Prim, to: Prim, value: &str) -> Option<String> {
     }
     match (repr(from), repr(to)) {
         (Repr::Number, Repr::Number) => Some(narrow_number(from, to, value)),
+        // A float into a 64- or 128-bit integer SATURATES, exactly as it does
+        // into a narrower one. Truncating and then keeping the low bits gave
+        // `1e30f64 as u64` an arbitrary number where Rust gives `u64::MAX`, and
+        // `f64::NAN as u64` raised `RangeError: NaN can't be converted to
+        // BigInt` where Rust gives 0.
+        (Repr::Number, Repr::BigInt) if is_float(from) => Some(saturating_bigint(to, value)),
         (Repr::Number, Repr::BigInt) => {
-            // A float has to lose its fraction before it can be a `BigInt` at
-            // all: `BigInt(1.5)` throws.
-            let integral = if is_float(from) {
-                format!("Math.trunc({})", value)
-            } else {
-                value.to_string()
-            };
-            let widened = format!("BigInt({})", integral);
-            Some(if !is_float(from) && fits(from, to) {
-                widened
-            } else {
-                wrap_bigint(to, &widened)
-            })
+            let widened = format!("BigInt({})", value);
+            Some(if fits(from, to) { widened } else { wrap_bigint(to, &widened) })
         }
         (Repr::BigInt, Repr::Number) => {
             // A float destination first: `width` has no answer for `f32`/`f64`,
@@ -111,7 +106,13 @@ pub fn numeric(from: Prim, to: Prim, value: &str) -> Option<String> {
             // cast was reported as unwritable and the bigint was handed on as
             // it stood, where a `number` was wanted.
             if is_float(to) {
-                return Some(format!("Number({})", value));
+                // Every `number` is a double, so `f64` is the value and `f32`
+                // is that value rounded to single precision: `16777217u64 as
+                // f32` is 16777216.
+                return Some(match to {
+                    Prim::F32 => format!("Math.fround(Number({}))", value),
+                    _ => format!("Number({})", value),
+                });
             }
             let (bits, signed) = width(to)?;
             Some(format!(
@@ -187,6 +188,36 @@ fn saturating(to: Prim, value: &str) -> String {
         "Math.min(Math.max(Math.trunc({}) || 0, {}), {})",
         value, low, high
     )
+}
+
+/// A float truncated into a 64- or 128-bit integer the way Rust's `as` does it.
+///
+/// The clamp happens in floating point, before `BigInt` is ever asked for the
+/// value: `BigInt(NaN)` and `BigInt(Infinity)` both throw, and a double above
+/// 2^63 has no exact bigint anyway. The bounds are written as bigint literals
+/// so that the second clamp — the one that catches the rounding a double does
+/// at the top of the range — is exact.
+fn saturating_bigint(to: Prim, value: &str) -> String {
+    let Some((bits, signed)) = width(to) else {
+        return format!("BigInt({})", value);
+    };
+    let (low, high) = if signed {
+        (format!("-{}n", 1u128 << (bits - 1)), format!("{}n", (1u128 << (bits - 1)) - 1))
+    } else {
+        ("0n".to_string(), format!("{}n", (1u128 << bits) - 1))
+    };
+    let (low_f, high_f) = (low.trim_end_matches('n'), high.trim_end_matches('n'));
+    // The clamp runs TWICE, and both are needed. In floating point first,
+    // because `BigInt(Infinity)` throws and `Math.trunc(NaN) || 0` is the 0
+    // Rust answers for a NaN; then in bigint, because a bound near 2^64 has no
+    // exact double and the first clamp lets a value one above the top through.
+    let clamped = format!(
+        "BigInt(Math.min(Math.max(Math.trunc({value}) || 0, {low_f}), {high_f}))",
+        value = value,
+        low_f = low_f,
+        high_f = high_f
+    );
+    format!("(($v) => $v < {low} ? {low} : $v > {high} ? {high} : $v)({clamped})")
 }
 
 /// A value brought back inside a type's range, the way Rust's `as` and its

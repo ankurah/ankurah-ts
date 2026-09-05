@@ -50,3 +50,15 @@ export function borrowing(): number {
   }
 }
 
+export function consumed(entity: Entity): number {
+  const take = new OwnedClosure([entity], () => {
+    const held = entity;
+    try {
+      return borrow(held);
+    } finally {
+      held.drop();
+    }
+  });
+  return take.callOnce();
+}
+

@@ -53,3 +53,43 @@ pub fn refuse(n: u32) -> u32 {
     }
     n
 }
+
+/// A `Display` that COMPOSES: several writes in sequence, the last of them the
+/// method's tail. Only `write!(..)?;` used to append, so the semicolon form was
+/// an unused string expression and the tail write replaced everything written
+/// before it — `write!(f, "a")?; write!(f, "b")` answered `"b"`.
+pub struct Parts {
+    pub head: String,
+    pub tail: String,
+}
+
+impl std::fmt::Display for Parts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        write!(f, "{}", self.head)?;
+        write!(f, "|{}", self.tail)?;
+        write!(f, "]")
+    }
+}
+
+/// The same, ending in `Ok(())` rather than in a write — which is the value the
+/// accumulator stands for.
+pub struct Lines {
+    pub first: String,
+}
+
+impl std::fmt::Display for Lines {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.first)?;
+        write!(f, "end");
+        Ok(())
+    }
+}
+
+/// A placeholder naming an argument the call does not have. rustc refuses this,
+/// so it can only reach the port through a macro the engine reads differently
+/// from rustc — and it used to be written as the name itself, which the emitted
+/// template reads and does not find.
+pub fn absent(a: u32) -> String {
+    format!("{0} {1}", a)
+}

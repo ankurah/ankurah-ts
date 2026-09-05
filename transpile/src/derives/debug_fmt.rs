@@ -25,17 +25,32 @@ pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<Str
         // Rust quotes and escapes a string under Debug, which is what JSON's
         // own string form does.
         Ty::Str => Ok(format!("JSON.stringify({})", expr)),
-        Ty::Prim(Prim::Char) => Err(
-            "a `char` prints between single quotes under Debug and the port has no rendering \
-             that does that"
-                .to_string(),
-        ),
+        // Rust prints a `char` between single quotes, and the port writes a
+        // `char` as a one-character string — so the quotes are the rendering.
+        Ty::Prim(Prim::Char) => Ok(format!("`'${{{}}}'`", expr)),
+        // A float keeps its decimal point: Rust's Debug for `1.0f64` is `1.0`
+        // and JavaScript's `String(1.0)` is `1`, so a `Value::F64(1.0)` printed
+        // `F64(1)` where Rust prints `F64(1.0)`. And `-0.0` prints with its
+        // sign, which `String(-0)` drops.
+        Ty::Prim(Prim::F32 | Prim::F64) => Ok(debug_float(expr)),
         Ty::Prim(_) => Ok(format!("String({})", expr)),
         Ty::Slice(elem) => sequence(reg, elem, expr),
         Ty::Array { elem, .. } => sequence(reg, elem, expr),
         Ty::Named { id, args } => named(reg, *id, args, expr),
         other => Err(format!("`{}` has no Debug rendering in the port", describe(other))),
     }
+}
+
+/// A float the way Rust's Debug prints one.
+///
+/// Rust keeps the decimal point on a whole number — `1.0f64` is `1.0`, not `1`
+/// — keeps the sign on `-0.0`, and spells the infinities `inf` and `-inf`.
+/// JavaScript's `String` does none of those. Written inline rather than as a
+/// runtime helper, because it is one expression and the subject is read once.
+fn debug_float(expr: &str) -> String {
+    let finite = "Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)";
+    let other = "$f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'";
+    format!("(($f) => Number.isFinite($f) ? ({}) : ({}))({})", finite, other, expr)
 }
 
 /// A named type: the std containers Rust prints structurally, then the crate's
@@ -46,20 +61,31 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
     match leaf {
         "String" => return Ok(format!("JSON.stringify({})", expr)),
         // `Box<T>` is invisible on the wire and invisible under Debug: Rust
-        // prints what is inside it.
-        "Box" | "Rc" | "Arc" => {
+        // prints what is inside it. An `Rc` and an `Arc` print their payload
+        // too, and the port holds that payload in `.value` — reaching through
+        // is what the runtime needs, and `this.inner.debug()` on an `Arc` was
+        // a TypeError.
+        "Box" => {
             if let Some(inner) = args.first() {
                 return debug_expr(reg, Some(inner), expr);
+            }
+        }
+        "Rc" | "Arc" => {
+            if let Some(inner) = args.first() {
+                return debug_expr(reg, Some(inner), &format!("{}.value", expr));
             }
         }
         "Option" => {
             let Some(inner) = args.first() else {
                 return Err("an `Option` with no element type".to_string());
             };
-            let some = debug_expr(reg, Some(inner), expr)?;
+            // The subject is read ONCE. Written twice — the test and the
+            // payload — a `{:?}` on an expression with an effect performed it
+            // twice.
+            let some = debug_expr(reg, Some(inner), "$v")?;
             return Ok(format!(
-                "({} === null ? 'None' : `Some(${{{}}})`)",
-                expr, some
+                "(($v) => $v === null ? 'None' : `Some(${{{}}})`)({})",
+                some, expr
             ));
         }
         "Vec" | "VecDeque" => {
@@ -178,13 +204,54 @@ mod tests {
         assert!(err.contains("no Debug"), "{}", err);
     }
 
+    /// PREMISE CHANGED 2026-09-04: the subject used to be written twice — once
+    /// for the null test and once inside `Some(..)` — so a `{:?}` on an
+    /// expression with an effect performed it twice. It is read once now.
     #[test]
-    fn an_option_prints_none_or_some() {
+    fn an_option_prints_none_or_some_reading_its_subject_once() {
         let f = built("pub struct S { pub n: Option<u32> }");
         let ty = f.field("lib.rs", "S", "n");
         assert_eq!(
             debug_expr(&f.reg, Some(&ty), "this.n").unwrap(),
-            "(this.n === null ? 'None' : `Some(${String(this.n)})`)"
+            "(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.n)"
+        );
+    }
+
+    /// Rust keeps a float's decimal point, its `-0.0` sign and its `inf`
+    /// spelling; JavaScript's `String` does none of those, so a
+    /// `Value::F64(1.0)` printed `F64(1)`.
+    #[test]
+    fn a_float_prints_the_way_rust_prints_one() {
+        let f = built("pub struct S { pub x: f64 }");
+        let ty = f.field("lib.rs", "S", "x");
+        let written = debug_expr(&f.reg, Some(&ty), "this.x").unwrap();
+        assert!(written.contains("toFixed(1)"), "{}", written);
+        assert!(written.contains("'-0.0'"), "{}", written);
+        assert!(written.contains("'inf'"), "{}", written);
+    }
+
+    /// A `char` prints between single quotes, and the port writes one as a
+    /// one-character string — so the quotes are the whole rendering.
+    #[test]
+    fn a_char_prints_between_quotes() {
+        let f = built("pub struct S { pub c: char }");
+        let ty = f.field("lib.rs", "S", "c");
+        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.c").unwrap(), "`'${this.c}'`");
+    }
+
+    /// An `Rc` and an `Arc` print their payload, and the port holds that
+    /// payload in `.value`: `this.inner.debug()` on an `Arc` was a TypeError.
+    #[test]
+    fn an_arc_prints_through_the_value_it_holds() {
+        let f = built(
+            "use std::sync::Arc;\n\
+             #[derive(Debug)] pub struct Inner { pub n: u32 }\n\
+             pub struct S { pub held: Arc<Inner> }",
+        );
+        let ty = f.field("lib.rs", "S", "held");
+        assert_eq!(
+            debug_expr(&f.reg, Some(&ty), "this.held").unwrap(),
+            "this.held.value.debug()"
         );
     }
 

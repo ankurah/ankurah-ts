@@ -41,3 +41,14 @@ pub fn parse(source: &Io) -> Result<u32, ParseError> {
 pub fn read(source: &Io) -> Result<u32, Io> {
     Ok(source.code)
 }
+
+/// `#[error(transparent)]` forwards this variant's text to the error it wraps.
+/// The port used to write the variant's own name — `Wrapped::Passed` — because
+/// the attribute reader saw only the string form.
+#[derive(Debug, thiserror::Error)]
+pub enum Wrapped {
+    #[error(transparent)]
+    Passed(#[from] Io),
+    #[error("said {0}")]
+    Said(String),
+}

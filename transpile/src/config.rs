@@ -25,7 +25,6 @@ pub struct Config {
     pub provided_modules: Vec<ProvidedModule>,
     /// TypeScript-only modules a module index re-exports.
     pub extra_exports: Vec<ProvidedModule>,
-    pub name_overrides: HashMap<String, String>,
     pub provided_impls: HashMap<String, ProvidedImpl>,
     /// Types from other crates that need explicit import mapping
     pub cross_crate_types: HashMap<String, String>,
@@ -41,15 +40,11 @@ pub struct Config {
 #[derive(Debug)]
 pub struct PathsConfig {
     pub rust_source: PathBuf,
-    pub ts_target: PathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProvidedImpl {
-    pub module: String,
     pub path: String,
-    /// If set, only these methods are provided (rest are generated)
-    pub methods: Option<Vec<String>>,
 }
 
 /// One item the port leaves out, named the way the corpus writes it.
@@ -59,6 +54,10 @@ pub struct ExcludedItem {
     pub file: String,
     pub selector: ItemSelector,
     pub written: String,
+    /// Why this item is out. Required at load — an exclusion with no reason is
+    /// a config error — and read by this module's own tests; nothing in the
+    /// run's output quotes it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub reason: String,
 }
 
@@ -82,10 +81,23 @@ pub struct FeatureOverride {
     pub feature: String,
     /// `true` = forced on, `false` = forced off.
     pub state: bool,
+    /// Why the port departs from Cargo's resolved set here. Required at load
+    /// and read by this module's own tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub reason: String,
 }
 
 impl Config {
+    /// Is this fully qualified Rust type's TypeScript written by hand?
+    ///
+    /// Read by this module's own tests, which pin which of proto's types the
+    /// port provides. Emission asks the registry instead — `is_hand_written`,
+    /// which the loader sets from this table.
+    #[cfg(test)]
+    pub fn is_provided(&self, rust_fqn: &str) -> bool {
+        self.provided_impls.contains_key(rust_fqn)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
@@ -110,22 +122,14 @@ impl Config {
                         .and_then(|v| v.as_str())
                         .unwrap_or("../ankurah-ts-support"),
                 ),
-                ts_target: PathBuf::from(
-                    paths
-                        .get("ts_target")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(".."),
-                ),
             }
         } else {
             PathsConfig {
                 rust_source: locate_corpus("../ankurah-ts-support"),
-                ts_target: PathBuf::from(".."),
             }
         };
 
         let crates = parse_string_map(table.get("crates"));
-        let name_overrides = parse_string_map(table.get("name_overrides"));
 
         let (cfg_key_values, cfg_flags) = parse_cfg_table(table.get("cfg"));
         let crate_features = parse_crate_features(table.get("features"))?;
@@ -153,7 +157,6 @@ impl Config {
             excluded_items,
             provided_modules,
             extra_exports,
-            name_overrides,
             provided_impls,
             cross_crate_types,
             cfg_key_values,
@@ -219,23 +222,7 @@ impl Config {
         names
     }
 
-    /// Check if a fully qualified Rust type has a provided impl
-    pub fn is_provided(&self, rust_fqn: &str) -> bool {
-        self.provided_impls.contains_key(rust_fqn)
-    }
 
-    /// Check if a specific method on a type is provided (vs generated)
-    pub fn is_method_provided(&self, rust_fqn: &str, method: &str) -> bool {
-        if let Some(pi) = self.provided_impls.get(rust_fqn) {
-            if let Some(methods) = &pi.methods {
-                methods.iter().any(|m| m == method)
-            } else {
-                true // whole type is provided
-            }
-        } else {
-            false
-        }
-    }
 
     /// Check if a file should be excluded
     pub fn is_excluded_file(&self, path: &str) -> bool {
@@ -256,6 +243,10 @@ impl Config {
     }
 
     /// Is this file's TypeScript hand-written? (The old `[hardcode]` question.)
+    /// Read by this module's own tests. `[hardcode]` is a load error now and
+    /// `[[provided]]` is what a hand-written module is written as; this answers
+    /// the same question of that table.
+    #[cfg(test)]
     pub fn is_hardcoded(&self, path: &str) -> bool {
         self.provided_module(path).is_some()
     }
@@ -275,12 +266,6 @@ impl Config {
             .map(|p| format!("./{}", p.path))
     }
 
-    /// Map Rust crate name to TS package
-    pub fn crate_to_package(&self, crate_name: &str) -> Option<String> {
-        self.crates
-            .get(crate_name)
-            .map(|pkg| format!("@ankurah/{}", pkg))
-    }
 }
 
 /// Where the Rust corpus is.
@@ -492,32 +477,12 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
     if let Some(table) = value.and_then(|v| v.as_table()) {
         for (k, v) in table {
             if let Some(impl_table) = v.as_table() {
-                let module = impl_table
-                    .get("module")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("provided")
-                    .to_string();
                 let path = impl_table
                     .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let methods = impl_table.get("methods").and_then(|v| v.as_array()).map(
-                    |arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    },
-                );
-
-                map.insert(
-                    k.clone(),
-                    ProvidedImpl {
-                        module,
-                        path,
-                        methods,
-                    },
-                );
+                map.insert(k.clone(), ProvidedImpl { path });
             }
         }
     }

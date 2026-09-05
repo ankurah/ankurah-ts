@@ -54,6 +54,8 @@ pub(super) enum Update {
         defaults: Vec<Option<Ty>>,
     },
     Impl(ImplDef),
+    /// This type's serde derive writes it a `static fromJson`.
+    ReadsJson(TypeId),
     Trait(TraitDef),
     ConstType {
         id: super::ValueId,
@@ -178,6 +180,7 @@ pub fn build_registry_with_siblings(
     reg.index_blankets();
 
     crate::emit::set_contested_conversions(contested_conversions(&reg));
+    crate::emit_impls::set_contested_traits(&reg);
 
     reg
 }
@@ -195,7 +198,13 @@ pub fn build_registry_with_siblings(
 fn contested_conversions(
     reg: &TypeRegistry,
 ) -> std::collections::HashSet<(String, String)> {
-    let mut seen: std::collections::HashMap<(String, String), usize> = Default::default();
+    // Per (self type, emitted name): the distinct TypeScript spellings of the
+    // sources that want it. `From<&str>` and `From<String>` are one signature
+    // in TypeScript, so one method serves both and the name is not contested;
+    // `From<String>` and `From<i64>` are two signatures wanting one name, and
+    // that is what has to be told apart.
+    let mut seen: std::collections::HashMap<(String, String), std::collections::HashSet<String>> =
+        Default::default();
     for i in 0..reg.impls().len() {
         let def = reg.impl_def(crate::registry::ImplId(i as u32));
         let Some(implemented) = def.trait_ref.as_ref() else {
@@ -220,10 +229,20 @@ fn contested_conversions(
         let self_leaf = self_name.rsplit("::").next().unwrap_or(&self_name).to_string();
         let leaf = source.rsplit("::").next().unwrap_or(source);
         let base = if trait_name == "From" { "from" } else { "tryFrom" };
-        *seen.entry((self_leaf, format!("{}{}", base, leaf))).or_default() += 1;
+        // The name this impl WOULD take if nothing contested it, which is the
+        // plain one where the source's TypeScript spelling says nothing about
+        // which impl it is. Counting only the leaf-qualified form missed
+        // `From<String>` and `From<i64>` colliding on `from`.
+        let name = if crate::emit::source_reads_as_plain(source) {
+            base.to_string()
+        } else {
+            format!("{}{}", base, leaf)
+        };
+        let spelling = crate::name_map::map_type_name(leaf);
+        seen.entry((self_leaf, name)).or_default().insert(spelling.to_string());
     }
     seen.into_iter()
-        .filter(|(_, n)| *n > 1)
+        .filter(|(_, spellings)| spellings.len() > 1)
         .map(|(key, _)| key)
         .collect()
 }
@@ -232,6 +251,7 @@ fn contested_conversions(
 pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
     for update in updates {
         match update {
+            Update::ReadsJson(id) => reg.mark_reads_json(id),
             Update::Fields { id, fields } => {
                 if let Some(def) = reg.def_mut(id) {
                     def.fields = fields;
@@ -402,6 +422,9 @@ pub(super) fn resolve_file(
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
             derived_impls(reg, module, id, &s.type_params, &s.derives, updates);
+            if derives_json_read(&s.derives) {
+                updates.push(Update::ReadsJson(id));
+            }
             updates.push(Update::Fields { id, fields });
         }
     }
@@ -419,6 +442,9 @@ pub(super) fn resolve_file(
         if let Some(id) = id {
             derived_impls(reg, module, id, &e.type_params, &e.derives, updates);
             thiserror_from_impls(reg, module, id, e, updates);
+            if derives_json_read(&e.derives) {
+                updates.push(Update::ReadsJson(id));
+            }
             updates.push(Update::Variants { id, variants });
         }
     }
@@ -520,15 +546,13 @@ const DERIVED: [(&str, &str); 9] = [
 /// alongside, in `thiserror_from_impls`.
 const THISERROR_DERIVED: [&str; 2] = ["std::error::Error", "std::fmt::Display"];
 
-/// Is this the thiserror derive? It is written `Error` behind a `use
-/// thiserror::Error`, and `thiserror::Error` where the import is not there.
+
+/// Does this derive list make the type readable from JSON?
 ///
-/// `std::error::Error` cannot be derived, so an `Error` in a derive list is
-/// thiserror's in every case rustc accepts.
-fn is_thiserror(derives: &[String]) -> bool {
-    derives
-        .iter()
-        .any(|d| d == "Error" || d.replace(' ', "") == "thiserror::Error")
+/// `#[derive(Deserialize)]` is what `json_module` writes a `static fromJson`
+/// for, and it is what `serde_json::from_str::<T>` needs on the other side.
+pub(super) fn derives_json_read(derives: &[String]) -> bool {
+    derives.iter().any(|d| d == "Deserialize" || d.ends_with("::Deserialize"))
 }
 
 fn derived_impls(
@@ -583,7 +607,7 @@ fn derived_impls(
             methods: HashMap::new(),
         }));
     }
-    if is_thiserror(derives) {
+    if crate::derives::thiserror::is_thiserror(derives) {
         // The derive proves these of the type itself, with no bound on the
         // parameters: `#[error("{0}")]` writes a `Display` whatever the fields
         // hold. That is thiserror's own rule and not rustc's derive rule, so
@@ -625,7 +649,7 @@ fn thiserror_from_impls(
     e: &crate::types::EnumInfo,
     updates: &mut Vec<Update>,
 ) {
-    if !is_thiserror(&e.derives) {
+    if !crate::derives::thiserror::is_thiserror(&e.derives) {
         return;
     }
     let Some(trait_id) = reg.system_type(super::convert::FROM_PATH) else {

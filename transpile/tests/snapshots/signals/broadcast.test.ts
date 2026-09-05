@@ -84,10 +84,10 @@ describe('broadcast unit tests', () => {
     const counter = Arc.new(0);
     const counterClone = counter.clone();
     const _subscription = signal.subscribe((_) => {
-      counterClone.fetchAdd(1, undefined /* Ordering */.SeqCst);
+      counterClone.fetchAdd(1, undefined /* atomic Ordering::SeqCst */);
     });
     signal.set(100);
-    expect(counter.load(undefined /* Ordering */.SeqCst)).toEqual(1);
+    expect(counter.load(undefined /* atomic Ordering::SeqCst */)).toEqual(1);
   });
 
   test('test_reentrant_subscription_during_send', () => {

@@ -40,3 +40,16 @@ pub fn borrowing() -> usize {
     let f = || borrow(&entity);
     f()
 }
+
+/// A closure whose body hands a capture away is an `FnOnce`: Rust lets it run
+/// once, and the capture is the body's from there. The port had no call that
+/// transferred a capture, so the capture was left out of what the closure owned
+/// and nothing released it — reported, and a leak. `callOnce` transfers them
+/// and marks the closure moved, so the closure is not dropped after one.
+pub fn consumed(entity: Entity) -> usize {
+    let take = move || {
+        let held = entity;
+        borrow(&held)
+    };
+    take()
+}

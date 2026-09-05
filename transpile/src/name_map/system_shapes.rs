@@ -77,7 +77,7 @@ const ACCESSORS: [(&str, Accessor); 13] = [
 ];
 
 /// What each declared type is written as.
-const FORMS: [(&str, Form); 20] = [
+const FORMS: [(&str, Form); 21] = [
     ("std::vec::Vec", Form::VecOrBytes),
     ("std::option::Option", Form::Nullable),
     ("std::result::Result", Form::Result),
@@ -100,6 +100,10 @@ const FORMS: [(&str, Form); 20] = [
     ("std::sync::atomic::AtomicU64", Form::Number),
     ("std::sync::atomic::AtomicBool", Form::Boolean),
     ("std::convert::Infallible", Form::Never),
+    // An ordering IS the number a comparison answers: -1, 0, 1 — which is
+    // what every emitted `compareTo` returns and what `Array.prototype.sort`
+    // takes. `native_types/ordering.rs` says why it is not a class.
+    ("std::cmp::Ordering", Form::Number),
     ("serde_json::Value", Form::Unknown),
     ("wasm_bindgen::JsValue", Form::Unknown),
 ];

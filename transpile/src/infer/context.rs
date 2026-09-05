@@ -632,15 +632,14 @@ impl<'a> TypeContext<'a> {
         // Rust's operator traits default `Rhs` to `Self`, which every operator
         // impl in the corpus takes.
         let right = right.unwrap_or_else(|_| left.clone());
-        let found = self
-            .probe()
-            .operator_impl(&trait_path, left.peel_refs(), right.peel_refs())
-            .ok()?;
+        let found = self.probe().operator_impl(&trait_path, left, &right).ok()?;
         let def = self.registry.impl_def(found.impl_id);
-        if !def.generics.is_empty() {
-            return None;
-        }
-        def.assoc_types.get("Output").cloned()
+        // A generic impl says what it answers in terms of its own parameters —
+        // `impl<T> Add for Generic<T> { type Output = Generic<T>; }` — and the
+        // match that selected it is what says which `T` this site has. Refusing
+        // every generic impl left the local a `+` was bound to untyped, so
+        // nothing released what it held.
+        Some(def.assoc_types.get("Output")?.substitute(&found.args))
     }
 
     /// The type of an arithmetic operator where one side is an unsuffixed

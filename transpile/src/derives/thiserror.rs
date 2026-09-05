@@ -44,15 +44,76 @@ pub fn enum_error(reg: &TypeRegistry, e: &EnumInfo) -> (String, Vec<Gap>) {
     let mut gaps = Vec::new();
     let mut out = String::new();
     out.push_str(&display(reg, e, &mut gaps));
+    out.push_str(&source_accessor(e));
     out.push_str(&from_impls(reg, e, &mut gaps));
     (out, gaps)
+}
+
+/// `Error::source`: the error this one wraps, where a variant names one with
+/// `#[source]` or with the `#[from]` that implies it.
+///
+/// Rust's `Error::source` is what a chain-printing helper walks, and the port
+/// wrote nothing at all for it — a `#[source]` field was read as an ordinary
+/// field and the chain stopped at the outermost error. A variant with no source
+/// answers `null`, which is what Rust's default `source` answers.
+fn source_accessor(e: &EnumInfo) -> String {
+    let carrying: Vec<(&str, &str)> = e
+        .variants
+        .iter()
+        .filter_map(|v| {
+            let field = v.fields.iter().find(|f| f.is_source)?;
+            Some((v.name.as_str(), field.name.as_deref()?))
+        })
+        .collect();
+    if carrying.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n  /** The error this one wraps: Rust's `Error::source`. */\n  source(): unknown {\n    switch (this.type) {\n");
+    for (variant, field) in carrying {
+        out.push_str(&format!("      case '{}': return (this.value as any).{};\n", variant, field));
+    }
+    out.push_str("      default: return null;\n    }\n  }\n");
+    out
+}
+
+/// The `Display` arm of an `#[error(transparent)]` variant: the wrapped error's
+/// own text.
+fn transparent_arm(variant: &crate::types::VariantInfo) -> Option<String> {
+    // The wrapped error is the one field a transparent variant carries; where
+    // it says which with `#[source]` or `#[from]`, that one.
+    let field = variant
+        .fields
+        .iter()
+        .find(|f| f.is_source)
+        .or_else(|| variant.fields.first())?;
+    let name = field.name.clone()?;
+    Some(format!("      {}: (v) => v.{}.toString(),\n", variant.name, name))
 }
 
 /// `impl Display`: one arm per variant, rendering that variant's format string.
 fn display(reg: &TypeRegistry, e: &EnumInfo, gaps: &mut Vec<Gap>) -> String {
     let mut arms = String::new();
     for variant in &e.variants {
-        let Some(format) = &variant.error_format else {
+        // `#[error(transparent)]`: the variant's text IS the wrapped error's.
+        // The port used to write the variant's own name here, because the
+        // attribute reader saw only the string form.
+        if variant.error_text == Some(crate::types::ErrorText::Transparent) {
+            match transparent_arm(variant) {
+                Some(arm) => {
+                    arms.push_str(&arm);
+                    continue;
+                }
+                None => gaps.push((
+                    variant.span,
+                    format!(
+                        "`{}::{}` is `#[error(transparent)]`, which forwards its text to the \
+                         error it wraps, and this variant wraps none the engine can name",
+                        e.name, variant.name
+                    ),
+                )),
+            }
+        }
+        let Some(crate::types::ErrorText::Format(format)) = &variant.error_text else {
             gaps.push((
                 variant.span,
                 format!(
@@ -337,5 +398,44 @@ mod tests {
         let (_, gaps) = enum_error(&f.reg, enum_of(&f, "E"));
         assert_eq!(gaps.len(), 1, "{:?}", gaps);
         assert!(gaps[0].1.contains("carries no `#[error"), "{}", gaps[0].1);
+    }
+
+    /// `#[error(transparent)]` forwards the variant's text to the error it
+    /// wraps. The attribute reader saw only the string form, so the variant's
+    /// own name was written instead — reported, and wrong.
+    #[test]
+    fn a_transparent_variant_forwards_its_text() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "use thiserror::Error;\n\
+             #[derive(Error, Debug)]\n\
+             pub enum Inner { #[error(\"boom\")] Boom }\n\
+             #[derive(Error, Debug)]\n\
+             pub enum Outer { #[error(transparent)] Passed(#[from] Inner) }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("Passed: (v) => v._0.toString(),"), "{}", ts);
+        assert!(!ts.contains("'Outer::Passed'"), "{}", ts);
+    }
+
+    /// `#[source]`, and the `#[from]` that implies it, name the error this one
+    /// wraps: `Error::source` answers it, and the port wrote nothing at all.
+    #[test]
+    fn a_source_field_is_reachable_through_source() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "use thiserror::Error;\n\
+             #[derive(Error, Debug)]\n\
+             pub enum Inner { #[error(\"boom\")] Boom }\n\
+             #[derive(Error, Debug)]\n\
+             pub enum Outer {\n\
+               #[error(\"wrapped\")] Sourced { #[source] cause: Inner },\n\
+               #[error(\"plain\")] Plain,\n\
+             }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("source(): unknown"), "{}", ts);
+        assert!(ts.contains("case 'Sourced': return (this.value as any).cause;"), "{}", ts);
+        assert!(ts.contains("default: return null;"), "{}", ts);
     }
 }

@@ -98,9 +98,10 @@ export function toSerde(v: unknown): unknown {
 
   if (v instanceof Uint8Array) return Array.from(v);
   if (Array.isArray(v)) return v.map(toSerde);
-  if (v instanceof Map) {
+  if (v instanceof Map || (typeof (v as { entries?: unknown }).entries === 'function'
+      && typeof (v as { size?: unknown }).size === 'number')) {
     const out: Record<string, unknown> = {};
-    for (const [k, val] of v) out[String(k)] = toSerde(val);
+    for (const [k, val] of (v as Iterable<[unknown, unknown]>)) out[String(k)] = toSerde(val);
     return out;
   }
 

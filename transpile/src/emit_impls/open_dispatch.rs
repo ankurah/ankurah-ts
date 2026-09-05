@@ -32,8 +32,81 @@ pub struct Dispatcher {
 
 /// The dispatcher for one trait method, named the same way wherever it is
 /// asked for.
+///
+/// The name carries a STABLE trait identity, not the leaf alone: two traits of
+/// one leaf name — a `convert::Convert::into` beside a `wire::Convert::into` —
+/// wrote one function under one name, and the second silently replaced the
+/// first. The qualifier is the segment in front of the leaf, and it is written
+/// only where the leaf is contested, so an uncontested dispatcher keeps the
+/// short name every call site already reads.
 pub fn dispatcher_name(trait_name: &str, ts_method: &str) -> String {
-    format!("{}_dispatch_{}", leaf(trait_name), ts_method)
+    format!("{}_dispatch_{}", trait_identity(trait_name), ts_method)
+}
+
+/// A trait's leaf, qualified by the module in front of it where the leaf is
+/// contested.
+fn trait_identity(trait_name: &str) -> String {
+    let leaf = leaf(trait_name);
+    if !contested::holds(&leaf) {
+        return leaf;
+    }
+    let segments: Vec<&str> = trait_name.split("::").filter(|s| !s.is_empty()).collect();
+    match segments.len() {
+        0 | 1 => leaf,
+        n => {
+            let qualifier = segments[n - 2];
+            // A qualifier that says nothing the leaf does not, or that is only
+            // a position in the crate, is left out — the same rule a contested
+            // conversion static takes.
+            if matches!(qualifier, "crate" | "self" | "super" | "std" | "core")
+                || leaf.to_lowercase().starts_with(&qualifier.to_lowercase())
+            {
+                leaf
+            } else {
+                format!("{}{}", capitalised(qualifier), leaf)
+            }
+        }
+    }
+}
+
+fn capitalised(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Which trait leaves more than one declared trait takes.
+///
+/// Filled once per run from the whole trait table, because the answer is a fact
+/// about a trait's SIBLINGS and neither the call site nor the emitter can see
+/// them from the trait in its hand.
+mod contested {
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+
+    thread_local! {
+        static CONTESTED: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    }
+
+    #[cfg_attr(test, allow(dead_code))]
+    pub fn set(leaves: BTreeSet<String>) {
+        CONTESTED.with(|c| *c.borrow_mut() = leaves);
+    }
+
+    pub fn holds(leaf: &str) -> bool {
+        CONTESTED.with(|c| c.borrow().contains(leaf))
+    }
+}
+
+/// Record which trait leaf names two declared traits would both take.
+pub fn set_contested_traits(reg: &TypeRegistry) {
+    let mut seen: std::collections::BTreeMap<String, usize> = Default::default();
+    for id in reg.trait_ids() {
+        *seen.entry(leaf(&reg.name_of(id))).or_default() += 1;
+    }
+    contested::set(seen.into_iter().filter(|(_, n)| *n > 1).map(|(leaf, _)| leaf).collect());
 }
 
 /// The trait methods some call site asked a dispatcher for.
@@ -112,31 +185,87 @@ fn write(
     let mut branches: Vec<(String, String)> = Vec::new();
     let mut catch_all: Option<String> = None;
     let mut seen: HashMap<String, ImplId> = HashMap::new();
+    // ONE impl the engine cannot write must not cost the whole dispatcher.
+    // Every call through the bound went to the fatal at the end when it did:
+    // the impls that CAN be told apart are the ones the dispatcher is for, and
+    // the one that cannot is reported at the site and left out of it.
     for &id in impls {
-        let Some(test) = shape_test(reg, id)? else {
+        let test = match shape_test(reg, id) {
+            Ok(test) => test,
+            Err(why) => {
+                crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`{}` for `{}` has no run-time test the dispatcher can make, because \
+                         {}; the branch is left out and a receiver of that shape reaches the \
+                         dispatcher's own fatal",
+                        leaf(trait_name),
+                        reg.describe(&reg.impl_def(id).self_ty),
+                        why
+                    ),
+                );
+                continue;
+            }
+        };
+        let Some(test) = test else {
             // An impl written for a bare parameter with no bound the run time
             // can see applies to whatever the others do not, so it is the last
-            // branch rather than a test. Two of those is a trait the engine
-            // cannot lower at all.
+            // branch rather than a test. A second one has nothing to tell it
+            // from the first, so it is reported and left out.
             if catch_all.is_some() {
-                return Err(
-                    "two impls are written for anything at all, so nothing chooses between them"
-                        .to_string(),
+                crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`{}` for `{}` is written for anything at all, and so is an impl \
+                         before it, so nothing chooses between them; this one is left out",
+                        leaf(trait_name),
+                        reg.describe(&reg.impl_def(id).self_ty),
+                    ),
                 );
+                continue;
             }
             catch_all = Some(call(reg, id, &ts_method, sig));
             continue;
         };
         if let Some(other) = seen.insert(test.clone(), id) {
-            return Err(format!(
-                "two impls — the one for `{}` and the one for `{}` — are the same shape at run \
-                 time, so no test tells them apart",
-                reg.describe(&reg.impl_def(other).self_ty),
-                reg.describe(&reg.impl_def(id).self_ty),
-            ));
+            // Two impls of one shape: the first one written wins, the way
+            // Rust's own coherence would have refused the pair outright.
+            crate::diag::pending::park_at(
+                0,
+                0,
+                format!(
+                    "`{}` for `{}` and for `{}` are the same shape at run time, so no test \
+                     tells them apart; the first is what the dispatcher calls",
+                    leaf(trait_name),
+                    reg.describe(&reg.impl_def(other).self_ty),
+                    reg.describe(&reg.impl_def(id).self_ty),
+                ),
+            );
+            continue;
         }
         branches.push((test, call(reg, id, &ts_method, sig)));
     }
+    if branches.len() + usize::from(catch_all.is_some()) < 2 {
+        return Err(
+            "fewer than two impls have a run-time test, so nothing has to be chosen".to_string(),
+        );
+    }
+    // A strict refinement is tried before the test it refines: `self instanceof
+    // Arc && <arity>` is a narrowing of `self instanceof Arc`, and written
+    // after it the narrower impl was never reached. Rust picks the more
+    // specific impl; this is that order written out.
+    branches.sort_by(|(a, _), (b, _)| {
+        let refines = |narrow: &str, wide: &str| narrow.len() > wide.len() && narrow.starts_with(wide);
+        if refines(a, b) {
+            std::cmp::Ordering::Less
+        } else if refines(b, a) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
     let params: Vec<String> = sig
         .params
         .iter()
@@ -165,27 +294,11 @@ fn write(
         format!("<{}>", generics.join(", "))
     };
     // A closure the port had to own is an `OwnedClosure`, not a function, and
-    // an `Arc` holding one answers `typeof 'object'`: the arity test never
-    // matched it. Where one impl is written for an `Arc` of a callable, the
-    // `Arc` alone tells it apart and the test can accept both shapes. Where
-    // several are — an `Arc<dyn Fn(T)>` and an `Arc<dyn Fn()>` — only the arity
-    // separates them, and an `OwnedClosure` does not expose the arity of the
-    // function it holds; that is a runtime addition, and until it lands such a
-    // receiver reaches the fatal at the end rather than the wrong impl.
-    let arity_tests = branches
-        .iter()
-        .filter(|(test, _)| test.contains("self.value.length ==="))
-        .count();
-    if arity_tests == 1 {
-        for (test, _) in branches.iter_mut() {
-            if let Some(at) = test.find(" && typeof self.value === 'function'") {
-                test.truncate(at);
-                test.push_str(
-                    " && (typeof self.value === 'function' || self.value instanceof OwnedClosure)",
-                );
-            }
-        }
-    }
+    // an `Arc` holding one answers `typeof 'object'`: a plain `.length` test
+    // never matched it. `OwnedClosure.$arity` is the runtime's answer to that —
+    // the arity of the function it holds, read through the same liveness check
+    // every other read goes through — so an `Arc<dyn Fn(T)>` and an
+    // `Arc<dyn Fn()>` are told apart whichever shape the value has.
     let name = dispatcher_name(trait_name, &ts_method);
     let mut body = String::new();
     for (test, call) in &branches {
@@ -288,10 +401,11 @@ fn class_test(reg: &TypeRegistry, ty: &Ty) -> Option<String> {
     if let JsShape::Rc(name) = js_shape(reg, ty) {
         let mut test = format!("self instanceof {}", name);
         if let Some(arity) = callable_arity(reg, ty) {
-            test.push_str(&format!(
-                " && typeof self.value === 'function' && self.value.length === {}",
-                arity
-            ));
+            // Either shape a callable takes here: a plain function, or the
+            // `OwnedClosure` a closure that had to own its captures became.
+            let function_form = format!("typeof self.value === 'function' && self.value.length === {}", arity);
+            let closure_form = format!("self.value instanceof OwnedClosure && self.value.$arity === {}", arity);
+            test.push_str(&format!(" && (({}) || ({}))", function_form, closure_form));
         }
         return Some(test);
     }
@@ -351,4 +465,29 @@ fn call(reg: &TypeRegistry, id: ImplId, ts_method: &str, sig: &crate::registry::
 
 fn leaf(name: &str) -> String {
     name.rsplit("::").next().unwrap_or(name).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Two traits of one leaf name wrote one dispatcher under one name, and the
+    /// second silently replaced the first. The name carries the module in front
+    /// of the leaf where the leaf is contested, and nothing where it is not.
+    #[test]
+    fn a_contested_trait_leaf_takes_its_module_into_the_name() {
+        contested::set(BTreeSet::from(["Convert".to_string()]));
+        assert_eq!(
+            dispatcher_name("crate::wire::Convert", "into"),
+            "WireConvert_dispatch_into"
+        );
+        // A qualifier that is only a position in the crate says nothing.
+        assert_eq!(dispatcher_name("crate::Convert", "into"), "Convert_dispatch_into");
+        contested::set(BTreeSet::new());
+        assert_eq!(
+            dispatcher_name("crate::wire::Convert", "into"),
+            "Convert_dispatch_into"
+        );
+    }
 }

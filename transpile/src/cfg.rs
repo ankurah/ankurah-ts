@@ -17,7 +17,7 @@
 //! it decided and how, which is what the crate inventory pins.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 /// What a `#[cfg]` is evaluated against: the resolved feature set for one
 /// crate, plus the target and profile predicates, which are the same for every
@@ -61,7 +61,10 @@ impl CfgFeatures {
         self.enabled.contains(feature)
     }
 
-    pub fn enabled_names(&self) -> BTreeSet<&str> {
+    /// Read by this module's own tests, which check that the resolved set is
+    /// the one the config wrote.
+    #[cfg(test)]
+    pub fn enabled_names(&self) -> std::collections::BTreeSet<&str> {
         self.enabled.iter().map(|s| s.as_str()).collect()
     }
 }
@@ -178,6 +181,7 @@ pub fn gate(attrs: &[syn::Attribute], cfg: &CfgFeatures) -> Gate {
 /// Check if an item with the given attributes should be skipped (cfg evaluates
 /// to false). An undecided predicate keeps the item; `gate` is the form that
 /// reports it.
+#[cfg(test)]
 pub fn should_skip(attrs: &[syn::Attribute], features: &CfgFeatures) -> bool {
     gate(attrs, features) == Gate::Skip
 }

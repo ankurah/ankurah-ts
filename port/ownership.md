@@ -98,12 +98,23 @@ throw. `Result`'s `self`-taking methods (`unwrap`, `expect`, `map`, `andThen`,
 what a match on a reference needs, and it is what the emitter uses in borrow
 position. `intoMatch(arms)` is the by-value form: it hands the payload to the
 arm as the arm's own, marks the enum moved, and takes the payload out of
-`ownedFields()` so the cascade never reaches it. If the arm's body throws it
-drops the payload first, because Rust's unwind drops the arm's bindings and
-after the move nobody else can. The enum is moved rather than dropped, so the
-emitter emits no drop after one and every later use of the binding is fatal.
-`Result` inherits `intoMatch`; its self-taking methods are the same move written
-out for the two variants it has.
+`ownedFields()` so the cascade never reaches it. The enum is moved rather than
+dropped, so the emitter emits no drop after one and every later use of the
+binding is fatal. `Result` inherits `intoMatch`; its self-taking methods are the
+same move written out for the two variants it has.
+
+**A consuming arm has ONE unwind owner, and it is the arm.** The arm owns the
+whole payload from the moment it is called, on every path out of it — a normal
+return, a `return` from inside, and a throw alike. So an arm takes a name out of
+the payload for every part it uses and releases the rest with
+`dropUnbound(payload, bound)`, where `bound` names the keys it did take; both go
+in the arm's own `finally`. `intoMatch` releases nothing of its own when an arm
+throws. It used to, and that gave a throwing arm two unwind owners: the arm's
+`finally` released a binding, `intoMatch` released the payload it came out of,
+and the exception the arm actually raised was replaced by `BUG: … was dropped
+twice`. An arm that leaves part of the payload unowned now leaks it, which the
+registry reports against the arm that caused it rather than against whichever
+innocent value was released second.
 
 **A partial move — `let x = s.field;` — becomes `s.takeField('field')`.** The
 field's value becomes the caller's, the cascade stops releasing it, and reading
@@ -354,7 +365,9 @@ stack.
 | `AtomicBool` / `AtomicU32` | `boolean` / `number` | Single-threaded JS. |
 | Lifetimes (`'a`) | runtime liveness checks | No compile-time lifetimes. |
 | `fn method(self)` (move) | consuming method + moved state | No move semantics in JS. |
-| `match value { … }` (by value) | `enum.intoMatch(arms)` | Arm owns the payload; the enum is left moved. `match()` borrows. |
+| `match value { … }` (by value) | `enum.intoMatch(arms)` | Arm owns the whole payload on every path out, unwinds included; the enum is left moved. `match()` borrows. |
+| a payload field an arm took no name for | `dropUnbound(payload, bound)` | Releases every field of the arm's payload except the keys in `bound`. |
+| `a & b`, `a \| b` on `bool` | `boolAnd(a, b)`, `boolOr(a, b)` | Rust's `&`/`\|` evaluate both operands; `&&`/`\|\|` do not. `^` is `!==`, which is already eager. |
 | `let x = s.field` (partial move) | `s.takeField('field')` | The rest of the struct stays usable and droppable. |
 | `move \|…\| { … }` with droppable captures | `OwnedClosure` | `new OwnedClosure(captures, fn)`, invoked with `.call(...)`; `.callOnce(...)` for `FnOnce`. |
 | `anyhow::Error` | `AnyhowError`, or `anyhow.Error` | Owns its chain. `from`, `msg`, `context`, `downcast_ref`, `root_cause`. |

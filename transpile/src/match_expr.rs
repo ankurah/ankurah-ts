@@ -22,8 +22,17 @@ pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator
     if is_result_match(&match_expr.arms) {
         return translate_result_match(&scrutinee, match_expr, t, Position::Returning);
     }
+    // An ordering is a number, so a `match` on one is a chain of comparisons.
+    // The runtime's `.match({..})` dispatches on a variant name, and a number
+    // has none.
+    if t.is_ordering_value(&match_expr.expr) {
+        return translate_value_match(&scrutinee, match_expr, t, Position::Returning);
+    }
     if looks_like_enum_match(&match_expr.arms) {
         if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Returning) {
+            return written;
+        }
+        if let Some(written) = tests_inside_a_variant(&scrutinee, match_expr, t, Position::Returning) {
             return written;
         }
         return format!(
@@ -76,14 +85,50 @@ pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> Strin
     if is_result_match(&match_expr.arms) {
         return translate_result_match(&scrutinee, match_expr, t, Position::Statement);
     }
+    // An ordering is a number, so a `match` on one is a chain of comparisons.
+    // The runtime's `.match({..})` dispatches on a variant name, and a number
+    // has none.
+    if t.is_ordering_value(&match_expr.expr) {
+        return translate_value_match(&scrutinee, match_expr, t, Position::Statement);
+    }
     if looks_like_enum_match(&match_expr.arms) {
         if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Statement) {
+            return written;
+        }
+        if let Some(written) = tests_inside_a_variant(&scrutinee, match_expr, t, Position::Statement) {
             return written;
         }
         return translate_enum_match(&scrutinee, match_expr, t, Position::Statement);
     }
 
     translate_value_match(&scrutinee, match_expr, t, Position::Statement)
+}
+
+/// A match with an arm that tests inside its variant and a catch-all below it,
+/// written as the if-chain that can do both.
+///
+/// The runtime's `.match({..})` dispatches on the variant name and has one arm
+/// per variant, so it can neither test inside a payload nor fall through to the
+/// next arm when that test fails. `Ex::Literal(Lit::I(n)) => .., _ => 99` needs
+/// both. The if-chain over `pattern_test` is the form that has them.
+///
+/// A match that hands its payload to the arms has no such form — the if-chain
+/// reads the payload without marking the enum moved — so that one goes to the
+/// expansion, which reports it.
+fn tests_inside_a_variant(
+    scrutinee: &str,
+    match_expr: &syn::ExprMatch,
+    t: &BodyTranslator,
+    position: Position,
+) -> Option<String> {
+    let split = catch_all::split(match_expr)?;
+    if catch_all::contested(match_expr, &split, t).is_empty() {
+        return None;
+    }
+    if t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload {
+        return None;
+    }
+    Some(translate_value_match(scrutinee, match_expr, t, position))
 }
 
 /// A match whose arm leaves the loop around it, written as the if-chain that
@@ -107,13 +152,136 @@ fn leaves_the_loop(
         return None;
     }
     if t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload {
+        // The if-chain is not available here — it would read the payload
+        // without marking the enum moved — so the arms stay functions and the
+        // jump is handed back as a value. Each arm settles what it owns first,
+        // in its own `finally`, and the caller performs the jump.
+        // Only where the match's own value is `()`. Where something wants the
+        // value, the sentinel would be standing in the place of that value and
+        // there is nowhere to put the test.
+        // A statement's value is discarded whatever it is, and a match whose
+        // own Rust value is `()` has none to discard.
+        if position == Position::Statement || !produces_a_value(match_expr, t) {
+            return Some(jump_through_a_value(scrutinee, match_expr, t));
+        }
         t.report_match_gap(
             match_expr,
-            "an arm of this `match` leaves the loop around it, and the match hands its payload              to the arms — which needs `intoMatch`, whose arms are functions a `break` cannot              leave; the jump is written where it does not parse",
+            "an arm of this `match` leaves the loop around it, the match hands its payload to \
+             the arms — which needs `intoMatch`, whose arms are functions a `break` cannot \
+             leave — and the match stands where its value is wanted, so there is nowhere to \
+             put the test that would perform the jump",
         );
         return None;
     }
     Some(translate_value_match(scrutinee, match_expr, t, position))
+}
+
+/// Does this match hand a value back at all?
+///
+/// A `match` whose Rust value is `()` is run for what its arms do. Asking is
+/// not translating, so what the resolution cannot say is not reported here.
+fn produces_a_value(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> bool {
+    let mark = t.mark();
+    let whole = syn::Expr::Match(match_expr.clone());
+    let answer = !matches!(t.resolve_expr_type(&whole), Ok(crate::ty::Ty::Unit));
+    t.rewind(mark);
+    answer
+}
+
+/// A consuming match whose arms jump, written as the value they hand back.
+///
+/// `Payload: (v) => { .. return break; }` does not parse. The arm returns a
+/// sentinel instead, and the statement after the match reads it and performs
+/// the jump — after the arm's own `finally` has released whatever it held,
+/// which is the order Rust unwinds a `break` out of a scope in.
+fn jump_through_a_value(
+    scrutinee: &str,
+    match_expr: &syn::ExprMatch,
+    t: &BodyTranslator,
+) -> String {
+    let previous = t.jump_as_value.replace(true);
+    let written = translate_enum_match(scrutinee, match_expr, t, Position::Statement);
+    t.jump_as_value.set(previous);
+
+    let jumps: Vec<&syn::Arm> = match_expr.arms.iter().filter(|arm| jumps_out(&arm.body)).collect();
+    let mut kinds: Vec<String> = Vec::new();
+    for arm in jumps {
+        for jump in jumps_in(&arm.body) {
+            if !kinds.contains(&jump) {
+                kinds.push(jump);
+            }
+        }
+    }
+    let held = t.hoist_name(written);
+    let mut out = String::new();
+    for kind in kinds {
+        let (word, label) = match kind.split_once('#') {
+            Some((word, label)) => (word, format!(" && ({held} as any)?.$label === '{label}'", held = held, label = label)),
+            None => (kind.as_str(), String::new()),
+        };
+        let target = match kind.split_once('#') {
+            Some((_, label)) => format!(" {}", label),
+            None => String::new(),
+        };
+        // `?.` rather than a truthiness test: an arm that produces nothing
+        // makes the match's inferred type `void`, which TypeScript refuses to
+        // test for truth.
+        out.push_str(&format!(
+            "if (({held} as any)?.$jump === '{word}'{label}) {word}{target};\n",
+            held = held,
+            word = word,
+            label = label,
+            target = target
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+/// Every jump this expression performs, in the arms of a match or the branches
+/// of an `if`, as `break`, `continue`, or either with `#label` after it.
+pub(crate) fn jumps_out_of(expr: &syn::Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_jumps(expr, &mut out);
+    out.dedup();
+    out
+}
+
+/// Every jump an arm's body performs, as `break`, `continue`, or either with
+/// `#label` after it.
+fn jumps_in(expr: &syn::Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_jumps(expr, &mut out);
+    out
+}
+
+fn collect_jumps(expr: &syn::Expr, out: &mut Vec<String>) {
+    match expr {
+        syn::Expr::Break(brk) => out.push(match &brk.label {
+            Some(label) => format!("break#{}", label.ident),
+            None => "break".to_string(),
+        }),
+        syn::Expr::Continue(cont) => out.push(match &cont.label {
+            Some(label) => format!("continue#{}", label.ident),
+            None => "continue".to_string(),
+        }),
+        // A loop of the arm's own catches its own jumps.
+        syn::Expr::Loop(_) | syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Closure(_) => {}
+        syn::Expr::Block(block) => block.block.stmts.iter().for_each(|s| collect_jumps_stmt(s, out)),
+        syn::Expr::If(if_expr) => {
+            if_expr.then_branch.stmts.iter().for_each(|s| collect_jumps_stmt(s, out));
+            if let Some((_, other)) = &if_expr.else_branch {
+                collect_jumps(other, out);
+            }
+        }
+        syn::Expr::Match(m) => m.arms.iter().for_each(|arm| collect_jumps(&arm.body, out)),
+        _ => {}
+    }
+}
+
+fn collect_jumps_stmt(stmt: &syn::Stmt, out: &mut Vec<String>) {
+    if let syn::Stmt::Expr(expr, _) = stmt {
+        collect_jumps(expr, out);
+    }
 }
 
 /// Does this expression, or an arm of it, leave a loop that stands outside it?
@@ -218,7 +386,7 @@ fn translate_value_match(
     let arms: Vec<Arm> = match_expr
         .arms
         .iter()
-        .map(|arm| written_arm(arm, &subject, scrutinee_ty.as_ref(), t, position))
+        .map(|arm| written_arm(arm, &subject, &match_expr.expr, scrutinee_ty.as_ref(), t, position))
         .collect();
     // A guard reads the names its own pattern bound, and a guard that fails
     // hands the subject to the arm below it. An `else if` chain carries only
@@ -286,12 +454,28 @@ struct Arm {
 fn written_arm(
     arm: &syn::Arm,
     subject: &str,
+    subject_expr: &syn::Expr,
     scrutinee_ty: Option<&crate::ty::Ty>,
     t: &BodyTranslator,
     position: Position,
 ) -> Arm {
     let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
     let (test, bind) = t.pattern_test(subject, &arm.pat);
+    // `other => ..` moves the subject into `other` on the path this arm runs,
+    // and on no other path — which is what a drop flag is for. Without the
+    // flag the binding and the block both released the same value, and with a
+    // guard in front of it the flag has to be set INSIDE the guard, because a
+    // guard that fails hands the subject to the arm below.
+    let takes_subject = crate::ownership::scrutinee::binds_whole_subject(&arm.pat);
+    let subject_flag = if takes_subject { t.flag_set_for_subject(subject_expr) } else { String::new() };
+    let owned = if subject_flag.is_empty() {
+        Vec::new()
+    } else {
+        t.claim_bindings(
+            &crate::body::pattern_names(&arm.pat),
+            std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
+        )
+    };
     // A guard is its own temporary scope: Rust releases what the guard took to
     // make its test before the arm's body runs and before the next arm is
     // tried, exactly as it does for the condition of an `if`.
@@ -308,14 +492,14 @@ fn written_arm(
     // A local this arm hands away sets its drop flag here — the same line the
     // enclosing block would have written had the arm been a statement of it.
     // Without it the `finally` released a value the arm had already given away.
-    let flags = t.flag_sets_for(&arm.body);
+    let flags = format!("{}{}", subject_flag, t.flag_sets_for(&arm.body));
     Arm {
         test,
         bind,
         before,
         guard,
         flags,
-        body: crate::ownership::hoisted(&format!("{}\n", body), &lifted),
+        body: t.wrap_bindings(&owned, crate::ownership::hoisted(&format!("{}\n", body), &lifted)),
     }
 }
 
@@ -663,16 +847,14 @@ fn enum_match_over(
                 continue;
             }
             written.push(variant.clone());
-            let fields = name_refutable_fields(case, fields, t, match_expr);
+            // The arm's parameter must not collide with a name the pattern binds.
+            let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
             let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
+            let (payload, bound, declared) = arm_declarations(case, param, &fields, t, match_expr);
             // Where the enum handed its payload over, the arm owns what the
             // pattern named and releases it however the arm is left.
             let names: Vec<String> = match takes {
-                crate::ownership::scrutinee::Takes::Payload => fields
-                    .iter()
-                    .map(|(local, _)| local.clone())
-                    .filter(|local| local != "_")
-                    .collect(),
+                crate::ownership::scrutinee::Takes::Payload => declared,
                 crate::ownership::scrutinee::Takes::Nothing => Vec::new(),
             };
             let owned = t.claim_bindings(
@@ -710,8 +892,28 @@ fn enum_match_over(
             let flags = t.flag_sets_for(&arm.body);
             let is_async = crate::control_flow::awaiting::awaits(&arm.body);
             any_async |= is_async;
+            // A consuming arm owns every part of the payload, including the
+            // parts its pattern wrote `_` for: `intoMatch` releases nothing of
+            // its own on any path out, so an unowned part is a leak.
+            let release_rest = match takes {
+                crate::ownership::scrutinee::Takes::Payload if leaves_payload_unbound(case) => {
+                    format!("dropUnbound({}, [{}]);\n", param, bound.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(", "))
+                }
+                _ => String::new(),
+            };
             out.push_str(&render_arm(
-                &variant, &fields, &body, &flags, &owned, &lifted, t, produces, is_async,
+                ArmParts {
+                    variant: &variant,
+                    bindings: format!("{}{}", flags, payload),
+                    param: (!fields.is_empty() || !release_rest.is_empty()).then(|| param.to_string()),
+                    body: &body,
+                    owned: &owned,
+                    lifted: &lifted,
+                    produces,
+                    is_async,
+                    release_rest,
+                },
+                t,
             ));
         }
     }
@@ -720,47 +922,65 @@ fn enum_match_over(
     if any_async { format!("await ({})", out) } else { out }
 }
 
-/// Give a payload slot that ASKS something a name of its own.
+/// What one arm declares out of the payload it was handed, and which payload
+/// keys those declarations took.
 ///
+/// A slot whose pattern only binds is one name: `const token = v._0;`. A slot
+/// whose pattern ASKS something —
 /// `SqliteError::Rusqlite(rusqlite::Error::QueryReturnedNoRows)` names a variant
-/// and then tests inside it. The runtime's `.match({..})` dispatches on the
-/// outer variant alone and has nowhere to fall through to, so the inner test
-/// cannot be made here — and writing the pattern where the binding's name
-/// belongs produced `const rusqlite.Error.QueryReturnedNoRows = v._0;`, which
-/// is not a declaration: 123 parse errors in storage-sqlite's engine.ts alone.
-/// The slot gets a fresh name and the arm says what it no longer tests.
-fn name_refutable_fields(
+/// and then tests inside it — cannot have its question asked here: the
+/// runtime's `.match({..})` dispatches on the outer variant alone and has
+/// nowhere to fall through to. The question is reported, and the names the
+/// inner pattern binds are still taken out of the places they live in, so the
+/// arm reads the values it was written for on the path it was written for.
+/// Writing the pattern where the binding's name belongs produced `const
+/// rusqlite.Error.QueryReturnedNoRows = v._0;` (123 parse errors in
+/// storage-sqlite's engine.ts); giving the slot a fresh name instead left the
+/// arm's body naming a binding nothing declared.
+fn arm_declarations(
     pat: &syn::Pat,
-    fields: Vec<(String, String)>,
+    param: &str,
+    fields: &[(String, String)],
     t: &BodyTranslator,
     match_expr: &syn::ExprMatch,
-) -> Vec<(String, String)> {
+) -> (String, Vec<String>, Vec<String>) {
     let subpats: Vec<&syn::Pat> = match pat {
         syn::Pat::TupleStruct(ts) => ts.elems.iter().collect(),
         syn::Pat::Struct(st) => st.fields.iter().map(|f| &*f.pat).collect(),
-        _ => return fields,
+        _ => Vec::new(),
     };
-    fields
-        .into_iter()
-        .enumerate()
-        .map(|(i, (local, accessor))| {
-            match subpats.get(i) {
-                Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
-                    t.report_match_gap(
-                        match_expr,
-                        format!(
-                            "this arm tests inside the payload of `{}`, and the runtime's match dispatches \
-                             on the variant alone with no later arm to fall through to, so the \
-                             inner test is not made and the arm runs for every `{}`",
-                            accessor, accessor
-                        ),
-                    );
-                    (t.fresh_temp(), accessor)
-                }
-                _ => (local, accessor),
+    let mut text = String::new();
+    let mut bound_keys = Vec::new();
+    let mut names = Vec::new();
+    for (i, (local, accessor)) in fields.iter().enumerate() {
+        let place = format!("{}.{}", param, accessor);
+        match subpats.get(i) {
+            Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
+                t.report_match_gap(
+                    match_expr,
+                    format!(
+                        "this arm tests inside the payload of `{}`, and the runtime's match dispatches \
+                         on the variant alone with no later arm to fall through to, so the \
+                         inner test is not made and the arm runs for every `{}`",
+                        accessor, accessor
+                    ),
+                );
+                let (_, bind) = t.pattern_test(&place, sub);
+                text.push_str(&bind);
+                bound_keys.push(accessor.clone());
+                names.extend(crate::body::pattern_names(sub));
             }
-        })
-        .collect()
+            _ => {
+                if local == "_" {
+                    continue;
+                }
+                text.push_str(&format!("const {} = {};\n", local, place));
+                bound_keys.push(accessor.clone());
+                names.push(local.clone());
+            }
+        }
+    }
+    (text, bound_keys, names)
 }
 
 /// The variant a pattern names and the payload slots it takes out of it, as
@@ -797,57 +1017,90 @@ fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)>)> {
     }
 }
 
+/// One arm of a `.match({..})`, as the pieces the two callers assemble it from.
+///
+/// `enum_match_over` writes an arm the source named; `catch_all` writes one per
+/// variant the source left to its `_`. Both need the same decisions made the
+/// same way — whether the arm's value needs a `return`, whether its releases
+/// need a block, whether it is `async` — so both build one of these and hand it
+/// to `render_arm`. The catch-all used to format its arms itself and lost the
+/// match's value in every position but the enclosing function's return.
+pub(super) struct ArmParts<'a> {
+    /// The key the runtime's match dispatches on.
+    pub variant: &'a str,
+    /// What the arm declares before its body: the drop flags a hand-away owes,
+    /// and the names the arm takes out of the value it was given.
+    pub bindings: String,
+    /// The payload parameter, where the arm takes one.
+    pub param: Option<String>,
+    pub body: &'a str,
+    pub owned: &'a [crate::ownership::Owned],
+    pub lifted: &'a [crate::ownership::Hoist],
+    /// Whether the match hands a value back at all.
+    pub produces: bool,
+    pub is_async: bool,
+    /// What this arm's outermost `finally` says about the parts of the payload
+    /// no name took. A consuming arm owns the whole payload from the moment it
+    /// is called — `intoMatch` releases nothing of its own, on any path — so an
+    /// arm that binds only some of it releases the rest here.
+    pub release_rest: String,
+}
+
 /// One arm of a `.match({..})`.
 ///
 /// The payload's names are declared inside the arm, from the value the arm is
 /// handed. They used to be substituted into the rendered TypeScript by walking
 /// its characters, which could not tell a binding from the same word inside a
 /// string literal or a comment, and knew nothing of a name shadowed further in.
-#[allow(clippy::too_many_arguments)]
-fn render_arm(
-    variant: &str,
-    fields: &[(String, String)],
-    body: &str,
-    flags: &str,
-    owned: &[crate::ownership::Owned],
-    lifted: &[crate::ownership::Hoist],
-    t: &BodyTranslator,
-    produces: bool,
-    is_async: bool,
-) -> String {
-    // The arm's parameter must not collide with a name the pattern binds.
-    let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
+pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
+    let ArmParts { variant, bindings, param, body, owned, lifted, produces, is_async, release_rest } = parts;
     // An arm is an arrow function, and JavaScript's `await` belongs to the
     // nearest one — so an arm that awaits is `async`, and the whole `.match`
     // is awaited where it stands.
     let keyword = if is_async { "async " } else { "" };
-    let head = if fields.is_empty() {
-        format!("  {}: {}() => ", variant, keyword)
-    } else {
-        format!("  {}: {}({}) => ", variant, keyword, param)
+    let head = match &param {
+        Some(param) => format!("  {}: {}({}) => ", variant, keyword, param),
+        None => format!("  {}: {}() => ", variant, keyword),
     };
-    let mut bindings = String::from(flags);
-    for (local, accessor) in fields {
-        if local == "_" {
-            continue;
-        }
-        bindings.push_str(&format!("const {} = {}.{};\n", local, param, accessor));
-    }
-    if owned.is_empty() && lifted.is_empty() {
+    if owned.is_empty() && lifted.is_empty() && release_rest.is_empty() {
         return format!("{}{},\n", head, as_arm_value(body, &bindings, produces));
     }
-    // An arm that owns what it was handed, or that lifted a declaration out of
-    // its own body, is always a block: the release goes in a `finally`, so the
-    // arm cannot be the bare expression form.
-    let inner = t.wrap_bindings(
+    // An arm that owns what it was handed, that lifted a declaration out of its
+    // own body, or that owes the payload a release, is always a block: the
+    // release goes in a `finally`, so the arm cannot be the bare expression
+    // form.
+    let mut inner = t.wrap_bindings(
         owned,
         crate::ownership::hoisted(&arm_statements(body, produces), lifted),
     );
+    if !release_rest.is_empty() {
+        inner = format!("try {{\n{}}} finally {{\n{}}}\n", indent(&inner), indent(&release_rest));
+    }
     format!(
         "{}{{\n{}  }},\n",
         head,
         indent(&indent(&format!("{}{}", bindings, inner)))
     )
+}
+
+/// Does this pattern leave part of the variant's payload with no name?
+///
+/// Rust makes a tuple or struct pattern name every slot unless it writes `..`,
+/// so the only unnamed parts are the ones the source wrote `_` for and the ones
+/// a `..` stands in for. A consuming arm owes those a release, because nothing
+/// else holds them any more.
+fn leaves_payload_unbound(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::TupleStruct(ts) => ts.elems.iter().any(|p| {
+            matches!(p, syn::Pat::Rest(_)) || BodyTranslator::binds_nothing(p)
+        }),
+        syn::Pat::Struct(st) => {
+            st.rest.is_some() || st.fields.iter().any(|f| BodyTranslator::binds_nothing(&f.pat))
+        }
+        // `E::Unit` names a variant with no payload: Rust rejects the path form
+        // for a variant that carries one.
+        _ => false,
+    }
 }
 
 /// An arm body as statements: its own control flow where it has some, and

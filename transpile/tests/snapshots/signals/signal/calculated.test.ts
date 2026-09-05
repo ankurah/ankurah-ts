@@ -43,7 +43,7 @@ describe('calculated unit tests', () => {
       const count = Arc.new(0);
       return () => {
         const _ = trigger.get();
-        return count.fetchAdd(1, undefined /* Ordering */.SeqCst) + 1;
+        return count.fetchAdd(1, undefined /* atomic Ordering::SeqCst */) + 1;
       };
     })(trigger.read()));
     expect(counter.get()).toEqual(1);
@@ -62,10 +62,10 @@ describe('calculated unit tests', () => {
     const callCountRef = callCount.clone();
     const _sub = doubled.subscribe((value) => {
       expect(value).toEqual(20);
-      callCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
+      callCountRef.fetchAdd(1, undefined /* atomic Ordering::SeqCst */);
     });
     source.set(10);
-    expect(callCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
+    expect(callCount.load(undefined /* atomic Ordering::SeqCst */)).toEqual(1);
   });
 
   test('test_chained_calculated', () => {
@@ -86,22 +86,22 @@ describe('calculated unit tests', () => {
     const computeCountRef = computeCount.clone();
     const doubled = Calculated.new(((source) => {
       return () => {
-        computeCountRef.fetchAdd(1, undefined /* Ordering */.SeqCst);
+        computeCountRef.fetchAdd(1, undefined /* atomic Ordering::SeqCst */);
         return source.get() * 2;
       };
     })(source.read()));
     expect(doubled.get()).toEqual(2);
-    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(1);
+    expect(computeCount.load(undefined /* atomic Ordering::SeqCst */)).toEqual(1);
     const unrelatedRead = unrelated.read();
     const _sub = doubled.subscribe((_value) => {
       const _ = unrelatedRead.get();
     });
     source.set(2);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(2);
+    expect(computeCount.load(undefined /* atomic Ordering::SeqCst */)).toEqual(2);
     unrelated.set(200);
     expect(doubled.get()).toEqual(4);
-    expect(computeCount.load(undefined /* Ordering */.SeqCst)).toEqual(2);
+    expect(computeCount.load(undefined /* atomic Ordering::SeqCst */)).toEqual(2);
   });
 
 });

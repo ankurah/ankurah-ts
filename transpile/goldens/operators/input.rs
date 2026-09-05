@@ -71,3 +71,161 @@ pub fn heavier(a: Weight, b: Weight) -> bool {
     let total = a + b;
     total.grams > 100
 }
+
+/// An impl written for REFERENCES is an impl of its own: Rust looks operator
+/// impls up on the exact operand types, never through a reference and never
+/// through `Deref`. Looking this one up with the references peeled off missed
+/// it, and what stood was the JavaScript `+` between two objects.
+pub struct Left {
+    pub grams: u64,
+}
+
+pub struct Right {
+    pub grams: u64,
+}
+
+impl std::ops::Add<&Right> for &Left {
+    type Output = u64;
+    fn add(self, rhs: &Right) -> u64 {
+        self.grams + rhs.grams
+    }
+}
+
+pub fn borrowed_sum(a: &Left, b: &Right) -> u64 {
+    a + b
+}
+
+/// A heterogeneous `Rhs` whose type is only known from a LATER local. The move
+/// scan runs before that local has a type, and guessing `Rhs = Self` found no
+/// impl at all — so nothing marked the left operand moved, `add` consumed it,
+/// and the block released it again.
+pub struct Parcel {
+    pub grams: u64,
+}
+
+impl std::ops::Add<Right> for Parcel {
+    type Output = u64;
+    fn add(self, rhs: Right) -> u64 {
+        self.grams + rhs.grams
+    }
+}
+
+pub fn later_local(parcel: Parcel) -> u64 {
+    let right = Right { grams: 2 };
+    parcel + right
+}
+
+/// A generic impl says what it answers in terms of its own parameters, and the
+/// match that selected it says which ones this site has. Refusing every generic
+/// impl left the result local untyped, so nothing released what it held.
+pub struct Boxed<T> {
+    pub value: T,
+}
+
+impl<T> std::ops::Add for Boxed<T> {
+    type Output = Boxed<T>;
+    fn add(self, rhs: Boxed<T>) -> Boxed<T> {
+        rhs
+    }
+}
+
+pub fn generic_sum(a: Boxed<u64>, b: Boxed<u64>) -> u64 {
+    let result = a + b;
+    result.value
+}
+
+/// Rust's `&` and `|` on booleans evaluate both operands; `&&` and `||` do not.
+/// The two agree in value and differ in what runs, so an operand that records
+/// something recorded it in Rust and did not here.
+pub fn eager_and(flag: bool, seen: &mut Vec<u32>) -> bool {
+    flag & note(seen)
+}
+
+pub fn eager_or(flag: bool, seen: &mut Vec<u32>) -> bool {
+    flag | note(seen)
+}
+
+fn note(seen: &mut Vec<u32>) -> bool {
+    seen.push(1);
+    true
+}
+
+/// Rust's float-to-integer `as` SATURATES at the target's bounds and answers 0
+/// for a NaN — including into `u64` and `i64`, where the port truncated and
+/// then kept the low bits, and where `BigInt(NaN)` threw outright.
+pub fn to_u64(f: f64) -> u64 {
+    f as u64
+}
+
+pub fn to_i64(f: f64) -> i64 {
+    f as i64
+}
+
+/// Every `f32` destination rounds to single precision, whatever the source is.
+pub fn to_f32(v: u64) -> f32 {
+    v as f32
+}
+
+/// A compound bit operation is the operation and then the assignment, and its
+/// result needs the same wrapping the expression form gets.
+pub fn shift_assign_32(mut value: u32) -> u32 {
+    value <<= 31;
+    value
+}
+
+pub fn shift_assign_8(mut value: u8) -> u8 {
+    value <<= 7;
+    value
+}
+
+/// A `<<` on a bigint grows without bound where Rust keeps the low bits.
+pub fn shift_64(value: u64) -> u64 {
+    value << 1
+}
+
+/// A bigint shift beside a literal the engine typed one way and the literal
+/// emitter wrote the other: inside a tuple this threw `Cannot mix BigInt and
+/// other types`.
+pub fn shifts(a: u32, b: u8, c: u64) -> (u32, u8, u64) {
+    (a << 31, b << 4, c << 40)
+}
+
+/// The unary operators and indexing resolve through their impls exactly as the
+/// binary ones do. `-object` is `NaN` and `object[0]` is `undefined`, and the
+/// port used to write both without a word.
+pub struct Charge {
+    pub amount: i32,
+}
+
+impl std::ops::Neg for Charge {
+    type Output = Charge;
+    fn neg(self) -> Charge {
+        Charge { amount: -self.amount }
+    }
+}
+
+impl std::ops::Not for Charge {
+    type Output = Charge;
+    fn not(self) -> Charge {
+        Charge { amount: !self.amount }
+    }
+}
+
+impl std::ops::Index<usize> for Charge {
+    type Output = i32;
+    fn index(&self, _at: usize) -> &i32 {
+        &self.amount
+    }
+}
+
+pub fn charge_negated(c: Charge) -> Charge {
+    -c
+}
+
+pub fn complemented(c: Charge) -> Charge {
+    !c
+}
+
+pub fn indexed(c: &Charge) -> i32 {
+    c[0]
+}

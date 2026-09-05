@@ -34,6 +34,7 @@ enum Operand {
 
 /// One operator: the trait it resolves through, that trait's method, and the
 /// text that stands between the two operands when both are primitives.
+#[derive(Clone)]
 struct Operator {
     /// Where the trait is declared, so the impl table can be asked for it.
     trait_path: String,
@@ -70,6 +71,8 @@ fn operator_of(op: &syn::BinOp) -> Option<Operator> {
         BitXorAssign(_) => ("BitXorAssign", "bitxor_assign", "^="),
         BitAndAssign(_) => ("BitAndAssign", "bitand_assign", "&="),
         BitOrAssign(_) => ("BitOrAssign", "bitor_assign", "|="),
+        ShlAssign(_) => ("ShlAssign", "shl_assign", "<<="),
+        ShrAssign(_) => ("ShrAssign", "shr_assign", ">>="),
         _ => return None,
     };
     let trait_path = match trait_name {
@@ -153,7 +156,7 @@ impl BodyTranslator<'_> {
             | (Operand::Number(_), Operand::Native) => {
                 self.boolean_operator(&op, &lhs, &rhs, left, right, &bin.right, span)
             }
-            _ => self.overloaded_operator(&op, lhs.peel_refs(), rhs.peel_refs(), left, right, span),
+            _ => self.overloaded_operator(&op, &lhs, &rhs, left, right, span),
         }
     }
 
@@ -328,20 +331,21 @@ impl BodyTranslator<'_> {
         .ok();
         // This runs while the block's parameters are being claimed, which is
         // before the block's own `let`s have been translated — so the right
-        // operand is often a local the type context has not met yet. Rust's
-        // operator traits default `Rhs` to `Self`, and every operator impl in
-        // the corpus takes that default, so the left operand's type stands in
-        // for it. Where that guess finds no impl nothing is marked, and where
-        // it finds the wrong one the answer is "moved", which the memo's rule
-        // already prefers: a value moved and dropped anyway corrupts the
-        // program, and a value kept and not dropped is a leak the registry
-        // reports.
+        // operand is often a local the type context has not met yet. Guessing
+        // `Rhs = Self` found no impl at all for `impl Add<Right> for Left`, so
+        // nothing marked `left` moved, `add` consumed it, and the block
+        // released it again. Where the right operand is unknown the impl is
+        // looked up by the LEFT one alone, which answers whenever the trait has
+        // one impl for that self type — and which side it takes on the right
+        // cannot then change the answer.
         let Some(lhs) = lhs else {
             return (false, false);
         };
-        let rhs = rhs.unwrap_or_else(|| lhs.clone());
         if !matches!(
-            (self.operand_kind(&lhs), self.operand_kind(&rhs)),
+            (
+                self.operand_kind(&lhs),
+                rhs.as_ref().map(|ty| self.operand_kind(ty)).unwrap_or(Operand::Object)
+            ),
             (Operand::Object, _) | (_, Operand::Object)
         ) {
             return (false, false);
@@ -349,21 +353,49 @@ impl BodyTranslator<'_> {
         // A reference is never moved out of, whatever the impl does with the
         // value behind it: `&a + &b` leaves both where they were.
         let left_is_ref = matches!(lhs, Ty::Ref { .. });
-        let right_is_ref = matches!(rhs, Ty::Ref { .. });
+        let right_is_ref = rhs.as_ref().is_some_and(|ty| matches!(ty, Ty::Ref { .. }));
         let tc = tc.borrow();
-        let Ok(found) = tc.probe().operator_impl(&op.trait_path, lhs.peel_refs(), rhs.peel_refs())
-        else {
+        let candidates: Vec<crate::registry::Conversion> = match &rhs {
+            Some(rhs) => tc.probe().operator_impl(&op.trait_path, &lhs, rhs).ok().into_iter().collect(),
+            None => tc.probe().operator_impls_by_self(&op.trait_path, &lhs),
+        };
+        // Every candidate has to agree, or the answer is not known. Where the
+        // right operand is a local the scan has not met, the left type may
+        // carry several impls of the trait — `impl Add for Weight` beside
+        // `impl Add<Right> for Weight` — and they agree about the operands in
+        // every corpus shape, because Rust's operator traits take both by
+        // value. Where they do not agree the site says so.
+        let dispositions: Vec<(bool, bool)> = candidates
+            .iter()
+            .filter_map(|found| {
+                let def = tc.registry.impl_def(found.impl_id);
+                let method = def.methods.get(op.rust_method)?;
+                let takes_self = matches!(method.self_kind, Some(crate::types::SelfKind::Value));
+                let takes_rhs = method
+                    .params
+                    .first()
+                    .is_some_and(|(_, ty)| !matches!(ty, Ty::Ref { .. }));
+                Some((takes_self, takes_rhs))
+            })
+            .collect();
+        let Some(first) = dispositions.first().copied() else {
             return (false, false);
         };
-        let def = tc.registry.impl_def(found.impl_id);
-        let Some(method) = def.methods.get(op.rust_method) else {
-            return (false, false);
-        };
-        let takes_self = matches!(method.self_kind, Some(crate::types::SelfKind::Value));
-        let takes_rhs = method
-            .params
-            .first()
-            .is_some_and(|(_, ty)| !matches!(ty, Ty::Ref { .. }));
+        if dispositions.iter().any(|d| *d != first) {
+            drop(tc);
+            self.fallback(
+                syn::spanned::Spanned::span(bin),
+                format!(
+                    "`{}` here resolves to one of several `{}` impls written for the left \
+                     operand, and they do not agree about which operands they consume, so \
+                     whether the block still owns them is not decided; both are treated as \
+                     moved, which leaks rather than releasing twice",
+                    op.native, op.trait_name
+                ),
+            );
+            return (!left_is_ref, !right_is_ref);
+        }
+        let (takes_self, takes_rhs) = first;
         (takes_self && !left_is_ref, takes_rhs && !right_is_ref)
     }
 }
@@ -374,9 +406,13 @@ impl BodyTranslator<'_> {
     /// converts both to numbers and hands back `0` or `1` — a value that is
     /// neither `true` nor `false` and compares equal to neither.
     ///
-    /// Rust evaluates both operands of `&` and `|`; `&&` and `||` do not. The
-    /// two agree in value, and differ where the right operand does something on
-    /// its own, so a right operand that is not a place is reported.
+    /// Rust evaluates both operands of `&` and `|`; `&&` and `||` do not. They
+    /// agree in value and differ in what runs, so a right operand that logs,
+    /// mutates or advances an iterator happened in Rust and did not happen
+    /// here. A call evaluates both of its arguments, left to right, exactly
+    /// once — so the two operators are calls on the runtime's `boolAnd` and
+    /// `boolOr`, and there is nothing left to report. `^` is already eager and
+    /// already a boolean, so it stays an expression.
     fn boolean_operator(
         &self,
         op: &Operator,
@@ -384,32 +420,176 @@ impl BodyTranslator<'_> {
         rhs: &Ty,
         left: &str,
         right: &str,
-        right_expr: &syn::Expr,
-        span: proc_macro2::Span,
+        _right_expr: &syn::Expr,
+        _span: proc_macro2::Span,
     ) -> Option<String> {
         let both_bool = matches!(lhs.peel_refs(), Ty::Prim(Prim::Bool))
             && matches!(rhs.peel_refs(), Ty::Prim(Prim::Bool));
         if !both_bool {
             return None;
         }
-        let written = match op.native {
-            "^" => format!("{} !== {}", left, right),
-            "&" => format!("{} && {}", left, right),
-            "|" => format!("{} || {}", left, right),
-            _ => return None,
+        match op.native {
+            "^" => Some(format!("{} !== {}", left, right)),
+            "&" => Some(format!("boolAnd({}, {})", left, right)),
+            "|" => Some(format!("boolOr({}, {})", left, right)),
+            _ => None,
+        }
+    }
+}
+
+/// The unary and indexing operators, which resolve through an impl exactly as
+/// the binary ones do.
+///
+/// For: `-a`, `!a`, `a[i]` and `*a` are method calls in Rust whenever the
+/// operand is not a primitive — `impl Neg for Weight` is `Weight::neg` — and
+/// the port wrote the JavaScript operator instead. `-object` is `NaN`,
+/// `object[0]` is `undefined`, and neither said anything.
+impl BodyTranslator<'_> {
+    /// `-a` where `a` is not a number: the `Neg` impl's method.
+    pub(crate) fn unary_neg(&self, unary: &syn::ExprUnary, written: &str) -> Option<String> {
+        let ty = self.quietly(|| self.resolve_expr_type(&unary.expr)).ok()?;
+        if matches!(self.operand_kind(&ty), Operand::Number(_)) {
+            return None;
+        }
+        self.unary_through("std::ops::Neg", "Neg", "neg", &ty, written, "-", syn::spanned::Spanned::span(unary))
+    }
+
+    /// `!a` where `a` is neither a boolean nor an integer: the `Not` impl's.
+    pub(crate) fn unary_not_impl(&self, unary: &syn::ExprUnary, written: &str) -> Option<String> {
+        let ty = self.quietly(|| self.resolve_expr_type(&unary.expr)).ok()?;
+        self.unary_through("std::ops::Not", "Not", "not", &ty, written, "!", syn::spanned::Spanned::span(unary))
+    }
+
+    /// `a[i]` where `a` is not a JavaScript sequence: the `Index` impl's.
+    pub(crate) fn index_through_impl(&self, base: &syn::Expr, base_ts: &str, index: &str) -> Option<String> {
+        let ty = self.quietly(|| self.resolve_expr_type(base)).ok()?;
+        // An array, a `Uint8Array`, a `Map` and a string are indexed the way
+        // JavaScript indexes them; the impl table is for everything else.
+        use crate::name_map::shape::{js_shape, JsShape};
+        let tc = self.types.as_ref()?;
+        let shape = js_shape(tc.borrow().registry, ty.peel_refs());
+        if !matches!(shape, JsShape::Plain) {
+            return None;
+        }
+        let found = {
+            let tc = tc.borrow();
+            tc.probe().operator_impls_by_self("std::ops::Index", ty.peel_refs())
         };
-        if matches!(op.native, "&" | "|") && !crate::body::is_place(right_expr) {
+        let Some(found) = found.first() else {
+            self.fallback(
+                syn::spanned::Spanned::span(base),
+                format!(
+                    "`[..]` on `{}` resolves through `Index`, and no impl in the table performs \
+                     it; the JavaScript index is written, which reads a property that is not there",
+                    self.describe(&ty)
+                ),
+            );
+            return None;
+        };
+        let member = {
+            let tc = tc.borrow();
+            let def = tc.registry.impl_def(found.impl_id);
+            let args: Vec<String> = def
+                .trait_ref
+                .as_ref()
+                .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(tc.registry, ty)).collect())
+                .unwrap_or_default();
+            crate::emit::impl_method_name("Index", "index", "index", &args, "")
+        };
+        Some(format!("{}.{}({})", base_ts, member, index))
+    }
+
+    /// One unary operator through its trait, or the reason there is none.
+    #[allow(clippy::too_many_arguments)]
+    fn unary_through(
+        &self,
+        trait_path: &str,
+        trait_name: &str,
+        rust_method: &str,
+        ty: &Ty,
+        written: &str,
+        native: &str,
+        span: proc_macro2::Span,
+    ) -> Option<String> {
+        if !matches!(self.operand_kind(ty), Operand::Object) {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let found = {
+            let tc = tc.borrow();
+            tc.probe().operator_impls_by_self(trait_path, ty.peel_refs())
+        };
+        let Some(found) = found.first() else {
             self.fallback(
                 span,
                 format!(
-                    "`{}` between booleans evaluates both sides in Rust, and the port writes it \
-                     as `{}`, which does not evaluate the right one when the left has already \
-                     decided; what the right side does on its own does not happen",
-                    op.native,
-                    if op.native == "&" { "&&" } else { "||" }
+                    "`{}` on `{}` resolves through `{}`, and no impl in the table performs it; \
+                     the JavaScript operator is written, which does something else entirely",
+                    native,
+                    self.describe(ty),
+                    trait_name
                 ),
             );
+            return None;
+        };
+        let tc = tc.borrow();
+        let def = tc.registry.impl_def(found.impl_id);
+        if !crate::emit_impls::has_emitted_class(tc.registry, &def.self_ty) {
+            drop(tc);
+            self.fallback(
+                span,
+                format!(
+                    "`{}` on `{}` resolves through `{}`, and the operand has no class of its own \
+                     for the method to be on",
+                    native,
+                    self.describe(ty),
+                    trait_name
+                ),
+            );
+            return None;
         }
-        Some(written)
+        let member = crate::name_map::to_camel_case(rust_method);
+        Some(format!("{}.{}()", written, member))
+    }
+
+    /// How a diagnostic names a type.
+    fn describe(&self, ty: &Ty) -> String {
+        match &self.types {
+            Some(tc) => tc.borrow().registry.describe(ty),
+            None => "the operand".to_string(),
+        }
+    }
+}
+
+/// Which unary operators take their operand away from the block that held it.
+impl BodyTranslator<'_> {
+    /// Does the impl behind `-a`, `!a` or `*a` consume `a`?
+    ///
+    /// Rust's `Neg`, `Not` and the assignment-free unary traits take `self` by
+    /// value, so the call releases the operand and the block must not release
+    /// it again. `Deref` takes `&self` and consumes nothing.
+    pub(crate) fn unary_takes(&self, unary: &syn::ExprUnary) -> bool {
+        let trait_path = match unary.op {
+            syn::UnOp::Neg(_) => "std::ops::Neg",
+            syn::UnOp::Not(_) => "std::ops::Not",
+            _ => return false,
+        };
+        let Some(tc) = &self.types else { return false };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(&unary.expr)) else {
+            return false;
+        };
+        // A reference is never moved out of, and a primitive has no impl.
+        if matches!(ty, Ty::Ref { .. }) || !matches!(self.operand_kind(&ty), Operand::Object) {
+            return false;
+        }
+        let tc = tc.borrow();
+        let found = tc.probe().operator_impls_by_self(trait_path, ty.peel_refs());
+        let Some(found) = found.first() else { return false };
+        let def = tc.registry.impl_def(found.impl_id);
+        let method = match unary.op {
+            syn::UnOp::Neg(_) => def.methods.get("neg"),
+            _ => def.methods.get("not"),
+        };
+        method.is_some_and(|m| matches!(m.self_kind, Some(crate::types::SelfKind::Value)))
     }
 }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, HashMap, HashSet, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -16,6 +16,11 @@ export class BroadcastId extends Struct {
   equals(other: BroadcastId): boolean {
     if (this._0 !== other._0) return false;
     return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [keyHash(this._0)].join('|');
   }
 
   compareTo(other: BroadcastId): number {
@@ -42,7 +47,7 @@ export class Broadcast<T extends Clone = void> extends Struct {
   }
 
   static new<T>(): Broadcast<T> {
-    return new Broadcast(Arc.new(new Inner(new RwLock(new Map()), 0)));
+    return new Broadcast(Arc.new(new Inner(new RwLock(new HashMap()), 0)));
   }
 
   id(): BroadcastId {
@@ -111,10 +116,10 @@ export class Broadcast<T extends Clone = void> extends Struct {
 }
 
 class Inner<T> extends Struct {
-  listeners: RwLock<Map<number, BroadcastListener<T>>>;
+  listeners: RwLock<HashMap<number, BroadcastListener<T>>>;
   nextId: number;
 
-  constructor(listeners: RwLock<Map<number, BroadcastListener<T>>>, nextId: number) {
+  constructor(listeners: RwLock<HashMap<number, BroadcastListener<T>>>, nextId: number) {
     super();
     this.listeners = listeners;
     this.nextId = nextId;
@@ -251,8 +256,8 @@ export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListe
 export function IntoBroadcastListener_dispatch_intoBroadcastListener<T>(self: unknown): BroadcastListener<T> {
   if (typeof self === 'function' || self instanceof OwnedClosure) return intoBroadcastListener(self as any);
   if (self instanceof BroadcastListener) return (self as any).intoBroadcastListener();
-  if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 1) return Arc_Fn1_intoBroadcastListener(self as any);
-  if (self instanceof Arc && typeof self.value === 'function' && self.value.length === 0) return Arc_Fn0_intoBroadcastListener(self as any);
+  if (self instanceof Arc && ((typeof self.value === 'function' && self.value.length === 1) || (self.value instanceof OwnedClosure && self.value.$arity === 1))) return Arc_Fn1_intoBroadcastListener(self as any);
+  if (self instanceof Arc && ((typeof self.value === 'function' && self.value.length === 0) || (self.value instanceof OwnedClosure && self.value.$arity === 0))) return Arc_Fn0_intoBroadcastListener(self as any);
   if (self instanceof UnboundedSender) return UnboundedSender_intoBroadcastListener(self as any);
   if (self instanceof Sender) return Sender_intoBroadcastListener(self as any);
   throw new Error(`BUG: no IntoBroadcastListener impl for ${(self as object)?.constructor?.name ?? typeof self}`);

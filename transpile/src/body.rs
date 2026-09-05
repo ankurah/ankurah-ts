@@ -24,6 +24,47 @@ fn is_write_macro(expr: &syn::Expr) -> bool {
     }
 }
 
+/// Does this formatter body COMPOSE, or does every path through it write once?
+///
+/// `fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}", self.0) }`
+/// composes nothing: the one write IS the string, and so is each arm of a
+/// `match self { .. }` whose arms each write once. Those need no accumulator,
+/// and the method stays the expression it always was. A body that writes twice
+/// in sequence needs one, and it is the only thing that does.
+pub fn writes_once_at_the_tail(block: &syn::Block) -> bool {
+    matches!(block.stmts.as_slice(), [syn::Stmt::Expr(expr, None)] if writes_once(expr))
+}
+
+fn writes_once(expr: &syn::Expr) -> bool {
+    match expr {
+        _ if as_write_macro(expr).is_some() => true,
+        syn::Expr::Match(m) => m.arms.iter().all(|arm| writes_once(&arm.body)),
+        syn::Expr::If(if_expr) => {
+            single_block_expr(&if_expr.then_branch).is_some_and(writes_once)
+                && if_expr.else_branch.as_ref().is_some_and(|(_, e)| writes_once(e))
+        }
+        syn::Expr::Block(block) => writes_once_at_the_tail(&block.block),
+        syn::Expr::Paren(p) => writes_once(&p.expr),
+        _ => false,
+    }
+}
+
+/// Is this macro a `write!` or a `writeln!`?
+fn is_write_macro_path(mac: &syn::Macro) -> bool {
+    let name = mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+    matches!(name.as_str(), "write" | "writeln")
+}
+
+/// The `write!`/`writeln!` an expression is, through the `?` it may carry.
+pub(crate) fn as_write_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
+    match expr {
+        syn::Expr::Try(try_expr) => as_write_macro(&try_expr.expr),
+        syn::Expr::Paren(p) => as_write_macro(&p.expr),
+        _ if is_write_macro(expr) => extract_macro(expr),
+        _ => None,
+    }
+}
+
 /// Extract the Macro from an expression (for write! detection)
 fn extract_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
     if let syn::Expr::Macro(mac) = expr {
@@ -80,11 +121,11 @@ pub fn indent(s: &str) -> String {
 /// which is what an expectation is matched against.
 type Position = ((usize, usize), (usize, usize));
 
-fn position_of(expr: &syn::Expr) -> Position {
+pub(crate) fn position_of(expr: &syn::Expr) -> Position {
     span_position(syn::spanned::Spanned::span(expr))
 }
 
-fn span_position(span: proc_macro2::Span) -> Position {
+pub(crate) fn span_position(span: proc_macro2::Span) -> Position {
     let (start, end) = (span.start(), span.end());
     ((start.line, start.column), (end.line, end.column))
 }
@@ -131,6 +172,33 @@ pub struct BodyTranslator<'a> {
     /// translated before its parent, and it must not take an answer meant for
     /// the parent.
     expecting: std::cell::RefCell<Option<(Position, crate::ty::Ty)>>,
+    /// Is this body a formatter's — `Display::fmt` or `Debug::fmt`, whose
+    /// `write!(f, ..)` calls compose one string?
+    ///
+    /// Rust's `fmt` writes into the formatter it was handed and answers
+    /// `Ok(())`; TypeScript's `toString()` answers the string. So the body
+    /// opens an accumulator, every `write!` appends to it, and `Ok(())` — the
+    /// value Rust's `fmt` ends with — IS the accumulator.
+    pub formatter: bool,
+    /// The method call whose value the statement being written throws away,
+    /// as the position of its method name.
+    ///
+    /// Rust's `HashMap::insert` answers the value it displaced and hands
+    /// ownership of it to the caller; a statement that discards the answer
+    /// leaves the container to release it, which is a different runtime method.
+    /// The decision is the statement's, and the call is written well below it.
+    discarded_call: std::cell::Cell<Option<(usize, usize)>>,
+    /// While an arm of a CONSUMING match is being written, the jump it
+    /// performs is handed back to the caller instead of being written where it
+    /// stands: an arm of `intoMatch` is a function, and `break` cannot leave
+    /// one — `return break` does not even parse. The caller reads the sentinel
+    /// and performs the jump itself.
+    pub(crate) jump_as_value: std::cell::Cell<bool>,
+    /// Whether anything in this body actually named the accumulator. A `Debug`
+    /// written with `f.debug_struct(..)` and a `Display` that hands the writing
+    /// to a closure both write nothing of their own, and declaring an
+    /// accumulator nothing appends to is a line that says something untrue.
+    wrote_result: std::cell::Cell<bool>,
     /// The identifier Rust's `self` is emitted as in this body.
     ///
     /// A method on an emitted class writes `this`. A method whose impl is
@@ -153,6 +221,10 @@ impl<'a> BodyTranslator<'a> {
             owns_self: false,
             own: Default::default(),
             expecting: std::cell::RefCell::new(None),
+            formatter: false,
+            discarded_call: std::cell::Cell::new(None),
+            jump_as_value: std::cell::Cell::new(false),
+            wrote_result: std::cell::Cell::new(false),
             self_name: "this",
         }
     }
@@ -168,654 +240,11 @@ impl<'a> BodyTranslator<'a> {
             owns_self: false,
             own: Default::default(),
             expecting: std::cell::RefCell::new(None),
+            formatter: false,
+            discarded_call: std::cell::Cell::new(None),
+            jump_as_value: std::cell::Cell::new(false),
+            wrote_result: std::cell::Cell::new(false),
             self_name: "this",
-        }
-    }
-
-    /// Translate one expression with the type its position wants of it.
-    ///
-    /// The expectation reaches that expression and nothing else: it is put back
-    /// as it was afterwards, so a position that supplies one inside another
-    /// does not leave it standing.
-    pub(crate) fn expecting<T>(
-        &self,
-        expr: &syn::Expr,
-        want: Option<&crate::ty::Ty>,
-        translate: impl FnOnce() -> T,
-    ) -> T {
-        let held = self
-            .expecting
-            .replace(want.map(|ty| (position_of(expr), ty.clone())));
-        let written = translate();
-        *self.expecting.borrow_mut() = held;
-        written
-    }
-
-    /// The type this expression's position wants of it, where the position
-    /// said one.
-    pub(crate) fn expectation_for(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
-        self.expectation_at(syn::spanned::Spanned::span(expr))
-    }
-
-    /// The same, asked by span, for a translation that has the span but no
-    /// longer holds the expression it came from.
-    pub(crate) fn expectation_at(&self, span: proc_macro2::Span) -> Option<crate::ty::Ty> {
-        let slot = self.expecting.borrow();
-        let (at, ty) = slot.as_ref()?;
-        (*at == span_position(span)).then(|| ty.clone())
-    }
-
-    /// The registry this body is translated against, where there is one.
-    ///
-    /// The type context holds it by shared reference for the whole run, so it
-    /// comes out of the borrow rather than staying inside it.
-    pub(crate) fn registry(&self) -> Option<&'a crate::registry::TypeRegistry> {
-        self.types.as_ref().map(|tc| tc.borrow().registry)
-    }
-
-    /// Resolve the type of an expression, or say why not.
-    pub(crate) fn resolve_expr_type(&self, expr: &syn::Expr) -> Result<crate::ty::Ty, crate::diag::Diag> {
-        let expected = self.expectation_for(expr);
-        match &self.types {
-            Some(tc) => tc.borrow().resolve_expr_expecting(expr, expected.as_ref()),
-            None => Err(crate::diag::Diag {
-                file: String::new(),
-                line: 0,
-                col: 0,
-                message: "no type context on this translation path".to_string(),
-            }),
-        }
-    }
-
-    /// The one place a retained fallback is recorded.
-    ///
-    /// The engine could not type this site, so the translator does what it did
-    /// before and this says what was given up. Every fallback that survives
-    /// into this step goes through here, which is what makes the diagnostics
-    /// count a coverage measure rather than a sample. The fail-loud step turns
-    /// these into errors and deletes the fallbacks.
-    pub(crate) fn fallback(&self, span: proc_macro2::Span, message: impl Into<String>) {
-        match &self.types {
-            Some(tc) => tc.borrow().sink.report(span, message),
-            // A translation path with no type context has no sink either; the
-            // fallback waits there until the caller that owns the file drains it.
-            None => crate::diag::pending::park(span, message.into()),
-        }
-    }
-
-
-    /// Take a resolved answer, or record the fallback taken instead of it.
-    pub(crate) fn or_fallback<T>(&self, result: Result<T, crate::diag::Diag>, instead: &str) -> Option<T> {
-        match result {
-            Ok(value) => Some(value),
-            Err(diag) => {
-                let message = format!("{}; {}", diag.message, instead);
-                // A refusal raised where there is no type context carries no
-                // position; the sites on those paths report for themselves,
-                // with the span they do have.
-                if let Some(tc) = &self.types {
-                    tc.borrow().sink.push(crate::diag::Diag { message, ..diag });
-                }
-                None
-            }
-        }
-    }
-
-    /// Is a `let` of this name here a second declaration in the same block?
-    /// JavaScript refuses that, and the translator writes an assignment instead.
-    pub(crate) fn redeclares_here(&self, name: &str) -> bool {
-        self.types.as_ref().map(|tc| tc.borrow().redeclares(name)).unwrap_or(false)
-    }
-
-    /// Bind a variable in the current TypeContext scope.
-    pub fn bind_var(&self, name: &str, ty: crate::ty::Ty) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().bind(name, ty);
-        }
-    }
-
-    /// Bind a name whose type is not known, so that it still shadows.
-    pub(crate) fn bind_untyped(&self, name: &str) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().bind_untyped(name);
-        }
-    }
-
-    /// Push a block scope in the TypeContext.
-    pub fn push_block(&self) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().push_block();
-        }
-    }
-
-    /// Pop scope in the TypeContext.
-    pub fn pop_scope(&self) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().pop();
-        }
-    }
-
-    /// Push a closure scope with typed parameters.
-    pub fn push_closure_scope(&self, params: Vec<(String, crate::ty::Ty)>) {
-        if let Some(tc) = &self.types {
-            tc.borrow_mut().push_closure(params);
-        }
-    }
-
-    /// What one turn of a `for` loop over this expression hands out.
-    pub fn iteration_item(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
-        let tc = self.types.as_ref()?;
-        let ty = self.scrutinee_type(iterated)?;
-        // A sequence the engine cannot name the element of leaves the loop
-        // variable untyped; the uses of that variable are what report it, so
-        // that one gap is counted once per site rather than twice.
-        tc.borrow().iteration_item(&ty)
-    }
-
-    /// Note the function a call landed on, for the oracle comparison, without
-    /// translating it. A call the engine resolved and the runtime then writes as
-    /// nothing is still a resolution, and leaving it unrecorded made the engine
-    /// look as though it had no answer.
-    pub(crate) fn record_resolution(&self, call: &syn::ExprMethodCall, method: &str) {
-        let Some(tc) = &self.types else { return };
-        let tc = tc.borrow();
-        let Ok(found) =
-            tc.resolve_method_call_with(&call.receiver, method, call.turbofish.as_ref())
-        else {
-            return;
-        };
-        crate::trace::record(
-            tc.registry,
-            &tc.sink.file(),
-            syn::spanned::Spanned::span(&call.receiver),
-            method,
-            &found,
-        );
-    }
-
-    /// Does the port write this call as the value itself, where Rust wrote a
-    /// `Result` around it?
-    ///
-    /// `lock()`, `read()` and `write()` hand back the guard, and
-    /// `bincode::serialize`, `bincode::deserialize` and `serde_json::to_string`
-    /// hand back what they produced. In every one of them the `Ok` the Rust
-    /// source wrote has nothing to test and the `unwrap` after it nothing to do.
-    pub fn writes_the_value_not_the_result(&self, expr: &syn::Expr) -> bool {
-        let Some(tc) = &self.types else { return false };
-        let tc = tc.borrow();
-        tc.is_lock_call(expr)
-    }
-
-    /// The type of the value a `match` or an `if let` takes apart. `None` means
-    /// the engine could not read it, and the fallback has been recorded.
-    pub fn scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
-        let resolved = self.resolve_expr_type(expr);
-        self.or_fallback(resolved, "the pattern's names are bound without types")
-    }
-
-    /// Open a scope holding the names a pattern introduces, typed from the value
-    /// being taken apart. The scope closes when the returned guard drops.
-    ///
-    /// A name the engine could not type is still bound, so that it shadows and
-    /// so that a use of it says "bound but untyped" rather than "does not name a
-    /// value". The gap is reported where the name is used, which is where the
-    /// translator has to fall back; reporting it here as well would count one
-    /// gap twice.
-    pub fn enter_pattern<'t>(
-        &'t self,
-        pat: &syn::Pat,
-        scrutinee: Option<&crate::ty::Ty>,
-    ) -> PatternScope<'t, 'a> {
-        self.push_block();
-        self.bind_pattern_here(pat, scrutinee);
-        PatternScope { translator: self }
-    }
-
-    /// Write out what a native-type translation decided, reporting the calls it
-    /// had to refuse.
-    pub(crate) fn render_translation(
-        &self,
-        translated: native_types::MethodTranslation,
-        receiver: &str,
-        ts_method: &str,
-        args: &[String],
-        span: proc_macro2::Span,
-    ) -> String {
-        match translated {
-            native_types::MethodTranslation::Expr(result) => result,
-            native_types::MethodTranslation::Passthrough => {
-                format!("{}.{}({})", receiver, ts_method, args.join(", "))
-            }
-            native_types::MethodTranslation::Refused { message, fallback } => {
-                self.fallback(span, message);
-                self.render_translation(*fallback, receiver, ts_method, args, span)
-            }
-        }
-    }
-
-    /// Emit this name under a fresh identifier from here on.
-    pub(crate) fn freshen(&self, name: &str) -> String {
-        match &self.types {
-            Some(tc) => tc.borrow_mut().shadow(name),
-            None => name.to_string(),
-        }
-    }
-
-    /// The identifier a bound name is emitted under, which differs from the one
-    /// the source wrote wherever a shadow was freshened.
-    pub(crate) fn emitted_name(&self, name: &str) -> Option<String> {
-        self.types.as_ref().and_then(|tc| tc.borrow().emitted_name(name))
-    }
-
-    /// The type a `let` introduces, asked before the name is bound so that the
-    /// initialiser is read in the scope it shadows.
-    pub(crate) fn resolve_local(&self, local: &syn::Local) -> Option<crate::ty::Ty> {
-        let tc = self.types.as_ref()?;
-        let resolved = tc.borrow().resolve_local_type(local);
-        let pat = Self::pat_static(&local.pat);
-        // Saying only that the type is missing left the ownership consequence
-        // unsaid, and an untyped local is exactly one nothing releases.
-        let instead = format!(
-            "local `{}` is left untyped, so nothing releases whatever it holds",
-            pat
-        );
-        self.or_fallback(resolved, &instead)
-    }
-
-    /// Bind a pattern's names in the scope that is already open. Used where the
-    /// binding outlives the statement, as a `let` does.
-    pub fn bind_pattern_here(&self, pat: &syn::Pat, scrutinee: Option<&crate::ty::Ty>) {
-        let Some(tc) = &self.types else { return };
-        tc.borrow_mut().bind_pattern(pat, scrutinee);
-    }
-
-    // ── Block translation with ownership tracking ───────────────────
-
-    /// A function's own body.
-    ///
-    /// Rust drops a by-value parameter when the function returns, so the body
-    /// owns its parameters the way it owns its locals — released in the same
-    /// `finally`, after everything the body itself declared, and not at all
-    /// where the body hands one on.
-    pub fn translate_fn_block(
-        &self,
-        block: &syn::Block,
-        params: &[(String, crate::ty::Ty)],
-    ) -> String {
-        self.push_block();
-        // The parameters are claimed before the body is written, because a
-        // parameter handed away inside a branch needs its drop flag registered
-        // by the time the branch that sets it is translated.
-        let owned = self.claim_params(block, params);
-        let body = self.translate_block_stmts(block);
-        self.pop_scope();
-        for owned in &owned {
-            if let Some(source) = &owned.source {
-                self.own.flags.borrow_mut().remove(source);
-            }
-        }
-        let mut out = body;
-        for param in owned.iter().rev() {
-            out = ownership::wrap(&out, param);
-        }
-        let mut declarations = String::new();
-        for param in &owned {
-            if let Some(flag) = &param.flag {
-                declarations.push_str(&format!("let {} = false;\n", flag));
-            }
-        }
-        format!("{}{}", declarations, out)
-    }
-
-
-    pub fn translate_block(&self, block: &syn::Block) -> String {
-        // A Rust block is a scope: a `let` inside it shadows what is outside and
-        // stops shadowing at the closing brace, and TypeScript's `const` in a
-        // nested block does the same.
-        self.push_block();
-        let out = self.translate_block_stmts(block);
-        self.pop_scope();
-        out
-    }
-
-    /// A block's statements, with the releases the block owes written into it.
-    ///
-    /// Every value the block still owns when it ends is released in a
-    /// `finally`, so that a `return`, a `?`, a `break` and a thrown fatal all
-    /// leave through it — which is what Rust's drop glue does and what a run of
-    /// drops at the end of the block did not. The `try` opens immediately after
-    /// each declaration rather than at the top of the block: a `const` declared
-    /// inside a `try` is not in scope in its `finally`, and opening one `try`
-    /// per declaration also gets reverse declaration order for free, since the
-    /// innermost `finally` runs first.
-    pub(crate) fn translate_block_stmts(&self, block: &syn::Block) -> String {
-        let stmts = &block.stmts;
-        let dispositions = self.analyse_moves(stmts);
-        let ordinals = std::cell::RefCell::new(std::collections::HashMap::new());
-        self.emit_from(stmts, 0, &dispositions, &ordinals)
-    }
-
-    /// Statements `i..` of a block, with everything after an owning
-    /// declaration nested inside that declaration's `try`.
-    pub(crate) fn emit_from(
-        &self,
-        stmts: &[syn::Stmt],
-        i: usize,
-        dispositions: &ownership::Dispositions,
-        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
-    ) -> String {
-        let Some(stmt) = stmts.get(i) else {
-            return String::new();
-        };
-        // A brace-delimited macro at the end of a block is the block's value in
-        // Rust, and `syn` parses it as `Stmt::Macro` rather than `Stmt::Expr` —
-        // so the tail path used to walk past `select! { .. }` written last and
-        // throw away the value the arm produced. A macro with a semicolon after
-        // it is a statement like any other.
-        let tail_macro = match stmt {
-            syn::Stmt::Macro(mac) => mac.semi_token.is_none(),
-            _ => false,
-        };
-        let is_tail =
-            i + 1 == stmts.len() && (matches!(stmt, syn::Stmt::Expr(_, None)) || tail_macro);
-
-        // What this statement's own `let` should do with each name it binds,
-        // read before it is translated because `local()` acts on it.
-        self.set_stmt_dispositions(stmt, dispositions, ordinals);
-
-        // A move written directly by this statement sets its flag first: after
-        // it would be dead code behind a `return`, and the flag only ever
-        // decides what the `finally` releases.
-        let mut out = self.flag_sets(stmt);
-
-        let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
-        let previous_pending = std::mem::take(&mut *self.own.pending.borrow_mut());
-        let text = if is_tail {
-            let held;
-            let expr = match stmt {
-                syn::Stmt::Expr(expr, None) => expr,
-                syn::Stmt::Macro(mac) => {
-                    held = syn::Expr::Macro(syn::ExprMacro {
-                        attrs: mac.attrs.clone(),
-                        mac: mac.mac.clone(),
-                    });
-                    &held
-                }
-                _ => unreachable!("the tail was just matched"),
-            };
-            // A block's tail is the block's value, so it leaves through
-            // whatever the block itself was expected to produce — and through
-            // the function's return type where the block *is* the function's
-            // body (spec 4.6). Forcing the function's return on every tail made
-            // `let bytes: Vec<u8> = { vec![10, 11] };` ask the tail for the
-            // function's type instead of the `let`'s.
-            let want = self.expectation_for(expr).or_else(|| self.fn_return.clone());
-            self.expecting(expr, want.as_ref(), || {
-                format!(
-                    "{}\n",
-                    control_flow::translate_expr_in_return_position(expr, self)
-                )
-            })
-        } else {
-            self.stmt(stmt)
-        };
-        let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
-        let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);
-
-        let rest = self.emit_from(stmts, i + 1, dispositions, ordinals);
-        // A drop flag is only readable while the local it stands for is in
-        // scope. Taking it off again keeps a later block that reuses the name
-        // from setting a flag nothing tests.
-        for local in &owned {
-            if let Some(source) = &local.source {
-                self.own.flags.borrow_mut().remove(source);
-            }
-        }
-
-        // A `let` puts a name in scope for everything after it, so a temporary
-        // its initialiser lifted has to stay live that long too: both open a
-        // `try` over the rest of the block, and the releases then happen in
-        // reverse declaration order. Any other statement is over when it is
-        // over, and Rust drops its temporaries there — which is what keeps a
-        // lock taken in an argument from being held for the rest of the block.
-        let declares = matches!(stmt, syn::Stmt::Local(_));
-        let mut inner = text;
-        if declares {
-            // Releasing a guard at the end of its statement is what keeps the
-            // lock from outliving the line that took it. Where the statement
-            // *is* the rest of the block, the `finally` below says the same
-            // thing, so only one of them is written.
-            if !rest.trim().is_empty() {
-                for hoist in prelude.iter().rev() {
-                    if let Some(temp) = &hoist.owned {
-                        inner.push_str(&temp.statement_release());
-                    }
-                }
-            }
-            let mut tail = rest;
-            for local in owned.iter().rev() {
-                tail = ownership::wrap(&tail, local);
-            }
-            inner.push_str(&tail);
-            out.push_str(&ownership::hoisted(&inner, &prelude));
-            return out;
-        }
-        out.push_str(&ownership::hoisted(&inner, &prelude));
-        out.push_str(&rest);
-        out
-    }
-
-
-
-
-
-
-    // ── Statement translation ───────────────────────────────────────
-
-
-    pub(crate) fn stmt(&self, stmt: &syn::Stmt) -> String {
-        match stmt {
-            syn::Stmt::Local(local) => self.local(local),
-            syn::Stmt::Expr(expr, semi) => {
-                // Detect standalone `expr?;` — emit Result check
-                if semi.is_some() {
-                    if let syn::Expr::Try(try_expr) = expr {
-                        // Special case: write!(f, ...)?; in Display impls — emit string append
-                        if is_write_macro(&try_expr.expr) {
-                            let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap(), self);
-                            return format!("_result += {};\n", fmt_str);
-                        }
-                        // A `?` whose value nobody binds. Rust drops the `Ok`
-                        // payload at the end of the statement, and the wrapper
-                        // with it; `wrapper.drop()` cascades into both, which
-                        // is why the wrapper is not simply abandoned here.
-                        let lowered = self.lower_try(try_expr);
-                        return match &lowered.wrapper {
-                            Some(wrapper) => {
-                                format!("{}{}.drop();\n", lowered.declaration, wrapper)
-                            }
-                            // An `Option` has no wrapper here — the port writes
-                            // it as a nullable — but Rust still drops the `Some`
-                            // payload at the end of the statement.
-                            None => {
-                                let release = self
-                                    .release_of(&syn::Expr::Try(try_expr.clone()), &lowered.value)
-                                    .unwrap_or_else(|| format!("{};", lowered.value));
-                                format!("{}{}\n", lowered.declaration, release)
-                            }
-                        };
-                    }
-                }
-                let ts = self.expr(expr);
-                // If a match expression contains write! arms (Display pattern),
-                // append the result to _result
-                let ts = if is_match_with_write_arms(expr) {
-                    format!("_result += {}", ts)
-                } else {
-                    ts
-                };
-                if semi.is_some() {
-                    format!("{};\n", self.discard(expr, ts))
-                } else {
-                    format!("{}\n", ts)
-                }
-            }
-            syn::Stmt::Item(_) => String::new(),
-            syn::Stmt::Macro(macro_stmt) => {
-                let ts = macros::translate_macro(&macro_stmt.mac, self);
-                if macro_stmt.semi_token.is_some() {
-                    format!("{};\n", ts)
-                } else {
-                    format!("{}\n", ts)
-                }
-            }
-        }
-    }
-
-    pub(crate) fn local(&self, local: &syn::Local) -> String {
-        let pat = Self::pat_static(&local.pat);
-
-        let Some(init) = &local.init else {
-            return format!("let {};\n", pat);
-        };
-
-        // Read before the initialiser is translated. An initialiser that is a
-        // block of its own — `let sub = { let c = c.clone(); f(c) }` — runs the
-        // whole block machinery again and leaves its own statement's answers
-        // behind, so asking afterwards asked about the wrong statement and
-        // dropped a local the outer block had already handed away.
-        let disposition = self
-            .own
-            .stmt_dispositions
-            .borrow()
-            .get(&pat)
-            .copied()
-            .unwrap_or(ownership::Disposition::Kept);
-
-        // Rust allows `let x = x.method()` to shadow; JavaScript refuses a
-        // second declaration of the same name in the same block. This has to
-        // be asked before the binding is made.
-        let already_in_scope = self.redeclares_here(&pat);
-
-        // The initialiser is translated before the binding exists, because
-        // it is written in the scope the `let` is shadowing:
-        // `let stack = stack.borrow_mut()` borrows the *outer* `stack`, and
-        // binding first would resolve that receiver to the guard the line is
-        // about to introduce and reach through it.
-        // `let listener = move |..| ..` binds a closure that owns what it
-        // captured, so the block releases it as it releases any owned local —
-        // and asking the engine for a closure's type would only report a gap
-        // this line has already closed.
-        let bound_closure = as_move_closure(&init.expr)
-            .filter(|closure| !self.owned_captures(closure).is_empty());
-        // What the `let` wrote for itself is what its initialiser has to
-        // produce (spec 4.6): `let f: Box<dyn Fn(u32)> = |x| ..` types `x`, and
-        // `let n: u8 = 1` writes a byte rather than the `i32` a bare literal
-        // defaults to.
-        let annotation = self
-            .types
-            .as_ref()
-            .and_then(|tc| tc.borrow().local_annotation(local));
-        let ty = match bound_closure {
-            Some(_) => None,
-            None => self.expecting(&init.expr, annotation.as_ref(), || self.resolve_local(local)),
-        };
-        let expr = match bound_closure {
-            Some(closure) => self.closure(
-                closure,
-                ownership::closures::Placement::Bound,
-                annotation.as_ref(),
-            ),
-            None => self.expecting(&init.expr, annotation.as_ref(), || {
-                self.moved_value(&init.expr)
-            }),
-        };
-
-        // Only now does the name mean the new value. A `let` may take one
-        // apart — `let (a, b) = ...`, `let Foo { x } = ...` — so every name
-        // the pattern writes is bound, each typed from its own position.
-        if self.types.is_some() {
-            self.bind_pattern_here(&local.pat, ty.as_ref());
-        }
-
-        if let Some((_tok, _diverge)) = &init.diverge {
-            return format!("/* let-else */ const {} = {};\n", pat, expr);
-        }
-
-        // A name the enclosing block-as-expression already threaded in as a
-        // parameter is already this value; declaring it again would shadow
-        // what was threaded.
-        if self.threaded.borrow().iter().any(|n| *n == pat) {
-            let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
-                ident.ident.to_string()
-            } else {
-                pat.clone()
-            };
-            if references_var(&init.expr, &rust_name) {
-                return String::new();
-            }
-        }
-        let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
-        // A Rust shadow introduces a *new* variable. Assigning to the old
-        // one instead changed a value other code — a closure that captured
-        // it, a caller that owns it — can still see. JavaScript will not
-        // declare the same name twice here, so the shadow is emitted under a
-        // fresh identifier and every later use of the name follows it.
-        let emitted = if already_in_scope {
-            self.freshen(&pat)
-        } else {
-            pat.clone()
-        };
-        if bound_closure.is_some() {
-            self.own.owned_closure_locals.borrow_mut().push(emitted.clone());
-        }
-        let drops = bound_closure.map(|_| ownership::Drops::Own);
-        let flag = self.claim_local(&pat, &emitted, ty.as_ref(), drops, &local.pat, disposition);
-        format!("{}{} {} = {};\n", flag, keyword, emitted, expr)
-    }
-
-
-    // ── Pattern translation (static — no self_type needed) ──────────
-
-    pub fn pat_static(pat: &syn::Pat) -> String {
-        match pat {
-            syn::Pat::Ident(ident) => {
-                name_map::escape_reserved(&name_map::to_camel_case(&ident.ident.to_string()))
-            }
-            syn::Pat::Tuple(tuple) => {
-                let parts: Vec<String> = tuple.elems.iter().map(Self::pat_static).collect();
-                format!("[{}]", parts.join(", "))
-            }
-            syn::Pat::TupleStruct(ts) => {
-                let parts: Vec<String> = ts.elems.iter().map(Self::pat_static).collect();
-                parts.join(", ")
-            }
-            syn::Pat::Struct(s) => {
-                let fields: Vec<String> = s.fields.iter().map(|f| {
-                    let member = match &f.member {
-                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    };
-                    let pat = Self::pat_static(&f.pat);
-                    if member == pat { member } else { format!("{}: {}", member, pat) }
-                }).collect();
-                format!("{{ {} }}", fields.join(", "))
-            }
-            syn::Pat::Wild(_) => "_".to_string(),
-            syn::Pat::Lit(_) => "/* pat literal */".to_string(),
-            syn::Pat::Path(path) => Self::path_static(&path.path),
-            syn::Pat::Reference(r) => Self::pat_static(&r.pat),
-            syn::Pat::Type(t) => Self::pat_static(&t.pat),
-            syn::Pat::Or(or_pat) => {
-                let parts: Vec<String> = or_pat.cases.iter().map(Self::pat_static).collect();
-                parts.join(" | ")
-            }
-            syn::Pat::Slice(slice) => {
-                let parts: Vec<String> = slice.elems.iter().map(Self::pat_static).collect();
-                format!("[{}]", parts.join(", "))
-            }
-            syn::Pat::Rest(_) => "...".to_string(),
-            _ => "/* unknown pat */".to_string(),
         }
     }
 
@@ -825,260 +254,14 @@ impl<'a> BodyTranslator<'a> {
 
 
 
-    // ── Field reads and the places a value moves out of ─────────────
-
-    /// A field read split into what stands to the left of the field name and
-    /// the field name itself, with every wrapper the field sits behind written
-    /// out — one accessor per hop the engine took to find it.
-    pub(crate) fn field_parts(&self, field: &syn::ExprField) -> (String, String) {
-        let base = self.expr(&field.base);
-        let member = match &field.member {
-            syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-            syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-        };
-        // A body with no type context never went through `path_expr`, so a bare
-        // `self` written there still has to become the receiver this body emits
-        // it as. One that did is already correct and must not be rewritten:
-        // taking a module-level function's `self` parameter back to `this` read
-        // a binding that does not exist there.
-        let base = if base == "self" { self.self_name.to_string() } else { base };
-        // Reading a field off something the expression itself produced —
-        // `m.lock().unwrap().n` — leaves that value with nobody to release it.
-        // Rust drops it at the end of the statement, and it is the guard case
-        // that shows: the mutex stayed locked for the life of the program.
-        let base = self.hoist_produced(&field.base, base);
-        let Some(tc) = &self.types else {
-            return (base, member);
-        };
-        let found = tc.borrow().resolve_field_access(&field.base, &member);
-        let instead = format!("`.{}` is emitted without a wrapper accessor", member);
-        let Some(found) = self.or_fallback(found, &instead) else {
-            return (base, member);
-        };
-        let mut receiver = base;
-        for accessor in found.accessors() {
-            receiver.push('.');
-            receiver.push_str(&accessor);
-        }
-        (receiver, member)
-    }
-
-
-
-
-    /// A call written as the module-level function its impl was emitted as.
-    ///
-    /// The receiver goes first, as it does in Rust's own reading of a method.
-    /// Where the impl is a blanket one the engine picked it without knowing
-    /// what the receiver will be at run time — the bound is what the receiver
-    /// has to satisfy, and several impls of the trait may satisfy it — so the
-    /// site says which impl was written and which ones the emitted call cannot
-    /// reach.
-    fn render_free_call(
-        &self,
-        free: &crate::emit_impls::FreeCall,
-        receiver: &str,
-        args: &[String],
-        call: &syn::ExprMethodCall,
-    ) -> String {
-        let name = if free.is_blanket {
-            self.open_dispatcher(free, call).unwrap_or_else(|| free.name.clone())
-        } else {
-            free.name.clone()
-        };
-        let mut written = vec![receiver.to_string()];
-        written.extend(args.iter().cloned());
-        format!("{}({})", name, written.join(", "))
-    }
-
-    /// The function that picks among a trait's impls at run time, for a call
-    /// the engine resolved only to the blanket one.
-    ///
-    /// The blanket impl is what the engine picks when the bound is open, and it
-    /// is right only for the receivers the blanket is written for. The
-    /// dispatcher tests the receiver's shape instead, so every impl of the
-    /// trait is reachable — and where no dispatcher can be written, the site
-    /// says which impls the emitted call cannot reach.
-    fn open_dispatcher(
-        &self,
-        free: &crate::emit_impls::FreeCall,
-        call: &syn::ExprMethodCall,
-    ) -> Option<String> {
-        let tc = self.types.as_ref()?;
-        let tc = tc.borrow();
-        let reg = tc.registry;
-        let trait_ref = reg.impl_def(free.impl_id).trait_ref.as_ref()?;
-        let trait_id = trait_ref.id;
-        let trait_name = reg.name_of(trait_id);
-        // A trait another crate declares carries its dispatcher there, and this
-        // run does not read that crate.
-        let declared_here = reg
-            .def(trait_id)
-            .is_some_and(|def| !reg.modules().get(def.module).is_system);
-        let refused = if declared_here {
-            crate::emit_impls::dispatcher_refusal(reg, trait_id, &trait_name, &call.method.to_string())
-        } else {
-            Some("the trait is declared outside this crate, where its dispatcher lives".to_string())
-        };
-        if let Some(why) = refused {
-            drop(tc);
-            self.fallback(
-                syn::spanned::Spanned::span(call),
-                format!(
-                    "`{}` here dispatches through a bound the engine cannot close, and no \
-                     run-time selection among the trait's impls can be written because {}; the \
-                     call is written as `{}`, the blanket impl's function, and a receiver one \
-                     of the trait's other impls is written for reaches the wrong one",
-                    call.method, why, free.name
-                ),
-            );
-            return None;
-        }
-        crate::emit_impls::record_wanted(trait_id, &call.method.to_string());
-        Some(crate::emit_impls::dispatcher_name(
-            &trait_name,
-            &crate::name_map::map_fn_name(&call.method.to_string()),
-        ))
-    }
-
-    /// What the receiver of a wrapper-opening call is expected to produce.
-    ///
-    /// `unwrap`, `expect` and their kind hand back what a `Result` or an
-    /// `Option` carries, so a position that wants a `T` of the call wants a
-    /// `Result<T, E>` or an `Option<T>` of the receiver — which is how
-    /// `serde_json::from_str(&s).unwrap()` learns, from the value it is
-    /// compared against, which type reads itself out of the parsed text. Every
-    /// other method leaves the receiver's type to the receiver.
-    fn receiver_expectation(
-        &self,
-        call: &syn::ExprMethodCall,
-        expected: Option<&crate::ty::Ty>,
-    ) -> Option<crate::ty::Ty> {
-        const OPENS_A_WRAPPER: [&str; 4] = ["unwrap", "expect", "unwrap_or_default", "ok"];
-        let want = expected?;
-        if !OPENS_A_WRAPPER.contains(&call.method.to_string().as_str()) {
-            return None;
-        }
-        let tc = self.types.as_ref()?;
-        let receiver = self.quietly(|| self.resolve_expr_type(&call.receiver)).ok()?;
-        // The wrapper is the receiver's own, so the expectation is written
-        // inside whichever one it turns out to be rather than guessed at.
-        let crate::ty::Ty::Named { id, args } = receiver.peel_refs() else {
-            return None;
-        };
-        let tc = tc.borrow();
-        if !tc.is_result(&receiver) && !tc.is_option(&receiver) {
-            return None;
-        }
-        Some(crate::ty::Ty::Named {
-            id: *id,
-            args: std::iter::once(want.clone())
-                .chain(args.iter().skip(1).cloned())
-                .collect(),
-        })
-    }
-
-    /// A list literal, written as the runtime type the position wants.
-    ///
-    /// `Vec<u8>` and `[u8; N]` are a `Uint8Array` in the port, and a plain
-    /// JavaScript array compares unequal to one — which is what
-    /// `assert_eq!(bytes, [1, 2, 3])` was failing on.
-    /// Does this position want a `Uint8Array` rather than an array?
-    pub(crate) fn expects_bytes(&self, expected: &crate::ty::Ty) -> bool {
-        match &self.types {
-            Some(tc) => crate::infer::expected::expects_bytes(tc.borrow().registry, expected),
-            None => false,
-        }
-    }
-
-    pub(crate) fn sequence_literal(
-        &self,
-        items: Vec<String>,
-        expected: Option<&crate::ty::Ty>,
-    ) -> String {
-        let list = format!("[{}]", items.join(", "));
-        let bytes = match (expected, &self.types) {
-            (Some(want), Some(tc)) => {
-                crate::infer::expected::expects_bytes(tc.borrow().registry, want)
-            }
-            _ => false,
-        };
-        if bytes {
-            format!("new Uint8Array({})", list)
-        } else {
-            list
-        }
-    }
-
-    /// What each field of a struct literal is declared to hold.
-    pub(crate) fn struct_field_types(
-        &self,
-        lit: &syn::ExprStruct,
-    ) -> Vec<(String, crate::ty::Ty)> {
-        match &self.types {
-            Some(tc) => self.quietly(|| tc.borrow().struct_literal_field_types(lit)),
-            None => Vec::new(),
-        }
-    }
-
-    /// Which type reads itself out of a `serde_json::from_str` or a
-    /// `bincode::deserialize`.
-    ///
-    /// Rust takes it from the turbofish where one is written and from the
-    /// position otherwise — `let id: EntityId = bincode::deserialize(&bytes)?`
-    /// names `EntityId` as surely as `deserialize::<EntityId>` does — so both
-    /// are read here, the turbofish first because it is what the source said.
-    pub(crate) fn read_into_type(
-        &self,
-        callee: Option<&syn::Path>,
-        span: proc_macro2::Span,
-    ) -> Option<String> {
-        if let Some(written) = turbofish_type(callee) {
-            return Some(written);
-        }
-        let want = self.expectation_at(span)?;
-        let tc = self.types.as_ref()?;
-        // The call yields the value itself; a `Result` or an `Option` around it
-        // belongs to the `?` or the `unwrap` that follows, not to the type that
-        // reads itself out of the bytes.
-        let payload = tc.borrow().unwrapped_payload(&want);
-        Some(name_map::map_ty(tc.borrow().registry, &payload))
-    }
-
-    /// What the callee of a method call declares each of its arguments to be.
-    ///
-    /// Asking is not translating: the resolution files whatever it could not
-    /// settle, and the call is resolved again when it is written, so the record
-    /// is wound back and the same gap is not counted twice.
-    pub(crate) fn argument_types(&self, call: &syn::ExprMethodCall) -> Vec<Option<crate::ty::Ty>> {
-        let Some(tc) = &self.types else {
-            return Vec::new();
-        };
-        let method = call.method.to_string();
-        let found = self.quietly(|| {
-            tc.borrow()
-                .resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref())
-        });
-        let Ok(found) = found else {
-            return Vec::new();
-        };
-        // The bound is written in the callee's own terms — `FnMut(Self::Item)`
-        // — so the projection is settled against the receiver before the
-        // closure is asked to take its parameter from it. A projection left
-        // standing is not a type anything inside the closure can be resolved
-        // against.
-        let tc = tc.borrow();
-        let probe = tc.probe();
-        tc.registry
-            .method_param_types(&found)
-            .into_iter()
-            .map(|ty| Some(probe.normalize(&ty)))
-            .collect()
-    }
-
     // ── Expression translation ──────────────────────────────────────
 
     pub fn expr(&self, expr: &syn::Expr) -> String {
+        // A formatter's `Ok(())` is the string it has written.
+        if self.is_formatter_done(expr) {
+            self.wrote_result.set(true);
+            return "_result".to_string();
+        }
         let expected = self.expectation_for(expr);
         match expr {
             // A 64-bit integer is a `bigint`, and JavaScript will not mix one
@@ -1234,12 +417,13 @@ impl<'a> BodyTranslator<'a> {
                             drop(tc_ref);
                             return self.render_free_call(&free, &recv, &args, call);
                         }
-                        let translated = native_types::translate_method(
+                        let translated = native_types::translate_method_using(
                             tc_ref.registry,
                             found.receiver_type(),
                             &recv,
                             &rust_method,
                             &args,
+                            !self.discards(call),
                         );
                         drop(tc_ref);
                         return self.render_translation(
@@ -1252,7 +436,14 @@ impl<'a> BodyTranslator<'a> {
                     }
                 }
 
-                self.translate_unresolved_call(&receiver, &rust_method, &ts_method, &args, Some(&call.receiver))
+                self.translate_unresolved_call_using(
+                    &receiver,
+                    &rust_method,
+                    &ts_method,
+                    &args,
+                    Some(&call.receiver),
+                    !self.discards(call),
+                )
             }
 
             syn::Expr::Call(call) => {
@@ -1298,7 +489,14 @@ impl<'a> BodyTranslator<'a> {
                 // call that reached the body without a liveness check would be
                 // exactly the bug it exists to catch.
                 if self.own.owned_closure_locals.borrow().iter().any(|n| *n == func) {
-                    return format!("{}.call({})", func, args.join(", "));
+                    // A closure whose body hands a capture away is an `FnOnce`,
+                    // and `callOnce` is what transfers the captures and marks
+                    // it moved. `call` left them the closure's, so they were
+                    // released twice — once by the body and once by the
+                    // closure's own drop.
+                    let once = self.own.once_closure_locals.borrow().iter().any(|n| *n == func);
+                    let method = if once { "callOnce" } else { "call" };
+                    return format!("{}.{}({})", func, method, args.join(", "));
                 }
                 let path = match &*call.func {
                     syn::Expr::Path(path) => Some(&path.path),
@@ -1379,6 +577,12 @@ impl<'a> BodyTranslator<'a> {
                         // Rust's `!` is the bitwise complement on an integer
                         // and the logical negation on a `bool`; JavaScript
                         // spells the first one `~`.
+                        // The impl table first: a type with an `impl Not` has
+                        // a method to call, and `unary_not`'s own report is
+                        // for the case where nothing performs it.
+                        if let Some(call) = self.unary_not_impl(unary, &e) {
+                            return call;
+                        }
                         if let Some(complement) = self.unary_not(unary, &e) {
                             return complement;
                         }
@@ -1388,7 +592,12 @@ impl<'a> BodyTranslator<'a> {
                             format!("!{}", e)
                         }
                     }
-                    syn::UnOp::Neg(_) => format!("-{}", e),
+                    // `-a` on anything but a number is `Neg::neg`, and `-object`
+                    // is `NaN`.
+                    syn::UnOp::Neg(_) => match self.unary_neg(unary, &e) {
+                        Some(call) => call,
+                        None => format!("-{}", e),
+                    },
                     // `*guard` reads what the container holds, which the port
                     // writes as a field on the guard. Emitting the guard itself
                     // handed the guard where the value was wanted, and a guard
@@ -1505,6 +714,9 @@ impl<'a> BodyTranslator<'a> {
             // `continue 'outer`. A bare `break` leaves the innermost loop, which
             // is a different program wherever the source named an outer one.
             syn::Expr::Break(brk) => {
+                if self.jump_as_value.get() {
+                    return jump_sentinel("break", &brk.label);
+                }
                 let target = ownership::iteration::target_of(&brk.label);
                 if let Some(expr) = &brk.expr {
                     format!("break{} /* {} */", target, self.expr(expr))
@@ -1514,6 +726,9 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Continue(cont) => {
+                if self.jump_as_value.get() {
+                    return jump_sentinel("continue", &cont.label);
+                }
                 format!("continue{}", ownership::iteration::target_of(&cont.label))
             }
 
@@ -1548,7 +763,11 @@ impl<'a> BodyTranslator<'a> {
                 // the end of the statement.
                 let base = self.expr(&idx.expr);
                 let base = self.hoist_produced(&idx.expr, base);
-                format!("{}[{}]", base, self.expr(&idx.index))
+                let index = self.expr(&idx.index);
+                if let Some(call) = self.index_through_impl(&idx.expr, &base, &index) {
+                    return call;
+                }
+                format!("{}[{}]", base, index)
             }
 
             // `look(&Owned { .. })` builds a value the callee only reads, and
@@ -1722,6 +941,50 @@ impl<'a> BodyTranslator<'a> {
     /// A multi-statement block standing where a value is wanted: an
     /// immediately-called arrow function, with the shadowing a Rust block
     /// allows and JavaScript does not threaded through as parameters.
+    /// An expression whose value is wanted here and one of whose arms leaves
+    /// the loop around it.
+    ///
+    /// The value is computed in a wrapper function, which a `break` cannot
+    /// leave. So the arm that jumps hands the jump back instead, the statement
+    /// before this one reads it and performs the jump, and what stands here is
+    /// the value the other arms produced. `core/src/reactor/fetch_gap.ts` was
+    /// one of the four emitted files a JavaScript engine refused to load.
+    fn value_through_a_jump(&self, expr: &syn::Expr) -> String {
+        let previous = self.jump_as_value.replace(true);
+        let body = control_flow::translate_expr_in_return_position(expr, self);
+        self.jump_as_value.set(previous);
+        let awaits = control_flow::awaiting::awaits(expr);
+        let held = self.hoist_name(iife("()", &format!("{}\n", body), "", awaits));
+        let mut tests = String::new();
+        for kind in crate::match_expr::jumps_out_of(expr) {
+            let (word, label) = match kind.split_once('#') {
+                Some((word, label)) => (
+                    word.to_string(),
+                    format!(" && ({} as any)?.$label === '{}'", held, label),
+                ),
+                None => (kind.clone(), String::new()),
+            };
+            let target = match kind.split_once('#') {
+                Some((_, label)) => format!(" {}", label),
+                None => String::new(),
+            };
+            tests.push_str(&format!(
+                "if (({held} as any)?.$jump === '{word}'{label}) {word}{target};\n",
+                held = held,
+                word = word,
+                label = label,
+                target = target
+            ));
+        }
+        self.own.prelude.borrow_mut().push(ownership::Hoist {
+            declaration: tests,
+            owned: None,
+        });
+        // The value's type is the union of what the arms produced and the
+        // sentinel, and the jump above is what rules the sentinel out.
+        format!("({} as any)", held)
+    }
+
     fn block_as_value(&self, block: &syn::ExprBlock) -> String {
         // Multi-statement block as expression → IIFE
         // Detect shadowed variables: if a local in the block has the same name
@@ -1812,19 +1075,15 @@ impl<'a> BodyTranslator<'a> {
             }
             _ => return self.expr(expr),
         }
-        let body = control_flow::translate_expr_in_return_position(expr, self);
         // The wrapper is a function, and `break` and `continue` cannot leave
-        // one: a match used as a value whose arm jumps out of the loop around
-        // it has no form here at all, and TypeScript says so as "jump target
-        // cannot cross function boundary".
+        // one: `Cannot use "continue" here` is what a JavaScript engine says,
+        // and the whole module then fails to load. The jump is handed back as
+        // a value instead, and the statement that wanted the value performs it
+        // before reading one.
         if crate::match_expr::jumps_out_of_a_loop(expr) {
-            self.fallback(
-                syn::spanned::Spanned::span(expr),
-                "this expression's value is wanted here, and an arm of it leaves the loop \
-                 around it — the value is computed inside a function, which a `break` or a \
-                 `continue` cannot leave, so the jump is written where it does not run",
-            );
+            return self.value_through_a_jump(expr);
         }
+        let body = control_flow::translate_expr_in_return_position(expr, self);
         iife(
             "()",
             &format!("{}\n", body),
@@ -1987,288 +1246,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// Does this pattern match whatever it is given?
-    ///
-    /// A name and a `_` take the value and always match; every other pattern
-    /// asks a question of it. Callers use the answer to decide whether a
-    /// position can be written as a binding alone, or needs a test written
-    /// beside it so that the question still gets asked.
-    pub(crate) fn is_irrefutable(pat: &syn::Pat) -> bool {
-        match pat {
-            // `x @ Some(_)` binds *and* asks.
-            syn::Pat::Ident(ident) => ident
-                .subpat
-                .as_ref()
-                .map(|(_, inner)| Self::is_irrefutable(inner))
-                .unwrap_or(true),
-            syn::Pat::Wild(_) => true,
-            syn::Pat::Reference(r) => Self::is_irrefutable(&r.pat),
-            syn::Pat::Paren(p) => Self::is_irrefutable(&p.pat),
-            syn::Pat::Type(t) => Self::is_irrefutable(&t.pat),
-            syn::Pat::Tuple(t) => t.elems.iter().all(Self::is_irrefutable),
-            _ => false,
-        }
-    }
-
-    /// What a variant's payload contributes to the arm: the tests its members
-    /// ask, the names the destructuring takes out of `subject.value`, and the
-    /// bindings that live inside a member which asks a question of its own.
-    ///
-    /// A member that only binds is a name in the destructuring, which is what
-    /// the port has always written. A member that tests — `Expr::Literal(
-    /// Literal::String(s))`, `Op::Eq(0, b)` — needs its test written against the
-    /// place the value sits in, or the arm runs for values it does not match;
-    /// its own names then come out of that place rather than out of the
-    /// destructuring, so they arrive here as statements instead.
-    pub(crate) fn payload_parts<'p>(
-        &self,
-        subject: &str,
-        members: impl Iterator<Item = (String, &'p syn::Pat)>,
-    ) -> (Vec<String>, Vec<String>, String) {
-        let mut tests = Vec::new();
-        let mut names = Vec::new();
-        let mut nested = String::new();
-        for (member, pat) in members {
-            if Self::is_irrefutable(pat) {
-                let local = Self::pat_static(pat);
-                names.push(if local == member { member } else { format!("{}: {}", member, local) });
-                continue;
-            }
-            let place = format!("{}.value.{}", subject, member);
-            let (test, bind) = self.pattern_test(&place, pat);
-            if test != "true" {
-                tests.push(test);
-            }
-            nested.push_str(&bind);
-        }
-        (tests, names, nested)
-    }
-
-    /// How TypeScript asks whether a value matches a pattern, and what it writes
-    /// to take the pattern's names out of it.
-    ///
-    /// `Some`/`None` test the nullable the port maps `Option` to, `Ok`/`Err` ask
-    /// the `Result`, a variant asks the `Enum`, and a plain name always matches.
-    pub(crate) fn pattern_test(&self, subject: &str, pat: &syn::Pat) -> (String, String) {
-        match pat {
-            syn::Pat::TupleStruct(ts) => {
-                let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                match name.as_str() {
-                    // The port writes an `Option<T>` as `T | null`, so the
-                    // payload of a `Some` *is* the subject — which is why a
-                    // pattern inside it tests against the same place, and
-                    // `Some(true)` is a test and not only a binding.
-                    "Some" => {
-                        let Some(inner) = ts.elems.first() else {
-                            return (format!("{} != null", subject), String::new());
-                        };
-                        // A pattern that only binds takes the whole payload in
-                        // one declaration, so `Some((last, rest))` stays the
-                        // array destructuring a reader of the port expects.
-                        if Self::is_irrefutable(inner) {
-                            return (
-                                format!("{} != null", subject),
-                                format!("const {} = {};\n", Self::pat_static(inner), subject),
-                            );
-                        }
-                        let (inner_test, bind) = self.pattern_test(subject, inner);
-                        (format!("{} != null && ({})", subject, inner_test), bind)
-                    }
-                    // A `Result`'s payload is behind `unwrap`, which the runtime
-                    // counts as a read, so it is written once — into the
-                    // binding. A pattern that would have to be *tested* there
-                    // cannot be, and is reported rather than dropped.
-                    "Ok" | "Err" => {
-                        let inner = ts.elems.first();
-                        if let Some(pat) = inner.filter(|p| !Self::is_irrefutable(p)) {
-                            self.fallback(
-                                syn::spanned::Spanned::span(pat),
-                                format!(
-                                    "`{}` carries a pattern that has to be tested, and the port \
-                                     reads a `Result`'s payload once, into the binding, so what \
-                                     it tests is not tested",
-                                    name
-                                ),
-                            );
-                        }
-                        // A pattern that only binds names the payload; one that
-                        // tests has no name of its own, and writing the pattern
-                        // where a name belongs emitted `const /* pat literal */
-                        // = _v.unwrap();` and `const PropertyError.Missing =
-                        // ..`, neither of which is a declaration.
-                        let var = match inner {
-                            Some(pat) if Self::is_irrefutable(pat) => Self::pat_static(pat),
-                            Some(_) => self.fresh_temp(),
-                            None => "v".to_string(),
-                        };
-                        if name == "Ok" {
-                            (
-                                format!("{}.isOk()", subject),
-                                format!("const {} = {}.unwrap();\n", var, subject),
-                            )
-                        } else {
-                            (
-                                format!("{}.isErr()", subject),
-                                format!("const {} = {}.unwrapErr();\n", var, subject),
-                            )
-                        }
-                    }
-                    _ => {
-                        let (payload_tests, names, nested) =
-                            self.payload_parts(subject, ts.elems.iter().enumerate().map(|(i, p)| {
-                                (format!("_{}", i), p)
-                            }));
-                        let mut test = format!("{}.is('{}')", subject, name);
-                        for extra in payload_tests {
-                            test.push_str(&format!(" && ({})", extra));
-                        }
-                        let mut bind = if names.is_empty() {
-                            String::new()
-                        } else {
-                            format!("const {{ {} }} = {}.value;\n", names.join(", "), subject)
-                        };
-                        bind.push_str(&nested);
-                        (test, bind)
-                    }
-                }
-            }
-            syn::Pat::Path(p) => {
-                let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                match name.as_str() {
-                    "None" => (format!("{} == null", subject), String::new()),
-                    _ => (format!("{}.is('{}')", subject, name), String::new()),
-                }
-            }
-            syn::Pat::Struct(st) => {
-                let name = st.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                let (payload_tests, names, nested) = self.payload_parts(
-                    subject,
-                    st.fields.iter().map(|f| {
-                        let member = match &f.member {
-                            syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                            syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                        };
-                        (member, &*f.pat)
-                    }),
-                );
-                let mut test = format!("{}.is('{}')", subject, name);
-                for extra in payload_tests {
-                    test.push_str(&format!(" && ({})", extra));
-                }
-                let mut bind = if names.is_empty() {
-                    String::new()
-                } else {
-                    format!("const {{ {} }} = {}.value;\n", names.join(", "), subject)
-                };
-                bind.push_str(&nested);
-                (test, bind)
-            }
-            // `(a, b)` tests each element against its own pattern and binds
-            // through all of them; the port writes a Rust tuple as an array.
-            syn::Pat::Tuple(tuple) => {
-                let mut tests = Vec::new();
-                let mut binds = String::new();
-                for (i, element) in tuple.elems.iter().enumerate() {
-                    let (test, bind) = self.pattern_test(&format!("{}[{}]", subject, i), element);
-                    if test != "true" {
-                        tests.push(format!("({})", test));
-                    }
-                    binds.push_str(&bind);
-                }
-                let test = if tests.is_empty() { "true".to_string() } else { tests.join(" && ") };
-                (test, binds)
-            }
-            // `A(x) | B(x)`. Rust makes every alternative bind the same names,
-            // so where they also read them out of the same place — which two
-            // variants of one enum do — the test is the disjunction and the
-            // binding is what they agree on. Where they do not, which name came
-            // from which alternative is a question this cannot answer, and it
-            // says so rather than binding one of them.
-            syn::Pat::Or(or) => {
-                let mut tests = Vec::new();
-                let mut binds: Vec<String> = Vec::new();
-                for case in &or.cases {
-                    let (test, bind) = self.pattern_test(subject, case);
-                    tests.push(format!("({})", test));
-                    binds.push(bind);
-                }
-                match binds.first() {
-                    Some(first) if binds.iter().all(|b| b == first) => {
-                        (tests.join(" || "), first.clone())
-                    }
-                    _ => {
-                        self.fallback(
-                            syn::spanned::Spanned::span(or),
-                            "the alternatives of this pattern bind their names from \
-                             different places, which the translator cannot write as one test, \
-                             so the arm is written as one that never matches",
-                        );
-                        // NOT `true`: an arm whose test cannot be written and
-                        // which is taken anyway runs a body naming the very
-                        // bindings the alternatives disagreed about. ankql's
-                        // `(Expr::Path(path), _) | (_, Expr::Path(path))` came
-                        // out as an unconditional `return columns.includes(
-                        // path.property())` with `path` bound nowhere, so the
-                        // suite died on a ReferenceError instead of on the
-                        // engine's own report.
-                        ("false".to_string(), String::new())
-                    }
-                }
-            }
-            // A plain name binds whatever it was given, and always matches —
-            // except `None`, which syn hands over as an identifier because it
-            // is written without a path, and which Rust resolves to `Option`'s
-            // empty case rather than to a binding (binding it is an error, not
-            // a shadow). Reading it as a name made every `None` arm a
-            // catch-all that ran for a value that was there.
-            syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => {
-                (format!("{} == null", subject), String::new())
-            }
-            syn::Pat::Ident(_) => {
-                let var = Self::pat_static(pat);
-                ("true".to_string(), format!("const {} = {};\n", var, subject))
-            }
-            // `0 => ..` compares. Writing the pattern where the test belongs
-            // emitted `if (/* pat literal */)`, which does not parse.
-            syn::Pat::Lit(lit) => match translate_lit(&lit.lit) {
-                Some(written) => (format!("{} === {}", subject, written), String::new()),
-                None => {
-                    self.fallback(
-                        syn::spanned::Spanned::span(lit),
-                        "this literal pattern has a form the port has no spelling for, so the \
-                         arm is written as one that never matches",
-                    );
-                    ("false".to_string(), String::new())
-                }
-            },
-            // `1..=9 => ..`. Rust's exclusive form stops one short of the end.
-            syn::Pat::Range(range) => {
-                let mut tests = Vec::new();
-                if let Some(from) = &range.start {
-                    tests.push(format!("{} >= {}", subject, self.expr(from)));
-                }
-                if let Some(to) = &range.end {
-                    let op = match range.limits {
-                        syn::RangeLimits::Closed(_) => "<=",
-                        syn::RangeLimits::HalfOpen(_) => "<",
-                    };
-                    tests.push(format!("{} {} {}", subject, op, self.expr(to)));
-                }
-                let test = if tests.is_empty() { "true".to_string() } else { tests.join(" && ") };
-                (test, String::new())
-            }
-            syn::Pat::Wild(_) => ("true".to_string(), String::new()),
-            syn::Pat::Reference(r) => self.pattern_test(subject, &r.pat),
-            syn::Pat::Paren(p) => self.pattern_test(subject, &p.pat),
-            other => {
-                self.fallback(
-                    syn::spanned::Spanned::span(other),
-                    "this pattern has no test the translator can write, so the loop runs unconditionally",
-                );
-                ("true".to_string(), String::new())
-            }
-        }
-    }
 
     /// Try to translate an if/else as a ternary expression.
     /// Returns Some(ternary) if both branches are single expressions.
@@ -2316,703 +1293,33 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    // ── Method call translation ─────────────────────────────────────
-    //
-    // Dispatches to native_types modules based on resolved receiver type.
-    // System types (Arc, RwLock, Result, etc.) pass through — their TS
-    // implementations handle the method names directly.
-
-    /// A call the engine could not resolve to a function.
-    ///
-    /// This is the transitional path spec section 4.11 keeps: the diagnostic has
-    /// already been filed, and the translator does what it did before the impl
-    /// table existed — reach through one wrapper if the receiver has one and the
-    /// name is not its own, dispatch on whatever type it does know, and fall
-    /// back to the name when it knows nothing. The std-surface step is what
-    /// empties this path out; the fail-loud step deletes it.
-    pub(crate) fn translate_unresolved_call(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>) -> String {
-        if let (Some(receiver_expr), Some(tc)) = (receiver_expr, &self.types) {
-            let tc_ref = tc.borrow();
-            if let Ok(receiver_ty) = tc_ref.resolve_expr(receiver_expr) {
-                let probe = tc_ref.probe();
-                let step = probe.deref_once(&receiver_ty);
-                let reach_through = !probe.declares_method(&receiver_ty, rust_method);
-                let (target, receiver) = match (&step, reach_through) {
-                    (Some(step), true) => {
-                        let written = match &step.accessor {
-                            Some(accessor) => format!("{}.{}", receiver, accessor.written()),
-                            None => receiver.to_string(),
-                        };
-                        (step.to.clone(), written)
-                    }
-                    _ => (receiver_ty.clone(), receiver.to_string()),
-                };
-                let translated =
-                    native_types::translate_method(tc_ref.registry, &target, &receiver, rust_method, args);
-                drop(tc_ref);
-                return self.render_translation(
-                    translated,
-                    &receiver,
-                    ts_method,
-                    args,
-                    syn::spanned::Spanned::span(receiver_expr),
-                );
-            }
-        }
-
-        // No type at all — the methods that translate the same way whatever the
-        // receiver is.
-        self.render_translation(
-            native_types::translate_untyped(receiver, rust_method, args),
-            receiver,
-            ts_method,
-            args,
-            proc_macro2::Span::call_site(),
-        )
-    }
-
-    // ── Function call translation ───────────────────────────────────
-    //
-    // Language-level constructs (Self, Ok/Err/Some/None, enum variants,
-    // constructor heuristic) stay here. Type-specific translations
-    // (Vec::new, HashMap::new, etc.) are in native_types/ modules.
-
-    /// Does the type part of this callee path name a type this crate declared?
-    ///
-    /// `Vec::new` in ankurah is std's `Vec` unless ankurah declares one of its
-    /// own; the name tables downstream cannot tell the difference, so the
-    /// registry is asked before they are consulted.
-    pub(crate) fn names_crate_type(&self, callee: Option<&syn::Path>) -> bool {
-        let (Some(path), Some(tc)) = (callee, &self.types) else {
-            return false;
-        };
-        if path.segments.len() < 2 {
-            return false;
-        }
-        let owner: Vec<String> = path
-            .segments
-            .iter()
-            .take(path.segments.len() - 1)
-            .map(|s| s.ident.to_string())
-            .collect();
-        let tc = tc.borrow();
-        matches!(
-            tc.registry.lookup_type(tc.module, &owner),
-            Ok(Some(crate::registry::Def::Type(id)))
-                if !id.is_foreign() && !tc.registry.is_system(id)
-        )
-    }
-
-    // ── Path translation ────────────────────────────────────────────
-
-    /// A path in expression position. The standard-library qualifiers are
-    /// dropped so that `std::sync::Arc::new` becomes `Arc.new`, which is a
-    /// guess about what the remaining segments mean; it is recorded as one.
-    pub(crate) fn path_expr(&self, path: &syn::Path) -> String {
-        // A path of one segment is a name — a local, a parameter, a free
-        // function — and never a module qualifier. Filtering it as one deleted
-        // every local called `ops`, `iter` or `fmt`: `ops.iter()` came out as
-        // `[...]`, a spread of nothing.
-        let dropped: Vec<String> = if path.segments.len() == 1 {
-            Vec::new()
-        } else {
-            path.segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .filter(|name| STD_QUALIFIERS.contains(&name.as_str()))
-                .collect()
-        };
-        // A `tokio` path keeps its segments, so nothing was given up.
-        let dropped = if path.segments.first().is_some_and(|s| s.ident == "tokio") {
-            Vec::new()
-        } else {
-            dropped
-        };
-        if !dropped.is_empty() {
-            self.fallback(
-                syn::spanned::Spanned::span(path),
-                format!("path qualifiers {} are dropped by name", dropped.join(", ")),
-            );
-        }
-        // A path through another in-family crate — `ankql::ast::Expr::Literal`
-        // — names a type this file imports by its leaf, because the port
-        // flattens a crate's module tree into a package's exports. Keeping the
-        // qualifiers wrote `ankql.ast.Expr`, and nothing called `ankql` exists
-        // in the emitted module.
-        if let Some(trimmed) = self.through_sibling_crate(path) {
-            return trimmed;
-        }
-        // `ParseError::Empty` is a value, and building it is what every other
-        // construction of that enum does. Written as a member of the class it
-        // named a static nothing declares.
-        if let Some(built) = self.unit_variant(path) {
-            return built;
-        }
-        // A single name may be a local the translator had to emit under a
-        // different identifier, because a Rust shadow cannot be declared twice
-        // in one JavaScript scope.
-        if path.segments.len() == 1 {
-            // A body emitted as a module-level function has no `this`: its
-            // receiver arrived as an ordinary first parameter, under the name
-            // `self_name`.
-            if path.segments[0].ident == "self" {
-                return self.self_name.to_string();
-            }
-            let written = Self::path_static(path);
-            // A path of one lowercase segment names a local, a parameter or a
-            // free function — a binding, and JavaScript will not accept every
-            // Rust name in that position. `Type::new()` is not one: `new` there
-            // is a property, which may be a keyword, so the escape is confined
-            // to the single-segment case and to the names this function merely
-            // camel-cased. `self` becomes `this` and `None` becomes `null`,
-            // which are the keywords themselves and not names.
-            let ident = path.segments[0].ident.to_string();
-            let written = if written == name_map::to_camel_case(&ident) {
-                name_map::escape_reserved(&written)
-            } else {
-                written
-            };
-            if let Some(emitted) = self.emitted_name(&written) {
-                return emitted;
-            }
-            return written;
-        }
-        Self::path_static(path)
-    }
-
-    /// `Enum::Variant { field: .. }` built the way the port builds a variant.
-    fn struct_variant_literal(&self, s: &syn::ExprStruct) -> Option<String> {
-        let segments: Vec<String> =
-            s.path.segments.iter().map(|seg| seg.ident.to_string()).collect();
-        if segments.len() < 2 {
-            return None;
-        }
-        let tc = self.types.as_ref()?;
-        let (owner, variant) = tc.borrow().variant_of_emitted_enum(&segments)?;
-        let want = self.struct_field_types(s);
-        let fields: Vec<String> = s
-            .fields
-            .iter()
-            .map(|f| {
-                let member = crate::infer::member_name(&f.member);
-                let ty = want.iter().find(|(name, _)| *name == member).map(|(_, t)| t);
-                let value = self.expecting(&f.expr, ty, || self.moved_value(&f.expr));
-                format!("{}: {}", name_map::to_camel_case(&member), value)
-            })
-            .collect();
-        Some(format!("new {}('{}', {{ {} }})", owner, variant, fields.join(", ")))
-    }
-
-    /// A path whose first segment names another in-family crate, written the
-    /// way this file reaches it: from the type onwards, since that is what the
-    /// import brings in.
-    fn through_sibling_crate(&self, path: &syn::Path) -> Option<String> {
-        if path.segments.len() < 2 {
-            return None;
-        }
-        let head = path.segments.first()?.ident.to_string();
-        let tc = self.types.as_ref()?;
-        if tc.borrow().registry.sibling_crate(&head).is_none() {
-            return None;
-        }
-        let rest: Vec<&syn::PathSegment> = path
-            .segments
-            .iter()
-            .skip_while(|seg| !seg.ident.to_string().chars().next().is_some_and(|c| c.is_uppercase()))
-            .collect();
-        if rest.is_empty() {
-            // Every segment is a module name: the path names a free function
-            // of that crate, which the import map brings in by its own name.
-            return path.segments.last().map(|s| crate::name_map::to_camel_case(&s.ident.to_string()));
-        }
-        let mut trimmed = syn::Path {
-            leading_colon: None,
-            segments: syn::punctuated::Punctuated::new(),
-        };
-        for seg in rest {
-            trimmed.segments.push(seg.clone());
-        }
-        Some(
-            self.unit_variant(&trimmed)
-                .unwrap_or_else(|| Self::path_static(&trimmed)),
-        )
-    }
-
-    /// A unit enum variant written as a path, built the way one is built.
-    fn unit_variant(&self, path: &syn::Path) -> Option<String> {
-        if path.segments.len() < 2 {
-            return None;
-        }
-        let segments: Vec<String> =
-            path.segments.iter().map(|s| s.ident.to_string()).collect();
-        let tc = self.types.as_ref()?;
-        let (owner, variant) = tc.borrow().unit_variant_of_emitted_enum(&segments)?;
-        Some(format!("new {}('{}', {{}})", owner, variant))
-    }
-
-    pub(crate) fn path_static(path: &syn::Path) -> String {
-        let single = path.segments.len() == 1;
-        // A path through `tokio` keeps every segment and every name as written:
-        // `@ankurah/base` mirrors the crate's module tree and spells the
-        // functions the way tokio spells them, so `tokio::sync::mpsc::
-        // unbounded_channel` is `tokio.sync.mpsc.unbounded_channel`.
-        let through_tokio = path.segments.first().is_some_and(|s| s.ident == "tokio");
-        if through_tokio {
-            let names: Vec<String> =
-                path.segments.iter().map(|seg| seg.ident.to_string()).collect();
-            return names.join(".");
-        }
-        let segments: Vec<String> = path.segments.iter().map(|seg| {
-            let name = seg.ident.to_string();
-            match name.as_str() {
-                "self" => "this".to_string(),
-                "Self" => "Self".to_string(),
-                "None" => "null".to_string(),
-                "true" | "false" => name,
-                "Ok" | "Some" | "Err" => name,
-                "std" | "core" | "alloc" | "crate" | "super" | "marker" => name,
-                "PhantomData" => return "undefined /* PhantomData */".to_string(),
-                // Ordering::SeqCst etc. — no JS equivalent, stripped by method call handlers
-                "Ordering" => return "undefined /* Ordering */".to_string(),
-                _ => {
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        name
-                    } else {
-                        name_map::to_camel_case(&name)
-                    }
-                }
-            }
-        }).collect();
-
-        // Strip std/core/alloc module prefixes, keep type+method. A lone
-        // segment is a name, not a qualifier: a local called `ops` is `ops`.
-        let segments: Vec<String> = segments.into_iter()
-            .filter(|s| single || !STD_QUALIFIERS.contains(&s.as_str()))
-            .collect();
-        let joined = segments.join(".");
-        match joined.as_str() {
-            // `crate::` names this crate's own module tree, which the port
-            // flattens: a module is a file and its names are imported. What
-            // survives is the *type* and whatever is written after it —
-            // `crate::TypeResolver::new` is `TypeResolver.new` — while a path
-            // that names no type is a free function and keeps its own name.
-            // Taking the last segment alone took the type away with the
-            // modules and left a bare `new()`.
-            s if s.starts_with("crate.") => {
-                let at = segments
-                    .iter()
-                    .position(|seg| seg.chars().next().is_some_and(|c| c.is_uppercase()));
-                match at {
-                    Some(at) => segments[at..].join("."),
-                    None => segments.last().cloned().unwrap_or(joined),
-                }
-            }
-            _ => joined,
-        }
-    }
-}
-
-/// Does this method call take its receiver by value?
-///
-/// The move analysis asks; the impl table answers. `Result::unwrap`,
-/// `Option::take` and the `into_*` family all take `self`, and a receiver they
-/// took is not the block's to release any more.
-impl ownership::moves::Consumes for BodyTranslator<'_> {
-    fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool {
-        let Some(tc) = &self.types else { return false };
-        let tc = tc.borrow();
-        // Asking is not translating. The resolution files the questions it
-        // deferred, and this asks the same call several times — once per
-        // statement scan, once per flag scan — so the record is wound back to
-        // where it stood. The translation of the call reports them once.
-        let mark = tc.sink.mark();
-        let found = tc.resolve_method_call_with(
-            &call.receiver,
-            &call.method.to_string(),
-            call.turbofish.as_ref(),
-        );
-        tc.sink.rewind(mark);
-        let Ok(found) = found else {
-            // `.await` on a named future and `Result::unwrap` on a receiver the
-            // engine could not type are the two that matter, and both are worth
-            // reading off the name rather than losing: taking a receiver that
-            // was not taken leaks, and leaving one that was taken double-drops.
-            return matches!(
-                call.method.to_string().as_str(),
-                "unwrap" | "expect" | "unwrap_err" | "expect_err" | "unwrap_or" | "unwrap_or_else"
-                    | "unwrap_or_default" | "into" | "into_inner" | "into_iter" | "take"
-                    | "ok" | "err" | "map_err" | "and_then" | "or_else"
-            ) || call.method.to_string().starts_with("into_");
-        };
-        matches!(
-            tc.registry.method_self_kind(&found),
-            Some(crate::types::SelfKind::Value)
-        )
-    }
-
-    fn consumes_scrutinee(&self, m: &syn::ExprMatch) -> bool {
-        self.match_takes(m) == ownership::scrutinee::Takes::Payload
-    }
-
-    fn consumes_let_scrutinee(&self, let_expr: &syn::ExprLet) -> bool {
-        self.let_takes(let_expr) == ownership::scrutinee::Takes::Payload
-    }
-
-    fn consumes_operands(&self, bin: &syn::ExprBinary) -> (bool, bool) {
-        self.operator_takes(bin)
-    }
-}
-
-/// A numeric literal receiver, in parentheses.
-///
-/// `0xFFu8.wrapping_sub(b)` is written `255.wrappingSub(b)`, and JavaScript
-/// reads the `.` after a digit as a decimal point rather than a member access.
-/// Rust has no such ambiguity, so nothing in the source says the parentheses
-/// are needed; the literal is what says it.
-fn parenthesise_literal(receiver: &syn::Expr, written: String) -> String {
-    let is_number = match receiver {
-        syn::Expr::Lit(lit) => matches!(lit.lit, syn::Lit::Int(_) | syn::Lit::Float(_)),
-        // `(-1).abs()`: the minus is part of the literal as far as this is
-        // concerned, and the whole of it needs the parentheses.
-        syn::Expr::Unary(unary) => matches!(
-            (&unary.op, &*unary.expr),
-            (syn::UnOp::Neg(_), syn::Expr::Lit(lit))
-                if matches!(lit.lit, syn::Lit::Int(_) | syn::Lit::Float(_))
-        ),
-        _ => false,
-    };
-    if is_number && !written.starts_with('(') {
-        return format!("({})", written);
-    }
-    written
-}
-
-/// The names a `let` pattern introduces, in the TypeScript spelling.
-/// The closure a callee expression is, where it is one written in place.
-fn as_closure(expr: &syn::Expr) -> Option<&syn::ExprClosure> {
-    match expr {
-        syn::Expr::Closure(closure) => Some(closure),
-        syn::Expr::Paren(p) => as_closure(&p.expr),
-        syn::Expr::Group(g) => as_closure(&g.expr),
-        _ => None,
-    }
-}
-
-/// The same, restricted to a `move` closure, which is the only kind that takes
-/// its captures by value.
-fn as_move_closure(expr: &syn::Expr) -> Option<&syn::ExprClosure> {
-    as_closure(expr).filter(|closure| closure.capture.is_some())
-}
-
-/// The names a pattern binds, in the TypeScript spelling they are emitted
-/// under.
-pub fn pattern_names(pat: &syn::Pat) -> Vec<String> {
-    bound_names(pat)
-}
-
-fn bound_names(pat: &syn::Pat) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_bound(pat, &mut out);
-    out
-}
-
-fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
-    match pat {
-        syn::Pat::Ident(ident) => {
-            out.push(name_map::escape_reserved(&name_map::to_camel_case(
-                &ident.ident.to_string(),
-            )));
-            if let Some((_, sub)) = &ident.subpat {
-                collect_bound(sub, out);
-            }
-        }
-        syn::Pat::Tuple(t) => t.elems.iter().for_each(|p| collect_bound(p, out)),
-        syn::Pat::TupleStruct(t) => t.elems.iter().for_each(|p| collect_bound(p, out)),
-        syn::Pat::Slice(s) => s.elems.iter().for_each(|p| collect_bound(p, out)),
-        syn::Pat::Struct(s) => s.fields.iter().for_each(|f| collect_bound(&f.pat, out)),
-        syn::Pat::Reference(r) => collect_bound(&r.pat, out),
-        syn::Pat::Type(t) => collect_bound(&t.pat, out),
-        syn::Pat::Paren(p) => collect_bound(&p.pat, out),
-        syn::Pat::Or(or) => or.cases.iter().for_each(|p| collect_bound(p, out)),
-        _ => {}
-    }
-}
-
-/// What `e?` became: the statements that test it, the expression that stands in
-/// its place, and the `Result` wrapper — which a statement-position `?` has to
-/// release, because nothing downstream consumes it.
-pub(crate) struct Lowered {
-    pub(crate) declaration: String,
-    pub(crate) value: String,
-    pub(crate) wrapper: Option<String>,
-}
-
-/// The type a call's turbofish names: `from_str::<EntityId>(s)` says which
-/// type is being read out of the parsed value.
-fn turbofish_type(callee: Option<&syn::Path>) -> Option<String> {
-    let segment = callee?.segments.last()?;
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    match args.args.first()? {
-        syn::GenericArgument::Type(ty) => Some(name_map::map_type(ty)),
-        _ => None,
-    }
-}
-
-/// Is this the `+=` family, which reads a place and writes back to it?
-fn is_assign_op(op: &syn::BinOp) -> bool {
-    matches!(
-        op,
-        syn::BinOp::AddAssign(_)
-            | syn::BinOp::SubAssign(_)
-            | syn::BinOp::MulAssign(_)
-            | syn::BinOp::DivAssign(_)
-            | syn::BinOp::RemAssign(_)
-            | syn::BinOp::BitXorAssign(_)
-            | syn::BinOp::BitAndAssign(_)
-            | syn::BinOp::BitOrAssign(_)
-            | syn::BinOp::ShlAssign(_)
-            | syn::BinOp::ShrAssign(_)
-    )
-}
-
-/// Does this expression name storage that already exists, rather than produce
-/// a value? Rust drops what a statement produced and nothing else, so only the
-/// second kind needs a release written for it.
-pub fn is_place(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Path(_) | syn::Expr::Field(_) | syn::Expr::Index(_) => true,
-        syn::Expr::Unary(u) => matches!(u.op, syn::UnOp::Deref(_)) && is_place(&u.expr),
-        syn::Expr::Reference(r) => is_place(&r.expr),
-        syn::Expr::Paren(p) => is_place(&p.expr),
-        syn::Expr::Group(g) => is_place(&g.expr),
-        // `x?` hands back what was inside a Result the lowering already
-        // consumed; `x.await` takes the future by value. Neither leaves a value
-        // behind for the statement to release.
-        syn::Expr::Try(t) => is_place(&t.expr),
-        _ => false,
-    }
-}
-
-/// Look through the wrappers a binding can be written behind — `let mut x`,
-/// `let x: T`, `let (x)` — to whatever it really binds.
-pub fn strip_binding(pat: &syn::Pat) -> &syn::Pat {
-    match pat {
-        syn::Pat::Type(t) => strip_binding(&t.pat),
-        syn::Pat::Paren(p) => strip_binding(&p.pat),
-        other => other,
-    }
-}
-
-/// A scope holding one pattern's bindings; it closes when this drops.
-pub struct PatternScope<'t, 'a> {
-    translator: &'t BodyTranslator<'a>,
-}
-
-impl Drop for PatternScope<'_, '_> {
-    fn drop(&mut self) {
-        self.translator.pop_scope();
-    }
-}
-
-// ── Standalone helpers ──────────────────────────────────────────────────
-
-/// What `*x = y` falls back to when the engine cannot say what `x` wraps.
-const ASSUMED_ACCESSOR: &str = "the wrapper accessor is assumed to be `value`";
-
-/// Path segments dropped when a written path becomes a TypeScript expression.
-/// Resolving the path properly is the value-namespace work in the engine; this
-/// list is what stands in for it, and dropping any of them is recorded.
-const STD_QUALIFIERS: [&str; 11] = [
-    "std", "core", "alloc", "sync", "collections", "convert", "fmt", "ops", "iter", "atomic",
-    "marker",
-];
-
-fn is_mut_binding(pat: &syn::Pat) -> bool {
-    if let syn::Pat::Ident(ident) = pat {
-        ident.mutability.is_some()
-    } else {
-        false
-    }
-}
-
-/// A block written as an immediately-called arrow function.
-///
-/// JavaScript's `await` belongs to the nearest function, so a block that awaits
-/// becomes an `async` arrow and the call is awaited where it stands — otherwise
-/// the value is a promise nobody unwrapped, and TypeScript refuses the `await`
-/// inside outright.
-fn iife(params: &str, body: &str, args: &str, awaits: bool) -> String {
-    if awaits {
-        format!("await (async {} => {{\n{}}})({})", params, indent(body), args)
-    } else {
-        format!("({} => {{\n{}}})({})", params, indent(body), args)
-    }
-}
-
-/// One text value as a single-quoted TypeScript literal.
-///
-/// Rust's `'\''` and `"a\\b"` and `'\0'` are ordinary values by the time syn
-/// hands them over — a quote, a backslash, a NUL — and writing them back out
-/// between quotes without escaping them again produced `'''`, `'a\b'` and a raw
-/// NUL in the middle of a source file. ankql's SQL renderer, which escapes SQL
-/// quotes by writing `'\''`, is where that showed: 106 parse errors from one
-/// unescaped character.
-pub fn quoted(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('\'');
-    for ch in value.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            // A lone surrogate or a control character has no printable form;
-            // `\u{..}` is what both TypeScript and Rust write.
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
-                out.push_str(&format!("\\u{{{:x}}}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
-}
-
-/// A literal as the port writes it, or `None` where the port has no spelling
-/// for that literal form and the site has to say so.
-fn translate_lit(lit: &syn::Lit) -> Option<String> {
-    Some(match lit {
-        syn::Lit::Str(s) => quoted(&s.value()),
-        syn::Lit::Int(i) => i.base10_digits().to_string(),
-        syn::Lit::Float(f) => f.base10_digits().to_string(),
-        syn::Lit::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
-        syn::Lit::Char(c) => quoted(&c.value().to_string()),
-        syn::Lit::Byte(b) => format!("{}", b.value()),
-        // `b"abc"` is a `&[u8; 3]`, and the port writes a byte sequence as a
-        // `Uint8Array`. It used to come out as a comment, which is not an
-        // expression at all.
-        syn::Lit::ByteStr(bytes) => {
-            let values: Vec<String> =
-                bytes.value().iter().map(|b| b.to_string()).collect();
-            format!("new Uint8Array([{}])", values.join(", "))
-        }
-        _ => return None,
-    })
-}
-
-/// Check if an expression references a variable name as a standalone path
-/// (not as a field name in `a.field`). Used for shadow detection.
-fn references_var(expr: &syn::Expr, name: &str) -> bool {
-    match expr {
-        syn::Expr::Path(path) => {
-            // Standalone variable reference: just the name
-            path.path.segments.len() == 1
-                && path.path.segments[0].ident == name
-        }
-        syn::Expr::MethodCall(call) => {
-            // Check receiver and args, but NOT the method name
-            references_var(&call.receiver, name)
-                || call.args.iter().any(|a| references_var(a, name))
-        }
-        syn::Expr::Call(call) => {
-            references_var(&call.func, name)
-                || call.args.iter().any(|a| references_var(a, name))
-        }
-        syn::Expr::Field(field) => {
-            // Check the base, but NOT the field name
-            references_var(&field.base, name)
-        }
-        syn::Expr::Binary(bin) => {
-            references_var(&bin.left, name) || references_var(&bin.right, name)
-        }
-        syn::Expr::Unary(unary) => references_var(&unary.expr, name),
-        syn::Expr::Reference(r) => references_var(&r.expr, name),
-        syn::Expr::Paren(p) => references_var(&p.expr, name),
-        syn::Expr::Block(b) => {
-            b.block.stmts.iter().any(|s| match s {
-                syn::Stmt::Expr(e, _) => references_var(e, name),
-                _ => false,
-            })
-        }
-        syn::Expr::Closure(c) => references_var(&c.body, name),
-        _ => false,
-    }
 }
 
 
-/// What the position wants of a shift's left operand: everything it wants of
-/// the shift, because a shift hands back the type of the value it shifted.
-fn shift_expectation<'e>(
-    op: &syn::BinOp,
-    expected: Option<&'e crate::ty::Ty>,
-) -> Option<&'e crate::ty::Ty> {
-    matches!(op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_))
-        .then_some(expected)
-        .flatten()
-}
+/// What a call, a match or an operator takes away from the block that held it.
+mod consumes;
 
-fn translate_binop(op: &syn::BinOp) -> &'static str {
-    match op {
-        syn::BinOp::Add(_) => "+",
-        syn::BinOp::Sub(_) => "-",
-        syn::BinOp::Mul(_) => "*",
-        syn::BinOp::Div(_) => "/",
-        syn::BinOp::Rem(_) => "%",
-        syn::BinOp::And(_) => "&&",
-        syn::BinOp::Or(_) => "||",
-        syn::BinOp::BitXor(_) => "^",
-        syn::BinOp::BitAnd(_) => "&",
-        syn::BinOp::BitOr(_) => "|",
-        syn::BinOp::Shl(_) => "<<",
-        syn::BinOp::Shr(_) => ">>",
-        syn::BinOp::Eq(_) => "===",
-        syn::BinOp::Lt(_) => "<",
-        syn::BinOp::Le(_) => "<=",
-        syn::BinOp::Ne(_) => "!==",
-        syn::BinOp::Ge(_) => ">=",
-        syn::BinOp::Gt(_) => ">",
-        syn::BinOp::AddAssign(_) => "+=",
-        syn::BinOp::SubAssign(_) => "-=",
-        syn::BinOp::MulAssign(_) => "*=",
-        syn::BinOp::DivAssign(_) => "/=",
-        syn::BinOp::RemAssign(_) => "%=",
-        syn::BinOp::BitXorAssign(_) => "^=",
-        syn::BinOp::BitAndAssign(_) => "&=",
-        syn::BinOp::BitOrAssign(_) => "|=",
-        syn::BinOp::ShlAssign(_) => "<<=",
-        syn::BinOp::ShrAssign(_) => ">>=",
-        _ => "/* unknown op */",
-    }
-}
+/// A block, and the statements in it.
+mod blocks;
 
+/// What the translator knows while it writes: scopes, expectations, reports.
+mod scopes;
+
+/// A call the engine could not resolve, and the free functions an impl with no
+/// class of its own became.
+mod calls;
+
+/// Reading a field, and the places a value moves out of.
+mod places;
+
+/// A path in expression position, and the values a path names.
+mod paths;
+
+/// The small pieces of TypeScript the translator writes by hand.
+mod writing;
+pub(crate) use writing::*;
+/// What a pattern asks of a value, and what it takes out of it.
+mod patterns;
+/// What the pattern machinery writes, tested apart from the rest of the body.
 #[cfg(test)]
-mod literal_tests {
-    use super::quoted;
-
-    #[test]
-    fn a_quote_and_a_backslash_are_escaped_again() {
-        // ankql's SQL renderer writes `buffer.push('\'')` to open a quoted
-        // string and `push_str("''")` to escape one inside it.
-        assert_eq!(quoted("'"), r"'\''");
-        assert_eq!(quoted("''"), r"'\'\''");
-        assert_eq!(quoted(r"a\b"), r"'a\\b'");
-    }
-
-    #[test]
-    fn control_characters_keep_their_escape() {
-        assert_eq!(quoted("\0"), r"'\0'");
-        assert_eq!(quoted("\n"), r"'\n'");
-        assert_eq!(quoted("\t"), r"'\t'");
-        assert_eq!(quoted("\u{1}"), r"'\u{1}'");
-    }
-
-    #[test]
-    fn ordinary_text_is_left_alone() {
-        assert_eq!(quoted("hello"), "'hello'");
-        assert_eq!(quoted("héllo →"), "'héllo →'");
-    }
-}
+mod pattern_tests;

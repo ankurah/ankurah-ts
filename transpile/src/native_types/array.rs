@@ -18,14 +18,28 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "is_empty" => format!("{}.length === 0", receiver),
 
         // Passthrough — same name in JS
-        "push" | "pop" | "sort" | "reverse" | "join" | "map" | "filter" | "find"
+        "push" | "pop" | "reverse" | "join" | "map" | "filter" | "find"
             => return MethodTranslation::Passthrough,
+
+        // `Vec::sort()` orders by `Ord`. JavaScript's argument-less `sort`
+        // orders by `String(value)`, so a `Vec<Key>` came out ordered by
+        // `[object Object]` — every element equal, and the order whatever the
+        // engine's sort happened to leave.
+        "sort" | "sort_unstable" if args.is_empty() => {
+            format!("{}.sort((a, b) => a.compareTo(b))", receiver)
+        }
 
         // Renamed methods
         "contains" => format!("{}.includes({})", receiver, args.join(", ")),
         "last" => format!("{}.at(-1)", receiver),
         "first" => format!("{}[0]", receiver),
-        "sort_by" => format!("{}.sort({})", receiver, args.join(", ")),
+        "sort_by" | "sort_unstable_by" => format!("{}.sort({})", receiver, args.join(", ")),
+        // `sort_by_key(f)` orders by what `f` answers, through that type's own
+        // ordering.
+        "sort_by_key" if args.len() == 1 => format!(
+            "{}.sort((a, b) => {{ const f = {}; return f(a).compareTo(f(b)); }})",
+            receiver, args[0]
+        ),
 
         // Structural transforms
         "insert" if args.len() == 2 => format!("{}.splice({}, 0, {})", receiver, args[0], args[1]),

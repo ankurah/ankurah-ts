@@ -49,6 +49,11 @@ pub struct Lowering {
     /// is not a bare callable — it is invoked as `f.call(x)`, and this is how
     /// the call sites the emitter can see are written that way.
     pub owned_closure_locals: std::cell::RefCell<Vec<String>>,
+    /// Of those, the ones whose body hands a capture away. Rust calls such a
+    /// closure an `FnOnce` and lets it run once; the runtime's `callOnce` is
+    /// what transfers the captures and marks the closure moved, so a second
+    /// call is the fatal Rust would have refused at compile time.
+    pub once_closure_locals: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'a> BodyTranslator<'a> {

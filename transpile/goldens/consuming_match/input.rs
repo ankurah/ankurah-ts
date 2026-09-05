@@ -61,3 +61,38 @@ pub fn peek(slot: &Slot) -> usize {
         Slot::Filled(entity) => borrow(entity),
     }
 }
+
+/// An arm of a consuming match that leaves the loop around it. An arm of
+/// `intoMatch` is a function, and `break` cannot leave one — `return break`
+/// does not parse — so the arm settles what it owns in its own `finally` and
+/// hands the jump back as a value the caller performs.
+pub fn until_filled(slots: Vec<Slot>) -> usize {
+    let mut seen = 0;
+    for slot in slots {
+        match slot {
+            Slot::Filled(entity) => {
+                drop(entity);
+                break;
+            }
+            Slot::Empty => seen += 1,
+        }
+    }
+    seen
+}
+
+/// The same for `continue`, which the caller performs after the arm has
+/// released what it took.
+pub fn count_empty(slots: Vec<Slot>) -> usize {
+    let mut seen = 0;
+    for slot in slots {
+        match slot {
+            Slot::Filled(entity) => {
+                drop(entity);
+                continue;
+            }
+            Slot::Empty => {}
+        }
+        seen += 1;
+    }
+    seen
+}

@@ -53,7 +53,7 @@ const OWNERSHIP_REPORTS: [&str; 3] = ["BUG:", "OwnershipFatal", "the drop cascad
 /// one would prove nothing the text does not already say: the encode and decode
 /// pair means something only against bytes Rust produced, and those bytes are
 /// what the wire-protocol fixtures compare, not this runner.
-const TEXT_ONLY: [(&str, &str); 5] = [
+const TEXT_ONLY: [(&str, &str); 4] = [
     (
         "struct_bincode",
         "a named-field struct and a byte newtype, with the encode/decode pair the derive writes",
@@ -66,12 +66,6 @@ const TEXT_ONLY: [(&str, &str); 5] = [
         "option_result_fields",
         "`Option<T>` fields and a method returning `Result<T, E>`; the README records its emitted \
          error construction as unvetted, so a driver would pin output nobody has read yet",
-    ),
-    (
-        "tracing",
-        "the calls the five tracing macros are written as. `@ankurah/base` exports no `tracing` \
-         yet — the report for this pass carries the API it owes — so nothing can execute the \
-         emitted module, and the text is what there is to pin",
     ),
     (
         "question_mark",
@@ -93,32 +87,7 @@ const TEXT_ONLY: [(&str, &str); 5] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-const TYPECHECK_DEBT: [(&str, &[&str], &str); 5] = [
-    (
-        "enum_payload",
-        &["enum_payload/input.ts:TS2724"],
-        "the JSON half of `#[derive(Serialize, Deserialize)]` answers `Result<T, JsonError>`, \
-         and `@ankurah/base` at this checkout does not export `JsonError` yet. The base agent's \
-         report of 2026-09-04 lands it; this line goes with that branch, together with `tracing`'s",
-    ),
-    (
-        "option_result_fields",
-        &["option_result_fields/input.ts:TS2724"],
-        "the same missing `JsonError`",
-    ),
-    (
-        "struct_bincode",
-        &["struct_bincode/input.ts:TS2724"],
-        "the same missing `JsonError`",
-    ),
-    (
-        "tracing",
-        &["tracing/input.ts:TS2305"],
-        "the emitted calls are right and the runtime does not export `tracing` yet. The hook \
-         emits them because the alternative is the comment the port used to emit, which logged \
-         nothing at all; the report for this pass carries the exact API `@ankurah/base` owes, \
-         and this line goes when it lands",
-    ),
+const TYPECHECK_DEBT: [(&str, &[&str], &str); 1] = [
     (
         "blanket_free_fn",
         &["blanket_free_fn/run.test.ts:TS2345"],

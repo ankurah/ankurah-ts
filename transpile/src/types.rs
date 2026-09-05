@@ -118,11 +118,24 @@ pub struct FieldInfo {
     /// `impl From<this field's type> for the enum`, and the registry has to
     /// know it as one so a `?` can find it.
     pub is_from: bool,
+    /// `#[source]`, or the `#[from]` that implies one: this field is the error
+    /// this one wraps, and `Error::source` answers it.
+    pub is_source: bool,
     /// `#[serde(with = "json_as_bytes")]` — the module serde routes this
     /// field's two halves through, which changes the bytes on the wire. Read as
     /// the module's own name, so the codec can look up a hook for it by
     /// identity rather than expanding what the module writes.
     pub serde_with: Option<String>,
+}
+
+/// What a `thiserror` variant's `#[error(..)]` says.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorText {
+    /// `#[error("no such {0}")]` — a format string the shared renderer writes.
+    Format(String),
+    /// `#[error(transparent)]` — this variant's text IS the wrapped error's, so
+    /// `toString` forwards to it rather than saying anything of its own.
+    Transparent,
 }
 
 #[derive(Debug)]
@@ -145,10 +158,10 @@ pub struct VariantInfo {
     pub fields: Vec<FieldInfo>,
     /// True if the variant has `#[serde(other)]` — catch-all for unknown discriminants
     pub is_serde_other: bool,
-    /// The format string of this variant's `#[error("..")]`, where thiserror's
-    /// derive is what writes the type's `Display`. `None` where the variant
-    /// carries no such attribute, or carries one this reader does not handle.
-    pub error_format: Option<String>,
+    /// What this variant's `#[error(..)]` says, where thiserror's derive is
+    /// what writes the type's `Display`. `None` where the variant carries no
+    /// such attribute, or carries one this reader does not handle.
+    pub error_text: Option<ErrorText>,
     /// Where the variant's name is written.
     pub span: proc_macro2::Span,
 }
@@ -244,7 +257,6 @@ pub struct ParamInfo {
     /// The written type; `None` for the `self` receiver.
     pub rust_ty: Option<syn::Type>,
     pub is_self: bool,
-    pub is_mut_self: bool,
 }
 
 /// An `impl` block as written.
@@ -463,6 +475,13 @@ impl FieldInfo {
     }
 
     pub fn ts_ty(&self, reg: &crate::registry::TypeRegistry) -> String {
+        // A resolved type has no memory of the alias it was written as, so
+        // writing the field from it turns `Listener` into the `Arc<dyn Fn(T)>`
+        // the alias stands for. The port emits the alias, and the alias is what
+        // the source said — under a reference and inside a wrapper too.
+        if crate::name_map::names_an_alias(reg, &self.rust_ty) {
+            return crate::name_map::map_type(&self.rust_ty);
+        }
         match &self.ty {
             Some(ty) => crate::name_map::map_ty(reg, ty),
             None => crate::name_map::map_type(&self.rust_ty),

@@ -4,7 +4,7 @@
 // argument by position, by name, or — since Rust 2021 — by naming a variable.
 
 import { expect, test } from 'bun:test';
-import { Peer, braces, captured, debugged, greeting, named, positional, refuse } from './input.ts';
+import { Lines, Parts, Peer, absent, braces, captured, debugged, greeting, named, positional, refuse } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('{} renders the value itself', () => {
@@ -41,6 +41,24 @@ test('escaped braces stay text', () => {
 test('panic! carries the same rendering', () => {
   expect(refuse(2)).toBe(2);
   expect(() => refuse(0)).toThrow('refusing 0');
+});
+
+test('a Display that writes several times composes all of them', () => {
+  // `write!(f, "a")?; write!(f, "b")` answered `"b"`: only the statement form
+  // with a `?` appended, and the tail write replaced the accumulator.
+  const parts = new Parts('head', 'tail');
+  expect(parts.toString()).toBe('[head|tail]');
+  parts.drop();
+});
+
+test('a Display ending in Ok(()) answers what it wrote, including the semicolon form', () => {
+  const lines = new Lines('first');
+  expect(lines.toString()).toBe('first\nend');
+  lines.drop();
+});
+
+test('a placeholder with no argument is written as undefined and reported', () => {
+  expect(absent(1)).toBe('1 undefined');
 });
 
 test('nothing leaked and nothing was reported', async () => {

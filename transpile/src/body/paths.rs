@@ -1,0 +1,302 @@
+//! A path in expression position, and the values a path names.
+//!
+//! For: Rust writes a name with as much of its module tree in front of it as
+//! the reader needs, and the port has no module tree — a crate is a package and
+//! its names are imported by their leaves. So a path is not written out; it is
+//! resolved, and what stands is whatever the emitted module has for the thing
+//! it named: a class, a variant built with its constructor, a local under the
+//! identifier a shadow was freshened to, a number for an ordering.
+
+use crate::name_map;
+
+use super::{BodyTranslator, STD_QUALIFIERS};
+
+impl BodyTranslator<'_> {
+    // ── Path translation ────────────────────────────────────────────
+
+    /// A path in expression position. The standard-library qualifiers are
+    /// dropped so that `std::sync::Arc::new` becomes `Arc.new`, which is a
+    /// guess about what the remaining segments mean; it is recorded as one.
+    /// `std::cmp::Ordering::Greater`, as the number the port writes an ordering
+    /// as.
+    ///
+    /// Three different types are called `Ordering` in reach of the corpus:
+    /// `std::cmp`'s, `std::sync::atomic`'s, and core's own in `lineage.rs`. The
+    /// registry says which one this path names, so only the first takes a
+    /// number and the other two are left to be written as themselves.
+    pub(crate) fn ordering_variant(&self, path: &syn::Path) -> Option<&'static str> {
+        let mut segments = path.segments.iter().rev();
+        let variant = segments.next()?.ident.to_string();
+        if segments.next()?.ident != "Ordering" {
+            return None;
+        }
+        let number = crate::native_types::ordering::variant(&variant)?;
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let resolved = tc.resolve_expr(&syn::Expr::Path(syn::ExprPath {
+            attrs: Vec::new(),
+            qself: None,
+            path: path.clone(),
+        }));
+        tc.sink.rewind(mark);
+        crate::native_types::ordering::is_ordering(tc.registry, &resolved.ok()?).then_some(number)
+    }
+
+    /// `std::sync::atomic::Ordering::SeqCst` and its four siblings. A JavaScript
+    /// program is single-threaded and every atomic is a plain value, so the
+    /// ordering says nothing — the method translations drop the argument, and
+    /// this is what stands where one is written anywhere else.
+    fn atomic_ordering(&self, path: &syn::Path) -> Option<String> {
+        let mut segments = path.segments.iter().rev();
+        let variant = segments.next()?.ident.to_string();
+        if segments.next()?.ident != "Ordering" {
+            return None;
+        }
+        if !matches!(variant.as_str(), "Relaxed" | "Acquire" | "Release" | "AcqRel" | "SeqCst") {
+            return None;
+        }
+        Some(format!("undefined /* atomic Ordering::{} */", variant))
+    }
+
+    /// Is this expression one of the three numbers the port writes an ordering
+    /// as? A `match` on one is a comparison, not a dispatch on a variant name.
+    pub(crate) fn is_ordering_value(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = self.types.as_ref() else { return false };
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let resolved = tc.resolve_expr(expr);
+        tc.sink.rewind(mark);
+        match resolved {
+            Ok(ty) => crate::native_types::ordering::is_ordering(tc.registry, &ty),
+            Err(_) => false,
+        }
+    }
+
+    /// Is this the `Ok(())` a formatter's `fmt` ends with?
+    ///
+    /// Rust's `fmt` answers `fmt::Result`, and every path out of it that did
+    /// not fail answers `Ok(())`. The port's `toString()` answers the string,
+    /// so that value is the accumulator.
+    pub(crate) fn is_formatter_done(&self, expr: &syn::Expr) -> bool {
+        if !self.formatter {
+            return false;
+        }
+        let syn::Expr::Call(call) = expr else { return false };
+        let syn::Expr::Path(path) = call.func.as_ref() else { return false };
+        if path.path.segments.last().map(|s| s.ident.to_string()).as_deref() != Some("Ok") {
+            return false;
+        }
+        matches!(call.args.first(), Some(syn::Expr::Tuple(t)) if t.elems.is_empty())
+    }
+
+    pub(crate) fn path_expr(&self, path: &syn::Path) -> String {
+        // A path of one segment is a name — a local, a parameter, a free
+        // function — and never a module qualifier. Filtering it as one deleted
+        // every local called `ops`, `iter` or `fmt`: `ops.iter()` came out as
+        // `[...]`, a spread of nothing.
+        let dropped: Vec<String> = if path.segments.len() == 1 {
+            Vec::new()
+        } else {
+            path.segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .filter(|name| STD_QUALIFIERS.contains(&name.as_str()))
+                .collect()
+        };
+        // A `tokio` path keeps its segments, so nothing was given up.
+        let dropped = if path.segments.first().is_some_and(|s| s.ident == "tokio") {
+            Vec::new()
+        } else {
+            dropped
+        };
+        if !dropped.is_empty() {
+            self.fallback(
+                syn::spanned::Spanned::span(path),
+                format!("path qualifiers {} are dropped by name", dropped.join(", ")),
+            );
+        }
+        // A path through another in-family crate — `ankql::ast::Expr::Literal`
+        // — names a type this file imports by its leaf, because the port
+        // flattens a crate's module tree into a package's exports. Keeping the
+        // qualifiers wrote `ankql.ast.Expr`, and nothing called `ankql` exists
+        // in the emitted module.
+        if let Some(trimmed) = self.through_sibling_crate(path) {
+            return trimmed;
+        }
+        // `Ordering::Greater` is the number `1`: the port writes an ordering as
+        // the number a comparison answers, which is what `compareTo` returns.
+        // Written as a member of a class, it named `undefined /* Ordering */`.
+        if let Some(number) = self.ordering_variant(path) {
+            return number.to_string();
+        }
+        if let Some(written) = self.atomic_ordering(path) {
+            return written;
+        }
+        // `ParseError::Empty` is a value, and building it is what every other
+        // construction of that enum does. Written as a member of the class it
+        // named a static nothing declares.
+        if let Some(built) = self.unit_variant(path) {
+            return built;
+        }
+        // A single name may be a local the translator had to emit under a
+        // different identifier, because a Rust shadow cannot be declared twice
+        // in one JavaScript scope.
+        if path.segments.len() == 1 {
+            // A body emitted as a module-level function has no `this`: its
+            // receiver arrived as an ordinary first parameter, under the name
+            // `self_name`.
+            if path.segments[0].ident == "self" {
+                return self.self_name.to_string();
+            }
+            let written = Self::path_static(path);
+            // A path of one lowercase segment names a local, a parameter or a
+            // free function — a binding, and JavaScript will not accept every
+            // Rust name in that position. `Type::new()` is not one: `new` there
+            // is a property, which may be a keyword, so the escape is confined
+            // to the single-segment case and to the names this function merely
+            // camel-cased. `self` becomes `this` and `None` becomes `null`,
+            // which are the keywords themselves and not names.
+            let ident = path.segments[0].ident.to_string();
+            let written = if written == name_map::to_camel_case(&ident) {
+                name_map::escape_reserved(&written)
+            } else {
+                written
+            };
+            if let Some(emitted) = self.emitted_name(&written) {
+                return emitted;
+            }
+            return written;
+        }
+        Self::path_static(path)
+    }
+
+    /// `Enum::Variant { field: .. }` built the way the port builds a variant.
+    pub(crate) fn struct_variant_literal(&self, s: &syn::ExprStruct) -> Option<String> {
+        let segments: Vec<String> =
+            s.path.segments.iter().map(|seg| seg.ident.to_string()).collect();
+        if segments.len() < 2 {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let (owner, variant) = tc.borrow().variant_of_emitted_enum(&segments)?;
+        let want = self.struct_field_types(s);
+        let fields: Vec<String> = s
+            .fields
+            .iter()
+            .map(|f| {
+                let member = crate::infer::member_name(&f.member);
+                let ty = want.iter().find(|(name, _)| *name == member).map(|(_, t)| t);
+                let value = self.expecting(&f.expr, ty, || self.moved_value(&f.expr));
+                format!("{}: {}", name_map::to_camel_case(&member), value)
+            })
+            .collect();
+        Some(format!("new {}('{}', {{ {} }})", owner, variant, fields.join(", ")))
+    }
+
+    /// A path whose first segment names another in-family crate, written the
+    /// way this file reaches it: from the type onwards, since that is what the
+    /// import brings in.
+    fn through_sibling_crate(&self, path: &syn::Path) -> Option<String> {
+        if path.segments.len() < 2 {
+            return None;
+        }
+        let head = path.segments.first()?.ident.to_string();
+        let tc = self.types.as_ref()?;
+        if tc.borrow().registry.sibling_crate(&head).is_none() {
+            return None;
+        }
+        let rest: Vec<&syn::PathSegment> = path
+            .segments
+            .iter()
+            .skip_while(|seg| !seg.ident.to_string().chars().next().is_some_and(|c| c.is_uppercase()))
+            .collect();
+        if rest.is_empty() {
+            // Every segment is a module name: the path names a free function
+            // of that crate, which the import map brings in by its own name.
+            return path.segments.last().map(|s| crate::name_map::to_camel_case(&s.ident.to_string()));
+        }
+        let mut trimmed = syn::Path {
+            leading_colon: None,
+            segments: syn::punctuated::Punctuated::new(),
+        };
+        for seg in rest {
+            trimmed.segments.push(seg.clone());
+        }
+        Some(
+            self.unit_variant(&trimmed)
+                .unwrap_or_else(|| Self::path_static(&trimmed)),
+        )
+    }
+
+    /// A unit enum variant written as a path, built the way one is built.
+    fn unit_variant(&self, path: &syn::Path) -> Option<String> {
+        if path.segments.len() < 2 {
+            return None;
+        }
+        let segments: Vec<String> =
+            path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let tc = self.types.as_ref()?;
+        let (owner, variant) = tc.borrow().unit_variant_of_emitted_enum(&segments)?;
+        Some(format!("new {}('{}', {{}})", owner, variant))
+    }
+
+    pub(crate) fn path_static(path: &syn::Path) -> String {
+        let single = path.segments.len() == 1;
+        // A path through `tokio` keeps every segment and every name as written:
+        // `@ankurah/base` mirrors the crate's module tree and spells the
+        // functions the way tokio spells them, so `tokio::sync::mpsc::
+        // unbounded_channel` is `tokio.sync.mpsc.unbounded_channel`.
+        let through_tokio = path.segments.first().is_some_and(|s| s.ident == "tokio");
+        if through_tokio {
+            let names: Vec<String> =
+                path.segments.iter().map(|seg| seg.ident.to_string()).collect();
+            return names.join(".");
+        }
+        let segments: Vec<String> = path.segments.iter().map(|seg| {
+            let name = seg.ident.to_string();
+            match name.as_str() {
+                "self" => "this".to_string(),
+                "Self" => "Self".to_string(),
+                "None" => "null".to_string(),
+                "true" | "false" => name,
+                "Ok" | "Some" | "Err" => name,
+                "std" | "core" | "alloc" | "crate" | "super" | "marker" => name,
+                "PhantomData" => return "undefined /* PhantomData */".to_string(),
+                _ => {
+                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        name
+                    } else {
+                        name_map::to_camel_case(&name)
+                    }
+                }
+            }
+        }).collect();
+
+        // Strip std/core/alloc module prefixes, keep type+method. A lone
+        // segment is a name, not a qualifier: a local called `ops` is `ops`.
+        let segments: Vec<String> = segments.into_iter()
+            .filter(|s| single || !STD_QUALIFIERS.contains(&s.as_str()))
+            .collect();
+        let joined = segments.join(".");
+        match joined.as_str() {
+            // `crate::` names this crate's own module tree, which the port
+            // flattens: a module is a file and its names are imported. What
+            // survives is the *type* and whatever is written after it —
+            // `crate::TypeResolver::new` is `TypeResolver.new` — while a path
+            // that names no type is a free function and keeps its own name.
+            // Taking the last segment alone took the type away with the
+            // modules and left a bare `new()`.
+            s if s.starts_with("crate.") => {
+                let at = segments
+                    .iter()
+                    .position(|seg| seg.chars().next().is_some_and(|c| c.is_uppercase()));
+                match at {
+                    Some(at) => segments[at..].join("."),
+                    None => segments.last().cloned().unwrap_or(joined),
+                }
+            }
+            _ => joined,
+        }
+    }
+}

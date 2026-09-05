@@ -44,6 +44,7 @@ pub use dispatch::{
     class_module,
     forwards_every_method, free_call, has_emitted_class, is_reference_forwarding, FreeCall,
 };
+pub use open_dispatch::set_contested_traits;
 pub use open_dispatch::{
     dispatcher_name, dispatchers, record_wanted, refusal as dispatcher_refusal, Dispatcher,
 };

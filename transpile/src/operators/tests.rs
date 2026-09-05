@@ -152,27 +152,35 @@ fn the_result_of_an_overloaded_operator_has_the_impls_output_type() {
 
 /// Rust gives booleans `^`, `&` and `|`; JavaScript reads all three as bit
 /// arithmetic on numbers, so `a ^ b` answered `0` or `1`.
+///
+/// PREMISE CHANGED 2026-09-04: `&` and `|` used to be written as `&&` and `||`,
+/// which agree in value and not in what runs — `&&` skips its right operand
+/// once the left has decided, and Rust's `&` never does. They are calls now, so
+/// both operands are evaluated, left to right, exactly once.
 #[test]
 fn the_bit_operators_on_booleans_are_boolean_operators() {
     let (ts, _) = body("pub fn differ(a: bool, b: bool) -> bool { a ^ b }", "differ");
     assert!(ts.contains("a !== b"), "{}", ts);
     let (ts, _) = body("pub fn both(a: bool, b: bool) -> bool { a & b }", "both");
-    assert!(ts.contains("a && b"), "{}", ts);
+    assert!(ts.contains("boolAnd(a, b)"), "{}", ts);
     let (ts, _) = body("pub fn either(a: bool, b: bool) -> bool { a | b }", "either");
-    assert!(ts.contains("a || b"), "{}", ts);
+    assert!(ts.contains("boolOr(a, b)"), "{}", ts);
 }
 
-/// A right operand that does something of its own is not evaluated by `&&`,
-/// and Rust's `&` evaluates it.
+/// PREMISE CHANGED 2026-09-04: a right operand that does something of its own
+/// used to be reported, because `&&` would not have evaluated it. The eager
+/// form evaluates it, so there is nothing left to report — and the test that
+/// asked for the report now asks for the call.
 #[test]
-fn a_side_effecting_right_operand_of_a_boolean_and_is_reported() {
-    let (_, said) = body(
+fn a_side_effecting_right_operand_of_a_boolean_and_is_evaluated() {
+    let (ts, said) = body(
         "pub fn check(flag: bool) -> bool { flag & touch() }\n\
          pub fn touch() -> bool { true }",
         "check",
     );
+    assert!(ts.contains("boolAnd(flag, touch())"), "{}", ts);
     assert!(
-        said.iter().any(|m| m.contains("evaluates both sides")),
+        !said.iter().any(|m| m.contains("evaluates both sides")),
         "{:?}",
         said
     );
@@ -194,4 +202,151 @@ fn a_signed_shift_keeps_the_arithmetic_one() {
     let (ts, _) = body("pub fn half(n: i32) -> i32 { n >> 1 }", "half");
     assert!(ts.contains("(n >> 1)"), "{}", ts);
     assert!(!ts.contains(">>>"), "{}", ts);
+}
+
+/// An impl written for REFERENCES is an impl of its own. Rust does not search
+/// operator impls through a reference or through `Deref` — `W + N` with only
+/// `impl Add<N> for N` and `W: Deref<Target = N>` is E0369 — so
+/// `impl Add<&R> for &L` has to be found exactly, and the method it names has
+/// to exist. The old test with this name compared two primitive fields and
+/// never invoked an overloaded reference operator at all.
+#[test]
+fn an_operator_impl_written_for_references_is_found_and_called() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::ops::Add;\n\
+         pub struct L { pub n: u32 }\n\
+         pub struct R { pub n: u32 }\n\
+         impl Add<&R> for &L {\n\
+           type Output = u32;\n\
+           fn add(self, rhs: &R) -> u32 { self.n + rhs.n }\n\
+         }\n\
+         pub fn refs(a: &L, b: &R) -> u32 { a + b }",
+    )]);
+    let ts = f.translated_method("lib.rs", "refs");
+    assert!(ts.contains("a.add(b)"), "{}", ts);
+    assert!(f.messages().is_empty(), "{:?}", f.messages());
+    // And the method the call names is on the class the reference points at.
+    let emitted = f.emitted("lib.rs");
+    assert!(emitted.contains("add(rhs: R): number"), "{}", emitted);
+}
+
+/// A heterogeneous `Rhs` resolved only as a LATER local still moves the left
+/// operand: the impl consumes it, so the block must not release it as well.
+#[test]
+fn a_heterogeneous_operator_moves_its_left_operand_even_from_a_later_local() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::ops::Add;\n\
+         pub struct Left { pub n: u32 }\n\
+         pub struct Right { pub n: u32 }\n\
+         impl Add<Right> for Left {\n\
+           type Output = u32;\n\
+           fn add(self, rhs: Right) -> u32 { self.n + rhs.n }\n\
+         }\n\
+         pub fn local(left: Left) -> u32 {\n\
+           let right = Right { n: 2 };\n\
+           left + right\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "local");
+    assert!(ts.contains("left.add(right)"), "{}", ts);
+    assert!(!ts.contains("left.drop()"), "{}", ts);
+}
+
+/// A generic impl says what it answers in terms of its own parameters, and the
+/// match that selected it says which ones this site has. Refusing every generic
+/// impl left the result local untyped, so nothing released it.
+#[test]
+fn a_generic_operator_impls_output_is_substituted() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::ops::Add;\n\
+         pub struct Generic<T> { pub value: T }\n\
+         impl<T> Add for Generic<T> {\n\
+           type Output = Generic<T>;\n\
+           fn add(self, rhs: Generic<T>) -> Generic<T> { rhs }\n\
+         }\n\
+         pub fn generic(left: Generic<u32>, right: Generic<u32>) -> u32 {\n\
+           let result = left + right;\n\
+           result.value\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "generic");
+    assert!(ts.contains("const result = left.add(right);"), "{}", ts);
+    assert!(ts.contains("result.drop()"), "{}", ts);
+}
+
+/// Two written impls whose methods land on one class member: the second used to
+/// be dropped without a word, and every call to it went to the first.
+#[test]
+fn two_operator_impls_that_emit_one_method_name_are_reported() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::ops::Add;\n\
+         pub struct W { pub n: u32 }\n\
+         pub struct R { pub n: u32 }\n\
+         impl Add for W {\n\
+           type Output = u32;\n\
+           fn add(self, rhs: W) -> u32 { self.n + rhs.n }\n\
+         }\n\
+         impl Add<R> for W {\n\
+           type Output = u32;\n\
+           fn add(self, rhs: R) -> u32 { self.n + rhs.n }\n\
+         }",
+    )]);
+    let _ = f.emitted("lib.rs");
+    assert!(
+        f.messages().iter().any(|m| m.contains("already has that name")),
+        "{:?}",
+        f.messages()
+    );
+}
+
+/// A shift by a literal at or past the left operand's width is proof the type
+/// is a guess and the guess is wrong: Rust rejects `1u32 << 63` outright.
+#[test]
+fn a_shift_past_the_guessed_width_is_reported_rather_than_wrapped() {
+    let (ts, said) = body("pub fn wide(n: u32) -> u32 { n << 63 }", "wide");
+    assert!(said.iter().any(|m| m.contains("shifts by 63")), "{:?}", said);
+    assert!(!ts.contains(">>> 0"), "{}", ts);
+}
+
+/// `-a`, `!a` and `a[i]` on anything but a primitive are method calls in Rust,
+/// and the port wrote the JavaScript operator: `-object` is `NaN` and
+/// `object[0]` is `undefined`, neither with a word said.
+#[test]
+fn the_unary_operators_and_indexing_resolve_through_their_impls() {
+    let source = "use std::ops::{Neg, Not, Index};\n\
+                  pub struct S { pub n: i32 }\n\
+                  impl Neg for S { type Output = S; fn neg(self) -> S { S { n: -self.n } } }\n\
+                  impl Not for S { type Output = S; fn not(self) -> S { S { n: !self.n } } }\n\
+                  impl Index<usize> for S { type Output = i32; fn index(&self, i: usize) -> &i32 { &self.n } }\n";
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        &format!("{}pub fn negated(a: S) -> S {{ -a }}", source),
+    )]);
+    let ts = f.translated_method("lib.rs", "negated");
+    assert!(ts.contains("a.neg()"), "{}", ts);
+    // `Neg::neg` takes self by value, so the block must not release it again.
+    assert!(!ts.contains("a.drop()"), "{}", ts);
+
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        &format!("{}pub fn notted(a: S) -> S {{ !a }}", source),
+    )]);
+    assert!(f.translated_method("lib.rs", "notted").contains("a.not()"));
+
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        &format!("{}pub fn at(a: &S) -> i32 {{ a[0] }}", source),
+    )]);
+    assert!(f.translated_method("lib.rs", "at").contains("a.index(0)"));
+}
+
+/// And an operand with no impl says so, where it used to say nothing.
+#[test]
+fn a_unary_operator_with_no_impl_is_reported() {
+    let (_, said) = body("pub struct T { pub n: i32 }\npub fn negated(a: T) -> T { -a }", "negated");
+    assert!(said.iter().any(|m| m.contains("resolves through `Neg`")), "{:?}", said);
 }

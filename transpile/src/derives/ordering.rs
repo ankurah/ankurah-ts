@@ -188,7 +188,7 @@ fn sequence(left: &str, right: &str, element: &str) -> String {
         "((xs, ys) => {{ const n = Math.min(xs.length, ys.length); \
          for (let i = 0; i < n; i++) {{ const a = xs[i], b = ys[i]; \
          const d = {element}; if (d !== 0) return d; }} \
-         return xs.length - ys.length; }})({left}, {right})",
+         return Math.sign(xs.length - ys.length); }})({left}, {right})",
         element = element,
         left = left,
         right = right

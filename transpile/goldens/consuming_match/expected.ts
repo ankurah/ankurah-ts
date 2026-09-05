@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/consuming_match/src/input.rs
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, dropOwned } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -87,5 +87,66 @@ export function peek(slot: Slot): number {
       return borrow(entity);
     },
   });
+}
+
+export function untilFilled(slots: Slot[]): number {
+  let seen = 0;
+  const _seq2 = slots;
+  let _at3 = 0;
+  try {
+    while (_at3 < _seq2.length) {
+      const slot = _seq2[_at3++];
+      const _m1 = slot.intoMatch({
+        Filled: (v) => {
+          const entity = v._0;
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            entity.drop();
+            return { $jump: 'break' };
+          } finally {
+            if (!_moved0) entity.drop();
+          }
+        },
+        Empty: () => {
+          seen += 1;
+        },
+      });
+      if ((_m1 as any)?.$jump === 'break') break;
+    }
+  } finally {
+    dropOwned(_seq2.slice(_at3));
+  }
+  return seen;
+}
+
+export function countEmpty(slots: Slot[]): number {
+  let seen = 0;
+  const _seq2 = slots;
+  let _at3 = 0;
+  try {
+    while (_at3 < _seq2.length) {
+      const slot = _seq2[_at3++];
+      const _m1 = slot.intoMatch({
+        Filled: (v) => {
+          const entity = v._0;
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            entity.drop();
+            return { $jump: 'continue' };
+          } finally {
+            if (!_moved0) entity.drop();
+          }
+        },
+        Empty: () => {},
+      });
+      if ((_m1 as any)?.$jump === 'continue') continue;
+      seen += 1;
+    }
+  } finally {
+    dropOwned(_seq2.slice(_at3));
+  }
+  return seen;
 }
 

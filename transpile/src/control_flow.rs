@@ -14,7 +14,7 @@ use crate::match_expr;
 
 /// Whether a branch produces the block's value or just runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Position {
+pub(crate) enum Position {
     /// The `if` is a statement: its branches run and produce nothing.
     Statement,
     /// The `if` is the value of the function or of the block around it, so each

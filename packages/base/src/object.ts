@@ -103,6 +103,28 @@ export function dropOwned(value: unknown): void {
 }
 
 /**
+ * Release the parts of a match arm's payload that the arm took no name for.
+ *
+ * A consuming match hands the arm the whole payload and keeps none of it, so
+ * the arm owns every field from the moment it is called — including the ones
+ * its pattern wrote `_` for, or never mentioned at all. Those have no name to
+ * be released under, so the arm names them here instead, by the keys it *did*
+ * take: `dropUnbound(v, ['_0'])` releases everything in `v` except `_0`, which
+ * the arm bound and releases itself.
+ *
+ * `bound` is empty for an arm that took nothing — a `_` arm over a payload
+ * variant — and that arm still owes the whole payload a release.
+ */
+export function dropUnbound(payload: unknown, bound: readonly string[]): void {
+  const value = payload as Record<string, unknown> | null;
+  if (value == null || typeof value !== 'object') return;
+  for (const key of Object.keys(value)) {
+    if (bound.includes(key)) continue;
+    dropOwned(value[key]);
+  }
+}
+
+/**
  * Does this value have no drop glue — is it, in Rust's terms, `Copy`?
  *
  * A `Copy` type cannot implement `Drop` in Rust, so re-storing one releases

@@ -13,7 +13,7 @@ pub fn emit_struct(
     s: &StructInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
-    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
+    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo, &[String])>>,
     impl_bounds: Option<&HashMap<String, Vec<String>>>,
     assigned: &HashSet<String>,
 ) {
@@ -82,6 +82,7 @@ pub fn emit_struct(
     );
     emit_derive_methods(
         out, reg, &s.name, &s.generics, &s.derives, &mut emitted, &s.fields, Some(ordering),
+        Some(crate::derives::hashing::struct_hash(reg, s)),
     );
     // The derives that write code rather than only proving an impl: Debug's
     // `debug()`, and thiserror's `toString`/`from`. `emitted` keeps a
@@ -99,7 +100,7 @@ pub fn emit_struct(
             if inner_ty.ends_with("[]") {
                 out.push_str(&format!("\n  get length(): number {{\n    return this.{}.length;\n  }}\n", field_name));
                 out.push_str(&format!("\n  [Symbol.iterator](): Iterator<any> {{\n    return this.{}[Symbol.iterator]();\n  }}\n", field_name));
-            } else if inner_ty.starts_with("Map<") {
+            } else if inner_ty.starts_with("HashMap<") {
                 out.push_str(&format!("\n  get size(): number {{\n    return this.{}.size;\n  }}\n", field_name));
                 out.push_str(&format!("\n  [Symbol.iterator](): Iterator<any> {{\n    return this.{}[Symbol.iterator]();\n  }}\n", field_name));
                 out.push_str(&format!("\n  entries(): IterableIterator<any> {{\n    return this.{}.entries();\n  }}\n", field_name));
@@ -118,7 +119,7 @@ pub fn emit_enum(
     e: &EnumInfo,
     inherent_methods: &HashMap<String, Vec<&FnInfo>>,
     _trait_impls: &HashMap<String, Vec<(&str, &[String])>>,
-    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
+    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo, &[String])>>,
 ) {
     let export = if e.is_pub { "export " } else { "" };
 
@@ -206,6 +207,7 @@ pub fn emit_enum(
     );
     emit_derive_methods(
         out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[], Some(ordering),
+        Some(crate::derives::hashing::enum_hash(reg, e)),
     );
     // `emitted` already holds every method a written impl put on the class, so a
     // hand-written `Display` keeps its `toString` and the derive does not write
@@ -337,7 +339,7 @@ pub fn assigned_fields(file: &crate::types::RustFile) -> HashSet<String> {
         fn visit_expr(&mut self, expr: &syn::Expr) {
             match expr {
                 syn::Expr::Assign(assign) => self.record(&assign.left),
-                syn::Expr::Binary(bin) if is_assign_op(&bin.op) => self.record(&bin.left),
+                syn::Expr::Binary(bin) if crate::body::is_assign_op(&bin.op) => self.record(&bin.left),
                 _ => {}
             }
             syn::visit::visit_expr(self, expr);
@@ -361,23 +363,6 @@ pub fn assigned_fields(file: &crate::types::RustFile) -> HashSet<String> {
         names.extend(assigned_fields(inner));
     }
     names
-}
-
-/// Is this the operator of an assignment — `=`'s compound cousins?
-fn is_assign_op(op: &syn::BinOp) -> bool {
-    matches!(
-        op,
-        syn::BinOp::AddAssign(_)
-            | syn::BinOp::SubAssign(_)
-            | syn::BinOp::MulAssign(_)
-            | syn::BinOp::DivAssign(_)
-            | syn::BinOp::RemAssign(_)
-            | syn::BinOp::BitXorAssign(_)
-            | syn::BinOp::BitAndAssign(_)
-            | syn::BinOp::BitOrAssign(_)
-            | syn::BinOp::ShlAssign(_)
-            | syn::BinOp::ShrAssign(_)
-    )
 }
 
 /// Say what this type owns, where saying nothing would be wrong.
@@ -433,12 +418,18 @@ fn emit_inherent_methods(
 fn emit_trait_methods(
     out: &mut String,
     self_type: &str,
-    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo)>>,
+    trait_methods: &HashMap<String, Vec<(&str, &[String], &FnInfo, &[String])>>,
     emitted: &mut HashSet<String>,
 ) {
     let plain_name = self_type.split('<').next().unwrap_or(self_type);
+    // What each name this pass wrote actually looks like, so a second impl
+    // wanting the same name can be told apart: two impls whose TypeScript
+    // signatures are identical — `From<&str>` and `From<String>` are both
+    // `from(v: string)` — are ONE method here, and that is a merge rather than
+    // a loss. Two that differ are a loss, and the site says so.
+    let mut signatures: HashMap<String, String> = HashMap::new();
     if let Some(trait_fns) = trait_methods.get(plain_name) {
-        for (trait_name, type_args, method) in trait_fns {
+        for (trait_name, type_args, method, impl_params) in trait_fns {
             // Skip From<Infallible> — unreachable code
             if *trait_name == "From" && type_args.iter().any(|a| a == "never" || a == "Infallible") {
                 continue;
@@ -447,7 +438,14 @@ fn emit_trait_methods(
             let ts_name = trait_method_name(trait_name, type_args, method, self_type);
             // `Drop` declares `onDrop` protected, so the override has to say so.
             let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
-            if emitted.insert(ts_name.clone()) {
+            let signature = format!(
+                "{}|{}",
+                method.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>().join(","),
+                method.return_type
+            );
+            if !emitted.contains(&ts_name) {
+                emitted.insert(ts_name.clone());
+                signatures.insert(ts_name.clone(), signature);
                 let m = FnInfo {
                     name: method.name.clone(),
                     ts_name,
@@ -462,7 +460,12 @@ fn emit_trait_methods(
                     return_type: ret_override.map(|s| s.to_string())
                         .unwrap_or_else(|| method.return_type.clone()),
                     rust_return: method.rust_return.clone(),
-                    generics: method.generics.clone(),
+                    // The impl's OWN parameters, where the method's
+                    // signature names them and the class does not declare
+                    // them: `impl<T: Into<Expr>> From<Vec<T>> for Expr` writes
+                    // a static whose parameter is `T[]`, and a `T` nothing
+                    // declares is not a type at all.
+                    generics: with_impl_params(&method.generics, impl_params, method, self_type),
                     type_params: method.type_params.clone(),
                     syn_generics: method.syn_generics.clone(),
                     is_test: false,
@@ -471,6 +474,27 @@ fn emit_trait_methods(
                 };
                 out.push('\n');
                 emit_method_with(out, &m, self_type, modifiers);
+            } else if signatures.get(&ts_name) != Some(&signature) {
+                // Two written impls whose methods land on one name AND differ
+                // in what they take or answer: the second used to be dropped
+                // without a word, and every call to it went to the first —
+                // `impl Add<Right> for Weight` beside `impl Add for Weight` are
+                // both `add`, and `weight + right` called the one that takes a
+                // `Weight`.
+                crate::diag::pending::park(
+                    method
+                        .rust_return
+                        .as_ref()
+                        .map(syn::spanned::Spanned::span)
+                        .or_else(|| method.body_ast.as_ref().map(syn::spanned::Spanned::span))
+                        .unwrap_or_else(proc_macro2::Span::call_site),
+                    format!(
+                        "`{}` for `{}` emits a method called `{}`, and something on this class \
+                         already has that name, so this one is not written and every call to it \
+                         goes to the other",
+                        trait_name, self_type, ts_name
+                    ),
+                );
             }
         }
     }
@@ -485,6 +509,7 @@ fn emit_derive_methods(
     emitted: &mut HashSet<String>,
     fields: &[crate::types::FieldInfo],
     ordering_of: Option<(String, Vec<crate::derives::Gap>)>,
+    hash_of: Option<String>,
 ) {
     let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
     let field_names: Vec<&str> = fields.iter()
@@ -522,6 +547,16 @@ fn emit_derive_methods(
                 out.push_str("    return true;\n  }\n");
             }
         }
+    }
+
+    // `#[derive(Hash)]` is what makes a type usable as a key: the runtime's
+    // `HashMap` and `HashSet` file a key under its own `hash()` and refuse one
+    // that declares none, because a container that silently answered nothing
+    // for every key is worse than one that says so.
+    if derive_set.contains("Hash") && emitted.insert("hash".to_string()) {
+        out.push_str(&hash_of.unwrap_or_else(|| {
+            format!("\n  hash(): string {{\n    return '{}';\n  }}\n", type_name)
+        }));
     }
 
     if derive_set.contains("PartialOrd") || derive_set.contains("Ord") {
@@ -604,7 +639,7 @@ fn emit_derive_methods(
                                         })
                                         .collect();
                                     format!("[{}] as {}", clones.join(", "), base_ty)
-                                } else if base_ty.starts_with("Map<") {
+                                } else if base_ty.starts_with("HashMap<") {
                                     // Map — clone entries
                                     format!("new Map(Array.from(this.{}.entries()).map(([k, v]) => [k, v]))", n)
                                 } else if ty.ends_with(" | null") {
@@ -680,7 +715,7 @@ fn emit_field_eq(name: &str, ty: &str) -> String {
             "{{ if (this.{n}.length !== other.{n}.length) return false; for (let i = 0; i < this.{n}.length; i++) {{ if (this.{n}[i] !== other.{n}[i]) return false; }} }}",
             n = name
         )
-    } else if ty.starts_with("Map<") {
+    } else if ty.starts_with("HashMap<") {
         // Map comparison — check size and key-value equality
         format!(
             "{{ if (this.{n}.size !== other.{n}.size) return false; for (const [k, v] of this.{n}) {{ if (!other.{n}.has(k)) return false; }} }}",
@@ -732,6 +767,44 @@ fn emit_struct_bincode(
     }
 }
 
+/// A method's type parameters, plus the impl's own where the signature names
+/// them and nothing else declares them.
+fn with_impl_params(generics: &str, impl_params: &[String], method: &FnInfo, self_type: &str) -> String {
+    let signature = format!(
+        "{} {}",
+        method.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>().join(" "),
+        method.return_type
+    );
+    let declared = format!("{} {}", generics, self_type);
+    let missing: Vec<&String> = impl_params
+        .iter()
+        .filter(|p| names_type_param(&signature, p) && !names_type_param(&declared, p))
+        .collect();
+    if missing.is_empty() {
+        return generics.to_string();
+    }
+    let mut params: Vec<String> = missing.into_iter().cloned().collect();
+    let inner = generics.trim_start_matches('<').trim_end_matches('>').trim();
+    if !inner.is_empty() {
+        params.extend(inner.split(',').map(|p| p.trim().to_string()));
+    }
+    format!("<{}>", params.join(", "))
+}
+
+/// Is this type parameter named in this text as a name of its own, rather than
+/// as part of a longer identifier?
+fn names_type_param(text: &str, param: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(param).any(|(at, _)| {
+        let before = at == 0 || !is_ident_byte(bytes[at - 1]);
+        let after_at = at + param.len();
+        let after = after_at == bytes.len() || !is_ident_byte(bytes[after_at]);
+        before && after
+    })
+}
+
+fn is_ident_byte(b: u8) -> bool { b.is_ascii_alphanumeric() || b == b'_' }
+
 fn emit_method(out: &mut String, method: &FnInfo, self_type: &str) {
     emit_method_with(out, method, self_type, "")
 }
@@ -754,20 +827,15 @@ fn emit_method_with(out: &mut String, method: &FnInfo, self_type: &str, modifier
 
     let body = if let Some(body_ts) = &method.body_ts {
         let ts = body_ts.clone();
-        // Display::fmt bodies: wrap with _result accumulator if body uses _result +=
-        let ts = if method.ts_name == "toString" && ts.contains("_result +=") {
-            let mut fixed = String::from("let _result = '';\n");
-            for line in ts.lines() {
-                let trimmed = line.trim();
-                if trimmed == "return Result.Ok([]);" || trimmed == "return Result.Ok(undefined);" {
-                    fixed.push_str("return _result;\n");
-                } else {
-                    fixed.push_str(line);
-                    fixed.push('\n');
-                }
-            }
-            fixed
-        } else if method.ts_name == "toString" && ts.contains("fromParts(") {
+        // The `_result` accumulator a formatter composes into used to be spliced
+        // in here, by searching the finished text for `_result +=` and
+        // rewriting whichever lines happened to read `return Result.Ok(..)`.
+        // It found the statement forms and not the tail, so a `Display` ending
+        // in `write!(f, "b")` answered `"b"` rather than everything it had
+        // written; and it knew nothing of a `write!` with no `?`. The body
+        // translator opens the accumulator, appends every write and returns it,
+        // from the Rust rather than from the text.
+        let ts = if method.ts_name == "toString" && ts.contains("fromParts(") {
             // Monomorphized generic calls (Attested::<Event>::from_parts) can't be translated
             format!("return `[{}]`;\n", self_type)
         } else {
@@ -997,12 +1065,18 @@ pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_
     // TYPE, so it is asked of the leaf's TypeScript spelling.
     let source = &type_args[0];
     let leaf = source.rsplit("::").next().unwrap_or(source);
-    let as_ts = crate::name_map::map_type_name(leaf);
 
-    if as_ts.ends_with("[]") || as_ts.starts_with("Map<") || as_ts.starts_with("Set<")
-        || as_ts.contains("Uint8Array")
-        || matches!(as_ts, "string" | "boolean" | "number" | "bigint")
-    {
+    if source_reads_as_plain(source) {
+        // Until two impls of one type both want the plain name. `From<String>
+        // for Expr` and `From<i64> for Expr` are both `from`, and emission kept
+        // the first and dropped the other seven — so where the name is
+        // contested the Rust leaf is what tells them apart, `bigint` having
+        // nothing to say about `i64` versus `u64`.
+        if is_contested(_self_type, base_name) {
+            if let Some(fragment) = name_fragment(leaf) {
+                return format!("{}{}", base_name, fragment);
+            }
+        }
         return base_name.to_string();
     }
 
@@ -1019,6 +1093,36 @@ pub(crate) fn disambiguate_trait_method(base_name: &str, trait_name: &str, type_
     }
 
     base_name.to_string()
+}
+
+/// Does this conversion source name a type whose TypeScript spelling says
+/// nothing about which impl it is?
+///
+/// `String`, `u64` and `Vec<u8>` all become a built-in TypeScript type, so the
+/// leaf reads as noise beside `from` where only one impl wants that name. Both
+/// halves of the naming — the class's method and the registry post-pass that
+/// finds out which names are contested — ask this one question.
+pub(crate) fn source_reads_as_plain(source: &str) -> bool {
+    let leaf = source.rsplit("::").next().unwrap_or(source);
+    let as_ts = crate::name_map::map_type_name(leaf);
+    as_ts.ends_with("[]")
+        || as_ts.starts_with("HashMap<")
+        || as_ts.starts_with("HashSet<")
+        || as_ts.contains("Uint8Array")
+        || matches!(&*as_ts, "string" | "boolean" | "number" | "bigint")
+}
+
+/// A type's spelling as a fragment of a method name: identifier characters
+/// only, first letter capitalised. `T[]` is `T` and `Uint8Array` is itself; a
+/// spelling with nothing left in it has no fragment to give.
+fn name_fragment(spelling: &str) -> Option<String> {
+    let kept: String = spelling.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let mut chars = kept.chars();
+    let first = chars.next()?;
+    if first.is_ascii_digit() {
+        return None;
+    }
+    Some(first.to_uppercase().chain(chars).collect())
 }
 
 thread_local! {
@@ -1196,6 +1300,7 @@ fn trait_method_mapping(trait_name: &str, rust_method_name: &str) -> Option<(&'s
         ("Clone", "clone") => Some(("clone", None)),
         ("PartialEq", "eq") => Some(("equals", Some("boolean"))),
         ("PartialOrd", "partial_cmp") => Some(("compareTo", Some("number"))),
+        ("Ord", "cmp") => Some(("compareTo", Some("number"))),
         ("From", "from") => Some(("from", None)),
         ("TryFrom", "try_from") => Some(("tryFrom", None)),
         ("TryInto", "try_into") => Some(("from", None)),

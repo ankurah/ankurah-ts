@@ -143,6 +143,8 @@ impl ItemSelector {
 
     /// Whether this selector is one that only shows up inside another item, and
     /// so is never matched by `matches`.
+    /// Read by this module's own tests.
+    #[cfg(test)]
     pub fn is_nested(&self) -> bool {
         matches!(
             self,

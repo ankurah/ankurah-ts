@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result, JsonError } from '@ankurah/base';
+import { Struct, Result, JsonError, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
@@ -37,6 +37,11 @@ export class CollectionId extends Struct {
   equals(other: CollectionId): boolean {
     if (this._0 !== other._0) return false;
     return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [keyHash(this._0)].join('|');
   }
 
   compareTo(other: CollectionId): number {

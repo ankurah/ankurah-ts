@@ -9,7 +9,7 @@
 
 import { expect, test } from 'bun:test';
 import { OwnedClosure } from '@ankurah/base';
-import { Entity, borrow, borrowing, plain, runLater, runNow } from './input.ts';
+import { Entity, borrow, borrowing, consumed, plain, runLater, runNow } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('borrow leaves the Entity to its owner', () => {
@@ -46,6 +46,13 @@ test('an OwnedClosure built here releases its captures when it is dropped', () =
   // Dropping the closure cascades into the Entity it captured; nothing else
   // may release that Entity.
   closure.drop();
+});
+
+test('a closure that hands its capture away is called once and releases it', () => {
+  // The capture used to be left out of what the closure owned, and nothing
+  // released it; `callOnce` transfers it and marks the closure moved, so the
+  // closure is not dropped after one either.
+  expect(consumed(new Entity('abcde'))).toBe(5);
 });
 
 test('nothing leaked and nothing was reported', async () => {

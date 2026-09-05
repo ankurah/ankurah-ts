@@ -14,8 +14,13 @@ mod js_value; // serde_json::Value / JsValue → unknown
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
+pub(crate) mod ordering; // std::cmp::Ordering → -1 | 0 | 1
 mod set; // HashSet<T>/BTreeSet<T> → Set<T>
 mod string; // String/&str → string // Arc<T>/Weak<T> — reference-counted pointer
+
+#[cfg(test)]
+#[path = "tests_ordering.rs"]
+mod tests_ordering;
 
 use crate::name_map::shape::{js_shape, JsShape};
 use crate::registry::TypeRegistry;
@@ -55,6 +60,23 @@ pub fn translate_method(
     rust_method: &str,
     args: &[String],
 ) -> MethodTranslation {
+    translate_method_using(reg, receiver_ty, receiver, rust_method, args, true)
+}
+
+/// The same, told whether the call's answer is used.
+///
+/// `HashMap::insert` answers the value it displaced and hands ownership of it
+/// to the caller; a statement that discards the answer leaves the container to
+/// release it. The two are different runtime methods, so the question has to
+/// reach here.
+pub fn translate_method_using(
+    reg: &TypeRegistry,
+    receiver_ty: &Ty,
+    receiver: &str,
+    rust_method: &str,
+    args: &[String],
+    used: bool,
+) -> MethodTranslation {
     // Check type-erased conversions first (apply to any type)
     if let Some(result) = conversion::translate(receiver, rust_method, args) {
         return MethodTranslation::Expr(result);
@@ -80,6 +102,13 @@ pub fn translate_method(
         };
     }
 
+    // `Ordering` is a number here, and so are the atomics — but what a call on
+    // one means is nothing like what a call on the other means, so the type is
+    // asked before the shape is.
+    if ordering::is_ordering(reg, receiver_ty) {
+        return ordering::translate(receiver, rust_method, args);
+    }
+
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
@@ -88,16 +117,46 @@ pub fn translate_method(
         // the reading half of an array's surface.
         JsShape::Bytes => bytes::translate(receiver, rust_method, args),
         JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args),
-        JsShape::Map(_, _) => map::translate(receiver, rust_method, args),
-        JsShape::Set(_) => set::translate(receiver, rust_method, args),
-        JsShape::Rc(name) => arc::translate(&name, receiver, rust_method, args),
+        JsShape::Map(_, _) => map::translate_using_result(receiver, rust_method, args, used),
+        JsShape::Set(_) => set::translate_using_result(receiver, rust_method, args, used),
+        // An `Arc<T>` answers `Arc`'s own methods; everything else is a method
+        // on the `T` inside it, reached the way the runtime holds it — Rust's
+        // own auto-deref, written out. `Arc<AtomicUsize>::fetch_add` was left
+        // as `arc.fetchAdd(1, undefined)`, a method no number has.
+        JsShape::Rc(name) => match arc::translate(&name, receiver, rust_method, args) {
+            MethodTranslation::Passthrough => match inner_of(reg, receiver_ty) {
+                Some((inner, accessor)) => {
+                    translate_method_using(reg, &inner, &format!("{}{}", receiver, accessor), rust_method, args, used)
+                }
+                None => MethodTranslation::Passthrough,
+            },
+            translated => translated,
+        },
         JsShape::Str => string::translate(receiver, rust_method, args),
         // `serde_json::Value` and `JsValue`: the value JavaScript already holds.
         JsShape::Unknown => js_value::translate(receiver, rust_method, args),
-        JsShape::Number => number::translate(receiver, rust_method, args),
+        // An `AtomicBool` is a boolean here, and `load`/`store`/`swap` on one are
+        // the same rewrites the numeric atomics take.
+        JsShape::Number | JsShape::Boolean => number::translate(receiver, rust_method, args),
         // `Box<T>` and `&T` are the value they hold.
-        JsShape::SameAs(inner) => translate_method(reg, &inner, receiver, rust_method, args),
+        JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, used),
         _ => MethodTranslation::Passthrough,
+    }
+}
+
+/// What a wrapper holds, and how the emitted code reaches it.
+fn inner_of(reg: &TypeRegistry, ty: &Ty) -> Option<(Ty, String)> {
+    let Ty::Named { id, args } = ty.peel_refs() else { return None };
+    let inner = args.first()?.clone();
+    // Only where the inner type has a translation of its own; otherwise the
+    // call belongs to whatever class the wrapper holds, and reaching through
+    // `.value` for that would write the method on the wrong thing.
+    if matches!(js_shape(reg, &inner), JsShape::Plain | JsShape::Unknown) {
+        return None;
+    }
+    match reg.shapes().accessor(*id)? {
+        crate::name_map::system_shapes::Accessor::Field(name) => Some((inner, format!(".{}", name))),
+        crate::name_map::system_shapes::Accessor::Transparent => Some((inner, String::new())),
     }
 }
 

@@ -7,7 +7,7 @@
 // after it into a fatal use-after-move.
 
 import { expect, test } from 'bun:test';
-import { Entity, Slot, borrow, consume, intoEntity, peek, take, width, label } from './input.ts';
+import { Entity, Slot, borrow, consume, countEmpty, intoEntity, label, peek, take, untilFilled, width } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('consume takes an Entity by value and releases it', () => {
@@ -58,6 +58,24 @@ test('peek on the empty variant leaves the Slot whole too', () => {
 test('an arm with a block body produces its tail and still releases the payload', () => {
   expect(label(new Slot('Filled', { _0: new Entity('abc') }))).toBe(6);
   expect(label(new Slot('Empty', {}))).toBe(0);
+});
+
+test('an arm that leaves the loop settles what it owns and the caller jumps', () => {
+  // `return break` does not parse; the arm hands the jump back as a value.
+  expect(untilFilled([
+    new Slot('Empty', {}),
+    new Slot('Empty', {}),
+    new Slot('Filled', { _0: new Entity('a') }),
+    new Slot('Empty', {}),
+  ])).toBe(2);
+});
+
+test('the same for continue', () => {
+  expect(countEmpty([
+    new Slot('Empty', {}),
+    new Slot('Filled', { _0: new Entity('b') }),
+    new Slot('Empty', {}),
+  ])).toBe(2);
 });
 
 test('nothing leaked and nothing was reported', async () => {

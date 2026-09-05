@@ -20,6 +20,42 @@ export class Peer extends Struct {
   }
 }
 
+export class Parts extends Struct {
+  readonly head: string;
+  readonly tail: string;
+
+  constructor(head: string, tail: string) {
+    super();
+    this.head = head;
+    this.tail = tail;
+  }
+
+  toString(): string {
+    let _result = '';
+    _result += '[';
+    _result += `${this.head}`;
+    _result += `|${this.tail}`;
+    _result += ']';
+    return _result;
+  }
+}
+
+export class Lines extends Struct {
+  readonly first: string;
+
+  constructor(first: string) {
+    super();
+    this.first = first;
+  }
+
+  toString(): string {
+    let _result = '';
+    _result += `${this.first}` + '\n';
+    _result += 'end';
+    return _result;
+  }
+}
+
 export function greeting(peer: Peer): string {
   return `hello ${peer.name}`;
 }
@@ -49,5 +85,9 @@ export function refuse(n: number): number {
     throw new Error(`refusing ${n}`);
   }
   return n;
+}
+
+export function absent(a: number): string {
+  return `${a} ${undefined}`;
 }
 

@@ -26,7 +26,7 @@ export class Slot extends Struct {
   }
 
   debug(): string {
-    return `Slot { name: ${(this.name === null ? 'None' : `Some(${JSON.stringify(this.name)})`)}, count: ${(this.count === null ? 'None' : `Some(${String(this.count)})`)} }`;
+    return `Slot { name: ${(($v) => $v === null ? 'None' : `Some(${JSON.stringify($v)})`)(this.name)}, count: ${(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.count)} }`;
   }
 
   encode(writer: BincodeWriter): void {

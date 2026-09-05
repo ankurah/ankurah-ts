@@ -88,10 +88,23 @@ fn binds_owned_payload(
 }
 
 /// A name bound with neither `ref` nor `&`, which is Rust's by-value binding.
+///
+/// A pattern that goes further into the payload before it binds still moves out
+/// of it: `Ex::Literal(Lit::I(i))` takes `i` by value out of the `Lit` the
+/// `Literal` variant holds, so Rust moves the whole subject just as
+/// `Ex::Path(i)` does. Reading only the outermost pattern said this match
+/// borrowed, so the arm took the value AND the subject's owner released it —
+/// the same double drop the borrowing form was written to avoid.
 fn binds_by_value(pat: &syn::Pat) -> bool {
     match pat {
         syn::Pat::Ident(ident) => ident.by_ref.is_none(),
         syn::Pat::Paren(p) => binds_by_value(&p.pat),
+        syn::Pat::TupleStruct(ts) => ts.elems.iter().any(binds_by_value),
+        syn::Pat::Struct(st) => st.fields.iter().any(|f| binds_by_value(&f.pat)),
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().any(binds_by_value),
+        syn::Pat::Or(or) => or.cases.iter().any(binds_by_value),
+        // `&x` matches through a reference and binds one.
+        syn::Pat::Reference(_) => false,
         _ => false,
     }
 }
