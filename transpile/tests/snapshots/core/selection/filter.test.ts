@@ -25,9 +25,9 @@ class TestItem extends Struct implements Filterable {
 
   value(name: string): Value | null {
     if (name === 'name') {
-      return new Value('String', { _0: this.name.clone() });
+      return new Value('String', { _0: this.name });
     } else if (name === 'age') {
-      return new Value('String', { _0: this.age.clone() });
+      return new Value('String', { _0: this.age });
     } else {
       return null;
     }
@@ -101,7 +101,7 @@ describe('filter unit tests', () => {
     const items = [TestItem.new('Alice', '20'), TestItem.new('Bob', '25'), TestItem.new('Charlie', '30'), TestItem.new('David', '35'), TestItem.new('Eve', '40')];
     const selection = parseSelection('name IN (\'Alice\', \'Charlie\', \'Eve\')').unwrap();
     try {
-      const results = FilterIterator.new([...items.clone()], selection.takeField('predicate'));
+      const results = FilterIterator.new([...items.map((e) => e.clone())], selection.takeField('predicate'));
       const _t0 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Pass', { _0: TestItem.new('Eve', '40') })];
       try {
         expect(results).toEqual(_t0);

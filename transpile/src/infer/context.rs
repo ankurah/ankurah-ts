@@ -1023,6 +1023,13 @@ impl<'a> TypeContext<'a> {
             }
         }
 
+        // A primitive's associated constant has that primitive's type, which is
+        // what makes a method call on it reach the number translations at all
+        // (`ty::prim_consts`).
+        if let Some(prim) = crate::ty::prim_consts::type_of_path(&segments) {
+            return Ok(Ty::Prim(prim));
+        }
+
         // A unit enum variant written as a path is a value of its enum.
         if let Some((id, _)) = self.registry.lookup_variant(self.module, &segments) {
             let params = self

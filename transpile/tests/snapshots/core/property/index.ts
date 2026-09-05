@@ -31,13 +31,20 @@ export function Option_fromValue<T extends Property>(value: Value | null): Resul
     const value = _v.unwrap();
     return Result.Ok(value);
   } else {
-    const err = _v.unwrapErr();
-    return Result.Err(err);
+    const _v1 = _v.unwrapErr();
+    if (_v1.is('Missing')) {
+      const _v2 = _v1;
+      return Result.Ok(null);
+    }
+    {
+      const err = _v1;
+      return Result.Err(err);
+    }
   }
 }
 
 export function Cow_Str_intoValue(self: Cow<string>): Result<Value | null, PropertyError> {
-  return Result.Ok(new Value('String', { _0: self.toString() }));
+  return Result.Ok(new Value('String', { _0: self }));
 }
 
 export function Cow_Str_fromValue(value: Value | null): Result<Cow<string>, PropertyError> {

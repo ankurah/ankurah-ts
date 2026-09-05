@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
-import { Struct, Enum, Result, invokeRef, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, dropOwned, derivedEquals, derivedClone } from '@ankurah/base';
 import { ComparisonOperator, Expr, Predicate, Literal } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { Value_castTo } from '../value/cast';
@@ -22,12 +22,19 @@ export class FilterIterator<I extends Iterator> extends Struct {
   next<R>(): FilterResult<R> | null {
     const _m0 = this.iter.next();
     return (_m0 != null ? ((item) => (() => {
-      const _v3 = evaluatePredicate(item, this.predicate);
-      if (_v3.isOk()) {
-        const _v5 = _v3.unwrap();
-        return new FilterResult('Skip', { _0: item });
+      const _v4 = evaluatePredicate(item, this.predicate);
+      if (_v4.isOk()) {
+        const _v5 = _v4.unwrap();
+        if (_v5 === true) {
+          const _v6 = _v5;
+          return new FilterResult('Pass', { _0: item });
+        }
+        {
+          const _v7 = _v5;
+          return new FilterResult('Skip', { _0: item });
+        }
       } else {
-        const e = _v3.unwrapErr();
+        const e = _v4.unwrapErr();
         return new FilterResult('Error', { _0: item, _1: e });
       }
     })())(_m0!) : null);
@@ -86,13 +93,13 @@ export class Error extends Enum<ErrorV> {
   }
 }
 
-export type ExprOutputV = {
+export type ExprOutputV<T> = {
   List: { _0: ExprOutput<T>[] };
   Value: { _0: T };
   None: {};
 };
 
-export class ExprOutput<T> extends Enum<ExprOutputV> {
+export class ExprOutput<T> extends Enum<ExprOutputV<T>> {
 
   asValue(): T | null {
     return this.match({
@@ -122,9 +129,9 @@ export class ExprOutput<T> extends Enum<ExprOutputV> {
 
   clone(): ExprOutput<T> {
     return this.match({
-      List: (v) => new ExprOutput('List', { _0: v._0.map(e => e.clone()) }),
-      Value: (v) => new ExprOutput('Value', { _0: v._0.clone() }),
-      None: () => new ExprOutput('None', {}),
+      List: (v) => new ExprOutput<T>('List', { _0: v._0.map(e => e.clone()) }),
+      Value: (v) => new ExprOutput<T>('Value', { _0: derivedClone(v._0) }),
+      None: () => new ExprOutput<T>('None', {}),
     });
   }
 
@@ -136,7 +143,7 @@ export class ExprOutput<T> extends Enum<ExprOutputV> {
         break;
       }
       case 'Value': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         break;
       }
     }
@@ -152,27 +159,27 @@ export class ExprOutput<T> extends Enum<ExprOutputV> {
   }
 }
 
-export type FilterResultV = {
+export type FilterResultV<R> = {
   Pass: { _0: R };
   Skip: { _0: R };
   Error: { _0: R; _1: Error };
 };
 
-export class FilterResult<R> extends Enum<FilterResultV> {
+export class FilterResult<R> extends Enum<FilterResultV<R>> {
 
   equals(other: FilterResult<R>): boolean {
     if (this.type !== other.type) return false;
     switch (this.type) {
       case 'Pass': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         break;
       }
       case 'Skip': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         break;
       }
       case 'Error': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
         break;
       }
@@ -324,19 +331,19 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
               },
               GreaterThan: () => {
                 const _m8 = leftVal.asValue().zip(rightVal.asValue());
-                return (_m8 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) > 0))(_m8!) : null) ?? false;
+                return (_m8 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => ((a.partialCompareTo(b) ?? NaN) > 0)))(_m8!) : null) ?? false;
               },
               GreaterThanOrEqual: () => {
                 const _m11 = leftVal.asValue().zip(rightVal.asValue());
-                return (_m11 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) >= 0))(_m11!) : null) ?? false;
+                return (_m11 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => ((a.partialCompareTo(b) ?? NaN) >= 0)))(_m11!) : null) ?? false;
               },
               LessThan: () => {
                 const _m14 = leftVal.asValue().zip(rightVal.asValue());
-                return (_m14 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) < 0))(_m14!) : null) ?? false;
+                return (_m14 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => ((a.partialCompareTo(b) ?? NaN) < 0)))(_m14!) : null) ?? false;
               },
               LessThanOrEqual: () => {
                 const _m17 = leftVal.asValue().zip(rightVal.asValue());
-                return (_m17 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) <= 0))(_m17!) : null) ?? false;
+                return (_m17 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => ((a.partialCompareTo(b) ?? NaN) <= 0)))(_m17!) : null) ?? false;
               },
               In: () => {
                 const _m20 = leftVal.asValue();

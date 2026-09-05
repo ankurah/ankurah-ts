@@ -55,7 +55,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
         return txn.getOrInsertText(b_1).observe(new OwnedClosure([changedFields], (_, __) => {
           let changedFields = changedFields.value.lock();
           try {
-            changedFields.value.add(b_1.clone());
+            changedFields.value.add(b_1);
           } finally {
             changedFields.drop();
           }
@@ -77,7 +77,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
 
   getPropertyString(trx: Transaction, propertyName: PropertyName): Value | null {
     const value = (() => {
-      const _v1 = trx.getText(propertyName.clone());
+      const _v1 = trx.getText(propertyName);
       if (_v1 != null) {
         const textRef = _v1;
         {
@@ -94,7 +94,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
   fieldBroadcastId(fieldName: PropertyName): BroadcastId {
     let fieldBroadcasts = this.fieldBroadcasts.lock();
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName.clone()).orDefault(() => Broadcast.default()).value;
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default()).value;
       return broadcast.id();
     } finally {
       fieldBroadcasts.drop();
@@ -209,7 +209,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard {
     let fieldBroadcasts = this.fieldBroadcasts.lock();
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName.clone()).orDefault(() => Broadcast.default()).value;
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default()).value;
       const _t0 = broadcast.reference();
       try {
         return ListenerGuard.from(_t0.listen(listener));

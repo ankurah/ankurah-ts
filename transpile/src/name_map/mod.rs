@@ -186,7 +186,7 @@ pub fn map_type(ty: &syn::Type) -> String {
                             if inner_types[0] == "number" && is_u8_vec(ty) {
                                 "Uint8Array".to_string()
                             } else {
-                                format!("{}[]", inner_types[0])
+                                format!("{}[]", crate::name_map::emit_ty::as_an_element(&inner_types[0]))
                             }
                         }
                         "Option" if inner_types.len() == 1 => {
@@ -241,7 +241,7 @@ pub fn map_type(ty: &syn::Type) -> String {
             if is_u8(&slice.elem) {
                 "Uint8Array".to_string()
             } else {
-                format!("{}[]", map_type(&slice.elem))
+                format!("{}[]", crate::name_map::emit_ty::as_an_element(&map_type(&slice.elem)))
             }
         }
         syn::Type::ImplTrait(impl_trait) => {
@@ -269,7 +269,7 @@ pub fn map_type(ty: &syn::Type) -> String {
             if is_u8(&arr.elem) {
                 "Uint8Array".to_string()
             } else {
-                format!("{}[]", map_type(&arr.elem))
+                format!("{}[]", crate::name_map::emit_ty::as_an_element(&map_type(&arr.elem)))
             }
         }
         syn::Type::Never(_) => "never".to_string(),
@@ -317,7 +317,7 @@ fn map_trait_bound(trait_bound: &syn::TraitBound) -> Option<String> {
                 for arg in &args.args {
                     if let syn::GenericArgument::AssocType(assoc) = arg {
                         if assoc.ident == "Item" {
-                            return Some(format!("{}[]", map_type(&assoc.ty)));
+                            return Some(format!("{}[]", crate::name_map::emit_ty::as_an_element(&map_type(&assoc.ty))));
                         }
                     }
                 }

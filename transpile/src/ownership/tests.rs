@@ -942,9 +942,12 @@ fn an_arm_whose_guard_failed_hands_the_subject_to_the_arm_below_it() {
         .trim()
         .trim_end_matches(": {")
         .to_string();
+    // The guarded arm leaves the block; the LAST arm is unconditional — Rust's
+    // match is exhaustive and its own test is redundant — so it has nothing to
+    // jump over and writes no `break`.
     assert_eq!(
         statement.matches(&format!("break {};", label)).count(),
-        2,
+        1,
         "an arm that ran leaves the block, so the arms below it are not tried:\n{}",
         statement
     );
@@ -1205,17 +1208,29 @@ fn a_guarded_borrowing_enum_match_is_tried_arm_by_arm() {
            match c { Choice::One(o) if o.n > 2 => 9, Choice::One(o) => look(o), Choice::Two(o) => look(o) } }",
         "f",
     );
+    // A match that only READS its subject keeps the if-chain, which has carried
+    // guards since before the arm chain existed: the chain is for a CONSUMING
+    // match, where nothing else can mark the subject moved. Both arms naming
+    // `One` are written, which is what this test is for.
     assert!(
         ts.matches("c.is('One')").count() == 2,
         "both arms naming `One` are written, which one key in a `.match({{}})` cannot \
          carry:\n{}",
         ts
     );
-    assert!(ts.contains("if (o.n > 2)"), "{}", ts);
+    let guard = ts.find("if (o.n > 2)").expect(&ts);
+    let below = ts.find("look(o)").expect(&ts);
+    assert!(guard < below, "and a failed guard reaches the arm below it:\n{}", ts);
 }
 
 #[test]
-fn a_guard_the_runtimes_match_cannot_carry_is_reported() {
+fn a_guarded_consuming_enum_arm_is_written_by_the_chain() {
+    // PREMISE CHANGED 2026-09-05 (fixpass6 item 2, D8): a guarded consuming
+    // match used to report "a failed guard cannot fall out of" and drop the
+    // guard, so the arm ran for every value its pattern matched — live at
+    // `core/src/node.rs:621`, where an EMPTY event bridge answered the bridge
+    // path. The chain binds the names inside the arrow, tests the guard there,
+    // and falls through to the arm below.
     let mut fixture = Fixture::build(&[(
         "lib.rs",
         &format!(
@@ -1225,32 +1240,27 @@ fn a_guard_the_runtimes_match_cannot_carry_is_reported() {
             PRELUDE
         ),
     )]);
-    let _ = fixture.translated_method("lib.rs", "f");
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(ts.contains("intoMatch"), "the subject is still handed over:\n{}", ts);
+    assert!(!ts.contains("unsupported("), "{}", ts);
+    let guard = ts.find("if (o.n > 2)").expect(&ts);
+    let below = ts.rfind("take(o)").expect(&ts);
+    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
     let said = fixture.messages();
     assert!(
-        said.iter().any(|m| m.contains("a failed guard cannot fall out of")),
-        "a guarded consuming match has no form here and says so: {:?}",
+        said.iter().all(|m| !m.contains("guard is dropped")),
+        "and nothing says the guard was dropped: {:?}",
         said
     );
-    // PREMISE CHANGED 2026-09-05 (fixpass4 item 1): what this used to assert is
-    // that a variant SEVERAL arms name is a hole, full stop. The arm chain
-    // writes those arms in Rust order now, so the hole here is the GUARD's:
-    // a guard reads names the pattern binds inside the branch it guards, so it
-    // cannot be written where the test belongs, and R12 makes that arm and the
-    // arms below it a hole rather than a body run for every value of `One`.
-    assert!(
-        said.iter().any(|m| m.contains("an arm naming `One` has a guard")),
-        "and the chain refuses the guard rather than dropping it: {:?}",
-        said
-    );
-    let ts = fixture.translated_method("lib.rs", "f");
-    assert!(ts.contains("One: (v) => {"), "{}", ts);
-    assert!(ts.contains("unsupported("), "{}", ts);
-    assert!(!ts.contains("One: (v) => take("), "the guarded arm does not run: {}", ts);
 }
 
 #[test]
-fn a_guarded_result_match_is_reported() {
+fn a_guarded_result_arm_is_written_and_falls_through_to_the_arm_below() {
+    // PREMISE CHANGED 2026-09-05 (fixpass6 item 2, D8): a guarded `Result` arm
+    // used to be reported and dropped, so the arm ran unconditionally — live at
+    // `core/src/context.rs:187`, where `Err(NoDurablePeers) if cached => ()`
+    // vanished entirely and a cached entity with no durable peers answered an
+    // error. The side reads its payload ONCE and tries its arms against it.
     let mut fixture = Fixture::build(&[(
         "lib.rs",
         &format!(
@@ -1259,13 +1269,14 @@ fn a_guarded_result_match_is_reported() {
             PRELUDE
         ),
     )]);
-    let _ = fixture.translated_method("lib.rs", "f");
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert_eq!(ts.matches(".unwrap()").count(), 1, "the payload is read once:\n{}", ts);
+    let guard = ts.find("if (v.n > 2)").expect(&ts);
+    let below = ts.rfind("take(v)").expect(&ts);
+    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
     assert!(
-        fixture
-            .messages()
-            .iter()
-            .any(|m| m.contains("takes the wrapper apart")),
-        "{:?}",
+        fixture.messages().iter().all(|m| !m.contains("takes the wrapper apart")),
+        "and nothing says the guard was dropped: {:?}",
         fixture.messages()
     );
 }

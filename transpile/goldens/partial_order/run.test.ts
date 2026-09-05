@@ -20,7 +20,9 @@ test('the total order keeps `compareTo`, which is what a sort calls', () => {
 test('and the partial order answers separately, including "not comparable"', () => {
   const zero = new Weight(0);
   const one = new Weight(1);
-  expect(one.partialCompareTo(new Weight(2))).toBe(-1);
+  const two = new Weight(2);
+  expect(one.partialCompareTo(two)).toBe(-1);
+  two.drop();
   // The defective path: Rust answers `None` here and the port answered `-1`,
   // because `Ord::cmp` was what ran.
   expect(zero.partialCompareTo(one)).toBe(null);
@@ -38,6 +40,6 @@ test('a forwarding partial order is the same method, and is not written twice', 
   b.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

@@ -90,6 +90,6 @@ test("map_or's default is released on the path that runs the closure", () => {
   r.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

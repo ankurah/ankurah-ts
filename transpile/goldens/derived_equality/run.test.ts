@@ -6,7 +6,7 @@
 
 import { expect, test } from 'bun:test';
 import { HashMap, HashSet } from '@ankurah/base';
-import { Buffers, Groups, Marked, Maybe, Nested, Sparse, Tag } from './input.ts';
+import { Buffers, Groups, Holder, Marked, Maybe, Nested, Paired, Slot, Sparse, Tag } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 const bytes = (...ns: number[]) => new Uint8Array(ns);
@@ -81,6 +81,65 @@ test('a nullable field, and a nullable primitive field', () => {
   a.drop(); b.drop(); c.drop(); d.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('a tuple field is compared position by position, and cloned the same way', () => {
+  // At the parent this called `.equals()` on a JavaScript array.
+  const make = () =>
+    new Paired([1, new Tag('a')], [['k', new Tag('b')]], [[new Tag('c')], true], [new Tag('d')]);
+  const a = make();
+  const b = make();
+  expect(a.equals(b)).toBe(true);
+  const c = new Paired([2, new Tag('a')], [['k', new Tag('b')]], [[new Tag('c')], true], [new Tag('d')]);
+  expect(a.equals(c)).toBe(false);
+  const d = new Paired([1, new Tag('a')], [['k', new Tag('b')]], null, [new Tag('d')]);
+  expect(a.equals(d)).toBe(false);
+  // A one-element tuple is a tuple: the clone writer used to hand it to
+  // `.clone()` on an array, which is a TypeError.
+  const copy = a.clone();
+  expect(copy.equals(a)).toBe(true);
+  expect(copy.single[0]).not.toBe(a.single[0]);
+  a.drop(); b.drop(); c.drop(); d.drop(); copy.drop();
+});
+
+test('a field written as a type PARAMETER is compared and copied at run time', () => {
+  // A struct, which the fourth pass fixed, and an ENUM, which it did not.
+  const numbers = new Holder(1, [2, 3]);
+  const alike = new Holder(1, [2, 3]);
+  const unlike = new Holder(1, [2, 4]);
+  expect(numbers.equals(alike)).toBe(true);
+  expect(numbers.equals(unlike)).toBe(false);
+  const numbersCopy = numbers.clone();
+  expect(numbersCopy.many).toEqual([2, 3]);
+  numbers.drop(); alike.drop(); unlike.drop(); numbersCopy.drop();
+
+  const one = new Slot<number>('One', { _0: 7 });
+  const same = new Slot<number>('One', { _0: 7 });
+  const other = new Slot<number>('One', { _0: 8 });
+  // At the parent each of these called `.equals()` on a number.
+  expect(one.equals(same)).toBe(true);
+  expect(one.equals(other)).toBe(false);
+  const oneCopy = one.clone();
+  expect(oneCopy.value).toEqual({ _0: 7 });
+  same.drop(); other.drop(); oneCopy.drop();
+
+  const many = new Slot<number>('Many', { _0: [1, 2] });
+  const manyAlike = new Slot<number>('Many', { _0: [1, 2] });
+  expect(many.equals(manyAlike)).toBe(true);
+  const manyCopy = many.clone();
+  expect(manyCopy.value).toEqual({ _0: [1, 2] });
+  const empty = new Slot<number>('Empty', {});
+  expect(empty.equals(one)).toBe(false);
+  many.drop(); manyAlike.drop(); manyCopy.drop(); empty.drop(); one.drop();
+});
+
+test('and the same parameter instantiated with a class still copies deeply', () => {
+  const tags = new Slot<Tag>('Many', { _0: [new Tag('a')] });
+  const copy = tags.clone();
+  expect(copy.equals(tags)).toBe(true);
+  expect((copy.value as { _0: Tag[] })._0[0]).not.toBe((tags.value as { _0: Tag[] })._0[0]);
+  copy.drop();
+  tags.drop();
+});
+
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

@@ -198,7 +198,8 @@ impl<'a> BodyTranslator<'a> {
                     syn::spanned::Spanned::span(&for_loop.expr),
                     "this loop takes the sequence by value, and the runtime does not write it \
                      as an array; the elements a `break` or a `return` leaves behind are not \
-                     released",
+                     released, and neither is the container itself, which Rust drops when the \
+                     iterator it was moved into ends",
                 );
                 format!("{}for (const {} of {}) {{\n{}}}", label, pat, sequence, indent(&body))
             }

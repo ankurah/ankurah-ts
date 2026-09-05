@@ -68,14 +68,25 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "values_mut" => format!("{}.values()", receiver),
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
 
-        // `retain(|k, v| p)` is a delete loop. The predicate is PARENTHESISED,
-        // because an arrow's body extends as far as it can: `(k, v) =>
-        // invokeRef(cb, k, v)(_k, _v)` made the call part of the body, so what
-        // the `!` tested was the arrow itself — an object, always truthy — and
-        // nothing was ever deleted.
+        // `retain(|k, v| p)` is a delete loop, written as an IIFE over
+        // `(receiver, predicate)` for the same three reasons the array's is:
+        // the predicate is evaluated ONCE rather than per entry, it is reached
+        // through `invokeRef` because an `OwnedClosure` is not callable as a
+        // function (R10), and `retain` takes it by value so Rust drops it when
+        // the call ends, however it ends.
+        //
+        // The map's iterator walks a snapshot of its table, so deleting while
+        // iterating is safe, and `delete` releases the key and the value it
+        // removes — which is what Rust does with a rejected entry.
         "retain" if args.len() == 1 => format!(
-            "{{ for (const [_k, _v] of {}) {{ if (!(({})(_k, _v))) {}.delete(_k); }} }}",
-            receiver, args[0], receiver
+            "((<K, V>($m: {{ [Symbol.iterator](): IterableIterator<[K, V]>; delete(key: K): unknown }}, $p: Invocable<[K, V], boolean>) => {{\n\
+             \x20 try {{\n\
+             \x20   for (const [$k, $v] of $m) {{ if (!invokeRef($p, $k, $v)) $m.delete($k); }}\n\
+             \x20 }} finally {{\n\
+             \x20   dropOwned($p);\n\
+             \x20 }}\n\
+             }})({}, {}))",
+            receiver, args[0]
         ),
 
         // Iterator entry points

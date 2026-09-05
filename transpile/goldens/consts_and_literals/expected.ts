@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/consts_and_literals/src/input.rs
-import { Struct, checkedAdd, wrappingAdd } from '@ankurah/base';
+import { Struct, floatMax, checkedAdd, wrappingAdd } from '@ankurah/base';
 
 export class Rec extends Struct {
   readonly first: number;
@@ -93,6 +93,14 @@ export function ordered(): number {
 
 export function wrapAround(): number {
   return (() => { const _v = WRAPS; WRAPS = wrappingAdd(WRAPS, 1, 'u32'); return _v; })();
+}
+
+export function epsilonNear(v: number): number {
+  return floatMax(Number.EPSILON, Math.abs(v) * Number.EPSILON);
+}
+
+export function widths(): [number, bigint, bigint, number, number] {
+  return [4294967295, -9223372036854775808n, 18446744073709551615n, Infinity, NaN];
 }
 
 export const TAG_NULL: number = 0;

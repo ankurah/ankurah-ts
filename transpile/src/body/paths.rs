@@ -90,6 +90,17 @@ impl BodyTranslator<'_> {
         matches!(call.args.first(), Some(syn::Expr::Tuple(t)) if t.elems.is_empty())
     }
 
+    /// The constant a `<prim>::<CONST>` path names, where the port has one, and
+    /// an R12 hole where it has none — the alternative is the path written out,
+    /// `f64.MIN_POSITIVE`, which names something the file never declares.
+    fn primitive_const(&self, path: &syn::Path) -> Option<String> {
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        match crate::ty::prim_consts::written_or_reason(&segments)? {
+            Ok(written) => Some(written),
+            Err(why) => Some(self.hole(syn::spanned::Spanned::span(path), why)),
+        }
+    }
+
     pub(crate) fn path_expr(&self, path: &syn::Path) -> String {
         // A path of one segment is a name — a local, a parameter, a free
         // function — and never a module qualifier. Filtering it as one deleted
@@ -130,6 +141,10 @@ impl BodyTranslator<'_> {
         // beside it.
         if let Some(trimmed) = self.through_local_module(path) {
             return trimmed;
+        }
+        // `f64::EPSILON`, `u32::MAX` — see `ty::prim_consts`.
+        if let Some(written) = self.primitive_const(path) {
+            return written;
         }
         // `Ordering::Greater` is the number `1`: the port writes an ordering as
         // the number a comparison answers, which is what `compareTo` returns.

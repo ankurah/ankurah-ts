@@ -25,11 +25,22 @@ export class FilteredStream<I> extends Struct {
         const item = _v.value._0;
         const _v1 = evaluatePredicate(item, this.predicate);
         if (_v1.isOk()) {
-          const _v3 = _v1.unwrap();
-          continue
+          const _v2 = _v1.unwrap();
+          if (_v2 === true) {
+            const _v3 = _v2;
+            return new Poll('Ready', { _0: item })
+          }
+          {
+            const _v4 = _v2;
+            continue
+          }
         } else {
-          const _v4 = _v1.unwrapErr();
-          continue
+          const _v5 = _v1.unwrapErr();
+          try {
+            continue
+          } finally {
+            _v5.drop();
+          }
         }
       } else if (_v.is('Ready') && (_v.value._0 == null)) {
         return new Poll('Ready', { _0: null })

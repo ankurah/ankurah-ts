@@ -251,24 +251,13 @@ impl BodyTranslator<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        let member =
-            crate::emit::impl_method_name(op.trait_name, op.rust_method, &op.ts_method, &args, "", None);
+        let member = crate::body::calls::comparison_member(
+            &tc, op.trait_name, op.rust_method, &op.ts_method, &args, &def.self_ty,
+        );
         drop(tc);
-        Some(match op.trait_name {
-            "PartialEq" => {
-                let call = format!("{}.{}({})", left, member, right);
-                if op.native == "!==" {
-                    format!("!{}", call)
-                } else {
-                    call
-                }
-            }
-            // `partial_cmp` hands back an ordering, and the port writes it as a
-            // number; the operator is the sign test Rust's own default methods
-            // perform.
-            "PartialOrd" => format!("{}.{}({}) {} 0", left, member, right, op.native),
-            _ => format!("{}.{}({})", left, member, right),
-        })
+        Some(crate::body::calls::operator_call(
+            op.trait_name, &left, &member, &right, op.native,
+        ))
     }
 }
 

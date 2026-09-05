@@ -592,11 +592,11 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               let states = [];
               const _r19 = await storageCollection.deref().value.getStates(ids);
               if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
-              const _seq21 = _r19.unwrap();
-              let _at22 = 0;
+              const _seq22 = _r19.unwrap();
+              let _at23 = 0;
               try {
-                while (_at22 < _seq21.length) {
-                  const state = _seq21[_at22++];
+                while (_at23 < _seq22.length) {
+                  const state = _seq22[_at23++];
                   let _moved20 = false;
                   try {
                     const _v3 = this.deref().value.policyAgent.checkRead(cdata, state.payload.entityId, collection, state.payload.state);
@@ -605,11 +605,25 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                       _moved20 = true;
                       states.push(state)
                     } else {
-                      const e = _v3.unwrapErr();
-                      try {
-                        return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`))
-                      } finally {
-                        e.drop();
+                      const _v5 = _v3.unwrapErr();
+                      _arm21: {
+                        if (_v5.is('ByPolicy')) {
+                          const _v6 = _v5;
+                          try {
+
+                          } finally {
+                            _v6.drop();
+                          }
+                          break _arm21;
+                        }
+                        {
+                          const e = _v5;
+                          try {
+                            return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`))
+                          } finally {
+                            e.drop();
+                          }
+                        }
                       }
                     }
                   } finally {
@@ -617,7 +631,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   }
                 }
               } finally {
-                dropOwned(_seq21.slice(_at22));
+                dropOwned(_seq22.slice(_at23));
               }
               return Result.Ok(new NodeResponseBody('Get', { _0: states }));
             } finally {
@@ -630,53 +644,67 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         GetEvents: async (v) => {
           const collection = v.collection;
           const eventIds = v.eventIds;
-          let _moved23 = false;
+          let _moved24 = false;
           try {
             try {
-              const _r24 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
-              if (_r24.isErr()) return Result.Err(_r24.unwrapErr());
-              _r24.drop();
-              const _r25 = await this.deref().value.collections.get(collection);
+              const _r25 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
               if (_r25.isErr()) return Result.Err(_r25.unwrapErr());
-              const storageCollection = _r25.unwrap();
+              _r25.drop();
+              const _r26 = await this.deref().value.collections.get(collection);
+              if (_r26.isErr()) return Result.Err(_r26.unwrapErr());
+              const storageCollection = _r26.unwrap();
               try {
                 let events = [];
-                _moved23 = true;
-                const _r26 = await storageCollection.deref().value.getEvents(eventIds);
-                if (_r26.isErr()) return Result.Err(_r26.unwrapErr());
-                const _seq28 = _r26.unwrap();
-                let _at29 = 0;
+                _moved24 = true;
+                const _r27 = await storageCollection.deref().value.getEvents(eventIds);
+                if (_r27.isErr()) return Result.Err(_r27.unwrapErr());
+                const _seq30 = _r27.unwrap();
+                let _at31 = 0;
                 try {
-                  while (_at29 < _seq28.length) {
-                    const event = _seq28[_at29++];
-                    let _moved27 = false;
+                  while (_at31 < _seq30.length) {
+                    const event = _seq30[_at31++];
+                    let _moved28 = false;
                     try {
-                      const _v6 = this.deref().value.policyAgent.checkReadEvent(cdata, event);
-                      if (_v6.isOk()) {
-                        const _v7 = _v6.unwrap();
-                        _moved27 = true;
+                      const _v7 = this.deref().value.policyAgent.checkReadEvent(cdata, event);
+                      if (_v7.isOk()) {
+                        const _v8 = _v7.unwrap();
+                        _moved28 = true;
                         events.push(event)
                       } else {
-                        const e = _v6.unwrapErr();
-                        try {
-                          return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`))
-                        } finally {
-                          e.drop();
+                        const _v9 = _v7.unwrapErr();
+                        _arm29: {
+                          if (_v9.is('ByPolicy')) {
+                            const _v10 = _v9;
+                            try {
+
+                            } finally {
+                              _v10.drop();
+                            }
+                            break _arm29;
+                          }
+                          {
+                            const e = _v9;
+                            try {
+                              return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`))
+                            } finally {
+                              e.drop();
+                            }
+                          }
                         }
                       }
                     } finally {
-                      if (!_moved27) event.drop();
+                      if (!_moved28) event.drop();
                     }
                   }
                 } finally {
-                  dropOwned(_seq28.slice(_at29));
+                  dropOwned(_seq30.slice(_at31));
                 }
                 return Result.Ok(new NodeResponseBody('GetEvents', { _0: events }));
               } finally {
                 storageCollection.drop();
               }
             } finally {
-              if (!_moved23) dropOwned(eventIds);
+              if (!_moved24) dropOwned(eventIds);
             }
           } finally {
             collection.drop();
@@ -688,35 +716,35 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           const selection = v.selection;
           const version = v.version;
           const knownMatches = v.knownMatches;
-          let _moved30 = false;
-          let _moved31 = false;
           let _moved32 = false;
+          let _moved33 = false;
+          let _moved34 = false;
           try {
             try {
               try {
-                const _m33 = this.deref().value.peerConnections.get(request.from);
-                const _r34 = (_m33 != null ? Result.Ok(_m33!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))()));
-                if (_r34.isErr()) return Result.Err(_r34.unwrapErr());
-                const peerState = _r34.unwrap();
+                const _m35 = this.deref().value.peerConnections.get(request.from);
+                const _r36 = (_m35 != null ? Result.Ok(_m35!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))()));
+                if (_r36.isErr()) return Result.Err(_r36.unwrapErr());
+                const peerState = _r36.unwrap();
                 try {
-                  const _r35 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
-                  if (_r35.isErr()) return Result.Err(_r35.unwrapErr());
-                  const cdata_1 = _r35.unwrap();
-                  _moved30 = true;
-                  _moved31 = true;
+                  const _r37 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
+                  if (_r37.isErr()) return Result.Err(_r37.unwrapErr());
+                  const cdata_1 = _r37.unwrap();
                   _moved32 = true;
+                  _moved33 = true;
+                  _moved34 = true;
                   return await peerState.value.subscriptionHandler.subscribeQuery(this, queryId, collection, selection, cdata_1, version, knownMatches);
                 } finally {
                   peerState.drop();
                 }
               } finally {
-                if (!_moved32) dropOwned(knownMatches);
+                if (!_moved34) dropOwned(knownMatches);
               }
             } finally {
-              if (!_moved31) selection.drop();
+              if (!_moved33) selection.drop();
             }
           } finally {
-            if (!_moved30) collection.drop();
+            if (!_moved32) collection.drop();
           }
         },
       }));
@@ -758,11 +786,42 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
       for (const peerId of this.getDurablePeers()) {
         const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.map((e) => e.clone()) }));
         if (_v.isOk()) {
-          const _v2 = _v.unwrap();
-          return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} rejected: ${e}`) }));
+          const _v1 = _v.unwrap();
+          _arm0: {
+            if (_v1.is('CommitComplete')) {
+              const _v2 = _v1;
+              try {
+                []
+              } finally {
+                _v2.drop();
+              }
+              break _arm0;
+            }
+            if (_v1.is('Error')) {
+              const _v3 = _v1;
+              const { _0: e } = _v1.value;
+              try {
+                return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} rejected: ${e}`) }));
+              } finally {
+                _v3.drop();
+              }
+            }
+            {
+              const _v4 = _v1;
+              try {
+                return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} returned unexpected response`) }));
+              } finally {
+                _v4.drop();
+              }
+            }
+          }
         } else {
-          const _v4 = _v.unwrapErr();
-          return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} returned unexpected response`) }));
+          const _v5 = _v.unwrapErr();
+          try {
+            return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} returned unexpected response`) }));
+          } finally {
+            _v5.drop();
+          }
         }
       }
       return Result.Ok([]);
@@ -898,28 +957,42 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
     const currentHead = state.head;
     try {
       {
-        const _v3 = knownMap.get(entityId);
-        if (_v3 != null) {
-          const knownHead = _v3;
+        const _v4 = knownMap.get(entityId);
+        if (_v4 != null) {
+          const knownHead = _v4;
           if (knownHead.equals(currentHead)) {
             return Result.Ok(null);
           }
           _moved0 = true;
           const _v = await this.collectEventBridge(storageCollection, knownHead, currentHead);
           if (_v.isOk()) {
-            const attestedEvents = _v.unwrap();
-            let _moved1 = false;
-            try {
-              {
-                _moved1 = true;
-                const eventFragments = [...attestedEvents].map((e) => e);
-                return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
+            const _v1 = _v.unwrap();
+            {
+              const attestedEvents = _v1;
+              if (!(attestedEvents.length === 0)) {
+                let _moved1 = false;
+                try {
+                  {
+                    _moved1 = true;
+                    const eventFragments = [...attestedEvents].map((e) => e);
+                    return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
+                  }
+                } finally {
+                  if (!_moved1) dropOwned(attestedEvents);
+                }
               }
-            } finally {
-              if (!_moved1) dropOwned(attestedEvents);
+            }
+            {
+              const _v2 = _v1;
+              try {
+                {
+                }
+              } finally {
+                dropOwned(_v2);
+              }
             }
           } else {
-            const _v2 = _v.unwrapErr();
+            const _v3 = _v.unwrapErr();
             {
             }
           }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/derived_equality/src/input.rs
-import { Struct, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, derivedEquals, derivedClone, HashMap, HashSet, keyHash } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly name: string;
@@ -136,6 +136,88 @@ export class Sparse extends Struct {
 
   clone(): Sparse {
     return new Sparse(this.slots.clone());
+  }
+}
+
+export class Paired extends Struct {
+  readonly one: [number, Tag];
+  readonly many: [string, Tag][];
+  readonly maybe: [Tag[], boolean] | null;
+  readonly single: [Tag];
+
+  constructor(one: [number, Tag], many: [string, Tag][], maybe: [Tag[], boolean] | null, single: [Tag]) {
+    super();
+    this.one = one;
+    this.many = many;
+    this.maybe = maybe;
+    this.single = single;
+  }
+
+  equals(other: Paired): boolean {
+    { if (this.one[0] !== other.one[0]) return false; if (!this.one[1].equals(other.one[1])) return false; }
+    { if (this.many.length !== other.many.length) return false; for (let i = 0; i < this.many.length; i++) { { if (this.many[i][0] !== other.many[i][0]) return false; if (!this.many[i][1].equals(other.many[i][1])) return false; } } }
+    if (this.maybe === null && other.maybe === null) { /* both null, ok */ }
+    else if (this.maybe === null || other.maybe === null) return false;
+    else { { if (this.maybe[0].length !== other.maybe[0].length) return false; for (let i1 = 0; i1 < this.maybe[0].length; i1++) { if (!this.maybe[0][i1].equals(other.maybe[0][i1])) return false; } } if (this.maybe[1] !== other.maybe[1]) return false; }
+    { if (!this.single[0].equals(other.single[0])) return false; }
+    return true;
+  }
+
+  clone(): Paired {
+    return new Paired([this.one[0], this.one[1].clone()] as [number, Tag], this.many.map(e => [e[0], e[1].clone()] as [string, Tag]), (this.maybe != null ? [this.maybe[0].map(e1 => e1.clone()), this.maybe[1]] as [Tag[], boolean] : null), [this.single[0].clone()] as [Tag]);
+  }
+}
+
+export class Holder<T> extends Struct {
+  readonly one: T;
+  readonly many: T[];
+
+  constructor(one: T, many: T[]) {
+    super();
+    this.one = one;
+    this.many = many;
+  }
+
+  equals(other: Holder<T>): boolean {
+    if (!derivedEquals(this.one, other.one)) return false;
+    { if (this.many.length !== other.many.length) return false; for (let i = 0; i < this.many.length; i++) { if (!derivedEquals(this.many[i], other.many[i])) return false; } }
+    return true;
+  }
+
+  clone(): Holder<T> {
+    return new Holder(derivedClone(this.one), this.many.map(e => derivedClone(e)));
+  }
+}
+
+export type SlotV<T> = {
+  Empty: {};
+  One: { _0: T };
+  Many: { _0: T[] };
+};
+
+export class Slot<T> extends Enum<SlotV<T>> {
+
+  clone(): Slot<T> {
+    return this.match({
+      Empty: () => new Slot<T>('Empty', {}),
+      One: (v) => new Slot<T>('One', { _0: derivedClone(v._0) }),
+      Many: (v) => new Slot<T>('Many', { _0: v._0.map(e => derivedClone(e)) }),
+    });
+  }
+
+  equals(other: Slot<T>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'One': {
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
+        break;
+      }
+      case 'Many': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if (!derivedEquals((this.value as any)._0[i], (other.value as any)._0[i])) return false; } }
+        break;
+      }
+    }
+    return true;
   }
 }
 

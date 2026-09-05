@@ -83,7 +83,11 @@ export function takeOne(step: Step, into: number[]): boolean {
           item.drop();
         }
       } else {
-        return false;
+        try {
+          return false;
+        } finally {
+          dropUnbound(v, []);
+        }
       }
     },
     Pending: () => false,
@@ -117,12 +121,20 @@ export function widen(e: Expr, source: Expr): Result<number, string> {
   return e.intoMatch({
     Literal: (v) => {
       if (v._0.is('Flag') && (v._0.value._0 === true)) {
-        const _r0 = width(source);
-        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-        const n = _r0.unwrap();
-        return Result.Ok(checkedAdd(n, 1, 'u32'));
+        try {
+          const _r0 = width(source);
+          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+          const n = _r0.unwrap();
+          return Result.Ok(checkedAdd(n, 1, 'u32'));
+        } finally {
+          dropUnbound(v, []);
+        }
       } else if (v._0.is('Flag') && (v._0.value._0 === false)) {
-        return Result.Err('false');
+        try {
+          return Result.Err('false');
+        } finally {
+          dropUnbound(v, []);
+        }
       } else if (v._0.is('Count')) {
         const { _0: n } = v._0.value;
         return Result.Ok(n);
@@ -169,7 +181,11 @@ export function drain(items: Payload[], into: number[]): number {
             item.drop();
           }
         } else {
-          return { $jump: 'break' }
+          try {
+            return { $jump: 'break' }
+          } finally {
+            dropUnbound(v, []);
+          }
         }
       },
       Pending: () => {

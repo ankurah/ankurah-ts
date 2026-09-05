@@ -403,6 +403,7 @@ impl<'a> BodyTranslator<'a> {
                 let receiver = self.hoist_receiver(call, receiver);
                 let receiver = parenthesise_receiver(&call.receiver, receiver);
                 let rust_method = call.method.to_string();
+                let (receiver, named_early) = self.name_nullable_receiver_early(call, &rust_method, receiver);
                 let ts_method = name_map::map_fn_name(&rust_method);
 
                 // The callee's signature is what says what each argument has to
@@ -567,14 +568,19 @@ impl<'a> BodyTranslator<'a> {
                             return format!("{}({})", name, written.join(", "));
                         }
                         let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
-                        let bind_receiver =
-                            |written: &str| self.name_once(Some(&call.receiver), written);
+                        let bind_receiver = |written: &str| match named_early {
+                            // Already named above, in Rust's evaluation order.
+                            true => written.to_string(),
+                            false => self.name_once(Some(&call.receiver), written),
+                        };
                         let bind_eager = |at: usize, written: &str| {
                             self.name_eager(call_args.get(at), written)
                         };
+                        let bind_closure = |_: usize, written: &str| self.name_closure(written);
                         let once = native_types::nullable::Once {
                             bind_receiver: &bind_receiver,
                             bind_eager: &bind_eager,
+                            bind_closure: &bind_closure,
                         };
                         let translated = native_types::translate_method_using(
                             tc_ref.registry,
@@ -588,22 +594,35 @@ impl<'a> BodyTranslator<'a> {
                             },
                             &once,
                         );
+                        // R9: `Ord::cmp` owns `compareTo`, and a written-out
+                        // `PartialOrd::partial_cmp` is a method of its own. The
+                        // CALL has to write the name the class declares — and
+                        // only a call the native tables PASS THROUGH writes a
+                        // name at all: a `partial_cmp` on a number is a
+                        // comparison written out, and asking there reported a
+                        // question nothing was about to answer.
+                        let named = match matches!(translated, native_types::MethodTranslation::Passthrough) {
+                            true => self.ordering_method_name(&tc_ref, &found, &rust_method, &ts_method, call),
+                            false => ts_method.clone(),
+                        };
                         drop(tc_ref);
                         return self.render_translation(
                             translated,
                             &recv,
-                            &ts_method,
+                            &named,
                             &args,
                             syn::spanned::Spanned::span(call),
                         );
                     }
                 }
 
+                let arg_exprs: Vec<syn::Expr> = call.args.iter().cloned().collect();
                 self.translate_unresolved_call_using(
                     &receiver,
                     &rust_method,
                     &ts_method,
                     &args,
+                    &arg_exprs,
                     Some(&call.receiver),
                     !self.discards(call),
                 )
@@ -627,6 +646,10 @@ impl<'a> BodyTranslator<'a> {
                     return format!("({})({})", arrow, args.join(", "));
                 }
                 let func = self.expr(&call.func);
+                // A CALLEE is a postfix base like any other: `get_function()
+                // .await(8)` came out `await getFunction()(8)`, which calls the
+                // promise.
+                let func = parenthesise_receiver(&call.func, func);
                 // What the callee declares each argument to be, with the
                 // position the call stands in used to close whatever the
                 // signature left open. This is what types the closure in
@@ -1033,13 +1056,16 @@ impl<'a> BodyTranslator<'a> {
                         (_, Some(to)) => format!(", {}", to),
                         (_, None) => String::new(),
                     };
-                    return format!("{}.slice({}{})", self.expr(&idx.expr), from, end);
+                    let base = self.expr(&idx.expr);
+                    let base = parenthesise_receiver(&idx.expr, base);
+                    return format!("{}.slice({}{})", base, from, end);
                 }
                 // `[Owned::new()][0]` reads out of a sequence the expression
                 // itself built, and that sequence is a temporary Rust drops at
                 // the end of the statement.
                 let base = self.expr(&idx.expr);
                 let base = self.hoist_produced(&idx.expr, base);
+                let base = parenthesise_receiver(&idx.expr, base);
                 let index = self.expr(&idx.index);
                 if let Some(call) = self.index_through_impl(&idx.expr, &base, &index) {
                     return call;
@@ -1531,7 +1557,7 @@ mod scopes;
 
 /// A call the engine could not resolve, and the free functions an impl with no
 /// class of its own became.
-mod calls;
+pub(crate) mod calls;
 
 /// Reading a field, and the places a value moves out of.
 mod places;
@@ -1543,7 +1569,10 @@ mod paths;
 mod writing;
 pub(crate) use writing::*;
 /// What a pattern asks of a value, and what it takes out of it.
+mod pat_shape;
 mod patterns;
+#[cfg(test)]
+mod patterns_tests;
 /// What a module-level `const` and a `static` are, and what naming one means.
 #[cfg(test)]
 mod const_tests;

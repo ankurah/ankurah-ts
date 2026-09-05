@@ -147,47 +147,63 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         const _v1 = _v.unwrap();
         [];
       } else {
-        const e = _v.unwrapErr();
-        let _moved0 = false;
-        try {
-          {
-            _moved0 = true;
-            return Result.Err(e);
+        const _v2 = _v.unwrapErr();
+        _arm1: {
+          if (_v2.is('NoDurablePeers')) {
+            const _v3 = _v2;
+            if (cached) {
+              try {
+                [];
+              } finally {
+                _v3.drop();
+              }
+              break _arm1;
+            }
           }
-        } finally {
-          if (!_moved0) e.drop();
+          {
+            const e = _v2;
+            let _moved0 = false;
+            try {
+              {
+                _moved0 = true;
+                return Result.Err(e);
+              }
+            } finally {
+              if (!_moved0) e.drop();
+            }
+          }
         }
       }
     }
     {
-      const _v3 = this.node.deref().value.entities.get(id);
-      if (_v3 != null) {
-        const local = _v3;
+      const _v4 = this.node.deref().value.entities.get(id);
+      if (_v4 != null) {
+        const local = _v4;
         tracing.debug(`Node(${this.node.deref().value.id}).get_entity found local entity - returning`);
         return Result.Ok(local);
       }
     }
     tracing.debug(`${this.node}.get_entity fetching from storage`);
-    const _r1 = await this.node.deref().value.collections.get(collectionId);
-    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-    const collection = _r1.unwrap();
+    const _r2 = await this.node.deref().value.collections.get(collectionId);
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    const collection = _r2.unwrap();
     try {
-      const _v4 = await collection.deref().value.getState(id);
-      if (_v4.isOk()) {
-        const entityState = _v4.unwrap();
+      const _v5 = await collection.deref().value.getState(id);
+      if (_v5.isOk()) {
+        const entityState = _v5.unwrap();
         try {
           {
             const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-            const _r2 = await this.node.deref().value.entities.withState(retriever, id, collectionId.clone(), entityState.payload.takeField('state'));
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-            const [_changed, entity] = _r2.unwrap();
+            const _r3 = await this.node.deref().value.entities.withState(retriever, id, collectionId.clone(), entityState.payload.takeField('state'));
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            const [_changed, entity] = _r3.unwrap();
             return Result.Ok(entity);
           }
         } finally {
           entityState.drop();
         }
       } else {
-        const e = _v4.unwrapErr();
+        const e = _v5.unwrapErr();
         return Result.Err(e);
       }
     } finally {

@@ -122,12 +122,31 @@ describe('sql unit tests', () => {
       try {
         const _v = generateSelectionSql(selection.predicate, 1);
         if (_v.isOk()) {
-          const _v2 = _v.unwrap();
+          const _v4 = _v.unwrap();
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          expect(expected).toEqual(1);
-          expect(found).toEqual(2);
+          _arm1: {
+            if (_v1.is('PlaceholderCountMismatch')) {
+              const _v2 = _v1;
+              const { expected, found } = _v1.value;
+              try {
+                expect(expected).toEqual(1);
+                expect(found).toEqual(2);
+              } finally {
+                _v2.drop();
+              }
+              break _arm1;
+            }
+            {
+              const _v3 = _v1;
+              try {
+                throw new Error('Expected PlaceholderCountMismatch error')
+              } finally {
+                _v3.drop();
+              }
+            }
+          }
         }
         return Result.Ok([]);
       } finally {
@@ -144,12 +163,31 @@ describe('sql unit tests', () => {
       try {
         const _v = generateSelectionSql(selection.predicate, 2);
         if (_v.isOk()) {
-          const _v2 = _v.unwrap();
+          const _v4 = _v.unwrap();
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          expect(expected).toEqual(2);
-          expect(found).toEqual(1);
+          _arm1: {
+            if (_v1.is('PlaceholderCountMismatch')) {
+              const _v2 = _v1;
+              const { expected, found } = _v1.value;
+              try {
+                expect(expected).toEqual(2);
+                expect(found).toEqual(1);
+              } finally {
+                _v2.drop();
+              }
+              break _arm1;
+            }
+            {
+              const _v3 = _v1;
+              try {
+                throw new Error('Expected PlaceholderCountMismatch error')
+              } finally {
+                _v3.drop();
+              }
+            }
+          }
         }
         return Result.Ok([]);
       } finally {
@@ -228,12 +266,31 @@ describe('sql unit tests', () => {
       try {
         const _v = generateSelectionSql(selection.predicate, 0);
         if (_v.isOk()) {
-          const _v2 = _v.unwrap();
+          const _v4 = _v.unwrap();
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          expect(expected).toEqual(0);
-          expect(found).toEqual(1);
+          _arm1: {
+            if (_v1.is('PlaceholderCountMismatch')) {
+              const _v2 = _v1;
+              const { expected, found } = _v1.value;
+              try {
+                expect(expected).toEqual(0);
+                expect(found).toEqual(1);
+              } finally {
+                _v2.drop();
+              }
+              break _arm1;
+            }
+            {
+              const _v3 = _v1;
+              try {
+                throw new Error('Expected PlaceholderCountMismatch error')
+              } finally {
+                _v3.drop();
+              }
+            }
+          }
         }
         return Result.Ok([]);
       } finally {

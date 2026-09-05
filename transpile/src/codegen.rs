@@ -1285,6 +1285,14 @@ pub fn generate_test_ts_with_imports(
             from_parent.push(c.name.clone());
         }
     }
+    imports::names_this_module_declares(
+        type_to_file,
+        current_module,
+        &bodies_and_fixtures,
+        &declared_here,
+        &available_types,
+        &mut from_parent,
+    );
     if !from_parent.is_empty() {
         from_parent.sort();
         from_parent.dedup();
@@ -1607,7 +1615,7 @@ fn mentions(text: &str, word: &str) -> bool {
 /// The import lists are built by looking for a name in emitted text, and a
 /// substring match imported `Mutex` into a file that only ever wrote
 /// `AsyncMutex`.
-fn names_word(text: &str, word: &str) -> bool {
+pub(crate) fn names_word(text: &str, word: &str) -> bool {
     let is_part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
     let mut from = 0usize;
     while let Some(at) = text[from..].find(word) {

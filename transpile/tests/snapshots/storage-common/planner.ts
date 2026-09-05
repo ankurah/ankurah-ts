@@ -641,7 +641,7 @@ export class Planner extends Struct {
           const _v1 = equalityValue;
           if (_v1 != null) {
             const value = _v1;
-            keypartBounds.push(new KeyBoundComponent(fullPath.clone(), Endpoint.incl(value.clone()), Endpoint.incl(value.clone())));
+            keypartBounds.push(new KeyBoundComponent(fullPath, Endpoint.incl(value.clone()), Endpoint.incl(value.clone())));
           } else {
           const _v = inequality;
           if (_v != null) {
@@ -713,7 +713,7 @@ export class Planner extends Struct {
                   Between: () => {},
                 });
               }
-              keypartBounds.push(new KeyBoundComponent(fullPath.clone(), low, high));
+              keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
               break;
             } else {
               break;
@@ -743,7 +743,7 @@ export class Planner extends Struct {
       if ((_v1[0].is('Val')) && (_v1[1].is('Val'))) {
         const { _0: candVal } = _v1[0].value;
         const { _0: currVal } = _v1[1].value;
-        const _v2 = candVal.compareTo(currVal);
+        const _v2 = candVal.partialCompareTo(currVal);
         if (_v2 != null && (_v2 === 1)) {
           return true;
         } else if (_v2 != null && (_v2 === 0)) {
@@ -774,7 +774,7 @@ export class Planner extends Struct {
       if ((_v1[0].is('Val')) && (_v1[1].is('Val'))) {
         const { _0: candVal } = _v1[0].value;
         const { _0: currVal } = _v1[1].value;
-        const _v2 = candVal.compareTo(currVal);
+        const _v2 = candVal.partialCompareTo(currVal);
         if (_v2 != null && (_v2 === -1)) {
           return true;
         } else if (_v2 != null && (_v2 === 0)) {
@@ -802,7 +802,7 @@ export class Planner extends Struct {
         if ((_v1[0].is('Val')) && (_v1[1].is('Val'))) {
           const { _0: lowVal } = _v1[0].value;
           const { _0: highVal } = _v1[1].value;
-          const _v2 = lowVal.compareTo(highVal);
+          const _v2 = lowVal.partialCompareTo(highVal);
           if (_v2 != null && (_v2 === 1)) {
             return true;
           } else if (_v2 != null && (_v2 === 0)) {
@@ -883,7 +883,7 @@ export class Planner extends Struct {
             Index: (v) => {
               const indexSpec = v.indexSpec;
               const scanDirection = v.scanDirection;
-              const key = [indexSpec.keyparts.clone(), scanDirection];
+              const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
               if (seen.insert(key)) {
                 _moved0 = true;
                 uniquePlans.push(plan);
@@ -935,7 +935,7 @@ export class Planner extends Struct {
                 const spill = orderItems.slice(1).map((e) => e.clone());
                 return [direction, OrderByComponents.new(presort, spill)];
               } else {
-                return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.clone())];
+                return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.map((e) => e.clone()))];
               }
             } else {
             return [new ScanDirection('Forward', {}), OrderByComponents.default()];
@@ -1062,7 +1062,7 @@ export class Planner extends Struct {
       const { _0: a } = _v[0].value.datum.value;
       const { inclusive: incB } = _v[1].value;
       const { _0: b } = _v[1].value.datum.value;
-      const _v1 = a.compareTo(b);
+      const _v1 = a.partialCompareTo(b);
       if (_v1 != null && (_v1 === 1)) {
         return left.clone();
       } else if (_v1 != null && (_v1 === -1)) {
@@ -1087,7 +1087,7 @@ export class Planner extends Struct {
       const { _0: a } = _v[0].value.datum.value;
       const { inclusive: incB } = _v[1].value;
       const { _0: b } = _v[1].value.datum.value;
-      const _v1 = a.compareTo(b);
+      const _v1 = a.partialCompareTo(b);
       if (_v1 != null && (_v1 === -1)) {
         return left.clone();
       } else if (_v1 != null && (_v1 === 1)) {

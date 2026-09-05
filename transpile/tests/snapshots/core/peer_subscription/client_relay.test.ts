@@ -37,7 +37,7 @@ class MockMessageSender<CD extends ContextData> extends Struct implements TNode<
   getSentRequests(): [EntityId, QueryId, CollectionId, Selection][] {
     const _t0 = this.sentRequests.value.lock();
     try {
-      return _t0.value.clone();
+      return _t0.value.map((e) => [e[0].clone(), e[1].clone(), e[2].clone(), e[3].clone()] as [EntityId, QueryId, CollectionId, Selection]);
     } finally {
       _t0.drop();
     }

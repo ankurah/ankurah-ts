@@ -63,21 +63,12 @@ pub(super) fn declared_in(body: &syn::Expr) -> Vec<String> {
     bound.names
 }
 
-/// What one arm declares out of the payload it was handed, and which payload
-/// keys those declarations took.
+
+/// The same walk, for a key that stands ALONE.
 ///
-/// A slot whose pattern only binds is one name: `const token = v._0;`. A slot
-/// whose pattern ASKS something —
-/// `SqliteError::Rusqlite(rusqlite::Error::QueryReturnedNoRows)` names a variant
-/// and then tests inside it — cannot have its question asked here: the
-/// runtime's `.match({..})` dispatches on the outer variant alone and has
-/// nowhere to fall through to. The question is reported, and the names the
-/// inner pattern binds are still taken out of the places they live in, so the
-/// arm reads the values it was written for on the path it was written for.
-/// Writing the pattern where the binding's name belongs produced `const
-/// rusqlite.Error.QueryReturnedNoRows = v._0;` (123 parse errors in
-/// storage-sqlite's engine.ts); giving the slot a fresh name instead left the
-/// arm's body naming a binding nothing declared.
+/// A variant only one arm names, with no arm below it, has nothing to fall
+/// through to — so the inner test cannot be made at all and the site says so.
+/// Everything else is what a chain link does.
 pub(super) fn arm_declarations(
     pat: &syn::Pat,
     param: &str,
@@ -85,43 +76,10 @@ pub(super) fn arm_declarations(
     t: &BodyTranslator,
     match_expr: &syn::ExprMatch,
 ) -> (String, Vec<String>, Vec<String>) {
-    let subpats: Vec<&syn::Pat> = match pat {
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().collect(),
-        syn::Pat::Struct(st) => st.fields.iter().map(|f| &*f.pat).collect(),
-        _ => Vec::new(),
-    };
-    let mut text = String::new();
-    let mut bound_keys = Vec::new();
-    let mut names = Vec::new();
-    for (i, (local, accessor)) in fields.iter().enumerate() {
-        let place = format!("{}.{}", param, accessor);
-        match subpats.get(i) {
-            Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
-                t.report_match_gap(
-                    match_expr,
-                    format!(
-                        "this arm tests inside the payload of `{}`, and the runtime's match dispatches \
-                         on the variant alone with no later arm to fall through to, so the \
-                         inner test is not made and the arm runs for every `{}`",
-                        accessor, accessor
-                    ),
-                );
-                let (_, bind) = t.pattern_test(&place, sub);
-                text.push_str(&bind);
-                bound_keys.push(accessor.clone());
-                names.extend(crate::body::pattern_names(sub));
-            }
-            _ => {
-                if local == "_" {
-                    continue;
-                }
-                text.push_str(&format!("const {} = {};\n", local, place));
-                bound_keys.push(accessor.clone());
-                names.push(local.clone());
-            }
-        }
-    }
-    (text, bound_keys, names)
+    let walked =
+        super::payload::payload_walk(pat, param, fields, t, super::payload::Tests::Reported, match_expr)
+            .expect("a reported walk has no test to be a hole");
+    (walked.text, walked.bound_keys, walked.names)
 }
 
 /// The variant a pattern names and the payload slots it takes out of it, as
@@ -222,6 +180,16 @@ pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
 /// A link of a chain has already been handed the payload by the key around it,
 /// so it needs the same statements without an arrow of its own.
 pub(super) fn arm_block(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
+    let (bindings, inner) = arm_block_parts(parts, t);
+    format!("{}{}", bindings, inner)
+}
+
+/// The same, with the DECLARATIONS kept apart from the body.
+///
+/// A guarded link needs the two separately: the names the pattern took have to
+/// stand before the guard, because the guard reads them, and the body has to
+/// stand inside the `if` the guard opens.
+pub(super) fn arm_block_parts(parts: ArmParts<'_>, t: &BodyTranslator) -> (String, String) {
     let ArmParts { bindings, body, owned, lifted, produces, release_rest, .. } = parts;
     let mut inner = t.wrap_bindings(
         owned,
@@ -230,7 +198,52 @@ pub(super) fn arm_block(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
     if !release_rest.is_empty() {
         inner = format!("try {{\n{}}} finally {{\n{}}}\n", indent(&inner), indent(&release_rest));
     }
-    format!("{}{}", bindings, inner)
+    (bindings, inner)
+}
+
+/// A HOLE written where an arm holds the payload, with what it owes first.
+///
+/// R12 says a hole throws where the branch would have run. It does not say the
+/// branch may abandon what it was handed: `intoMatch` marks the subject moved
+/// and gives the payload to the arm, and releases nothing of its own on any path
+/// out — so an arm that throws still owns the whole payload, and a refusal that
+/// walked away from it turned a reported gap into a leak. The release stands
+/// BEFORE the throw rather than in a `finally`, because there is no other path
+/// out of a block whose only statement throws.
+pub(super) fn hole_in_an_arm(
+    what: &str,
+    param: &str,
+    has_payload: bool,
+    takes: crate::ownership::scrutinee::Takes,
+) -> String {
+    let throw = format!("{};\n", crate::body::hole_text(what));
+    if !has_payload || takes != crate::ownership::scrutinee::Takes::Payload {
+        return throw;
+    }
+    format!("dropUnbound({}, []);\n{}", param, throw)
+}
+
+/// What an arm owes when its own DECLARATIONS carry a hole.
+///
+/// A refusal written into the bindings — `const path = unsupported(..)`, which
+/// is what an or-pattern the translator cannot read back comes out as — throws
+/// before the `try` around the body is entered, so the `finally` that would
+/// have released the rest of the payload never runs. The release goes first,
+/// for the same reason `hole_in_an_arm` puts it first: `intoMatch` releases
+/// nothing of its own, and the arm is the owner from the moment it is called.
+pub(super) fn release_before_a_hole_in_the_bindings(
+    bindings: &str,
+    param: &str,
+    has_payload: bool,
+    takes: crate::ownership::scrutinee::Takes,
+) -> String {
+    if !has_payload
+        || takes != crate::ownership::scrutinee::Takes::Payload
+        || !bindings.contains("unsupported(")
+    {
+        return String::new();
+    }
+    format!("dropUnbound({}, []);\n", param)
 }
 
 /// A pattern's alternatives: an `|` pattern writes one body for several
@@ -358,10 +371,11 @@ pub(super) fn translate_arm(
     // pattern wrote `_` for: `intoMatch` releases nothing of its own on any path
     // out, so an unowned part is a leak.
     let release_rest = release_of(case, &param, &bound, takes);
+    let refusing = release_before_a_hole_in_the_bindings(&payload, &param, !fields.is_empty(), takes);
     render_arm(
         ArmParts {
             variant,
-            bindings: format!("{}{}", flags, payload),
+            bindings: format!("{}{}{}", refusing, flags, payload),
             param: (!fields.is_empty() || !release_rest.is_empty()).then(|| param.clone()),
             body: &body,
             owned: &owned,
@@ -390,27 +404,9 @@ pub(super) fn translate_link(
     scrutinee_ty: Option<&crate::ty::Ty>,
     any_async: &mut bool,
 ) -> super::chain::Link {
-    // A guard is a second test, made after the pattern's and reading the names
-    // the pattern bound — which are declared inside the branch the test guards,
-    // so the guard cannot be written where the test belongs. R12: from this arm
-    // on the port cannot say, and the hole says so rather than running the
-    // arm's body for every value the pattern matched.
-    if arm.guard.is_some() {
-        let what = format!(
-            "an arm naming `{}` has a guard, and the guard reads names the pattern binds \
-             inside the branch it guards, so it cannot be written as part of the test; this \
-             arm and the arms below it are not written",
-            variant
-        );
-        t.report_match_gap(match_expr, what.clone());
-        return super::chain::Link {
-            test: None,
-            block: format!("{};\n", crate::body::hole_text(&what)),
-            is_async: false,
-        };
-    }
     let _bindings = t.enter_pattern(case, scrutinee_ty);
-    let Some((test, payload, bound, declared)) = super::chain::conditions(case, param, fields, t)
+    let Some(super::payload::Payload { test, text: payload, bound_keys: bound, names: declared }) =
+        super::payload::payload_walk(case, param, fields, t, super::payload::Tests::Kept, match_expr)
     else {
         // R12: the arm's pattern is one the translator cannot read back, so
         // neither the test nor the arms below it can be written, and the hole
@@ -424,19 +420,27 @@ pub(super) fn translate_link(
         t.report_match_gap(match_expr, what.clone());
         return super::chain::Link {
             test: None,
-            block: format!("{};\n", crate::body::hole_text(&what)),
+            bindings: String::new(),
+            guard: None,
+            block: hole_in_an_arm(&what, param, !fields.is_empty(), takes),
+            leaves: true,
             is_async: false,
         };
     };
+    // The guard is translated inside the pattern's scope, because it reads the
+    // names the pattern bound — and it is written before the body, so its
+    // temporaries are numbered where Rust evaluates them.
+    let guard = arm.guard.as_ref().map(|(_, guard)| t.expr(guard));
     let Body { body, lifted, owned, flags, is_async } =
         translate_body(arm, &declared, takes, t, match_expr, position);
     *any_async |= is_async;
     drop(_bindings);
     let release_rest = release_of(case, param, &bound, takes);
-    let block = arm_block(
+    let refusing = release_before_a_hole_in_the_bindings(&payload, param, !fields.is_empty(), takes);
+    let (bindings, block) = arm_block_parts(
         ArmParts {
             variant,
-            bindings: format!("{}{}", flags, payload),
+            bindings: format!("{}{}{}", refusing, flags, payload),
             param: None,
             body: &body,
             owned: &owned,
@@ -447,7 +451,23 @@ pub(super) fn translate_link(
         },
         t,
     );
-    super::chain::Link { test, block, is_async }
+    super::chain::Link {
+        test,
+        bindings,
+        guard,
+        block,
+        leaves: leaves_by_itself(&body, produces),
+        is_async,
+    }
+}
+
+/// Does this arm's body leave the arrow by itself?
+///
+/// Only a chain with a GUARD asks: an arm whose guard failed falls into the arm
+/// below it, so an arm that ran has to say it is finished — and a body that
+/// returns or throws has said so already.
+fn leaves_by_itself(body: &str, produces: bool) -> bool {
+    super::leaves_the_arm(&arm_statements(body, produces))
 }
 
 /// An arm's body, and what the arm owes around it.

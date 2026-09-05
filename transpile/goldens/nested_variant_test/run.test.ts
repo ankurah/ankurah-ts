@@ -81,6 +81,6 @@ test('two keys a separator would have merged are two keys', () => {
   map.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

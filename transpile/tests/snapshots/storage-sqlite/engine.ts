@@ -73,7 +73,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
       const bucket = SqliteBucket.new(this.pool.clone(), collectionId.clone());
       try {
         const collectionIdClone = collectionId.clone();
-        const _r4 = await conn.withConnection(new OwnedClosure([collectionIdClone], (c) => {
+        const _r4 = await conn.withConnection(new OwnedClosure([collectionIdClone], (c: Connection) => {
           const _r2 = createStateTable(c, collectionIdClone);
           if (_r2.isErr()) return Result.Err(RetrievalError.fromSqliteError(_r2.unwrapErr()));
           _r2.drop();
@@ -179,7 +179,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
   existingColumns(): string[] {
     const columns = this.columns.value.read();
     try {
-      return [...columns.value].map((c) => c.name.clone());
+      return [...columns.value].map((c) => c.name);
     } finally {
       columns.drop();
     }
@@ -247,7 +247,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         if (SqliteStorageEngine.saneName(column) && !this.hasColumn(column)) {
           const alterQuery = `ALTER TABLE "${tableName}" ADD COLUMN "${column}" ${datatype}`;
           tracing.debug(`Adding column: ${alterQuery}`);
-          const query = alterQuery.clone();
+          const query = alterQuery;
           const _r2 = await conn.withConnection((c) => {
             const _r1 = c.execute(query, []);
             if (_r1.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r1.unwrapErr()));
@@ -286,7 +286,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         if (_r3.isErr()) return Result.Err(MutationError.fromBincodeError(_r3.unwrapErr()));
         const attestationsBlob = _r3.unwrap();
         const id = state.payload.entityId.toBase64();
-        const idClone = id.clone();
+        const idClone = id;
         const materialized = [];
         try {
           let seenProperties = new HashSet();
@@ -298,7 +298,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
               for (const [column, value] of backend.value.propertyValues()) {
                 let _moved5 = false;
                 try {
-                  if (!seenProperties.insert(column.clone())) {
+                  if (!seenProperties.insert(column)) {
                     continue;
                   }
                   _moved5 = true;
@@ -311,7 +311,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
                         const _v = sqliteValue;
                         if (_v != null) {
                           const sv = _v;
-                          const _r7 = await this.addMissingColumns(conn, [[column.clone(), sv.sqliteType()]]);
+                          const _r7 = await this.addMissingColumns(conn, [[column, sv.sqliteType()]]);
                           if (_r7.isErr()) return Result.Err(MutationError.fromSqliteError(_r7.unwrapErr()));
                           _r7.drop();
                         } else {
@@ -362,17 +362,24 @@ export class SqliteBucket extends Struct implements StorageCollection {
           tracing.debug(`set_state query: ${query}`);
           const newHead = state.payload.state.head.clone();
           const tableNameClone = tableName;
-          const queryClone = query.clone();
-          const valuesClone = values.clone();
-          const _r12 = await conn.withConnection(new OwnedClosure([newHead], (c) => {
+          const queryClone = query;
+          const valuesClone = values.map((e) => e.clone());
+          const _r12 = await conn.withConnection(new OwnedClosure([newHead], (c: Connection) => {
             const _m8 = (() => {
               const _v1 = c.queryRow(`SELECT "head" FROM "${tableNameClone}" WHERE "id" = ?`, [idClone], (row) => row.get(0));
               if (_v1.isOk()) {
                 const json = _v1.unwrap();
                 return json;
               } else {
-                const e = _v1.unwrapErr();
-                return { $jump: 'return', $value: Result.Err(new SqliteError('Rusqlite', { _0: e })) };
+                const _v2 = _v1.unwrapErr();
+                if (_v2.is('QueryReturnedNoRows')) {
+                  const _v3 = _v2;
+                  return null;
+                }
+                {
+                  const e = _v2;
+                  return { $jump: 'return', $value: Result.Err(new SqliteError('Rusqlite', { _0: e })) };
+                }
               }
             })();
             if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
@@ -424,7 +431,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
       const tableName = this.stateTable();
       const idStr = id.toBase64();
       const collectionId = this.collectionId.clone();
-      const _r10 = (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+      const _r10 = (await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
         const query = `SELECT "id", "state_buffer", "head", "attestations" FROM "${tableName}" WHERE "id" = ?`;
         const result = c.queryRow(query, [idStr], (row) => {
           const _r1 = row.get(0);
@@ -469,8 +476,18 @@ export class SqliteBucket extends Struct implements StorageCollection {
               }
             }
           } else {
-            const e = result.unwrapErr();
-            return Result.Err(new SqliteError('Rusqlite', { _0: e }));
+            const _v1 = result.unwrapErr();
+            if (_v1.is('QueryReturnedNoRows')) {
+              const _v2 = _v1;
+              {
+                const _ = createStateTable(c, collectionId);
+                return Result.Err(new SqliteError('Rusqlite', { _0: rusqlite.Error.QueryReturnedNoRows }));
+              }
+            }
+            {
+              const e = _v1;
+              return Result.Err(new SqliteError('Rusqlite', { _0: e }));
+            }
           }
         } finally {
           result.drop();
@@ -536,7 +553,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
                 const [sql, params] = _r4.unwrap();
                 tracing.debug(`fetch_states SQL: ${sql} with ${params.length} params`);
                 const collectionId = this.collectionId.clone();
-                const _r18 = await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+                const _r18 = await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
                   const _r5 = c.prepare(sql);
                   if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
                   let stmt = _r5.unwrap();
@@ -679,7 +696,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const collectionId = this.collectionId.clone();
         const idStrings = [...eventIds].map((id) => id.toBase64());
         const numIds = idStrings.length;
-        return (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+        return (await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
           const placeholders = (undefined /* range 0..numIds */).map((_) => '?').join(', ');
           const query = `SELECT "id", "entity_id", "operations", "parent", "attestations" FROM "${tableName}" WHERE "id" IN (${placeholders})`;
           const _r1 = c.prepare(query);
@@ -769,7 +786,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
       const tableName = this.eventTable();
       const collectionId = this.collectionId.clone();
       const entityIdStr = entityId.toBase64();
-      return (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+      return (await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
         const query = `SELECT "id", "operations", "parent", "attestations" FROM "${tableName}" WHERE "entity_id" = ?`;
         const _r1 = c.prepare(query);
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());

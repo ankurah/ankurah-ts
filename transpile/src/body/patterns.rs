@@ -6,6 +6,10 @@
 //! names values. Rust says both in one piece of syntax; TypeScript has neither
 //! in one place, so both are written out here.
 //!
+//! The shape questions a caller asks of a pattern before writing either —
+//! whether it can fail, and whether it binds anything — live next door in
+//! `pat_shape.rs`.
+//!
 //! Two halves. The static renderers (`pat_static`, `pat_render`) write a
 //! pattern as a destructuring, which is what a `let` and a closure parameter
 //! need; `pattern_test` and `payload_parts` write the test and the bindings
@@ -84,62 +88,6 @@ impl BodyTranslator<'_> {
     fn pat_slot_with(pat: &syn::Pat, rename: &dyn Fn(&str) -> String) -> String {
         if Self::binds_nothing(pat) { String::new() } else { Self::pat_render(pat, rename) }
     }
-
-
-    /// Does this pattern match whatever it is given?
-    ///
-    /// A name and a `_` take the value and always match; every other pattern
-    /// asks a question of it. Callers use the answer to decide whether a
-    /// position can be written as a binding alone, or needs a test written
-    /// beside it so that the question still gets asked.
-    pub(crate) fn is_irrefutable(pat: &syn::Pat) -> bool {
-        match pat {
-            // `None` is not a binding. syn hands it over as an identifier
-            // because it is written without a path, and Rust resolves it to
-            // `Option`'s empty case — binding it is an error, not a shadow.
-            // `pattern_test` was given this exception and this was not, so a
-            // `None` NESTED in any pattern — `Some(None)`, `E::Opt(None)` —
-            // was read as a name that matches everything, and the arm ran for
-            // a value that was there.
-            syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => false,
-            // `x @ Some(_)` binds *and* asks.
-            syn::Pat::Ident(ident) => ident
-                .subpat
-                .as_ref()
-                .map(|(_, inner)| Self::is_irrefutable(inner))
-                .unwrap_or(true),
-            syn::Pat::Wild(_) => true,
-            syn::Pat::Reference(r) => Self::is_irrefutable(&r.pat),
-            syn::Pat::Paren(p) => Self::is_irrefutable(&p.pat),
-            syn::Pat::Type(t) => Self::is_irrefutable(&t.pat),
-            syn::Pat::Tuple(t) => t.elems.iter().all(Self::is_irrefutable),
-            _ => false,
-        }
-    }
-
-    /// Does this pattern take no name out of the value at all?
-    ///
-    /// Rust's `_` is not a name: it says "there is a value here and I want
-    /// nothing from it", and two of them in one pattern are two nothings.
-    /// TypeScript has no such spelling — writing `_` there declares a variable
-    /// called `_`, so `(Some(_), None)` emitted two `const _` in one block and
-    /// `Comparison { left, operator: _, right: _ }` two `_` keys, and a
-    /// JavaScript engine refuses the whole module. Every caller that would
-    /// write a name asks this first and writes nothing instead.
-    pub(crate) fn binds_nothing(pat: &syn::Pat) -> bool {
-        match pat {
-            syn::Pat::Wild(_) => true,
-            syn::Pat::Reference(r) => Self::binds_nothing(&r.pat),
-            syn::Pat::Paren(p) => Self::binds_nothing(&p.pat),
-            syn::Pat::Type(t) => Self::binds_nothing(&t.pat),
-            syn::Pat::Tuple(t) => t.elems.iter().all(Self::binds_nothing),
-            syn::Pat::Slice(sl) => sl.elems.iter().all(Self::binds_nothing),
-            syn::Pat::Struct(st) => st.fields.iter().all(|f| Self::binds_nothing(&f.pat)),
-            syn::Pat::TupleStruct(ts) => ts.elems.iter().all(Self::binds_nothing),
-            _ => false,
-        }
-    }
-
     /// What a variant's payload contributes to the arm: the tests its members
     /// ask, the names the destructuring takes out of `subject.value`, and the
     /// bindings that live inside a member which asks a question of its own.
@@ -380,9 +328,18 @@ impl BodyTranslator<'_> {
                     // of the left or out of the right, whichever matched. One
                     // test cannot say which, so the BINDING asks: each name is
                     // read from the alternative whose test passed.
+                    // R12's wording is that the hole throws where the BRANCH
+                    // would have run. Written as the test, it threw for every
+                    // value the match was given — including the ones whose
+                    // pattern does not match, which Rust answers with an empty
+                    // `else`: core's `recursePredicateWatchers` refused every
+                    // `Comparison` predicate rather than the one shape it
+                    // cannot read. So the test is the honest disjunction and
+                    // the refusal is the branch's first statement, which is
+                    // what declaring each name from a hole already is.
                     _ => match per_alternative(&tests, &binds) {
                         Some(bind) => (tests.join(" || "), bind),
-                        None => unreadable_alternatives(self, or),
+                        None => (tests.join(" || "), unreadable_alternatives(self, or)),
                     },
                 }
             }
@@ -491,21 +448,31 @@ fn per_alternative(tests: &[String], binds: &[String]) -> Option<String> {
     if first.is_empty() {
         return None;
     }
-    // Every alternative binds the same names, in the same order: Rust requires
-    // it, and a set that differs here means this did not read them properly.
+    // Rust requires every alternative to bind the same SET of names; it says
+    // nothing about the ORDER, and the whole point of an or-pattern is that the
+    // same name comes out of a different place in each alternative.
+    // `(Expr::Path(path), Expr::Literal(literal)) | (Expr::Literal(literal),
+    // Expr::Path(path))` — core's `watcherset.rs:171` — binds `path` and
+    // `literal` in opposite positions, and comparing by position refused it. So
+    // each name is looked up BY NAME in every alternative, and an alternative
+    // that does not carry one of them is a set that differs, which means this
+    // did not read them properly.
     for other in &parsed {
         if other.len() != first.len() {
             return None;
         }
-        if other.iter().zip(first).any(|((a, _), (b, _))| a != b) {
+        if first.iter().any(|(name, _)| !other.iter().any(|(other_name, _)| other_name == name)) {
             return None;
         }
     }
+    let place_in = |alternative: &Vec<(String, String)>, name: &str| -> Option<String> {
+        alternative.iter().find(|(bound, _)| bound == name).map(|(_, place)| place.clone())
+    };
     let mut out = String::new();
-    for (index, (name, _)) in first.iter().enumerate() {
+    for (name, _) in first {
         let mut written = "undefined".to_string();
         for (alternative, test) in parsed.iter().zip(tests).rev() {
-            written = format!("({}) ? {} : {}", test, alternative[index].1, written);
+            written = format!("({}) ? {} : {}", test, place_in(alternative, name)?, written);
         }
         out.push_str(&format!("const {} = {};\n", name, written));
     }
@@ -659,11 +626,16 @@ impl<'a> BodyTranslator<'a> {
 /// declared: `if (false) { .. } finally { literal.drop() }` is a
 /// `ReferenceError` waiting for the day the test stops being `false`.
 ///
-/// R12: the test is the hole, so reaching the branch reports what the port
-/// cannot do; and the names the branch's body reads are declared from a hole
-/// too, so the emitted text is still one a JavaScript engine loads and
-/// TypeScript types (`unsupported` answers `never`).
-fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> (String, String) {
+/// PREMISE CHANGED 2026-09-05 (fixpass6 item 4, D2): the hole used to stand
+/// where the TEST goes, so the branch refused for every value the match was
+/// given — including the ones whose pattern does not match, which Rust answers
+/// with an empty `else`. R12's own wording is that the hole throws where the
+/// BRANCH would have run. The test is the honest disjunction now, and this
+/// writes the branch: each name the body reads is declared from a hole, so the
+/// first statement of the branch throws and the emitted text is still one a
+/// JavaScript engine loads and TypeScript types (`unsupported` answers
+/// `never`).
+fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> String {
     let what = "the alternatives of this pattern bind their names in a form the translator \
                 cannot read back — each alternative has to bind the same names, one `const` \
                 apiece — so this branch is a hole";
@@ -676,85 +648,14 @@ fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> (String, Stri
             if declared.contains(&name) {
                 continue;
             }
-            bind.push_str(&format!("const {} = {};\n", name, hole));
+            // `as any` because `unsupported` answers `never`, and a `never`
+            // name refuses every member the branch's body reads off it —
+            // `a.n`, `a.drop()`. The branch throws at its first statement, so
+            // the type is never observed; what it has to do is let the rest of
+            // the branch through the type checker.
+            bind.push_str(&format!("const {} = {} as any;\n", name, hole));
             declared.push(name);
         }
     }
-    (hole, bind)
-}
-
-#[cfg(test)]
-mod const_pattern_tests {
-    use crate::testing::Fixture;
-
-    /// A const pattern binds NOTHING: Rust compares the subject against the
-    /// const's value. Read as a binding, the arm owned a value nothing
-    /// declared — `match p { ORIGIN => true, _ => false }` released `oRIGIN`,
-    /// an identifier the emitted file never introduces, and the arm the hole
-    /// had replaced still carried it.
-    #[test]
-    fn a_const_pattern_binds_nothing_and_releases_nothing() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub struct Point { pub x: i32 }\n             impl Drop for Point { fn drop(&mut self) {} }\n             pub const ORIGIN: Point = Point { x: 0 };\n             pub fn at_origin(p: Point) -> bool { match p { ORIGIN => true, _ => false } }",
-        )]);
-        let ts = f.translated_method("lib.rs", "at_origin");
-        assert!(ts.contains("if (unsupported("), "the test is the hole:\n{ts}");
-        assert!(!ts.contains("oRIGIN"), "and it declares no binding:\n{ts}");
-        // The subject is still the body's, released where nothing took it.
-        assert!(ts.contains("p.drop()"), "{ts}");
-    }
-
-    /// The same for a const the port compares by value, which is not a hole:
-    /// no binding there either, and the arms below it are reachable.
-    #[test]
-    fn a_primitive_const_pattern_is_a_comparison() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub const LIMIT: i32 = 5;\n             pub fn at_limit(n: i32) -> bool { match n { LIMIT => true, _ => false } }",
-        )]);
-        let ts = f.translated_method("lib.rs", "at_limit");
-        assert!(ts.contains("n === LIMIT"), "{ts}");
-        assert!(!ts.contains("const lIMIT"), "{ts}");
-    }
-}
-
-#[cfg(test)]
-mod or_pattern_tests {
-    use crate::testing::Fixture;
-
-    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 6): an or-pattern the
-    /// translator cannot read back used to be written as a branch that never
-    /// matches. That is a wrong answer twice: the program carried on as though
-    /// the pattern had not matched — core's `watcherset.ts` never registered an
-    /// index watcher — and the skipped branch still carried its own releases,
-    /// naming bindings nothing declared.
-    #[test]
-    fn an_or_pattern_the_translator_cannot_read_back_is_a_hole() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "pub struct Lit { pub n: u32 }\n\
-             pub struct Path { pub s: String }\n\
-             pub enum Side { Literal(Lit), Property(Path) }\n\
-             pub fn pair(left: Side, right: Side) -> u32 {\n\
-               if let (Side::Property(p), Side::Literal(l)) | (Side::Literal(l), Side::Property(p)) = (left, right) {\n\
-                 l.n\n\
-               } else {\n\
-                 0\n\
-               }\n\
-             }",
-        )]);
-        let ts = f.translated_method("lib.rs", "pair");
-        assert!(ts.contains("if (unsupported("), "the test is the hole:\n{}", ts);
-        // and every name the branch reads is declared, from a hole, so what is
-        // emitted is still text a JavaScript engine loads.
-        assert!(ts.contains("const l = unsupported("), "{}", ts);
-        assert!(ts.contains("const p = unsupported("), "{}", ts);
-        assert!(!ts.contains("if (false)"), "{}", ts);
-        assert!(
-            f.messages().iter().any(|m| m.contains("cannot read back")),
-            "and it says why: {:?}",
-            f.messages()
-        );
-    }
+    bind
 }

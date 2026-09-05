@@ -9,12 +9,20 @@
 use super::{indent, BodyTranslator};
 use crate::name_map;
 
-/// A numeric literal receiver, in parentheses.
+/// The BASE of a postfix expression, parenthesised where JavaScript would read
+/// it differently from Rust.
 ///
-/// `0xFFu8.wrapping_sub(b)` is written `255.wrappingSub(b)`, and JavaScript
-/// reads the `.` after a digit as a decimal point rather than a member access.
-/// Rust has no such ambiguity, so nothing in the source says the parentheses
-/// are needed; the literal is what says it.
+/// Every postfix form asks this — a method receiver, a field's base, the base
+/// of an index or a slice, and the callee of a direct call — because what makes
+/// the parentheses necessary is the base, not what follows it. Applied to `.`
+/// alone, `get_vec().await[0]` came out `await getVec()[0]`, which indexes the
+/// promise and answers `undefined`, and `get_function().await(8)` called it.
+///
+/// Two rules. A numeric literal: `0xFFu8.wrapping_sub(b)` is written
+/// `255.wrappingSub(b)`, and JavaScript reads the `.` after a digit as a decimal
+/// point rather than a member access. Rust has no such ambiguity, so nothing in
+/// the source says the parentheses are needed; the literal is what says it. And
+/// an `await`, below.
 pub(crate) fn parenthesise_receiver(receiver: &syn::Expr, written: String) -> String {
     // Rust's `.await` is postfix and binds tighter than whatever follows it;
     // JavaScript's `await` is a PREFIX operator that binds LOOSER than member

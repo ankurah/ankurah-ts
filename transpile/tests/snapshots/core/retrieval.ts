@@ -126,8 +126,19 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
       const state = _v.unwrap();
       return Result.Ok(state);
     } else {
-      const e = _v.unwrapErr();
-      return Result.Err(e);
+      const _v1 = _v.unwrapErr();
+      if (_v1.is('EntityNotFound')) {
+        const _v2 = _v1;
+        try {
+          return Result.Ok(null);
+        } finally {
+          _v2.drop();
+        }
+      }
+      {
+        const e = _v1;
+        return Result.Err(e);
+      }
     }
   }
 
@@ -368,8 +379,19 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
         const state = _v.unwrap();
         return Result.Ok(state);
       } else {
-        const e = _v.unwrapErr();
-        return Result.Err(e);
+        const _v1 = _v.unwrapErr();
+        if (_v1.is('EntityNotFound')) {
+          const _v2 = _v1;
+          try {
+            return Result.Ok(null);
+          } finally {
+            _v2.drop();
+          }
+        }
+        {
+          const e = _v1;
+          return Result.Err(e);
+        }
       }
     } finally {
       collection.drop();

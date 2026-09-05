@@ -28,7 +28,7 @@ impl BodyTranslator<'_> {
     /// back to the name when it knows nothing. The std-surface step is what
     /// empties this path out; the fail-loud step deletes it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn translate_unresolved_call_using(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], receiver_expr: Option<&syn::Expr>, used: bool) -> String {
+    pub(crate) fn translate_unresolved_call_using(&self, receiver: &str, rust_method: &str, ts_method: &str, args: &[String], arg_exprs: &[syn::Expr], receiver_expr: Option<&syn::Expr>, used: bool) -> String {
         if let (Some(receiver_expr), Some(tc)) = (receiver_expr, &self.types) {
             let tc_ref = tc.borrow();
             if let Ok(receiver_ty) = tc_ref.resolve_expr(receiver_expr) {
@@ -46,15 +46,20 @@ impl BodyTranslator<'_> {
                     _ => (receiver_ty.clone(), receiver.to_string()),
                 };
                 let bind_receiver = |written: &str| self.name_once(Some(receiver_expr), written);
-                let bind_eager = |_: usize, written: &str| {
-                    Some(native_types::nullable::Eager {
-                        name: written.to_string(),
-                        release: None,
-                    })
+                // D13: this used to hand the argument straight back, so an
+                // `ok_or(build())` on this path was written inside the `else`
+                // branch — it did not run on the `Some` path, and nothing said
+                // so. It is the same question the resolved path asks, and the
+                // same answer: named before the branch, with the release the
+                // other branch owes.
+                let bind_eager = |at: usize, written: &str| {
+                    self.name_eager(arg_exprs.get(at), written)
                 };
+                let bind_closure = |_: usize, written: &str| self.name_closure(written);
                 let once = native_types::nullable::Once {
                     bind_receiver: &bind_receiver,
                     bind_eager: &bind_eager,
+                    bind_closure: &bind_closure,
                 };
                 let translated = native_types::translate_method_using(
                     tc_ref.registry,
@@ -135,6 +140,185 @@ impl BodyTranslator<'_> {
     /// into one reads the same storage again and runs nothing, which is the
     /// same reason Rust may read it once. Anything else is named before the
     /// statement it stands in, and both reads read that name.
+    /// The receiver, named before the arguments are translated where a nullable
+    /// combinator is about to read it twice.
+    ///
+    /// Rust evaluates the receiver first. The combinator's own naming happens
+    /// while the CALL is written — after the arguments — so an argument that
+    /// hoisted anything of its own landed ahead of it:
+    /// `source(1).map_or(source(2).map_or(eager(), f), g)` emitted `source(2)`,
+    /// `eager()`, `source(1)`. The second answer tells the caller not to name it
+    /// again.
+    pub(crate) fn name_nullable_receiver_early(
+        &self,
+        call: &syn::ExprMethodCall,
+        rust_method: &str,
+        receiver: String,
+    ) -> (String, bool) {
+        if !self.nullable_reads_receiver_twice(call, rust_method) {
+            return (receiver, false);
+        }
+        (self.name_once(Some(&call.receiver), &receiver), true)
+    }
+
+    /// Does this call go to a nullable combinator that reads its receiver more
+    /// than once?
+    ///
+    /// Asked BEFORE the arguments are translated, because Rust evaluates the
+    /// receiver first and the combinator's own naming happens while the call is
+    /// being written — after them. Asking costs a type resolution, so it is
+    /// asked quietly: a receiver the engine cannot type is one no combinator
+    /// translation will fire for either.
+    pub(crate) fn nullable_reads_receiver_twice(
+        &self,
+        call: &syn::ExprMethodCall,
+        rust_method: &str,
+    ) -> bool {
+        if !crate::native_types::nullable::reads_receiver_twice(rust_method) {
+            return false;
+        }
+        let Some(tc) = &self.types else { return false };
+        let mark = self.mark();
+        let answer = {
+            let tc = tc.borrow();
+            tc.resolve_expr(&call.receiver).is_ok_and(|ty| {
+                matches!(
+                    crate::name_map::shape::js_shape(tc.registry, &ty),
+                    crate::name_map::shape::JsShape::Nullable(_)
+                )
+            })
+        };
+        self.rewind(mark);
+        answer
+    }
+
+    /// A CLOSURE argument of an `Option` combinator, named once, with the
+    /// release the branch that does not call it owes.
+    ///
+    /// Only a closure the port wrote as an `OwnedClosure` — a `move` closure
+    /// over something with drop glue — is named here. R10: such a closure is
+    /// invoked through `invoke` and never called as a function, which the
+    /// emitted `(new OwnedClosure(..))(value)` did, a `TypeError` on the first
+    /// value it saw. It is a VALUE besides: Rust builds it before it enters the
+    /// method and drops it on the path that does not call it, so its captures
+    /// leaked on the other branch. An ordinary arrow owns nothing and is called
+    /// where it stands.
+    pub(crate) fn name_closure(
+        &self,
+        written: &str,
+    ) -> Option<crate::native_types::nullable::Eager> {
+        use crate::native_types::nullable::Eager;
+        if !written.trim_start().starts_with("new OwnedClosure(") {
+            return None;
+        }
+        let name = self.hoist_name(written.to_string());
+        let release = Some(format!("dropOwned({})", name));
+        Some(Eager { name, release })
+    }
+
+}
+
+/// The method a comparison OPERATOR calls on its left operand.
+///
+/// R9's other half: `Ord::cmp` owns `compareTo`, so `a > b` on a type with no
+/// total order is a call to its `partialCompareTo` — the name that type's
+/// written-out `PartialOrd` is emitted under. `core/selection/filter.rs`'s four
+/// comparison operators on a `Value` named a method the class does not declare.
+pub(crate) fn comparison_member(
+    tc: &crate::infer::TypeContext,
+    trait_name: &str,
+    rust_method: &str,
+    ts_method: &str,
+    args: &[String],
+    self_ty: &crate::ty::Ty,
+) -> String {
+    if trait_name == "PartialOrd" && !has_a_total_order(tc, self_ty) {
+        return "partialCompareTo".to_string();
+    }
+    crate::emit::impl_method_name(trait_name, rust_method, ts_method, args, "", None)
+}
+
+/// The call an operator becomes, once its method is named.
+///
+/// `partial_cmp` hands back an ordering, and the port writes it as a number, so
+/// the operator is the sign test Rust's own default methods perform. A PARTIAL
+/// order answers `None` for a pair Rust cannot compare, and `a > b` is `false`
+/// for it — as it is for all four operators. `null` compares that way in
+/// JavaScript too, but TypeScript refuses `null > 0` under `strict`; `NaN` is
+/// the number that answers `false` to every comparison and types.
+pub(crate) fn operator_call(
+    trait_name: &str,
+    left: &str,
+    member: &str,
+    right: &str,
+    native: &str,
+) -> String {
+    match trait_name {
+        "PartialEq" => {
+            let call = format!("{}.{}({})", left, member, right);
+            if native == "!==" { format!("!{}", call) } else { call }
+        }
+        "PartialOrd" if member == "partialCompareTo" => {
+            format!("(({}.{}({}) ?? NaN) {} 0)", left, member, right, native)
+        }
+        "PartialOrd" => format!("{}.{}({}) {} 0", left, member, right, native),
+        _ => format!("{}.{}({})", left, member, right),
+    }
+}
+
+/// Does this type write an `Ord`, which is what keeps the name `compareTo`?
+///
+/// R9: `Ord::cmp` owns `compareTo`. A type with no total order writes its
+/// partial one as `partialCompareTo`, and both a CALL to `partial_cmp` and a
+/// comparison OPERATOR on such a type have to name that.
+pub(crate) fn has_a_total_order(tc: &crate::infer::TypeContext, ty: &crate::ty::Ty) -> bool {
+    let probe = tc.probe();
+    probe
+        .reg
+        .system_type("std::cmp::Ord")
+        .is_some_and(|ord| probe.implements(ty, ord))
+}
+
+impl BodyTranslator<'_> {
+    /// The name a call to `cmp` or `partial_cmp` writes.
+    ///
+    /// R9: `Ord::cmp` owns `compareTo`, which is what the runtime's sorts and
+    /// the derived `equals` call. A `PartialOrd::partial_cmp` written out is a
+    /// second answer — Rust lets a partial order disagree with a total one —
+    /// and it is emitted as `partialCompareTo`, so a call has to write that.
+    ///
+    /// The question the CALL can ask is whether the type has an `Ord` at all: a
+    /// type with none has no `compareTo`, so every call to its `partial_cmp` is
+    /// the partial one. A type with BOTH may have written its `partial_cmp` out
+    /// — in which case the class declares two methods and this writes the wrong
+    /// one — or may have forwarded it to `cmp`, in which case `compareTo` is
+    /// right and is all there is. Only the emitted body says which, and that is
+    /// written after this, so the ambiguous case is reported rather than
+    /// guessed at. No corpus site reaches it.
+    pub(crate) fn ordering_method_name(
+        &self,
+        tc: &crate::infer::TypeContext,
+        found: &crate::registry::MethodResolution,
+        rust_method: &str,
+        ts_method: &str,
+        call: &syn::ExprMethodCall,
+    ) -> String {
+        if rust_method != "partial_cmp" {
+            return ts_method.to_string();
+        }
+        if !has_a_total_order(tc, found.receiver_type()) {
+            return "partialCompareTo".to_string();
+        }
+        self.fallback(
+            syn::spanned::Spanned::span(call),
+            "this type writes both `Ord::cmp` and `PartialOrd::partial_cmp`, and only the \
+             emitted body says whether the partial one forwards to the total one — so whether \
+             the class declares `partialCompareTo` beside `compareTo` is not known here, and \
+             the call is written as `compareTo`",
+        );
+        ts_method.to_string()
+    }
+
     pub(crate) fn name_once(&self, expr: Option<&syn::Expr>, written: &str) -> String {
         match expr {
             Some(expr) if reads_a_place_twice(expr, written) => written.to_string(),

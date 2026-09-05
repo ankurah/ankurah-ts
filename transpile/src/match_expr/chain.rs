@@ -24,12 +24,31 @@ pub(super) struct Link {
     /// The test the arm's inner pattern makes of the payload, or nothing where
     /// the pattern matches every value of the variant.
     pub test: Option<String>,
-    /// Everything that runs when the test passes: the drop flags the body owes,
-    /// the names the pattern takes out of the payload, and the body.
+    /// The drop flags the body owes and the names the pattern takes out of the
+    /// payload, which stand before the guard because the guard reads them.
+    pub bindings: String,
+    /// The arm's SECOND test, made after the pattern's and after the names it
+    /// bound are in scope. A guard that fails hands the payload to the arm
+    /// below, which is why a chain with one is written as a run of `if`s rather
+    /// than an `else if` chain.
+    pub guard: Option<String>,
+    /// Everything that runs when both tests pass: the body and what it owes
+    /// around it.
     pub block: String,
+    /// Whether the block leaves the arrow by itself, so that nothing written
+    /// after it in the chain would run. A block that does not needs a `break`
+    /// out of the chain's label, or the arms below it would be tried after it.
+    pub leaves: bool,
     /// Whether the branch awaits, which makes the key `async` and the match
     /// around it awaited.
     pub is_async: bool,
+}
+
+impl Link {
+    /// The link as one piece of text, for the forms that need no fall-through.
+    fn whole(&self) -> String {
+        format!("{}{}", self.bindings, self.block)
+    }
 }
 
 /// What the chain runs when no arm's pattern matched.
@@ -53,19 +72,27 @@ pub(super) enum Fallthrough<'a> {
 /// them to the arm anyway.
 pub(super) fn contested(arms_of: &[&syn::Arm], has_catch_all: bool) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
-    let mut seen: Vec<(String, usize, bool)> = Vec::new();
+    // variant → (how many arms name it, whether any of them covers it, whether
+    // any of them carries a guard).
+    let mut seen: Vec<(String, usize, bool, bool)> = Vec::new();
     for arm in arms_of.iter().copied() {
         for case in arms::cases_of(&arm.pat) {
             let Some((variant, _)) = arms::payload_of(case) else { continue };
-            let covers = catch_all::covers_its_variant(case);
-            match seen.iter_mut().find(|(name, _, _)| *name == variant) {
+            // A GUARDED arm covers nothing: the values whose guard fails belong
+            // to the arm below it, and a key with no test of its own hands them
+            // to this one anyway. So a guard puts its variant on the chain,
+            // which is the only form that can try the next arm.
+            let guarded = arm.guard.is_some();
+            let covers = !guarded && catch_all::covers_its_variant(case);
+            match seen.iter_mut().find(|(name, _, _, _)| *name == variant) {
                 Some(entry) => {
                     entry.1 += 1;
                     entry.2 |= covers;
+                    entry.3 |= guarded;
                 }
                 None => {
                     order.push(variant.clone());
-                    seen.push((variant, 1, covers));
+                    seen.push((variant, 1, covers, guarded));
                 }
             }
         }
@@ -73,71 +100,11 @@ pub(super) fn contested(arms_of: &[&syn::Arm], has_catch_all: bool) -> Vec<Strin
     order
         .into_iter()
         .filter(|name| {
-            let (_, times, covered) =
-                seen.iter().find(|(n, _, _)| n == name).expect("built from the same walk");
-            *times > 1 || (!*covered && has_catch_all)
+            let (_, times, covered, guarded) =
+                seen.iter().find(|(n, _, _, _)| n == name).expect("built from the same walk");
+            *times > 1 || *guarded || (!*covered && has_catch_all)
         })
         .collect()
-}
-
-/// What one link tests of the payload it was handed, and what it takes out of
-/// it.
-///
-/// `arms::arm_declarations` asks the same question for a key that has no test
-/// to make: it takes the names out and reports the test it cannot make. Here
-/// the test is made, so it is kept. Nothing comes back for a pattern the
-/// translator cannot read back — `pattern_test` writes a HOLE for an alternation
-/// whose parts bind different names — because a link whose test throws is not a
-/// link, and a chain that reaches it stops there.
-pub(super) fn conditions(
-    pat: &syn::Pat,
-    param: &str,
-    fields: &[(String, String)],
-    t: &BodyTranslator,
-) -> Option<(Option<String>, String, Vec<String>, Vec<String>)> {
-    let subpats: Vec<&syn::Pat> = match pat {
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().collect(),
-        syn::Pat::Struct(st) => st.fields.iter().map(|f| &*f.pat).collect(),
-        _ => Vec::new(),
-    };
-    let mut tests: Vec<String> = Vec::new();
-    let mut text = String::new();
-    let mut bound_keys = Vec::new();
-    let mut names = Vec::new();
-    for (i, (local, accessor)) in fields.iter().enumerate() {
-        let place = format!("{}.{}", param, accessor);
-        match subpats.get(i) {
-            Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
-                let (test, bind) = t.pattern_test(&place, sub);
-                if test.starts_with("unsupported(") {
-                    return None;
-                }
-                if test.trim() != "true" {
-                    tests.push(test);
-                }
-                text.push_str(&bind);
-                bound_keys.push(accessor.clone());
-                names.extend(crate::body::pattern_names(sub));
-            }
-            _ => {
-                if local == "_" {
-                    continue;
-                }
-                text.push_str(&format!("const {} = {};\n", local, place));
-                bound_keys.push(accessor.clone());
-                names.push(local.clone());
-            }
-        }
-    }
-    // One test stands as it is; several are joined, and each is parenthesised
-    // so that an `||` inside one — which is what an alternation writes — cannot
-    // reach across the `&&`.
-    let test = match tests.len() {
-        0 => None,
-        1 => Some(tests.remove(0)),
-        _ => Some(tests.iter().map(|test| format!("({})", test)).collect::<Vec<_>>().join(" && ")),
-    };
-    Some((test, text, bound_keys, names))
 }
 
 /// A name for the parameter each contested variant's arms share.
@@ -179,15 +146,25 @@ pub(super) fn write(
     variant: &str,
     has_payload: bool,
     param: &str,
+    takes: crate::ownership::scrutinee::Takes,
     t: &BodyTranslator,
 ) -> String {
+    // A guard is a test the port cannot write where the pattern's test goes,
+    // because it reads the names the pattern binds — so a chain with one is
+    // written as a run of `if`s inside a labelled block, and a link that ran
+    // leaves the block rather than falling into the arms below it.
+    if links.iter().any(|link| link.guard.is_some()) {
+        return in_turn(links, fall, variant, has_payload, param, takes, t);
+    }
+
     // Rust never reads past an arm that matches every value of the variant, so
     // neither does this: the arms below such a link are unreachable, and
     // rustc's own "unreachable pattern" is what says so about the source.
     let mut parts: Vec<(Option<String>, String)> = Vec::new();
     for link in links {
         let unconditional = link.test.is_none();
-        parts.push((link.test, link.block));
+        let whole = link.whole();
+        parts.push((link.test, whole));
         if unconditional {
             break;
         }
@@ -198,7 +175,9 @@ pub(super) fn write(
             Fallthrough::CatchAll(fallback) => {
                 parts.push((None, fallback.statements(variant, has_payload, param, t)))
             }
-            Fallthrough::Unwritable(why) => parts.push((None, unwritable(why))),
+            Fallthrough::Unwritable(why) => {
+                parts.push((None, arms::hole_in_an_arm(why, param, has_payload, takes)))
+            }
             // rustc proved the arms exhaustive between them, so a value that
             // failed every test above matches the last of them.
             Fallthrough::Exhaustive => {
@@ -231,12 +210,112 @@ pub(super) fn write(
     out
 }
 
-/// The chain's `else` where the port cannot write what belongs there.
+/// The chain when one of its arms carries a GUARD.
 ///
-/// R12: a branch whose emission is known wrong carries a hole rather than a
-/// wrong answer, and the hole throws where the branch would have run.
-fn unwritable(why: &str) -> String {
-    format!("{};\n", crate::body::hole_text(why))
+/// A guard reads the names its own pattern bound, and those names are declared
+/// inside the branch the pattern's test opens — so the guard cannot be part of
+/// that test, and an `else if` chain has nowhere to put it. What Rust does when
+/// a guard fails is try the NEXT arm, with the value untouched, so that is what
+/// this writes: each arm is an `if` of its own, standing one after another
+/// inside a labelled block, and an arm that ran leaves the block instead of
+/// falling into the arms below it.
+///
+/// ```text
+/// $match0: {
+///   if (v.is('Flag')) {
+///     const b = v.value._0;
+///     if (b) { … ; break $match0; }
+///   }
+///   … the next arm …
+///   … the catch-all's body …
+/// }
+/// ```
+///
+/// A body that returns or throws has made that jump for itself, so it gets no
+/// `break`.
+fn in_turn(
+    links: Vec<Link>,
+    fall: &Fallthrough<'_>,
+    variant: &str,
+    has_payload: bool,
+    param: &str,
+    takes: crate::ownership::scrutinee::Takes,
+    t: &BodyTranslator,
+) -> String {
+    // An arm with neither a test nor a guard matches every value of the
+    // variant, so Rust never reads past it and neither does this.
+    let unconditional = |link: &Link| link.test.is_none() && link.guard.is_none();
+    let mut open = true;
+    let mut kept: Vec<Link> = Vec::new();
+    for link in links {
+        let last = unconditional(&link);
+        kept.push(link);
+        if last {
+            open = false;
+            break;
+        }
+    }
+    // A label nothing jumps to is noise: where every arm's body returns or
+    // throws by itself, the chain needs no way out.
+    let needs_break = kept.iter().enumerate().any(|(i, link)| {
+        !link.leaves && !unconditional(link) && (open || i + 1 < kept.len())
+    });
+    let label = if needs_break { t.fresh_hoist("_match") } else { String::new() };
+    let mut inner = String::new();
+    for link in kept {
+        let unconditional = unconditional(&link);
+        let leaving = if link.leaves || unconditional || label.is_empty() {
+            String::new()
+        } else {
+            format!("break {};\n", label)
+        };
+        let guarded = match &link.guard {
+            Some(guard) => format!(
+                "{}if ({}) {{\n{}}}\n",
+                link.bindings,
+                guard,
+                indent(&format!("{}{}", link.block, leaving))
+            ),
+            None => format!("{}{}{}", link.bindings, link.block, leaving),
+        };
+        match &link.test {
+            Some(test) => inner.push_str(&format!("if ({}) {{\n{}}}\n", test, indent(&guarded))),
+            // A pattern that matches every value of the variant still opens a
+            // block of its own: the names it binds belong to this arm and to
+            // no arm written after it.
+            None => inner.push_str(&format!("{{\n{}}}\n", indent(&guarded))),
+        }
+    }
+    if open {
+        match fall {
+            Fallthrough::CatchAll(fallback) => {
+                inner.push_str(&fallback.statements(variant, has_payload, param, t))
+            }
+            Fallthrough::Unwritable(why) => {
+                inner.push_str(&arms::hole_in_an_arm(why, param, has_payload, takes))
+            }
+            // Every arm here is conditional — a guard makes even an
+            // irrefutable pattern one — so an exhaustive match still needs
+            // something written where a failed guard lands. Rust proves it
+            // unreachable; the port cannot, and a chain that fell off its end
+            // would hand back `undefined`.
+            Fallthrough::Exhaustive => inner.push_str(&arms::hole_in_an_arm(
+                &format!(
+                    "every arm naming `{}` has a guard, and rustc proved between them that one \
+                     always holds; the port cannot see that proof, so a value that fails all of \
+                     them arrives here",
+                    variant
+                ),
+                param,
+                has_payload,
+                takes,
+            )),
+        }
+    }
+    if label.is_empty() {
+        return inner;
+    }
+    format!("{}: {{\n{}}}\n", label, indent(&inner))
 }
 
 #[cfg(test)]
@@ -249,6 +328,56 @@ mod tests {
 
     fn built(src: &str) -> Fixture {
         Fixture::build(&[("lib.rs", &format!("{}{}", TYPES, src))])
+    }
+
+    /// Y1: a link that REFUSES still owns the payload the arm was handed, and
+    /// `intoMatch` releases nothing of its own on any path out. Before the sixth
+    /// pass the refusal threw and left the whole payload to nobody.
+    #[test]
+    fn a_hole_in_a_consuming_link_releases_the_payload_before_it_throws() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: u32 }\n\
+             pub enum Inner { A((Token, Token)), B((Token, Token)) }\n\
+             pub enum Wrap { Held(Inner, Token), Empty }\n\
+             pub fn pick(w: Wrap) -> u32 {\n\
+               match w {\n\
+                 Wrap::Held(Inner::A((a, b)) | Inner::B((b, a)), _) => \
+                   { let n = a.n + b.n; drop(a); drop(b); n }\n\
+                 Wrap::Held(_, rest) => { let n = rest.n; drop(rest); n }\n\
+                 Wrap::Empty => 0,\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "pick");
+        let release = ts.find("dropUnbound(v, []);").expect(&ts);
+        let throw = ts.find("unsupported(").expect(&ts);
+        assert!(release < throw, "the refusal releases what it holds first:\n{}", ts);
+        // D2: the TEST still decides, so a value the refusing arm does not
+        // match reaches the arm below it.
+        assert!(ts.contains("v._0.is('A')"), "the test is written:\n{}", ts);
+    }
+
+    /// And a BORROWED link's refusal owes nothing: the subject is still its
+    /// owner's, and a release here would be a second one.
+    #[test]
+    fn a_hole_in_a_borrowed_link_releases_nothing() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: u32 }\n\
+             pub enum Inner { A((Token, Token)), B((Token, Token)) }\n\
+             pub enum Wrap { Held(Inner, Token), Empty }\n\
+             pub fn pick(w: &Wrap) -> u32 {\n\
+               match w {\n\
+                 Wrap::Held(Inner::A((a, b)) | Inner::B((b, a)), _) => a.n + b.n,\n\
+                 Wrap::Held(_, rest) => rest.n,\n\
+                 Wrap::Empty => 0,\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "pick");
+        assert!(ts.contains("unsupported("), "{}", ts);
+        assert!(!ts.contains("dropUnbound"), "a borrowed link owes nothing:\n{}", ts);
     }
 
     /// The arms are tried in the order the source wrote them, and the
@@ -321,7 +450,7 @@ mod tests {
     /// R12: an arm whose pattern the translator cannot read back is a hole from
     /// that arm on, rather than a body run for every value of the variant.
     #[test]
-    fn an_arm_with_a_guard_is_a_hole_from_there_on() {
+    fn an_arm_with_a_guard_is_tried_and_falls_through_to_the_next() {
         let mut f = built(
             "pub fn pick(e: Ex, limit: u32) -> u32 {\n\
                match e {\n\
@@ -332,10 +461,18 @@ mod tests {
              }",
         );
         let ts = f.translated_method("lib.rs", "pick");
-        assert!(ts.contains("unsupported("), "{}", ts);
+        // PREMISE CHANGED 2026-09-05 (fixpass6 item 2, D8): a guard used to
+        // make this arm and the arms below it a hole. The chain writes it now:
+        // the pattern's test opens a block, the names it bound stand in that
+        // block, the guard is tested there, and a guard that fails falls
+        // through to the arm below.
+        assert!(!ts.contains("unsupported("), "{}", ts);
+        let guard = ts.find("if (n > limit)").expect(&ts);
+        let below = ts.find("return 2;").expect(&ts);
+        assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
         assert!(
-            f.messages().iter().any(|m| m.contains("has a guard")),
-            "and it says why: {:?}",
+            f.messages().iter().all(|m| !m.contains("guard is dropped")),
+            "and nothing says the guard was dropped: {:?}",
             f.messages()
         );
     }

@@ -52,7 +52,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
   items(): Entity[] {
     const _t0 = this._0.value.items.read();
     try {
-      return _t0.value.clone();
+      return _t0.value.map((e) => e.clone());
     } finally {
       _t0.drop();
     }

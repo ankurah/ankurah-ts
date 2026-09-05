@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/changes.rs
-import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, derivedClone } from '@ankurah/base';
 import { Attested, Event } from '@ankurah/proto';
 import { Entity } from './entity';
 import { MutationError } from './error';
@@ -186,14 +186,14 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 }
 
-export type ItemChangeV = {
+export type ItemChangeV<I> = {
   Initial: { item: I };
   Add: { item: I; events: Attested<Event>[] };
   Update: { item: I; events: Attested<Event>[] };
   Remove: { item: I; events: Attested<Event>[] };
 };
 
-export class ItemChange<I> extends Enum<ItemChangeV> {
+export class ItemChange<I> extends Enum<ItemChangeV<I>> {
 
   entity(): I {
     {
@@ -262,10 +262,10 @@ export class ItemChange<I> extends Enum<ItemChangeV> {
 
   clone(): ItemChange<I> {
     return this.match({
-      Initial: (v) => new ItemChange('Initial', { item: v.item.clone() }),
-      Add: (v) => new ItemChange('Add', { item: v.item.clone(), events: v.events.map(e => e.clone()) }),
-      Update: (v) => new ItemChange('Update', { item: v.item.clone(), events: v.events.map(e => e.clone()) }),
-      Remove: (v) => new ItemChange('Remove', { item: v.item.clone(), events: v.events.map(e => e.clone()) }),
+      Initial: (v) => new ItemChange<I>('Initial', { item: derivedClone(v.item) }),
+      Add: (v) => new ItemChange<I>('Add', { item: derivedClone(v.item), events: v.events.map(e => e.clone()) }),
+      Update: (v) => new ItemChange<I>('Update', { item: derivedClone(v.item), events: v.events.map(e => e.clone()) }),
+      Remove: (v) => new ItemChange<I>('Remove', { item: derivedClone(v.item), events: v.events.map(e => e.clone()) }),
     });
   }
 

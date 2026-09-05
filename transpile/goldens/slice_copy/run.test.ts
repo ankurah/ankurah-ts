@@ -5,7 +5,7 @@
 // dropped.
 
 import { expect, test } from 'bun:test';
-import { Batch, Event } from './input.ts';
+import { Batch, Event, Named } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a copy of a slice is a copy of what it holds', () => {
@@ -31,6 +31,21 @@ test('where there is nothing inside to copy, the array copy is the whole copy', 
   expect(Batch.copyOfCounts([1, 2, 3])).toEqual([1, 2, 3]);
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('`Vec::clone` is that copy under a third name', () => {
+  const batch = new Batch([new Event(4), new Event(5)]);
+  const mine = batch.clonedEvents();
+  expect(mine.map((e) => e.n)).toEqual([4, 5]);
+  expect(mine[0]).not.toBe(batch.events[0]);
+  for (const e of mine) e.drop();
+  batch.drop();
+});
+
+test('`String::clone` is the string', () => {
+  const named = new Named('a');
+  expect(named.spellings()).toEqual(['a', 'a', 'a']);
+  named.drop();
+});
+
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

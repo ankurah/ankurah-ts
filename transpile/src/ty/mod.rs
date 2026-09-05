@@ -3,6 +3,7 @@
 //! emission, and are never parsed back.
 
 mod def;
+pub mod prim_consts;
 pub mod subst;
 mod unify;
 

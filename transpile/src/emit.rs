@@ -130,8 +130,14 @@ pub fn emit_enum(
 ) {
     let export = if e.is_pub { "export " } else { "" };
 
-    // Variant type map
-    out.push_str(&format!("{}type {}V = {{\n", export, e.name));
+    // Variant type map. It carries the class's own type parameters, because the
+    // variants' fields are written in them: `RangeBound<T>`'s alias said
+    // `Included: { _0: T }` with nothing declaring `T`, which is a `Cannot find
+    // name` on every generic enum in the corpus (core's `collation.ts`,
+    // `selection/filter.ts`, `changes.ts` and `lineage.ts`). The class below
+    // instantiates it with the same parameters.
+    let alias_generics = strip_generic_defaults(&e.generics);
+    out.push_str(&format!("{}type {}V{} = {{\n", export, e.name, e.generics));
     for v in &e.variants {
         if v.fields.is_empty() {
             out.push_str(&format!("  {}: {{}};\n", v.name));
@@ -145,9 +151,12 @@ pub fn emit_enum(
     out.push_str("};\n\n");
 
     // Class
-    out.push_str(&format!("{}class {}{} extends Enum<{}V> {{\n", export, e.name, e.generics, e.name));
+    out.push_str(&format!(
+        "{}class {}{} extends Enum<{}V{}> {{\n",
+        export, e.name, e.generics, e.name, alias_generics
+    ));
 
-    let generics_usage = strip_generic_defaults(&e.generics);
+    let generics_usage = alias_generics.clone();
     let self_type = format!("{}{}", e.name, generics_usage);
     let self_id = module.and_then(|m| reg.module_type(m, &e.name));
     let mut emitted = HashSet::new();
@@ -156,55 +165,12 @@ pub fn emit_enum(
 
     // Enum-specific derive handling (clone needs variant-aware logic)
     if e.derives.iter().any(|d| d == "Clone") && emitted.insert("clone".to_string()) {
-        // Clone via match — deep-clone each variant's fields
-        let has_complex_fields = e.variants.iter().any(|v| v.fields.iter().any(|f| {
-            let ty = f.ts_ty(reg);
-            !is_primitive_ts_type(&ty) && ty != "Uint8Array"
-        }));
-        if has_complex_fields {
-            out.push_str(&format!("\n  clone(): {} {{\n    return this.match({{\n", self_type));
-            for v in &e.variants {
-                if v.fields.is_empty() {
-                    out.push_str(&format!("      {}: () => new {}('{}', {{}}),\n", v.name, e.name, v.name));
-                } else {
-                    let clone_fields: Vec<String> = v.fields.iter()
-                        .filter_map(|f| {
-                            let n = f.name.as_deref()?;
-                            let ty = f.ts_ty(reg);
-                            let base_ty = ty.trim_end_matches(" | null");
-                            let nullable = ty.ends_with(" | null");
-                            Some(if is_primitive_ts_type(base_ty) {
-                                format!("{}: v.{}", n, n)
-                            } else if base_ty == "Uint8Array" {
-                                if nullable {
-                                    format!("{}: v.{} != null ? new Uint8Array(v.{}) : null", n, n, n)
-                                } else {
-                                    format!("{}: new Uint8Array(v.{})", n, n)
-                                }
-                            } else if base_ty.ends_with("[]") {
-                                let inner = &base_ty[..base_ty.len()-2];
-                                if is_primitive_ts_type(inner) {
-                                    format!("{}: [...v.{}]", n, n)
-                                } else {
-                                    format!("{}: v.{}.map(e => e.clone())", n, n)
-                                }
-                            } else if nullable {
-                                format!("{}: v.{}?.clone() ?? null", n, n)
-                            } else {
-                                format!("{}: v.{}.clone()", n, n)
-                            })
-                        })
-                        .collect();
-                    out.push_str(&format!("      {}: (v) => new {}('{}', {{ {} }}),\n",
-                        v.name, e.name, v.name, clone_fields.join(", ")));
-                }
-            }
-            out.push_str("    });\n  }\n");
-        } else {
-            // Simple enum — shallow copy is sufficient
-            out.push_str(&format!("\n  clone(): {} {{\n    return new {}(this.type, {{ ...this.value }});\n  }}\n",
-                self_type, e.name));
-        }
+        out.push_str(&crate::derives::cloning::enum_clone(
+            reg,
+            e,
+            &self_type,
+            &declared_parameters(&e.generics),
+        ));
     }
 
     // Handle remaining derives (PartialEq, Default, etc.) — pass empty fields for enums
@@ -216,7 +182,12 @@ pub fn emit_enum(
     emit_derive_methods(
         out, reg, &e.name, &e.generics, &e.derives, &mut emitted, &[], Some(ordering),
         Some(crate::derives::hashing::enum_hash(reg, e)),
-        Some(crate::derives::equality::enum_equals(reg, e, &format!("{}{}", e.name, strip_generic_defaults(&e.generics)))),
+        Some(crate::derives::equality::enum_equals(
+            reg,
+            e,
+            &format!("{}{}", e.name, strip_generic_defaults(&e.generics)),
+            &declared_parameters(&e.generics),
+        )),
     );
     // `emitted` already holds every method a written impl put on the class, so a
     // hand-written `Display` keeps its `toString` and the derive does not write
@@ -460,10 +431,15 @@ fn emit_trait_methods(
             // whichever the source wrote first took it. `cmp` keeps `compareTo`,
             // which is what the runtime's sorts and the derived `equals` call;
             // the partial one is written as `partialCompareTo`.
+            //
+            // Asked of the partial order ALONE, not of whether an `Ord` stands
+            // beside it. A type with no `Ord` kept `compareTo` and declared
+            // `number` for a body with `return null` in it — `core/value/index.ts`
+            // is one, and its `ge`/`le` wrappers read the null correctly while
+            // the declared type denied it could arrive.
             if *trait_name == "PartialOrd"
                 && method.name == "partial_cmp"
                 && !forwards_to_itself(method, &ts_name)
-                && writes_a_total_order(trait_fns)
             {
                 ts_name = "partialCompareTo".to_string();
                 // `compareTo` answers a number because a total order always
@@ -1405,11 +1381,7 @@ pub(crate) fn impl_method_name(
 /// forwarding one reads `return this.compareTo(other)` — a method that calls
 /// itself and never returns. The question is asked of the TRANSLATED body,
 /// because that is where the two names have become one.
-/// Does this type write `Ord::cmp` as well, which is the method that keeps
-/// `compareTo`?
-fn writes_a_total_order(trait_fns: &[(&str, &[String], &FnInfo, &[String])]) -> bool {
-    trait_fns.iter().any(|(name, _, method, _)| *name == "Ord" && method.name == "cmp")
-}
+
 
 fn forwards_to_itself(method: &FnInfo, ts_name: &str) -> bool {
     let Some(body) = method.body_ts.as_deref() else { return false };

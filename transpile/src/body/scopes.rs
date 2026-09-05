@@ -438,22 +438,15 @@ impl<'a> BodyTranslator<'a> {
         self.cell_params.borrow().iter().any(|name| *name == written)
     }
 
-    /// Does this call's callee name a parameter or local whose type is a
-    /// CALLABLE BOUND — `F: FnOnce(..)`, `impl Fn(..)`, `Box<dyn FnMut(..)>`?
+    /// Which helper a call on a bound closure goes through, where the callee
+    /// names a parameter or local whose type is a CALLABLE BOUND — `F: FnOnce(..)`,
+    /// `impl Fn(..)`, `Box<dyn FnMut(..)>`.
     ///
     /// R10: whether a closure needed wrapping is a property of what it
     /// CAPTURED, and a callee cannot see that. `f(x)` written in such a callee
     /// raised `TypeError: f is not a function` the moment a caller handed it an
     /// `OwnedClosure` — three live sites did. Every call on one goes through
-    /// base's `invoke`, which tells the two shapes apart.
-    ///
-    /// Only a single-segment path, because that is what names a binding; a
-    /// qualified path names a function, and a function is called as written.
-    pub(crate) fn calls_a_bound_closure(&self, callee: &syn::Expr) -> bool {
-        self.bound_closure_helper(callee).is_some()
-    }
-
-    /// Which helper a call on a bound closure goes through.
+    /// one of base's two helpers, which tell the two shapes apart.
     ///
     /// `invoke` calls and then releases, which is right where the CALL is what
     /// consumes the closure — an `FnOnce` bound, and only when the parameter is

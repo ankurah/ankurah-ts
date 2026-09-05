@@ -11,7 +11,9 @@ import { expectNoOwnershipReports } from './leaks.ts';
 
 test('the inner match’s Err leaves the function', () => {
   const out = new BorrowMut('');
-  const answer = run(new Outer('One', { _0: Token.new(5) }), new Inner('Bad', {}), out);
+  const inner = new Inner('Bad', {});
+  const answer = run(new Outer('One', { _0: Token.new(5) }), inner, out);
+  inner.drop(); // `run` takes `&Inner`; the temporary is the caller's
   expect(answer.isErr()).toBe(true);
   expect(answer.unwrapErr()).toBe('bad');
   // The arm never reached its own `return`, so nothing was written after 'g'.
@@ -20,7 +22,9 @@ test('the inner match’s Err leaves the function', () => {
 
 test('the arm still answers when the inner match falls through', () => {
   const out = new BorrowMut('');
-  const answer = run(new Outer('One', { _0: Token.new(5) }), new Inner('Good', {}), out);
+  const inner = new Inner('Good', {});
+  const answer = run(new Outer('One', { _0: Token.new(5) }), inner, out);
+  inner.drop();
   expect(answer.isOk()).toBe(true);
   expect(answer.unwrap()).toBe(5);
   expect(out.value).toBe('g1');
@@ -28,12 +32,14 @@ test('the arm still answers when the inner match falls through', () => {
 
 test('the arm that takes no payload answers the value after the match', () => {
   const out = new BorrowMut('');
-  const answer = run(new Outer('Two', {}), new Inner('Good', {}), out);
+  const inner = new Inner('Good', {});
+  const answer = run(new Outer('Two', {}), inner, out);
+  inner.drop();
   expect(answer.isOk()).toBe(true);
   expect(answer.unwrap()).toBe(0);
   expect(out.value).toBe('2');
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

@@ -17,7 +17,7 @@ export class PropertyPath extends Struct {
 
   static fromPath(path: PathExpr): PropertyPath {
     const steps = path.steps;
-    return new PropertyPath(steps[0].clone(), steps.slice(1).slice());
+    return new PropertyPath(steps[0], steps.slice(1).slice());
   }
 
   root(): string {

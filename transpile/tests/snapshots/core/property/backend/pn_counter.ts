@@ -72,7 +72,7 @@ export class PNBackend extends Struct implements PropertyBackend {
     try {
       let map = new HashMap();
       for (const [property, data] of [...values.value]) {
-        map.insert(property.clone(), Value.Number(data.value));
+        map.insert(property, Value.Number(data.value));
       }
       return map;
     } finally {

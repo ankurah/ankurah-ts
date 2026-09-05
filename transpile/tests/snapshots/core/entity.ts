@@ -58,7 +58,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         const _r0 = backend.value.toStateBuffer();
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         const stateBuffer = _r0.unwrap();
-        stateBuffers.insert(name.clone(), stateBuffer);
+        stateBuffers.insert(name, stateBuffer);
       }
       const stateBuffers_1 = new StateBuffers(stateBuffers);
       return Result.Ok(new State(stateBuffers_1, state.value.head.clone()));
@@ -120,7 +120,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
             const _v = _r1.unwrap();
             if (_v != null) {
               const ops = _v;
-              operations.set(name.clone(), ops);
+              operations.set(name, ops);
             }
           }
         }
@@ -186,7 +186,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
       try {
         if (state.value.head.isEmpty()) {
           for (const [backendName, operations] of [...event.operations.deref()]) {
-            const _r1 = state.value.applyOperations(backendName.clone(), operations);
+            const _r1 = state.value.applyOperations(backendName, operations);
             if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
             _r1.drop();
           }
@@ -254,9 +254,9 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
         const newHead = (_m5 as any);
         let _c9;
-        const _r8 = this.tryMutate(head, new OwnedClosure([newHead], (state) => {
+        const _r8 = this.tryMutate(head, new OwnedClosure([newHead], (state: EntityInnerState) => {
           for (const [backendName, operations] of [...event.operations.deref()]) {
-            const _r6 = state.applyOperations(backendName.clone(), operations);
+            const _r6 = state.applyOperations(backendName, operations);
             if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
             _r6.drop();
           }
@@ -370,7 +370,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     try {
       let forked = new HashMap();
       for (const [name, backend] of state.value.backends) {
-        forked.insert(name.clone(), backend.value.fork());
+        forked.insert(name, backend.value.fork());
       }
       return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
     } finally {
@@ -665,11 +665,26 @@ export class WeakEntitySet extends Struct {
       const _v1 = await retriever.getState(id);
       if (_v1.isOk()) {
         const _v2 = _v1.unwrap();
+        if (_v2 == null) {
+          const _v3 = _v2;
+          try {
+            return Result.Ok(null);
+          } finally {
+            dropOwned(_v3);
+          }
+        }
         {
-          const _r0 = await this.withState(retriever, id, collectionId.clone(), state.payload.takeField('state'));
-          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-          const [, entity] = _r0.unwrap();
-          return Result.Ok(entity);
+          const state = _v2;
+          try {
+            {
+              const _r0 = await this.withState(retriever, id, collectionId.clone(), state.payload.takeField('state'));
+              if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+              const [, entity] = _r0.unwrap();
+              return Result.Ok(entity);
+            }
+          } finally {
+            state.drop();
+          }
         }
       } else {
         const e = _v1.unwrapErr();

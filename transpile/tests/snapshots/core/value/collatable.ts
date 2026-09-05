@@ -26,7 +26,7 @@ export function Value_toBytes(self: Value): Uint8Array {
       const f = v._0;
       const bits = (() => {
         if (Number.isNaN(f)) {
-          return u64.MAX;
+          return 18446744073709551615n;
         } else {
           const bits = f.toBits();
           if (f >= 0.0) {
@@ -36,7 +36,7 @@ export function Value_toBytes(self: Value): Uint8Array {
           }
         }
       })();
-      return bits.toBeBytes().toVec();
+      return bits.toBeBytes().slice();
     },
     Bool: (v) => {
       const b = v._0;
@@ -71,7 +71,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
     },
     I16: (v) => {
       const x = v._0;
-      if (x === i16.MAX) {
+      if (x === 32767) {
         return null;
       } else {
         return (checkedAdd((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
@@ -79,7 +79,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
     },
     I32: (v) => {
       const x = v._0;
-      if (x === i32.MAX) {
+      if (x === 2147483647) {
         return null;
       } else {
         return (checkedAdd((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
@@ -87,7 +87,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
     },
     I64: (v) => {
       const x = v._0;
-      if (x === i64.MAX) {
+      if (x === 9223372036854775807n) {
         return null;
       } else {
         return (checkedAdd(x, 1n, 'i64')).toBeBytes().slice();
@@ -143,7 +143,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     },
     I16: (v) => {
       const x = v._0;
-      if (x === i16.MIN) {
+      if (x === -32768) {
         return null;
       } else {
         return (checkedSub((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
@@ -151,7 +151,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     },
     I32: (v) => {
       const x = v._0;
-      if (x === i32.MIN) {
+      if (x === -2147483648) {
         return null;
       } else {
         return (checkedSub((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
@@ -159,7 +159,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     },
     I64: (v) => {
       const x = v._0;
-      if (x === i64.MIN) {
+      if (x === -9223372036854775808n) {
         return null;
       } else {
         return (checkedSub(x, 1n, 'i64')).toBeBytes().slice();
@@ -214,19 +214,19 @@ export function Value_isMinimum(self: Value): boolean {
     },
     I16: (v) => {
       const x = v._0;
-      return x === i16.MIN;
+      return x === -32768;
     },
     I32: (v) => {
       const x = v._0;
-      return x === i32.MIN;
+      return x === -2147483648;
     },
     I64: (v) => {
       const x = v._0;
-      return x === i64.MIN;
+      return x === -9223372036854775808n;
     },
     F64: (v) => {
       const f = v._0;
-      return f === f64.NEG_INFINITY;
+      return f === -Infinity;
     },
     Bool: (v) => {
       const b = v._0;
@@ -247,19 +247,19 @@ export function Value_isMaximum(self: Value): boolean {
     String: (v) => false,
     I16: (v) => {
       const x = v._0;
-      return x === i16.MAX;
+      return x === 32767;
     },
     I32: (v) => {
       const x = v._0;
-      return x === i32.MAX;
+      return x === 2147483647;
     },
     I64: (v) => {
       const x = v._0;
-      return x === i64.MAX;
+      return x === 9223372036854775807n;
     },
     F64: (v) => {
       const f = v._0;
-      return f === f64.INFINITY;
+      return f === Infinity;
     },
     Bool: (v) => {
       const b = v._0;

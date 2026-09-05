@@ -67,6 +67,6 @@ test('a tail-position loop keeps its break payload', () => {
   expect(spin(3)).toBe(3);
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

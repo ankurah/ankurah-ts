@@ -101,6 +101,6 @@ test('a BTreeMap entry gets its thunk too', () => {
   l.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

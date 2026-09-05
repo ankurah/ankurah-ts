@@ -115,10 +115,10 @@ export class CanonicalRange extends Struct {
   equals(other: CanonicalRange): boolean {
     if (this.lower === null && other.lower === null) { /* both null, ok */ }
     else if (this.lower === null || other.lower === null) return false;
-    else if (!this.lower.equals(other.lower)) return false;
+    else { { if (this.lower[0].length !== other.lower[0].length) return false; for (let i1 = 0; i1 < this.lower[0].length; i1++) { if (!this.lower[0][i1].equals(other.lower[0][i1])) return false; } } if (this.lower[1] !== other.lower[1]) return false; }
     if (this.upper === null && other.upper === null) { /* both null, ok */ }
     else if (this.upper === null || other.upper === null) return false;
-    else if (!this.upper.equals(other.upper)) return false;
+    else { { if (this.upper[0].length !== other.upper[0].length) return false; for (let i1 = 0; i1 < this.upper[0].length; i1++) { if (!this.upper[0][i1].equals(other.upper[0][i1])) return false; } } if (this.upper[1] !== other.upper[1]) return false; }
     return true;
   }
 

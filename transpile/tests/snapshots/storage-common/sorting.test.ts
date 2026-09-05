@@ -133,7 +133,7 @@ describe('sorting unit tests', () => {
     return v.match({
       String: (v) => {
         const s = v._0;
-        return s.clone();
+        return s;
       },
       I16: () => {
         throw new Error('expected String')

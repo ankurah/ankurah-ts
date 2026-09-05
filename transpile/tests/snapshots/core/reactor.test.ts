@@ -27,7 +27,7 @@ class TestEntity extends Struct implements Filterable, AbstractEntity {
     return this.id === other.id;
   }
 
-  compareTo(other: TestEntity): number {
+  partialCompareTo(other: TestEntity): number | null {
     return this.id.compareTo(other.id);
   }
 
@@ -103,7 +103,7 @@ class MockGapFetcher extends Struct implements GapFetcher<TestEntity> {
   }
 
   async fetchGap(_collectionId: CollectionId, _selection: Selection, _lastEntity: TestEntity | null, _gapSize: number): Promise<Result<TestEntity[], RetrievalError>> {
-    return Result.Ok(this.entities.clone());
+    return Result.Ok(this.entities.map((e) => e.clone()));
   }
 }
 
@@ -128,7 +128,7 @@ class MockNode extends Struct implements TNodeErased<TestEntity> {
   }
 
   async fetchEntitiesFromLocal(_collectionId: CollectionId, _selection: Selection): Promise<Result<TestEntity[], RetrievalError>> {
-    return Result.Ok(this.entities.clone());
+    return Result.Ok(this.entities.map((e) => e.clone()));
   }
 
   reactor(): Reactor<TestEntity, Attested<Event>> {

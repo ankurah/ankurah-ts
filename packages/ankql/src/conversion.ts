@@ -28,9 +28,17 @@ export function Predicate_tryFromExpr(value: Expr): Result<Predicate, ParseError
     Placeholder: () => Result.Ok(new Predicate('Placeholder', {})),
     Literal: (v) => {
       if (v._0.is('Bool') && (v._0.value._0 === true)) {
-        return Result.Ok(new Predicate('True', {}));
+        try {
+          return Result.Ok(new Predicate('True', {}));
+        } finally {
+          dropUnbound(v, []);
+        }
       } else if (v._0.is('Bool') && (v._0.value._0 === false)) {
-        return Result.Ok(new Predicate('False', {}));
+        try {
+          return Result.Ok(new Predicate('False', {}));
+        } finally {
+          dropUnbound(v, []);
+        }
       } else {
         try {
           return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));

@@ -190,12 +190,12 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
   }
 }
 
-export type BroadcastListenerV = {
+export type BroadcastListenerV<T = void> = {
   Payload: { _0: Arc<(arg0: T) => void> };
   NotifyOnly: { _0: Arc<() => void> };
 };
 
-export class BroadcastListener<T = void> extends Enum<BroadcastListenerV> {
+export class BroadcastListener<T = void> extends Enum<BroadcastListenerV<T>> {
 
   intoBroadcastListener(): BroadcastListener<T> {
     return this;
@@ -203,8 +203,8 @@ export class BroadcastListener<T = void> extends Enum<BroadcastListenerV> {
 
   clone(): BroadcastListener<T> {
     return this.match({
-      Payload: (v) => new BroadcastListener('Payload', { _0: v._0.clone() }),
-      NotifyOnly: (v) => new BroadcastListener('NotifyOnly', { _0: v._0.clone() }),
+      Payload: (v) => new BroadcastListener<T>('Payload', { _0: v._0.clone() }),
+      NotifyOnly: (v) => new BroadcastListener<T>('NotifyOnly', { _0: v._0.clone() }),
     });
   }
 }

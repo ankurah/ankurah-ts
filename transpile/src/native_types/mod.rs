@@ -279,10 +279,18 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
         "values_mut" => format!("{}.values()", receiver),
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
 
-        // .retain(predicate) — works for Map/Set/Vec when type unknown
+        // .retain(predicate) — for a Map or a Set whose type is unknown, in the
+        // same shape `map::translate` writes it: the predicate is evaluated
+        // once, reached through `invokeRef`, and released when the call ends.
         "retain" if args.len() == 1 => format!(
-            "{{ for (const [_k, _v] of {}) {{ if (!(({})(_k, _v))) {}.delete(_k); }} }}",
-            receiver, args[0], receiver
+            "((<K, V>($m: {{ [Symbol.iterator](): IterableIterator<[K, V]>; delete(key: K): unknown }}, $p: Invocable<[K, V], boolean>) => {{\n\
+             \x20 try {{\n\
+             \x20   for (const [$k, $v] of $m) {{ if (!invokeRef($p, $k, $v)) $m.delete($k); }}\n\
+             \x20 }} finally {{\n\
+             \x20   dropOwned($p);\n\
+             \x20 }}\n\
+             }})({}, {}))",
+            receiver, args[0]
         ),
 
         _ => return MethodTranslation::Passthrough,

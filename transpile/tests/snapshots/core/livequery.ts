@@ -353,7 +353,7 @@ export class LiveQuery<R extends View & Clone> extends Struct implements Signal,
   subscribe<L>(listener: L): SubscriptionGuard {
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const me = this.clone();
-    return this._0._0.value.subscription.subscribe(new OwnedClosure([me, listener_1], (reactorUpdate) => {
+    return this._0._0.value.subscription.subscribe(new OwnedClosure([me, listener_1], (reactorUpdate: ReactorUpdate<Entity, Attested<Event>>) => {
       const changeset = livequeryChangeSetFrom(me._0._0.value.resultset.wrap(), reactorUpdate);
       listener_1(changeset);
     }));

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/context/stack
-import { Arc, RefCell, ThreadLocal, dropOwned } from '@ankurah/base';
+import { Arc, RefCell, ThreadLocal, invokeRef, Invocable, dropOwned } from '@ankurah/base';
 import { Observer, Observer_dispatch_observe, Observer_dispatch_observerId } from '../observer';
 import { Signal } from '../signal';
 
@@ -57,7 +57,19 @@ export function remove(observer: Observer): void {
           }
         }
       }
-      (($xs) => { let $at = 0; for (let $i = 0; $i < $xs.length; $i++) { if (((o) => Observer_dispatch_observerId(o.value) !== targetId)($xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); } } $xs.length = $at; })(stack_1.value);
+      ((<T,>($xs: T[], $p: Invocable<[T], boolean>) => {
+        let $at = 0;
+        let $i = 0;
+        try {
+          for (; $i < $xs.length; $i++) {
+            if (invokeRef($p, $xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); }
+          }
+        } finally {
+          for (; $i < $xs.length; $i++) $xs[$at++] = $xs[$i];
+          $xs.length = $at;
+          dropOwned($p);
+        }
+      })(stack_1.value, (o) => Observer_dispatch_observerId(o.value) !== targetId));
     } finally {
       stack_1.drop();
     }

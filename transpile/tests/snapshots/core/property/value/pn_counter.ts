@@ -29,7 +29,7 @@ export class PNCounter<I extends Into<PNValue> & From<PNValue> & Copy & Clone> e
   add(amount: PNValue): void {
     const _t0 = this.backend();
     try {
-      _t0.value.add(this.propertyName.clone(), amount.asI64());
+      _t0.value.add(this.propertyName, amount.asI64());
     } finally {
       _t0.drop();
     }
@@ -38,7 +38,7 @@ export class PNCounter<I extends Into<PNValue> & From<PNValue> & Copy & Clone> e
   value(): I {
     const _t0 = this.backend();
     try {
-      const pnValue = _t0.value.get(this.propertyName.clone());
+      const pnValue = _t0.value.get(this.propertyName);
       return I.from(pnValue);
     } finally {
       _t0.drop();

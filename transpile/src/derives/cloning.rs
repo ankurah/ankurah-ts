@@ -81,11 +81,88 @@ fn clone_at(place: &str, ty: &str, depth: usize, params: &[String]) -> String {
     format!("{}.clone()", place)
 }
 
+/// `clone()` for an ENUM: the variant, and then its payload field by field.
+///
+/// The same rule a struct's derived clone uses, at every depth and told the
+/// type's own PARAMETERS. Written out by hand in `emit.rs`, it stopped one level
+/// down — a tuple field, a nested container, a `Vec` inside a nullable — and
+/// knew nothing of a field written `T`, which is a number in `Slot<u32>` and a
+/// class in `Slot<Item>` (fixpass4's §3.8, which reached the struct writer and
+/// not this one). It also read a `Uint8Array` as needing no copy at all, so an
+/// enum whose only non-primitive field was one took the shallow path and both
+/// copies shared the buffer.
+pub fn enum_clone(
+    reg: &crate::registry::TypeRegistry,
+    e: &crate::types::EnumInfo,
+    self_type: &str,
+    params: &[String],
+) -> String {
+    let copies: Vec<Vec<(String, String)>> = e
+        .variants
+        .iter()
+        .map(|v| {
+            v.fields
+                .iter()
+                .filter_map(|f| {
+                    let name = f.name.clone()?;
+                    let copy = clone_within(&format!("v.{}", name), &f.ts_ty(reg), params);
+                    Some((name, copy))
+                })
+                .collect()
+        })
+        .collect();
+    // A variant whose every field is its own copy needs no walk: the record
+    // spread is the whole clone.
+    if !copies.iter().flatten().any(|(name, copy)| *copy != format!("v.{}", name)) {
+        return format!(
+            "\n  clone(): {} {{\n    return new {}(this.type, {{ ...this.value }});\n  }}\n",
+            self_type, e.name
+        );
+    }
+    // The class's own parameters are written on each construction. Without
+    // them TypeScript infers a fresh one per arm from the payload — a variant
+    // holding a `Vec<u8>` inferred `Slot<Uint8Array>`, which is not the
+    // `Slot<T>` the signature promises.
+    let arguments = match self_type.split_once('<') {
+        Some((_, rest)) => format!("<{}", rest),
+        None => String::new(),
+    };
+    let mut out = format!("\n  clone(): {} {{\n    return this.match({{\n", self_type);
+    for (v, fields) in e.variants.iter().zip(&copies) {
+        if v.fields.is_empty() {
+            out.push_str(&format!(
+                "      {}: () => new {}{}('{}', {{}}),\n",
+                v.name, e.name, arguments, v.name
+            ));
+            continue;
+        }
+        let written: Vec<String> =
+            fields.iter().map(|(name, copy)| format!("{}: {}", name, copy)).collect();
+        out.push_str(&format!(
+            "      {}: (v) => new {}{}('{}', {{ {} }}),\n",
+            v.name,
+            e.name,
+            arguments,
+            v.name,
+            written.join(", ")
+        ));
+    }
+    out.push_str("    });\n  }\n");
+    out
+}
+
 /// The element types of a written tuple, or nothing where the type is not one.
-fn tuple_parts(ty: &str) -> Option<Vec<String>> {
-    let inner = ty.strip_prefix('[')?.strip_suffix(']')?;
-    let parts = top_level_parts(inner);
-    (parts.len() > 1).then_some(parts)
+///
+/// A ONE-element tuple is a tuple: `(Owned,)` is written `[Owned]` here, and
+/// requiring two parts sent it to `.clone()` on a JavaScript array. The written
+/// form an array shares — `T[]` — is not this shape, because the brackets are a
+/// suffix there and this asks for them around the whole type.
+pub(crate) fn tuple_parts(ty: &str) -> Option<Vec<String>> {
+    let inner = ty.trim().strip_prefix('[')?.strip_suffix(']')?;
+    if inner.trim().is_empty() {
+        return None;
+    }
+    Some(top_level_parts(inner))
 }
 
 #[cfg(test)]

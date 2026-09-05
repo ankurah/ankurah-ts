@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
-import { Struct, Enum, Arc, unsupported, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Arc, HashMap, HashSet } from '@ankurah/base';
 import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
@@ -7,7 +7,7 @@ import { ComparisonIndex } from './comparison_index';
 import { PropertyPath } from './property_path';
 import { ReactorSubscriptionId } from './subscription';
 import { Subscription } from './subscription_state';
-import { Predicate } from '@ankurah/ankql';
+import { Literal, Predicate } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 
 export class WatcherSet extends Struct {
@@ -35,7 +35,7 @@ export class WatcherSet extends Struct {
           if (_v != null) {
             const value = _v;
             for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
             }
           }
         }
@@ -46,7 +46,7 @@ export class WatcherSet extends Struct {
       if (_v1 != null) {
         const watchers = _v1;
         for (const [subscriptionId, queryId] of [...watchers]) {
-          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
+          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
         }
       }
     }
@@ -59,11 +59,11 @@ export class WatcherSet extends Struct {
             Predicate: (v) => {
               const subscriptionId = v._0;
               const queryId = v._1;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
             },
             Subscription: (v) => {
               const subscriptionId = v._0;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addEntity(offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addEntity(offset);
             },
           });
         }
@@ -173,9 +173,9 @@ export class WatcherSet extends Struct {
         const right = v.right;
         {
           const _v = [left, right];
-          if (unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole')) {
-            const path = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole');
-            const literal = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole');
+          if (((_v[0].is('Path')) && (_v[1].is('Literal'))) || ((_v[0].is('Literal')) && (_v[1].is('Path')))) {
+            const path = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[0].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[1].value._0 : undefined;
+            const literal = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[1].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[0].value._0 : undefined;
             try {
               try {
                 const propertyPath = PropertyPath.fromPath(path);

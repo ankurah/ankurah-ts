@@ -122,7 +122,7 @@ export function Value_tryFromJsValue(value: unknown): Result<Value, unknown> {
       const n = _v2;
       if ((n - Math.trunc(n)) === 0.0) {
         const nInt = (($v) => $v < -9223372036854775808n ? -9223372036854775808n : $v > 9223372036854775807n ? 9223372036854775807n : $v)(BigInt(Math.min(Math.max(Math.trunc(n) || 0, -9223372036854775808), 9223372036854775807)));
-        if (nInt >= i32.MIN && nInt <= i32.MAX) {
+        if (nInt >= BigInt(-2147483648) && nInt <= BigInt(2147483647)) {
           return Result.Ok(new Value('I32', { _0: Number(BigInt.asIntN(32, nInt)) }));
         } else {
           return Result.Ok(new Value('I64', { _0: nInt }));

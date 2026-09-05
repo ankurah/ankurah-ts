@@ -1,16 +1,41 @@
-# How many R12 holes each crate's emitted output carries, written by
-# transpile/tests/hole_ledger.rs. Matched EXACTLY in both directions: a
-# hole that appears has to be recorded, and one that disappears has to be
-# explained. Generated: do not hand-edit. Refresh with:
+# Every R12 hole in the emitted output, by the identity that survives an
+# edit somewhere else: the crate, the emitted file, and the refusal the
+# call prints. `calls` is how many calls in that file print it — the
+# or-pattern refusal is one semantic site written as a test and two
+# bindings. Written by transpile/tests/hole_ledger.rs and matched
+# EXACTLY: a hole that appears has to be recorded, and one that
+# disappears has to be explained.
+#
+# Generated: do not hand-edit. Refresh with:
 #     cd transpile && UPDATE_HOLE_LEDGER=1 cargo test --test hole_ledger
 
+# A summary, for a reader. The assertion is the table below it.
+[summary]
 "ankql" = 0
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 6
+"core" = 3
 "proto" = 0
 "signals" = 0
 "storage-common" = 0
 "storage-indexeddb" = 0
 "storage-sqlite" = 0
+
+[[hole]]
+crate = "core"
+file = "property/index.ts"
+calls = 1
+refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
+
+[[hole]]
+crate = "core"
+file = "property/value/entity_ref.ts"
+calls = 1
+refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
+
+[[hole]]
+crate = "core"
+file = "property/value/json.ts"
+calls = 1
+refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"

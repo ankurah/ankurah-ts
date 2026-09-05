@@ -24,15 +24,30 @@ export async function expandStates(states: Attested<EntityState>[], additionalEn
             if (!_moved1) state.drop();
           }
         } else {
-          const e = _v.unwrapErr();
-          let _moved2 = false;
-          try {
-            {
-              _moved2 = true;
-              return Result.Err(e);
+          const _v1 = _v.unwrapErr();
+          _arm3: {
+            if (_v1.is('EntityNotFound')) {
+              const _v2 = _v1;
+              try {
+                {
+                }
+              } finally {
+                _v2.drop();
+              }
+              break _arm3;
             }
-          } finally {
-            if (!_moved2) e.drop();
+            {
+              const e = _v1;
+              let _moved2 = false;
+              try {
+                {
+                  _moved2 = true;
+                  return Result.Err(e);
+                }
+              } finally {
+                if (!_moved2) e.drop();
+              }
+            }
           }
         }
       }

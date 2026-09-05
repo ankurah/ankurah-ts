@@ -770,7 +770,10 @@ class IVec extends Enum<IVecV> {
   }
 
   clone(): IVec {
-    return new IVec(this.type, { ...this.value });
+    return this.match({
+      Small: (v) => new IVec('Small', { _0: new Uint8Array(v._0) }),
+      Large: (v) => new IVec('Large', { _0: new Uint8Array(v._0) }),
+    });
   }
 
   equals(other: IVec): boolean {

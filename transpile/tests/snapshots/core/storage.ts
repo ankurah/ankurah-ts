@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/storage.rs
-import { Struct, Result, Arc, dropOwned } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, tracing } from '@ankurah/base';
 import { Attested, CollectionId, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
 
 export class StorageCollectionWrapper extends Struct {
@@ -55,8 +55,22 @@ export abstract class StorageCollection {
         const state = _v.unwrap();
         states.push(state)
       } else {
-        const e = _v.unwrapErr();
-        return Result.Err(e)
+        const _v1 = _v.unwrapErr();
+        _arm0: {
+          if (_v1.is('EntityNotFound')) {
+            const _v2 = _v1;
+            try {
+              tracing.warn(`Entity not found: ${id}`);
+            } finally {
+              _v2.drop();
+            }
+            break _arm0;
+          }
+          {
+            const e = _v1;
+            return Result.Err(e)
+          }
+        }
       }
     }
     return Result.Ok(states);

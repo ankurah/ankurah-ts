@@ -36,6 +36,16 @@ pub struct Once<'a> {
     /// argument is: no release can be written for a type nobody could name, so
     /// the argument stays inside the branch and the caller reports it.
     pub bind_eager: &'a dyn Fn(usize, &str) -> Option<Eager>,
+    /// The same for a CLOSURE argument the port hands over as a value.
+    ///
+    /// Rust builds the closure before it enters the method and drops it on the
+    /// path that does not call it, and a `move` closure over something
+    /// droppable is an `OwnedClosure`, which R10 says is invoked through one
+    /// base helper and never called as a function. So it is named once, called
+    /// through `invoke`, and released by the branch that does not call it.
+    /// Nothing comes back for an ordinary arrow, which owns nothing and which
+    /// the port calls where it stands.
+    pub bind_closure: &'a dyn Fn(usize, &str) -> Option<Eager>,
 }
 
 /// An eager argument the caller has named, and what the branch that hands it
@@ -61,6 +71,7 @@ impl Once<'_> {
         Once {
             bind_receiver: &|written| written.to_string(),
             bind_eager: &|_, written| Some(Eager { name: written.to_string(), release: None }),
+            bind_closure: &|_, _| None,
         }
     }
 }
@@ -80,14 +91,51 @@ fn releasing(release: &Option<String>, value: String) -> String {
     }
 }
 
+/// A closure argument, as the port calls it and as the other branch releases it.
+struct Callable {
+    /// The call, with the argument list already in it.
+    call: String,
+    /// What the branch that does NOT call it owes.
+    release: Option<String>,
+}
+
+/// How to call a combinator's closure argument, and what the other branch owes.
+///
+/// Every one of these takes its closure by value (`FnOnce`), so the call
+/// consumes it: `invoke` is the helper for that, and it is what R10 says an
+/// `OwnedClosure` is always reached through — calling one as a function is a
+/// `TypeError`, and the emitted code did exactly that.
+fn callable(once: &Once<'_>, at: usize, written: &str, args: &str) -> Callable {
+    match (once.bind_closure)(at, written) {
+        Some(bound) => Callable {
+            call: match args.is_empty() {
+                true => format!("invoke({})", bound.name),
+                false => format!("invoke({}, {})", bound.name, args),
+            },
+            release: bound.release,
+        },
+        None => Callable { call: format!("({})({})", written, args), release: None },
+    }
+}
+
+/// Which of these read the receiver more than once — the test, and the hand-on.
+///
+/// Asked from two places: here, to name it once; and by the body translator,
+/// which has to take that name BEFORE it translates the arguments, because Rust
+/// evaluates the receiver first and an argument that hoists something of its own
+/// would otherwise land ahead of it.
+pub fn reads_receiver_twice(method: &str) -> bool {
+    matches!(
+        method,
+        "map" | "and_then" | "filter" | "is_some_and" | "ok_or" | "ok_or_else" | "map_or" | "map_or_else"
+    )
+}
+
 pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>) -> MethodTranslation {
     // The receiver of every form below is read at least twice — the test, and
     // the hand-on — so it is named once here rather than per arm.
-    let reads_twice = matches!(
-        method,
-        "map" | "and_then" | "filter" | "is_some_and" | "ok_or" | "ok_or_else" | "map_or" | "map_or_else"
-    );
-    let subject = if reads_twice { (once.bind_receiver)(receiver) } else { receiver.to_string() };
+    let subject =
+        if reads_receiver_twice(method) { (once.bind_receiver)(receiver) } else { receiver.to_string() };
     let subject = subject.as_str();
     let result = match method {
         // unwrap/expect/unwrap_or/unwrap_or_else handled in body.rs before dispatch.
@@ -97,7 +145,10 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
         "is_none" => format!("({} == null)", subject),
 
         // Map — apply function if non-null
-        "map" if args.len() == 1 => format!("({} != null ? ({})({}!) : null)", subject, args[0], subject),
+        "map" if args.len() == 1 => {
+            let f = callable(once, 0, &args[0], &format!("{}!", subject));
+            format!("({} != null ? {} : {})", subject, f.call, releasing(&f.release, "null".into()))
+        }
 
         // A JavaScript value is neither borrowed nor owned, so the four
         // `as_` conversions between those states are the value itself. Written
@@ -107,13 +158,37 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
 
         // The combinators, each written as the test it is.
         "and_then" if args.len() == 1 => {
-            format!("({} != null ? ({})({}!) : null)", subject, args[0], subject)
+            let f = callable(once, 0, &args[0], &format!("{}!", subject));
+            format!("({} != null ? {} : {})", subject, f.call, releasing(&f.release, "null".into()))
         }
         "filter" if args.len() == 1 => {
-            format!("({} != null && ({})({}!) ? {} : null)", subject, args[0], subject, subject)
+            let p = callable(once, 0, &args[0], &format!("{}!", subject));
+            match &p.release {
+                // The predicate is built whether or not the receiver is `Some`,
+                // and dropped where it is not — so the `&&` form, which does not
+                // evaluate its right-hand side at all, has nowhere to put the
+                // release and the branch is written out.
+                Some(_) => format!(
+                    "({} != null ? ({} ? {} : null) : {})",
+                    subject,
+                    p.call,
+                    subject,
+                    releasing(&p.release, "null".into())
+                ),
+                None => format!("({} != null && {} ? {} : null)", subject, p.call, subject),
+            }
         }
         "is_some_and" if args.len() == 1 => {
-            format!("({} != null && ({})({}!))", subject, args[0], subject)
+            let f = callable(once, 0, &args[0], &format!("{}!", subject));
+            match &f.release {
+                Some(_) => format!(
+                    "({} != null ? {} : {})",
+                    subject,
+                    f.call,
+                    releasing(&f.release, "false".into())
+                ),
+                None => format!("({} != null && {})", subject, f.call),
+            }
         }
         "ok_or" if args.len() == 1 => {
             let eager = (once.bind_eager)(0, &args[0]);
@@ -125,7 +200,9 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
             format!("({} != null ? {} : Result.Err({}))", subject, ok, error)
         }
         "ok_or_else" if args.len() == 1 => {
-            format!("({} != null ? Result.Ok({}!) : Result.Err(({})()))", subject, subject, args[0])
+            let f = callable(once, 0, &args[0], "");
+            let ok = releasing(&f.release, format!("Result.Ok({}!)", subject));
+            format!("({} != null ? {} : Result.Err({}))", subject, ok, f.call)
         }
         "map_or" if args.len() == 2 => {
             let eager = (once.bind_eager)(0, &args[0]);
@@ -133,11 +210,21 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
                 Some(eager) => (eager.name, eager.release),
                 None => (args[0].clone(), None),
             };
-            let mapped = releasing(&release, format!("({})({}!)", args[1], subject));
-            format!("({} != null ? {} : {})", subject, mapped, default)
+            let f = callable(once, 1, &args[1], &format!("{}!", subject));
+            let mapped = releasing(&release, f.call);
+            format!("({} != null ? {} : {})", subject, mapped, releasing(&f.release, default))
         }
         "map_or_else" if args.len() == 2 => {
-            format!("({} != null ? ({})({}!) : ({})())", subject, args[1], subject, args[0])
+            // Rust evaluates the default closure first — it is the first
+            // argument — and builds both before it branches.
+            let default = callable(once, 0, &args[0], "");
+            let f = callable(once, 1, &args[1], &format!("{}!", subject));
+            format!(
+                "({} != null ? {} : {})",
+                subject,
+                releasing(&default.release, f.call),
+                releasing(&f.release, default.call)
+            )
         }
 
         // `Option<&T>::cloned` and `::copied` turn a borrow of the payload into
@@ -172,6 +259,15 @@ mod tests {
                 let release = owns.then(|| format!("{}.drop()", name));
                 Some(Eager { name, release })
             },
+            // A closure written `owned(..)` in these tests is one the port
+            // wraps: named once, invoked through `invoke`, released by the
+            // branch that does not invoke it.
+            bind_closure: &|_, written| {
+                written.starts_with("owned").then(|| Eager {
+                    name: "_f0".to_string(),
+                    release: Some("dropOwned(_f0)".to_string()),
+                })
+            },
         }
     }
 
@@ -183,6 +279,7 @@ mod tests {
                 if written.contains('(') { "_v0".to_string() } else { written.to_string() }
             },
             bind_eager: &|_, _| None,
+            bind_closure: &|_, _| None,
         }
     }
 
@@ -319,6 +416,47 @@ mod tests {
         assert_eq!(
             expr_with(&unnamed(), "o", "map_or", &["build()", "f"]),
             "(o != null ? (f)(o!) : build())"
+        );
+    }
+
+    /// Y4: a closure the port wraps is invoked through `invoke` — an
+    /// `OwnedClosure` called as a function is a `TypeError` — and released by
+    /// the branch that does not invoke it, because Rust builds it before it
+    /// enters the method and drops it on the path that does not call it.
+    #[test]
+    fn a_wrapped_closure_is_invoked_and_released_by_the_other_branch() {
+        assert_eq!(
+            expr("o", "map", &["owned(f)"]),
+            "(o != null ? invoke(_f0, o!) : (dropOwned(_f0), null))"
+        );
+        assert_eq!(
+            expr("o", "and_then", &["owned(f)"]),
+            "(o != null ? invoke(_f0, o!) : (dropOwned(_f0), null))"
+        );
+        assert_eq!(
+            expr("o", "is_some_and", &["owned(f)"]),
+            "(o != null ? invoke(_f0, o!) : (dropOwned(_f0), false))"
+        );
+        assert_eq!(
+            expr("o", "filter", &["owned(p)"]),
+            "(o != null ? (invoke(_f0, o!) ? o : null) : (dropOwned(_f0), null))"
+        );
+        assert_eq!(
+            expr("o", "ok_or_else", &["owned(e)"]),
+            "(o != null ? (dropOwned(_f0), Result.Ok(o!)) : Result.Err(invoke(_f0)))"
+        );
+    }
+
+    /// And an ordinary arrow — one that captures nothing with drop glue — is
+    /// called where it stands, because there is nothing to release and nothing
+    /// R10 refuses.
+    #[test]
+    fn a_plain_arrow_is_called_where_it_stands() {
+        assert_eq!(expr("o", "map", &["(v) => v"]), "(o != null ? ((v) => v)(o!) : null)");
+        assert_eq!(expr("o", "is_some_and", &["(v) => v"]), "(o != null && ((v) => v)(o!))");
+        assert_eq!(
+            expr("o", "filter", &["(v) => v"]),
+            "(o != null && ((v) => v)(o!) ? o : null)"
         );
     }
 }

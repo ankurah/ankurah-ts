@@ -16,7 +16,19 @@ use crate::registry::TypeRegistry;
 use crate::types::EnumInfo;
 
 /// `equals` for an enum: the variant first, then the payload both values carry.
-pub fn enum_equals(reg: &TypeRegistry, e: &EnumInfo, full_type: &str) -> String {
+///
+/// `params` are the enum's own type parameters. A payload field written `T` is
+/// a number in `Slot<u32>` and a class in `Slot<Item>`, and `.equals()` on a
+/// number is a `TypeError`; the struct writer was told this in the fourth pass
+/// (§3.8) and this one was not, so `RangeBound<T>`, `ExprOutput<T>`,
+/// `FilterResult<R>` and `ItemChange<I>` all compared their payloads with a
+/// method the value may not have.
+pub fn enum_equals(
+    reg: &TypeRegistry,
+    e: &EnumInfo,
+    full_type: &str,
+    params: &[String],
+) -> String {
     let mut out = format!("\n  equals(other: {}): boolean {{\n", full_type);
     out.push_str("    if (this.type !== other.type) return false;\n");
     let carrying: Vec<&crate::types::VariantInfo> =
@@ -30,20 +42,11 @@ pub fn enum_equals(reg: &TypeRegistry, e: &EnumInfo, full_type: &str) -> String 
                 let mine = format!("(this.value as any).{}", name);
                 let theirs = format!("(other.value as any).{}", name);
                 let ts = field.ts_ty(reg);
-                let base = ts.trim_end_matches(" | null");
-                if ts.ends_with(" | null") {
-                    out.push_str(&format!(
-                        "        if ({m} === null || {o} === null) {{ if ({m} !== {o}) return false; }}\n        else {}\n",
-                        field_eq_at(&mine, &theirs, base),
-                        m = mine,
-                        o = theirs
-                    ));
-                } else {
-                    out.push_str(&format!(
-                        "        {}\n",
-                        field_eq_at(&mine, &theirs, base)
-                    ));
-                }
+                // The nullable case is `compare`'s own, written once: this
+                // wrote a second spelling of it — `=== null`, which a field
+                // holding `undefined` slips past, where `compare` writes
+                // `== null`, which it does not.
+                out.push_str(&format!("        {}\n", field_eq_within(&mine, &theirs, &ts, params)));
             }
             out.push_str("        break;\n      }\n");
         }
@@ -55,7 +58,7 @@ pub fn enum_equals(reg: &TypeRegistry, e: &EnumInfo, full_type: &str) -> String 
 
 // ── How two values of one type are compared ─────────────────────────
 
-/// One field compared for equality, by the two places it is read from.
+/// (How one field is compared, and why the rule recurses.)
 ///
 /// For: how two values are the same depends on what the field IS. A
 /// `Uint8Array`, a `HashMap`, a `HashSet` and an array carry no `equals` of
@@ -68,11 +71,8 @@ pub fn enum_equals(reg: &TypeRegistry, e: &EnumInfo, full_type: &str) -> String 
 /// `mine` and `theirs` are written expressions, not names, so the same rules
 /// serve a struct's `this.x`/`other.x` and an enum payload's
 /// `(this.value as any)._0`.
-pub(crate) fn field_eq_at(mine: &str, theirs: &str, ty: &str) -> String {
-    compare(mine, theirs, ty, 0, &[])
-}
-
-/// The same, told the declaring type's own PARAMETERS.
+/// One field compared for equality, by the two places it is read from, and told
+/// the declaring type's own PARAMETERS.
 ///
 /// A field written as `T` is one whose comparison emission cannot fix: `T` is a
 /// number in `Holder<u32>` and a class in `Holder<Item>`, and `.equals()` on a
@@ -142,6 +142,28 @@ fn compare(mine: &str, theirs: &str, ty: &str, depth: usize, params: &[String]) 
             c = compare(&format!("{}[{}]", mine, i), &format!("{}[{}]", theirs, i), inner, depth + 1, params)
         );
     }
+    // A tuple is a JavaScript array and has no `equals` of its own, so each
+    // position is compared by its own rule — the recursion `clone_at` has had
+    // since the fourth pass, which this was written beside and did not get.
+    // Live at `core/reactor/update.ts` on a `[QueryId, MembershipChange][]` and
+    // at `storage-common/types.ts` on a `[Value[], boolean] | null`, both of
+    // which the clone writer got right on the line below.
+    if let Some(parts) = crate::derives::cloning::tuple_parts(ty) {
+        let each: Vec<String> = parts
+            .iter()
+            .enumerate()
+            .map(|(at, part)| {
+                compare(
+                    &format!("{}[{}]", mine, at),
+                    &format!("{}[{}]", theirs, at),
+                    part,
+                    depth + 1,
+                    params,
+                )
+            })
+            .collect();
+        return format!("{{ {} }}", each.join(" "));
+    }
     format!("if (!{}.equals({})) return false;", mine, theirs)
 }
 
@@ -192,7 +214,12 @@ fn after_top_level_comma(inner: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{field_eq_at, field_eq_within};
+    use super::field_eq_within;
+
+    /// The same, for a type that declares no parameters of its own.
+    fn field_eq_at(mine: &str, theirs: &str, ty: &str) -> String {
+        field_eq_within(mine, theirs, ty, &[])
+    }
     use crate::testing::Fixture;
 
     /// PREMISE CHANGED 2026-09-05 (fixpass4 item 3): the rule this pins used to
@@ -269,7 +296,7 @@ mod tests {
     fn equals_of(src: &str, name: &str) -> String {
         let f = Fixture::build(&[("lib.rs", src)]);
         let e = f.files[0].file.enums.iter().find(|e| e.name == name).expect("enum");
-        super::enum_equals(&f.reg, e, name)
+        super::enum_equals(&f.reg, e, name, &[])
     }
 
     /// An enum declares no fields of its own — they live on its variants — so

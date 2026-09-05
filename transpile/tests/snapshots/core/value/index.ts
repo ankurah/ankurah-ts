@@ -86,7 +86,7 @@ export class Value extends Enum<ValueV> {
     return this.match({
       String: (v) => {
         const s = v._0;
-        return s.parse().mapErr((_) => new PropertyError('InvalidValue', { value: s.clone(), ty: any.typeName() }));
+        return s.parse().mapErr((_) => new PropertyError('InvalidValue', { value: s, ty: any.typeName() }));
       },
       I16: () => {
         const other = this;
@@ -179,28 +179,28 @@ export class Value extends Enum<ValueV> {
   }
 
   gt(other: Value): boolean {
-    return this.compareTo(other) === 1;
+    return this.partialCompareTo(other) === 1;
   }
 
   ge(other: Value): boolean {
     return ((_v) => {
       if (!(_v != null && ((_v === 1) || (_v === 0)))) return false;
       return true;
-    })(this.compareTo(other));
+    })(this.partialCompareTo(other));
   }
 
   lt(other: Value): boolean {
-    return this.compareTo(other) === -1;
+    return this.partialCompareTo(other) === -1;
   }
 
   le(other: Value): boolean {
     return ((_v) => {
       if (!(_v != null && ((_v === -1) || (_v === 0)))) return false;
       return true;
-    })(this.compareTo(other));
+    })(this.partialCompareTo(other));
   }
 
-  compareTo(other: Value): number {
+  partialCompareTo(other: Value): number | null {
     const _v = [this, other];
     if ((_v[0].is('I16')) && (_v[1].is('I16'))) {
       const { _0: a } = _v[0].value;
@@ -365,7 +365,7 @@ export class Value extends Enum<ValueV> {
       },
       String: (v) => {
         const s = v._0;
-        return new Value('String', { _0: s.clone() });
+        return new Value('String', { _0: s });
       },
       EntityId: (v) => {
         const ulid = v._0;
@@ -757,7 +757,7 @@ function jsonValueToValue(json: unknown): Value {
     },
     String: (v) => {
       const s = v._0;
-      return new Value('String', { _0: s.clone() });
+      return new Value('String', { _0: s });
     },
     Array: (v) => new Value('Json', { _0: structuredClone(json) }),
     Object: (v) => new Value('Json', { _0: structuredClone(json) }),
@@ -797,11 +797,11 @@ export function Literal_fromValue(value: Value): Literal {
       },
       Object: (v) => {
         const bytes = v._0;
-        return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+        return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
       },
       Binary: (v) => {
         const bytes = v._0;
-        return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+        return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
       },
       Json: (v) => {
         const json = v._0;
@@ -837,7 +837,7 @@ export function Literal_fromRefValue(value: Value): Literal {
     },
     String: (v) => {
       const s = v._0;
-      return new Literal('String', { _0: s.clone() });
+      return new Literal('String', { _0: s });
     },
     EntityId: (v) => {
       const entityId = v._0;
@@ -845,11 +845,11 @@ export function Literal_fromRefValue(value: Value): Literal {
     },
     Object: (v) => {
       const bytes = v._0;
-      return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+      return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
     },
     Binary: (v) => {
       const bytes = v._0;
-      return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+      return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
     },
     Json: (v) => {
       const json = v._0;

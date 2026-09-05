@@ -6,7 +6,7 @@ import { Entity } from '../entity';
 import { SubscriptionError } from '../error';
 import { ContextData, Node } from '../node';
 import { ReactorSubscription, ReactorSubscriptionId } from '../reactor/subscription';
-import { MembershipChange, ReactorUpdateItem } from '../reactor/update';
+import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from '../reactor/update';
 import { expandStates } from '../util/expand_states';
 import { Selection } from '@ankurah/ankql';
 
@@ -25,7 +25,7 @@ export class SubscriptionHandler extends Struct {
   static new<SE, PA>(peerId: EntityId, node: Node<SE, PA>): SubscriptionHandler {
     const subscription = node.deref().value.reactor.subscribe();
     const weakNode = node.weak();
-    const guard = subscription.subscribe(new OwnedClosure([weakNode], (update) => {
+    const guard = subscription.subscribe(new OwnedClosure([weakNode], (update: ReactorUpdate<Entity, Attested<Event>>) => {
       tracing.info(`SubscriptionHandler[${peerId}] received reactor update with ${update.items.length} items`);
       {
         const _v = weakNode.upgrade();

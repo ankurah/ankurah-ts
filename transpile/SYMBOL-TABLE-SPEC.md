@@ -798,10 +798,14 @@ addressed by the step that found it.
     a capture the engine could not type is left out of what the closure owns,
     and the closure is reported rather than given an incomplete list silently.
   - **A closure the emitter cannot see the call site of.** A `move` closure over
-    droppable values is an `OwnedClosure`, which is invoked as `.call(...)`; the
-    emitter rewrites the call sites it can see — a closure bound to a local —
-    and reports the ones it cannot, because the callee that receives the closure
-    still writes `f(x)`.
+    droppable values is an `OwnedClosure`, which is never callable as a function;
+    the emitter rewrites the call sites it can see and reports the ones it
+    cannot, because the callee that receives the closure still writes `f(x)`.
+    Three shapes it does see now: a closure bound to a local (`.call`/
+    `.callOnce`), a parameter with a callable bound (R10's `invoke`/`invokeRef`),
+    and — since 2026-09-05 — an argument to an `Option` combinator or to
+    `retain`, which is named once, reached through the helper its bound calls
+    for, and released by the branch that does not call it.
   - **`?` across two error types calls the `From` impl the engine resolved**
     (step 5). What is left is named at each site: a conversion whose source or
     target is still a type parameter, which Rust decides per instantiation and
@@ -819,10 +823,14 @@ addressed by the step that found it.
   - **An awaited value whose `Future::Output` the engine could not project is
     not released.** The engine hands back the future's own type there, and
     releasing that would drop a value the await already moved.
-  - **A loop over an owned sequence the runtime does not write as an array does
-    not release what an early exit left behind.** Rust's `IntoIter` drops the
-    elements it never handed out; a `Vec` is an array and the emitter can name
-    them, and a `HashMap` or an adaptor is not and it cannot.
+  - **A loop over an owned sequence the runtime does not write as an array
+    releases neither what an early exit left behind nor the CONTAINER.** Rust's
+    `IntoIter` takes the sequence by value: it drops the elements it never
+    handed out, and it drops the emptied sequence itself when the loop ends. A
+    `Vec` is an array and the emitter can name both; a `HashMap` or an adaptor
+    is not, and releasing the map after the loop would release the keys and
+    values the loop has already taken — the runtime has no way to empty one
+    without them. The `borrowed_iteration` golden records the leak by name.
   - **A macro the emitter does not expand releases nothing it was handed.** The
     macro becomes `undefined` with the source in a comment beside it, so a value
     passed into one goes with it. It is `undefined` rather than the comment
@@ -917,12 +925,20 @@ addressed by the step that found it.
   declaration, and the emitted class implements the interface, so the runtime
   object has the method. Only where the impl the engine picked has no class of
   its own does the call become a module-level function.
-- **An or-pattern whose alternatives read their names from different places has
-  no test the translator can write.** `if let (Expr::Path(p), Expr::Literal(l)) |
-  (Expr::Literal(l), Expr::Path(p)) = ..` binds the same two names from opposite
-  positions, which needs a per-name conditional extraction. One site, in
-  `core/src/reactor/watcherset.rs`; the alternatives that agree — two variants of
-  one enum — are lowered.
+- **An or-pattern whose alternatives take their names out of a form the
+  translator cannot read back refuses in the BRANCH.**
+  (Rewritten 2026-09-05: the gap this bullet used to record — an or-pattern whose
+  alternatives read their names from DIFFERENT PLACES having no test the
+  translator can write — is closed. Rust requires every alternative to bind the
+  same SET of names and says nothing about the order, so each name is looked up
+  by name in every alternative and read from whichever one matched;
+  `core/src/reactor/watcherset.rs`'s `(Expr::Path(p), Expr::Literal(l)) |
+  (Expr::Literal(l), Expr::Path(p))` is written.) What is left is an alternative
+  whose binding is not a name or a field list — a tuple or a slice
+  destructuring, `Inner::A((a, b)) | Inner::B((b, a))` — which the reader that
+  pairs the alternatives up cannot parse. That one refuses: the TEST is still
+  written, so a value the pattern does not match reaches the arms below it, and
+  the branch's first statement is the refusal. No corpus site reaches it.
 
 - **A dynamic shift past the width is JavaScript's masking, not Rust's panic.**
   `x << n` with `n` a value rather than a literal is `x << (n & 31)` in

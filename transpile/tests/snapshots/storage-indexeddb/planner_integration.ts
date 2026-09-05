@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
-import { Result, AnyhowError, tracing, checkedAdd, saturatingAdd } from '@ankurah/base';
+import { Result, AnyhowError, floatMax, tracing, checkedAdd, saturatingAdd } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
 import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
@@ -32,13 +32,13 @@ function nextUpperBound(value: Value): [Value, boolean] | null {
       if (Number.isNaN(v) || (!Number.isFinite(v) && !Number.isNaN(v))) {
         return null;
       } else {
-        const epsilon = f64.EPSILON.max(Math.abs(v) * f64.EPSILON);
+        const epsilon = floatMax(Number.EPSILON, Math.abs(v) * Number.EPSILON);
         return [new Value('F64', { _0: v + epsilon }), true];
       }
     },
     String: (v) => {
       const s = v._0;
-      let bumped = s.clone();
+      let bumped = s;
       bumped += '\u{0}';
       return [new Value('String', { _0: bumped }), true];
     },

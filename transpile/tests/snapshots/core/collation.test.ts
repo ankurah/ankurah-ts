@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/collation.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
-import { RangeBound } from './collation';
+import { F64_isMaximum, F64_isMinimum, F64_predecessorBytes, F64_successorBytes, F64_toBytes, I64_isMaximum, I64_isMinimum, I64_predecessorBytes, I64_successorBytes, RangeBound, Str_isMaximum, Str_isMinimum, Str_predecessorBytes, Str_successorBytes, Str_toBytes } from './collation';
 import { Literal } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 
@@ -23,10 +23,10 @@ describe('collation unit tests', () => {
     expect(i64.fromBeBytes((I64_predecessorBytes(n) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()).tryInto())).toEqual(41n);
     if (!(!I64_isMinimum(n))) throw new Error('assertion failed');
     if (!(!I64_isMaximum(n))) throw new Error('assertion failed');
-    if (!(i64.MAX.successorBytes() == null)) throw new Error('assertion failed');
-    if (!(i64.MIN.predecessorBytes() == null)) throw new Error('assertion failed');
-    if (!(i64.MAX.isMaximum())) throw new Error('assertion failed');
-    if (!(i64.MIN.isMinimum())) throw new Error('assertion failed');
+    if (!((I64_successorBytes(9223372036854775807n) == null))) throw new Error('assertion failed');
+    if (!((I64_predecessorBytes(-9223372036854775808n) == null))) throw new Error('assertion failed');
+    if (!(I64_isMaximum(9223372036854775807n))) throw new Error('assertion failed');
+    if (!(I64_isMinimum(-9223372036854775808n))) throw new Error('assertion failed');
   });
 
   test('test_float_collation', () => {
@@ -35,13 +35,13 @@ describe('collation unit tests', () => {
     if (!((F64_predecessorBytes(f) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) < F64_toBytes(f))) throw new Error('assertion failed');
     if (!(!F64_isMinimum(f))) throw new Error('assertion failed');
     if (!(!F64_isMaximum(f))) throw new Error('assertion failed');
-    if (!(f64.INFINITY.isMaximum())) throw new Error('assertion failed');
-    if (!(f64.NEG_INFINITY.isMinimum())) throw new Error('assertion failed');
-    if (!(f64.INFINITY.successorBytes() == null)) throw new Error('assertion failed');
-    if (!(f64.NEG_INFINITY.predecessorBytes() == null)) throw new Error('assertion failed');
-    const nan = f64.NAN;
-    if (!(nan.successorBytes() == null)) throw new Error('assertion failed');
-    if (!(nan.predecessorBytes() == null)) throw new Error('assertion failed');
+    if (!(F64_isMaximum(Infinity))) throw new Error('assertion failed');
+    if (!(F64_isMinimum(-Infinity))) throw new Error('assertion failed');
+    if (!((F64_successorBytes(Infinity) == null))) throw new Error('assertion failed');
+    if (!((F64_predecessorBytes(-Infinity) == null))) throw new Error('assertion failed');
+    const nan = NaN;
+    if (!((F64_successorBytes(nan) == null))) throw new Error('assertion failed');
+    if (!((F64_predecessorBytes(nan) == null))) throw new Error('assertion failed');
   });
 
   test('test_range_bounds', () => {
@@ -64,8 +64,8 @@ describe('collation unit tests', () => {
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const maxLit = new ast.Literal('I16', { _0: i16.MAX });
-    const minLit = new ast.Literal('I16', { _0: i16.MIN });
+    const maxLit = new ast.Literal('I16', { _0: 32767 });
+    const minLit = new ast.Literal('I16', { _0: -32768 });
     if (!(maxLit.successorBytes() == null)) throw new Error('assertion failed');
     if (!(minLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(maxLit.isMaximum())) throw new Error('assertion failed');
@@ -78,8 +78,8 @@ describe('collation unit tests', () => {
     if (!(lit.predecessorBytes() < lit.toBytes())) throw new Error('assertion failed');
     if (!(!lit.isMinimum())) throw new Error('assertion failed');
     if (!(!lit.isMaximum())) throw new Error('assertion failed');
-    const maxLit = new ast.Literal('I32', { _0: i32.MAX });
-    const minLit = new ast.Literal('I32', { _0: i32.MIN });
+    const maxLit = new ast.Literal('I32', { _0: 2147483647 });
+    const minLit = new ast.Literal('I32', { _0: -2147483648 });
     if (!(maxLit.successorBytes() == null)) throw new Error('assertion failed');
     if (!(minLit.predecessorBytes() == null)) throw new Error('assertion failed');
     if (!(maxLit.isMaximum())) throw new Error('assertion failed');

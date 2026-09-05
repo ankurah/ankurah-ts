@@ -116,8 +116,15 @@ export function Option_fromActive<Projected, S extends FromActiveType>(active: Y
     const value = _v.unwrap();
     return Result.Ok(value);
   } else {
-    const err = _v.unwrapErr();
-    return Result.Err(err);
+    const _v1 = _v.unwrapErr();
+    if (_v1.is('Missing')) {
+      const _v2 = _v1;
+      return Result.Ok(null);
+    }
+    {
+      const err = _v1;
+      return Result.Err(err);
+    }
   }
 }
 

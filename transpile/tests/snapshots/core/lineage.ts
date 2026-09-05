@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/lineage.rs
-import { Struct, Enum, Result, dropOwned, derivedClone, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, derivedEquals, derivedClone, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
 import { RetrievalError } from './error';
 import { TClock, TClock_dispatch_members, TEvent_dispatch_id, TEvent_dispatch_parent } from './retrieval';
 import { Attested, Event } from '@ankurah/proto';
@@ -322,7 +322,7 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 }
 
-export type OrderingV = {
+export type OrderingV<Id> = {
   Equal: {};
   Descends: {};
   NotDescends: { meet: Id[] };
@@ -331,17 +331,17 @@ export type OrderingV = {
   BudgetExceeded: { subjectFrontier: HashSet<Id>; otherFrontier: HashSet<Id> };
 };
 
-export class Ordering<Id> extends Enum<OrderingV> {
+export class Ordering<Id> extends Enum<OrderingV<Id>> {
 
   equals(other: Ordering<Id>): boolean {
     if (this.type !== other.type) return false;
     switch (this.type) {
       case 'NotDescends': {
-        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!(this.value as any).meet[i].equals((other.value as any).meet[i])) return false; } }
+        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!derivedEquals((this.value as any).meet[i], (other.value as any).meet[i])) return false; } }
         break;
       }
       case 'PartiallyDescends': {
-        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!(this.value as any).meet[i].equals((other.value as any).meet[i])) return false; } }
+        { if ((this.value as any).meet.length !== (other.value as any).meet.length) return false; for (let i = 0; i < (this.value as any).meet.length; i++) { if (!derivedEquals((this.value as any).meet[i], (other.value as any).meet[i])) return false; } }
         break;
       }
       case 'BudgetExceeded': {

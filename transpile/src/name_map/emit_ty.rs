@@ -12,11 +12,48 @@ use super::shape::{js_shape, JsShape};
 use crate::registry::TypeRegistry;
 use crate::ty::Ty;
 
+/// An element type, written so that `[]` after it means what Rust meant.
+///
+/// TypeScript's `[]` binds TIGHTER than `|`, so `Vec<Option<T>>` written
+/// `T | null[]` is read as `T | (null[])` — a `T` or an array of nulls, which is
+/// neither of the things Rust said. Five sites in `storage-common/sorting.ts`
+/// declared `Value | null[] | null` and meant `(Value | null)[] | null`.
+pub(crate) fn as_an_element(written: &str) -> String {
+    match has_a_top_level_union(written) {
+        true => format!("({})", written),
+        false => written.to_string(),
+    }
+}
+
+/// Is there a `|` this type's OWN, rather than one inside a tuple, an argument
+/// list or a parenthesised group? `[string, Value | null]` carries its own
+/// brackets and needs none from here.
+fn has_a_top_level_union(written: &str) -> bool {
+    let mut depth = 0i32;
+    let bytes = written.as_bytes();
+    for (at, c) in written.char_indices() {
+        match c {
+            '(' | '[' | '<' | '{' => depth += 1,
+            ')' | ']' | '>' | '}' => depth -= 1,
+            '|' if depth == 0 => {
+                // ` | `, not the `|` of some other spelling.
+                let before = at > 0 && bytes[at - 1] == b' ';
+                let after = bytes.get(at + 1) == Some(&b' ');
+                if before && after {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Map a resolved Rust type to its TypeScript spelling.
 pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
     match js_shape(reg, ty) {
         JsShape::Bytes => "Uint8Array".to_string(),
-        JsShape::Array(elem) => format!("{}[]", map_ty(reg, &elem)),
+        JsShape::Array(elem) => format!("{}[]", as_an_element(&map_ty(reg, &elem))),
         // R5: an `Option<T>` is `T | null`, and that spelling has room for ONE
         // `null`. `Option<Option<T>>` collapses — `Some(None)` and the outer
         // `None` become the same value — and so does an `Option` of anything

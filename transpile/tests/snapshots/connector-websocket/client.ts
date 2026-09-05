@@ -165,7 +165,7 @@ class ClientInner extends Drop {
   }
 
   connect(): Result<void, Error> {
-    const _r0 = Connection.new(Node_cloned(this.node), this.serverUrl.clone(), this.downgrade()).mapErr((e) => AnyhowError.msg(`${e}`));
+    const _r0 = Connection.new(Node_cloned(this.node), this.serverUrl, this.downgrade()).mapErr((e) => AnyhowError.msg(`${e}`));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     let _moved1 = false;
     const connection = _r0.unwrap();
@@ -178,7 +178,7 @@ class ClientInner extends Drop {
       } finally {
         _t2.drop();
       }
-      this.state.set(new ConnectionState('Connecting', { url: this.serverUrl.clone() }));
+      this.state.set(new ConnectionState('Connecting', { url: this.serverUrl }));
       return Result.Ok([]);
     } finally {
       if (!_moved1) connection.drop();

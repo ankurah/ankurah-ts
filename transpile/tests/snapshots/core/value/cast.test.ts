@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/core/src/value/cast.rs (tests module)
 
 import { describe, test, expect } from 'bun:test';
+import { Value_castTo } from './cast';
 import { Json } from '../property/value/json';
 import { Value, ValueType } from './index';
 import { EntityId } from '@ankurah/proto';
@@ -9,7 +10,7 @@ describe('cast unit tests', () => {
   test('test_string_to_entity_id', () => {
     const entityId = EntityId.new();
     const base64Str = entityId.toBase64();
-    const value = new Value('String', { _0: base64Str.clone() });
+    const value = new Value('String', { _0: base64Str });
     try {
       const result = Value_castTo(value, new ValueType('EntityId', {})).unwrap();
       try {

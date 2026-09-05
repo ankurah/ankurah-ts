@@ -134,7 +134,7 @@ export class SqlBuilder extends Struct {
     return lit.match({
       String: (v) => {
         const s = v._0;
-        this.pushParam(new rusqlite.types.Value('Text', { _0: s.clone() }));
+        this.pushParam(new rusqlite.types.Value('Text', { _0: s }));
       },
       I64: (v) => {
         const i = v._0;
@@ -173,7 +173,7 @@ export class SqlBuilder extends Struct {
         json.match({
           String: (v) => {
             const s = v._0;
-            this.pushParam(new rusqlite.types.Value('Text', { _0: s.clone() }));
+            this.pushParam(new rusqlite.types.Value('Text', { _0: s }));
           },
           Number: (v) => {
             const n = v._0;

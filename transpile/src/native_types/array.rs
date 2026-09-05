@@ -117,14 +117,43 @@ pub fn translate(
         // `Vec::retain` keeps what the predicate accepts, IN PLACE, and DROPS
         // what it rejects. `filter` answers a new array and leaves the original
         // as it was, so the two lines the emitter wrote — a `/* TODO */` comment
-        // and a `filter` whose answer nobody read — changed nothing at all. The
-        // loop below compacts the array where it stands and releases each
-        // element it passes over, which is what Rust does with them.
+        // and a `filter` whose answer nobody read — changed nothing at all.
+        //
+        // Three things the loop that replaced it still got wrong, all of them
+        // about the PREDICATE and about what happens when it throws:
+        //
+        //   - it was interpolated INSIDE the loop, so a `move` closure was
+        //     constructed once per element and an `OwnedClosure` — which is not
+        //     callable as a function (R10) — threw a `TypeError` on the first;
+        //   - `retain` takes its predicate by value and Rust drops it when the
+        //     call ends, however it ends, and nothing released it;
+        //   - the array was truncated only on normal completion, so a predicate
+        //     that threw left the already-dropped elements still in it and the
+        //     kept ones duplicated: a later cascade dropped them twice.
+        //
+        // So: an IIFE over `(receiver, predicate)`, which is Rust's own
+        // evaluation order and evaluates each exactly once; `invokeRef`,
+        // because an `FnMut` bound borrows the closure however the parameter is
+        // written (fixpass5 §3.3); and a `finally` that moves the tail the loop
+        // never reached down over the gap the rejected elements left, cuts the
+        // array to what is left, and releases the predicate. That is what
+        // Rust's own `BackshiftOnDrop` guard does on an unwind — the element
+        // the predicate threw on is counted unprocessed and kept.
         "retain" if args.len() == 1 => format!(
-            "(($xs) => {{ let $at = 0; for (let $i = 0; $i < $xs.length; $i++) {{ if \
-             (({})($xs[$i])) {{ $xs[$at++] = $xs[$i]; }} else {{ dropOwned($xs[$i]); }} }} \
-             $xs.length = $at; }})({})",
-            args[0], receiver
+            "((<T,>($xs: T[], $p: Invocable<[T], boolean>) => {{\n\
+             \x20 let $at = 0;\n\
+             \x20 let $i = 0;\n\
+             \x20 try {{\n\
+             \x20   for (; $i < $xs.length; $i++) {{\n\
+             \x20     if (invokeRef($p, $xs[$i])) {{ $xs[$at++] = $xs[$i]; }} else {{ dropOwned($xs[$i]); }}\n\
+             \x20   }}\n\
+             \x20 }} finally {{\n\
+             \x20   for (; $i < $xs.length; $i++) $xs[$at++] = $xs[$i];\n\
+             \x20   $xs.length = $at;\n\
+             \x20   dropOwned($p);\n\
+             \x20 }}\n\
+             }})({}, {}))",
+            receiver, args[0]
         ),
         "split_last" => format!(
             "{}.length > 0 ? [{}.at(-1), {}.slice(0, -1)] : null",
@@ -142,15 +171,25 @@ pub fn translate(
         // element is copied by its own Clone shape; where that is nothing —
         // a number, a string — the copy of the array is the whole copy, and
         // `slice()` is what it was.
-        "to_vec" | "to_owned" => match copy(receiver, element, &format!("{}.slice()", receiver)) {
-            Ok(written) => written,
-            Err(why) => {
-                return MethodTranslation::Refused {
-                    message: format!("`{}` copies a slice, which clones each element, and {}", method, why),
-                    fallback: Box::new(MethodTranslation::Expr(format!("{}.slice()", receiver))),
+        // `Vec::clone` is `to_vec` under another name — Rust's own signature
+        // says so, `T: Clone` and one clone per element — and it fell through
+        // to a bare `.clone()` on a JavaScript array, with no diagnostic. Live
+        // at `core/reactor.test.ts`, where `self.entities.clone()` answered a
+        // method the array has not got.
+        "clone" | "to_vec" | "to_owned" if args.is_empty() => {
+            match copy(receiver, element, &format!("{}.slice()", receiver)) {
+                Ok(written) => written,
+                Err(why) => {
+                    return MethodTranslation::Refused {
+                        message: format!(
+                            "`{}` copies a slice, which clones each element, and {}",
+                            method, why
+                        ),
+                        fallback: Box::new(MethodTranslation::Expr(format!("{}.slice()", receiver))),
+                    }
                 }
             }
-        },
+        }
 
         // Iterator entry points — these convert to array operations
 

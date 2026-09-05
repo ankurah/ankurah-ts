@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/observer/callback_observer.rs
-import { Struct, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, HashMap } from '@ankurah/base';
+import { Struct, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, dropOwned, HashMap } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
@@ -52,7 +52,13 @@ export class CallbackObserver extends Struct implements Observer {
   sweepMarkedListeners(): void {
     let entries = this._0.value.entries.write();
     try {
-      { for (const [_k, _v] of entries.value) { if (!(((_, entry) => !entry.markedForRemoval)(_k, _v))) entries.value.delete(_k); } };
+      ((<K, V>($m: { [Symbol.iterator](): IterableIterator<[K, V]>; delete(key: K): unknown }, $p: Invocable<[K, V], boolean>) => {
+        try {
+          for (const [$k, $v] of $m) { if (!invokeRef($p, $k, $v)) $m.delete($k); }
+        } finally {
+          dropOwned($p);
+        }
+      })(entries.value, (_, entry) => !entry.markedForRemoval));
     } finally {
       entries.drop();
     }

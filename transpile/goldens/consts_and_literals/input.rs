@@ -113,8 +113,22 @@ pub fn ordered() -> u32 {
 // say — `AtomicU32::MAX.fetch_add(1)` stores `0` — and a `+=` on a `number`
 // went on counting. A `static mut` beside it already went through the checked
 // helper, so the two spellings of one idea disagreed.
-pub static WRAPS: AtomicU32 = AtomicU32::new(4294967295);
+pub static WRAPS: AtomicU32 = AtomicU32::new(u32::MAX);
 
 pub fn wrap_around() -> u32 {
     WRAPS.fetch_add(1, Ordering::SeqCst)
+}
+
+// D5: a constant Rust puts on a PRIMITIVE type. The port writes the type as a
+// JavaScript primitive, which has no members, so `f64::EPSILON` came out
+// `f64.EPSILON` — a name the file never declares — and nothing typed the
+// expression, so `.max()` on it fell through the number translations too and
+// wrote a method a JavaScript number has not got. Live at
+// `storage/indexeddb-wasm/src/planner_integration.rs:19`, which is this line.
+pub fn epsilon_near(v: f64) -> f64 {
+    f64::EPSILON.max(v.abs() * f64::EPSILON)
+}
+
+pub fn widths() -> (u32, i64, u64, f64, f64) {
+    (u32::MAX, i64::MIN, u64::MAX, f64::INFINITY, f64::NAN)
 }

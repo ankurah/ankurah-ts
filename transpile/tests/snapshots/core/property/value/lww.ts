@@ -29,7 +29,7 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
     const value_1 = _r0.unwrap();
     try {
       _moved1 = true;
-      this.backend.value.set(this.propertyName.clone(), value_1);
+      this.backend.value.set(this.propertyName, value_1);
       return Result.Ok([]);
     } finally {
       if (!_moved1) dropOwned(value_1);

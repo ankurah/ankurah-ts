@@ -141,3 +141,34 @@ pub fn is_primitive_or_base_type(ty: &str) -> bool {
         | "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Result"
     )
 }
+
+/// The names a test file has to import from the module it is the test half of,
+/// beyond that module's own `fn`s and `const`s.
+///
+/// An impl whose self type has no emitted class is written as module-level
+/// FUNCTIONS — `I64_isMaximum`, `F64_successorBytes` — and a test module's own
+/// walk over the file's declarations does not see those: they come from the
+/// impl table, not from the file. They ARE in the import map, under this same
+/// module, so that is what says them. Without it `core/collation.test.ts` called
+/// four functions nothing had imported.
+pub fn names_this_module_declares(
+    type_to_file: &std::collections::HashMap<String, String>,
+    current_module: &str,
+    bodies: &str,
+    declared_here: &HashSet<String>,
+    available_types: &HashSet<String>,
+    into: &mut Vec<String>,
+) {
+    for (name, source) in type_to_file {
+        if source != current_module
+            || declared_here.contains(name)
+            || available_types.contains(name)
+            || into.contains(name)
+        {
+            continue;
+        }
+        if crate::codegen::names_word(bodies, name) {
+            into.push(name.clone());
+        }
+    }
+}

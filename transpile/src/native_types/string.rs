@@ -20,6 +20,15 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "trim" | "repeat" | "replace"
             => return MethodTranslation::Passthrough,
 
+        // A JavaScript string is a value, so copying one is reading it: Rust's
+        // three spellings for "make me an owned `String` from this" are all the
+        // receiver itself. Passed through, `name.clone()` called a method a
+        // string has not got — live at `core/entity.ts:61`, where the `String`
+        // key of a `BTreeMap` was cloned into an insert. The derived clone
+        // writer already stops at a primitive; this is the explicit-call path,
+        // which resolved `String::clone` and wrote it out.
+        "clone" | "to_owned" | "to_string" if args.is_empty() => receiver.to_string(),
+
         // Renamed (already camelCased by name_map)
         "starts_with" => format!("{}.startsWith({})", receiver, args.join(", ")),
         "ends_with" => format!("{}.endsWith({})", receiver, args.join(", ")),

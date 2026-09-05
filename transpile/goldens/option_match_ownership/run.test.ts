@@ -37,6 +37,6 @@ test('a match through a reference leaves the value to its owner', () => {
   token.drop();
 });
 
-test('nothing leaked and nothing was dropped twice', () => {
-  expectNoOwnershipReports();
+test('nothing leaked and nothing was dropped twice', async () => {
+  await expectNoOwnershipReports();
 });

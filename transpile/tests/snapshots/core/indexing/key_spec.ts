@@ -164,9 +164,9 @@ export class IndexKeyPart extends Struct {
   static fromPath(path: PathExpr, direction: IndexDirection, valueType: ValueType): IndexKeyPart {
     const [column, subPath] = (() => {
       if (path.steps.length === 1) {
-        return [path.steps[0].clone(), null];
+        return [path.steps[0], null];
       } else {
-        const column = path.steps[0].clone();
+        const column = path.steps[0];
         const subPath = path.steps.slice(1).slice();
         return [column, subPath];
       }
@@ -176,12 +176,12 @@ export class IndexKeyPart extends Struct {
 
   fullPath(): string {
     if (this.subPath == null) {
-      return this.column.clone();
+      return this.column;
     } else {
       const sub = this.subPath;
       {
-        let parts = [this.column.clone()];
-        parts.push(...sub.clone());
+        let parts = [this.column];
+        parts.push(...sub.slice());
         return parts.join('.');
       }
     }

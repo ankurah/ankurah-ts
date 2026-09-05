@@ -48,7 +48,7 @@ export class CandidateChanges<C> extends Struct {
   }
 
   clone(): CandidateChanges<C> {
-    return new CandidateChanges(this.changes.clone(), this.queryOffsets.clone(), this.entityOffsets.clone());
+    return new CandidateChanges(this.changes.value.slice(), this.queryOffsets.clone(), this.entityOffsets.clone());
   }
 }
 

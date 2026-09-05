@@ -1,21 +1,21 @@
 // MIRRORS: ankurah/core/src/collation.rs
-import { Enum, checkedAdd, checkedSub } from '@ankurah/base';
+import { Enum, derivedEquals, derivedClone, checkedAdd, checkedSub } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { Json } from './property/value/json';
 
-export type RangeBoundV = {
+export type RangeBoundV<T> = {
   Included: { _0: T };
   Excluded: { _0: T };
   Unbounded: {};
 };
 
-export class RangeBound<T> extends Enum<RangeBoundV> {
+export class RangeBound<T> extends Enum<RangeBoundV<T>> {
 
   clone(): RangeBound<T> {
     return this.match({
-      Included: (v) => new RangeBound('Included', { _0: v._0.clone() }),
-      Excluded: (v) => new RangeBound('Excluded', { _0: v._0.clone() }),
-      Unbounded: () => new RangeBound('Unbounded', {}),
+      Included: (v) => new RangeBound<T>('Included', { _0: derivedClone(v._0) }),
+      Excluded: (v) => new RangeBound<T>('Excluded', { _0: derivedClone(v._0) }),
+      Unbounded: () => new RangeBound<T>('Unbounded', {}),
     });
   }
 
@@ -23,11 +23,11 @@ export class RangeBound<T> extends Enum<RangeBoundV> {
     if (this.type !== other.type) return false;
     switch (this.type) {
       case 'Included': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         break;
       }
       case 'Excluded': {
-        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
         break;
       }
     }
@@ -110,7 +110,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
       const f = v._0;
       const bits = (() => {
         if (Number.isNaN(f)) {
-          return u64.MAX;
+          return 18446744073709551615n;
         } else {
           const bits = f.toBits();
           if (f >= 0.0) {
@@ -120,7 +120,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
           }
         }
       })();
-      return bits.toBeBytes().toVec();
+      return bits.toBeBytes().slice();
     },
     Bool: (v) => {
       const b = v._0;
@@ -161,7 +161,7 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     },
     I16: (v) => {
       const i = v._0;
-      if (i === i16.MAX) {
+      if (i === 32767) {
         return null;
       } else {
         return (checkedAdd(i, 1, 'i16')).toBeBytes().slice();
@@ -169,7 +169,7 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     },
     I32: (v) => {
       const i = v._0;
-      if (i === i32.MAX) {
+      if (i === 2147483647) {
         return null;
       } else {
         return (checkedAdd(i, 1, 'i32')).toBeBytes().slice();
@@ -177,7 +177,7 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     },
     I64: (v) => {
       const i = v._0;
-      if (i === i64.MAX) {
+      if (i === 9223372036854775807n) {
         return null;
       } else {
         return (checkedAdd(i, 1n, 'i64')).toBeBytes().slice();
@@ -262,7 +262,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     },
     I16: (v) => {
       const i = v._0;
-      if (i === i16.MIN) {
+      if (i === -32768) {
         return null;
       } else {
         return (checkedSub(i, 1, 'i16')).toBeBytes().slice();
@@ -270,7 +270,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     },
     I32: (v) => {
       const i = v._0;
-      if (i === i32.MIN) {
+      if (i === -2147483648) {
         return null;
       } else {
         return (checkedSub(i, 1, 'i32')).toBeBytes().slice();
@@ -278,7 +278,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     },
     I64: (v) => {
       const i = v._0;
-      if (i === i64.MIN) {
+      if (i === -9223372036854775808n) {
         return null;
       } else {
         return (checkedSub(i, 1n, 'i64')).toBeBytes().slice();
@@ -374,19 +374,19 @@ export function Literal_isMinimum(self: Literal): boolean {
     },
     I16: (v) => {
       const i = v._0;
-      return i === i16.MIN;
+      return i === -32768;
     },
     I32: (v) => {
       const i = v._0;
-      return i === i32.MIN;
+      return i === -2147483648;
     },
     I64: (v) => {
       const i = v._0;
-      return i === i64.MIN;
+      return i === -9223372036854775808n;
     },
     F64: (v) => {
       const f = v._0;
-      return f === f64.NEG_INFINITY;
+      return f === -Infinity;
     },
     Bool: (v) => {
       const b = v._0;
@@ -413,19 +413,19 @@ export function Literal_isMaximum(self: Literal): boolean {
     String: (v) => false,
     I16: (v) => {
       const i = v._0;
-      return i === i16.MAX;
+      return i === 32767;
     },
     I32: (v) => {
       const i = v._0;
-      return i === i32.MAX;
+      return i === 2147483647;
     },
     I64: (v) => {
       const i = v._0;
-      return i === i64.MAX;
+      return i === 9223372036854775807n;
     },
     F64: (v) => {
       const f = v._0;
-      return f === f64.INFINITY;
+      return f === Infinity;
     },
     Bool: (v) => {
       const b = v._0;
@@ -481,7 +481,7 @@ export function I64_toBytes(self: bigint): Uint8Array {
 }
 
 export function I64_successorBytes(self: bigint): Uint8Array | null {
-  if (self === i64.MAX) {
+  if (self === 9223372036854775807n) {
     return null;
   } else {
     return (checkedAdd(self, 1n, 'i64')).toBeBytes().slice();
@@ -489,7 +489,7 @@ export function I64_successorBytes(self: bigint): Uint8Array | null {
 }
 
 export function I64_predecessorBytes(self: bigint): Uint8Array | null {
-  if (self === i64.MIN) {
+  if (self === -9223372036854775808n) {
     return null;
   } else {
     return (checkedSub(self, 1n, 'i64')).toBeBytes().slice();
@@ -497,17 +497,17 @@ export function I64_predecessorBytes(self: bigint): Uint8Array | null {
 }
 
 export function I64_isMinimum(self: bigint): boolean {
-  return self === i64.MIN;
+  return self === -9223372036854775808n;
 }
 
 export function I64_isMaximum(self: bigint): boolean {
-  return self === i64.MAX;
+  return self === 9223372036854775807n;
 }
 
 export function F64_toBytes(self: number): Uint8Array {
   const bits = (() => {
     if (Number.isNaN(self)) {
-      return u64.MAX;
+      return 18446744073709551615n;
     } else {
       const bits = self.toBits();
       if (self >= 0.0) {
@@ -517,7 +517,7 @@ export function F64_toBytes(self: number): Uint8Array {
       }
     }
   })();
-  return bits.toBeBytes().toVec();
+  return bits.toBeBytes().slice();
 }
 
 export function F64_successorBytes(self: number): Uint8Array | null {
@@ -541,11 +541,11 @@ export function F64_predecessorBytes(self: number): Uint8Array | null {
 }
 
 export function F64_isMinimum(self: number): boolean {
-  return self === f64.NEG_INFINITY;
+  return self === -Infinity;
 }
 
 export function F64_isMaximum(self: number): boolean {
-  return self === f64.INFINITY;
+  return self === Infinity;
 }
 
 export function EntityId_toBytes(self: EntityId): Uint8Array {

@@ -43,7 +43,7 @@ export class ReactorUpdateItem<E = Entity, Ev extends Clone = Attested<Event>> e
   equals(other: ReactorUpdateItem<E, Ev>): boolean {
     if (!derivedEquals(this.entity, other.entity)) return false;
     { if (this.events.length !== other.events.length) return false; for (let i = 0; i < this.events.length; i++) { if (!derivedEquals(this.events[i], other.events[i])) return false; } }
-    { if (this.predicateRelevance.length !== other.predicateRelevance.length) return false; for (let i = 0; i < this.predicateRelevance.length; i++) { if (!this.predicateRelevance[i].equals(other.predicateRelevance[i])) return false; } }
+    { if (this.predicateRelevance.length !== other.predicateRelevance.length) return false; for (let i = 0; i < this.predicateRelevance.length; i++) { { if (!this.predicateRelevance[i][0].equals(other.predicateRelevance[i][0])) return false; if (!this.predicateRelevance[i][1].equals(other.predicateRelevance[i][1])) return false; } } }
     return true;
   }
 

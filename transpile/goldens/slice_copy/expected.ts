@@ -33,5 +33,22 @@ export class Batch extends Struct {
   static ownedEvents(events: Event[]): Event[] {
     return events.map((e) => e.clone());
   }
+
+  clonedEvents(): Event[] {
+    return this.events.map((e) => e.clone());
+  }
+}
+
+export class Named extends Struct {
+  readonly name: string;
+
+  constructor(name: string) {
+    super();
+    this.name = name;
+  }
+
+  spellings(): [string, string, string] {
+    return [this.name, this.name, this.name];
+  }
 }
 

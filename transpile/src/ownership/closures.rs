@@ -101,23 +101,36 @@ impl<'a> BodyTranslator<'a> {
         // emitted can collide with, and one a reader of TypeScript already
         // reads as "unused".
         let mut ignored = 0usize;
+        let mut ignored_names: Vec<String> = Vec::new();
         let params: Vec<String> = closure
             .inputs
             .iter()
             .map(|pat| {
                 if Self::binds_nothing(pat) {
                     ignored += 1;
-                    "_".repeat(ignored)
+                    let name = "_".repeat(ignored);
+                    ignored_names.push(name.clone());
+                    name
                 } else {
                     Self::pat_static(pat)
                 }
             })
             .collect();
-        let params = params.join(", ");
         // A `move` closure captures everything it names; one written without
         // `move` captures by value only what its body hands away, which Rust
         // infers per capture. Both own what they took.
         let captures = self.owned_captures(closure);
+        // An `OwnedClosure` is a VALUE, not an arrow in a call position, so
+        // TypeScript has no call site to take the parameter types from:
+        // `new OwnedClosure([t], (n) => n + 1)` infers `n: unknown` and every
+        // use of `n` in the body is an error. It typechecked only while the
+        // wrapper was written in an immediately-called position — which was
+        // itself the `TypeError` R10 exists to stop. So a wrapped closure
+        // writes the parameter types the engine already resolved.
+        let params = match captures.is_empty() {
+            true => params.join(", "),
+            false => self.annotated_params(closure, expected, &params, &ignored_names),
+        };
         // The closure's own scope, with its parameters bound to whatever the
         // position it stands in says they are (spec 4.5). Without them the body
         // names values nothing has typed, and every call inside it falls back.
@@ -197,6 +210,43 @@ impl<'a> BodyTranslator<'a> {
                 ownership::closures::owned(&names, &arrow, consumes)
             }
         }
+    }
+
+    /// A wrapped closure's parameter list, with each parameter's type written.
+    ///
+    /// The names come from the caller, which has already decided how an ignored
+    /// parameter is spelled; the types come from the same signature
+    /// `bind_closure_params` binds the body against, paired by POSITION because
+    /// an ignored parameter's emitted name is not its Rust one. A parameter the
+    /// engine could not type is written bare — `bind_closure_params` reports it.
+    fn annotated_params(
+        &self,
+        closure: &syn::ExprClosure,
+        expected: Option<&crate::ty::Ty>,
+        names: &[String],
+        ignored: &[String],
+    ) -> String {
+        let Some(tc) = &self.types else { return names.join(", ") };
+        let tc = tc.borrow();
+        let sig = tc.closure_signature(closure, expected);
+        names
+            .iter()
+            .enumerate()
+            .map(|(at, name)| {
+                // A parameter the closure takes no name out of is read nowhere
+                // in the body, so nothing needs its type — and writing one for
+                // a Rust `()` would put `void` in a parameter position, which
+                // says something narrower than the port means.
+                if ignored.contains(name) {
+                    return name.clone();
+                }
+                match sig.params.get(at).and_then(|(_, ty)| ty.as_ref()) {
+                    Some(ty) => format!("{}: {}", name, crate::name_map::map_ty(tc.registry, ty)),
+                    None => name.clone(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Bind a closure's parameters in the scope its body is translated in.

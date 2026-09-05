@@ -58,7 +58,11 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 return r;
               } else {
                 const _v3 = _v2.unwrapErr();
-                return { $jump: 'continue' };
+                try {
+                  return { $jump: 'continue' };
+                } finally {
+                  _v3.drop();
+                }
               }
             })();
             if ((_m3 as any)?.$jump === 'continue') continue;

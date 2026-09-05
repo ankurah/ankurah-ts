@@ -3,7 +3,7 @@
 // hands each value to the field it was written beside.
 
 import { expect, test } from 'bun:test';
-import { FLOOR, Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, arm, bump, collection, movedOrigin, ordered, radix, shifted, word, wrapAround } from './input.ts';
+import { FLOOR, Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, arm, bump, collection, epsilonNear, movedOrigin, ordered, radix, shifted, widths, word, wrapAround } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a const carries its value, not `undefined`', () => {
@@ -73,6 +73,25 @@ test('a const whose initialiser names a later one loads and answers', () => {
 test('an atomic wraps at its width', () => {
   expect(wrapAround()).toBe(4294967295);
   expect(wrapAround()).toBe(0);
+});
+
+// D5: a constant Rust puts on a primitive type. At the parent this line read
+// `f64.EPSILON.max(..)` — an undeclared name AND a method a JavaScript number
+// has not got — and no diagnostic said so.
+test('a primitive`s associated constant is the constant, and types the call on it', () => {
+  expect(epsilonNear(0)).toBe(Number.EPSILON);
+  // `Math.abs(1e9) * EPSILON` is the larger of the two, which is what Rust
+  // picks here.
+  expect(epsilonNear(1e9)).toBe(Math.abs(1e9) * Number.EPSILON);
+});
+
+test('and the width constants are the numbers those widths hold', () => {
+  const [maxU32, minI64, maxU64, inf, nan] = widths();
+  expect(maxU32).toBe(4294967295);
+  expect(minI64).toBe(-9223372036854775808n);
+  expect(maxU64).toBe(18446744073709551615n);
+  expect(inf).toBe(Infinity);
+  expect(Number.isNaN(nan)).toBe(true);
 });
 
 test('nothing leaked and nothing was reported', async () => {

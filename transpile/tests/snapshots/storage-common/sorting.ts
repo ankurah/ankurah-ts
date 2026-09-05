@@ -9,11 +9,11 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
   inner: S | null;
   orderBy: OrderByComponents;
   currentPartition: Item[];
-  currentPartitionKey: Value | null[] | null;
+  currentPartitionKey: (Value | null)[] | null;
   sortedPartition: Item[] | null;
   exhausted: boolean;
 
-  constructor(inner: S | null, orderBy: OrderByComponents, currentPartition: Item[], currentPartitionKey: Value | null[] | null, sortedPartition: Item[] | null, exhausted: boolean) {
+  constructor(inner: S | null, orderBy: OrderByComponents, currentPartition: Item[], currentPartitionKey: (Value | null)[] | null, sortedPartition: Item[] | null, exhausted: boolean) {
     super();
     this.inner = inner;
     this.orderBy = orderBy;
@@ -137,7 +137,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
                     break _match7;
                   }
                 }
-                if (this_.currentPartitionKey != null) {
+                {
                   {
                     let partition = mem.take(this_.currentPartition);
                     sortItemsByOrder(partition, this_.orderBy.spill);
@@ -148,7 +148,6 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
                     this_.currentPartitionKey = _a6;
                     this_.currentPartition.push(item);
                   }
-                  break _match7;
                 }
               }
             } finally {
@@ -248,11 +247,11 @@ class HeapItem<T extends Filterable> extends Struct {
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const s = _v1[0];
           const o = _v1[1];
-          return s.compareTo(o) ?? 0;
+          return s.partialCompareTo(o) ?? 0;
         } else {
           const s = _v1[0];
           const o = _v1[1];
-          return o.compareTo(s) ?? 0;
+          return o.partialCompareTo(s) ?? 0;
         }
       })();
       if (cmp !== 0) {
@@ -269,11 +268,11 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
   k: number;
   emittedCount: number;
   currentPartition: Item[];
-  currentPartitionKey: Value | null[] | null;
+  currentPartitionKey: (Value | null)[] | null;
   sortedPartition: Item[] | null;
   exhausted: boolean;
 
-  constructor(inner: S | null, orderBy: OrderByComponents, k: number, emittedCount: number, currentPartition: Item[], currentPartitionKey: Value | null[] | null, sortedPartition: Item[] | null, exhausted: boolean) {
+  constructor(inner: S | null, orderBy: OrderByComponents, k: number, emittedCount: number, currentPartition: Item[], currentPartitionKey: (Value | null)[] | null, sortedPartition: Item[] | null, exhausted: boolean) {
     super();
     this.inner = inner;
     this.orderBy = orderBy;
@@ -331,7 +330,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
             Ready: (v) => {
               if (v._0 != null) {
                 const item = v._0;
-                const heapItem = new HeapItem(item, this_.orderBy.spill.clone());
+                const heapItem = new HeapItem(item, this_.orderBy.spill.map((e) => e.clone()));
                 if (heap.len() < this_.k) {
                   heap.push(heapItem);
                 } else {
@@ -437,7 +436,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     break _match8;
                   }
                 }
-                if (this_.currentPartitionKey != null) {
+                {
                   {
                     let partition = mem.take(this_.currentPartition);
                     sortItemsByOrder(partition, this_.orderBy.spill);
@@ -448,7 +447,6 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     this_.currentPartitionKey = _a7;
                     this_.currentPartition.push(item);
                   }
-                  break _match8;
                 }
               }
             } finally {
@@ -490,11 +488,11 @@ function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const a = _v1[0];
           const b = _v1[1];
-          return a.compareTo(b) ?? 0;
+          return a.partialCompareTo(b) ?? 0;
         } else {
           const a = _v1[0];
           const b = _v1[1];
-          return b.compareTo(a) ?? 0;
+          return b.partialCompareTo(a) ?? 0;
         }
       })();
       if (cmp !== 0) {
@@ -505,7 +503,7 @@ function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem
   });
 }
 
-function extractPartitionKey<T extends Filterable>(item: T, presort: OrderByItem[]): Value | null[] {
+function extractPartitionKey<T extends Filterable>(item: T, presort: OrderByItem[]): (Value | null)[] {
   return [...presort].map((p) => item.value(p.path.property()));
 }
 

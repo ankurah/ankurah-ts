@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safemap.rs
-import { Struct, Result, RwLock, invokeRef, dropOwned, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, RwLock, invokeRef, Invocable, dropOwned, HashMap, HashSet } from '@ankurah/base';
 
 export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Default & Debug> extends Struct {
   _0: RwLock<HashMap<K, V>>;
@@ -35,7 +35,13 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
     try {
       const _t0 = this._0.write();
       try {
-        { for (const [_k, _v] of _t0.value) { if (!(((k, v) => invokeRef(cb, k, v))(_k, _v))) _t0.value.delete(_k); } };
+        ((<K, V>($m: { [Symbol.iterator](): IterableIterator<[K, V]>; delete(key: K): unknown }, $p: Invocable<[K, V], boolean>) => {
+          try {
+            for (const [$k, $v] of $m) { if (!invokeRef($p, $k, $v)) $m.delete($k); }
+          } finally {
+            dropOwned($p);
+          }
+        })(_t0.value, (k, v) => invokeRef(cb, k, v)));
       } finally {
         _t0.drop();
       }
@@ -162,7 +168,19 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
         const _v = _t0.value.get(key);
         if (_v != null) {
           const v = _v;
-          (($xs) => { let $at = 0; for (let $i = 0; $i < $xs.length; $i++) { if (((h) => h !== value)($xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); } } $xs.length = $at; })(v);
+          ((<T,>($xs: T[], $p: Invocable<[T], boolean>) => {
+            let $at = 0;
+            let $i = 0;
+            try {
+              for (; $i < $xs.length; $i++) {
+                if (invokeRef($p, $xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); }
+              }
+            } finally {
+              for (; $i < $xs.length; $i++) $xs[$at++] = $xs[$i];
+              $xs.length = $at;
+              dropOwned($p);
+            }
+          })(v, (h) => h !== value));
         }
       }
     } finally {

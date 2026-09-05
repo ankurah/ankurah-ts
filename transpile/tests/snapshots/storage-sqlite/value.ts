@@ -47,7 +47,7 @@ export class SqliteValue extends Enum<SqliteValueV> {
     return this.match({
       Text: (v) => {
         const s = v._0;
-        return new rusqlite.types.Value('Text', { _0: s.clone() });
+        return new rusqlite.types.Value('Text', { _0: s });
       },
       Integer: (v) => {
         const i = v._0;

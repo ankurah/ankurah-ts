@@ -216,16 +216,26 @@ export class NodeApplier extends Struct {
     let readyChunks = ReadyChunks.new([...deltas].map((delta) => NodeApplier.applyDelta(node, fromPeerId, delta, retriever)));
     let allErrors = [];
     for (;;) {
-      const _v1 = await readyChunks.next();
-      if (!(_v1 != null)) {
+      const _v2 = await readyChunks.next();
+      if (!(_v2 != null)) {
         break;
       }
-      const results = _v1;
+      const results = _v2;
       let batch = [];
       for (const result of results) {
         if (result.isOk()) {
-          const none = result.unwrap();
+          const _v = result.unwrap();
+          _arm0: {
+            if (_v != null) {
+              const change = _v;
+              batch.push(change)
+              break _arm0;
+            }
+            {
+              const _v1 = _v;
 
+            }
+          }
         } else {
           const errorItem = result.unwrapErr();
           allErrors.push(errorItem);
@@ -245,7 +255,7 @@ export class NodeApplier extends Struct {
     const entityId = delta.entityId;
     const collection = delta.collection.clone();
     const result = await NodeApplier.applyDeltaInner(node, fromPeerId, delta, retriever);
-    return result.mapErr(new OwnedClosure([collection], (cause) => new ApplyErrorItem(entityId, collection, cause), undefined, true));
+    return result.mapErr(new OwnedClosure([collection], (cause: MutationError) => new ApplyErrorItem(entityId, collection, cause), undefined, true));
   }
 
   static async applyDeltaInner<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, delta: EntityDelta, retriever: R): Promise<Result<EntityChange | null, MutationError>> {
@@ -285,7 +295,7 @@ export class NodeApplier extends Struct {
               let _moved7 = false;
               const attestedEvents = [...events].map((f) => [delta.entityId, delta.collection.clone(), f]);
               try {
-                retriever.stageEvents(attestedEvents.clone());
+                retriever.stageEvents(attestedEvents.map((e) => e.clone()));
                 const _r8 = await node.deref().value.entities.getRetrieveOrCreate(retriever, delta.collection, delta.entityId);
                 if (_r8.isErr()) return Result.Err(MutationError.fromRetrievalError(_r8.unwrapErr()));
                 let _moved9 = false;
