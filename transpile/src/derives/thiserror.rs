@@ -197,7 +197,7 @@ fn from_impls(
             let method = crate::emit::disambiguate_trait_method(
                 "from",
                 "From",
-                std::slice::from_ref(&crate::name_map::map_type(&field.rust_ty)),
+                std::slice::from_ref(&crate::types::rust_source_path(&field.rust_ty)),
                 "",
                 self_id,
             );

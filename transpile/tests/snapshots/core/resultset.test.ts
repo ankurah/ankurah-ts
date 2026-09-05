@@ -41,11 +41,11 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   clone(): TestEntity {
-    return new TestEntity(this.id.clone(), this.collection.clone(), new Map(Array.from(this.properties.entries()).map(([k, v]) => [k, v])));
+    return new TestEntity(this.id.clone(), this.collection.clone(), this.properties.clone());
   }
 
   debug(): string {
-    return `TestEntity { id: ${this.id.debug()}, collection: ${this.collection.debug()}, properties: ${this.properties} }`;
+    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, properties: ${this.properties} }`;
   }
 }
 
@@ -54,11 +54,11 @@ describe('resultset unit tests', () => {
     const resultset = EntityResultSet.empty();
     try {
       let write = resultset.write();
-      const entity1 = TestEntity.new(1, new HashMap());
+      const entity1 = TestEntity.new(1, new HashMap<string, Value>());
       try {
-        const entity2 = TestEntity.new(2, new HashMap());
+        const entity2 = TestEntity.new(2, new HashMap<string, Value>());
         try {
-          const entity3 = TestEntity.new(3, new HashMap());
+          const entity3 = TestEntity.new(3, new HashMap<string, Value>());
           try {
             write.add(entity3.clone());
             write.add(entity1.clone());
@@ -198,15 +198,15 @@ describe('resultset unit tests', () => {
       (() => {
         let write = resultset.write();
         try {
-          const entity1 = TestEntity.new(1, new HashMap());
-          const entity2 = TestEntity.new(2, new HashMap());
+          const entity1 = TestEntity.new(1, new HashMap<string, Value>());
+          const entity2 = TestEntity.new(2, new HashMap<string, Value>());
           write.add(entity1);
           write.add(entity2);
           expect(write.iterEntities().length).toEqual(2);
         } finally {
           write.drop();
         }
-      })()
+      })();
       expect(resultset.len()).toEqual(2);
     } finally {
       resultset.drop();
@@ -271,7 +271,7 @@ describe('resultset unit tests', () => {
           Large: (v) => {
             throw new Error('16-byte key should use Small variant')
           },
-        })
+        });
         return exactly17.match({
           Large: (v) => {
             [];

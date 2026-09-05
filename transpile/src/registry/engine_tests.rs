@@ -207,8 +207,15 @@ fn a_projection_keeps_the_trait_it_projects_through() {
 fn arguments_that_are_not_types_are_refused_rather_than_dropped() {
     let c = Fixture::build(&[("lib.rs", "pub struct IVec<T> { pub v: T }")]);
 
-    let err = c.ty_in("lib.rs", "IVec<u8, 4>", &[]).unwrap_err();
-    assert!(err.message.contains("const generic"), "{}", err.message);
+    // A CONST generic argument is the exception: the port's spelling drops it
+    // — `IVec<usize, 8>` is `IVec<number>` — and a declaration's type
+    // parameters are the type ones alone, so refusing it refused the whole
+    // type and every field of it went untyped. core's `candidate_changes` had
+    // two, and `is_empty()` on a `HashMap` field came out `.length === 0`.
+    assert_eq!(
+        c.ty_in("lib.rs", "IVec<u8, 4>", &[]).unwrap(),
+        c.ty_in("lib.rs", "IVec<u8>", &[]).unwrap()
+    );
 
     let err = c.ty_in("lib.rs", "IVec<Item = u8>", &[]).unwrap_err();
     assert!(

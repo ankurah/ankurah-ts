@@ -92,3 +92,64 @@ fn the_receiver_is_the_functions_first_parameter() {
         emitted[0].text
     );
 }
+
+/// R8: a contested conversion is named by the RUST source type. Read through
+/// the TypeScript spelling, `i64`, `i32` and `f64` were `bigint`, `number` and
+/// `number`, so three impls looked like two and one was never emitted;
+/// `bincode::Error`, `anyhow::Error` and a crate `Error` all spelled `Error`,
+/// and two of the three bodies were lost.
+#[test]
+fn a_contested_conversion_is_named_by_its_rust_source() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub enum QV { S(String), I(i64), F(f64) }\n\
+         impl From<String> for QV { fn from(s: String) -> Self { QV::S(s) } }\n\
+         impl From<&str> for QV { fn from(s: &str) -> Self { QV::S(s.to_string()) } }\n\
+         impl From<i64> for QV { fn from(i: i64) -> Self { QV::I(i) } }\n\
+         impl From<i32> for QV { fn from(i: i32) -> Self { QV::I(i as i64) } }\n\
+         impl From<f64> for QV { fn from(x: f64) -> Self { QV::F(x) } }\n",
+    )]);
+    let ts = f.emitted("lib.rs");
+    for named in ["static fromI64(", "static fromI32(", "static fromF64("] {
+        assert!(ts.contains(named), "{named} is missing:\n{ts}");
+    }
+    // `str` is `String`'s borrowed form and the port writes both as `string`,
+    // so those two are one conversion — and one name, not two methods with one
+    // body.
+    assert_eq!(ts.matches("static fromString(").count(), 1, "{ts}");
+    assert!(!ts.contains("static fromStr("), "{ts}");
+    assert!(!ts.contains("static fromNumber("), "no name comes from the spelling:\n{ts}");
+}
+
+/// Two sources that share a leaf are told apart by the module in front of it.
+#[test]
+fn two_sources_sharing_a_leaf_keep_the_qualifier() {
+    let mut f = Fixture::build(&[
+        ("lib.rs", "pub mod first;\npub mod second;\npub struct Wrapped;\n\
+                    impl From<first::Error> for Wrapped { fn from(e: first::Error) -> Self { Wrapped } }\n\
+                    impl From<second::Error> for Wrapped { fn from(e: second::Error) -> Self { Wrapped } }\n"),
+        ("first.rs", "pub struct Error;\n"),
+        ("second.rs", "pub struct Error;\n"),
+    ]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("static fromFirstError("), "{ts}");
+    assert!(ts.contains("static fromSecondError("), "{ts}");
+    assert!(!ts.contains("static fromError("), "{ts}");
+}
+
+/// A1.5: the same decision names the module-level function an impl with no
+/// class of its own becomes. It used to compute a second name that did not see
+/// the contest, so an owned conversion and a borrowed one collapsed onto one
+/// symbol only one of them was emitted under.
+#[test]
+fn a_free_function_reads_the_same_naming() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Tag { pub n: u32 }\n\
+         impl From<Tag> for String { fn from(t: Tag) -> String { String::new() } }\n\
+         impl From<&Tag> for String { fn from(t: &Tag) -> String { String::new() } }\n",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("export function String_fromTag("), "{ts}");
+    assert!(ts.contains("export function String_fromRefTag("), "{ts}");
+}

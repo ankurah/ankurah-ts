@@ -21,7 +21,7 @@ pub fn translate(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     let takes = t.match_takes(match_expr);
     // Rust evaluates the subject once and each arm tests that one value. The
     // arms are tests here, so a subject that is not already a name is read into

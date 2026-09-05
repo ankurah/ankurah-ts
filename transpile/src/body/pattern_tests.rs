@@ -1,6 +1,7 @@
 //! What the pattern machinery writes: the tests a pattern asks and the names it
 //! takes out of the value.
 
+use crate::control_flow::sentinel_tests::inside_an_arrow;
 use crate::testing::Fixture;
 
 fn built(src: &str) -> Fixture {
@@ -100,13 +101,13 @@ fn a_question_mark_in_a_lifted_body_leaves_the_function() {
     );
     let ts = f.translated_method("lib.rs", "commit");
     assert!(
-        ts.contains("return { $jump: 'return', $value: Result.Err("),
+        inside_an_arrow(&ts, "return { $jump: 'return', $value: Result.Err("),
         "the `?` inside the arrow has to hand the exit back, not return from the arrow:\n{}",
         ts
     );
     assert!(
-        ts.contains("?.$jump === 'return') return"),
-        "and the statement holding the lifted value has to perform it:\n{}",
+        !inside_an_arrow(&ts, "?.$jump === 'return') return"),
+        "and the statement that performs it stands outside the arrow:\n{}",
         ts
     );
 }
@@ -122,11 +123,15 @@ fn a_return_in_a_lifted_block_leaves_the_function() {
     );
     let ts = f.translated_method("lib.rs", "pick");
     assert!(
-        ts.contains("return { $jump: 'return', $value: 7 }"),
-        "{}",
+        inside_an_arrow(&ts, "return { $jump: 'return', $value: 7 }"),
+        "the `return` is written inside the block's arrow:\n{}",
         ts
     );
-    assert!(ts.contains("?.$jump === 'return') return"), "{}", ts);
+    assert!(
+        !inside_an_arrow(&ts, "?.$jump === 'return') return"),
+        "and the test that performs it stands outside it:\n{}",
+        ts
+    );
 }
 
 /// An arm of a consuming match written as a STATEMENT is an arrow function too,
@@ -150,11 +155,15 @@ fn an_arm_of_a_statement_match_hands_its_exit_back() {
     );
     let ts = f.translated_method("lib.rs", "run");
     assert!(
-        ts.contains("return { $jump: 'return', $value: Result.Err("),
-        "{}",
+        inside_an_arrow(&ts, "return { $jump: 'return', $value: Result.Err("),
+        "the arm hands its exit back from inside its arrow:\n{}",
         ts
     );
-    assert!(ts.contains("?.$jump === 'return') return"), "{}", ts);
+    assert!(
+        !inside_an_arrow(&ts, "?.$jump === 'return') return"),
+        "and the statement after the match performs it:\n{}",
+        ts
+    );
 }
 
 /// A `?` inside a closure belongs to the closure and is not the enclosing
@@ -162,7 +171,7 @@ fn an_arm_of_a_statement_match_hands_its_exit_back() {
 /// always was.
 #[test]
 fn a_question_mark_inside_a_closure_is_not_the_functions_exit() {
-    use crate::match_expr::leaves_the_function;
+    use crate::control_flow::sentinel::leaves_the_function;
     let expr: syn::Expr = syn::parse_str("{ let f = |x: u32| -> Result<u32, ()> { g(x)? }; 1 }")
         .expect("parses");
     assert!(!leaves_the_function(&expr));

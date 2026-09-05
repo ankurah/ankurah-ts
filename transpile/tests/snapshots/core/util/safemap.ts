@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safemap.rs
-import { Struct, Result, RwLock, HashMap } from '@ankurah/base';
+import { Struct, Result, RwLock, invokeRef, HashMap, HashSet } from '@ankurah/base';
 
 export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Default & Debug> extends Struct {
   _0: RwLock<HashMap<K, V>>;
@@ -34,7 +34,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   retain(cb: (arg0: K, arg1: V) => boolean): void {
     const _t0 = this._0.write();
     try {
-      { for (const [_k, _v] of _t0.value) { if (!((k, v) => cb(k, v)(_k, _v))) _t0.value.delete(_k); } };
+      { for (const [_k, _v] of _t0.value) { if (!((k, v) => invokeRef(cb, k, v)(_k, _v))) _t0.value.delete(_k); } };
     } finally {
       _t0.drop();
     }
@@ -145,7 +145,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   push(key: K, value: H): void {
     const _t0 = this._0.write();
     try {
-      _t0.value.entry(key).orDefault().push(value);
+      _t0.value.entry(key).orDefault(() => []).push(value);
     } finally {
       _t0.drop();
     }
@@ -169,7 +169,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   setInsert(key: K, value: H): void {
     const _t0 = this._0.write();
     try {
-      _t0.value.entry(key).orDefault().add(value);
+      _t0.value.entry(key).orDefault(() => new HashSet()).add(value);
     } finally {
       _t0.drop();
     }
@@ -195,7 +195,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   }
 
   static default<K, V>(): SafeMap<K, V> {
-    return new SafeMap(new RwLock(new Map()));
+    return new SafeMap(new RwLock(new HashMap()));
   }
 }
 

@@ -125,7 +125,7 @@ impl<'a> BodyTranslator<'a> {
         let pat = Self::pat_static(&for_loop.pat);
         let sequence = self.expr(&for_loop.expr);
         let item = self.iteration_item(&for_loop.expr);
-        let sequence_ty = self.quietly(|| self.resolve_expr_type(&for_loop.expr)).ok();
+        let sequence_ty = self.quietly(|| self.iterated_type(&for_loop.expr));
         let form = match &self.types {
             Some(tc) => ownership::iteration::iterate(
                 &tc.borrow().probe(),
@@ -139,7 +139,9 @@ impl<'a> BodyTranslator<'a> {
             Iterate::Borrowed => Vec::new(),
             _ => self.claim_bindings(&crate::body::pattern_names(&for_loop.pat), &for_loop.body.stmts),
         };
-        let body = self.translate_block(&for_loop.body);
+        let body = crate::control_flow::sentinel::inside_a_loop(self, &for_loop.label, || {
+            self.translate_loop_block(&for_loop.body)
+        });
         drop(_bindings);
         let body = self.wrap_bindings(&owned, body);
         let label = ownership::iteration::label_of(&for_loop.label);

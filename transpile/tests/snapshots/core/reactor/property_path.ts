@@ -75,7 +75,7 @@ export class PropertyPath extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this.root), keyHash(this.subPath)].join('|');
+    return [keyHash(this.root), keyHash(this.subPath)].map((p) => p.length + ':' + p).join('');
   }
 
   compareTo(other: PropertyPath): number {

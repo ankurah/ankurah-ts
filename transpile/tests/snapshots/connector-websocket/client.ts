@@ -83,7 +83,7 @@ class ClientInner extends Drop {
         }
       })();
       if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-      (_m0 as any)
+      (_m0 as any);
       this.state.set(newState.clone());
       undefined /* action_info!(self , "state changed" , "{}" , & new_state) */;
       newState.match({
@@ -117,7 +117,7 @@ class ClientInner extends Drop {
             } finally {
               _t3.drop();
             }
-          })()
+          })();
           const _t4 = this.reconnectDelay.borrow();
           try {
             const nextDelay = (checkedAdd(_t4.value, 500n, 'u64')).min(MAX_RECONNECT_DELAY);
@@ -141,7 +141,7 @@ class ClientInner extends Drop {
             } finally {
               _t6.drop();
             }
-          })()
+          })();
           const _t7 = this.reconnectDelay.borrow();
           try {
             const nextDelay = (checkedAdd(_t7.value, 500n, 'u64')).min(MAX_RECONNECT_DELAY);
@@ -157,7 +157,7 @@ class ClientInner extends Drop {
             _t7.drop();
           }
         },
-      })
+      });
       return true;
     } finally {
       newState.drop();

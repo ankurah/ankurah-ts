@@ -19,7 +19,7 @@ export function Vec_iterable<T>(self: T[]): T[] {
 }
 
 export function Iterable_dispatch_iterable<T>(self: unknown): Iter {
-  if (self instanceof Set) return HashSet_iterable(self as any);
+  if (self instanceof HashSet) return HashSet_iterable(self as any);
   if (Array.isArray(self)) return Vec_iterable(self as any);
   return iterable(self as any);
 }

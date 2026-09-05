@@ -7,7 +7,7 @@ export { unsupported, UnsupportedShape } from './unsupported.ts';
 export { Struct } from './struct.ts';
 export { Enum } from './enum.ts';
 export { Result } from './result.ts';
-export { OwnedClosure } from './closure.ts';
+export { OwnedClosure, invoke, invokeRef, type Invocable } from './closure.ts';
 export { AnyhowError } from './anyhow.ts';
 export * as anyhow from './anyhow.ts';
 export { JsonError, jsonAll, jsonMap } from './serde_json.ts';
@@ -40,7 +40,7 @@ export { AsyncMutex, AsyncMutexGuard } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
-export { HashMap, HashSet, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
+export { HashMap, HashSet, MapEntry, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
 export {
   boolAnd,

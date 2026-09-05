@@ -90,7 +90,7 @@ export class DefaultContext extends Struct implements ContextData {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [].join('|');
+    return [].map((p) => p.length + ':' + p).join('');
   }
 
   clone(): DefaultContext {

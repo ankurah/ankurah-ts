@@ -53,7 +53,7 @@ export class Slot extends Struct {
       const _rname = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(v)))(_o['name']);
       if (_rname.isErr()) return Result.Err(_rname.unwrapErr());
       const name = _rname.unwrap();
-      const _rcount = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(v)))(_o['count']);
+      const _rcount = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u32'))))(v)))(_o['count']);
       if (_rcount.isErr()) return Result.Err(_rcount.unwrapErr());
       const count = _rcount.unwrap();
       return Result.Ok(new Slot(name, count));

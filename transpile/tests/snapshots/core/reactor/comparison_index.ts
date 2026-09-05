@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
-import { Struct, HashMap, HashSet } from '@ankurah/base';
+import { Struct, invoke, Invocable, HashMap, HashSet } from '@ankurah/base';
 import { Collatable, Collatable_dispatch_predecessorBytes, Collatable_dispatch_successorBytes, Collatable_dispatch_toBytes } from '../collation';
 import { ComparisonOperator } from '@ankurah/ankql';
 
@@ -21,24 +21,24 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
     return ComparisonIndex.default();
   }
 
-  forEntry<F, V>(value: V, op: ComparisonOperator, f: F): void {
+  forEntry<V>(value: V, op: ComparisonOperator, f: Invocable<[T[]], void>): void {
     try {
       return op.match({
         Equal: () => {
-          const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault();
-          f(entry);
+          const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+          invoke(f, entry);
         },
         NotEqual: () => {
-          const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault();
-          f(entry);
+          const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+          invoke(f, entry);
         },
         GreaterThan: () => {
           const entry = this.gt.entry(Collatable_dispatch_toBytes(value)).orDefault();
-          f(entry);
+          invoke(f, entry);
         },
         LessThan: () => {
           const entry = this.lt.entry(Collatable_dispatch_toBytes(value)).orDefault();
-          f(entry);
+          invoke(f, entry);
         },
         GreaterThanOrEqual: () => {
           {
@@ -46,10 +46,10 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
             if (_v != null) {
               const pred = _v;
               const entry = this.gt.entry(pred).orDefault();
-              f(entry);
+              invoke(f, entry);
             } else {
             const entry = this.gt.entry([]).orDefault();
-            f(entry);
+            invoke(f, entry);
           }
           }
         },
@@ -59,7 +59,7 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
             if (_v1 != null) {
               const succ = _v1;
               const entry = this.lt.entry(succ).orDefault();
-              f(entry);
+              invoke(f, entry);
             }
           }
         },
@@ -122,7 +122,7 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
   }
 
   static default<T>(): ComparisonIndex<T> {
-    return new ComparisonIndex(new HashMap(), new HashMap(), new HashMap(), new HashMap());
+    return new ComparisonIndex(new HashMap<Uint8Array, T[]>(), new HashMap<Uint8Array, T[]>(), new HashMap<Uint8Array, T[]>(), new HashMap<Uint8Array, T[]>());
   }
 
   debug(): string {

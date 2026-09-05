@@ -24,7 +24,7 @@ export class Transaction extends Drop {
   }
 
   static new(dyncontext: Arc<TContext>): Transaction {
-    return new Transaction(dyncontext, TransactionId.new(), AppendOnlyVec.new(), Arc.new(AtomicBool.new(true)), new RwLock(new HashSet()));
+    return new Transaction(dyncontext, TransactionId.new(), AppendOnlyVec.new(), Arc.new(true), new RwLock(new HashSet<EntityId>()));
   }
 
   addEntity(entity: Entity): Entity {

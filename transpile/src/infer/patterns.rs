@@ -205,7 +205,7 @@ impl TypeContext<'_> {
 
     /// The type a projection `<ty as Trait>::name` normalises to, or nothing
     /// when no impl in the table supplies it.
-    fn project_through(&self, ty: &Ty, trait_path: &str, name: &str) -> Option<Ty> {
+    pub(crate) fn project_through(&self, ty: &Ty, trait_path: &str, name: &str) -> Option<Ty> {
         let trait_id = self.registry.system_type(trait_path)?;
         self.project_with(
             ty,

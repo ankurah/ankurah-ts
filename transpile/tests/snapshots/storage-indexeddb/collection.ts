@@ -133,13 +133,13 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         return await SendWrapper.new((async () => {
           undefined /* action_debug!(self , "set_state {}" , "{}" , & self . collection_id) */;
           const _r0 = Result_JsValue_require(dbConnection.transactionWithStrAndMode('entities', Readwrite), 'create transaction');
-          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+          if (_r0.isErr()) return Result.Err(MutationError.fromAnyhowError(_r0.unwrapErr()));
           const transaction = _r0.unwrap();
           const _r1 = Result_JsValue_require(transaction.objectStore('entities'), 'get object store');
-          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          if (_r1.isErr()) return Result.Err(MutationError.fromAnyhowError(_r1.unwrapErr()));
           const store = _r1.unwrap();
           const _r2 = Result_JsValue_require(store.get(state.payload.entityId.toString()), 'get old entity');
-          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          if (_r2.isErr()) return Result.Err(MutationError.fromAnyhowError(_r2.unwrapErr()));
           const oldRequest = _r2.unwrap();
           const foo = await cbFuture(oldRequest, 'success', 'error');
           try {
@@ -147,7 +147,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
             const _ = _r3.unwrap();
             const _r4 = Result_JsValue_require(oldRequest.result(), 'get old entity result');
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            if (_r4.isErr()) return Result.Err(MutationError.fromAnyhowError(_r4.unwrapErr()));
             const oldEntity = _r4.unwrap();
             if (!((oldEntity === undefined)) && !((oldEntity === null))) {
               const oldEntityObj = Object.new(oldEntity);
@@ -188,7 +188,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
               if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
               _r11.drop();
               const _r12 = Result_JsValue_require(store.putWithKey(entity, state.payload.entityId.toString()), 'put entity in store');
-              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+              if (_r12.isErr()) return Result.Err(MutationError.fromAnyhowError(_r12.unwrapErr()));
               const request = _r12.unwrap();
               const _t13 = await cbFuture(request, 'success', 'error');
               try {
@@ -226,13 +226,13 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
     const dbConnection = await this.db.getConnection();
     return await SendWrapper.new((async () => {
       const _r0 = Result_JsValue_require(dbConnection.transactionWithStr('entities'), 'create transaction');
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r0.unwrapErr()));
       const transaction = _r0.unwrap();
       const _r1 = Result_JsValue_require(transaction.objectStore('entities'), 'get object store');
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
       const store = _r1.unwrap();
       const _r2 = Result_JsValue_require(store.get(id.toString()), 'get entity');
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      if (_r2.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r2.unwrapErr()));
       const request = _r2.unwrap();
       const _t3 = await cbFuture(request, 'success', 'error');
       try {
@@ -243,7 +243,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         _t3.drop();
       }
       const _r5 = Result_JsValue_require(request.result(), 'get result');
-      if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+      if (_r5.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r5.unwrapErr()));
       const result = _r5.unwrap();
       if ((result === undefined) || (result === null)) {
         return Result.Err(new RetrievalError('EntityNotFound', { _0: id }));
@@ -296,13 +296,13 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                     const limit = selection.limit;
                     return SendWrapper.new((async () => {
                       const _r2 = Result_JsValue_require(dbConnection.transactionWithStr('entities'), 'create transaction');
-                      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+                      if (_r2.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r2.unwrapErr()));
                       const transaction = _r2.unwrap();
                       const _r3 = Result_JsValue_require(transaction.objectStore('entities'), 'get object store');
-                      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+                      if (_r3.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r3.unwrapErr()));
                       const store = _r3.unwrap();
                       const _r4 = Result_JsValue_require(store.index(indexSpec.nameWith('', '__')), 'get index');
-                      if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+                      if (_r4.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r4.unwrapErr()));
                       const index = _r4.unwrap();
                       const _r5 = planBoundsToIdbRange(bounds, scanDirection).mapErr((e) => new RetrievalError('StorageError', { _0: `bounds conversion: ${e}` }));
                       if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
@@ -353,10 +353,10 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
       const dbConnection = await this.db.getConnection();
       return await SendWrapper.new((async () => {
         const _r0 = Result_JsValue_require(dbConnection.transactionWithStrAndMode('events', webSys.IdbTransactionMode.Readwrite), 'create transaction');
-        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        if (_r0.isErr()) return Result.Err(MutationError.fromAnyhowError(_r0.unwrapErr()));
         const transaction = _r0.unwrap();
         const _r1 = Result_JsValue_require(transaction.objectStore('events'), 'get object store');
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        if (_r1.isErr()) return Result.Err(MutationError.fromAnyhowError(_r1.unwrapErr()));
         const store = _r1.unwrap();
         const eventObj = Object.new(jsSys.Object.new());
         try {
@@ -385,7 +385,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const _t8 = payload.id();
             try {
               const _r9 = Result_JsValue_require(store.putWithKey(eventObj, (_t8)), 'put event in store');
-              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              if (_r9.isErr()) return Result.Err(MutationError.fromAnyhowError(_r9.unwrapErr()));
               const request = _r9.unwrap();
               const _t10 = await cbFuture(request, 'success', 'error');
               try {
@@ -428,10 +428,10 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
       const dbConnection = await this.db.getConnection();
       return await SendWrapper.new((async () => {
         const _r1 = Result_JsValue_require(dbConnection.transactionWithStr('events'), 'create transaction');
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
         const transaction = _r1.unwrap();
         const _r2 = Result_JsValue_require(transaction.objectStore('events'), 'get object store');
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        if (_r2.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r2.unwrapErr()));
         const store = _r2.unwrap();
         let events = [];
         _moved0 = true;
@@ -442,7 +442,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const eventId = _seq11[_at12++];
             try {
               const _r3 = Result_JsValue_require(store.get(eventId.toBase64()), 'get event');
-              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              if (_r3.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r3.unwrapErr()));
               const request = _r3.unwrap();
               const _t4 = await cbFuture(request, 'success', 'error');
               try {
@@ -453,7 +453,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 _t4.drop();
               }
               const _r6 = Result_JsValue_require(request.result(), 'get result');
-              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+              if (_r6.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r6.unwrapErr()));
               const result = _r6.unwrap();
               if ((result === undefined) || (result === null)) {
                 continue;
@@ -491,19 +491,19 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
     const dbConnection = await this.db.getConnection();
     return await SendWrapper.new((async () => {
       const _r0 = Result_JsValue_require(dbConnection.transactionWithStr('events'), 'create transaction');
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r0.unwrapErr()));
       const transaction = _r0.unwrap();
       const _r1 = Result_JsValue_require(transaction.objectStore('events'), 'get object store');
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
       const store = _r1.unwrap();
       const _r2 = Result_JsValue_require(store.index('by_entity_id'), 'get entity_id index');
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      if (_r2.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r2.unwrapErr()));
       const index = _r2.unwrap();
       const _r3 = Result_JsValue_require(webSys.IdbKeyRange.only(id), 'create key range');
-      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      if (_r3.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r3.unwrapErr()));
       const keyRange = _r3.unwrap();
       const _r4 = Result_JsValue_require(index.openCursorWithRange(keyRange), 'open cursor');
-      if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+      if (_r4.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r4.unwrapErr()));
       const request = _r4.unwrap();
       let events = [];
       let stream = cbStream(request, 'success', 'error');
@@ -621,51 +621,29 @@ class IdbRecord extends Struct implements Filterable, HasEntityId {
 
 function extractSortProperties(entityObj: Object, orderBy: OrderByComponents): HashMap<string, Value> {
   let map = new HashMap();
-  const _seq0 = orderBy.presort;
-  let _at1 = 0;
-  try {
-    while (_at1 < _seq0.length) {
-      const item = _seq0[_at1++];
-      try {
-        const propertyName = item.path.property();
-        {
-          const _v = entityObj.getOpt(propertyName);
-          if (_v.isOk()) {
-            const _v1 = _v.unwrap();
-            map.insert(propertyName, idbVal.intoValue());
-          } else {
-          _v.drop();
-        }
-        }
-      } finally {
-        item.drop();
-      }
+  for (const item of orderBy.presort) {
+    const propertyName = item.path.property();
+    {
+      const _v = entityObj.getOpt(propertyName);
+      if (_v.isOk()) {
+        const _v1 = _v.unwrap();
+        map.insert(propertyName, idbVal.intoValue());
+      } else {
+      _v.drop();
     }
-  } finally {
-    dropOwned(_seq0.slice(_at1));
+    }
   }
-  const _seq2 = orderBy.spill;
-  let _at3 = 0;
-  try {
-    while (_at3 < _seq2.length) {
-      const item = _seq2[_at3++];
-      try {
-        const propertyName = item.path.property();
-        {
-          const _v2 = entityObj.getOpt(propertyName);
-          if (_v2.isOk()) {
-            const _v3 = _v2.unwrap();
-            map.insert(propertyName, idbVal.intoValue());
-          } else {
-          _v2.drop();
-        }
-        }
-      } finally {
-        item.drop();
-      }
+  for (const item of orderBy.spill) {
+    const propertyName = item.path.property();
+    {
+      const _v2 = entityObj.getOpt(propertyName);
+      if (_v2.isOk()) {
+        const _v3 = _v2.unwrap();
+        map.insert(propertyName, idbVal.intoValue());
+      } else {
+      _v2.drop();
     }
-  } finally {
-    dropOwned(_seq2.slice(_at3));
+    }
   }
   return map;
 }

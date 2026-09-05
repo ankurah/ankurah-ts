@@ -46,6 +46,8 @@ const OWNERSHIP_REPORTS: [&str; 3] = ["BUG:", "OwnershipFatal", "the drop cascad
 /// four seconds — and finite, which is the point: emitted code that loops
 /// forever is a defect the run has to report rather than a harness that hangs.
 const GOLDEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// The type check reads every golden at once, so it gets longer than one driver.
+const TYPECHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Run a command, killing it if it outlives `limit`. `None` means it was
 /// killed, which is a failure the caller reports in its own words.
@@ -53,26 +55,44 @@ fn run_with_timeout(
     command: &mut Command,
     limit: std::time::Duration,
     what: &str,
-) -> Option<std::process::Output> {
+) -> Result<std::process::Output, Vec<u8>> {
     use std::io::Read as _;
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| panic!("cannot run {what}: {e}"));
+
+    // The pipes are drained WHILE the child runs, not after it exits. A pipe
+    // holds about 64KB; a driver that writes more than that blocks on the write
+    // and never exits, and reading only after exit turned a chatty test into
+    // what looked like an infinite loop. Two threads, so neither pipe can wedge
+    // the other.
+    let mut out_pipe = child.stdout.take().expect("stdout was piped");
+    let mut err_pipe = child.stderr.take().expect("stderr was piped");
+    let reading_out = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = out_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    let reading_err = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = err_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    let drained = |out: std::thread::JoinHandle<Vec<u8>>, err: std::thread::JoinHandle<Vec<u8>>| {
+        let mut text = out.join().unwrap_or_default();
+        text.extend(err.join().unwrap_or_default());
+        text
+    };
+
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                if let Some(mut pipe) = child.stdout.take() {
-                    let _ = pipe.read_to_end(&mut stdout);
-                }
-                if let Some(mut pipe) = child.stderr.take() {
-                    let _ = pipe.read_to_end(&mut stderr);
-                }
-                return Some(std::process::Output { status, stdout, stderr });
+                let stdout = reading_out.join().unwrap_or_default();
+                let stderr = reading_err.join().unwrap_or_default();
+                return Ok(std::process::Output { status, stdout, stderr });
             }
             Ok(None) if started.elapsed() < limit => {
                 std::thread::sleep(std::time::Duration::from_millis(25));
@@ -80,7 +100,11 @@ fn run_with_timeout(
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                // Killing the child closes the pipes, so the readers finish and
+                // whatever it managed to say comes back with the failure. A
+                // timeout with no output at all says nothing about where it
+                // stopped.
+                return Err(drained(reading_out, reading_err));
             }
             Err(e) => panic!("cannot wait for {what}: {e}"),
         }
@@ -248,13 +272,27 @@ fn goldens_typecheck() {
     link_base(root.path(), &base, "typecheck");
     write_tsconfig(root.path(), &tsc);
 
-    let output = Command::new(&tsc)
-        .arg("--noEmit")
-        .arg("--project")
-        .arg(".")
-        .current_dir(root.path())
-        .output()
-        .unwrap_or_else(|e| panic!("cannot run {}: {e}", tsc.display()));
+    // Under the same timeout as the drivers: a type checker that does not
+    // finish is a failing check, not a wedged harness. D13: the limit used to
+    // cover only `bun test`, so a hang anywhere else stopped the run with no
+    // message at all.
+    let output = match run_with_timeout(
+        Command::new(&tsc)
+            .arg("--noEmit")
+            .arg("--project")
+            .arg(".")
+            .current_dir(root.path()),
+        TYPECHECK_TIMEOUT,
+        "the golden type check",
+    ) {
+        Ok(output) => output,
+        Err(said) => panic!(
+            "the golden type check did not finish within {}s and was killed.\n\nwhat it had \
+             said before it was killed:\n{}",
+            TYPECHECK_TIMEOUT.as_secs(),
+            String::from_utf8_lossy(&said)
+        ),
+    };
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
 
@@ -348,13 +386,20 @@ fn run_one(goldens: &Path, name: &str, base: &Path) -> Option<String> {
         GOLDEN_TIMEOUT,
         &format!("golden {name}"),
     );
-    let Some(output) = finished else {
-        return Some(format!(
-            "the driver did not finish within {}s and was killed. Emitted code that loops \
-             forever is a defect: a `let Some(x) = e else {{ break }}` whose `break` the \
-             emitter dropped turned `loop {{ .. }}` into a program with no exit.",
-            GOLDEN_TIMEOUT.as_secs()
-        ));
+    let output = match finished {
+        Ok(output) => output,
+        Err(said) => {
+            // The golden's NAME, because this message is read in a list of
+            // them: "the driver did not finish" said nothing about which.
+            return Some(format!(
+                "── {name} ──\nthe driver did not finish within {}s and was killed. Emitted \
+                 code that loops forever is a defect: a `let Some(x) = e else {{ break }}` \
+                 whose `break` the emitter dropped turned `loop {{ .. }}` into a program with \
+                 no exit.\n\nwhat it had said before it was killed:\n{}\n",
+                GOLDEN_TIMEOUT.as_secs(),
+                String::from_utf8_lossy(&said)
+            ));
+        }
     };
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));

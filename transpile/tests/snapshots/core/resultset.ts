@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/resultset.rs
-import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, dropOwned, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, checkedAdd, HashMap } from '@ankurah/base';
 import { Broadcast, BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from './entity';
 import { View } from './indexel';
@@ -24,19 +24,19 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
       order.push(new EntityEntry(entity, null, false));
     }
     const state = new State(order, index, null, null, false);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), AtomicBool.new(loaded), Broadcast.new())));
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), loaded, Broadcast.new())));
   }
 
   static empty<E>(): EntityResultSet<E> {
     const state = new State([], new HashMap(), null, null, false);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), AtomicBool.new(false), Broadcast.new())));
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
   }
 
   static single<E>(entity: E): EntityResultSet<E> {
     const entry = new EntityEntry(entity.clone(), null, false);
     let state = new State([entry], new HashMap(), null, null, false);
     state.index.insert(entity.id(), 0);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), AtomicBool.new(false), Broadcast.new())));
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
   }
 
   write(): ResultSetWrite<E> {
@@ -155,31 +155,20 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
         const _a1 = keySpec.clone();
         dropOwned(st.value.keySpec);
         st.value.keySpec = _a1;
-        const _seq3 = st.value.order;
-        let _at4 = 0;
-        try {
-          while (_at4 < _seq3.length) {
-            const entry = _seq3[_at4++];
-            try {
-              const _a2 = (() => {
-                {
-                  const _v = keySpec;
-                  if (_v != null) {
-                    const ks = _v;
-                    return ResultSetWrite.computeSortKey(entry.entity, ks);
-                  } else {
-                  return null;
-                }
-                }
-              })();
-              dropOwned(entry.sortKey);
-              entry.sortKey = _a2;
-            } finally {
-              entry.drop();
+        for (const entry of st.value.order) {
+          const _a2 = (() => {
+            {
+              const _v = keySpec;
+              if (_v != null) {
+                const ks = _v;
+                return ResultSetWrite.computeSortKey(entry.entity, ks);
+              } else {
+              return null;
             }
-          }
-        } finally {
-          dropOwned(_seq3.slice(_at4));
+            }
+          })();
+          dropOwned(entry.sortKey);
+          entry.sortKey = _a2;
         }
         st.value.order.sort((a, b) => {
           const _v1 = [a.sortKey, b.sortKey];
@@ -525,31 +514,20 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
 
   markAllDirty(): void {
     const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
-    const _seq0 = guard.value.order;
-    let _at1 = 0;
-    try {
-      while (_at1 < _seq0.length) {
-        const entry = _seq0[_at1++];
-        try {
-          entry.dirty = true;
-        } finally {
-          entry.drop();
-        }
-      }
-    } finally {
-      dropOwned(_seq0.slice(_at1));
+    for (const entry of guard.value.order) {
+      entry.dirty = true;
     }
     this.changed = true;
   }
 
-  retainDirty<F>(shouldRetain: F): EntityId[] {
+  retainDirty(shouldRetain: Invocable<[E], boolean>): EntityId[] {
     const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     let removedIds = [];
     let i = 0;
     const wasAtLimit = guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!);
     while (i < guard.value.order.length) {
       if (guard.value.order[i].dirty) {
-        const shouldKeep = shouldRetain(guard.value.order[i].entity);
+        const shouldKeep = invokeRef(shouldRetain, guard.value.order[i].entity);
         if (shouldKeep) {
           const keySpec = guard.value.keySpec.clone();
           {
@@ -640,28 +618,17 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
 
   static computeSortKey<E>(entity: E, keySpec: KeySpec): IVec {
     let values = [];
-    const _seq0 = keySpec.keyparts;
-    let _at1 = 0;
-    try {
-      while (_at1 < _seq0.length) {
-        const keypart = _seq0[_at1++];
-        try {
-          const value = AbstractEntity.value(entity, keypart.column);
-          {
-            const _v = value;
-            if (_v != null) {
-              const v = _v;
-              values.push(v);
-            } else {
-            return IVec.fromSlice([]);
-          }
-          }
-        } finally {
-          keypart.drop();
-        }
+    for (const keypart of keySpec.keyparts) {
+      const value = AbstractEntity.value(entity, keypart.column);
+      {
+        const _v = value;
+        if (_v != null) {
+          const v = _v;
+          values.push(v);
+        } else {
+        return IVec.fromSlice([]);
       }
-    } finally {
-      dropOwned(_seq0.slice(_at1));
+      }
     }
     const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOrDefault();
     return IVec.from(encoded);
@@ -770,7 +737,7 @@ export class EntityResultSetKeyIterator extends Struct {
   }
 
   debug(): string {
-    return `EntityResultSetKeyIterator { keys: ${`[${Array.from(this.keys).map((e) => e.debug()).join(', ')}]`}, index: ${String(this.index)} }`;
+    return `EntityResultSetKeyIterator { keys: ${this.keys}, index: ${String(this.index)} }`;
   }
 }
 

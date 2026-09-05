@@ -38,7 +38,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
   }
 
   static new(): LWWBackend {
-    return new LWWBackend(new RwLock(BTreeMap.default()), new Mutex(new HashMap()));
+    return new LWWBackend(new RwLock(new HashMap<string, ValueEntry>()), new Mutex(new HashMap<string, Broadcast<void>>()));
   }
 
   set(propertyName: PropertyName, value: Value | null): void {
@@ -85,7 +85,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
     const values = this.values.read();
     const cloned = (values.value).clone();
     values.drop();
-    return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap())));
+    return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
   }
 
   properties(): PropertyName[] {
@@ -128,10 +128,10 @@ export class LWWBackend extends Struct implements PropertyBackend {
 
   static fromStateBuffer(stateBuffer: Uint8Array): Result<LWWBackend, RetrievalError> {
     const _r0 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<PropertyName, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(PropertyName.decode(_r), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    if (_r0.isErr()) return Result.Err(RetrievalError.fromBincodeError(_r0.unwrapErr()));
     const rawMap = _r0.unwrap();
     const map = rawMap.intoIter().map(([k, v]) => [k, new ValueEntry(v, true)]);
-    return Result.Ok(new LWWBackend(new RwLock(map), new Mutex(new HashMap())));
+    return Result.Ok(new LWWBackend(new RwLock(map), new Mutex(new HashMap<string, Broadcast<void>>())));
   }
 
   toOperations(): Result<Operation[] | null, MutationError> {
@@ -148,11 +148,11 @@ export class LWWBackend extends Struct implements PropertyBackend {
         return Result.Ok(null);
       }
       const _r0 = (() => { const _w = new BincodeWriter(); changedValues.encode(_w); return _w.finish(); })();
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
       const _t1 = new LWWDiff(LWW_DIFF_VERSION, _r0.unwrap());
       try {
         const _r2 = (() => { const _w = new BincodeWriter(); _t1.encode(_w); return _w.finish(); })();
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        if (_r2.isErr()) return Result.Err(MutationError.fromBincodeError(_r2.unwrapErr()));
         return Result.Ok([new Operation(_r2.unwrap())]);
       } finally {
         _t1.drop();
@@ -166,33 +166,31 @@ export class LWWBackend extends Struct implements PropertyBackend {
     let changedFields = [];
     for (const operation of operations) {
       const _r0 = (() => { const _r = new BincodeReader(operation.diff); return _r; })();
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
       const { version, data } = _r0.unwrap();
       const _v = version;
       if (_v === 1) {
-        {
-          const _r1 = (() => { const _r = new BincodeReader(data); return (() => { const _m = new HashMap<string, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(_r.readString(), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
-          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-          let _moved2 = false;
-          const changes = _r1.unwrap();
+        const _r1 = (() => { const _r = new BincodeReader(data); return (() => { const _m = new HashMap<string, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(_r.readString(), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
+        if (_r1.isErr()) return Result.Err(MutationError.fromBincodeError(_r1.unwrapErr()));
+        let _moved2 = false;
+        const changes = _r1.unwrap();
+        try {
+          let values = this.values.write();
           try {
-            let values = this.values.write();
-            try {
-              _moved2 = true;
-              for (const [propertyName, newValue] of changes) {
-                values.value.set(propertyName.clone(), new ValueEntry(newValue, true));
-                changedFields.push(propertyName);
-              }
-            } finally {
-              values.drop();
+            _moved2 = true;
+            for (const [propertyName, newValue] of changes) {
+              values.value.set(propertyName.clone(), new ValueEntry(newValue, true));
+              changedFields.push(propertyName);
             }
           } finally {
-            if (!_moved2) dropOwned(changes);
+            values.drop();
           }
+        } finally {
+          if (!_moved2) dropOwned(changes);
         }
       } else {
         const version = _v;
-        return Result.Err(new MutationError('UpdateFailed', { _0: AnyhowError.msg(`Unknown LWW operation version: ${version}`) }));
+        return Result.Err(new MutationError('UpdateFailed', { _0: AnyhowError.msg(`Unknown LWW operation version: ${version}`) }))
       }
     }
     const fieldBroadcasts = this.fieldBroadcasts.lock();
@@ -266,13 +264,13 @@ export class LWWDiff extends Struct {
       if (!('version' in _o)) {
         return Result.Err(JsonError.custom('missing field `version`'));
       }
-      const _rversion = ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(_o['version']);
+      const _rversion = ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u8'))))(_o['version']);
       if (_rversion.isErr()) return Result.Err(_rversion.unwrapErr());
       const version = _rversion.unwrap();
       if (!('data' in _o)) {
         return Result.Err(JsonError.custom('missing field `data`'));
       }
-      const _rdata = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['data']);
+      const _rdata = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['data']);
       if (_rdata.isErr()) return Result.Err(_rdata.unwrapErr());
       const data = _rdata.unwrap();
       return Result.Ok(new LWWDiff(version, data));

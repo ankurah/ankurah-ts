@@ -97,7 +97,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
           listener_1(currentValue);
         }
       }
-    })));
+    }, undefined, true)));
     return SubscriptionGuard.new(subscription);
   }
 

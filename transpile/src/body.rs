@@ -227,6 +227,25 @@ pub struct BodyTranslator<'a> {
     /// one — `return break` does not even parse. The caller reads the sentinel
     /// and performs the jump itself.
     pub(crate) jump_as_value: std::cell::Cell<bool>,
+    /// The loops written INSIDE the body currently being lifted, innermost
+    /// last, each as the label it carries.
+    ///
+    /// A `break` or a `continue` naming one of these is an ordinary JavaScript
+    /// jump: the loop is in the same arrow the jump is written in. Only a jump
+    /// that reaches PAST every one of them has to travel out as a sentinel.
+    /// With this stack missing, ankql's `generate_expr_sql` handed the
+    /// `continue` that skips a NUL byte back to the arm's caller and left the
+    /// String arm on the first NUL, writing an unterminated SQL literal.
+    pub(crate) loops_in_lift: std::cell::RefCell<Vec<Option<String>>>,
+    /// The loops being written, innermost last, each with the name a `break`
+    /// carrying a value assigns to and the label it breaks — where the loop
+    /// stands in VALUE position and so has one.
+    ///
+    /// `let v = loop { .. break n; };` is an expression in Rust and a statement
+    /// in TypeScript: written as it stood, `const v = while (true) { .. }` does
+    /// not parse. The loop is hoisted above the statement that wanted its value
+    /// and each `break n` assigns to the name before it leaves.
+    pub(crate) loop_frames: std::cell::RefCell<Vec<LoopFrame>>,
     /// Whether anything in this body actually named the accumulator. A `Debug`
     /// written with `f.debug_struct(..)` and a `Display` that hands the writing
     /// to a closure both write nothing of their own, and declaring an
@@ -240,6 +259,16 @@ pub struct BodyTranslator<'a> {
     /// takes its receiver as an ordinary first parameter, and there `self` is
     /// that parameter's name.
     pub self_name: &'a str,
+}
+
+/// One loop being written, and what a `break` carrying a value does in it.
+#[derive(Clone)]
+pub struct LoopFrame {
+    /// The label the loop carries, where the source wrote one.
+    pub label: Option<String>,
+    /// The name a `break <value>` assigns to, and the label it then leaves —
+    /// only for a loop whose own value the code around it wanted.
+    pub value: Option<(String, String)>,
 }
 
 impl<'a> BodyTranslator<'a> {
@@ -257,6 +286,8 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             jump_as_value: std::cell::Cell::new(false),
+            loops_in_lift: std::cell::RefCell::new(Vec::new()),
+            loop_frames: std::cell::RefCell::new(Vec::new()),
             boxed: std::cell::RefCell::new(Vec::new()),
             cell_candidates: std::cell::RefCell::new(Vec::new()),
             cell_params: std::cell::RefCell::new(Vec::new()),
@@ -279,6 +310,8 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             jump_as_value: std::cell::Cell::new(false),
+            loops_in_lift: std::cell::RefCell::new(Vec::new()),
+            loop_frames: std::cell::RefCell::new(Vec::new()),
             boxed: std::cell::RefCell::new(Vec::new()),
             cell_candidates: std::cell::RefCell::new(Vec::new()),
             cell_params: std::cell::RefCell::new(Vec::new()),
@@ -577,6 +610,13 @@ impl<'a> BodyTranslator<'a> {
                                 _ => unreachable!("names_a_cell_param answered for a path"),
                             });
                         }
+                        // D11: a `&mut T` whose `T` the port writes as a VALUE
+                        // is a cell, and only a LOCAL is held in one.
+                        if let Some(hole) =
+                            self.cell_argument_gap(a, want.get(index).and_then(|t| t.as_ref()))
+                        {
+                            return hole;
+                        }
                         self.expecting(a, want.get(index).and_then(|t| t.as_ref()), || {
                             self.moved_value(a)
                         })
@@ -594,6 +634,16 @@ impl<'a> BodyTranslator<'a> {
                     let once = self.own.once_closure_locals.borrow().iter().any(|n| *n == func);
                     let method = if once { "callOnce" } else { "call" };
                     return format!("{}.{}({})", func, method, args.join(", "));
+                }
+                // R10: a parameter bound by `Fn`, `FnMut` or `FnOnce` may be
+                // handed a plain function or the `OwnedClosure` the emitter
+                // writes when the closure captured values with drop glue, and
+                // the callee cannot see which. `invoke` is the one place that
+                // tells them apart.
+                if let Some(helper) = self.bound_closure_helper(&call.func) {
+                    let mut through = vec![func.clone()];
+                    through.extend(args.iter().cloned());
+                    return format!("{}({})", helper, through.join(", "));
                 }
                 let path = match &*call.func {
                     syn::Expr::Path(path) => Some(&path.path),
@@ -621,20 +671,48 @@ impl<'a> BodyTranslator<'a> {
                 if is_assign_op(&bin.op) {
                     if let syn::Expr::Unary(unary) = &*bin.left {
                         if matches!(unary.op, syn::UnOp::Deref(_)) {
-                            let place = self.deref_place(unary);
+                            let place = self.deref_place_read_once(unary);
                             let op = translate_binop(&bin.op);
-                            return format!("{} {} {}", place, op, self.expr(&bin.right));
+                            // R7 reaches through the cell too. `*n += 1` on a
+                            // `&mut u32` is Rust arithmetic on a `u32`, and
+                            // writing `n.value += 1` skipped the overflow check
+                            // the same statement gets when the place is a local.
+                            let width = self
+                                .quietly(|| self.resolve_expr_type(&bin.left))
+                                .ok()
+                                .and_then(|ty| match ty.peel_refs() {
+                                    crate::ty::Ty::Prim(prim) if prim.is_integer() => Some(*prim),
+                                    _ => None,
+                                });
+                            let want = width.map(crate::ty::Ty::Prim);
+                            let right = self
+                                .expecting(&bin.right, want.as_ref(), || self.expr_value(&bin.right));
+                            if let (Some(prim), Some(helper)) =
+                                (width, crate::operators::primitives::checked_helper(op))
+                            {
+                                return format!(
+                                    "{place} = {helper}({place}, {right}, '{width}')",
+                                    place = place,
+                                    helper = helper,
+                                    right = right,
+                                    width = crate::operators::primitives::width_name(prim)
+                                );
+                            }
+                            return format!("{} {} {}", place, op, right);
                         }
                     }
                 }
+                // An operand is a VALUE position: an `if`, a `match`, a block
+                // or a `loop` written there is a statement in TypeScript, and
+                // `total + if (c) { .. }` does not parse.
                 let left = self.expecting(&bin.left, shift_expectation(&bin.op, expected.as_ref()), || {
-                    self.expr(&bin.left)
+                    self.expr_value(&bin.left)
                 });
                 // `&&` and `||` evaluate their right operand only if the left
                 // one allows it, so anything that operand took to evaluate
                 // itself belongs inside the branch the short circuit guards.
                 if matches!(bin.op, syn::BinOp::And(_) | syn::BinOp::Or(_)) {
-                    let (right, lifted) = self.with_own_hoists(|| self.expr(&bin.right));
+                    let (right, lifted) = self.with_own_hoists(|| self.expr_value(&bin.right));
                     let right = self.short_circuit_operand(&bin.right, right, lifted);
                     return format!("{} {} {}", left, translate_binop(&bin.op), right);
                 }
@@ -657,7 +735,7 @@ impl<'a> BodyTranslator<'a> {
                     self.quietly(|| self.resolve_expr_type(&bin.left)).ok()
                 };
                 let right =
-                    self.expecting(&bin.right, want.as_ref(), || self.expr(&bin.right));
+                    self.expecting(&bin.right, want.as_ref(), || self.expr_value(&bin.right));
                 // What the operator resolves to: the impl's method where the
                 // operands are not primitives, and the JavaScript operator with
                 // whatever correction its arithmetic needs where they are.
@@ -668,7 +746,28 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Unary(unary) => {
-                let e = self.expr(&unary.expr);
+                // `-1i64` is one literal in Rust and two tokens here, and the
+                // width belongs to the LITERAL: without the expectation reaching
+                // it, `const MIN: i64 = -9007199254740991;` came out with no `n`
+                // suffix, so the value was a `number` where a `bigint` was
+                // declared. The same forwarding is what makes `x / -1` resolve
+                // its operand under the operator's primitive.
+                //
+                // Only a primitive expectation travels: `-duration` on a type
+                // with an `impl Neg` is a call, and its operand is not the
+                // Output type.
+                let want = match &expected {
+                    Some(ty @ crate::ty::Ty::Prim(_))
+                        if matches!(unary.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) =>
+                    {
+                        Some(ty.clone())
+                    }
+                    _ => None,
+                };
+                let e = match &want {
+                    Some(ty) => self.expecting(&unary.expr, Some(ty), || self.expr(&unary.expr)),
+                    None => self.expr(&unary.expr),
+                };
                 match &unary.op {
                     syn::UnOp::Not(_) => {
                         // Rust's `!` is the bitwise complement on an integer
@@ -759,7 +858,9 @@ impl<'a> BodyTranslator<'a> {
                 // instead, and the statement that reads the lifted value
                 // performs the real return.
                 if self.jump_as_value.get() {
-                    return return_sentinel(value.as_deref().unwrap_or("undefined"));
+                    return crate::control_flow::sentinel::return_marker(
+                        value.as_deref().unwrap_or("undefined"),
+                    );
                 }
                 match value {
                     Some(value) => format!("return {}", value),
@@ -784,7 +885,12 @@ impl<'a> BodyTranslator<'a> {
                 // where the test should be and left the binding undeclared.
                 let label = ownership::iteration::label_of(&while_loop.label);
                 if let syn::Expr::Let(let_expr) = &*while_loop.cond {
-                    return self.while_let(let_expr, &while_loop.body, &label);
+                    return self.while_let(
+                        let_expr,
+                        &while_loop.body,
+                        &label,
+                        &while_loop.label,
+                    );
                 }
                 // Rust evaluates the condition afresh each turn and drops
                 // what it produced before the body runs. Where the condition
@@ -792,7 +898,11 @@ impl<'a> BodyTranslator<'a> {
                 // in the `while` header evaluated it once and held whatever it
                 // took for the life of the loop.
                 let (cond, lifted) = self.with_own_hoists(|| self.expr(&while_loop.cond));
-                let body = self.translate_block(&while_loop.body);
+                let body = crate::control_flow::sentinel::inside_a_loop(
+                    self,
+                    &while_loop.label,
+                    || self.translate_loop_block(&while_loop.body),
+                );
                 if lifted.is_empty() {
                     return format!("{}while ({}) {{\n{}}}", label, cond, indent(&body));
                 }
@@ -809,7 +919,11 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Loop(loop_expr) => {
-                let body = self.translate_block(&loop_expr.body);
+                let body = crate::control_flow::sentinel::inside_a_loop(
+                    self,
+                    &loop_expr.label,
+                    || self.translate_loop_block(&loop_expr.body),
+                );
                 format!(
                     "{}while (true) {{\n{}}}",
                     ownership::iteration::label_of(&loop_expr.label),
@@ -821,8 +935,20 @@ impl<'a> BodyTranslator<'a> {
             // `continue 'outer`. A bare `break` leaves the innermost loop, which
             // is a different program wherever the source named an outer one.
             syn::Expr::Break(brk) => {
-                if self.jump_as_value.get() {
-                    return jump_sentinel("break", &brk.label);
+                if crate::control_flow::sentinel::jump_leaves_the_lift(self, &brk.label) {
+                    return crate::control_flow::sentinel::jump_marker("break", &brk.label);
+                }
+                // `break n` in a loop whose value the code around it wanted:
+                // the value is what the loop produces, so it is assigned to the
+                // name that stands for it and then the loop is left. Written as
+                // a comment beside a bare `break`, the value was discarded.
+                if let Some(value) = &brk.expr {
+                    if let Some((held, label)) =
+                        crate::control_flow::sentinel::value_loop_for(self, &brk.label)
+                    {
+                        let written = self.expr_value(value);
+                        return format!("{} = {};\nbreak {}", held, written, label);
+                    }
                 }
                 let target = ownership::iteration::target_of(&brk.label);
                 if let Some(expr) = &brk.expr {
@@ -833,8 +959,8 @@ impl<'a> BodyTranslator<'a> {
             }
 
             syn::Expr::Continue(cont) => {
-                if self.jump_as_value.get() {
-                    return jump_sentinel("continue", &cont.label);
+                if crate::control_flow::sentinel::jump_leaves_the_lift(self, &cont.label) {
+                    return crate::control_flow::sentinel::jump_marker("continue", &cont.label);
                 }
                 format!("continue{}", ownership::iteration::target_of(&cont.label))
             }
@@ -1073,41 +1199,20 @@ impl<'a> BodyTranslator<'a> {
     /// the value the other arms produced. `core/src/reactor/fetch_gap.ts` was
     /// one of the four emitted files a JavaScript engine refused to load.
     fn value_through_a_jump(&self, expr: &syn::Expr) -> String {
-        let previous = self.jump_as_value.replace(true);
-        let body = control_flow::translate_expr_in_return_position(expr, self);
-        self.jump_as_value.set(previous);
+        let (body, _) = control_flow::sentinel::lifting(self, || {
+            control_flow::translate_expr_in_return_position(expr, self)
+        });
         let awaits = control_flow::awaiting::awaits(expr);
         let held = self.hoist_name(iife("()", &format!("{}\n", body), "", awaits));
-        let mut tests = String::new();
-        // The function's own exit comes first: a `?` inside the lifted body
-        // left with an error, and nothing below may read that error as if it
-        // were the expression's value.
-        if crate::match_expr::leaves_the_function(expr) {
-            tests.push_str(&format!(
-                "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
-                held = held
-            ));
-        }
-        for kind in crate::match_expr::jumps_out_of(expr) {
-            let (word, label) = match kind.split_once('#') {
-                Some((word, label)) => (
-                    word.to_string(),
-                    format!(" && ({} as any)?.$label === '{}'", held, label),
-                ),
-                None => (kind.clone(), String::new()),
-            };
-            let target = match kind.split_once('#') {
-                Some((_, label)) => format!(" {}", label),
-                None => String::new(),
-            };
-            tests.push_str(&format!(
-                "if (({held} as any)?.$jump === '{word}'{label}) {word}{target};\n",
-                held = held,
-                word = word,
-                label = label,
-                target = target
-            ));
-        }
+        let jumps = crate::control_flow::sentinel::jumps_out_of(expr);
+        let tests = control_flow::sentinel::reader(
+            self,
+            &held,
+            control_flow::sentinel::Handed {
+                returns: crate::control_flow::sentinel::leaves_the_function(expr),
+                jumps: &jumps,
+            },
+        );
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: tests,
             owned: None,
@@ -1117,14 +1222,47 @@ impl<'a> BodyTranslator<'a> {
         format!("({} as any)", held)
     }
 
+    /// `loop { .. break n; }` standing where a value is wanted.
+    ///
+    /// A hoisted name, then the loop under a label of its own, with every
+    /// `break` carrying a value assigning to the name before it leaves. The
+    /// expression itself is the name. Written as it stood, `const v = while
+    /// (true) { .. }` is a statement where an expression has to be, which a
+    /// JavaScript engine refuses to parse.
+    fn loop_as_value(&self, loop_expr: &syn::ExprLoop) -> String {
+        let held = self.fresh_hoist("_lv");
+        let label = match &loop_expr.label {
+            // A labelled loop keeps its own name, so a `break 'outer n` written
+            // inside it still names the loop the source named.
+            Some(label) => label.name.ident.to_string(),
+            None => self.fresh_hoist("_at"),
+        };
+        let body = crate::control_flow::sentinel::inside_a_loop_for(
+            self,
+            &loop_expr.label,
+            Some((held.clone(), label.clone())),
+            || self.translate_loop_block(&loop_expr.body),
+        );
+        self.own.prelude.borrow_mut().push(ownership::Hoist {
+            declaration: format!(
+                "let {held};\n{label}: while (true) {{\n{body}}}\n",
+                held = held,
+                label = label,
+                body = indent(&body)
+            ),
+            owned: None,
+        });
+        held
+    }
+
     fn block_as_value(&self, block: &syn::ExprBlock) -> String {
         // A `?`, a `return`, a `break` or a `continue` written in the block
         // leaves something the arrow this block becomes is not: the function,
         // or the loop around it. The exit travels out as a value the statement
         // below performs; see `value_through_a_jump`.
         let whole = syn::Expr::Block(block.clone());
-        if crate::match_expr::leaves_the_function(&whole)
-            || crate::match_expr::jumps_out_of_a_loop(&whole)
+        if crate::control_flow::sentinel::leaves_the_function(&whole)
+            || crate::control_flow::sentinel::jumps_out_of_a_loop(&whole)
         {
             return self.value_through_a_jump(&whole);
         }
@@ -1204,6 +1342,26 @@ impl<'a> BodyTranslator<'a> {
                     return ternary;
                 }
             }
+            // #14: `let v = loop { .. break n; };`. The loop is a statement in
+            // TypeScript, so it is hoisted above the statement that wanted its
+            // value and each `break n` assigns to the name standing for it.
+            syn::Expr::Loop(loop_expr) => return self.loop_as_value(loop_expr),
+            // P1: `let n = { if ok { 1 } else { 2 } };`. A block of ONE
+            // statement is written as that statement, and the statement is
+            // asked for as an ordinary expression — so an `if` came out as an
+            // `if`, where TypeScript needs a ternary or an arrow. The block is
+            // transparent, so what the position wants of it, it wants of the
+            // tail.
+            syn::Expr::Block(block) if block.label.is_none() => {
+                return match single_block_expr(&block.block) {
+                    Some(tail) => self.expecting(tail, self.expectation_for(expr).as_ref(), || {
+                        self.expr_value(tail)
+                    }),
+                    // A block of several statements is its own scope, and
+                    // `block_as_value` is what threads a name it shadows.
+                    None => self.expr(expr),
+                };
+            }
             // A `match` is a value in Rust too. Where the port writes one as
             // the runtime's `match`, that is already an expression; where it
             // writes an `if`/`else` chain — an `Option` or a `Result` match —
@@ -1213,7 +1371,7 @@ impl<'a> BodyTranslator<'a> {
                 // Ask before writing: an arm that leaves the function has to
                 // leave THIS function, and every arm of the runtime's match is
                 // an arrow. The written form is what the answer changes.
-                if crate::match_expr::leaves_the_function(expr) {
+                if crate::control_flow::sentinel::leaves_the_function(expr) {
                     return self.value_through_a_jump(expr);
                 }
                 let written = self.expr(expr);
@@ -1230,8 +1388,8 @@ impl<'a> BodyTranslator<'a> {
         // returns from the wrapper instead of from the function. Either way
         // the jump is handed back as a value, and the statement that wanted
         // the value performs it before reading one.
-        if crate::match_expr::jumps_out_of_a_loop(expr)
-            || crate::match_expr::leaves_the_function(expr)
+        if crate::control_flow::sentinel::jumps_out_of_a_loop(expr)
+            || crate::control_flow::sentinel::leaves_the_function(expr)
         {
             return self.value_through_a_jump(expr);
         }
@@ -1323,19 +1481,22 @@ impl<'a> BodyTranslator<'a> {
         let_expr: &syn::ExprLet,
         body: &syn::Block,
         label: &str,
+        written_label: &Option<syn::Label>,
     ) -> String {
         // The scrutinee is read afresh every turn, in value position: it is the
         // turn's own value, and an `if` written there is a run of statements
         // that `const _v = …` cannot hold. Whatever it lifted belongs inside
         // the loop with it, because it is taken again on the next turn.
         let (scrutinee, lifted) = self.with_own_hoists(|| self.expr_value(&let_expr.expr));
-        let ty = self.scrutinee_type(&let_expr.expr);
+        let ty = self.borrowed_scrutinee_type(&let_expr.expr);
         let _bindings = self.enter_pattern(&let_expr.pat, ty.as_ref());
         // The pattern binds afresh each turn, and Rust drops what it bound at
         // the end of that turn — so the release goes inside the loop, not after
         // it.
         let owned = self.claim_bindings(&bound_names(&let_expr.pat), &body.stmts);
-        let translated = self.translate_block(body);
+        let translated = crate::control_flow::sentinel::inside_a_loop(self, written_label, || {
+            self.translate_loop_block(body)
+        });
         drop(_bindings);
 
         let subject = self.fresh_temp();
@@ -1413,6 +1574,76 @@ impl<'a> BodyTranslator<'a> {
     /// accessor there emitted `counter.lock() += 1`, which names no place at
     /// all. So the target keeps `.value` as its default, and says that it
     /// assumed it.
+    /// The same place, read ONCE.
+    ///
+    /// `*counts.entry(k).or_insert(0) += 1` is one place in Rust and two
+    /// mentions here — `p = f(p, 1)` — so a place with a side effect performed
+    /// it twice: the entry was created twice and the key cloned twice, and the
+    /// second clone leaked. The receiver is named first where it is not already
+    /// a place, and the accessor hangs off the name.
+    /// A `&mut <place>` handed to a parameter the port holds in a CELL, where
+    /// the place is not a local.
+    ///
+    /// C1 turns `&mut u32` into a `BorrowMut<number>` so the callee's write
+    /// reaches the caller, and only a local can be held in one: `&mut c.n`
+    /// hands the callee a copy of the number, and the write goes nowhere.
+    /// `ownership.md` said this was reported; it was not, and the emitted call
+    /// passed a bare `number` to a `BorrowMut<number>` parameter.
+    ///
+    /// R12: the site says what it could not translate and stops there, rather
+    /// than running an update nobody sees.
+    fn cell_argument_gap(&self, arg: &syn::Expr, want: Option<&crate::ty::Ty>) -> Option<String> {
+        let crate::ty::Ty::Ref { mutable: true, inner } = want? else {
+            return None;
+        };
+        let spelled = match &self.types {
+            Some(tc) => crate::name_map::map_ty(tc.borrow().registry, inner),
+            None => return None,
+        };
+        if !crate::is_value_spelling(&spelled) {
+            return None;
+        }
+        let syn::Expr::Reference(reference) = arg else { return None };
+        if reference.mutability.is_none() {
+            return None;
+        }
+        // A single name is the case C1 covers: the local is held in a cell and
+        // the cell is what goes over.
+        if matches!(&*reference.expr, syn::Expr::Path(path) if path.path.segments.len() == 1) {
+            return None;
+        }
+        Some(self.hole(
+            syn::spanned::Spanned::span(arg),
+            format!(
+                "`&mut {}` borrows a place that is not a local, and a `&mut` to a value \
+                 JavaScript copies is passed as a cell — which only a local can be held in, so \
+                 the callee's write would reach nobody",
+                spelled
+            ),
+        ))
+    }
+
+    pub(crate) fn deref_place_read_once(&self, unary: &syn::ExprUnary) -> String {
+        if crate::body::is_place(&unary.expr) || self.names_a_cell(&unary.expr) {
+            return self.deref_place(unary);
+        }
+        // `hoist_produced` first, because a temporary with drop glue — a mutex
+        // guard — owes a release and a bare `const` would not give it one. Only
+        // where it declines does the place get a plain name of its own.
+        let written = self.expr(&unary.expr);
+        let held = self.hoist_produced(&unary.expr, written.clone());
+        let inner = if held == written { self.hoist_name(written) } else { held };
+        let Some(tc) = &self.types else {
+            self.fallback(syn::spanned::Spanned::span(&*unary.expr), ASSUMED_ACCESSOR);
+            return format!("{}.value", inner);
+        };
+        let accessor = tc.borrow().deref_accessor_of(&unary.expr);
+        match self.or_fallback(accessor, ASSUMED_ACCESSOR) {
+            Some(accessor) => format!("{}.{}", inner, accessor),
+            None => format!("{}.value", inner),
+        }
+    }
+
     pub(crate) fn deref_place(&self, unary: &syn::ExprUnary) -> String {
         // C1: a name the body holds in a cell is ALREADY read through it —
         // `path_expr` writes `found.value` — so `*found` is that place and not
@@ -1448,6 +1679,16 @@ impl<'a> BodyTranslator<'a> {
             syn::Expr::Block(block) => single_block_expr(&block.block)?,
             _ => return None,
         };
+        // P2: a `break`, a `continue`, a `return` or a `?` is a statement, and
+        // a ternary branch is not one. `total += if x == 0 { break } else { x }`
+        // came out with a `break` inside the ternary, which a JavaScript engine
+        // refuses to parse at all. The lifted form is what carries a jump.
+        let whole = syn::Expr::If(if_expr.clone());
+        if crate::control_flow::sentinel::jumps_out_of_a_loop(&whole)
+            || crate::control_flow::sentinel::leaves_the_function(&whole)
+        {
+            return None;
+        }
         // A branch that hands a flagged local away needs a statement to set the
         // flag in, and a ternary branch is not one. The `if` form is.
         if !self.flag_sets_for(then_val).is_empty() || !self.flag_sets_for(else_val).is_empty() {
@@ -1507,7 +1748,13 @@ mod writing;
 pub(crate) use writing::*;
 /// What a pattern asks of a value, and what it takes out of it.
 mod patterns;
+/// What a module-level `const` and a `static` are, and what naming one means.
+#[cfg(test)]
+mod const_tests;
 /// What the pattern machinery writes, tested apart from the rest of the body.
 #[cfg(test)]
 mod pattern_tests;
+/// Names the emitter chooses, and the places it cannot choose one at all.
+#[cfg(test)]
+mod shadow_tests;
 

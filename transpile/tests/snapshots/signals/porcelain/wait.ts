@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/signals/src/porcelain/wait.rs
-import { Arc, OwnedClosure, tokio } from '@ankurah/base';
+import { Arc, OwnedClosure, invokeRef, Invocable, tokio } from '@ankurah/base';
 
 export interface Wait<T> {
   waitValue(targetValue: T): Promise<void>;
-  waitFor(predicate: F): Promise<Output>;
+  waitFor(predicate: Invocable<[T], R>): Promise<Output>;
 }
 
 export interface WaitResult {
@@ -52,9 +52,7 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
           break;
         }
       } else {
-        {
-          break;
-        }
+        break;
       }
     }
   } finally {
@@ -62,11 +60,11 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
   }
 }
 
-export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, predicate: F): Promise<Output> {
+export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, predicate: Invocable<[T], R>): Promise<Output> {
   const _t0 = self.getReadcell();
   try {
     {
-      const _v = _t0.with((value) => predicate(value).result());
+      const _v = _t0.with((value) => invokeRef(predicate, value).result());
       if (_v != null) {
         const result = _v;
         return result;
@@ -81,24 +79,22 @@ export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, 
   })));
   try {
     while (true) {
-      const _t1 = self.getReadcell();
-      try {
-        const _v1 = await rx.recv();
-        if (_v1 != null) {
+      const _v1 = await rx.recv();
+      if (_v1 != null) {
+        const _t1 = self.getReadcell();
+        try {
           {
-            const _v2 = _t1.with((value) => predicate(value).result());
+            const _v2 = _t1.with((value) => invokeRef(predicate, value).result());
             if (_v2 != null) {
               const result = _v2;
               return result;
             }
           }
-        } else {
-          {
-            break;
-          }
+        } finally {
+          _t1.drop();
         }
-      } finally {
-        _t1.drop();
+      } else {
+        break;
       }
     }
     throw new Error('Subscription channel closed unexpectedly - this should not be possible');

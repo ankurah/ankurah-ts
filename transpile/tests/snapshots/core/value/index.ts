@@ -456,7 +456,7 @@ export class Value extends Enum<ValueV> {
       F64: (v) => `F64(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Bool: (v) => `Bool(${String(v._0)})`,
       String: (v) => `String(${JSON.stringify(v._0)})`,
-      EntityId: (v) => `EntityId(${v._0.debug()})`,
+      EntityId: (v) => `EntityId(${v._0})`,
       Object: (v) => `Object(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
       Binary: (v) => `Binary(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
       Json: (v) => `Json(${v._0})`,
@@ -811,5 +811,50 @@ export function Literal_fromValue(value: Value): Literal {
   } finally {
     value.drop();
   }
+}
+
+export function Literal_fromRefValue(value: Value): Literal {
+  return value.match({
+    I16: (v) => {
+      const i = v._0;
+      return new Literal('I16', { _0: i });
+    },
+    I32: (v) => {
+      const i = v._0;
+      return new Literal('I32', { _0: i });
+    },
+    I64: (v) => {
+      const i = v._0;
+      return new Literal('I64', { _0: i });
+    },
+    F64: (v) => {
+      const f = v._0;
+      return new Literal('F64', { _0: f });
+    },
+    Bool: (v) => {
+      const b = v._0;
+      return new Literal('Bool', { _0: b });
+    },
+    String: (v) => {
+      const s = v._0;
+      return new Literal('String', { _0: s.clone() });
+    },
+    EntityId: (v) => {
+      const entityId = v._0;
+      return new Literal('EntityId', { _0: entityId.toUlid() });
+    },
+    Object: (v) => {
+      const bytes = v._0;
+      return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+    },
+    Binary: (v) => {
+      const bytes = v._0;
+      return new Literal('String', { _0: String.fromUtf8Lossy(bytes).toString() });
+    },
+    Json: (v) => {
+      const json = v._0;
+      return new Literal('Json', { _0: structuredClone(json) });
+    },
+  });
 }
 

@@ -6,9 +6,18 @@
 use super::MethodTranslation;
 
 /// Translate HashSet/BTreeSet static/associated function calls
-pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
     match func {
-        "HashSet::new" | "HashSet.new" | "BTreeSet::new" | "BTreeSet.new" => Some("new HashSet()".to_string()),
+        "HashSet::new" | "HashSet.new" | "BTreeSet::new" | "BTreeSet.new"
+        | "HashSet::with_capacity" | "HashSet.withCapacity" => Some("new HashSet()".to_string()),
+        "HashSet::default" | "HashSet.default" | "BTreeSet::default" | "BTreeSet.default" => {
+            Some("new HashSet()".to_string())
+        }
+        "HashSet::from" | "HashSet.from" | "BTreeSet::from" | "BTreeSet.from"
+            if args.len() == 1 =>
+        {
+            Some(format!("HashSet.from({})", args[0]))
+        }
         _ => None,
     }
 }

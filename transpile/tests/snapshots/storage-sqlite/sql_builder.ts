@@ -297,18 +297,14 @@ export class SqlBuilder extends Struct {
       const _v = selection.orderBy;
       if (_v != null) {
         const orderByItems = _v;
-        try {
-          this.pushSql(' ORDER BY ');
-          for (const [i, orderBy] of [...orderByItems].entries()) {
-            if (i > 0) {
-              this.pushSql(', ');
-            }
-            const _r1 = this.orderByItem(orderBy);
-            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-            _r1.drop();
+        this.pushSql(' ORDER BY ');
+        for (const [i, orderBy] of [...orderByItems].entries()) {
+          if (i > 0) {
+            this.pushSql(', ');
           }
-        } finally {
-          dropOwned(orderByItems);
+          const _r1 = this.orderByItem(orderBy);
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          _r1.drop();
         }
       }
     }
@@ -341,7 +337,7 @@ export class SqlBuilder extends Struct {
       Desc: () => {
         this.pushSql(' DESC');
       },
-    })
+    });
     return Result.Ok([]);
   }
 

@@ -37,7 +37,11 @@
 import { DropGuard } from './drop.ts';
 import { dropContainer } from './guard.ts';
 import { dropOwned, isCopyLike } from '../object.ts';
+import { Table, cloned, type Entry } from './hash_key.ts';
 import { fatalSelfAssignment } from '../drop_registry.ts';
+export { keyHash, keysEqual, type Hashable } from './hash_key.ts';
+import { BorrowMut } from './borrow.ts';
+import { invoke, type Invocable } from '../closure.ts';
 
 /**
  * What `#[derive(Hash, PartialEq, Eq)]` gives a type, in the spelling this map
@@ -48,143 +52,6 @@ import { fatalSelfAssignment } from '../drop_registry.ts';
  * are `equals` MUST return the same `hash()` — Rust's own `Hash`/`Eq` contract,
  * and the same thing goes wrong if it is broken: the table keeps two entries
  * for one key.
- */
-export interface Hashable {
-  hash(): string;
-  equals(other: never): boolean;
-}
-
-/** One entry. A plain record: it is the table's, and nothing else names it. */
-interface Entry<K, V> {
-  key: K;
-  value: V;
-}
-
-/** Where a lookup landed, and the bucket label it landed under. */
-interface Found<K, V> {
-  hash: string;
-  bucket: Entry<K, V>[];
-  at: number;
-}
-
-function isSequence(value: object): value is ArrayLike<unknown> {
-  return Array.isArray(value) || ArrayBuffer.isView(value);
-}
-
-/**
- * The bucket label for a key. Distinct types are tagged apart, so `1`, `"1"`
- * and `1n` do not share a bucket — not that sharing one would be wrong, only
- * slower.
- */
-export function keyHash(key: unknown): string {
-  switch (typeof key) {
-    case 'string': return `s:${key}`;
-    // String(-0) is "0", so -0 and 0 land together, which is what a JS Map does
-    // and what Rust's integer keys mean. Rust has no f64 key: f64 is not Hash.
-    case 'number': return `n:${key}`;
-    case 'bigint': return `i:${key}`;
-    case 'boolean': return `b:${key}`;
-    case 'undefined': return 'u:';
-    default: break;
-  }
-  if (key === null) return 'z:';
-  const obj = key as object;
-  if (isSequence(obj)) {
-    const parts: string[] = [];
-    for (let at = 0; at < obj.length; at++) parts.push(keyHash(obj[at]));
-    return `[${parts.join(',')}]`;
-  }
-  const own = (obj as Partial<Hashable>).hash;
-  if (typeof own === 'function') return `h:${String(own.call(obj))}`;
-  throw new Error(
-    `BUG: ${obj.constructor?.name ?? '(anonymous)'} was used as a HashMap or HashSet key,\n` +
-    `and it declares no hash(). Rust would have needed a Hash impl to compile the\n` +
-    `map at all. A ported type gets hash() and equals() from #[derive(Hash, Eq)];\n` +
-    `keying it by identity instead is exactly the bug this map exists to prevent.`,
-  );
-}
-
-/**
- * Are two keys the same key? `equals` where the type has one, and otherwise
- * SameValueZero — a JS `Map`'s rule, under which `NaN` is its own key and `-0`
- * and `0` are one.
- */
-export function keysEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a !== a && b !== b) return true; // NaN
-  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
-  if (isSequence(a) && isSequence(b)) {
-    if (a.length !== b.length) return false;
-    for (let at = 0; at < a.length; at++) {
-      if (!keysEqual(a[at], b[at])) return false;
-    }
-    return true;
-  }
-  const own = (a as Partial<Hashable>).equals;
-  if (typeof own === 'function') return own.call(a, b as never) === true;
-  return false;
-}
-
-/**
- * The buckets, and nothing else. It owns nothing, releases nothing and is not
- * leak-tracked: `HashMap` and `HashSet` each hold one, and each of them is the
- * registered value with the label and the liveness checks. Keeping the
- * bookkeeping here is what lets the set be a table of its own rather than a map
- * wrapped in a set, which would register one leak twice.
- */
-class Table<K, V> {
-  readonly #buckets = new Map<string, Entry<K, V>[]>();
-  #size = 0;
-
-  get size(): number { return this.#size; }
-
-  find(key: K): Found<K, V> | null {
-    const hash = keyHash(key);
-    const bucket = this.#buckets.get(hash);
-    if (bucket === undefined) return null;
-    for (let at = 0; at < bucket.length; at++) {
-      if (keysEqual((bucket[at] as Entry<K, V>).key, key)) return { hash, bucket, at };
-    }
-    return null;
-  }
-
-  /** Store a key the caller has established is absent. */
-  add(key: K, value: V): void {
-    const hash = keyHash(key);
-    const bucket = this.#buckets.get(hash);
-    if (bucket === undefined) this.#buckets.set(hash, [{ key, value }]);
-    else bucket.push({ key, value });
-    this.#size++;
-  }
-
-  /** Unhook an entry a lookup found, and hand it over. Releases nothing. */
-  take(found: Found<K, V>): Entry<K, V> {
-    const [entry] = found.bucket.splice(found.at, 1) as [Entry<K, V>];
-    if (found.bucket.length === 0) this.#buckets.delete(found.hash);
-    this.#size--;
-    return entry;
-  }
-
-  /** Every entry, in bucket order, as a snapshot — so a loop may delete. */
-  all(): Entry<K, V>[] {
-    const entries: Entry<K, V>[] = [];
-    for (const bucket of this.#buckets.values()) entries.push(...bucket);
-    return entries;
-  }
-
-  /** Forget every entry. Releases nothing: the caller does that first. */
-  reset(): void {
-    this.#buckets.clear();
-    this.#size = 0;
-  }
-}
-
-/**
- * `std::collections::HashMap<K, V>`.
- *
- * A generic container rather than a ported Rust type, so it is leak-tracked
- * through a `DropGuard` the way `Mutex` and `RwLock` are, and does not extend
- * `AkObject`.
  */
 export class HashMap<K, V> {
   readonly #table = new Table<K, V>();
@@ -305,6 +172,65 @@ export class HashMap<K, V> {
     return this.#table.size;
   }
 
+  /**
+   * TS-only: write through a `&mut V` this map handed out.
+   *
+   * `*map.entry(k).or_insert(0) += 1` writes the VALUE and leaves the key
+   * alone; going back through `set` handed the map the key it is already
+   * storing, which is a self-assignment and a fatal. `$`-namespaced because it
+   * is the runtime's own seam and no Rust field name can collide with one.
+   */
+  $writeSlot(key: K, value: V): void {
+    this.#guard.assertNotDropped();
+    const found = this.#table.find(key);
+    if (found === null) {
+      throw new Error('BUG: a slot was written through for a key the map no longer has');
+    }
+    const entry = found.bucket[found.at] as Entry<K, V>;
+    if (entry.value === value) return;
+    // Rust's `*slot = v` drops what was there.
+    dropOwned(entry.value);
+    entry.value = value;
+  }
+
+  /**
+   * `#[derive(Clone)]` on a type holding one: a NEW map with a clone of every
+   * key and every value, so the two maps own separate values.
+   *
+   * A shallow copy handed both maps one set of values, and the second drop of
+   * the pair released each of them twice.
+   */
+  clone(): HashMap<K, V> {
+    this.#guard.assertNotDropped();
+    const copy = new HashMap<K, V>(null, this.#label);
+    for (const entry of this.#table.all()) {
+      copy.set(cloned(entry.key), cloned(entry.value));
+    }
+    return copy;
+  }
+
+  /**
+   * `HashMap::from([(k, v), ..])`, and what `collect()` into one becomes.
+   *
+   * The emitter wrote this call before anything declared it, so every
+   * `HashMap::from` in the corpus named a static that does not exist.
+   */
+  static from<K, V>(entries: Iterable<readonly [K, V]>): HashMap<K, V> {
+    return new HashMap<K, V>(entries);
+  }
+
+  /**
+   * `map.entry(k)` — the one place in Rust's map API that takes the key BEFORE
+   * deciding whether it needs it.
+   *
+   * The entry owns the key it was handed, as Rust's does: an occupied entry
+   * releases it, because the map keeps the key it already has.
+   */
+  entry(key: K): MapEntry<K, V> {
+    this.#guard.assertNotDropped();
+    return new MapEntry(this, key);
+  }
+
   // ── Iteration. Every one of these borrows: Rust's `iter()` yields `(&K, &V)`
   //    and the map is still the owner, so nothing an iterator hands out may be
   //    dropped by whoever received it. Each takes a snapshot first, so a loop
@@ -351,6 +277,94 @@ export class HashMap<K, V> {
  * with the value half unused. It holds its own table rather than a `HashMap`,
  * so that a forgotten set is one registered value and one leak report.
  */
+/**
+ * What `HashMap::entry` hands back: a key the map may or may not need, and the
+ * three ways Rust says what to do when it does not have one.
+ *
+ * Each of them CONSUMES the entry, so each releases the key where the map keeps
+ * the one it already has — and releases the value, or the closure, it did not
+ * need. Rust's `or_insert(v)` evaluates `v` eagerly and drops it on the occupied
+ * path; `or_insert_with(f)` does not call `f` at all there, and `f` is dropped
+ * unused.
+ */
+export class MapEntry<K, V> {
+  readonly #map: HashMap<K, V>;
+  readonly #key: K;
+
+  constructor(map: HashMap<K, V>, key: K) {
+    this.#map = map;
+    this.#key = key;
+  }
+
+  /** Is there already a value under this key? */
+  get occupied(): boolean {
+    return this.#map.has(this.#key);
+  }
+
+  /** `or_insert(v)`: the value there, or `v` put there. */
+  orInsert(value: V): BorrowMut<V> {
+    if (this.#map.has(this.#key)) {
+      dropOwned(this.#key);
+      dropOwned(value);
+    } else {
+      dropOwned(this.#map.insert(this.#key, value));
+    }
+    return new Slot(this.#map, this.#key);
+  }
+
+  /** `or_insert_with(f)`: `f` is called only where there is nothing there. */
+  orInsertWith(make: Invocable<[], V>): BorrowMut<V> {
+    if (this.#map.has(this.#key)) {
+      dropOwned(this.#key);
+      // Rust consumes `f` whether or not it calls it, and a closure that owns
+      // captures has to be released here or they leak.
+      dropOwned(make);
+    } else {
+      dropOwned(this.#map.insert(this.#key, invoke(make)));
+    }
+    return new Slot(this.#map, this.#key);
+  }
+
+  /**
+   * `or_default()`: the same, with the thunk standing in for `V: Default`.
+   *
+   * Rust reads the default off the type; the port has no such thing for an
+   * arbitrary `V`, so the caller supplies it and the emitter writes the
+   * `default()` of the value type there.
+   */
+  orDefault(make: Invocable<[], V>): BorrowMut<V> {
+    return this.orInsertWith(make);
+  }
+}
+
+/**
+ * A `&mut V` into a map: reading it reads the map, and writing it writes the
+ * map — which is what makes `*counts.entry(k).or_insert(0) += 1` count.
+ *
+ * A plain `BorrowMut` holds a COPY, so the increment landed on the copy and the
+ * map never changed.
+ */
+class Slot<K, V> extends BorrowMut<V> {
+  readonly #map: HashMap<K, V>;
+  readonly #key: K;
+
+  constructor(map: HashMap<K, V>, key: K) {
+    super(undefined as never);
+    this.#map = map;
+    this.#key = key;
+  }
+
+  override get value(): V {
+    return this.#map.get(this.#key) as V;
+  }
+
+  override set value(v: V) {
+    // Through the map's own seam: `set` would hand it the key it is already
+    // storing, which is a self-assignment and a fatal.
+    this.#map.$writeSlot(this.#key, v);
+  }
+}
+
 export class HashSet<T> {
   readonly #table = new Table<T, null>();
   readonly #guard: DropGuard;
@@ -429,6 +443,21 @@ export class HashSet<T> {
   get size(): number {
     this.#guard.assertNotDropped();
     return this.#table.size;
+  }
+
+  /** `#[derive(Clone)]`: a new set holding a clone of every value. */
+  clone(): HashSet<T> {
+    this.#guard.assertNotDropped();
+    const copy = new HashSet<T>(null, this.#label);
+    for (const entry of this.#table.all()) {
+      copy.add(cloned(entry.key));
+    }
+    return copy;
+  }
+
+  /** `HashSet::from([a, b])`, and what `collect()` into one becomes. */
+  static from<T>(values: Iterable<T>): HashSet<T> {
+    return new HashSet<T>(values);
   }
 
   // Borrowing, like the map's: Rust's `iter()` yields `&T`.

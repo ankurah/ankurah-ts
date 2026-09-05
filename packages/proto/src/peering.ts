@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/peering.rs
-import { Struct, Result, JsonError, dropOwned, OwnershipFatal } from '@ankurah/base';
+import { Struct } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
 import { EntityState } from './data';
@@ -54,38 +54,6 @@ export class Presence extends Struct {
     const durable = reader.readBool();
     const systemRoot = reader.readOption((r) => Attested.decode(r, (r2: BincodeReader) => EntityState.decode(r2)));
     return new Presence(nodeId, durable, systemRoot);
-  }
-
-  toJSON(): unknown {
-    return { 'node_id': this.nodeId.toJSON(), 'durable': this.durable, 'system_root': (this.systemRoot == null ? null : this.systemRoot.toJSON()) };
-  }
-
-  static fromJson(value: unknown): Result<Presence, JsonError> {
-    try {
-      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-        return Result.Err(JsonError.custom('expected an object for `Presence`'));
-      }
-      const _o = value as Record<string, unknown>;
-      if (!('node_id' in _o)) {
-        return Result.Err(JsonError.custom('missing field `node_id`'));
-      }
-      const _rnodeId = ((v: unknown) => EntityId.fromJson(v))(_o['node_id']);
-      if (_rnodeId.isErr()) return Result.Err(_rnodeId.unwrapErr());
-      const nodeId = _rnodeId.unwrap();
-      if (!('durable' in _o)) {
-        return ((e: JsonError) => { dropOwned([nodeId]); return Result.Err(e); })(JsonError.custom('missing field `durable`'));
-      }
-      const _rdurable = ((v: unknown) => (typeof v === 'boolean' ? Result.Ok(v as boolean) : Result.Err(JsonError.custom('expected a boolean'))))(_o['durable']);
-      if (_rdurable.isErr()) return ((e: JsonError) => { dropOwned([nodeId]); return Result.Err(e); })(_rdurable.unwrapErr());
-      const durable = _rdurable.unwrap();
-      const _rsystemRoot = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => Attested.fromJson(v))(v)))(_o['system_root']);
-      if (_rsystemRoot.isErr()) return ((e: JsonError) => { dropOwned([nodeId]); return Result.Err(e); })(_rsystemRoot.unwrapErr());
-      const systemRoot = _rsystemRoot.unwrap();
-      return Result.Ok(new Presence(nodeId, durable, systemRoot));
-    } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
-      return Result.Err(JsonError.fromException(e));
-    }
   }
 }
 

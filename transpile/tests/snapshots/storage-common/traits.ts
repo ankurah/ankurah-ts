@@ -22,10 +22,10 @@ export abstract class EntityStateStream {
         const item = _v;
         if (item.isOk()) {
           const state = item.unwrap();
-          return results.push(state);
+          results.push(state)
         } else {
           const e = item.unwrapErr();
-          return Result.Err(e);
+          return Result.Err(e)
         }
       }
       return Result.Ok(results);

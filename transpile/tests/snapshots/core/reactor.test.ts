@@ -77,7 +77,7 @@ class TestEvent extends Struct {
   }
 
   clone(): TestEvent {
-    return new TestEvent(this.id.clone(), this.collection.clone(), new Map(Array.from(this.changes.entries()).map(([k, v]) => [k, v])));
+    return new TestEvent(this.id.clone(), this.collection.clone(), this.changes.clone());
   }
 
   debug(): string {

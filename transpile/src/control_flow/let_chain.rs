@@ -71,7 +71,7 @@ fn build(
     match first {
         syn::Expr::Let(let_expr) => {
             let scrutinee = t.expr(&let_expr.expr);
-            let scrutinee_ty = t.scrutinee_type(&let_expr.expr);
+            let scrutinee_ty = t.borrowed_scrutinee_type(&let_expr.expr);
             let subject = t.fresh_temp();
             let _bound = t.enter_pattern(&let_expr.pat, scrutinee_ty.as_ref());
             let (test, bind) = t.pattern_test(&subject, &let_expr.pat);

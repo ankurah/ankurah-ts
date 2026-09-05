@@ -53,10 +53,10 @@ export abstract class StorageCollection {
       const _v = await this.getState(id);
       if (_v.isOk()) {
         const state = _v.unwrap();
-        return states.push(state);
+        states.push(state)
       } else {
         const e = _v.unwrapErr();
-        return Result.Err(e);
+        return Result.Err(e)
       }
     }
     return Result.Ok(states);

@@ -9,6 +9,10 @@ export function String_fromEntityId(id: EntityId): string {
   return id.toBase64();
 }
 
+export function String_fromRefEntityId(id: EntityId): string {
+  return id.toBase64();
+}
+
 export function Vec_U8_tryInto(self: Uint8Array): Result<EntityId, DecodeError> {
   const _r0 = self.tryInto().mapErr((_) => new DecodeError('InvalidLength', {}));
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
@@ -21,6 +25,10 @@ export function Ulid_fromEntityId(id: EntityId): Ulid {
 }
 
 export function Expr_fromEntityId(id: EntityId): Expr {
+  return new Expr('Literal', { _0: new Literal('EntityId', { _0: id.toUlid() }) });
+}
+
+export function Expr_fromRefEntityId(id: EntityId): Expr {
   return new Expr('Literal', { _0: new Literal('EntityId', { _0: id.toUlid() }) });
 }
 

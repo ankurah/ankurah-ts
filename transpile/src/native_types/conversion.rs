@@ -42,6 +42,22 @@ pub fn between(reg: &TypeRegistry, from: &Ty, to: &Ty, value: &str) -> Option<St
     if let JsShape::SameAs(inner) = js_shape(reg, to) {
         return between(reg, from, &inner, value);
     }
+    // `HashMap::from([(k, v), ..])` and `HashSet::from([a, b])`: the array is
+    // the entries, and the container is the runtime's own — not JavaScript's
+    // `Map` or `Set`, which key by identity. Asked of the type's IDENTITY,
+    // because the target here is written without its arguments and the shape
+    // table needs them.
+    if matches!(js_shape(reg, from), JsShape::Array(_) | JsShape::Bytes) {
+        if let Ty::Named { id, .. } = to.peel_refs() {
+            let is = |path: &str| reg.system_type(path) == Some(*id);
+            if is("std::collections::HashMap") || is("std::collections::BTreeMap") {
+                return Some(format!("HashMap.from({})", value));
+            }
+            if is("std::collections::HashSet") || is("std::collections::BTreeSet") {
+                return Some(format!("HashSet.from({})", value));
+            }
+        }
+    }
     match (js_shape(reg, from), js_shape(reg, to)) {
         // `&str` to `String`, `char` to `String`: one type in the port, so the
         // conversion is the value.
@@ -57,6 +73,7 @@ pub fn between(reg: &TypeRegistry, from: &Ty, to: &Ty, value: &str) -> Option<St
         // then owns.
         (JsShape::Bytes, JsShape::Bytes) => Some(format!("{}.slice()", value)),
         (JsShape::Array(_), JsShape::Array(_)) => Some(format!("[...{}]", value)),
+
         // `Arc::from(v)` and `Rc::from(v)` wrap a value the way `new` does —
         // `Arc.from` is not a function, and the call raised a `TypeError`.
         (_, JsShape::Rc(name)) => Some(format!("{}.new({})", name, value)),

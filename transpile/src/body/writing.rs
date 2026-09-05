@@ -95,30 +95,6 @@ pub(crate) struct Lowered {
 
 /// The type a call's turbofish names: `from_str::<EntityId>(s)` says which
 /// type is being read out of the parsed value.
-/// What an arm of a consuming match hands back in place of a jump it cannot
-/// perform.
-///
-/// A plain object, read by the caller and by nothing else. `$` is the port's
-/// namespace for members emitted code never declares, so no emitted value can
-/// be mistaken for one of these.
-pub(crate) fn jump_sentinel(kind: &str, label: &Option<syn::Lifetime>) -> String {
-    match label {
-        Some(label) => format!("return {{ $jump: '{}', $label: '{}' }}", kind, label.ident),
-        None => format!("return {{ $jump: '{}' }}", kind),
-    }
-}
-
-/// What a lifted body hands back in place of a `return` it cannot perform.
-///
-/// A `return` written inside an arrow returns from the arrow, and Rust's
-/// `return` — and the early exit a `?` performs — leaves the whole function.
-/// So the value the function was going to answer with travels out as `$value`
-/// beside the `$jump` marker, and the statement that reads the lifted value
-/// performs the real `return` before anything looks at it.
-pub(crate) fn return_sentinel(value: &str) -> String {
-    format!("return {{ $jump: 'return', $value: {} }}", value)
-}
-
 /// The type a turbofish names, as the syntax wrote it.
 pub(crate) fn turbofish_written(callee: Option<&syn::Path>) -> Option<syn::Type> {
     let segment = callee?.segments.last()?;

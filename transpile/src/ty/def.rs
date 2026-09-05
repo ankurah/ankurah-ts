@@ -70,6 +70,43 @@ impl Prim {
         )
     }
 
+    /// The Rust name, which is also the name the runtime knows the width by.
+    pub fn rust_name(self) -> String {
+        format!("{:?}", self).to_lowercase()
+    }
+
+    /// The inclusive range of values this integer type holds, as the port
+    /// mirrors it.
+    ///
+    /// For: two places have to agree on the bounds — the arithmetic helpers,
+    /// which panic outside them, and the JSON readers, which refuse a document
+    /// that carries a value outside them. They disagreed: a reader typed by the
+    /// TypeScript SPELLING accepted `1.5`, `-1` and `256` for a `u8`, because
+    /// all three are `typeof v === 'number'`.
+    ///
+    /// R13: `usize` and `isize` are 32-bit here. The port's target is wasm32,
+    /// where that is what they are; the 8 bytes they occupy on the bincode wire
+    /// is a separate fact, and belongs to the codec.
+    ///
+    /// `u128` is left out: its maximum does not fit the `i128` this answers in,
+    /// and nothing in the port reads or writes one.
+    pub fn range(self) -> Option<(i128, i128)> {
+        Some(match self {
+            Prim::U8 => (0, 255),
+            Prim::U16 => (0, 65_535),
+            Prim::U32 => (0, 4_294_967_295),
+            Prim::Usize => (0, 4_294_967_295),
+            Prim::U64 => (0, 18_446_744_073_709_551_615),
+            Prim::I8 => (-128, 127),
+            Prim::I16 => (-32_768, 32_767),
+            Prim::I32 => (-2_147_483_648, 2_147_483_647),
+            Prim::Isize => (-2_147_483_648, 2_147_483_647),
+            Prim::I64 => (-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
+            Prim::I128 => (i128::MIN, i128::MAX),
+            Prim::U128 | Prim::Bool | Prim::Char | Prim::F32 | Prim::F64 => return None,
+        })
+    }
+
     pub fn from_rust_name(name: &str) -> Option<Prim> {
         Some(match name {
             "bool" => Prim::Bool,

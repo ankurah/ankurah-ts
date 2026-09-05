@@ -9,7 +9,7 @@
 
 import { expect, test } from 'bun:test';
 import { OwnedClosure } from '@ankurah/base';
-import { Entity, borrow, borrowing, consumed, plain, runLater, runNow } from './input.ts';
+import { Entity, borrow, borrowing, consumed, handsAPlainOne, handsAWrappedOne, plain, runLater, runNow, throughABound } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('borrow leaves the Entity to its owner', () => {
@@ -53,6 +53,19 @@ test('a closure that hands its capture away is called once and releases it', () 
   // released it; `callOnce` transfers it and marks the closure moved, so the
   // closure is not dropped after one either.
   expect(consumed(new Entity('abcde'))).toBe(5);
+});
+
+test('a callee that sees only the bound calls either shape', () => {
+  // The wrapped one: `through_a_bound` is written `f(n)` in Rust and cannot see
+  // that this caller's closure captured an Entity, so it goes through `invoke`.
+  expect(handsAWrappedOne(new Entity('abcde'))).toBe(6);
+  expect(handsAPlainOne(4)).toBe(5);
+  // And directly, with each shape.
+  expect(throughABound((n: number) => n * 2, 3)).toBe(6);
+  const entity = new Entity('xy');
+  expect(
+    throughABound(new OwnedClosure<[number], number>([entity], (n) => n + entity.name.length), 1),
+  ).toBe(3);
 });
 
 test('nothing leaked and nothing was reported', async () => {

@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/signals/src/signal/read.rs
-import { Struct, Arc, OwnedClosure } from '@ankurah/base';
-import { Broadcast, BroadcastId, BroadcastListener, ListenerGuard } from '../broadcast';
+import { Struct, Arc, OwnedClosure, Invocable } from '@ankurah/base';
+import { Broadcast, BroadcastId, BroadcastListener } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
-import { Get, GetReadCell, Peek, Signal, With } from '../signal';
+import { Get, GetReadCell, ListenerGuard, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 import { Memo } from './memo';
 
@@ -21,11 +21,11 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
     return this.value.value();
   }
 
-  map<Output, Transform>(transform: Transform): Map<Read<T>, T, Output, Transform> {
+  map<Output, Transform extends Invocable<[T], Output>>(transform: Transform): Map<Read<T>, T, Output, Transform> {
     return Map.new(this.clone(), transform);
   }
 
-  memo<Output, Transform>(transform: Transform): Memo<Read<T>, T, Output, Transform> {
+  memo<Output, Transform extends Invocable<[T], Output>>(transform: Transform): Memo<Read<T>, T, Output, Transform> {
     return Memo.new(this.clone(), transform);
   }
 

@@ -35,6 +35,40 @@ fn fn_traits(reg: &TypeRegistry) -> Vec<crate::ty::TypeId> {
         .collect()
 }
 
+/// Is this callable bound `FnOnce` — the one Rust takes BY VALUE?
+///
+/// `Fn` and `FnMut` are taken by reference: the caller keeps the closure and may
+/// call it again, so a callee must not release it. `FnOnce` is consumed by the
+/// call, and what its captures owe is released there.
+pub fn takes_the_closure_by_value(
+    reg: &TypeRegistry,
+    ty: &Ty,
+    param_bounds: &[(String, TraitRef)],
+) -> bool {
+    let Some(once) = reg.system_type("std::ops::FnOnce") else {
+        return false;
+    };
+    let carried: Vec<&TraitRef> = match ty.peel_refs() {
+        Ty::Param(name) => param_bounds
+            .iter()
+            .filter(|(on, _)| on == name)
+            .map(|(_, bound)| bound)
+            .collect(),
+        Ty::ImplTrait { bounds } => bounds.iter().collect(),
+        Ty::Dyn { traits } => traits.iter().collect(),
+        _ => Vec::new(),
+    };
+    // `FnOnce` alone. A closure bounded by `Fn` is also an `FnOnce` in Rust, and
+    // a bound list that names either of the other two says the caller keeps it.
+    carried.iter().any(|b| b.id == once)
+        && !carried.iter().any(|b| {
+            ["std::ops::Fn", "std::ops::FnMut"]
+                .iter()
+                .filter_map(|path| reg.system_type(path))
+                .any(|id| id == b.id)
+        })
+}
+
 /// The callable an expected type describes, where it describes one.
 ///
 /// A closure's parameter types are written nowhere in the source that passes

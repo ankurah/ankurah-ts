@@ -81,7 +81,7 @@ fn remaining(
     t: &BodyTranslator,
 ) -> Result<Remainder, String> {
     let ty = t
-        .scrutinee_type(&match_expr.expr)
+        .borrowed_scrutinee_type(&match_expr.expr)
         .ok_or_else(|| "the engine could not type the subject".to_string())?;
     let crate::ty::Ty::Named { id, .. } = ty.peel_refs() else {
         return Err("the subject is not a named type".to_string());
@@ -232,7 +232,7 @@ pub(super) fn lower(
         }
     }
 
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     // The arms read the subject as well as matching on it, and Rust evaluates
     // it once, so a subject that is not already a name is read into one first.
     let named_subject = subject_name(&match_expr.expr);

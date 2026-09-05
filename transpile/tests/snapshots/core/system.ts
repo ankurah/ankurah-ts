@@ -35,7 +35,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
           }
         }
       })());
-    })(me.clone())
+    })(me.clone());
     return me;
   }
 
@@ -95,7 +95,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       }
     })();
     if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-    (_m0 as any)
+    (_m0 as any);
     const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
     try {
       const _r1 = await this._0.value.collectionset.get(collectionId);
@@ -205,7 +205,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                 this._0.value.systemReadyNotify.notifyWaiters();
                 return Result.Ok([]);
               }
-              tracing.warn(`Mismatched root state during join: local=${root.debug()}, remote=${state.payload.state.head.debug()}`);
+              tracing.warn(`Mismatched root state during join: local=${root}, remote=${state.payload.state.head}`);
               tracing.info('Resetting storage to replace mismatched root');
               (() => {
                 let root_1 = this._0.value.root.write();
@@ -214,7 +214,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                 } finally {
                   root_1.drop();
                 }
-              })()
+              })();
               const _r3 = await this.hardReset().mapErr((e) => new MutationError('General', { _0: io.Error.other(e.toString()) }));
               if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
               _r3.drop();
@@ -240,7 +240,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
               } finally {
                 root.drop();
               }
-            })()
+            })();
             const _t6 = this._0.value.systemReady.write();
             try {
               _t6.value = true;
@@ -274,7 +274,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       } finally {
         items.drop();
       }
-    })()
+    })();
     (() => {
       let root = this._0.value.root.write();
       try {
@@ -282,7 +282,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       } finally {
         root.drop();
       }
-    })()
+    })();
     (() => {
       let collectionMap = this._0.value.collectionMap.write();
       try {
@@ -290,7 +290,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       } finally {
         collectionMap.drop();
       }
-    })()
+    })();
     (() => {
       let systemReady = this._0.value.systemReady.write();
       try {
@@ -298,7 +298,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       } finally {
         systemReady.drop();
       }
-    })()
+    })();
     this._0.value.reactor.systemReset();
     return Result.Ok([]);
   }
@@ -382,7 +382,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
             } finally {
               items.drop();
             }
-          })()
+          })();
           const hasRoot = rootState != null;
           (() => {
             let root = this._0.value.root.write();
@@ -391,7 +391,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
             } finally {
               root.drop();
             }
-          })()
+          })();
           if (hasRoot && this._0.value.durable) {
             const _t7 = this._0.value.systemReady.write();
             try {

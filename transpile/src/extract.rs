@@ -162,6 +162,8 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                     init: Some((*c.expr).clone()),
                     init_ts: None,
                     mutable: false,
+                    is_static: false,
+                    fresh_at_each_use: false,
                 });
             }
             // A `static` is a module-level value like a `const`, and the item
@@ -178,6 +180,8 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                     init: Some((*st.expr).clone()),
                     init_ts: None,
                     mutable: matches!(st.mutability, syn::StaticMutability::Mut(_)),
+                    is_static: true,
+                    fresh_at_each_use: false,
                 });
             }
             syn::Item::Mod(m) => {
@@ -193,7 +197,14 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                         let mut sub = RustFile::empty(String::new());
                         sub.vis = VisInfo::Private;
                         sub.is_test_module = true;
-                        extract_items(items, cfg, &mut sub);
+                        // D6: the compiler is already building with `test` true
+                        // in here, so a `#[cfg(test)]` on an item KEEPS it.
+                        let under_test = cfg.features.map(|f| f.under_test());
+                        let inner = ExtractCfg {
+                            features: under_test.as_ref(),
+                            excluded: cfg.excluded,
+                        };
+                        extract_items(items, inner, &mut sub);
                         // The functions stay in the module so that it DECLARES
                         // them — a test calling a helper of its own module has
                         // to resolve it — and a copy is lifted out, which is
@@ -257,6 +268,8 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
                             init: None,
                             init_ts: None,
                             mutable: false,
+                            is_static: true,
+                            fresh_at_each_use: false,
                         });
                     }
                 }
@@ -411,6 +424,7 @@ fn is_test_fn(attrs: &[syn::Attribute]) -> bool {
 }
 
 fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::CfgFeatures>) -> StructInfo {
+    let attrs = expanded_attrs(&s.attrs, features, s.ident.span());
     StructInfo {
         name: s.ident.to_string(),
         is_pub: is_public(&s.vis),
@@ -419,10 +433,39 @@ fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::CfgFeatures
         generics: extract_generics(&s.generics),
         type_params: type_param_names(&s.generics),
         param_defaults: type_param_defaults(&s.generics),
-        derives: extract_derives(&s.attrs),
-        serde_transparent: has_serde_flag(&s.attrs, "transparent"),
+        derives: extract_derives(&attrs),
+        serde_transparent: has_serde_flag(&attrs, "transparent"),
         span: s.ident.span(),
     }
+}
+
+/// The item's attributes, with `#[cfg_attr(P, ..)]` expanded where `P` holds.
+///
+/// D8: the port read `cfg_attr` as nothing at all, which is the right answer
+/// only where the predicate is false — as all 37 corpus sites' are, gating
+/// `wasm`, `uniffi` and `instrument`. A predicate that HOLDS carries real
+/// attributes: a derive, a serde rename, a `#[test]`.
+fn expanded_attrs(
+    attrs: &[syn::Attribute],
+    features: Option<&crate::cfg::CfgFeatures>,
+    span: proc_macro2::Span,
+) -> Vec<syn::Attribute> {
+    let Some(features) = features else {
+        return attrs.to_vec();
+    };
+    let mut undecided = Vec::new();
+    let expanded = crate::cfg::expand_cfg_attrs(attrs, features, &mut undecided);
+    for text in undecided {
+        crate::diag::pending::park(
+            span,
+            format!(
+                "`{}` gates its attributes on a predicate nothing in the port decides, so they \
+                 are left out",
+                text
+            ),
+        );
+    }
+    expanded
 }
 
 fn extract_enum(e: &syn::ItemEnum, features: Option<&crate::cfg::CfgFeatures>) -> EnumInfo {
@@ -456,7 +499,7 @@ fn extract_enum(e: &syn::ItemEnum, features: Option<&crate::cfg::CfgFeatures>) -
         generics: extract_generics(&e.generics),
         type_params: type_param_names(&e.generics),
         param_defaults: type_param_defaults(&e.generics),
-        derives: extract_derives(&e.attrs),
+        derives: extract_derives(&expanded_attrs(&e.attrs, features, e.ident.span())),
         serde_transparent: has_serde_flag(&e.attrs, "transparent"),
         span: e.ident.span(),
     }
@@ -628,6 +671,24 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
         ReturnType::Type(_, ty) => (name_map::map_type(ty), Some((**ty).clone())),
     };
 
+    // A type parameter whose only bound is a CALLABLE one, and whose only use is
+    // a parameter's type, is written as the callable itself. TypeScript infers
+    // nothing through a type parameter constrained by a union, so
+    // `<F extends Invocable<[number], number>>(f: F)` made `invoke(f, n)`
+    // answer `unknown` and every use of that answer a type error; the parameter
+    // spelled `f: Invocable<[number], number>` says the same thing and infers.
+    let callables = callable_only_params(sig);
+
+    let params: Vec<ParamInfo> = params
+        .into_iter()
+        .map(|mut p| {
+            if let Some(spelling) = callables.get(&p.ty) {
+                p.ty = spelling.clone();
+            }
+            p
+        })
+        .collect();
+
     FnInfo {
         name: rust_name,
         ts_name,
@@ -641,7 +702,7 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
         params,
         return_type,
         rust_return,
-        generics: extract_generics(&sig.generics),
+        generics: extract_generics_without(&sig.generics, &callables),
         type_params: type_param_names(&sig.generics),
         syn_generics: sig.generics.clone(),
         is_test: is_test_fn(attrs),
@@ -905,6 +966,141 @@ fn type_param_defaults(generics: &syn::Generics) -> Vec<Option<syn::Type>> {
         .collect()
 }
 
+/// Every type parameter of this signature whose bounds are ONE callable bound,
+/// by name, with the `Invocable<..>` it is written as.
+pub(crate) fn callable_only_params(
+    sig: &syn::Signature,
+) -> std::collections::HashMap<String, String> {
+    let arguments: Vec<syn::Type> = sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(t) => Some((*t.ty).clone()),
+            _ => None,
+        })
+        .collect();
+    let returned = match &sig.output {
+        syn::ReturnType::Type(_, ty) => Some((**ty).clone()),
+        syn::ReturnType::Default => None,
+    };
+    callable_only_params_of(&sig.generics, &arguments, returned.as_ref())
+}
+
+/// The same, for a caller that kept the pieces rather than the signature.
+pub(crate) fn callable_only_params_of(
+    generics: &syn::Generics,
+    arguments: &[syn::Type],
+    returned: Option<&syn::Type>,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for param in &generics.params {
+        let syn::GenericParam::Type(t) = param else { continue };
+        let name = t.ident.to_string();
+        let carried: Vec<&syn::TypeParamBound> = t
+            .bounds
+            .iter()
+            .chain(where_bounds(generics, &name))
+            .filter(|b| !is_marker_bound(b))
+            .collect();
+        if carried.len() != 1 {
+            continue;
+        }
+        let syn::TypeParamBound::Trait(bound) = carried[0] else { continue };
+        let Some(leaf) = bound.path.segments.last().map(|s| s.ident.to_string()) else {
+            continue;
+        };
+        // Only where the parameter's NAME is used nowhere else: a signature
+        // that mentions it in its return type — `map<Transform>(t: Transform)
+        // -> Map<.., Transform>` — still needs the parameter declared.
+        if mentions_beyond_one_parameter(arguments, returned, &name) {
+            continue;
+        }
+        if let Some(spelling) = invocable_bound(&leaf, bound) {
+            out.insert(name, spelling);
+        }
+    }
+    out
+}
+
+/// Does this signature name the type parameter anywhere but as the whole type
+/// of exactly one argument?
+fn mentions_beyond_one_parameter(
+    arguments: &[syn::Type],
+    returned: Option<&syn::Type>,
+    name: &str,
+) -> bool {
+    let is_the_parameter = |ty: &syn::Type| match ty {
+        syn::Type::Path(path) => path.path.get_ident().is_some_and(|i| i == name),
+        _ => false,
+    };
+    let mut as_a_whole_argument = 0usize;
+    for ty in arguments {
+        if is_the_parameter(ty) {
+            as_a_whole_argument += 1;
+            continue;
+        }
+        if mentions(ty, name) {
+            return true;
+        }
+    }
+    if returned.is_some_and(|ty| mentions(ty, name)) {
+        return true;
+    }
+    as_a_whole_argument != 1
+}
+
+/// Does this type mention the named type parameter anywhere inside it?
+fn mentions(ty: &syn::Type, name: &str) -> bool {
+    struct Named<'n> {
+        name: &'n str,
+        found: bool,
+    }
+    impl syn::visit::Visit<'_> for Named<'_> {
+        fn visit_ident(&mut self, ident: &syn::Ident) {
+            if ident == self.name {
+                self.found = true;
+            }
+        }
+    }
+    let mut named = Named { name, found: false };
+    syn::visit::Visit::visit_type(&mut named, ty);
+    named.found
+}
+
+/// `Send`, `Sync`, `Sized` and a lifetime say nothing about the shape.
+fn is_marker_bound(bound: &syn::TypeParamBound) -> bool {
+    match bound {
+        syn::TypeParamBound::Trait(t) => t
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| matches!(s.ident.to_string().as_str(), "Send" | "Sync" | "Sized")),
+        _ => true,
+    }
+}
+
+/// The generics list with the callable-only parameters left out: they are
+/// written as the parameter's type instead.
+fn extract_generics_without(
+    generics: &syn::Generics,
+    without: &std::collections::HashMap<String, String>,
+) -> String {
+    if without.is_empty() {
+        return extract_generics(generics);
+    }
+    let mut kept = generics.clone();
+    kept.params = generics
+        .params
+        .iter()
+        .filter(|p| match p {
+            syn::GenericParam::Type(t) => !without.contains_key(&t.ident.to_string()),
+            _ => true,
+        })
+        .cloned()
+        .collect();
+    extract_generics(&kept)
+}
+
 fn extract_generics(generics: &syn::Generics) -> String {
     if generics.params.is_empty() {
         return String::new();
@@ -914,11 +1110,34 @@ fn extract_generics(generics: &syn::Generics) -> String {
         match p {
             syn::GenericParam::Type(t) => {
                 let name = t.ident.to_string();
-                let bounds: Vec<String> = t.bounds.iter().filter_map(|b| {
+                // A `where` clause says the same thing as an inline bound, and
+                // reading only the inline ones left `F: FnOnce(..)` written
+                // there with no constraint at all — so `invoke(f, x)` in the
+                // emitted body answered `unknown` and every use of the answer
+                // was a type error.
+                //
+                // Only the CALLABLE bounds are read from the `where` clause.
+                // Every other trait bound there would be new surface: a bound
+                // names a TypeScript interface, and a trait the declared surface
+                // holds has none for it to name.
+                let carried: Vec<&syn::TypeParamBound> = t
+                    .bounds
+                    .iter()
+                    .chain(where_bounds(generics, &name).filter(|b| is_callable_bound(b)))
+                    .collect();
+                let bounds: Vec<String> = carried.iter().filter_map(|b| {
                     if let syn::TypeParamBound::Trait(trait_bound) = b {
                         let trait_name = trait_bound.path.segments.last()?.ident.to_string();
                         if matches!(trait_name.as_str(), "Send" | "Sync" | "Sized") {
                             return None;
+                        }
+                        // R10: a callable bound is what the port's `Invocable`
+                        // says — either a plain function or the `OwnedClosure`
+                        // the emitter writes — and it carries the shape, so
+                        // `invoke` on a value of this type answers the right
+                        // type instead of `unknown`.
+                        if let Some(invocable) = invocable_bound(&trait_name, trait_bound) {
+                            return Some(invocable);
                         }
                         Some(trait_name)
                     } else {
@@ -953,4 +1172,63 @@ fn extract_generics(generics: &syn::Generics) -> String {
     } else {
         format!("<{}>", params.join(", "))
     }
+}
+
+/// The bounds a `where` clause puts on one type parameter.
+fn where_bounds<'g>(
+    generics: &'g syn::Generics,
+    name: &str,
+) -> impl Iterator<Item = &'g syn::TypeParamBound> {
+    let owned = name.to_string();
+    generics
+        .where_clause
+        .iter()
+        .flat_map(|clause| clause.predicates.iter())
+        .filter_map(move |predicate| match predicate {
+            syn::WherePredicate::Type(pt) => match &pt.bounded_ty {
+                syn::Type::Path(path)
+                    if path.qself.is_none()
+                        && path.path.is_ident(&syn::Ident::new(
+                            &owned,
+                            proc_macro2::Span::call_site(),
+                        )) =>
+                {
+                    Some(pt.bounds.iter())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+}
+
+/// `FnOnce(A) -> R` as the port's `Invocable<[A], R>`, which is what a bound
+/// closure parameter really accepts: a plain function, or the `OwnedClosure`
+/// the emitter writes when the closure captured values with drop glue.
+fn invocable_bound(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
+    if !matches!(trait_name, "Fn" | "FnMut" | "FnOnce") {
+        return None;
+    }
+    let segment = bound.path.segments.last()?;
+    let syn::PathArguments::Parenthesized(args) = &segment.arguments else {
+        return None;
+    };
+    let inputs: Vec<String> = args.inputs.iter().map(name_map::map_type).collect();
+    let output = match &args.output {
+        syn::ReturnType::Type(_, ty) => name_map::map_type(ty),
+        syn::ReturnType::Default => "void".to_string(),
+    };
+    Some(format!("Invocable<[{}], {}>", inputs.join(", "), output))
+}
+
+/// Is this bound one of `Fn`, `FnMut`, `FnOnce`?
+fn is_callable_bound(bound: &syn::TypeParamBound) -> bool {
+    let syn::TypeParamBound::Trait(trait_bound) = bound else {
+        return false;
+    };
+    trait_bound
+        .path
+        .segments
+        .last()
+        .is_some_and(|s| matches!(s.ident.to_string().as_str(), "Fn" | "FnMut" | "FnOnce"))
 }

@@ -78,7 +78,7 @@ export class CollectionSet<SE extends StorageEngine> extends Struct {
       } finally {
         collections.drop();
       }
-    })()
+    })();
     return await this._0.value.storageEngine.value.deleteAllCollections();
   }
 

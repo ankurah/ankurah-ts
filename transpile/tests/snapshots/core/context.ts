@@ -140,7 +140,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
   }
 
   async getEntity(collectionId: CollectionId, id: EntityId, cached: boolean): Promise<Result<Entity, RetrievalError>> {
-    tracing.debug(`Node(${this.node.deref().value.id}).get_entity ${id.debug()}-${collectionId.debug()}`);
+    tracing.debug(`Node(${this.node.deref().value.id}).get_entity ${id}-${collectionId.debug()}`);
     if (!this.node.deref().value.durable) {
       const _v = await this.node.getFromPeer(collectionId, [id], this.cdata);
       if (_v.isOk()) {
@@ -294,7 +294,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
       let attestedEvents = [];
       let entityAttestedEvents = [];
       for (const [entity, event] of entityEvents) {
-        const trxAlive = Arc.new(AtomicBool.new(true));
+        const trxAlive = Arc.new(true);
         const forked = entity.snapshot(trxAlive);
         const entityBefore = (() => {
           return entity.kind.match({

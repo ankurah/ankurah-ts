@@ -33,7 +33,7 @@ export class ReactorSubscriptionId extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [this._0.hash()].join('|');
+    return [this._0.hash()].map((p) => p.length + ':' + p).join('');
   }
 
   compareTo(other: ReactorSubscriptionId): number {

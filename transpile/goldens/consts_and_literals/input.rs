@@ -12,6 +12,8 @@
 //! DECLARATION order. Two fields of one type swap in silence, which is what
 //! `connectors/local-process/src/lib.rs:70` does with its two `EntityId`s.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 pub const TAG_NULL: u8 = 0x00;
 pub const TAG_STRING: u8 = 0x04;
 pub const WORDS: &[&str; 3] = &["ack", "alabama", "alanine"];
@@ -45,4 +47,51 @@ pub fn collection() -> String {
 
 pub fn shifted() -> u64 {
     SHIFT
+}
+
+// A `const` of a non-Copy type is INLINED at each use, so each use is its own
+// value: `let mut a = ORIGIN; a.x = 9;` mutates nobody else's. Bound to one
+// module object, two uses shared an identity, a mutation and a release.
+#[derive(Clone)]
+pub struct Point {
+    pub x: u32,
+    pub y: String,
+}
+
+pub const ORIGIN: Point = Point { x: 0, y: String::new() };
+
+// A `static` whose type carries interior mutability is written THROUGH, and an
+// atomic is its value here — so the binding has to be reassignable.
+pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub static READY: AtomicBool = AtomicBool::new(false);
+
+// A negated literal in a const initialiser is one literal in Rust and two
+// tokens here; the width belongs to the literal.
+pub const FLOOR: i64 = -9007199254740991;
+
+pub const BASE: u32 = 36;
+
+pub fn moved_origin() -> u32 {
+    let mut first = ORIGIN;
+    first.x = 9;
+    let second = ORIGIN;
+    first.x + second.x
+}
+
+pub fn bump() -> usize {
+    COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+pub fn arm(ready: bool) -> bool {
+    READY.store(ready, Ordering::SeqCst);
+    READY.load(Ordering::SeqCst)
+}
+
+// A `const` in a pattern is a comparison against its value, not a binding.
+pub fn radix(n: u32) -> u32 {
+    match n {
+        BASE => 1,
+        0 => 2,
+        _ => 3,
+    }
 }

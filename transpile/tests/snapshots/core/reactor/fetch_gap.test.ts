@@ -46,13 +46,13 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   debug(): string {
-    return `TestEntity { id: ${this.id.debug()}, collection: ${this.collection.debug()}, data: ${this.data} }`;
+    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, data: ${this.data} }`;
   }
 }
 
 describe('fetch_gap unit tests', () => {
   test('test_build_gap_predicate_single_column_asc', () => {
-    const entity = TestEntity.new(1, new Map([['name', new Value('String', { _0: 'John' })]]));
+    const entity = TestEntity.new(1, HashMap.from([['name', new Value('String', { _0: 'John' })]]));
     try {
       const originalPredicate = new Predicate('True', {});
       try {
@@ -77,7 +77,7 @@ describe('fetch_gap unit tests', () => {
   });
 
   test('test_build_gap_predicate_multi_column', () => {
-    const entity = TestEntity.new(2, new Map([['name', new Value('String', { _0: 'John' })], ['age', new Value('I32', { _0: 30 })]]));
+    const entity = TestEntity.new(2, HashMap.from([['name', new Value('String', { _0: 'John' })], ['age', new Value('I32', { _0: 30 })]]));
     try {
       const originalPredicate = new Predicate('True', {});
       try {
@@ -102,7 +102,7 @@ describe('fetch_gap unit tests', () => {
   });
 
   test('test_infer_value_type_for_field', () => {
-    const entities = [TestEntity.new(1, new Map([['name', new Value('String', { _0: 'Alice' })]])), TestEntity.new(2, new Map([['age', new Value('I32', { _0: 25 })]]))];
+    const entities = [TestEntity.new(1, HashMap.from([['name', new Value('String', { _0: 'Alice' })]])), TestEntity.new(2, HashMap.from([['age', new Value('I32', { _0: 25 })]]))];
     try {
       expect(inferValueTypeForField(entities, 'name')).toEqual(new ValueType('String', {}));
       expect(inferValueTypeForField(entities, 'age')).toEqual(new ValueType('I32', {}));

@@ -59,18 +59,30 @@ impl u8 {
     pub const MAX: u8 = 0;
     pub fn to_be_bytes(self) -> [u8; 1] { todo!() }
     pub fn from_be_bytes(bytes: [u8; 1]) -> u8 { todo!() }
-    pub fn wrapping_add(self, rhs: u8) -> u8 { todo!() }
-    pub fn wrapping_sub(self, rhs: u8) -> u8 { todo!() }
-    pub fn saturating_add(self, rhs: u8) -> u8 { todo!() }
-    pub fn saturating_sub(self, rhs: u8) -> u8 { todo!() }
-    pub fn checked_add(self, rhs: u8) -> Option<u8> { todo!() }
-    pub fn checked_sub(self, rhs: u8) -> Option<u8> { todo!() }
     pub fn min(self, other: u8) -> u8 { todo!() }
     pub fn max(self, other: u8) -> u8 { todo!() }
     pub fn is_ascii_digit(&self) -> bool { todo!() }
     pub fn is_ascii_alphanumeric(&self) -> bool { todo!() }
     pub fn to_ascii_lowercase(&self) -> u8 { todo!() }
     pub fn to_ascii_uppercase(&self) -> u8 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: u8) -> u8 { todo!() }
+    pub fn wrapping_sub(self, rhs: u8) -> u8 { todo!() }
+    pub fn wrapping_mul(self, rhs: u8) -> u8 { todo!() }
+    pub fn saturating_add(self, rhs: u8) -> u8 { todo!() }
+    pub fn saturating_sub(self, rhs: u8) -> u8 { todo!() }
+    pub fn saturating_mul(self, rhs: u8) -> u8 { todo!() }
+    pub fn checked_add(self, rhs: u8) -> Option<u8> { todo!() }
+    pub fn checked_sub(self, rhs: u8) -> Option<u8> { todo!() }
+    pub fn checked_mul(self, rhs: u8) -> Option<u8> { todo!() }
+    pub fn checked_div(self, rhs: u8) -> Option<u8> { todo!() }
+    pub fn checked_rem(self, rhs: u8) -> Option<u8> { todo!() }
+    pub fn overflowing_add(self, rhs: u8) -> (u8, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: u8) -> (u8, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: u8) -> (u8, bool) { todo!() }
 }
 
 impl u16 {
@@ -79,12 +91,26 @@ impl u16 {
     pub fn to_be_bytes(self) -> [u8; 2] { todo!() }
     pub fn from_be_bytes(bytes: [u8; 2]) -> u16 { todo!() }
     pub fn to_le_bytes(self) -> [u8; 2] { todo!() }
-    pub fn wrapping_add(self, rhs: u16) -> u16 { todo!() }
-    pub fn wrapping_sub(self, rhs: u16) -> u16 { todo!() }
-    pub fn saturating_add(self, rhs: u16) -> u16 { todo!() }
-    pub fn saturating_sub(self, rhs: u16) -> u16 { todo!() }
     pub fn min(self, other: u16) -> u16 { todo!() }
     pub fn max(self, other: u16) -> u16 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: u16) -> u16 { todo!() }
+    pub fn wrapping_sub(self, rhs: u16) -> u16 { todo!() }
+    pub fn wrapping_mul(self, rhs: u16) -> u16 { todo!() }
+    pub fn saturating_add(self, rhs: u16) -> u16 { todo!() }
+    pub fn saturating_sub(self, rhs: u16) -> u16 { todo!() }
+    pub fn saturating_mul(self, rhs: u16) -> u16 { todo!() }
+    pub fn checked_add(self, rhs: u16) -> Option<u16> { todo!() }
+    pub fn checked_sub(self, rhs: u16) -> Option<u16> { todo!() }
+    pub fn checked_mul(self, rhs: u16) -> Option<u16> { todo!() }
+    pub fn checked_div(self, rhs: u16) -> Option<u16> { todo!() }
+    pub fn checked_rem(self, rhs: u16) -> Option<u16> { todo!() }
+    pub fn overflowing_add(self, rhs: u16) -> (u16, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: u16) -> (u16, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: u16) -> (u16, bool) { todo!() }
 }
 
 impl u32 {
@@ -94,19 +120,30 @@ impl u32 {
     pub fn from_be_bytes(bytes: [u8; 4]) -> u32 { todo!() }
     pub fn to_le_bytes(self) -> [u8; 4] { todo!() }
     pub fn from_le_bytes(bytes: [u8; 4]) -> u32 { todo!() }
-    pub fn wrapping_add(self, rhs: u32) -> u32 { todo!() }
-    pub fn wrapping_sub(self, rhs: u32) -> u32 { todo!() }
-    pub fn saturating_add(self, rhs: u32) -> u32 { todo!() }
-    pub fn saturating_sub(self, rhs: u32) -> u32 { todo!() }
-    pub fn checked_add(self, rhs: u32) -> Option<u32> { todo!() }
-    pub fn checked_sub(self, rhs: u32) -> Option<u32> { todo!() }
-    pub fn checked_mul(self, rhs: u32) -> Option<u32> { todo!() }
     pub fn pow(self, exp: u32) -> u32 { todo!() }
     pub fn min(self, other: u32) -> u32 { todo!() }
     pub fn max(self, other: u32) -> u32 { todo!() }
     pub fn count_ones(self) -> u32 { todo!() }
     pub fn leading_zeros(self) -> u32 { todo!() }
     pub fn trailing_zeros(self) -> u32 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: u32) -> u32 { todo!() }
+    pub fn wrapping_sub(self, rhs: u32) -> u32 { todo!() }
+    pub fn wrapping_mul(self, rhs: u32) -> u32 { todo!() }
+    pub fn saturating_add(self, rhs: u32) -> u32 { todo!() }
+    pub fn saturating_sub(self, rhs: u32) -> u32 { todo!() }
+    pub fn saturating_mul(self, rhs: u32) -> u32 { todo!() }
+    pub fn checked_add(self, rhs: u32) -> Option<u32> { todo!() }
+    pub fn checked_sub(self, rhs: u32) -> Option<u32> { todo!() }
+    pub fn checked_mul(self, rhs: u32) -> Option<u32> { todo!() }
+    pub fn checked_div(self, rhs: u32) -> Option<u32> { todo!() }
+    pub fn checked_rem(self, rhs: u32) -> Option<u32> { todo!() }
+    pub fn overflowing_add(self, rhs: u32) -> (u32, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: u32) -> (u32, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: u32) -> (u32, bool) { todo!() }
 }
 
 impl u64 {
@@ -116,20 +153,30 @@ impl u64 {
     pub fn from_be_bytes(bytes: [u8; 8]) -> u64 { todo!() }
     pub fn to_le_bytes(self) -> [u8; 8] { todo!() }
     pub fn from_le_bytes(bytes: [u8; 8]) -> u64 { todo!() }
-    pub fn wrapping_add(self, rhs: u64) -> u64 { todo!() }
-    pub fn wrapping_sub(self, rhs: u64) -> u64 { todo!() }
-    pub fn saturating_add(self, rhs: u64) -> u64 { todo!() }
-    pub fn saturating_sub(self, rhs: u64) -> u64 { todo!() }
-    pub fn checked_add(self, rhs: u64) -> Option<u64> { todo!() }
-    pub fn checked_sub(self, rhs: u64) -> Option<u64> { todo!() }
-    pub fn checked_mul(self, rhs: u64) -> Option<u64> { todo!() }
-    pub fn checked_div(self, rhs: u64) -> Option<u64> { todo!() }
     pub fn pow(self, exp: u32) -> u64 { todo!() }
     pub fn min(self, other: u64) -> u64 { todo!() }
     pub fn max(self, other: u64) -> u64 { todo!() }
     pub fn count_ones(self) -> u32 { todo!() }
     pub fn leading_zeros(self) -> u32 { todo!() }
     pub fn trailing_zeros(self) -> u32 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: u64) -> u64 { todo!() }
+    pub fn wrapping_sub(self, rhs: u64) -> u64 { todo!() }
+    pub fn wrapping_mul(self, rhs: u64) -> u64 { todo!() }
+    pub fn saturating_add(self, rhs: u64) -> u64 { todo!() }
+    pub fn saturating_sub(self, rhs: u64) -> u64 { todo!() }
+    pub fn saturating_mul(self, rhs: u64) -> u64 { todo!() }
+    pub fn checked_add(self, rhs: u64) -> Option<u64> { todo!() }
+    pub fn checked_sub(self, rhs: u64) -> Option<u64> { todo!() }
+    pub fn checked_mul(self, rhs: u64) -> Option<u64> { todo!() }
+    pub fn checked_div(self, rhs: u64) -> Option<u64> { todo!() }
+    pub fn checked_rem(self, rhs: u64) -> Option<u64> { todo!() }
+    pub fn overflowing_add(self, rhs: u64) -> (u64, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: u64) -> (u64, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: u64) -> (u64, bool) { todo!() }
 }
 
 impl u128 {
@@ -137,8 +184,24 @@ impl u128 {
     pub const MAX: u128 = 0;
     pub fn to_be_bytes(self) -> [u8; 16] { todo!() }
     pub fn from_be_bytes(bytes: [u8; 16]) -> u128 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
     pub fn wrapping_add(self, rhs: u128) -> u128 { todo!() }
     pub fn wrapping_sub(self, rhs: u128) -> u128 { todo!() }
+    pub fn wrapping_mul(self, rhs: u128) -> u128 { todo!() }
+    pub fn saturating_add(self, rhs: u128) -> u128 { todo!() }
+    pub fn saturating_sub(self, rhs: u128) -> u128 { todo!() }
+    pub fn saturating_mul(self, rhs: u128) -> u128 { todo!() }
+    pub fn checked_add(self, rhs: u128) -> Option<u128> { todo!() }
+    pub fn checked_sub(self, rhs: u128) -> Option<u128> { todo!() }
+    pub fn checked_mul(self, rhs: u128) -> Option<u128> { todo!() }
+    pub fn checked_div(self, rhs: u128) -> Option<u128> { todo!() }
+    pub fn checked_rem(self, rhs: u128) -> Option<u128> { todo!() }
+    pub fn overflowing_add(self, rhs: u128) -> (u128, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: u128) -> (u128, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: u128) -> (u128, bool) { todo!() }
 }
 
 // `usize` and `isize` are pointer-sized, and the transpiler evaluates cfg as
@@ -153,16 +216,27 @@ impl usize {
     pub fn from_be_bytes(bytes: [u8; 4]) -> usize { todo!() }
     pub fn to_le_bytes(self) -> [u8; 4] { todo!() }
     pub fn from_le_bytes(bytes: [u8; 4]) -> usize { todo!() }
-    pub fn wrapping_add(self, rhs: usize) -> usize { todo!() }
-    pub fn wrapping_sub(self, rhs: usize) -> usize { todo!() }
-    pub fn saturating_add(self, rhs: usize) -> usize { todo!() }
-    pub fn saturating_sub(self, rhs: usize) -> usize { todo!() }
-    pub fn checked_add(self, rhs: usize) -> Option<usize> { todo!() }
-    pub fn checked_sub(self, rhs: usize) -> Option<usize> { todo!() }
-    pub fn checked_mul(self, rhs: usize) -> Option<usize> { todo!() }
     pub fn pow(self, exp: u32) -> usize { todo!() }
     pub fn min(self, other: usize) -> usize { todo!() }
     pub fn max(self, other: usize) -> usize { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: usize) -> usize { todo!() }
+    pub fn wrapping_sub(self, rhs: usize) -> usize { todo!() }
+    pub fn wrapping_mul(self, rhs: usize) -> usize { todo!() }
+    pub fn saturating_add(self, rhs: usize) -> usize { todo!() }
+    pub fn saturating_sub(self, rhs: usize) -> usize { todo!() }
+    pub fn saturating_mul(self, rhs: usize) -> usize { todo!() }
+    pub fn checked_add(self, rhs: usize) -> Option<usize> { todo!() }
+    pub fn checked_sub(self, rhs: usize) -> Option<usize> { todo!() }
+    pub fn checked_mul(self, rhs: usize) -> Option<usize> { todo!() }
+    pub fn checked_div(self, rhs: usize) -> Option<usize> { todo!() }
+    pub fn checked_rem(self, rhs: usize) -> Option<usize> { todo!() }
+    pub fn overflowing_add(self, rhs: usize) -> (usize, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: usize) -> (usize, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: usize) -> (usize, bool) { todo!() }
 }
 
 impl i16 {
@@ -172,12 +246,26 @@ impl i16 {
     pub fn from_be_bytes(bytes: [u8; 2]) -> i16 { todo!() }
     pub fn abs(self) -> i16 { todo!() }
     pub fn signum(self) -> i16 { todo!() }
-    pub fn wrapping_add(self, rhs: i16) -> i16 { todo!() }
-    pub fn wrapping_sub(self, rhs: i16) -> i16 { todo!() }
-    pub fn saturating_add(self, rhs: i16) -> i16 { todo!() }
-    pub fn saturating_sub(self, rhs: i16) -> i16 { todo!() }
     pub fn min(self, other: i16) -> i16 { todo!() }
     pub fn max(self, other: i16) -> i16 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: i16) -> i16 { todo!() }
+    pub fn wrapping_sub(self, rhs: i16) -> i16 { todo!() }
+    pub fn wrapping_mul(self, rhs: i16) -> i16 { todo!() }
+    pub fn saturating_add(self, rhs: i16) -> i16 { todo!() }
+    pub fn saturating_sub(self, rhs: i16) -> i16 { todo!() }
+    pub fn saturating_mul(self, rhs: i16) -> i16 { todo!() }
+    pub fn checked_add(self, rhs: i16) -> Option<i16> { todo!() }
+    pub fn checked_sub(self, rhs: i16) -> Option<i16> { todo!() }
+    pub fn checked_mul(self, rhs: i16) -> Option<i16> { todo!() }
+    pub fn checked_div(self, rhs: i16) -> Option<i16> { todo!() }
+    pub fn checked_rem(self, rhs: i16) -> Option<i16> { todo!() }
+    pub fn overflowing_add(self, rhs: i16) -> (i16, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: i16) -> (i16, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: i16) -> (i16, bool) { todo!() }
 }
 
 impl i32 {
@@ -189,14 +277,26 @@ impl i32 {
     pub fn abs(self) -> i32 { todo!() }
     pub fn signum(self) -> i32 { todo!() }
     pub fn pow(self, exp: u32) -> i32 { todo!() }
-    pub fn wrapping_add(self, rhs: i32) -> i32 { todo!() }
-    pub fn wrapping_sub(self, rhs: i32) -> i32 { todo!() }
-    pub fn saturating_add(self, rhs: i32) -> i32 { todo!() }
-    pub fn saturating_sub(self, rhs: i32) -> i32 { todo!() }
-    pub fn checked_add(self, rhs: i32) -> Option<i32> { todo!() }
-    pub fn checked_sub(self, rhs: i32) -> Option<i32> { todo!() }
     pub fn min(self, other: i32) -> i32 { todo!() }
     pub fn max(self, other: i32) -> i32 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: i32) -> i32 { todo!() }
+    pub fn wrapping_sub(self, rhs: i32) -> i32 { todo!() }
+    pub fn wrapping_mul(self, rhs: i32) -> i32 { todo!() }
+    pub fn saturating_add(self, rhs: i32) -> i32 { todo!() }
+    pub fn saturating_sub(self, rhs: i32) -> i32 { todo!() }
+    pub fn saturating_mul(self, rhs: i32) -> i32 { todo!() }
+    pub fn checked_add(self, rhs: i32) -> Option<i32> { todo!() }
+    pub fn checked_sub(self, rhs: i32) -> Option<i32> { todo!() }
+    pub fn checked_mul(self, rhs: i32) -> Option<i32> { todo!() }
+    pub fn checked_div(self, rhs: i32) -> Option<i32> { todo!() }
+    pub fn checked_rem(self, rhs: i32) -> Option<i32> { todo!() }
+    pub fn overflowing_add(self, rhs: i32) -> (i32, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: i32) -> (i32, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: i32) -> (i32, bool) { todo!() }
 }
 
 impl i64 {
@@ -209,14 +309,26 @@ impl i64 {
     pub fn abs(self) -> i64 { todo!() }
     pub fn signum(self) -> i64 { todo!() }
     pub fn pow(self, exp: u32) -> i64 { todo!() }
-    pub fn wrapping_add(self, rhs: i64) -> i64 { todo!() }
-    pub fn wrapping_sub(self, rhs: i64) -> i64 { todo!() }
-    pub fn saturating_add(self, rhs: i64) -> i64 { todo!() }
-    pub fn saturating_sub(self, rhs: i64) -> i64 { todo!() }
-    pub fn checked_add(self, rhs: i64) -> Option<i64> { todo!() }
-    pub fn checked_sub(self, rhs: i64) -> Option<i64> { todo!() }
     pub fn min(self, other: i64) -> i64 { todo!() }
     pub fn max(self, other: i64) -> i64 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: i64) -> i64 { todo!() }
+    pub fn wrapping_sub(self, rhs: i64) -> i64 { todo!() }
+    pub fn wrapping_mul(self, rhs: i64) -> i64 { todo!() }
+    pub fn saturating_add(self, rhs: i64) -> i64 { todo!() }
+    pub fn saturating_sub(self, rhs: i64) -> i64 { todo!() }
+    pub fn saturating_mul(self, rhs: i64) -> i64 { todo!() }
+    pub fn checked_add(self, rhs: i64) -> Option<i64> { todo!() }
+    pub fn checked_sub(self, rhs: i64) -> Option<i64> { todo!() }
+    pub fn checked_mul(self, rhs: i64) -> Option<i64> { todo!() }
+    pub fn checked_div(self, rhs: i64) -> Option<i64> { todo!() }
+    pub fn checked_rem(self, rhs: i64) -> Option<i64> { todo!() }
+    pub fn overflowing_add(self, rhs: i64) -> (i64, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: i64) -> (i64, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: i64) -> (i64, bool) { todo!() }
 }
 
 impl isize {
@@ -226,10 +338,26 @@ impl isize {
     pub fn to_be_bytes(self) -> [u8; 4] { todo!() }
     pub fn from_be_bytes(bytes: [u8; 4]) -> isize { todo!() }
     pub fn abs(self) -> isize { todo!() }
-    pub fn saturating_add(self, rhs: isize) -> isize { todo!() }
-    pub fn saturating_sub(self, rhs: isize) -> isize { todo!() }
     pub fn min(self, other: isize) -> isize { todo!() }
     pub fn max(self, other: isize) -> isize { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: isize) -> isize { todo!() }
+    pub fn wrapping_sub(self, rhs: isize) -> isize { todo!() }
+    pub fn wrapping_mul(self, rhs: isize) -> isize { todo!() }
+    pub fn saturating_add(self, rhs: isize) -> isize { todo!() }
+    pub fn saturating_sub(self, rhs: isize) -> isize { todo!() }
+    pub fn saturating_mul(self, rhs: isize) -> isize { todo!() }
+    pub fn checked_add(self, rhs: isize) -> Option<isize> { todo!() }
+    pub fn checked_sub(self, rhs: isize) -> Option<isize> { todo!() }
+    pub fn checked_mul(self, rhs: isize) -> Option<isize> { todo!() }
+    pub fn checked_div(self, rhs: isize) -> Option<isize> { todo!() }
+    pub fn checked_rem(self, rhs: isize) -> Option<isize> { todo!() }
+    pub fn overflowing_add(self, rhs: isize) -> (isize, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: isize) -> (isize, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: isize) -> (isize, bool) { todo!() }
 }
 
 impl f32 {

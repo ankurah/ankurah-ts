@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/signals/src/observer/callback_observer.rs
-import { Struct, Arc, Weak, RwLock, OwnedClosure, HashMap } from '@ankurah/base';
-import { BroadcastId, ListenerGuard } from '../broadcast';
+import { Struct, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, HashMap } from '@ankurah/base';
+import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
-import { Signal } from '../signal';
+import { ListenerGuard, Signal } from '../signal';
 
 export class CallbackObserver extends Struct implements Observer {
   _0: Arc<Inner>;
@@ -13,18 +13,18 @@ export class CallbackObserver extends Struct implements Observer {
     this._0 = _0;
   }
 
-  static new<F extends Fn>(callback: Arc<F>): CallbackObserver {
-    return new CallbackObserver(Arc.new(new Inner(new OwnedClosure([callback], () => callback()), new RwLock(new HashMap()))));
+  static new<F extends Invocable<[], void>>(callback: Arc<F>): CallbackObserver {
+    return new CallbackObserver(Arc.new(new Inner(new OwnedClosure([callback], () => callback()), new RwLock(new HashMap<BroadcastId, SubscriptionEntry>()))));
   }
 
   trigger(): void {
     this.withContext(this._0.value.callback);
   }
 
-  withContext<F extends Fn>(f: F): void {
+  withContext<F extends Invocable<[], void>>(f: F): void {
     this.markAllForRemoval();
     CurrentObserver.set(this.clone());
-    f();
+    invokeRef(f);
     CurrentObserver.remove(this);
     this.sweepMarkedListeners();
   }

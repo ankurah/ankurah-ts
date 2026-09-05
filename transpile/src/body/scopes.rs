@@ -203,10 +203,44 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// The type of an expression a PATTERN is matched against, with a written
+    /// `&` kept on it.
+    ///
+    /// For: everywhere else the port erases references, because a TypeScript
+    /// object reference is what a Rust reference becomes, so `resolve_expr_type`
+    /// answers what a `&e` points at. Matching is where the difference decides
+    /// who owns what the pattern binds: Rust's default binding mode (RFC 2005)
+    /// says a pattern matched against a reference binds by reference, and the
+    /// binding then owes no release. With the `&` erased, `for v in &map`
+    /// released the borrowed key and value on every turn and the map released
+    /// them again, and `if let Some(order_by) = &self.order_by` released a
+    /// vector the field still holds — both double drops the strict registry
+    /// aborts on.
+    pub fn borrowed_scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
+        match expr {
+            syn::Expr::Reference(r) => Some(crate::ty::Ty::Ref {
+                mutable: r.mutability.is_some(),
+                inner: Box::new(self.borrowed_scrutinee_type(&r.expr)?),
+            }),
+            syn::Expr::Paren(p) => self.borrowed_scrutinee_type(&p.expr),
+            syn::Expr::Group(g) => self.borrowed_scrutinee_type(&g.expr),
+            _ => self.scrutinee_type(expr),
+        }
+    }
+
+    /// The type of the expression a `for` loop iterates.
+    ///
+    /// `IntoIterator for Vec<T>` hands out a `T` the loop has to release, and
+    /// `IntoIterator for &Vec<T>` a `&T` that stays the sequence's, so the
+    /// written `&` decides the form of the whole loop.
+    pub fn iterated_type(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
+        self.borrowed_scrutinee_type(iterated)
+    }
+
     /// What one turn of a `for` loop over this expression hands out.
     pub fn iteration_item(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
         let tc = self.types.as_ref()?;
-        let ty = self.scrutinee_type(iterated)?;
+        let ty = self.iterated_type(iterated)?;
         // A sequence the engine cannot name the element of leaves the loop
         // variable untyped; the uses of that variable are what report it, so
         // that one gap is counted once per site rather than twice.
@@ -371,6 +405,51 @@ impl<'a> BodyTranslator<'a> {
         let written = Self::path_static(&path.path);
         let written = self.emitted_name(&written).unwrap_or(written);
         self.cell_params.borrow().iter().any(|name| *name == written)
+    }
+
+    /// Does this call's callee name a parameter or local whose type is a
+    /// CALLABLE BOUND — `F: FnOnce(..)`, `impl Fn(..)`, `Box<dyn FnMut(..)>`?
+    ///
+    /// R10: whether a closure needed wrapping is a property of what it
+    /// CAPTURED, and a callee cannot see that. `f(x)` written in such a callee
+    /// raised `TypeError: f is not a function` the moment a caller handed it an
+    /// `OwnedClosure` — three live sites did. Every call on one goes through
+    /// base's `invoke`, which tells the two shapes apart.
+    ///
+    /// Only a single-segment path, because that is what names a binding; a
+    /// qualified path names a function, and a function is called as written.
+    pub(crate) fn calls_a_bound_closure(&self, callee: &syn::Expr) -> bool {
+        self.bound_closure_helper(callee).is_some()
+    }
+
+    /// Which helper a call on a bound closure goes through: `invoke` where the
+    /// bound is `FnOnce`, which Rust takes BY VALUE, and `invokeRef` where it is
+    /// `Fn` or `FnMut`, which Rust takes by reference and the caller may call
+    /// again.
+    pub(crate) fn bound_closure_helper(&self, callee: &syn::Expr) -> Option<&'static str> {
+        let syn::Expr::Path(path) = callee else { return None };
+        if path.path.segments.len() != 1 {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let ty = self.quietly(|| self.resolve_expr_type(callee)).ok()?;
+        // A BOUND, not a concrete closure. A local the emitter wrote as a plain
+        // arrow is called as one; what a caller may have wrapped is a value
+        // whose type the callee knows only through a bound.
+        if !matches!(
+            ty.peel_refs(),
+            crate::ty::Ty::Param(_) | crate::ty::Ty::ImplTrait { .. } | crate::ty::Ty::Dyn { .. }
+        ) {
+            return None;
+        }
+        let tc = tc.borrow();
+        crate::infer::expected::fn_shape(tc.registry, &ty, &tc.param_bounds)?;
+        let once = crate::infer::expected::takes_the_closure_by_value(
+            tc.registry,
+            &ty,
+            &tc.param_bounds,
+        );
+        Some(if once { "invoke" } else { "invokeRef" })
     }
 
     /// Note that this body holds `name` in a runtime cell.

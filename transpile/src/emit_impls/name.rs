@@ -25,6 +25,7 @@ pub fn method_symbol(
     type_args: &[String],
     ts_method: &str,
     self_type: &str,
+    self_id: Option<crate::ty::TypeId>,
 ) -> String {
     match trait_name {
         // `Into` and `TryInto` name their *target*, not their source, so the
@@ -33,7 +34,11 @@ pub fn method_symbol(
         // which direction it goes.
         Some("Into") | Some("TryInto") | None => ts_method.to_string(),
         Some(trait_name) => {
-            crate::emit::impl_method_name(trait_name, "", ts_method, type_args, self_type, None)
+            // R8's one decision, asked here too: the free-function path used
+            // to compute a second name of its own, so an owned conversion and a
+            // borrowed one collapsed onto one symbol that only one of them was
+            // emitted under.
+            crate::emit::impl_method_name(trait_name, "", ts_method, type_args, self_type, self_id)
         }
     }
 }

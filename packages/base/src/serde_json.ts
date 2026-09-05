@@ -381,8 +381,21 @@ class JsonReader {
         this.#at += 1;
         // The escapes are JSON's own, so the host's reader is what decodes
         // them: writing a second unescaper here would be a second thing to get
-        // wrong about `🚀`.
-        return JSON.parse(this.#text.slice(start, this.#at)) as string;
+        // wrong about `🚀`. What it must not do is THROW past this reader: a
+        // `SyntaxError` leaving `parse` is an exception where `from_str` answers
+        // `Err`, and seven live boundaries — storage-sqlite's engine, core's
+        // system, the value reader — call `parse` for a `Result`.
+        const quoted = this.#text.slice(start, this.#at);
+        try {
+          return JSON.parse(quoted) as string;
+        } catch {
+          throw this.fail('invalid string');
+        }
+      }
+      // JSON forbids a raw control character inside a string; serde_json says
+      // so by name. `JSON.parse` refuses it too, by throwing.
+      if (ch !== undefined && ch < ' ') {
+        throw this.fail('control character (\\u0000-\\u001F) found while parsing a string');
       }
       this.#at += 1;
     }
@@ -397,35 +410,54 @@ class JsonReader {
   private number(): number | bigint {
     const start = this.#at;
     if (this.#text[this.#at] === '-') this.#at += 1;
-    while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
-      this.#at += 1;
+    const digitsFrom = this.#at;
+    this.digits();
+    if (this.#at === digitsFrom) throw this.fail('expected a value');
+    // JSON's grammar allows one leading zero and no more: `01` is not a number.
+    // serde_json stops after the `0` and calls the rest trailing characters;
+    // either way the document is refused, and accepting it read `01` as `1`.
+    if (this.#text[digitsFrom] === '0' && this.#at > digitsFrom + 1) {
+      throw this.fail('invalid number');
     }
     const integerEnd = this.#at;
     let fractional = false;
     if (this.#text[this.#at] === '.') {
       fractional = true;
       this.#at += 1;
-      while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
-        this.#at += 1;
-      }
+      const from = this.#at;
+      this.digits();
+      // `1.` has no fraction. `Number('1.')` is 1, so it used to be accepted.
+      if (this.#at === from) throw this.fail('invalid number');
     }
     if (this.#text[this.#at] === 'e' || this.#text[this.#at] === 'E') {
       fractional = true;
       this.#at += 1;
       if (this.#text[this.#at] === '+' || this.#text[this.#at] === '-') this.#at += 1;
-      while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
-        this.#at += 1;
-      }
+      const from = this.#at;
+      this.digits();
+      if (this.#at === from) throw this.fail('invalid number');
     }
     const token = this.#text.slice(start, this.#at);
-    if (token === '' || token === '-') throw this.fail('expected a value');
-    if (fractional) return Number(token);
+    if (fractional) {
+      const value = Number(token);
+      // serde_json refuses a float the format cannot hold: `1e999` is
+      // `number out of range`, not `Infinity`.
+      if (!Number.isFinite(value)) throw this.fail('number out of range');
+      return value;
+    }
     // An integer token. It stays a `number` while a `number` can hold it
     // exactly, so nothing that used to be a `number` becomes a `bigint`; beyond
     // that it is a `bigint`, which is what keeps `u64::MAX` readable.
     const asNumber = Number(this.#text.slice(start, integerEnd));
     if (Number.isSafeInteger(asNumber)) return asNumber;
     return BigInt(token);
+  }
+
+  /** Walk past a run of decimal digits. */
+  private digits(): void {
+    while (this.#at < this.#text.length && this.#text[this.#at] >= '0' && this.#text[this.#at] <= '9') {
+      this.#at += 1;
+    }
   }
 
   private fail(message: string): Fault {

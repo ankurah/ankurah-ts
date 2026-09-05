@@ -107,7 +107,7 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
     if reg.is_system(id) {
         return Err(format!("`{}` is a std type with no Debug rendering in the port", path));
     }
-    if reg.is_hand_written(id) {
+    if reg.members_are_hand_written(id) {
         return Err(format!(
             "`{}`'s TypeScript is written by hand, so it has no emitted `debug()` to call",
             path

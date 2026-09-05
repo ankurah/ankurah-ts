@@ -16,6 +16,7 @@
 //! Every predicate evaluated is recorded (`decisions()`), so a run can say what
 //! it decided and how, which is what the crate inventory pins.
 
+use quote::ToTokens;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
@@ -62,6 +63,19 @@ impl CfgFeatures {
     pub fn with_flags(mut self, flags: BTreeMap<String, bool>) -> Self {
         self.flags = flags;
         self
+    }
+
+    /// The same set, with `test` ON.
+    ///
+    /// D6: inside a `#[cfg(test)] mod tests`, the compiler is already building
+    /// with `test` true, so a `#[cfg(test)]` on an item there keeps it. Walking
+    /// the module with the crate's own set — where `test` is false — dropped
+    /// every one of those items, and the emitted suite then called a helper
+    /// nothing declared.
+    pub fn under_test(&self) -> CfgFeatures {
+        let mut under = self.clone();
+        under.flags.insert("test".to_string(), true);
+        under
     }
 
     /// The features the crate's own `Cargo.toml` declares.
@@ -183,6 +197,55 @@ pub enum Gate {
     /// A predicate nothing decides. The item is kept and the text of the
     /// undecided cfg comes back so the caller can report it at the item.
     Undecided(String),
+}
+
+/// `#[cfg_attr(P, a, b)]` as the attributes it really is.
+///
+/// Rust reads it as `#[a] #[b]` where `P` holds and as nothing where it does
+/// not. Ignoring it entirely gave the right answer for every corpus site, whose
+/// predicates are all features the port turns off — and the wrong answer for
+/// any site whose predicate is TRUE, where a derive, a serde rename or a
+/// `#[test]` would have been dropped in silence.
+///
+/// A predicate nothing decides leaves the attributes out, which is what the
+/// port did before; `undecided` collects those so the caller can say so.
+pub fn expand_cfg_attrs(
+    attrs: &[syn::Attribute],
+    cfg: &CfgFeatures,
+    undecided: &mut Vec<String>,
+) -> Vec<syn::Attribute> {
+    let mut out = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("cfg_attr") {
+            out.push(attr.clone());
+            continue;
+        }
+        let Ok(list) = attr.meta.require_list() else {
+            out.push(attr.clone());
+            continue;
+        };
+        let Ok(parts) = list.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        ) else {
+            undecided.push(attr.meta.to_token_stream().to_string());
+            continue;
+        };
+        let mut parts = parts.into_iter();
+        let Some(predicate) = parts.next() else { continue };
+        let text = format!("cfg({})", predicate.to_token_stream());
+        let normalized = text.replace(" (", "(").replace(", ", ",");
+        match parse_cfg_attr(&normalized).and_then(|expr| expr.eval(cfg)) {
+            Some(true) => out.extend(parts.map(|meta| syn::Attribute {
+                pound_token: attr.pound_token,
+                style: attr.style,
+                bracket_token: attr.bracket_token,
+                meta,
+            })),
+            Some(false) => {}
+            None => undecided.push(attr.meta.to_token_stream().to_string()),
+        }
+    }
+    out
 }
 
 /// Decide whether an item with these attributes is part of the port's build.
@@ -423,7 +486,7 @@ pub fn decisions() -> Vec<(String, Answer, usize)> {
     })
 }
 
-use quote::ToTokens;
+
 
 #[cfg(test)]
 mod tests {
@@ -627,4 +690,55 @@ mod tests {
         assert_eq!(row.1, Some(true));
         assert!(row.2 >= 2, "both sites counted: {}", row.2);
     }
+
+    /// D6: inside a `#[cfg(test)] mod tests` the compiler is already building
+    /// with `test` true, so a `#[cfg(test)]` on an item there KEEPS it. Walked
+    /// with the crate's own set, every such item was dropped and the emitted
+    /// suite called a helper nothing declared.
+    #[test]
+    fn a_cfg_test_item_is_kept_inside_a_test_module() {
+        let outside = port_build(&[]);
+        let item: syn::ItemFn = syn::parse_str("#[cfg(test)] fn helper() -> u32 { 1 }").unwrap();
+        assert!(should_skip(&item.attrs, &outside), "outside, it is not in the build");
+        assert!(
+            !should_skip(&item.attrs, &outside.under_test()),
+            "inside a test module, it is"
+        );
+    }
+
+    /// D8: `#[cfg_attr(P, ..)]` is the attributes it carries where `P` holds and
+    /// nothing where it does not. Ignored entirely, a derive gated on a
+    /// predicate that HOLDS was dropped in silence.
+    #[test]
+    fn a_cfg_attr_is_the_attributes_it_carries() {
+        let cfg = port_build(&["singlethread"]);
+        let mut undecided = Vec::new();
+
+        let held: syn::ItemStruct =
+            syn::parse_str("#[cfg_attr(feature = \"singlethread\", derive(Clone), serde(transparent))] struct S;")
+                .unwrap();
+        let expanded = expand_cfg_attrs(&held.attrs, &cfg, &mut undecided);
+        let written: Vec<String> = expanded
+            .iter()
+            .map(|a| a.meta.to_token_stream().to_string().replace(" (", "("))
+            .collect();
+        assert_eq!(written, vec!["derive(Clone)", "serde(transparent)"]);
+        assert!(undecided.is_empty(), "{undecided:?}");
+
+        let absent: syn::ItemStruct =
+            syn::parse_str("#[cfg_attr(feature = \"uniffi\", derive(Clone))] struct S;").unwrap();
+        assert!(expand_cfg_attrs(&absent.attrs, &cfg, &mut undecided).is_empty());
+        assert!(undecided.is_empty(), "a decided predicate is not undecided");
+
+        // A predicate nothing decides leaves the attributes out AND says so.
+        let unknown: syn::ItemStruct =
+            syn::parse_str("#[cfg_attr(target_os = \"redox\", derive(Clone))] struct S;").unwrap();
+        assert!(expand_cfg_attrs(&unknown.attrs, &cfg, &mut undecided).is_empty());
+        assert_eq!(undecided.len(), 1, "{undecided:?}");
+
+        // Everything that is not a `cfg_attr` travels through untouched.
+        let plain: syn::ItemStruct = syn::parse_str("#[derive(Debug)] struct S;").unwrap();
+        assert_eq!(expand_cfg_attrs(&plain.attrs, &cfg, &mut undecided).len(), 1);
+    }
 }
+

@@ -515,13 +515,22 @@ fn emit_trait_methods(
                 };
                 out.push('\n');
                 emit_method_with(out, &m, self_type, modifiers);
-            } else if signatures.get(&ts_name) != Some(&signature) {
-                // Two written impls whose methods land on one name AND differ
-                // in what they take or answer: the second used to be dropped
-                // without a word, and every call to it went to the first —
-                // `impl Add<Right> for Weight` beside `impl Add for Weight` are
-                // both `add`, and `weight + right` called the one that takes a
-                // `Weight`.
+            } else if signatures.get(&ts_name) != Some(&signature)
+                || !matches!(trait_name, &"From" | &"TryFrom")
+            {
+                // Two written impls whose methods land on one name: the second
+                // used to be dropped without a word, and every call to it went
+                // to the first — `impl Add<Right> for Weight` beside
+                // `impl Add for Weight` are both `add`, and `weight + right`
+                // called the one that takes a `Weight`.
+                //
+                // An identical signature is not evidence that the two are one
+                // method: R8 retracts that reading, because
+                // `From<bincode::Error>` and `From<anyhow::Error>` are both
+                // `from(e: Error)` and have different bodies. For a CONVERSION
+                // the naming post-pass has already settled which impls share a
+                // name and reported the contests it could not settle, so a
+                // second word here would be about a decision, not a loss.
                 crate::diag::pending::park(
                     method
                         .rust_return
@@ -687,9 +696,13 @@ fn emit_derive_methods(
                                         })
                                         .collect();
                                     format!("[{}] as {}", clones.join(", "), base_ty)
-                                } else if base_ty.starts_with("HashMap<") {
-                                    // Map — clone entries
-                                    format!("new Map(Array.from(this.{}.entries()).map(([k, v]) => [k, v]))", n)
+                                } else if base_ty.starts_with("HashMap<") || base_ty.starts_with("HashSet<") {
+                                    // The runtime container's own clone, which
+                                    // walks its keys and values by their Clone
+                                    // shape. `new Map(...)` built a JavaScript
+                                    // `Map` — identity-keyed, and shallow, so
+                                    // both maps then owned one set of values.
+                                    format!("this.{}.clone()", n)
                                 } else if ty.ends_with(" | null") {
                                     format!("this.{}?.clone() ?? null", n)
                                 } else {
@@ -1175,7 +1188,9 @@ pub(crate) fn disambiguate_trait_method(
     if trait_name == "PartialEq" {
         let target = &type_args[0];
         // Only disambiguate when comparing against a different type (str, string, etc.)
-        if matches!(target.as_str(), "string" | "str") {
+        // The argument arrives as Rust wrote it, so `String` and `str` are
+        // the two spellings of the one TypeScript `string`.
+        if matches!(target.as_str(), "string" | "str" | "String") {
             return format!("{}Str", base_name);
         } else if target.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
             return format!("{}{}", base_name, target);
@@ -1278,12 +1293,14 @@ pub(crate) fn qualified_source(written: &str) -> String {
     if lower_leaf.contains(&qualifier.to_lowercase()) {
         return leaf;
     }
-    let mut out = String::new();
-    let mut chars = qualifier.chars();
-    if let Some(first) = chars.next() {
-        out.extend(first.to_uppercase());
-        out.push_str(chars.as_str());
-    }
+    // A Rust module is snake_case and a TypeScript name is not:
+    // `serde_json::Error` is `fromSerdeJsonError`, not `fromSerde_jsonError`.
+    let mut out = crate::name_map::to_camel_case(qualifier);
+    let mut chars = out.chars();
+    out = match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    };
     out.push_str(&leaf);
     out
 }

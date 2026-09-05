@@ -51,6 +51,15 @@ pub struct PathsConfig {
 #[derive(Debug, Clone)]
 pub struct ProvidedImpl {
     pub path: String,
+    /// Does the hand-written file declare `static fromJson` for this type?
+    ///
+    /// The engine never reads the TypeScript it did not write, so a provided
+    /// type's members are whatever the person who wrote the file wrote. Reading
+    /// "it is hand-written" as "it reads JSON" put `Attested.fromJson` in three
+    /// emitted call sites where `auth.provided.ts` declares no such static.
+    /// Each entry says which it is, and a type that does not is refused —
+    /// transitively, so nothing holding one gets a JSON half either.
+    pub reads_json: bool,
 }
 
 /// One item the port leaves out, named the way the corpus writes it.
@@ -534,7 +543,11 @@ fn parse_provided_impls(value: Option<&toml::Value>) -> HashMap<String, Provided
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                map.insert(k.clone(), ProvidedImpl { path });
+                let reads_json = impl_table
+                    .get("reads_json")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                map.insert(k.clone(), ProvidedImpl { path, reads_json });
             }
         }
     }

@@ -47,16 +47,27 @@ pub fn immediate(params: &str, body: &str, captures: &[Owned]) -> String {
 
 /// The persistent form: the captures are listed beside the body that closes
 /// over them, and from there they are the closure's own fields.
-pub fn owned(captures: &[String], arrow: &str) -> String {
-    format!("new OwnedClosure([{}], {})", captures.join(", "), arrow)
+///
+/// `consumes` says whether the body hands one of them away — Rust's `FnOnce`.
+/// The runtime needs it because `invoke` cannot read a body: a closure whose
+/// body takes the captures is called with `callOnce`, and one that only reads
+/// them is called and then dropped, which is where its captures' glue runs.
+pub fn owned(captures: &[String], arrow: &str, consumes: bool) -> String {
+    let marker = if consumes { ", undefined, true" } else { "" };
+    format!("new OwnedClosure([{}], {}{})", captures.join(", "), arrow, marker)
 }
 
 /// What to say about a closure whose call sites the emitter cannot see.
+///
+/// R10 settles the emitted half: every emitted callee whose parameter carries a
+/// callable bound invokes through base's `invoke`, and base's own
+/// closure-taking methods accept either shape. What is left is a callee written
+/// by hand, which the emitter cannot reach and cannot check.
 pub fn loose_report(captures: &[String]) -> String {
     format!(
-        "this closure owns {} and is written as an `OwnedClosure`, so it is invoked as \
-         `.call(...)` and released by whoever holds it; the emitter cannot see this call site \
-         and has not rewritten it",
+        "this closure owns {} and is written as an `OwnedClosure`, which is not a bare \
+         callable; every emitted callee and `@ankurah/base` invoke one through `invoke`, but \
+         the emitter cannot see THIS call site, so a hand-written callee has to do the same",
         captures
             .iter()
             .map(|c| format!("`{}`", c))
@@ -174,15 +185,16 @@ impl<'a> BodyTranslator<'a> {
             })
             .collect();
         let names: Vec<String> = captures.iter().map(|(name, _)| name.clone()).collect();
+        let consumes = self.hands_a_capture_away(closure);
         match placement {
             Placement::Immediate => ownership::closures::immediate(&params, &statements, &owned),
-            Placement::Bound => ownership::closures::owned(&names, &arrow),
+            Placement::Bound => ownership::closures::owned(&names, &arrow, consumes),
             Placement::Loose => {
                 self.fallback(
                     syn::spanned::Spanned::span(closure),
                     ownership::closures::loose_report(&names),
                 );
-                ownership::closures::owned(&names, &arrow)
+                ownership::closures::owned(&names, &arrow, consumes)
             }
         }
     }

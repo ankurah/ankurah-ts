@@ -84,7 +84,7 @@ export class KeySpec extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this.keyparts)].join('|');
+    return [keyHash(this.keyparts)].map((p) => p.length + ':' + p).join('');
   }
 
   clone(): KeySpec {
@@ -220,7 +220,7 @@ export class IndexKeyPart extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this.column), keyHash(this.subPath), this.direction.hash(), this.valueType.hash(), keyHash(this.nulls), keyHash(this.collation)].join('|');
+    return [keyHash(this.column), keyHash(this.subPath), this.direction.hash(), this.valueType.hash(), keyHash(this.nulls), keyHash(this.collation)].map((p) => p.length + ':' + p).join('');
   }
 
   clone(): IndexKeyPart {

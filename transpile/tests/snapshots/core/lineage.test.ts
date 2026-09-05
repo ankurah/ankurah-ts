@@ -57,7 +57,7 @@ class MockEventStore extends Struct implements GetEvents {
   }
 
   static new(): MockEventStore {
-    return new MockEventStore(new HashMap());
+    return new MockEventStore(new HashMap<number, Attested<TestEvent>>());
   }
 
   add(id: TestId, parentIds: TestId[]): void {
@@ -168,7 +168,7 @@ describe('lineage unit tests', () => {
         } finally {
           ancestor.drop();
         }
-      })()
+      })();
       await (async () => {
         const ancestor = new TestClock([2, 3]);
         try {
@@ -197,7 +197,7 @@ describe('lineage unit tests', () => {
         } finally {
           ancestor.drop();
         }
-      })()
+      })();
       await (async () => {
         const a = new TestClock([2]);
         try {
@@ -231,7 +231,7 @@ describe('lineage unit tests', () => {
         } finally {
           a.drop();
         }
-      })()
+      })();
       {
         const a = new TestClock([6]);
         try {
@@ -288,7 +288,7 @@ describe('lineage unit tests', () => {
         } finally {
           a.drop();
         }
-      })()
+      })();
       await (async () => {
         const a = new TestClock([2]);
         try {
@@ -306,7 +306,7 @@ describe('lineage unit tests', () => {
         } finally {
           a.drop();
         }
-      })()
+      })();
       {
         const a = new TestClock([3]);
         try {
@@ -400,7 +400,7 @@ describe('lineage unit tests', () => {
         } finally {
           ancestor.drop();
         }
-      })()
+      })();
       {
         const ancestor = new TestClock([1]);
         try {

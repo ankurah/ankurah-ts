@@ -172,7 +172,12 @@ const OWN_DROP: [(&str, Glue); 26] = [
 /// `PhantomData<T>` and a `&T` behind an alias hold no `T`; an atomic and a
 /// `Duration` are numbers here. Without this a `PhantomData<Entity>` would look
 /// like a value that owes a drop.
-const NO_GLUE: [&str; 6] = [
+const NO_GLUE: [&str; 7] = [
+    // A `map.entry(k)` borrows the map and owns only the key it was handed,
+    // and every one of the three finishers consumes it — so there is nothing
+    // for a scope to release. Read as a droppable temporary, the emitted code
+    // released an entry `or_default()` had already consumed.
+    "std::collections::hash_map::Entry",
     "std::marker::PhantomData",
     "std::time::Duration",
     "std::time::Instant",

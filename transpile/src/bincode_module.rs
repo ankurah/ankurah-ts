@@ -198,6 +198,36 @@ fn unknown_serde_with(module: &str, owner: &str) {
 /// `Literal::I32(-1234567890)` into `3060399406`, which the wire-format oracle
 /// caught at 26 sites. The Rust type is what decides, so the resolved type
 /// travels beside the spelling.
+/// Is this the one pair the wire width and the port's spelling disagree about?
+///
+/// `usize` and `isize` are eight bytes on the bincode wire and a `number` here.
+/// Nothing else is: the widths the port spells `bigint` are already `bigint`,
+/// and the narrow ones are `number` on both sides.
+fn widens_at_the_wire(ty: Option<&Ty>) -> bool {
+    matches!(
+        ty.map(Ty::peel_refs),
+        Some(Ty::Prim(Prim::Usize)) | Some(Ty::Prim(Prim::Isize))
+    )
+}
+
+/// A `number` about to be written as eight bytes.
+fn widened(value: &str, ty: Option<&Ty>) -> String {
+    if widens_at_the_wire(ty) {
+        format!("BigInt({})", value)
+    } else {
+        value.to_string()
+    }
+}
+
+/// A `bigint` just read, about to land in a `number`.
+fn narrowed(read: &str, ty: Option<&Ty>) -> String {
+    if widens_at_the_wire(ty) {
+        format!("Number({})", read)
+    } else {
+        read.to_string()
+    }
+}
+
 fn width_of(ty: Option<&Ty>) -> Option<&'static str> {
     match ty?.peel_refs() {
         Ty::Prim(p) => Some(match p {
@@ -322,7 +352,11 @@ fn tuple_element<'t>(ty: Option<&'t Ty>, n: usize) -> Option<&'t Ty> {
 fn encode_expr_with(value: &str, ts_type: &str, wr: &str, ty: Option<&Ty>) -> String {
     if let Some(width) = width_of(ty) {
         report_missing_width(width);
-        return format!("{}.write{}({})", wr, width, value);
+        // D9: `usize` and `isize` occupy EIGHT bytes on the wire and are
+        // spelled `number` here, and `setBigUint64` throws on a number. The
+        // conversion belongs at this boundary and nowhere else — R13 keeps the
+        // arithmetic 32-bit.
+        return format!("{}.write{}({})", wr, width, widened(value, ty));
     }
     match ts_type {
         "string" => format!("{}.writeString({})", wr, value),
@@ -548,7 +582,9 @@ fn report_missing_decoder(owner: &str, field: &crate::types::FieldInfo, head: &s
 pub(crate) fn decode_expr_with(ts_type: &str, rd: &str, ty: Option<&Ty>) -> String {
     if let Some(width) = width_of(ty) {
         report_missing_width(width);
-        return format!("{}.read{}()", rd, width);
+        // The other half of D9: an eight-byte read answers a `bigint`, and the
+        // field it lands in is a `number`.
+        return narrowed(&format!("{}.read{}()", rd, width), ty);
     }
     match ts_type {
         "string" => format!("{}.readString()", rd),
@@ -769,10 +805,25 @@ mod width_tests {
             DERIVE
         ));
         let ts = f.emitted("lib.rs");
+        // D9: eight bytes on the wire, a `number` in the port — and
+        // `setBigUint64` throws on a number, so the conversion belongs at this
+        // boundary and nowhere else.
+        assert!(ts.contains("writer.writeU64(BigInt(this.n))"), "{}", ts);
+        assert!(ts.contains("writer.writeI64(BigInt(this.m))"), "{}", ts);
+        assert!(ts.contains("Number(reader.readU64())"), "{}", ts);
+        assert!(ts.contains("Number(reader.readI64())"), "{}", ts);
+    }
+
+    /// A width the port already spells `bigint` crosses no boundary, so nothing
+    /// is wrapped around it.
+    #[test]
+    fn a_sixty_four_bit_field_is_written_as_it_stands() {
+        let mut f = built(&format!("{}pub struct Row {{ pub n: u64 }}", DERIVE));
+        let ts = f.emitted("lib.rs");
         assert!(ts.contains("writer.writeU64(this.n)"), "{}", ts);
-        assert!(ts.contains("writer.writeI64(this.m)"), "{}", ts);
+        assert!(!ts.contains("BigInt(this.n)"), "{}", ts);
         assert!(ts.contains("reader.readU64()"), "{}", ts);
-        assert!(ts.contains("reader.readI64()"), "{}", ts);
+        assert!(!ts.contains("Number(reader.readU64())"), "{}", ts);
     }
 
     /// A width the codec has no method for writes the CORRECT call and says

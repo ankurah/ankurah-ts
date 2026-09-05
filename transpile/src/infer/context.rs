@@ -342,6 +342,48 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::Reference(r) => self.resolve_expr(&r.expr),
 
+            // `loop { .. break n; }` is an expression whose type is what its
+            // `break`s carry; a `loop` with no such `break` never ends and has
+            // no value. Untyped, the local it was bound to was untyped too, and
+            // every operator on that local fell back.
+            syn::Expr::Loop(loop_expr) => {
+                let carried = break_value(&loop_expr.body);
+                match carried {
+                    Some(value) => self.resolve_expr_expecting(value, expected),
+                    None => Ok(Ty::Never),
+                }
+            }
+
+            // `-x` and `!x`. On a primitive both answer the operand's own type,
+            // which is what tells the operator around them that they are
+            // integer arithmetic: with `-1` unresolved, `x / -1` was written as
+            // JavaScript's `/` — a float division where Rust truncates, and
+            // with `i32::MIN / -1`'s panic missed. On anything else the answer
+            // is the impl's `Output`.
+            syn::Expr::Unary(unary)
+                if matches!(unary.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) =>
+            {
+                let operand = self.resolve_expr_expecting(&unary.expr, expected)?;
+                if matches!(operand.peel_refs(), Ty::Prim(_)) {
+                    return Ok(operand.peel_refs().clone());
+                }
+                let trait_path = match unary.op {
+                    syn::UnOp::Neg(_) => "std::ops::Neg",
+                    _ => "std::ops::Not",
+                };
+                self.project_through(&operand, trait_path, "Output")
+                    .ok_or_else(|| {
+                        self.refuse(
+                            expr.span(),
+                            format!(
+                                "`{}` has no `{}` impl in reach",
+                                self.registry.describe(&operand),
+                                trait_path
+                            ),
+                        )
+                    })
+            }
+
             syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
                 let inner_ty = self.resolve_expr(&unary.expr)?;
                 self.probe()
@@ -1794,4 +1836,37 @@ fn is_unsuffixed_int(expr: &syn::Expr) -> bool {
             ..
         }) if int.suffix().is_empty()
     )
+}
+
+/// The first value a `break` inside this loop's body carries, which is what the
+/// loop's own type is.
+///
+/// A `break` in a loop written INSIDE the body belongs to that loop, and a
+/// closure carries its own control flow, so neither is looked into.
+fn break_value(block: &syn::Block) -> Option<&syn::Expr> {
+    fn in_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
+        match expr {
+            syn::Expr::Break(brk) if brk.label.is_none() => brk.expr.as_deref(),
+            syn::Expr::Loop(_)
+            | syn::Expr::While(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::Closure(_)
+            | syn::Expr::Async(_) => None,
+            syn::Expr::Block(b) => in_block(&b.block),
+            syn::Expr::Unsafe(b) => in_block(&b.block),
+            syn::Expr::If(if_expr) => in_block(&if_expr.then_branch).or_else(|| {
+                if_expr.else_branch.as_ref().and_then(|(_, other)| in_expr(other))
+            }),
+            syn::Expr::Match(m) => m.arms.iter().find_map(|arm| in_expr(&arm.body)),
+            _ => None,
+        }
+    }
+    fn in_block(block: &syn::Block) -> Option<&syn::Expr> {
+        block.stmts.iter().find_map(|stmt| match stmt {
+            syn::Stmt::Expr(expr, _) => in_expr(expr),
+            syn::Stmt::Local(local) => local.init.as_ref().and_then(|init| in_expr(&init.expr)),
+            _ => None,
+        })
+    }
+    in_block(block)
 }

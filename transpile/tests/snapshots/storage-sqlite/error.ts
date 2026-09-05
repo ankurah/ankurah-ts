@@ -48,8 +48,16 @@ export class SqliteError extends Enum<SqliteErrorV> {
     }
   }
 
-  static fromError(inner: Error): SqliteError {
+  static fromRusqliteError(inner: Error): SqliteError {
     return new SqliteError('Rusqlite', { _0: inner });
+  }
+
+  static fromBincodeError(inner: Error): SqliteError {
+    return new SqliteError('Serialization', { _0: inner });
+  }
+
+  static fromSerdeJsonError(inner: Error): SqliteError {
+    return new SqliteError('Json', { _0: inner });
   }
 }
 

@@ -32,15 +32,21 @@ use crate::ty::{Ty, TypeId};
 /// was written for, spelled as the impl wrote it.
 pub type ConversionNames = HashMap<(TypeId, String), String>;
 
-/// What tells two impls of one name apart, once TypeScript has had its say.
+/// What tells two impls of one name apart.
 ///
-/// The parameter's spelling, because `From<&str>` and `From<String>` are both
-/// `from(v: string)` and one method serves both; and whether the source is a
-/// REFERENCE, because `From<Literal>` consumes its argument and
+/// The RUST source type, as the impl wrote it, and whether it is a reference.
+/// Not the TypeScript spelling: R8 retracts "identical TypeScript signatures are
+/// one method", which merged conversions with different BODIES.
+/// `RetrievalError`'s three `From<..Error>` impls all spell `Error` in
+/// TypeScript, and reading that as one identity emitted one of the three and
+/// dropped the other two; `From<&str>` and `From<String>` are both
+/// `from(v: string)` and are still two different conversions.
+///
+/// A reference is part of it because `From<Literal>` consumes its argument and
 /// `From<&Literal>` does not, and TypeScript spells both the same.
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct Identity {
-    spelling: String,
+    source: String,
     by_ref: bool,
 }
 
@@ -159,7 +165,7 @@ fn candidates(reg: &TypeRegistry) -> Vec<Candidate> {
             base,
             plain: crate::emit::source_reads_as_plain(&written),
             identity: Identity {
-                spelling: crate::name_map::map_type_name(&source_leaf).to_string(),
+                source: same_type(written.trim_start_matches('&')),
                 by_ref,
             },
             leaf: source_leaf,
@@ -200,16 +206,41 @@ fn nameable(leaf: &str) -> bool {
 /// differ in what they do with what they are given and in nothing TypeScript
 /// can see.
 fn qualified(candidate: &Candidate) -> String {
-    let tail = if candidate.plain || !nameable(&candidate.leaf) {
-        crate::emit::name_fragment(&candidate.identity.spelling)
-            .unwrap_or_else(|| capitalised(&candidate.leaf))
+    // Named from the IDENTITY, not from the candidate's own spelling: two impls
+    // the identity says are one conversion have to reach one name, or
+    // `From<&str>` and `From<String>` become `fromStr` and `fromString` — two
+    // methods with one signature and one body.
+    let source = &candidate.identity.source;
+    let leaf = leaf(source);
+    let tail = if candidate.plain || !nameable(&leaf) {
+        // `From<i32>` and `From<f64>` are both `from(v: number)`, so the
+        // TypeScript spelling cannot tell them apart and the RUST leaf is what
+        // names them: `fromI32`, `fromF64`.
+        crate::emit::name_fragment(&leaf).unwrap_or_else(|| capitalised(&leaf))
     } else {
-        crate::emit::qualified_source(candidate.written.trim_start_matches('&'))
+        crate::emit::qualified_source(source)
     };
     if candidate.identity.by_ref {
         format!("{}Ref{}", candidate.base, tail)
     } else {
         format!("{}{}", candidate.base, tail)
+    }
+}
+
+/// The source type, with a BORROWED spelling read as the owned one it is a
+/// spelling of.
+///
+/// `From<&str>` and `From<String>` are two impls of one conversion: `str` is
+/// `String`'s borrowed form, the port writes both as `string`, and there is
+/// nothing a caller could tell apart. `From<i32>` and `From<f64>` are not —
+/// both are `number` here and neither is the other's borrowed form, and reading
+/// them as one emitted one impl and dropped the other. `by_ref` carries the
+/// distinction that IS observable: a reference to a type the port gives a class
+/// to, whose conversion does not consume what it is handed.
+fn same_type(source: &str) -> String {
+    match source {
+        "str" => "String".to_string(),
+        other => other.to_string(),
     }
 }
 

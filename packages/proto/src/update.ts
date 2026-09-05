@@ -36,7 +36,7 @@ export class SubscriptionUpdateItem extends Struct {
         const events = v._1;
         return `State+Events(${state}, ${events.length})`;
       },
-    })
+    });
     if (!(this.predicateRelevance.length === 0)) {
       _result += ` predicates:${this.predicateRelevance.length}`;
     }

@@ -15,7 +15,7 @@ use crate::body::BodyTranslator;
 use crate::registry::NoConversion;
 use crate::ty::{Prim, Ty};
 
-mod primitives;
+pub(crate) mod primitives;
 
 #[cfg(test)]
 mod tests;

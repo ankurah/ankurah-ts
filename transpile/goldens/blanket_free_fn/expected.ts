@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/blanket_free_fn/src/input.rs
-import { Struct, Arc, OwnedClosure } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, invokeRef } from '@ankurah/base';
 
 export class Listener extends Struct {
   readonly tag: number;
@@ -32,7 +32,7 @@ export function fromAny<L extends IntoListener>(listener: L): Listener {
 }
 
 export function intoListener<F extends (arg0: number) => number>(self: F): Listener {
-  return new Listener(self(1));
+  return new Listener(invokeRef(self, 1));
 }
 
 export function Arc_Inner_intoListener(self: Arc<Inner>): Listener {

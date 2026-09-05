@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/owned_closures/src/input.rs
-import { Struct, OwnedClosure, checkedAdd } from '@ankurah/base';
+import { Struct, OwnedClosure, invoke, invokeRef, Invocable, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -37,14 +37,14 @@ export function runLater(): number {
 
 export function plain(n: number): number {
   const f = () => checkedAdd(n, 1, 'usize');
-  return f();
+  return invokeRef(f);
 }
 
 export function borrowing(): number {
   const entity = new Entity('ab');
   try {
     const f = () => borrow(entity);
-    return f();
+    return invokeRef(f);
   } finally {
     entity.drop();
   }
@@ -58,7 +58,19 @@ export function consumed(entity: Entity): number {
     } finally {
       held.drop();
     }
-  });
+  }, undefined, true);
   return take.callOnce();
+}
+
+export function throughABound(f: Invocable<[number], number>, n: number): number {
+  return invoke(f, n);
+}
+
+export function handsAWrappedOne(entity: Entity): number {
+  return throughABound(new OwnedClosure([entity], (n) => n + entity.name.length), 1);
+}
+
+export function handsAPlainOne(n: number): number {
+  return throughABound((x) => x + 1, n);
 }
 

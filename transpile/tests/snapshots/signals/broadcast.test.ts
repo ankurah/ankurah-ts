@@ -13,18 +13,24 @@ describe('broadcast unit tests', () => {
       const _sub1 = ((counter) => {
         const _t0 = sender.reference();
         try {
-          return _t0.listen((_) => counter.lock().value += 1);
+          return _t0.listen((_) => {
+            const _m1 = counter.lock();
+            return _m1.value += 1;
+          });
         } finally {
           _t0.drop();
         }
       })(counter.clone());
       try {
         const sub2 = ((counter) => {
-          const _t1 = sender.reference();
+          const _t2 = sender.reference();
           try {
-            return _t1.listen((_) => counter.lock().value += 10);
+            return _t2.listen((_) => {
+              const _m3 = counter.lock();
+              return _m3.value += 10;
+            });
           } finally {
-            _t1.drop();
+            _t2.drop();
           }
         })(counter.clone());
         sender.send([]);
@@ -99,17 +105,18 @@ describe('broadcast unit tests', () => {
       const _t0 = sender.reference();
       try {
         const _sub = _t0.listen(new OwnedClosure([senderClone], (_) => {
-          counterClone.lock().value += 1;
-          const _t1 = senderClone.reference();
+          const _m1 = counterClone.lock();
+          _m1.value += 1;
+          const _t2 = senderClone.reference();
           try {
-            const _tempSub = _t1.listen((_) => {
+            const _tempSub = _t2.listen((_) => {
             });
             try {
             } finally {
               _tempSub.drop();
             }
           } finally {
-            _t1.drop();
+            _t2.drop();
           }
         }));
         try {

@@ -24,7 +24,7 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
     const db = _r0.unwrap();
     try {
       _moved1 = true;
-      return Result.Ok(new IndexedDBStorageEngine(db, Arc.new(AtomicBool.new(false))));
+      return Result.Ok(new IndexedDBStorageEngine(db, Arc.new(false)));
     } finally {
       if (!_moved1) db.drop();
     }
@@ -50,13 +50,13 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
     const dbConnection = await this.db.getConnection();
     return await SendWrapper.new((async () => {
       const _r0 = Result_JsValue_require(dbConnection.transactionWithStrAndMode('entities', webSys.IdbTransactionMode.Readwrite), 'create entities transaction');
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(MutationError.fromAnyhowError(_r0.unwrapErr()));
       const entitiesTransaction = _r0.unwrap();
       const _r1 = Result_JsValue_require(entitiesTransaction.objectStore('entities'), 'get entities store');
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(MutationError.fromAnyhowError(_r1.unwrapErr()));
       const entitiesStore = _r1.unwrap();
       const _r2 = Result_JsValue_require(entitiesStore.clear(), 'clear entities store');
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      if (_r2.isErr()) return Result.Err(MutationError.fromAnyhowError(_r2.unwrapErr()));
       const entitiesRequest = _r2.unwrap();
       const _t3 = await cbFuture(entitiesRequest, 'success', 'error');
       try {
@@ -75,13 +75,13 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
         _t5.drop();
       }
       const _r7 = Result_JsValue_require(dbConnection.transactionWithStrAndMode('events', webSys.IdbTransactionMode.Readwrite), 'create events transaction');
-      if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+      if (_r7.isErr()) return Result.Err(MutationError.fromAnyhowError(_r7.unwrapErr()));
       const eventsTransaction = _r7.unwrap();
       const _r8 = Result_JsValue_require(eventsTransaction.objectStore('events'), 'get events store');
-      if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+      if (_r8.isErr()) return Result.Err(MutationError.fromAnyhowError(_r8.unwrapErr()));
       const eventsStore = _r8.unwrap();
       const _r9 = Result_JsValue_require(eventsStore.clear(), 'clear events store');
-      if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+      if (_r9.isErr()) return Result.Err(MutationError.fromAnyhowError(_r9.unwrapErr()));
       const eventsRequest = _r9.unwrap();
       const _t10 = await cbFuture(eventsRequest, 'success', 'error');
       try {

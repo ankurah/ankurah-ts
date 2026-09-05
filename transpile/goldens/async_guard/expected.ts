@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/async_guard/src/input.rs
-import { Struct, dropOwned, AsyncMutex, select, Receiver } from '@ankurah/base';
+import { Struct, dropOwned, checkedAdd, AsyncMutex, select, Receiver } from '@ankurah/base';
 
 export class Gate extends Struct {
   readonly lock: AsyncMutex<number>;
@@ -12,7 +12,7 @@ export class Gate extends Struct {
   async bump(): Promise<number> {
     let guard = await this.lock.lock();
     try {
-      guard.value += await step();
+      guard.value = checkedAdd(guard.value, await step(), 'usize');
       return guard.value;
     } finally {
       guard.drop();

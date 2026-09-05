@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/indexing/encoding.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum, Result, wrappingSub } from '@ankurah/base';
 import { Json } from '../property/value/json';
 import { Value_castTo } from '../value/cast';
 import { Value_toBytes } from '../value/collatable';
@@ -56,7 +56,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
     } else {
       let out = [];
       for (const b of s.asBytes()) {
-        const inv = (255).wrappingSub(b);
+        const inv = wrappingSub((255), b, 'u8');
         if (inv === 255) {
           out.push(255);
           out.push(0);
@@ -74,7 +74,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => (255).wrappingSub(b)));
+        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
       }
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('F64'))) {
@@ -83,13 +83,13 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => (255).wrappingSub(b)));
+        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
       }
     }
   } else if ((_v[0].is('Bool')) && (_v[1].is('Bool'))) {
     {
       const b = Value_toBytes(value)[0];
-      return Result.Ok(new Uint8Array([!descending ? b : (255).wrappingSub(b)]));
+      return Result.Ok(new Uint8Array([!descending ? b : wrappingSub((255), b, 'u8')]));
     }
   } else if ((_v[0].is('EntityId')) && (_v[1].is('EntityId'))) {
     const { _0: entityId } = _v[0].value;
@@ -98,7 +98,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes.slice());
       } else {
-        return Result.Ok([...bytes].map((b) => (255).wrappingSub(b)));
+        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
       }
     }
   } else if (((_v[0].is('Object')) || (_v[0].is('Binary'))) && ((_v[1].is('Binary')) || (_v[1].is('Object')))) {
@@ -118,7 +118,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
     } else {
       let out = [];
       for (const b of [...bytes]) {
-        const inv = (255).wrappingSub(b);
+        const inv = wrappingSub((255), b, 'u8');
         if (inv === 255) {
           out.push(255);
           out.push(0);
@@ -199,8 +199,8 @@ function encodeJsonValue(json: unknown, descending: boolean): Uint8Array {
     return out;
   } else {
     let out = [];
-    out.push((255).wrappingSub(tag));
-    out.extend([...payload].map((b) => (255).wrappingSub(b)));
+    out.push(wrappingSub((255), tag, 'u8'));
+    out.extend([...payload].map((b) => wrappingSub((255), b, 'u8')));
     return out;
   }
 }

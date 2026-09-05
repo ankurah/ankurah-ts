@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/signals/src/signal/map.rs
-import { Struct, Arc, OwnedClosure } from '@ankurah/base';
-import { BroadcastId, ListenerGuard } from '../broadcast';
+import { Struct, Arc, OwnedClosure, invoke, invokeRef } from '@ankurah/base';
+import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
-import { Get, Peek, Signal, With } from '../signal';
+import { Get, ListenerGuard, Peek, Signal, With } from '../signal';
 
 export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
   source: Upstream;
@@ -35,7 +35,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
     CurrentObserver.track(this.source);
     return this.source.with((input) => {
       const output = (this.transform)(input);
-      return f(output);
+      return invoke(f, output);
     });
   }
 
@@ -54,7 +54,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
     const transform = this.transform.clone();
     const subscription = this.source.listen(Arc.new(new OwnedClosure([listener_1], (_) => {
       source.with((input) => {
-        listener_1(transform(input));
+        listener_1(invokeRef(transform, input));
       });
     })));
     return SubscriptionGuard.new(subscription);

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -107,22 +107,11 @@ export class Selection extends Struct {
       const _v = this.orderBy;
       if (_v != null) {
         const orderBy = _v;
-        const _seq0 = orderBy;
-        let _at1 = 0;
-        try {
-          while (_at1 < _seq0.length) {
-            const item = _seq0[_at1++];
-            try {
-              const col = item.path.first();
-              if (!columns.includes(col)) {
-                columns.push(col);
-              }
-            } finally {
-              item.drop();
-            }
+        for (const item of orderBy) {
+          const col = item.path.first();
+          if (!columns.includes(col)) {
+            columns.push(col);
           }
-        } finally {
-          dropOwned(_seq0.slice(_at1));
         }
       }
     }
@@ -136,16 +125,12 @@ export class Selection extends Struct {
       const _v = this.orderBy;
       if (_v != null) {
         const orderBy = _v;
-        try {
-          _result += ' ORDER BY ';
-          for (const [i, item] of [...orderBy].entries()) {
-            if (i > 0) {
-              _result += ', ';
-            }
-            _result += `${item}`;
+        _result += ' ORDER BY ';
+        for (const [i, item] of [...orderBy].entries()) {
+          if (i > 0) {
+            _result += ', ';
           }
-        } finally {
-          dropOwned(orderBy);
+          _result += `${item}`;
         }
       }
     }
@@ -346,15 +331,15 @@ export class Expr extends Enum<ExprV> {
     return new Expr('Literal', { _0: new Literal('String', { _0: s }) });
   }
 
-  static fromBigint(i: bigint): Expr {
+  static fromI64(i: bigint): Expr {
     return new Expr('Literal', { _0: new Literal('I64', { _0: i }) });
   }
 
-  static fromNumber(f: number): Expr {
+  static fromF64(f: number): Expr {
     return new Expr('Literal', { _0: new Literal('F64', { _0: f }) });
   }
 
-  static fromBoolean(b: boolean): Expr {
+  static fromBool(b: boolean): Expr {
     return new Expr('Literal', { _0: new Literal('Bool', { _0: b }) });
   }
 
@@ -752,8 +737,8 @@ export type PredicateV = {
 
 export class Predicate extends Enum<PredicateV> {
 
-  walk<T, F>(accumulator: T, visitor: F): T {
-    const accumulator_1 = visitor(accumulator, this);
+  walk<T, F extends Invocable<[T, Predicate], T>>(accumulator: T, visitor: F): T {
+    const accumulator_1 = invokeRef(visitor, accumulator, this);
     return this.match({
       And: (v) => {
         const left = v._0;
@@ -811,7 +796,7 @@ export class Predicate extends Enum<PredicateV> {
             }
           }
         },
-      })
+      });
       return cols;
     });
   }

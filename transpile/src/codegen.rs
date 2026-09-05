@@ -307,12 +307,32 @@ fn named_import(line: &str) -> Option<(String, Vec<String>)> {
 /// `Mutex` is a part of `AsyncMutex`, and matching any substring imported
 /// std's `Mutex` into a file that only ever names tokio's.
 ///
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 71] = [
+/// Does the program write through this `static`, so that the emitted binding
+/// has to be reassignable?
+///
+/// A `static` of a type the port writes as a PLAIN value — an atomic, a `Cell`
+/// — is written by assigning to the binding, because the port has no wrapper
+/// object to write into. A `static` of an object type is not: the writes go
+/// through the object, and the binding never moves.
+fn writes_through(c: &crate::types::ConstInfo) -> bool {
+    let Some(syn::Type::Path(path)) = c.rust_ty.as_ref() else {
+        return false;
+    };
+    let Some(last) = path.path.segments.last() else {
+        return false;
+    };
+    let name = last.ident.to_string();
+    name.starts_with("Atomic") || name == "Cell"
+}
+
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 74] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
     // The closure that owns its captures, and the error `?` converts into.
-    "OwnedClosure", "AnyhowError", "anyhow",
+    // R10: `invoke` is the one place a bound closure parameter is called, so a
+    // callee cannot be handed a shape it does not know how to invoke.
+    "OwnedClosure", "invoke", "invokeRef", "Invocable", "AnyhowError", "anyhow",
     // What an emitted `fromJson` answers with: serde_json::Error's stand-in,
     // the lossless reader and writer, and the two combinators a list or a map
     // reads through. `dropOwned` releases what a failed decode had already
@@ -1012,9 +1032,33 @@ fn generate_declarations(
         let has_decl = file.module_decls.iter().any(|d| d.contains(&c.name));
         if has_decl { continue; }
         let export = if c.is_pub { "export " } else { "" };
-        // Rust's `static mut` is a global the program writes to; everything
-        // else here is a value fixed at load.
-        let keyword = if c.mutable { "let" } else { "const" };
+        // Rust's `static mut` is a global the program writes to, and so is a
+        // `static` whose type carries interior mutability: an atomic IS its
+        // value here, so `COUNTER.fetch_add(1, ..)` is `COUNTER += 1` and a
+        // `const` binding throws `Assignment to constant variable` on it.
+        // Everything else here is a value fixed at load.
+        let keyword = if c.mutable || (c.is_static && writes_through(c)) {
+            "let"
+        } else {
+            "const"
+        };
+        // A `const` of a non-`Copy` type is INLINED at each use in Rust, so the
+        // port writes it as a function and every use calls it: a fresh value,
+        // with the ordinary transfer and release analysis around it, rather than
+        // one module object two uses share, mutate and both release.
+        if c.fresh_at_each_use {
+            match &c.init_ts {
+                Some(init) => out.push_str(&format!(
+                    "{}function {}(): {} {{\n  return {};\n}}\n\n",
+                    export, c.name, c.ty, init
+                )),
+                None => out.push_str(&format!(
+                    "{}function {}(): {} {{\n  return undefined as any; // TODO\n}}\n\n",
+                    export, c.name, c.ty
+                )),
+            }
+            continue;
+        }
         match &c.init_ts {
             Some(init) => out.push_str(&format!(
                 "{}{} {}: {} = {};\n\n",

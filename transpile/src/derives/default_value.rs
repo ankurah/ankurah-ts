@@ -27,8 +27,13 @@ pub fn default_value(reg: &TypeRegistry, ty: &Ty) -> Result<String, String> {
         JsShape::Boolean => Ok("false".to_string()),
         JsShape::Bytes => Ok("new Uint8Array(0)".to_string()),
         JsShape::Array(_) => Ok("[]".to_string()),
-        JsShape::Map(..) => Ok("new Map()".to_string()),
-        JsShape::Set(_) => Ok("new Set()".to_string()),
+        // The runtime containers, not JavaScript's: a `Map` compares its keys
+        // by identity, and a key read back off the wire is never the object it
+        // was stored under. F7: every construction goes through the same two
+        // classes, or a derived `Default` hands the program a container the
+        // rest of the port cannot look anything up in.
+        JsShape::Map(..) => Ok("new HashMap()".to_string()),
+        JsShape::Set(_) => Ok("new HashSet()".to_string()),
         // An `Arc<T>` holds one `T`, and its default is a fresh `Arc` around
         // that type's default. The runtime spells the constructor `Arc.new`.
         JsShape::Rc(name) => {
@@ -78,7 +83,11 @@ fn named_default(reg: &TypeRegistry, ty: &Ty) -> Result<String, String> {
             reg.describe(ty)
         ));
     }
-    Ok(format!("{}.default()", crate::name_map::map_ty(reg, ty.peel_refs())))
+    // The CLASS's name, with no type arguments on it: `IVec<number>.default()`
+    // names a type where a value belongs and does not parse. TypeScript infers
+    // a static's type arguments from the call, and where it cannot the answer
+    // is `unknown` — a type error, not a parse error.
+    Ok(format!("{}.default()", leaf))
 }
 
 #[cfg(test)]
@@ -101,7 +110,7 @@ mod tests {
             "Holder",
             "inner",
         );
-        assert_eq!(got, Ok("Arc.new(new RwLock(new Map()))".to_string()));
+        assert_eq!(got, Ok("Arc.new(new RwLock(new HashMap()))".to_string()));
     }
 
     #[test]

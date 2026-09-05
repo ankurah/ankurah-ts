@@ -30,7 +30,7 @@ export class Content<CD extends ContextData> extends Struct {
   }
 
   debug(): string {
-    return `Content { queryId: ${this.queryId.debug()}, collectionId: ${this.collectionId.debug()}, selection: ${this.selection.debug()}, contextData: ${this.contextData}, version: ${String(this.version)} }`;
+    return `Content { queryId: ${this.queryId}, collectionId: ${this.collectionId.debug()}, selection: ${this.selection.debug()}, contextData: ${this.contextData}, version: ${String(this.version)} }`;
   }
 }
 
@@ -96,7 +96,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           } finally {
             _t2.drop();
           }
-        })()
+        })();
         if (!this.inner.value.connectedPeers.isEmpty()) {
           this.setupRemoteSubscriptions();
         }
@@ -169,14 +169,10 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
       const update = (_m5 as any);
       if (update != null) {
         const [peerId, collectionId, contextData] = update;
-        (() => {
-          _moved0 = true;
-          this.updateQueryOnPeer(peerId, queryId, collectionId, selection, version, contextData);
-        })()
+        _moved0 = true;
+        this.updateQueryOnPeer(peerId, queryId, collectionId, selection, version, contextData);
       } else {
-        (() => {
-          this.setupRemoteSubscriptions();
-        })()
+        this.setupRemoteSubscriptions();
       };
       return Result.Ok([]);
     } finally {
@@ -319,7 +315,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           const _v = info.status;
           if ((_v.is('Established')) || (_v.is('Requested'))) {
             const { _0: establishedPeerId } = _v.value;
-            if (establishedPeerId === peerId) {
+            if (establishedPeerId.equals(peerId)) {
               const _a1 = new Status('PendingRemote', {});
               info.status.drop();
               info.status = _a1;
@@ -360,8 +356,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
             contexts.insert(state.content.value.contextData.clone());
           }
         } else {
-          {
-          }
+
         }
       }
       return contexts;
@@ -622,9 +617,9 @@ export class Status extends Enum<StatusV> {
   debug(): string {
     return this.match({
       PendingRemote: () => 'PendingRemote',
-      Requested: (v) => `Requested(${v._0.debug()}, ${String(v._1)})`,
-      Established: (v) => `Established(${v._0.debug()}, ${String(v._1)})`,
-      PendingUpdate: (v) => `PendingUpdate(${v._0.debug()}, ${String(v._1)})`,
+      Requested: (v) => `Requested(${v._0}, ${String(v._1)})`,
+      Established: (v) => `Established(${v._0}, ${String(v._1)})`,
+      PendingUpdate: (v) => `PendingUpdate(${v._0}, ${String(v._1)})`,
       Failed: () => 'Failed',
     });
   }

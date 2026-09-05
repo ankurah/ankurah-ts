@@ -49,17 +49,17 @@ export class Step extends Enum<StepV> {
 }
 
 export function commit(entity: Entity, already: boolean, ok: boolean): Result<number, ApplyError> {
-  const _m2 = (() => {
+  const _m1 = (() => {
     if (already) {
       return true;
     } else {
-      const _r1 = entity.apply(ok);
-      if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-      return _r1.unwrap();
+      const _r0 = entity.apply(ok);
+      if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
+      return _r0.unwrap();
     }
   })();
-  if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-  const applied = (_m2 as any);
+  if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+  const applied = (_m1 as any);
   if (applied) {
     return Result.Ok(1);
   } else {
@@ -86,17 +86,17 @@ export function commitBlock(entity: Entity, ok: boolean): Result<number, ApplyEr
 }
 
 export function commitEarly(entity: Entity, stop: boolean, ok: boolean): Result<number, ApplyError> {
-  const _m2 = (() => {
+  const _m1 = (() => {
     if (stop) {
       return { $jump: 'return', $value: Result.Ok(7) };
     } else {
-      const _r1 = entity.apply(ok);
-      if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-      return _r1.unwrap();
+      const _r0 = entity.apply(ok);
+      if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
+      return _r0.unwrap();
     }
   })();
-  if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-  const applied = (_m2 as any);
+  if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+  const applied = (_m1 as any);
   if (applied) {
     return Result.Ok(1);
   } else {

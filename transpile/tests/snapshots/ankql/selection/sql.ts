@@ -1,12 +1,12 @@
 // MIRRORS: ankurah/ankql/src/selection/sql.rs
-import { Result, BorrowMut } from '@ankurah/base';
+import { Result, BorrowMut, checkedAdd } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, Predicate } from '../ast';
 import { SqlGenerationError } from '../error';
 
 function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>, foundPlaceholders: BorrowMut<number>, buffer: BorrowMut<string>): Result<void, SqlGenerationError> {
-  const _m0 = expr.match<any>({
+  const _m1 = expr.match<any>({
     Placeholder: () => {
-      foundPlaceholders.value += 1;
+      foundPlaceholders.value = checkedAdd(foundPlaceholders.value, 1, 'usize');
       {
         const _v = placeholderCount.value;
         if (_v != null) {
@@ -46,13 +46,11 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
           buffer.value += '\'';
           for (const c of [...s]) {
             if (c === '\'') {
-              buffer.value += '\'\'';
+              buffer.value += '\'\''
             } else if (c === '\u{0}') {
-              {
-                return { $jump: 'continue' };
-              }
+              continue;
             } else {
-              buffer.value += c;
+              buffer.value += c
             }
           }
           buffer.value += '\'';
@@ -101,9 +99,9 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
         if (i > 0) {
           buffer.value += ', ';
         }
-        return expr.match<any>({
+        const _m0 = expr.match<any>({
           Placeholder: () => {
-            foundPlaceholders.value += 1;
+            foundPlaceholders.value = checkedAdd(foundPlaceholders.value, 1, 'usize');
             {
               const _v1 = placeholderCount.value;
               if (_v1 != null) {
@@ -139,13 +137,11 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
                 buffer.value += '\'';
                 for (const c of [...s]) {
                   if (c === '\'') {
-                    buffer.value += '\'\'';
+                    buffer.value += '\'\''
                   } else if (c === '\u{0}') {
-                    {
-                      return { $jump: 'continue' };
-                    }
+                    continue;
                   } else {
-                    buffer.value += c;
+                    buffer.value += c
                   }
                 }
                 buffer.value += '\'';
@@ -189,6 +185,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
             return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
           },
         });
+        if ((_m0 as any)?.$jump === 'return') return _m0;
       }
       buffer.value += ')';
     },
@@ -199,7 +196,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
       return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) }
     },
   });
-  if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+  if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
   return Result.Ok([]);
 }
 

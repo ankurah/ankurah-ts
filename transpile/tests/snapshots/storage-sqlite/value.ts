@@ -127,6 +127,28 @@ export class SqliteValue extends Enum<SqliteValueV> {
     }
   }
 
+  static fromTypesValue(value: Value): SqliteValue {
+    return value.match({
+      Null: () => new SqliteValue('Null', {}),
+      Integer: (v) => {
+        const i = v._0;
+        return new SqliteValue('Integer', { _0: i });
+      },
+      Real: (v) => {
+        const f = v._0;
+        return new SqliteValue('Real', { _0: f });
+      },
+      Text: (v) => {
+        const s = v._0;
+        return new SqliteValue('Text', { _0: s });
+      },
+      Blob: (v) => {
+        const b = v._0;
+        return new SqliteValue('Blob', { _0: b });
+      },
+    });
+  }
+
   clone(): SqliteValue {
     return this.match({
       Text: (v) => new SqliteValue('Text', { _0: v._0 }),

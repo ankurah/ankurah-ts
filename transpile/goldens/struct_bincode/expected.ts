@@ -59,7 +59,7 @@ export class Envelope extends Struct {
       if (!('id' in _o)) {
         return Result.Err(JsonError.custom('missing field `id`'));
       }
-      const _rid = ((v: unknown) => (typeof v === 'bigint' ? Result.Ok(v) : (typeof v === 'number' && Number.isInteger(v) ? Result.Ok(BigInt(v)) : Result.Err(JsonError.custom('expected an integer')))))(_o['id']);
+      const _rid = ((v: unknown) => ((typeof v === 'bigint' && v >= 0n && v <= 18446744073709551615n) || (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 9007199254740991) ? Result.Ok(BigInt(v as bigint | number)) : Result.Err(JsonError.custom('expected a u64'))))(_o['id']);
       if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
       const id = _rid.unwrap();
       if (!('label' in _o)) {
@@ -71,7 +71,7 @@ export class Envelope extends Struct {
       if (!('payload' in _o)) {
         return Result.Err(JsonError.custom('missing field `payload`'));
       }
-      const _rpayload = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['payload']);
+      const _rpayload = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['payload']);
       if (_rpayload.isErr()) return Result.Err(_rpayload.unwrapErr());
       const payload = _rpayload.unwrap();
       return Result.Ok(new Envelope(id, label, payload));
@@ -118,7 +118,7 @@ export class Signature extends Struct {
 
   static fromJson(value: unknown): Result<Signature, JsonError> {
     try {
-      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
       return Result.Ok(new Signature(_0));

@@ -83,7 +83,7 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
           listener_1(currentValue);
         }
       }
-    })));
+    }, undefined, true)));
     return SubscriptionGuard.new(subscription);
   }
 

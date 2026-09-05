@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/lineage.rs
-import { Struct, Enum, Result, dropOwned, checkedAdd, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
 import { RetrievalError } from './error';
 import { TClock, TClock_dispatch_members, TEvent_dispatch_id, TEvent_dispatch_parent } from './retrieval';
 import { Attested, Event } from '@ankurah/proto';
@@ -184,7 +184,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const originalOtherEvents = other_1.clone();
     const initialHeadsEqual = subjectFrontier === other_1;
     const headOverlap = initialHeadsEqual;
-    return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, other_1.clone(), new HashMap(), new HashSet(), other_1.size, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
+    return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, other_1.clone(), new HashMap<Id, State<Id>>(), new HashSet<Id>(), other_1.size, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
   }
 
   takeAccumulatedEvents(): Attested<Event>[] | null {
@@ -204,7 +204,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const _r0 = await this.getter.retrieveEvent(ids);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const [cost, events] = _r0.unwrap();
-    this.remainingBudget = this.remainingBudget.saturatingSub(cost);
+    this.remainingBudget = saturatingSub(this.remainingBudget, cost, 'usize');
     const _seq1 = events;
     let _at2 = 0;
     try {
@@ -240,7 +240,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const fromSubject = this.subjectFrontier.remove(id);
     const fromOther = this.otherFrontier.remove(id);
     const [isCommon, origins] = (() => {
-      const nodeState = this.states.entry(id.clone()).orDefault();
+      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default());
       nodeState.markSeenFrom(fromSubject, fromOther);
       if (fromSubject && !this.originalOtherEvents.has(id) && !nodeState.isCommon()) {
         {
@@ -262,7 +262,7 @@ class Comparison<G extends GetEvents> extends Struct {
         this.outstandingHeads.delete(h);
       }
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault();
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
         if (fromOther) {
           parentState.origins.augment(origins);
         }
@@ -270,14 +270,14 @@ class Comparison<G extends GetEvents> extends Struct {
       }
     } else if (fromOther) {
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault();
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
         parentState.origins.augment(origins);
       }
     }
     if (fromSubject) {
       this.subjectFrontier.extend([...[...parents]]);
       if (this.originalOtherEvents.has(id)) {
-        this.unseenOtherHeads = this.unseenOtherHeads.saturatingSub(1);
+        this.unseenOtherHeads = saturatingSub(this.unseenOtherHeads, 1, 'usize');
         this.headOverlap = true;
       }
     }

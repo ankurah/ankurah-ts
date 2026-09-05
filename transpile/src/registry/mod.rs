@@ -29,7 +29,8 @@ use crate::ty::{Ty, TypeId};
 use crate::types::SelfKind;
 
 pub use build::{
-    build_registry, build_registry_with_siblings, narrow_reads_json, resolve_bounds,
+    build_registry, build_registry_with_siblings, mark_fresh_consts, narrow_reads_json,
+    resolve_bounds,
     ExtractedFile,
 };
 pub use convert::{Conversion, NoConversion};
@@ -158,6 +159,16 @@ pub struct ValueDef {
     /// reached, and 89 closures and 48 `.into()`s in the corpus stood in a
     /// position that said nothing.
     pub sig: Option<MethodSig>,
+    /// Is every use of this name a FRESH value?
+    ///
+    /// A Rust `const` is inlined at each use, so `let mut a = ORIGIN; a.x = 9;`
+    /// mutates a value of its own and `let b = ORIGIN;` gets another. Bound to
+    /// one module object, the two uses shared an identity, a mutation and a
+    /// release — the second `.drop()` on that object aborts the run. A `static`
+    /// is the opposite: ONE place for the life of the program, and shared on
+    /// purpose. Only a non-`Copy` `const` is fresh, and the emitted name is a
+    /// function each use calls.
+    pub fresh_at_each_use: bool,
 }
 
 /// Types the corpus names but nothing declares — `ulid::Ulid`, `anyhow::Error`,
@@ -210,6 +221,9 @@ pub struct TypeRegistry {
     /// written inside proto reaches ankql's real declaration and its real id,
     /// rather than a foreign name with no fields and no methods.
     sibling_crates: HashMap<String, ModuleId>,
+    /// Types whose MEMBERS a person wrote, in this crate or in a sibling. See
+    /// `members_are_hand_written`.
+    members_hand_written: std::collections::HashSet<TypeId>,
     /// Aliases part-way through expansion, so a cycle stops rather than recurses.
     expanding: RefCell<Vec<AliasId>>,
     /// What each declared system type becomes in TypeScript, by identity.
@@ -264,6 +278,7 @@ impl TypeRegistry {
             hand_written: std::collections::HashSet::new(),
             reads_json: std::collections::HashSet::new(),
             sibling_crates: HashMap::new(),
+            members_hand_written: std::collections::HashSet::new(),
             expanding: RefCell::new(Vec::new()),
             shapes: Default::default(),
         }
@@ -669,8 +684,36 @@ impl TypeRegistry {
     }
 
     /// Is this type's TypeScript written by hand?
+    ///
+    /// Answers ONE of the two questions "hand-written" used to answer at once:
+    /// **may this run emit an impl whose self type is this?** It must not, where
+    /// the class the methods would join is hand-written in THIS crate —
+    /// `Attested<T>`'s conversions are in `auth.provided.ts`, and emitting them
+    /// again would give the port two of each. An impl a DIFFERENT crate writes
+    /// for such a type is that crate's own code and is emitted, as the
+    /// module-level functions an impl away from its class becomes: core's
+    /// `impl OrderedCollation for EntityId` is one.
     pub fn is_hand_written(&self, id: TypeId) -> bool {
         self.hand_written.contains(&id)
+    }
+
+    /// Record that this type's MEMBERS are whatever a hand-written file wrote,
+    /// wherever that file lives.
+    pub fn mark_members_hand_written(&mut self, id: TypeId) {
+        self.members_hand_written.insert(id);
+    }
+
+    /// The other question: **does this class have emitted members I may call?**
+    ///
+    /// It does not, for a type whose TypeScript a person wrote — this crate's
+    /// or a sibling's. The engine has not read that file, so the `debug()` a
+    /// `#[derive(Debug)]` would have written and the `toJSON` a serde derive
+    /// would have written are not there to call. Asked through
+    /// `is_hand_written`, which only ever knew THIS crate's provided types, 26
+    /// emitted `${x.debug()}` calls in core named a method
+    /// `id.provided.ts` does not declare.
+    pub fn members_are_hand_written(&self, id: TypeId) -> bool {
+        self.hand_written.contains(&id) || self.members_hand_written.contains(&id)
     }
 
     /// Record that this type's `#[derive(Deserialize)]` writes it a
@@ -678,6 +721,7 @@ impl TypeRegistry {
     pub fn mark_reads_json(&mut self, id: TypeId) {
         self.reads_json.insert(id);
     }
+
 
     /// Does a `static fromJson` exist on this type's emitted class?
     ///
@@ -704,6 +748,11 @@ impl TypeRegistry {
     }
 
     /// This type's JSON half was refused, so nothing may call its `fromJson`.
+    ///
+    /// A `#[derive(Deserialize)]` on a type the port does NOT emit a class for
+    /// says what serde would have done, not what the port wrote: `Attested`
+    /// derives it and `auth.provided.ts` declares no `fromJson`, so three
+    /// emitted call sites named a static nothing declares.
     pub fn clear_reads_json(&mut self, id: TypeId) {
         self.reads_json.remove(&id);
     }
@@ -739,6 +788,36 @@ mod tests {
         assert!(reg.is_system(system_ref));
         assert_eq!(reg.modules().get(broadcast).path, vec!["broadcast"]);
         assert!(reg.modules().get(reg.system_root()).is_system);
+    }
+
+    /// "Hand-written" answered two questions at once, and they have different
+    /// answers for a SIBLING crate's provided type: proto's `EntityId` has no
+    /// emitted `debug()` for core to call — its TypeScript is in
+    /// `id.provided.ts` — and core's `impl OrderedCollation for EntityId` is
+    /// core's own code and still emits.
+    #[test]
+    fn a_siblings_provided_type_has_no_members_and_still_takes_impls() {
+        let mut reg = TypeRegistry::new("core");
+        let here = reg.modules_mut().module_for_file("entity.rs");
+        let ours = reg.declare_type(here, a_struct("Attested")).unwrap();
+        let theirs = reg.declare_type(here, a_struct("EntityId")).unwrap();
+
+        reg.mark_hand_written(ours);
+        reg.mark_members_hand_written(theirs);
+
+        // This crate's own provided type answers both questions the same way.
+        assert!(reg.is_hand_written(ours));
+        assert!(reg.members_are_hand_written(ours));
+
+        // A sibling's answers only the members question, so an impl this crate
+        // writes for it is still emitted.
+        assert!(!reg.is_hand_written(theirs));
+        assert!(reg.members_are_hand_written(theirs));
+
+        // And a type nobody wrote by hand answers neither.
+        let emitted = reg.declare_type(here, a_struct("Entity")).unwrap();
+        assert!(!reg.is_hand_written(emitted));
+        assert!(!reg.members_are_hand_written(emitted));
     }
 
     #[test]

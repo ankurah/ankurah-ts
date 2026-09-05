@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/operators/src/input.rs
-import { Struct, boolAnd, boolOr, checkedAdd, checkedDiv } from '@ankurah/base';
+import { Struct, boolAnd, boolOr, BorrowMut, checkedAdd, checkedDiv, wrappingAdd, checkedMulOption, saturatingAdd, overflowingAdd } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly id: number;
@@ -243,5 +243,29 @@ export function complemented(c: Charge): Charge {
 
 export function indexed(c: Charge): number {
   return c.index(0);
+}
+
+export function wraps(a: number, b: number): number {
+  return wrappingAdd(a, b, 'u8');
+}
+
+export function saturates(a: number, b: number): number {
+  return saturatingAdd(a, b, 'u8');
+}
+
+export function checks(a: number, b: number): number | null {
+  return checkedMulOption(a, b, 'u8');
+}
+
+export function overflows(a: number, b: number): [number, boolean] {
+  return overflowingAdd(a, b, 'u8');
+}
+
+export function dividedByNegativeOne(x: number): number {
+  return checkedDiv(x, -1, 'i32');
+}
+
+export function bump(n: BorrowMut<number>): void {
+  n.value = checkedAdd(n.value, 1, 'u32');
 }
 

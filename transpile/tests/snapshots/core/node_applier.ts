@@ -225,13 +225,10 @@ export class NodeApplier extends Struct {
       for (const result of results) {
         if (result.isOk()) {
           const none = result.unwrap();
-          {
-          }
+
         } else {
           const errorItem = result.unwrapErr();
-          {
-            allErrors.push(errorItem);
-          }
+          allErrors.push(errorItem);
         }
       }
       if (!(batch.length === 0)) {
@@ -248,7 +245,7 @@ export class NodeApplier extends Struct {
     const entityId = delta.entityId;
     const collection = delta.collection.clone();
     const result = await NodeApplier.applyDeltaInner(node, fromPeerId, delta, retriever);
-    return result.mapErr(new OwnedClosure([collection], (cause) => new ApplyErrorItem(entityId, collection, cause)));
+    return result.mapErr(new OwnedClosure([collection], (cause) => new ApplyErrorItem(entityId, collection, cause), undefined, true));
   }
 
   static async applyDeltaInner<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, delta: EntityDelta, retriever: R): Promise<Result<EntityChange | null, MutationError>> {

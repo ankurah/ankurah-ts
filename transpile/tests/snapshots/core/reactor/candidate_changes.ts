@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/reactor/candidate_changes.rs
 import { Struct, Arc, HashMap } from '@ankurah/base';
 import { QueryId } from '@ankurah/proto';
-import { IVec } from '../resultset';
+import { IVec } from '../util/ivec';
 
 export class CandidateChanges<C> extends Struct {
   changes: Arc<C[]>;
@@ -16,7 +16,7 @@ export class CandidateChanges<C> extends Struct {
   }
 
   static new<C>(changes: Arc<C[]>): CandidateChanges<C> {
-    return new CandidateChanges(changes, new HashMap(), IVec.new());
+    return new CandidateChanges(changes, new HashMap<QueryId, IVec<number>>(), IVec.new());
   }
 
   addEntity(offset: number): void {
@@ -24,15 +24,15 @@ export class CandidateChanges<C> extends Struct {
   }
 
   addQuery(queryId: QueryId, offset: number): void {
-    this.queryOffsets.entry(queryId).orDefault().add(offset);
+    this.queryOffsets.entry(queryId).orDefault(() => IVec.default()).add(offset);
   }
 
   isEmpty(): boolean {
-    return this.queryOffsets.length === 0 && this.entityOffsets.length === 0;
+    return this.queryOffsets.size === 0 && this.entityOffsets.isEmpty();
   }
 
   queryCount(): number {
-    return this.queryOffsets.length;
+    return this.queryOffsets.size;
   }
 
   queryIter(): QueryCandidate<C>[] {
@@ -40,7 +40,7 @@ export class CandidateChanges<C> extends Struct {
   }
 
   entityIter(): C[] {
-    return [...this.entityOffsets].map((offset) => this.changes[offset]);
+    return this.entityOffsets.iter().map((offset) => this.changes[offset]);
   }
 
   changes(): Arc<C[]> {

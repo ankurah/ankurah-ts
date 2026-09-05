@@ -22,7 +22,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
   static new(): YrsBackend {
     const doc = yrs.Doc.new();
     const startingState = doc.transact().stateVector();
-    return new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap()));
+    return new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap<string, Broadcast<void>>()));
   }
 
   getString(propertyName: string): string | null {
@@ -163,7 +163,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
     txn.commit();
     void txn;
     const startingState = doc.transact().stateVector();
-    return Result.Ok(new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap())));
+    return Result.Ok(new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap<string, Broadcast<void>>())));
   }
 
   toOperations(): Result<Operation[] | null, MutationError> {

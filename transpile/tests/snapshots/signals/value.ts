@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/value.rs
-import { Struct, Arc, RwLock } from '@ankurah/base';
+import { Struct, Arc, RwLock, invoke, invokeRef } from '@ankurah/base';
 
 export class ValueCell<T extends Clone> extends Struct {
   _0: Arc<RwLock<T>>;
@@ -25,7 +25,7 @@ export class ValueCell<T extends Clone> extends Struct {
   with<R>(f: (arg0: T) => R): R {
     const guard = this._0.value.read();
     try {
-      return f(guard.value);
+      return invoke(f, guard.value);
     } finally {
       guard.drop();
     }
@@ -35,7 +35,7 @@ export class ValueCell<T extends Clone> extends Struct {
     let current = this._0.value.write();
     try {
       current.value = value;
-      return f(current.value);
+      return invokeRef(f, current.value);
     } finally {
       current.drop();
     }
@@ -70,7 +70,7 @@ export class ReadValueCell<T extends Clone> extends Struct {
   with<R>(f: (arg0: T) => R): R {
     const guard = this._0.value.read();
     try {
-      return f(guard.value);
+      return invoke(f, guard.value);
     } finally {
       guard.drop();
     }

@@ -265,14 +265,11 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           const _v1 = connection.value.sendMessage(notification_1);
           if (_v1.isOk()) {
             const _v2 = _v1.unwrap();
-            (() => {
-            })()
+
           } else {
             const e = _v1.unwrapErr();
             try {
-              (() => {
-                tracing.warn(`Failed to send update to peer ${nodeId}: ${e}`);
-              })()
+              tracing.warn(`Failed to send update to peer ${nodeId}: ${e}`);
             } finally {
               e.drop();
             }
@@ -600,11 +597,11 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     if (_v3.isOk()) {
                       const _v4 = _v3.unwrap();
                       _moved20 = true;
-                      return states.push(state);
+                      states.push(state)
                     } else {
                       const e = _v3.unwrapErr();
                       try {
-                        return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`));
+                        return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`))
                       } finally {
                         e.drop();
                       }
@@ -652,11 +649,11 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                       if (_v6.isOk()) {
                         const _v7 = _v6.unwrap();
                         _moved27 = true;
-                        return events.push(event);
+                        events.push(event)
                       } else {
                         const e = _v6.unwrapErr();
                         try {
-                          return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`));
+                          return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`))
                         } finally {
                           e.drop();
                         }
@@ -755,14 +752,10 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.slice() }));
         if (_v.isOk()) {
           const _v2 = _v.unwrap();
-          {
-            return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} rejected: ${e}`) }));
-          }
+          return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} rejected: ${e}`) }));
         } else {
           const _v4 = _v.unwrapErr();
-          {
-            return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} returned unexpected response`) }));
-          }
+          return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} returned unexpected response`) }));
         }
       }
       return Result.Ok([]);
@@ -801,7 +794,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     _r3.drop();
                     return [entity.clone(), entity.clone(), true];
                   } else {
-                    const trxAlive = Arc.new(AtomicBool.new(true));
+                    const trxAlive = Arc.new(true);
                     let _moved4 = false;
                     const forked = entity.snapshot(trxAlive);
                     try {
@@ -826,50 +819,50 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     event.attestations.push(attestation);
                   }
                 }
-                const _m10 = await (async () => {
+                const _m9 = await (async () => {
                   if (alreadyApplied) {
                     return true;
                   } else {
-                    const _r9 = await entity.applyEvent(retriever, event.payload);
-                    if (_r9.isErr()) return { $jump: 'return', $value: Result.Err(_r9.unwrapErr()) };
-                    return _r9.unwrap();
+                    const _r8 = await entity.applyEvent(retriever, event.payload);
+                    if (_r8.isErr()) return { $jump: 'return', $value: Result.Err(_r8.unwrapErr()) };
+                    return _r8.unwrap();
                   }
                 })();
-                if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
-                const applied = (_m10 as any);
+                if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
+                const applied = (_m9 as any);
                 if (applied) {
-                  const _r11 = entity.toState();
-                  if (_r11.isErr()) return Result.Err(MutationError.fromStateError(_r11.unwrapErr()));
-                  let _moved12 = false;
-                  const state = _r11.unwrap();
+                  const _r10 = entity.toState();
+                  if (_r10.isErr()) return Result.Err(MutationError.fromStateError(_r10.unwrapErr()));
+                  let _moved11 = false;
+                  const state = _r10.unwrap();
                   try {
-                    _moved12 = true;
-                    let _moved13 = false;
+                    _moved11 = true;
+                    let _moved12 = false;
                     const entityState = new EntityState(entity.id(), entity.collection().clone(), state);
                     try {
-                      let _moved14 = false;
+                      let _moved13 = false;
                       const attestation = this.deref().value.policyAgent.attestState(this, entityState);
                       try {
+                        _moved12 = true;
                         _moved13 = true;
-                        _moved14 = true;
                         const attested = Attested.opt(entityState, attestation);
-                        const _r15 = await collection.deref().value.addEvent(event);
+                        const _r14 = await collection.deref().value.addEvent(event);
+                        if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+                        _r14.drop();
+                        const _r15 = await collection.deref().value.setState(attested);
                         if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
                         _r15.drop();
-                        const _r16 = await collection.deref().value.setState(attested);
+                        const _r16 = EntityChange.new(entity.clone(), [event.clone()]);
                         if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-                        _r16.drop();
-                        const _r17 = EntityChange.new(entity.clone(), [event.clone()]);
-                        if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
-                        changes.push(_r17.unwrap());
+                        changes.push(_r16.unwrap());
                       } finally {
-                        if (!_moved14) dropOwned(attestation);
+                        if (!_moved13) dropOwned(attestation);
                       }
                     } finally {
-                      if (!_moved13) entityState.drop();
+                      if (!_moved12) entityState.drop();
                     }
                   } finally {
-                    if (!_moved12) state.drop();
+                    if (!_moved11) state.drop();
                   }
                 }
               } finally {
@@ -948,20 +941,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         const _v = _r0.unwrap();
         if (_v != null && (_v.is('Descends'))) {
-          {
-            break;
-          }
+          break;
         } else if (_v != null && (_v.is('Equal'))) {
-          {
-            break;
-          }
+          break;
         } else if (_v != null) {
-          {
-            return Result.Ok([]);
-          }
+          return Result.Ok([]);
         } else {
-          {
-          }
+
         }
       }
       return Result.Ok(comparison.takeAccumulatedEvents().unwrapOrDefault());

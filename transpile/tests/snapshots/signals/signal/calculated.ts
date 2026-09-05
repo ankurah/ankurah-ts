@@ -1,10 +1,10 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs
-import { Struct, Arc, RwLock, OwnedClosure, HashMap } from '@ankurah/base';
-import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
+import { Struct, Arc, RwLock, OwnedClosure, invoke, Invocable, HashMap } from '@ankurah/base';
+import { Broadcast, BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
-import { Get, GetReadCell, Peek, Signal, With } from '../signal';
+import { Get, GetReadCell, ListenerGuard, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 
 class SubscriptionEntry extends Struct {
@@ -41,7 +41,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
     this._0 = _0;
   }
 
-  static new<T, F>(compute: F): Calculated<T> {
+  static new<T>(compute: Invocable<[], T>): Calculated<T> {
     const inner = Arc.new(new Inner(compute, ValueCell.new(null), Broadcast.new(), new RwLock(new HashMap())));
     trigger(inner);
     return new Calculated(inner);
@@ -62,7 +62,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
 
   with<R>(f: (arg0: T) => R): R {
     CurrentObserver.track(this);
-    return this._0.value.value.with((opt) => f((opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
+    return this._0.value.value.with((opt) => invoke(f, (opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
   }
 
   getReadcell(): ReadValueCell<T | null> {
@@ -103,7 +103,7 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
     } finally {
       entries.drop();
     }
-  })()
+  })();
   CurrentObserver.set(inner.clone());
   const newValue = (inner.value.compute)();
   inner.value.value.set(newValue);
@@ -115,7 +115,7 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
     } finally {
       entries.drop();
     }
-  })()
+  })();
   inner.value.broadcast.send([]);
 }
 
@@ -139,7 +139,7 @@ export function Arc_Inner_observe<T>(self: Arc<Inner<T>>, signal: Signal): void 
     }
   })();
   if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-  (_m0 as any)
+  (_m0 as any);
   const weak = self.downgrade();
   let _moved1 = false;
   const guard = signal.listen(Arc.new((_) => {

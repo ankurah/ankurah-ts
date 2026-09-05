@@ -3,7 +3,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   Struct, Enum, Result, Drop, DropGuard, Arc, Borrow, BorrowMut,
   Mutex, RefCell, RwLock, AsyncMutex, ThreadLocal, disposeSymbol, clearFatalLatch,
-  OwnershipFatal, OwnedClosure, AnyhowError, JsonError, HashMap, HashSet,
+  OwnershipFatal, OwnedClosure, invoke, invokeRef, AnyhowError, JsonError, HashMap, HashSet,
   dropUnbound, boolAnd, boolOr,
 } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
@@ -1537,6 +1537,42 @@ describe('Leak registry', () => {
     expect(reports.filter((r) => r.includes('ConsumedClosure'))).toEqual([]);
   });
 
+  // R10: whether a closure needed wrapping is a property of what it CAPTURED,
+  // and a callee cannot see that. `invoke` is the one place that tells the two
+  // shapes apart, so an emitted callee cannot be handed one it does not know
+  // how to call — three live sites raised `TypeError: f is not a function`.
+  test('invoke calls either shape, and consumes the wrapped one', () => {
+    expect(invoke((n: number) => n + 1, 1)).toBe(2);
+    expect(invoke(() => 'plain')).toBe('plain');
+
+    // A body that HANDS ITS CAPTURE AWAY is Rust's `FnOnce`: the capture
+    // becomes the body's and the closure is left moved.
+    const taken = new Inner();
+    const consuming = new OwnedClosure<[number], number>([taken], (n) => {
+      taken.drop();
+      return n + 1;
+    }, undefined, true);
+    expect(invoke(consuming, 1)).toBe(2);
+    expect(() => invoke(consuming, 1)).toThrow();
+    clearFatalLatch();
+
+    // A body that only READS its capture still owns it after the call, and the
+    // CALL is what consumed the closure — so `invoke` drops it, which runs the
+    // capture's glue where Rust runs it. Read as the other case, the capture
+    // was handed to a body that never released it and leaked.
+    const read = new Inner();
+    const reading = new OwnedClosure<[number], number>([read], (n) => n + 1);
+    expect(invoke(reading, 1)).toBe(2);
+    expect(reading.isDropped).toBe(true);
+
+    // `invokeRef` is the `Fn`/`FnMut` form: the closure stays its owner's.
+    const kept = new Inner();
+    const borrowed = new OwnedClosure<[number], number>([kept], (n) => n + 2);
+    expect(invokeRef(borrowed, 1)).toBe(3);
+    expect(invokeRef(borrowed, 2)).toBe(4);
+    borrowed.drop();
+  });
+
   test('an abandoned anyhow error is reported and a dropped one is not', async () => {
     const reports = await leakReportsDuring(() => {
       new LeakProbe();
@@ -2110,6 +2146,34 @@ describe('checked arithmetic panics where the debug build does', () => {
     expect(checkedDiv(7, 2, 'i32')).toBe(3);
     expect(checkedDiv(-7, 2, 'i32')).toBe(-3);
     expect(checkedRem(-7, 2, 'i32')).toBe(-1);
+  });
+
+  // Both are defined in terms of a quotient the type cannot hold, so both
+  // panic. `checkedDiv` catches its own case because the quotient IS its
+  // answer; the remainder's answer is 0, which the range check never sees.
+  test('the one division and the one remainder that overflow both raise', () => {
+    expect(() => checkedDiv(-2147483648, -1, 'i32')).toThrow('overflow');
+    expect(() => checkedRem(-2147483648, -1, 'i32')).toThrow('overflow');
+    expect(() => checkedRem(-128, -1, 'i8')).toThrow('overflow');
+    expect(() => checkedRem(-9223372036854775808n, -1n, 'i64')).toThrow('overflow');
+    // An unsigned width has no such case, and `-1` is out of its range anyway.
+    expect(checkedRem(7, 3, 'u32')).toBe(1);
+  });
+
+  // R13: the port's target is wasm32, where `usize` and `isize` are 32-bit.
+  test('usize and isize are 32-bit', () => {
+    expect(checkedAdd(4294967294, 1, 'usize')).toBe(4294967295);
+    expect(() => checkedAdd(4294967295, 1, 'usize')).toThrow('attempt to add with overflow');
+    expect(() => checkedSub(-2147483648, 1, 'isize')).toThrow('attempt to subtract with overflow');
+    expect(wrappingAdd(4294967295, 1, 'usize')).toBe(0);
+  });
+
+  // D10: a width the port spells `number` can still be handed an answer past
+  // what a double holds exactly. `Number(exact)` there rounds, and a rounded
+  // answer is a wrong number the program then computes with.
+  test('an answer a number cannot hold exactly panics rather than rounding', () => {
+    expect(() => checkedMul(9007199254740993n, 1n, 'u64')).not.toThrow();
+    expect(() => checkedAdd(9007199254740991, 2, 'u64')).toThrow('past what a number holds');
   });
 });
 

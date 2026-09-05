@@ -21,36 +21,25 @@ export class EntityChange extends Struct implements ChangeNotification {
     let _moved1 = false;
     try {
       try {
-        const _seq4 = events;
-        let _at5 = 0;
-        try {
-          while (_at5 < _seq4.length) {
-            const event = _seq4[_at5++];
-            try {
-              const head = entity.head();
-              try {
-                if (!event.payload.entityId.equals(entity.deref().id)) {
-                  return Result.Err(new MutationError('InvalidEvent', {}));
-                }
-                let _c3;
-                const _t2 = event.payload.id();
-                try {
-                  _c3 = !head.contains(_t2);
-                } finally {
-                  _t2.drop();
-                }
-                if (_c3) {
-                  return Result.Err(new MutationError('InvalidEvent', {}));
-                }
-              } finally {
-                head.drop();
-              }
-            } finally {
-              event.drop();
+        for (const event of events) {
+          const head = entity.head();
+          try {
+            if (!event.payload.entityId.equals(entity.deref().id)) {
+              return Result.Err(new MutationError('InvalidEvent', {}));
             }
+            let _c3;
+            const _t2 = event.payload.id();
+            try {
+              _c3 = !head.contains(_t2);
+            } finally {
+              _t2.drop();
+            }
+            if (_c3) {
+              return Result.Err(new MutationError('InvalidEvent', {}));
+            }
+          } finally {
+            head.drop();
           }
-        } finally {
-          dropOwned(_seq4.slice(_at5));
         }
         _moved0 = true;
         _moved1 = true;
@@ -88,7 +77,7 @@ export class EntityChange extends Struct implements ChangeNotification {
   }
 
   debug(): string {
-    return `EntityChange { entity: ${this.entity.debug()}, events: ${`[${Array.from(this.events).map((e) => e.debug()).join(', ')}]`} }`;
+    return `EntityChange { entity: ${this.entity.debug()}, events: ${this.events} }`;
   }
 }
 
@@ -283,9 +272,9 @@ export class ItemChange<I> extends Enum<ItemChangeV> {
   debug(): string {
     return this.match({
       Initial: (v) => `Initial { item: ${v.item} }`,
-      Add: (v) => `Add { item: ${v.item}, events: ${`[${Array.from(v.events).map((e) => e.debug()).join(', ')}]`} }`,
-      Update: (v) => `Update { item: ${v.item}, events: ${`[${Array.from(v.events).map((e) => e.debug()).join(', ')}]`} }`,
-      Remove: (v) => `Remove { item: ${v.item}, events: ${`[${Array.from(v.events).map((e) => e.debug()).join(', ')}]`} }`,
+      Add: (v) => `Add { item: ${v.item}, events: ${v.events} }`,
+      Update: (v) => `Update { item: ${v.item}, events: ${v.events} }`,
+      Remove: (v) => `Remove { item: ${v.item}, events: ${v.events} }`,
     });
   }
 }

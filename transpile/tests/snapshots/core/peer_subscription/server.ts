@@ -39,7 +39,7 @@ export class SubscriptionHandler extends Struct {
           }
         }
       }
-    }));
+    }, undefined, true));
     return new SubscriptionHandler(peerId, subscription, guard);
   }
 

@@ -383,3 +383,74 @@ describe('HashSet', () => {
     set.drop();
   });
 });
+
+// C18: `map.entry(k)` is the one place Rust's map API takes the key BEFORE it
+// knows whether it needs it, and `*map.entry(k).or_insert(0) += 1` is how the
+// corpus counts. Emitted against a map with no `entry`, that was a TypeError;
+// emitted against a plain `BorrowMut`, the increment landed on a copy and the
+// map never changed.
+describe('entry', () => {
+  test('or_insert puts a value there and hands back a slot into the map', () => {
+    const map = new HashMap<string, number>();
+    map.entry('a').orInsert(0).value += 1;
+    map.entry('a').orInsert(0).value += 1;
+    map.entry('b').orInsert(7);
+    expect(map.get('a')).toBe(2);
+    expect(map.get('b')).toBe(7);
+    expect(map.size).toBe(2);
+    map.drop();
+  });
+
+  test('an occupied entry releases the key it was handed and the value it did not use', () => {
+    const map = new HashMap<Id, Held>();
+    map.set(new Id([1]), new Held('first'));
+
+    // The map keeps the key it already has, so the one passed in is released —
+    // and so is the value `or_insert` was given and did not need.
+    const surplusKey = new Id([1]);
+    const surplusValue = new Held('unused');
+    expect(map.entry(surplusKey).orInsert(surplusValue).value.tag).toBe('first');
+    expect(surplusKey.isDropped).toBe(true);
+    expect(surplusValue.dropCount).toBe(1);
+    expect(map.size).toBe(1);
+    map.drop();
+  });
+
+  test('or_insert_with calls the thunk only where there is nothing there', () => {
+    const map = new HashMap<string, number>();
+    let calls = 0;
+    const make = () => {
+      calls += 1;
+      return 5;
+    };
+    expect(map.entry('a').orInsertWith(make).value).toBe(5);
+    expect(map.entry('a').orInsertWith(make).value).toBe(5);
+    expect(calls).toBe(1);
+    // `or_default` is the same, with the thunk standing in for `V: Default`.
+    expect(map.entry('b').orDefault(() => 0).value).toBe(0);
+    map.drop();
+  });
+
+  test('writing through the slot releases what the map held', () => {
+    const map = new HashMap<string, Held>();
+    const first = new Held('first');
+    map.set('k', first);
+    map.entry('k').orInsert(new Held('unused')).value = new Held('second');
+    expect(first.dropCount).toBe(1);
+    expect(map.get('k')?.tag).toBe('second');
+    map.drop();
+  });
+});
+
+describe('from', () => {
+  test('HashMap.from and HashSet.from build the keyed containers', () => {
+    const map = HashMap.from([['a', 1], ['b', 2]] as const);
+    expect(map.size).toBe(2);
+    expect(map.get('b')).toBe(2);
+    map.drop();
+
+    const set = HashSet.from(['a', 'b', 'a']);
+    expect(set.size).toBe(2);
+    set.drop();
+  });
+});

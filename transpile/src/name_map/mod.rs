@@ -114,8 +114,10 @@ pub fn map_type_name(rust_name: &str) -> &str {
         "bool" => "boolean",
         "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "usize" | "f64" | "f32" => "number",
         "i64" | "u64" => "bigint",
+        // The atomics: an atomic IS the value it holds, and this list is the
+        // one `native_types::number::ATOMICS` lowers the constructors of.
         "AtomicBool" => "boolean",
-        "AtomicU32" | "AtomicUsize" => "number",
+        "AtomicU32" | "AtomicU64" | "AtomicUsize" => "number",
         "Infallible" => "never",
         "Rule" => "string", // pest grammar::Rule → string in TS (no pest equivalent)
         _ => rust_name,

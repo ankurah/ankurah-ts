@@ -76,7 +76,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   clone(): TestItem {
-    return new TestItem(new Map(Array.from(this.values.entries()).map(([k, v]) => [k, v])));
+    return new TestItem(this.values.clone());
   }
 
   debug(): string {

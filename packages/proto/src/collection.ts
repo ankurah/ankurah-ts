@@ -41,7 +41,7 @@ export class CollectionId extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this._0)].join('|');
+    return [keyHash(this._0)].map((p) => p.length + ':' + p).join('');
   }
 
   compareTo(other: CollectionId): number {

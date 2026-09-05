@@ -8,6 +8,9 @@
 
 pub mod awaiting;
 mod let_chain;
+pub mod sentinel;
+#[cfg(test)]
+pub(crate) mod sentinel_tests;
 
 use crate::body::{indent, translate_pat, BodyTranslator};
 use crate::match_expr;
@@ -233,7 +236,7 @@ fn translate_if_let(
     let scrutinee = t.expr(&let_expr.expr);
     // The names the pattern introduces are in scope for the branch it guards,
     // and for the guard expression written after it.
-    let scrutinee_ty = t.scrutinee_type(&let_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&let_expr.expr);
     let bound = t.enter_pattern(&let_expr.pat, scrutinee_ty.as_ref());
     // Where the pattern took a value out of the scrutinee, the branch owns it
     // and releases it however the branch is left.

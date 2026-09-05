@@ -30,9 +30,11 @@ pub mod scrutinee;
 pub mod statements;
 pub mod temporaries;
 #[cfg(test)]
+mod borrowing_tests;
+#[cfg(test)]
 mod tests;
 
-pub use glue::{drops_of, Drops};
+pub use glue::{drops_of, fresh_at_each_use, Drops};
 pub use lowering::Lowering;
 pub use moves::{Disposition, Dispositions, Scan};
 

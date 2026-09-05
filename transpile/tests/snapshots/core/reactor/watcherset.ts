@@ -23,34 +23,22 @@ export class WatcherSet extends Struct {
   }
 
   static new(): WatcherSet {
-    return new WatcherSet(new HashMap(), new HashMap(), new HashMap());
+    return new WatcherSet(new HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>(), new HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>(), new HashMap<EntityId, HashSet<EntityWatcherId>>());
   }
 
   accumulateInterestedWatchers<E extends AbstractEntity, C>(entity: E, offset: number, changesArc: Arc<C[]>, candidatesBySub: HashMap<ReactorSubscriptionId, CandidateChanges<C>>): void {
     const entityId = AbstractEntity.id(entity);
     for (const [[collectionId, propertyPath], indexRef] of this.indexWatchers) {
-      try {
-        try {
-          try {
-            if (collectionId === AbstractEntity.collection(entity)) {
-              {
-                const _v = propertyPath.extractValue(entity);
-                if (_v != null) {
-                  const value = _v;
-                  for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
-                    candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
-                  }
-                }
-              }
+      if (collectionId === AbstractEntity.collection(entity)) {
+        {
+          const _v = propertyPath.extractValue(entity);
+          if (_v != null) {
+            const value = _v;
+            for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
             }
-          } finally {
-            indexRef.drop();
           }
-        } finally {
-          propertyPath.drop();
         }
-      } finally {
-        collectionId.drop();
       }
     }
     {
@@ -67,7 +55,7 @@ export class WatcherSet extends Struct {
       if (_v2 != null) {
         const subscriptionIds = _v2;
         for (const subId of [...subscriptionIds]) {
-          return subId.match({
+          subId.match({
             Predicate: (v) => {
               const subscriptionId = v._0;
               const queryId = v._1;
@@ -90,7 +78,7 @@ export class WatcherSet extends Struct {
           const entityId = v.entityId;
           const subscriptionId = v.subscriptionId;
           const queryId = v.queryId;
-          this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+          this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
         },
         Remove: (v) => {
           const entityId = v.entityId;
@@ -119,7 +107,7 @@ export class WatcherSet extends Struct {
   }
 
   addEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
-    this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
+    this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
   }
 
   removeEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
@@ -156,7 +144,7 @@ export class WatcherSet extends Struct {
 
   addPredicateEntityWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, entityIds: EntityId[]): void {
     for (const entityId of entityIds) {
-      this.entityWatchers.entry(entityId).orDefault().add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+      this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
     }
   }
 
@@ -189,7 +177,7 @@ export class WatcherSet extends Struct {
             try {
               try {
                 const propertyPath = PropertyPath.fromPath(path);
-                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault();
+                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
                 return op.match({
                   Add: () => {
                     index.add((literal).clone(), operator.clone(), watcherId);
@@ -228,7 +216,7 @@ export class WatcherSet extends Struct {
         throw new Error('unimplemented');
       },
       True: () => {
-        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault();
+        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet());
         return op.match({
           Add: () => {
             set.add(watcherId);
@@ -294,8 +282,8 @@ class EntityWatcherId extends Enum<EntityWatcherIdV> {
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
     switch (this.type) {
-      case 'Predicate': return ['Predicate', (this.value as any)._0.hash(), (this.value as any)._1.hash()].join('|');
-      case 'Subscription': return ['Subscription', (this.value as any)._0.hash()].join('|');
+      case 'Predicate': return ['Predicate', (this.value as any)._0.hash(), (this.value as any)._1.hash()].map((p) => p.length + ':' + p).join('');
+      case 'Subscription': return ['Subscription', (this.value as any)._0.hash()].map((p) => p.length + ':' + p).join('');
     }
     return String(this.type);
   }
@@ -324,7 +312,7 @@ class EntityWatcherId extends Enum<EntityWatcherIdV> {
 
   debug(): string {
     return this.match({
-      Predicate: (v) => `Predicate(${v._0.debug()}, ${v._1.debug()})`,
+      Predicate: (v) => `Predicate(${v._0.debug()}, ${v._1})`,
       Subscription: (v) => `Subscription(${v._0.debug()})`,
     });
   }
@@ -373,8 +361,8 @@ export class WatcherChange extends Enum<WatcherChangeV> {
 
   debug(): string {
     return this.match({
-      Add: (v) => `Add { entityId: ${v.entityId.debug()}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId.debug()} }`,
-      Remove: (v) => `Remove { entityId: ${v.entityId.debug()}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId.debug()} }`,
+      Add: (v) => `Add { entityId: ${v.entityId}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId} }`,
+      Remove: (v) => `Remove { entityId: ${v.entityId}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId} }`,
     });
   }
 }

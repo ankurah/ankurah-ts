@@ -53,3 +53,23 @@ pub fn consumed(entity: Entity) -> usize {
     };
     take()
 }
+
+/// R10: a callee sees only the BOUND, and whether the closure it is handed
+/// needed wrapping is a property of what that closure captured. Written `f(x)`,
+/// this raised `TypeError: f is not a function` the moment a caller passed one
+/// the emitter had wrapped — live at core's `node_applier`, core's `entity` and
+/// storage-sqlite's `engine`.
+pub fn through_a_bound<F>(f: F, n: usize) -> usize
+where
+    F: FnOnce(usize) -> usize,
+{
+    f(n)
+}
+
+pub fn hands_a_wrapped_one(entity: Entity) -> usize {
+    through_a_bound(move |n| n + entity.name.len(), 1)
+}
+
+pub fn hands_a_plain_one(n: usize) -> usize {
+    through_a_bound(|x| x + 1, n)
+}

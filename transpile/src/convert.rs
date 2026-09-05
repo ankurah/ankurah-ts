@@ -626,7 +626,7 @@ impl BodyTranslator<'_> {
     /// statement holding the lifted value performs the real return.
     pub(crate) fn leaving_with(&self, value: &str) -> String {
         if self.jump_as_value.get() {
-            crate::body::return_sentinel(value)
+            crate::control_flow::sentinel::return_marker(value)
         } else {
             format!("return {}", value)
         }

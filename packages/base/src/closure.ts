@@ -38,14 +38,30 @@ export class OwnedClosure<A extends unknown[] = unknown[], R = void> extends Dro
    * @param fn — the body, which closes over the same values lexically.
    * @param label — TS-only: what to call this closure in a leak report.
    */
+  /**
+   * Does the body hand one of the captures away?
+   *
+   * Rust reads such a closure as an `FnOnce`: running it moves the capture into
+   * the body, and the closure has nothing left to release. One that only READS
+   * its captures still owns them after a call, and whoever consumed the closure
+   * releases them by dropping it. `invoke` needs to tell the two apart, and
+   * only the emitter — which read the body — can say which this is.
+   *
+   * `$`-namespaced because it is the emitter's word to the runtime and not part
+   * of the Rust surface; no Rust field name can collide with a `$` name.
+   */
+  readonly $consumesCaptures: boolean;
+
   constructor(
     captures: readonly unknown[] | Record<string, unknown>,
     fn: (...args: A) => R,
     label?: string,
+    consumesCaptures = false,
   ) {
     super(label ?? 'OwnedClosure');
     this.#captures = captures;
     this.#fn = fn;
+    this.$consumesCaptures = consumesCaptures;
   }
 
   /**
@@ -120,3 +136,58 @@ export class OwnedClosure<A extends unknown[] = unknown[], R = void> extends Dro
     return [...super.ownedFields(), this.#captures];
   }
 }
+
+/**
+ * Call something the port may have wrapped: a plain function, or the
+ * `OwnedClosure` the emitter writes when the Rust closure captured values with
+ * drop glue.
+ *
+ * For: whether a closure needed wrapping is a property of what it CAPTURED, and
+ * a callee cannot see that. `Result::map_err(f)` is one function in Rust and
+ * two shapes here — `f(e)` and `f.callOnce(e)` — and an emitted callee that
+ * wrote `f(e)` raised `TypeError: f is not a function` the moment a caller
+ * handed it a wrapped one. Three live sites did: core's `node_applier`
+ * (`Result.mapErr`), core's `entity` (`tryMutate`, its own file) and
+ * storage-sqlite's `engine` (`withConnection`).
+ *
+ * R10: an argument the engine wraps is ALWAYS invoked through here, and nothing
+ * else may call a bound closure parameter directly.
+ *
+ * `callOnce` rather than `call`, because a bound `FnOnce` parameter is consumed
+ * by the call: the captures become the body's, and the closure is left moved so
+ * a second call is fatal.
+ */
+export function invoke<A extends unknown[], R>(f: (...args: A) => R, ...args: A): R;
+export function invoke<A extends unknown[], R>(f: OwnedClosure<A, R>, ...args: A): R;
+export function invoke<A extends unknown[], R>(f: Invocable<A, R>, ...args: A): R;
+export function invoke<A extends unknown[], R>(f: Invocable<A, R>, ...args: A): R {
+  if (!(f instanceof OwnedClosure)) return f(...args);
+  // The body takes the captures, so they become its and the closure is left
+  // moved — exactly Rust's `FnOnce::call_once`.
+  if (f.$consumesCaptures) return f.callOnce(...args);
+  // The body only read them, so they are still the closure's; the CALL is what
+  // consumed the closure, and dropping it here runs their glue where Rust runs
+  // it — at the end of the call that took `f` by value.
+  try {
+    return f.call(...args);
+  } finally {
+    f.drop();
+  }
+}
+
+/**
+ * The same for an `Fn` or `FnMut` parameter, which Rust takes by REFERENCE:
+ * the closure stays its owner's and may be called again, so nothing here
+ * releases it.
+ */
+export function invokeRef<A extends unknown[], R>(f: (...args: A) => R, ...args: A): R;
+export function invokeRef<A extends unknown[], R>(f: OwnedClosure<A, R>, ...args: A): R;
+export function invokeRef<A extends unknown[], R>(f: Invocable<A, R>, ...args: A): R;
+export function invokeRef<A extends unknown[], R>(f: Invocable<A, R>, ...args: A): R {
+  return f instanceof OwnedClosure ? f.call(...args) : f(...args);
+}
+
+/** The type an emitted parameter takes when either shape may arrive. */
+export type Invocable<A extends unknown[] = unknown[], R = void> =
+  | OwnedClosure<A, R>
+  | ((...args: A) => R);

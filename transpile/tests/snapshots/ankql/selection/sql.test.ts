@@ -126,10 +126,8 @@ describe('sql unit tests', () => {
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          (() => {
-            expect(expected).toEqual(1);
-            expect(found).toEqual(2);
-          })()
+          expect(expected).toEqual(1);
+          expect(found).toEqual(2);
         }
         return Result.Ok([]);
       } finally {
@@ -150,10 +148,8 @@ describe('sql unit tests', () => {
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          (() => {
-            expect(expected).toEqual(2);
-            expect(found).toEqual(1);
-          })()
+          expect(expected).toEqual(2);
+          expect(found).toEqual(1);
         }
         return Result.Ok([]);
       } finally {
@@ -236,10 +232,8 @@ describe('sql unit tests', () => {
           throw new Error('Expected PlaceholderCountMismatch error')
         } else {
           const _v1 = _v.unwrapErr();
-          (() => {
-            expect(expected).toEqual(0);
-            expect(found).toEqual(1);
-          })()
+          expect(expected).toEqual(0);
+          expect(found).toEqual(1);
         }
         return Result.Ok([]);
       } finally {

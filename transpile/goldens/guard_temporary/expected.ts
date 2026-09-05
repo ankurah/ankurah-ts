@@ -23,7 +23,7 @@ export class Counter extends Struct {
   bump(): number {
     let guard = this.value.lock();
     try {
-      guard.value += 1;
+      guard.value = checkedAdd(guard.value, 1, 'usize');
       return guard.value;
     } finally {
       guard.drop();

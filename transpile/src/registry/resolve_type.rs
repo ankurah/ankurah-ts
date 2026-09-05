@@ -370,12 +370,16 @@ fn generic_args(path: &syn::Path, env: &TypeEnv) -> Result<Vec<Ty>, Diag> {
                 match arg {
                     syn::GenericArgument::Type(ty) => out.push(resolve_type(ty, env)?),
                     syn::GenericArgument::Lifetime(_) => {}
-                    syn::GenericArgument::Const(_) => {
-                        return Err(env.refuse(
-                            arg.span(),
-                            "const generic argument is not modelled outside an array length",
-                        ))
-                    }
+                    // A const generic argument is DROPPED, because the port's
+                    // spelling already drops it: `IVec<usize, 8>` is
+                    // `IVec<number>`, and the declaration's type parameters are
+                    // the type ones alone. Refusing it refused the whole type,
+                    // so `candidate_changes`'s two fields had no type at all
+                    // and every method on them fell back — `is_empty()` on a
+                    // `HashMap` came out `.length === 0`. The erasure itself is
+                    // recorded in spec 7a; reporting it at every use would
+                    // count one decision once per mention.
+                    syn::GenericArgument::Const(_) => {}
                     syn::GenericArgument::AssocType(assoc) => {
                         return Err(env.refuse(
                             arg.span(),

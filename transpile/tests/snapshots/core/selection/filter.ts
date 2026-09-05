@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
-import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, dropOwned } from '@ankurah/base';
 import { ComparisonOperator, Expr, Predicate, Literal } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { Value_castTo } from '../value/cast';
@@ -257,14 +257,14 @@ function evaluateSubPath<I extends Filterable>(item: I, propertyName: string, su
 
 function compareValuesWithCast(left: Value, right: Value, op: (arg0: Value, arg1: Value) => boolean): boolean {
   if (ValueType.of(left) === ValueType.of(right)) {
-    return op(left, right);
+    return invokeRef(op, left, right);
   }
   {
     const _v = Value_castTo(right, ValueType.of(left));
     if (_v.isOk()) {
       const castedRight = _v.unwrap();
       try {
-        return op(left, castedRight);
+        return invokeRef(op, left, castedRight);
       } finally {
         castedRight.drop();
       }
@@ -277,7 +277,7 @@ function compareValuesWithCast(left: Value, right: Value, op: (arg0: Value, arg1
     if (_v1.isOk()) {
       const castedLeft = _v1.unwrap();
       try {
-        return op(castedLeft, right);
+        return invokeRef(op, castedLeft, right);
       } finally {
         castedLeft.drop();
       }

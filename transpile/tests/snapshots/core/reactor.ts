@@ -4,6 +4,7 @@ import { Entity } from './entity';
 import { SubscriptionError } from './error';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
 import { ContextData, Node, TNodeErased } from './node';
+import { CandidateChanges } from './reactor/candidate_changes';
 import { GapFetcher } from './reactor/fetch_gap';
 import { ReactorSubInner, ReactorSubscription, ReactorSubscriptionId } from './reactor/subscription';
 import { Subscription } from './reactor/subscription_state';
@@ -256,7 +257,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       try {
         tracing.debug(`Reactor.notify_change(${changes_1.value.length} changes)`);
         let _moved0 = false;
-        const candidatesBySub = new HashMap();
+        const candidatesBySub = new HashMap<ReactorSubscriptionId, CandidateChanges<C>>();
         try {
           (() => {
             const watcherSet = this._0.value.watcherSet.value.lock();
@@ -267,7 +268,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             } finally {
               watcherSet.drop();
             }
-          })()
+          })();
           const evaluations = (() => {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
@@ -314,7 +315,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       } finally {
         watcherSet.drop();
       }
-    })()
+    })();
     const subscriptions = this._0.value.subscriptions.lock();
     try {
       for (const subscription of subscriptions.value.values()) {

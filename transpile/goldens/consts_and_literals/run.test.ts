@@ -3,7 +3,7 @@
 // hands each value to the field it was written beside.
 
 import { expect, test } from 'bun:test';
-import { Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, collection, shifted, word } from './input.ts';
+import { FLOOR, Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, arm, bump, collection, movedOrigin, radix, shifted, word } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a const carries its value, not `undefined`', () => {
@@ -32,6 +32,31 @@ test('a struct literal hands each value to the field it was written beside', () 
   expect(rec.third).toBe(true);
   expect(rec.tag()).toBe(TAG_STRING);
   rec.drop();
+});
+
+test('each use of a non-Copy const is its own value', () => {
+  // `first.x = 9` mutates a value of its own; `second` is another `ORIGIN`.
+  expect(movedOrigin()).toBe(9);
+  // And the module name is not a value anything can mutate or release: a second
+  // call answers the same.
+  expect(movedOrigin()).toBe(9);
+});
+
+test('a static with interior mutability is written through', () => {
+  expect(bump()).toBe(0);
+  expect(bump()).toBe(1);
+  expect(arm(true)).toBe(true);
+  expect(arm(false)).toBe(false);
+});
+
+test('a negated literal in a const keeps its width', () => {
+  expect(FLOOR).toBe(-9007199254740991n);
+});
+
+test('a const in a pattern is a comparison, not a binding', () => {
+  expect(radix(36)).toBe(1);
+  expect(radix(0)).toBe(2);
+  expect(radix(7)).toBe(3);
 });
 
 test('nothing leaked and nothing was reported', async () => {

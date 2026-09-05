@@ -111,7 +111,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     const hasRelay = this._0.value.node.hasSubscriptionRelay();
     if (hasRelay) {
       const _r1 = this._0.value.node.updateRemoteQuery(this._0.value.queryId, newSelection_1.clone(), newVersion);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
       _r1.drop();
     } else {
       const me2 = this.clone();
@@ -155,11 +155,11 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     const initializedVersion = this._0.value.initializedVersion;
     if (initializedVersion === 0) {
       const _r0 = await reactor.addQueryAndNotify(this._0.value.subscription.id(), this._0.value.queryId, this._0.value.collectionId.clone(), selection, this._0.value.node, this._0.value.resultset.clone(), this._0.value.gapFetcher.clone(), this);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r0.unwrapErr()));
       _r0.unwrap();
     } else {
       const _r1 = await reactor.updateQueryAndNotify(this._0.value.subscription.id(), this._0.value.queryId, this._0.value.collectionId.clone(), selection, this._0.value.node, version, this);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
       _r1.drop();
     };
     return Result.Ok([]);

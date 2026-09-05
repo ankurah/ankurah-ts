@@ -95,7 +95,21 @@ pub(super) fn of_type(
     match ts_ty {
         "string" => Ok(checked("typeof v === 'string'", "a string", "string")),
         "boolean" => Ok(checked("typeof v === 'boolean'", "a boolean", "boolean")),
-        "number" => Ok(checked("typeof v === 'number'", "a number", "number")),
+        "number" => Ok(match integer_prim(ty) {
+            // serde reads an integer field by its Rust type: `1.5`, `-1` and
+            // `256` are each a `u8` error, and each is `typeof v === 'number'`.
+            Some(prim) => {
+                let (low, high) = prim.range().expect("an integer width has a range");
+                checked(
+                    &format!(
+                        "typeof v === 'number' && Number.isInteger(v) && v >= {low} && v <= {high}"
+                    ),
+                    &article(prim),
+                    "number",
+                )
+            }
+            None => checked("typeof v === 'number'", "a number", "number"),
+        }),
         // `PhantomData` carries nothing. serde writes it as a unit, and the
         // emitted class has no field for it at all, so nothing here reads or
         // writes one — but a type that HAS one still has a JSON half, which is
@@ -116,18 +130,50 @@ pub(super) fn of_type(
         // Both are the same Rust integer, and both read here; the value goes
         // out as the `bigint` it is, which `serde_json.stringify` writes as a
         // bare integer token.
-        "bigint" => Ok(Shape {
-            write: "$V".to_string(),
-            read: "(typeof v === 'bigint' ? Result.Ok(v) \
-                   : (typeof v === 'number' && Number.isInteger(v) ? Result.Ok(BigInt(v)) \
-                   : Result.Err(JsonError.custom('expected an integer'))))"
-                .to_string(),
-            owns: false,
-        }),
+        "bigint" => {
+            // A `number` this wide has already lost digits: `2 ** 53 + 1` reads
+            // back as `2 ** 53`, and `BigInt()` of it invents the difference.
+            // `Number.isSafeInteger` is what refuses that instead of rounding.
+            let (test, expected) = match integer_prim(ty) {
+                Some(prim) => {
+                    let (low, high) = prim.range().expect("an integer width has a range");
+                    (
+                        format!(
+                            "(typeof v === 'bigint' && v >= {low}n && v <= {high}n) \
+                             || (typeof v === 'number' && Number.isSafeInteger(v) \
+                             && v >= {low_clamped} && v <= {high_clamped})",
+                            low = low,
+                            high = high,
+                            low_clamped = low.max(-9_007_199_254_740_991),
+                            high_clamped = high.min(9_007_199_254_740_991),
+                        ),
+                        article(prim),
+                    )
+                }
+                None => (
+                    "typeof v === 'bigint' \
+                     || (typeof v === 'number' && Number.isSafeInteger(v))"
+                        .to_string(),
+                    "an integer".to_string(),
+                ),
+            };
+            Ok(Shape {
+                write: "$V".to_string(),
+                read: format!(
+                    "({test} ? Result.Ok(BigInt(v as bigint | number)) \
+                     : Result.Err(JsonError.custom('expected {expected}')))"
+                ),
+                owns: false,
+            })
+        }
         // `Vec<u8>` is a `Uint8Array` here and an array of numbers in serde.
         "Uint8Array" => Ok(Shape {
             write: "Array.from($V)".to_string(),
-            read: "(Array.isArray(v) && v.every((b) => typeof b === 'number') \
+            // A `Uint8Array` truncates whatever it is handed, so `[-1, 256, 1.5]`
+            // became `[255, 0, 1]` and the document was accepted. serde reads
+            // each element as a `u8`.
+            read: "(Array.isArray(v) && v.every((b) => typeof b === 'number' \
+                   && Number.isInteger(b) && b >= 0 && b <= 255) \
                    ? Result.Ok(new Uint8Array(v as number[])) \
                    : Result.Err(JsonError.custom('expected an array of bytes')))"
                 .to_string(),
@@ -201,7 +247,12 @@ pub(super) fn of_type(
                     read = member.read(),
                     value = value
                 ),
-                owns: member.owns,
+                // The CONTAINER is what this read builds, and the runtime
+                // `HashMap` is tracked whatever it holds: a map of strings owes
+                // a `drop()` exactly as a map of entities does. Taking `owns`
+                // from the member left a partly decoded map unreleased on the
+                // error path of every later field.
+                owns: true,
             })
         }
         t if t.starts_with("HashSet<") => Err(format!(
@@ -282,23 +333,47 @@ pub(super) fn is_zero_sized(ts_ty: &str) -> bool {
     ts_ty.contains("PhantomData")
 }
 
+/// The width, spelled for a message: `a u8`, `an i64`.
+fn article(prim: crate::ty::Prim) -> String {
+    let name = prim.rust_name();
+    let article = if name.starts_with('i') { "an" } else { "a" };
+    format!("{article} {name}")
+}
+
+/// The integer width this field really is, where the resolution settled it.
+///
+/// The TypeScript spelling cannot say: `u8`, `u32`, `usize` and `f64` are all
+/// `number`. The `Ty` is what carries the Rust type, and the reader's checks
+/// come from it.
+fn integer_prim(ty: Option<&crate::ty::Ty>) -> Option<crate::ty::Prim> {
+    match ty?.peel_refs() {
+        crate::ty::Ty::Prim(prim) if prim.is_integer() && prim.range().is_some() => Some(*prim),
+        _ => None,
+    }
+}
+
 fn starts_upper(t: &str) -> bool {
     t.chars().next().is_some_and(|c| c.is_uppercase())
 }
 
 /// Does the port emit a `static fromJson` for this class?
 ///
-/// The registry knows, from the derive and from the narrowing pass that makes
-/// the refusal transitive. The IDENTITY is what it is asked of: a leaf scan
-/// finds the first `State` of however many crates declare one. The leaf is the
-/// fallback for a spelling the engine could not resolve, which is a guess and
-/// is the reason the old reader was wrong.
+/// The registry knows, from the derive, from the `[provided_impls]` entry where
+/// a person wrote the file, and from the narrowing pass that makes the refusal
+/// transitive. The IDENTITY is what it is asked of: a leaf scan finds the first
+/// `State` of however many crates declare one. The leaf is the fallback for a
+/// spelling the engine could not resolve, which is a guess and is the reason the
+/// old reader was wrong.
+///
+/// "This class is hand-written" is NOT evidence: `auth.provided.ts` declares no
+/// `fromJson`, and reading the two as one put `Attested.fromJson` in three
+/// emitted call sites where nothing declares it.
 fn reads_json(reg: &TypeRegistry, class: &str, ty: Option<&crate::ty::Ty>) -> bool {
     let id = match ty.and_then(|ty| ty.peel_refs().id()) {
         Some(id) => Some(id),
         None => reg.type_by_leaf(class),
     };
-    id.is_some_and(|id| reg.reads_json(id) || reg.is_hand_written(id))
+    id.is_some_and(|id| reg.reads_json(id))
 }
 
 /// The one type argument a wrapper carries — an `Option`'s, a `Vec`'s — the

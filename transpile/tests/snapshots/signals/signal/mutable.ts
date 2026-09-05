@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
 import { Struct, Arc, OwnedClosure } from '@ankurah/base';
-import { Broadcast, BroadcastId, ListenerGuard } from '../broadcast';
+import { Broadcast, BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
-import { Get, GetReadCell, Peek, Signal, With } from '../signal';
+import { Get, GetReadCell, ListenerGuard, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
 import { Read } from './read';
 

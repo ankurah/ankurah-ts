@@ -39,7 +39,7 @@ pub fn matches_macro(tokens: &TokenStream, t: &BodyTranslator) -> Option<String>
     }
 
     let written = syn::parse2::<Written>(tokens.clone()).ok()?;
-    let scrutinee_ty = t.scrutinee_type(&written.subject);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&written.subject);
     let value = t.expr_value(&written.subject);
 
     // Rust evaluates the subject once and the test may read it several times, so
@@ -155,7 +155,7 @@ pub fn hashmap_macro(tokens: &TokenStream, t: &BodyTranslator) -> Option<String>
         .iter()
         .map(|p| format!("[{}, {}]", t.moved_value(&p.key), t.moved_value(&p.value)))
         .collect();
-    Some(format!("new Map([{}])", entries.join(", ")))
+    Some(format!("HashMap.from([{}])", entries.join(", ")))
 }
 
 /// `serde_json::json!(expr)` — a JSON value built from one expression.

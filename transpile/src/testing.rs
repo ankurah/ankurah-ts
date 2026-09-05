@@ -79,6 +79,7 @@ impl Fixture {
             .filter_map(|f| reg.modules().lookup_file(&f.path))
             .collect();
         crate::registry::narrow_reads_json(&mut reg, &ours);
+        crate::registry::mark_fresh_consts(&mut reg, &parsed, &sink);
         Fixture { reg, sink, files: parsed }
     }
 
@@ -104,6 +105,7 @@ impl Fixture {
             .filter_map(|f| reg.modules().lookup_file(&f.path))
             .collect();
         crate::registry::narrow_reads_json(&mut reg, &ours);
+        crate::registry::mark_fresh_consts(&mut reg, &parsed, &sink);
         Fixture {
             reg,
             sink,

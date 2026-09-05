@@ -164,3 +164,18 @@ fn is_copy(probe: &Probe, ty: &Ty) -> bool {
         .copy_trait()
         .is_some_and(|copy| probe.implements(ty, copy))
 }
+
+/// Is every use of this module-level value a FRESH value?
+///
+/// Rust's `const` is INLINED at each use: `let mut a = ORIGIN; a.x = 9;` mutates
+/// a value of its own, and a second use is a second value. A `static` is the
+/// opposite — one place for the life of the program, shared on purpose. So only
+/// a non-`Copy` const is fresh, and the port writes its name as a function each
+/// use calls; a `Copy` one is a primitive the assignment already copies.
+///
+/// Bound to one module object, two uses of a non-`Copy` const shared an
+/// identity, a mutation and a release, and the second `.drop()` on that object
+/// aborts the run.
+pub fn fresh_at_each_use(probe: &Probe, ty: &Ty, is_static: bool) -> bool {
+    !is_static && drops_of(probe, ty).is_droppable()
+}

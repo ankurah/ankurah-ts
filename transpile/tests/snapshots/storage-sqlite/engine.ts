@@ -41,18 +41,16 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
         {
           const c = char;
           if (c.isAlphanumeric()) {
-            {
-            }
+
             break _match0;
           }
         }
         if ((char === '_') || (char === '.') || (char === ':')) {
-          {
-          }
+
           break _match0;
         }
         {
-          return false;
+          return false
         }
       }
     }
@@ -205,16 +203,16 @@ export class SqliteBucket extends Struct implements StorageCollection {
     const tableName = this.stateTable();
     const _r5 = await conn.withConnection((c) => {
       const _r0 = c.prepare(`PRAGMA table_info("${tableName}")`);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r0.unwrapErr()));
       let stmt = _r0.unwrap();
       const _r3 = stmt.queryMap([], (row) => {
         const _r1 = row.get(1);
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        if (_r1.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r1.unwrapErr()));
         const _r2 = row.get(2);
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        if (_r2.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r2.unwrapErr()));
         return Result.Ok(new SqliteColumn(_r1.unwrap(), _r2.unwrap()));
       });
-      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      if (_r3.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r3.unwrapErr()));
       let _moved4 = false;
       const columns = _r3.unwrap().filterMap((r) => r.ok());
       try {
@@ -252,7 +250,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           const query = alterQuery.clone();
           const _r2 = await conn.withConnection((c) => {
             const _r1 = c.execute(query, []);
-            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+            if (_r1.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r1.unwrapErr()));
             _r1.drop();
             return Result.Ok([]);
           });
@@ -279,13 +277,13 @@ export class SqliteBucket extends Struct implements StorageCollection {
           tracing.warn(`Warning: Empty head detected for entity ${state.payload.entityId}`);
         }
         const _r1 = (() => { const _w = new BincodeWriter(); state.payload.state.stateBuffers.encode(_w); return _w.finish(); })();
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        if (_r1.isErr()) return Result.Err(MutationError.fromBincodeError(_r1.unwrapErr()));
         const stateBuffers = _r1.unwrap();
         const _r2 = serde_json.stringify((state.payload.state.head).toJSON()).mapErr((e) => new MutationError('General', { _0: e }));
         if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
         const headJson = _r2.unwrap();
         const _r3 = (() => { const _w = new BincodeWriter(); state.attestations.encode(_w); return _w.finish(); })();
-        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        if (_r3.isErr()) return Result.Err(MutationError.fromBincodeError(_r3.unwrapErr()));
         const attestationsBlob = _r3.unwrap();
         const id = state.payload.entityId.toBase64();
         const idClone = id.clone();
@@ -345,28 +343,17 @@ export class SqliteBucket extends Struct implements StorageCollection {
           values.push(new rusqlite.types.Value('Blob', { _0: attestationsBlob }));
           const placeholderIsJsonb = [];
           placeholderIsJsonb.resize(BASE_COLUMNS.length, false);
-          const _seq8 = materialized;
-          let _at9 = 0;
-          try {
-            while (_at9 < _seq8.length) {
-              const [name, value, isJsonb] = _seq8[_at9++];
-              columns.push(name);
-              values.push((() => {
-                if (value != null) {
-                  const v = value;
-                  try {
-                    return v.toSql();
-                  } finally {
-                    v.drop();
-                  }
-                } else {
-                  return rusqlite.types.Value.Null;
-                }
-              })());
-              placeholderIsJsonb.push(isJsonb);
-            }
-          } finally {
-            dropOwned(_seq8.slice(_at9));
+          for (const [name, value, isJsonb] of materialized) {
+            columns.push(name);
+            values.push((() => {
+              if (value != null) {
+                const v = value;
+                return v.toSql();
+              } else {
+                return rusqlite.types.Value.Null;
+              }
+            })());
+            placeholderIsJsonb.push(isJsonb);
           }
           const columnsStr = [...columns].map((c) => `"${c}"`).join(', ');
           const placeholders = [...placeholderIsJsonb].map((isJsonb) => isJsonb ? 'jsonb(?)' : '?').join(', ');
@@ -377,8 +364,8 @@ export class SqliteBucket extends Struct implements StorageCollection {
           const tableNameClone = tableName;
           const queryClone = query.clone();
           const valuesClone = values.clone();
-          const _r14 = await conn.withConnection(new OwnedClosure([newHead], (c) => {
-            const _m10 = (() => {
+          const _r12 = await conn.withConnection(new OwnedClosure([newHead], (c) => {
+            const _m8 = (() => {
               const _v1 = c.queryRow(`SELECT "head" FROM "${tableNameClone}" WHERE "id" = ?`, [idClone], (row) => row.get(0));
               if (_v1.isOk()) {
                 const json = _v1.unwrap();
@@ -388,18 +375,18 @@ export class SqliteBucket extends Struct implements StorageCollection {
                 return { $jump: 'return', $value: Result.Err(new SqliteError('Rusqlite', { _0: e })) };
               }
             })();
-            if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
-            const oldHeadJson = (_m10 as any);
-            const _r11 = c.execute(queryClone, paramsFromIter([...valuesClone])).mapErr((e) => new SqliteError('Rusqlite', { _0: e }));
-            if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
-            _r11.drop();
-            const _m13 = (() => {
+            if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
+            const oldHeadJson = (_m8 as any);
+            const _r9 = c.execute(queryClone, paramsFromIter([...valuesClone])).mapErr((e) => new SqliteError('Rusqlite', { _0: e }));
+            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+            _r9.drop();
+            const _m11 = (() => {
               if (oldHeadJson != null) {
                 const json = oldHeadJson;
                 {
-                  const _r12 = serde_json.parse(json).mapErr((e) => new SqliteError('Json', { _0: e }));
-                  if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
-                  const oldHead = _r12.unwrap();
+                  const _r10 = serde_json.parse(json).mapErr((e) => new SqliteError('Json', { _0: e }));
+                  if (_r10.isErr()) return { $jump: 'return', $value: Result.Err(_r10.unwrapErr()) };
+                  const oldHead = _r10.unwrap();
                   try {
                     return !oldHead.equals(newHead);
                   } finally {
@@ -410,12 +397,12 @@ export class SqliteBucket extends Struct implements StorageCollection {
                 return true;
               }
             })();
-            if ((_m13 as any)?.$jump === 'return') return (_m13 as any).$value;
-            const changed = (_m13 as any);
+            if ((_m11 as any)?.$jump === 'return') return (_m11 as any).$value;
+            const changed = (_m11 as any);
             return Result.Ok(changed);
-          }));
-          if (_r14.isErr()) return Result.Err(MutationError.fromSqliteError(_r14.unwrapErr()));
-          const changed = _r14.unwrap();
+          }, undefined, true));
+          if (_r12.isErr()) return Result.Err(MutationError.fromSqliteError(_r12.unwrapErr()));
+          const changed = _r12.unwrap();
           tracing.debug(`set_state: Changed: ${changed}`);
           return Result.Ok(changed);
         } finally {
@@ -488,7 +475,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         } finally {
           result.drop();
         }
-      })).mapErr((e) => (() => {
+      }, undefined, true)).mapErr((e) => (() => {
         if (e.is('Rusqlite') && (e.value._0.is('QueryReturnedNoRows'))) {
           return new RetrievalError('EntityNotFound', { _0: id });
         } else {
@@ -651,10 +638,10 @@ export class SqliteBucket extends Struct implements StorageCollection {
     const conn = _r0.unwrap();
     try {
       const _r1 = (() => { const _w = new BincodeWriter(); entityEvent.payload.operations.encode(_w); return _w.finish(); })();
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      if (_r1.isErr()) return Result.Err(MutationError.fromBincodeError(_r1.unwrapErr()));
       const operations = _r1.unwrap();
       const _r2 = (() => { const _w = new BincodeWriter(); entityEvent.attestations.encode(_w); return _w.finish(); })();
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      if (_r2.isErr()) return Result.Err(MutationError.fromBincodeError(_r2.unwrapErr()));
       const attestations = _r2.unwrap();
       const _r3 = serde_json.stringify((entityEvent.payload.parent).toJSON()).mapErr((e) => new MutationError('General', { _0: e }));
       if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
@@ -765,7 +752,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
             }
           }
           return Result.Ok(events);
-        })).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
+        }, undefined, true)).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
       } finally {
         dropOwned(conn);
       }
@@ -845,7 +832,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           }
         }
         return Result.Ok(events);
-      })).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
+      }, undefined, true)).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
     } finally {
       dropOwned(conn);
     }
@@ -857,7 +844,7 @@ function createStateTable(conn: Connection, collectionId: CollectionId): Result<
   const query = `CREATE TABLE IF NOT EXISTS "${tableName}"(\n            "id" TEXT PRIMARY KEY,\n            "state_buffer" BLOB NOT NULL,\n            "head" TEXT NOT NULL,\n            "attestations" BLOB\n        )`;
   tracing.debug(`Creating state table: ${query}`);
   const _r0 = conn.execute(query, []);
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+  if (_r0.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r0.unwrapErr()));
   _r0.drop();
   return Result.Ok([]);
 }
@@ -867,11 +854,11 @@ function createEventTable(conn: Connection, collectionId: CollectionId): Result<
   const query = `CREATE TABLE IF NOT EXISTS "${tableName}"(\n            "id" TEXT PRIMARY KEY,\n            "entity_id" TEXT,\n            "operations" BLOB,\n            "parent" TEXT,\n            "attestations" BLOB\n        )`;
   tracing.debug(`Creating event table: ${query}`);
   const _r0 = conn.execute(query, []);
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+  if (_r0.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r0.unwrapErr()));
   _r0.drop();
   const indexQuery = `CREATE INDEX IF NOT EXISTS "${tableName}_entity_id_idx" ON "${tableName}"("entity_id")`;
   const _r1 = conn.execute(indexQuery, []);
-  if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+  if (_r1.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r1.unwrapErr()));
   _r1.drop();
   return Result.Ok([]);
 }

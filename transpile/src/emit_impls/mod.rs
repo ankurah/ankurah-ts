@@ -171,9 +171,10 @@ pub fn free_functions_reporting(
             }
             let symbol = method_symbol(
                 imp.trait_name().as_deref(),
-                &imp.trait_type_args(),
+                &imp.trait_type_arg_paths(),
                 &method.ts_name,
                 &imp.target_type,
+                self_ty.peel_refs().id(),
             );
             let name = free_fn_name(reg, &self_ty, &imp.type_params, &symbol);
             // Two impls of two traits can write one method name for one self

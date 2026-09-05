@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
-import { Result, AnyhowError, dropOwned, tracing, checkedAdd } from '@ankurah/base';
+import { Result, AnyhowError, tracing, unsupported, checkedAdd, saturatingAdd } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
 import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
@@ -8,14 +8,14 @@ import { EntityId } from '@ankurah/proto';
 
 function nextUpperBound(value: Value): [Value, boolean] | null {
   return value.match({
-    Bool: (v) => [new Value('Bool', { _0: true }), true] as any,
+    Bool: () => unsupported('`Bool` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
     I16: (_v) => {
       const v = _v._0;
-      return [new Value('I16', { _0: v.saturatingAdd(1) }), true] as any;
+      return [new Value('I16', { _0: saturatingAdd(v, 1, 'i16') }), true] as any;
     },
     I32: (_v) => {
       const v = _v._0;
-      return [new Value('I32', { _0: v.saturatingAdd(1) }), true] as any;
+      return [new Value('I32', { _0: saturatingAdd(v, 1, 'i32') }), true] as any;
     },
     I64: (_v) => {
       const v = _v._0;
@@ -55,76 +55,62 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
   let upperOpen = false;
   let eqPrefixLen = 0;
   let eqPrefixValues = [];
-  const _seq1 = bounds.keyparts;
-  let _at2 = 0;
-  try {
-    while (_at2 < _seq1.length) {
-      const bound = _seq1[_at2++];
-      try {
+  for (const bound of bounds.keyparts) {
+    {
+      const _v1 = [bound.low, bound.high];
+      if ((_v1[0].is('Value')) && (_v1[1].is('Value'))) {
+        const { datum: lowDatum, inclusive: lowIncl } = _v1[0].value;
+        const { datum: highDatum, inclusive: highIncl } = _v1[1].value;
         {
-          const _v1 = [bound.low, bound.high];
-          if ((_v1[0].is('Value')) && (_v1[1].is('Value'))) {
-            const { datum: lowDatum, inclusive: lowIncl } = _v1[0].value;
-            const { datum: highDatum, inclusive: highIncl } = _v1[1].value;
-            {
-              const _v = [lowDatum, highDatum];
-              if ((_v[0].is('Val')) && (_v[1].is('Val'))) {
-                const { _0: lowVal } = _v[0].value;
-                const { _0: highVal } = _v[1].value;
-                try {
-                  try {
-                    if (lowVal.equals(highVal) && lowIncl && highIncl) {
-                      lowerTuple.push(lowVal.clone());
-                      upperTuple.push(highVal.clone());
-                      eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
-                      eqPrefixValues.push(lowVal.clone());
-                      continue;
-                    }
-                  } finally {
-                    highVal.drop();
-                  }
-                } finally {
-                  lowVal.drop();
+          const _v = [lowDatum, highDatum];
+          if ((_v[0].is('Val')) && (_v[1].is('Val'))) {
+            const { _0: lowVal } = _v[0].value;
+            const { _0: highVal } = _v[1].value;
+            try {
+              try {
+                if (lowVal.equals(highVal) && lowIncl && highIncl) {
+                  lowerTuple.push(lowVal.clone());
+                  upperTuple.push(highVal.clone());
+                  eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
+                  eqPrefixValues.push(lowVal.clone());
+                  continue;
                 }
+              } finally {
+                highVal.drop();
               }
+            } finally {
+              lowVal.drop();
             }
           }
         }
-        if (bound.low.is('UnboundedLow')) {
-          (() => {
-          })()
-        } else if (bound.low.is('Value') && (bound.low.value.datum.is('Val'))) {
-          const { inclusive } = bound.low.value;
-          const { _0: val } = bound.low.value.datum.value;
-          (() => {
-            lowerTuple.push(val.clone());
-            lowerOpen = !inclusive;
-          })()
-        } else {
-          break
-        }
-        const _m0 = bound.high.match<any>({
-          UnboundedHigh: (v) => {
-            return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
-          },
-          Value: (v) => {
-            const { _0: val } = v.datum.value;
-            const inclusive = v.inclusive;
-            upperTuple.push(val.clone());
-            upperOpen = !inclusive;
-          },
-          UnboundedLow: () => {
-            return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
-          },
-        });
-        if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-        break;
-      } finally {
-        bound.drop();
       }
     }
-  } finally {
-    dropOwned(_seq1.slice(_at2));
+    if (bound.low.is('UnboundedLow')) {
+
+    } else if (bound.low.is('Value') && (bound.low.value.datum.is('Val'))) {
+      const { inclusive } = bound.low.value;
+      const { _0: val } = bound.low.value.datum.value;
+      lowerTuple.push(val.clone());
+      lowerOpen = !inclusive;
+    } else {
+      break
+    }
+    const _m0 = bound.high.match<any>({
+      UnboundedHigh: (v) => {
+        return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+      },
+      Value: (v) => {
+        const { _0: val } = v.datum.value;
+        const inclusive = v.inclusive;
+        upperTuple.push(val.clone());
+        upperOpen = !inclusive;
+      },
+      UnboundedLow: () => {
+        return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+      },
+    });
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+    break;
   }
   if (eqPrefixLen === bounds.keyparts.length && eqPrefixLen > 0) {
     {
@@ -135,20 +121,20 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
           const _v3 = nextUpperBound(lastValue);
           if (_v3 != null) {
             const [nextValue, upperOpen] = _v3;
-            let _moved3 = false;
+            let _moved1 = false;
             try {
               let upperWithBump = lowerTuple.clone();
               {
                 const _v2 = upperWithBump.lastMut();
                 if (_v2 != null) {
                   const slot = _v2;
-                  _moved3 = true;
+                  _moved1 = true;
                   slot.value = nextValue;
                   return [new CanonicalRange([lowerTuple, lowerOpen], [upperWithBump, upperOpen]), eqPrefixLen, eqPrefixValues];
                 }
               }
             } finally {
-              if (!_moved3) nextValue.drop();
+              if (!_moved1) nextValue.drop();
             }
           }
         }
@@ -156,13 +142,13 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
     }
     return [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues];
   }
-  let _moved4 = false;
+  let _moved2 = false;
   const canonicalRange = new CanonicalRange(lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen], upperTuple.length === 0 ? null : [upperTuple, upperOpen]);
   try {
-    _moved4 = true;
+    _moved2 = true;
     return [canonicalRange, eqPrefixLen, eqPrefixValues];
   } finally {
-    if (!_moved4) canonicalRange.drop();
+    if (!_moved2) canonicalRange.drop();
   }
 }
 
@@ -276,44 +262,32 @@ export function planBoundsToIdbRangeSyntax(bounds: KeyBounds): Result<string, Er
   if ((_v[0] != null) && (_v[1] != null)) {
     const [lowerTuple, lowerOpen] = _v[0];
     const [upperTuple, upperOpen] = _v[1];
-    (() => {
-      _result += 'IDBKeyRange.bound(';
-      const _r0 = valuesToJsArray(lowerTuple);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-      _result += `${_r0.unwrap()}`;
-      _result += ', ';
-      const _r1 = valuesToJsArray(upperTuple);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-      _result += `${_r1.unwrap()}`;
-      _result += `, ${lowerOpen}, ${upperOpen}`;
-      _result += ')';
-    })()
+    _result += 'IDBKeyRange.bound(';
+    const _r0 = valuesToJsArray(lowerTuple);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    _result += `${_r0.unwrap()}`;
+    _result += ', ';
+    const _r1 = valuesToJsArray(upperTuple);
+    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+    _result += `${_r1.unwrap()}`;
+    _result += `, ${lowerOpen}, ${upperOpen}`;
+    _result += ')';
   } else if ((_v[0] != null) && (_v[1] == null)) {
     const [lowerTuple, lowerOpen] = _v[0];
-    (() => {
-      _result += 'IDBKeyRange.lowerBound(';
-      const _r2 = valuesToJsArray(lowerTuple);
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-      _result += `${_r2.unwrap()}`;
-      _result += `, ${lowerOpen})`;
-    })()
+    _result += 'IDBKeyRange.lowerBound(';
+    const _r2 = valuesToJsArray(lowerTuple);
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    _result += `${_r2.unwrap()}`;
+    _result += `, ${lowerOpen})`;
   } else if ((_v[0] == null) && (_v[1] != null)) {
     const [upperTuple, upperOpen] = _v[1];
-    (() => {
-      _result += 'IDBKeyRange.upperBound(';
-      const _r3 = valuesToJsArray(upperTuple);
-      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-      _result += `${_r3.unwrap()}`;
-      _result += `, ${upperOpen})`;
-    })()
+    _result += 'IDBKeyRange.upperBound(';
+    const _r3 = valuesToJsArray(upperTuple);
+    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+    _result += `${_r3.unwrap()}`;
+    _result += `, ${upperOpen})`;
   } else {
-    const _m4 = (() => {
-      {
-        return { $jump: 'return', $value: Result.Err(AnyhowError.msg('Cannot generate syntax for completely unbounded range')) };
-      }
-    })();
-    if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
-    (_m4 as any)
+    return Result.Err(AnyhowError.msg('Cannot generate syntax for completely unbounded range'));
   }
   tracing.info(`Generated IDBKeyRange syntax: ${jsCode}`);
   return Result.Ok(jsCode);
@@ -325,7 +299,7 @@ function valuesToJsArray(values: Value[]): Result<string, Error> {
     if (i > 0) {
       result.pushStr(', ');
     }
-    return value.match({
+    const _m0 = value.match<any>({
       String: (v) => {
         const s = v._0;
         result.push('"');
@@ -363,15 +337,16 @@ function valuesToJsArray(values: Value[]): Result<string, Error> {
         result.push('"');
       },
       Object: (v) => {
-        return Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`));
+        return { $jump: 'return', $value: Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`)) };
       },
       Binary: (v) => {
-        return Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`));
+        return { $jump: 'return', $value: Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`)) };
       },
       Json: (v) => {
-        return Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`));
+        return { $jump: 'return', $value: Result.Err(AnyhowError.msg(`Object, Binary and Json values not supported in key syntax generation: ${value.debug()}`)) };
       },
     });
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
   }
   result.push(']');
   return Result.Ok(result);

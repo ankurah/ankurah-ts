@@ -332,6 +332,8 @@ impl ImplInfo {
     /// what names the emitted method most of the time and is not enough where
     /// two impls of one type convert from two `Error`s.
     pub fn trait_type_arg_paths(&self) -> Vec<String> {
+        // Shares its spelling with `rust_source_path` below, because the
+        // conversion names are looked up by it from two places.
         let Some(path) = &self.trait_path else {
             return Vec::new();
         };
@@ -360,7 +362,28 @@ impl ImplInfo {
                         syn::Type::Reference(r) => (&*r.elem, "&"),
                         other => (other, ""),
                     };
-                    let spelled = crate::name_map::map_type(inner);
+                    // The RUST leaf, not the TypeScript spelling. R8: a
+                    // contested conversion is qualified by the source type as
+                    // Rust wrote it, and `i64`, `i32` and `f64` are all
+                    // `number` — read through TypeScript, three impls looked
+                    // like one and two of them were never emitted. A leaf that
+                    // carries arguments has no name to give either way, so it
+                    // keeps the spelling that shows what they are.
+                    let spelled = match inner {
+                        syn::Type::Path(p)
+                            if p.path
+                                .segments
+                                .last()
+                                .is_some_and(|s| matches!(s.arguments, syn::PathArguments::None)) =>
+                        {
+                            p.path
+                                .segments
+                                .last()
+                                .map(|s| s.ident.to_string())
+                                .unwrap_or_default()
+                        }
+                        other => crate::name_map::map_type(other),
+                    };
                     let qualifier = match inner {
                         syn::Type::Path(p) if p.path.segments.len() > 1 => p
                             .path
@@ -514,6 +537,19 @@ pub struct ConstInfo {
     /// `static mut NAME` — a global the program writes to, which TypeScript
     /// spells `let` rather than `const`.
     pub mutable: bool,
+    /// Is this a `static` rather than a `const`?
+    ///
+    /// Rust means two different things by them, and the port has to keep them
+    /// apart. A `static` is ONE place that lives as long as the program, and a
+    /// `static COUNTER: AtomicUsize` is written through — which, since an atomic
+    /// IS its value here, is an assignment to the module binding, and a `const`
+    /// binding throws on one. A `const` is a value INLINED at each use: two uses
+    /// of a non-`Copy` const are two values, and binding both to one module
+    /// object gave them one identity, one mutation and one release.
+    pub is_static: bool,
+    /// Is every use of this name a FRESH value, so that the emitted name is a
+    /// function each use calls? See `ValueDef::fresh_at_each_use`.
+    pub fresh_at_each_use: bool,
 }
 
 impl FieldInfo {
@@ -542,4 +578,39 @@ impl FieldInfo {
             None => crate::name_map::map_type(&self.rust_ty),
         }
     }
+}
+
+/// A conversion source as RUST wrote it: the leaf's own identifier, with the
+/// module segments in front of it and a `&` kept.
+///
+/// R8 names a contested conversion by the source type Rust wrote, so this is
+/// the spelling both halves of the naming agree on. A leaf that carries type
+/// arguments keeps the spelling that shows what they are, because there is no
+/// method name to build out of one either way.
+pub fn rust_source_path(ty: &syn::Type) -> String {
+    let (inner, borrowed) = match ty {
+        syn::Type::Reference(r) => (&*r.elem, "&"),
+        other => (other, ""),
+    };
+    let syn::Type::Path(path) = inner else {
+        return format!("{}{}", borrowed, crate::name_map::map_type(inner));
+    };
+    let Some(last) = path.path.segments.last() else {
+        return format!("{}{}", borrowed, crate::name_map::map_type(inner));
+    };
+    let leaf = match last.arguments {
+        syn::PathArguments::None => last.ident.to_string(),
+        _ => crate::name_map::map_type(inner),
+    };
+    if path.path.segments.len() < 2 {
+        return format!("{}{}", borrowed, leaf);
+    }
+    let qualifier: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .take(path.path.segments.len() - 1)
+        .map(|s| s.ident.to_string())
+        .collect();
+    format!("{}{}::{}", borrowed, qualifier.join("::"), leaf)
 }

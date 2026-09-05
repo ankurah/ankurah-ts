@@ -11,6 +11,26 @@ use crate::body::BodyTranslator;
 use crate::native_types;
 
 impl BodyTranslator<'_> {
+    /// `new HashMap()` and `new HashSet()` with the arguments the position
+    /// wants of them, where the position said.
+    fn with_container_arguments(&self, written: String, span: proc_macro2::Span) -> String {
+        let bare = match written.as_str() {
+            "new HashMap()" | "new HashSet()" => &written[4..written.len() - 2],
+            _ => return written,
+        };
+        let Some(want) = self.expectation_at(span) else { return written };
+        let spelled = match &self.types {
+            Some(tc) => crate::name_map::map_ty(tc.borrow().registry, &want),
+            None => return written,
+        };
+        // Only where the expectation is that very container: an expectation of
+        // a wrapper around one says nothing about the arguments HERE.
+        match spelled.strip_prefix(bare).and_then(|rest| rest.strip_prefix('<')) {
+            Some(_) => format!("new {}()", spelled),
+            None => written,
+        }
+    }
+
     pub(crate) fn translate_call(
         &self,
         func: &str,
@@ -80,7 +100,11 @@ impl BodyTranslator<'_> {
                         ),
                     );
                 }
-                return result;
+                // `new HashMap()` says nothing about what it holds, so
+                // TypeScript reads it as `HashMap<unknown, unknown>` and every
+                // use of it after that is an error. The position knows: a `let`
+                // with a written type, a field, a return.
+                return self.with_container_arguments(result, span);
             }
         }
 

@@ -317,7 +317,7 @@ impl BodyTranslator<'_> {
         // `auth.provided.ts`, so the call is left to the port rather than
         // refused here.
         match ty.peel_refs().id() {
-            Some(id) => tc.registry.reads_json(id) || tc.registry.is_hand_written(id),
+            Some(id) => tc.registry.reads_json(id) || tc.registry.members_are_hand_written(id),
             None => false,
         }
     }

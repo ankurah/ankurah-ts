@@ -82,7 +82,7 @@ function convertJsonBoolsToNumbers(json: unknown): unknown {
 
 export const MAX_SAFE_INTEGER: bigint = 9007199254740991n;
 
-export const MIN_SAFE_INTEGER: bigint = -9007199254740991;
+export const MIN_SAFE_INTEGER: bigint = -9007199254740991n;
 
 export function JsValue_fromIdbValue(value: IdbValue): unknown {
   try {

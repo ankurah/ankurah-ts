@@ -109,6 +109,13 @@ pub fn translate_method_using(
         return ordering::translate(receiver, rust_method, args);
     }
 
+    // A `map.entry(k)` is not a shape the table below knows: it is the std
+    // surface's own `Entry`, and the three ways Rust finishes one are methods
+    // the runtime's `MapEntry` spells differently.
+    if let Some(translated) = map::translate_entry(reg, receiver_ty, receiver, rust_method, args) {
+        return translated;
+    }
+
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
@@ -137,7 +144,15 @@ pub fn translate_method_using(
         JsShape::Unknown => js_value::translate(reg, receiver_ty, receiver, rust_method, args),
         // An `AtomicBool` is a boolean here, and `load`/`store`/`swap` on one are
         // the same rewrites the numeric atomics take.
-        JsShape::Number | JsShape::Boolean => number::translate(receiver, rust_method, args),
+        JsShape::Number | JsShape::Boolean => {
+            // The WIDTH is what the arithmetic helpers need, and only the
+            // resolved type carries it: `u8` and `usize` are both `number`.
+            let width = match receiver_ty.peel_refs() {
+                Ty::Prim(prim) => Some(*prim),
+                _ => None,
+            };
+            number::translate(receiver, rust_method, args, width)
+        }
         // `Box<T>` and `&T` are the value they hold.
         JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, used),
         _ => MethodTranslation::Passthrough,

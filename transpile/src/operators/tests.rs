@@ -404,7 +404,14 @@ fn a_mut_reference_to_a_value_is_a_cell() {
         "fill",
     );
     assert!(ts.contains("buffer.value += '?'"), "{}", ts);
-    assert!(ts.contains("found.value += 1"), "{}", ts);
+    // R7 reaches through the cell: `*found += 1` is `usize` arithmetic, and a
+    // plain `+=` on the cell skipped the overflow check the same statement gets
+    // when the place is a local.
+    assert!(
+        ts.contains("found.value = checkedAdd(found.value, 1, 'usize')"),
+        "{}",
+        ts
+    );
 }
 
 /// A `&mut` to a class is already a reference in JavaScript and needs no cell.

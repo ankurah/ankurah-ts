@@ -18,6 +18,7 @@
 
 import { Enum } from './enum.ts';
 import { dropOwned } from './object.ts';
+import { invoke, type Invocable } from './closure.ts';
 
 type ResultV<T, E> = {
   Ok: { _0: T };
@@ -49,9 +50,12 @@ function describe(value: unknown): string {
  * drops the value f was given, so drop it before the throw carries on out —
  * otherwise it would belong to nobody and surface later as a leak.
  */
-function callOwning<A, R>(f: (a: A) => R, payload: A): R {
+function callOwning<A, R>(f: Invocable<[A], R>, payload: A): R {
   try {
-    return f(payload);
+    // R10: a caller may hand any of these an `OwnedClosure`, because whether a
+    // closure needed wrapping is a property of what it captured and no callee
+    // can see that.
+    return invoke(f, payload);
   } catch (thrown) {
     dropOwned(payload);
     throw thrown;
@@ -131,31 +135,31 @@ export class Result<T, E> extends Enum<ResultV<T, E>> {
     return defaultValue;
   }
 
-  unwrapOrElse(f: (err: E) => T): T {
+  unwrapOrElse(f: Invocable<[E], T>): T {
     const { ok, payload } = this.#consume();
     if (ok) return payload as T;
     return callOwning(f, payload as E); // the error moves into f
   }
 
-  map<U>(f: (value: T) => U): Result<U, E> {
+  map<U>(f: Invocable<[T], U>): Result<U, E> {
     const { ok, payload } = this.#consume();
     if (!ok) return Result.Err(payload as E); // the error moves into the new Result
     return Result.Ok(callOwning(f, payload as T));
   }
 
-  mapErr<F>(f: (err: E) => F): Result<T, F> {
+  mapErr<F>(f: Invocable<[E], F>): Result<T, F> {
     const { ok, payload } = this.#consume();
     if (ok) return Result.Ok(payload as T); // the value moves into the new Result
     return Result.Err(callOwning(f, payload as E));
   }
 
-  andThen<U>(f: (value: T) => Result<U, E>): Result<U, E> {
+  andThen<U>(f: Invocable<[T], Result<U, E>>): Result<U, E> {
     const { ok, payload } = this.#consume();
     if (!ok) return Result.Err(payload as E);
     return callOwning(f, payload as T);
   }
 
-  orElse<F>(f: (err: E) => Result<T, F>): Result<T, F> {
+  orElse<F>(f: Invocable<[E], Result<T, F>>): Result<T, F> {
     const { ok, payload } = this.#consume();
     if (ok) return Result.Ok(payload as T);
     return callOwning(f, payload as E);

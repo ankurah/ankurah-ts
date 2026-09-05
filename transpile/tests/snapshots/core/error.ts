@@ -25,7 +25,7 @@ export class ApplyErrorItem extends Struct {
   }
 
   debug(): string {
-    return `ApplyErrorItem { entityId: ${this.entityId.debug()}, collection: ${this.collection.debug()}, cause: ${this.cause.debug()} }`;
+    return `ApplyErrorItem { entityId: ${this.entityId}, collection: ${this.collection.debug()}, cause: ${this.cause.debug()} }`;
   }
 }
 
@@ -74,8 +74,16 @@ export class RetrievalError extends Enum<RetrievalErrorV> {
     return new RetrievalError('MutationError', { _0: err });
   }
 
-  static fromError(e: Error): RetrievalError {
+  static fromBincodeError(e: Error): RetrievalError {
     return new RetrievalError('DeserializationError', { _0: e });
+  }
+
+  static fromFilterError(err: Error): RetrievalError {
+    return new RetrievalError('AnkqlFilter', { _0: err });
+  }
+
+  static fromAnyhowError(err: AnyhowError): RetrievalError {
+    return new RetrievalError('Anyhow', { _0: err });
   }
 
   static fromDecodeError(err: DecodeError): RetrievalError {
@@ -106,8 +114,8 @@ export class RetrievalError extends Enum<RetrievalErrorV> {
     return this.match({
       AccessDenied: (v) => `AccessDenied(${v._0.debug()})`,
       ParseError: (v) => `ParseError(${v._0.debug()})`,
-      EntityNotFound: (v) => `EntityNotFound(${v._0.debug()})`,
-      EventNotFound: (v) => `EventNotFound(${v._0.debug()})`,
+      EntityNotFound: (v) => `EntityNotFound(${v._0})`,
+      EventNotFound: (v) => `EventNotFound(${v._0})`,
       StorageError: (v) => `StorageError(${v._0})`,
       CollectionNotFound: (v) => `CollectionNotFound(${v._0.debug()})`,
       FailedUpdate: (v) => `FailedUpdate(${v._0})`,
@@ -118,7 +126,7 @@ export class RetrievalError extends Enum<RetrievalErrorV> {
       AnkqlFilter: (v) => `AnkqlFilter(${v._0.debug()})`,
       FutureJoin: (v) => `FutureJoin(${v._0})`,
       Anyhow: (v) => `Anyhow(${v._0})`,
-      DecodeError: (v) => `DecodeError(${v._0.debug()})`,
+      DecodeError: (v) => `DecodeError(${v._0})`,
       StateError: (v) => `StateError(${v._0.debug()})`,
       MutationError: (v) => `MutationError(${v._0.debug()})`,
       PropertyError: (v) => `PropertyError(${v._0.debug()})`,
@@ -131,8 +139,8 @@ export class RetrievalError extends Enum<RetrievalErrorV> {
     return this.match({
       AccessDenied: () => 'access denied',
       ParseError: (v) => `Parse error: ${v._0}`,
-      EntityNotFound: (v) => `Entity not found: ${v._0.debug()}`,
-      EventNotFound: (v) => `Event not found: ${v._0.debug()}`,
+      EntityNotFound: (v) => `Entity not found: ${v._0}`,
+      EventNotFound: (v) => `Event not found: ${v._0}`,
       StorageError: (v) => `Storage error: ${v._0}`,
       CollectionNotFound: (v) => `Collection not found: ${v._0}`,
       FailedUpdate: (v) => `Update failed: ${v._0}`,
@@ -250,7 +258,7 @@ export class MutationError extends Enum<MutationErrorV> {
     return new MutationError('FutureJoin', { _0: err });
   }
 
-  static fromError(err: AnyhowError): MutationError {
+  static fromAnyhowError(err: AnyhowError): MutationError {
     return new MutationError('Anyhow', { _0: err });
   }
 
@@ -264,6 +272,10 @@ export class MutationError extends Enum<MutationErrorV> {
 
   static fromAccessDenied(err: AccessDenied): MutationError {
     return new MutationError('AccessDenied', { _0: err });
+  }
+
+  static fromBincodeError(e: Error): MutationError {
+    return new MutationError('StateError', { _0: new StateError('SerializationError', { _0: e }) });
   }
 
   static fromRetrievalError(err: RetrievalError): MutationError {
@@ -370,7 +382,7 @@ export class MutationError extends Enum<MutationErrorV> {
       FailedToSetProperty: (v) => `FailedToSetProperty(${JSON.stringify(v._0)}, ${JSON.stringify(v._1)})`,
       General: (v) => `General(${v._0})`,
       NoDurablePeers: () => 'NoDurablePeers',
-      DecodeError: (v) => `DecodeError(${v._0.debug()})`,
+      DecodeError: (v) => `DecodeError(${v._0})`,
       LineageError: (v) => `LineageError(${v._0.debug()})`,
       PeerRejected: () => 'PeerRejected',
       InvalidEvent: () => 'InvalidEvent',
@@ -440,7 +452,7 @@ export class LineageError extends Enum<LineageErrorV> {
   debug(): string {
     return this.match({
       Incomparable: () => 'Incomparable',
-      PartiallyDescends: (v) => `PartiallyDescends { meet: ${`[${Array.from(v.meet).map((e) => e.debug()).join(', ')}]`} }`,
+      PartiallyDescends: (v) => `PartiallyDescends { meet: ${v.meet} }`,
       BudgetExceeded: (v) => `BudgetExceeded { originalBudget: ${String(v.originalBudget)}, subjectFrontier: ${v.subjectFrontier}, otherFrontier: ${v.otherFrontier} }`,
     });
   }

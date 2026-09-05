@@ -45,16 +45,16 @@ pub fn free_call(reg: &TypeRegistry, found: &MethodResolution) -> Option<FreeCal
         return None;
     }
     let trait_name = def.trait_ref.as_ref().map(|t| leaf(reg.name_of(t.id)));
-    let type_args: Vec<String> = def
-        .trait_ref
-        .as_ref()
-        .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(reg, ty)).collect())
-        .unwrap_or_default();
+    // The Rust spelling, because that is the key R8's one decision is written
+    // under; a name computed from the TypeScript spelling reached a function
+    // nothing declares.
+    let type_args: Vec<String> = def.trait_args_written.clone();
     let symbol = super::method_symbol(
         trait_name.as_deref(),
         &type_args,
         &crate::name_map::map_fn_name(method),
         &crate::name_map::map_ty(reg, &def.self_ty),
+        def.self_ty.peel_refs().id(),
     );
     Some(FreeCall {
         name: super::free_fn_name(reg, &def.self_ty, &def.generics, &symbol),

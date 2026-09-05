@@ -235,7 +235,7 @@ fn bitwise(op: &Operator, left_ty: Prim, left: &str, right: &str) -> Option<Stri
 
 /// The base helper an arithmetic operator goes through, or `None` for an
 /// operator Rust cannot overflow (the bit operations, the comparisons).
-fn checked_helper(native: &str) -> Option<&'static str> {
+pub(crate) fn checked_helper(native: &str) -> Option<&'static str> {
     Some(match native {
         "+" | "+=" => "checkedAdd",
         "-" | "-=" => "checkedSub",
@@ -247,8 +247,8 @@ fn checked_helper(native: &str) -> Option<&'static str> {
 }
 
 /// The name the runtime knows this width by.
-fn width_name(prim: Prim) -> String {
-    format!("{:?}", prim).to_lowercase()
+pub(crate) fn width_name(prim: Prim) -> String {
+    prim.rust_name()
 }
 
 /// Is the ANSWER provably inside the type's range, so that the helper can be

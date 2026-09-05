@@ -6,7 +6,8 @@
 // rather than adding.
 
 import { expect, test } from 'bun:test';
-import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, chargeNegated, combined, different, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, negated, same, shift64, shiftAssign32, shiftAssign8, shifted, shifts, toF32, toI64, toU64, complemented as complemented_ } from './input.ts';
+import { BorrowMut } from '@ankurah/base';
+import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, bump, chargeNegated, checks, combined, different, dividedByNegativeOne, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, negated, overflows, same, saturates, shift64, shiftAssign32, shiftAssign8, shifted, shifts, toF32, toI64, toU64, wraps, complemented as complemented_ } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('== compares values, not references', () => {
@@ -138,6 +139,32 @@ test('the unary operators and indexing go through their impls', () => {
   const held = new Charge(9);
   expect(indexed(held)).toBe(9);
   held.drop();
+});
+
+test('the four explicit families are the free helpers, with the width', () => {
+  expect(wraps(255, 1)).toBe(0);
+  expect(saturates(255, 1)).toBe(255);
+  expect(checks(16, 16)).toBe(null);
+  expect(checks(2, 3)).toBe(6);
+  expect(overflows(255, 1)).toEqual([0, true]);
+  expect(overflows(1, 1)).toEqual([2, false]);
+  // And the debug build's own answer, which is a panic.
+  expect(() => wraps(255, 1) + 0).not.toThrow();
+});
+
+test('a unary literal operand keeps the operator arithmetic', () => {
+  expect(dividedByNegativeOne(7)).toBe(-7);
+  // Rust truncates towards zero; JavaScript's `/` would answer -3.5.
+  expect(dividedByNegativeOne(-7)).toBe(7);
+  // `i32::MIN / -1` is the one division that overflows.
+  expect(() => dividedByNegativeOne(-2147483648)).toThrow('overflow');
+});
+
+test('R7 reaches through the cell a &mut to a value becomes', () => {
+  const cell = new BorrowMut(4294967294);
+  bump(cell);
+  expect(cell.value).toBe(4294967295);
+  expect(() => bump(cell)).toThrow('attempt to add with overflow');
 });
 
 test('nothing leaked and nothing was reported', async () => {

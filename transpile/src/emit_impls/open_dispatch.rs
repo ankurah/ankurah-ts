@@ -204,12 +204,10 @@ pub fn open_bound_call(
         let def = reg.impl_def(free[0]);
         let symbol = super::method_symbol(
             Some(leaf(trait_name)).as_deref(),
-            &def.trait_ref
-                .as_ref()
-                .map(|t| t.args.iter().map(|ty| crate::name_map::map_ty(reg, ty)).collect::<Vec<_>>())
-                .unwrap_or_default(),
+            &def.trait_args_written,
             &crate::name_map::map_fn_name(method),
             &crate::name_map::map_ty(reg, &def.self_ty),
+            def.self_ty.peel_refs().id(),
         );
         return Some(OpenCall::One(super::free_fn_name(
             reg,
@@ -480,8 +478,11 @@ fn class_test(reg: &TypeRegistry, ty: &Ty) -> Option<String> {
     match js_shape(reg, ty) {
         JsShape::Array(_) => return Some("Array.isArray(self)".to_string()),
         JsShape::Bytes => return Some("self instanceof Uint8Array".to_string()),
-        JsShape::Set(_) => return Some("self instanceof Set".to_string()),
-        JsShape::Map(_, _) => return Some("self instanceof Map".to_string()),
+        // The runtime containers, which is what every construction now builds:
+        // a test against JavaScript's `Set` and `Map` matched nothing the port
+        // makes, so the dispatcher fell through for every map and set.
+        JsShape::Set(_) => return Some("self instanceof HashSet".to_string()),
+        JsShape::Map(_, _) => return Some("self instanceof HashMap".to_string()),
         JsShape::Str => return Some("typeof self === 'string'".to_string()),
         JsShape::Boolean => return Some("typeof self === 'boolean'".to_string()),
         JsShape::Number => return Some("typeof self === 'number'".to_string()),

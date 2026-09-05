@@ -20,7 +20,7 @@ export class BroadcastId extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this._0)].join('|');
+    return [keyHash(this._0)].map((p) => p.length + ':' + p).join('');
   }
 
   compareTo(other: BroadcastId): number {
@@ -68,7 +68,7 @@ export class Broadcast<T extends Clone = void> extends Struct {
       if (_v != null) {
         const [last, rest] = _v;
         for (const callback of rest) {
-          return callback.match({
+          callback.match({
             Payload: (v) => {
               const callback = v._0;
               return callback(value.clone());

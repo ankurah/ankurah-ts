@@ -8,13 +8,24 @@
 //! for, and it owns what it holds: dropping the map drops its keys and values.
 
 use super::MethodTranslation;
+use crate::registry::TypeRegistry;
+use crate::ty::Ty;
 
 /// Translate HashMap/BTreeMap static/associated function calls
-pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
     match func {
         "HashMap::new" | "HashMap.new" | "HashMap::with_capacity" | "HashMap.withCapacity"
         | "BTreeMap::new" | "BTreeMap.new" => Some("new HashMap()".to_string()),
-        "BTreeMap::from" | "BTreeMap.from" => Some("new HashMap()".to_string()),
+        "HashMap::default" | "HashMap.default" | "BTreeMap::default" | "BTreeMap.default" => {
+            Some("new HashMap()".to_string())
+        }
+        // `from([(k, v), ..])` builds a map WITH those entries. Written as an
+        // empty one, every entry was discarded in silence.
+        "HashMap::from" | "HashMap.from" | "BTreeMap::from" | "BTreeMap.from"
+            if args.len() == 1 =>
+        {
+            Some(format!("HashMap.from({})", args[0]))
+        }
         _ => None,
     }
 }
@@ -69,4 +80,50 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)
+}
+
+/// The three ways Rust finishes a `map.entry(k)`, as the runtime's `MapEntry`
+/// spells them.
+///
+/// `or_default()` reads `V: Default` off the TYPE, which TypeScript has no way
+/// to do, so the port passes the value type's default as a thunk — which is
+/// what `MapEntry::orDefault` takes. Emitted without one, `orDefault()` invoked
+/// `undefined`.
+pub fn translate_entry(
+    reg: &TypeRegistry,
+    receiver_ty: &Ty,
+    receiver: &str,
+    method: &str,
+    args: &[String],
+) -> Option<MethodTranslation> {
+    let entry = reg.system_type("std::collections::hash_map::Entry")?;
+    let Ty::Named { id, args: held } = receiver_ty.peel_refs() else {
+        return None;
+    };
+    if *id != entry {
+        return None;
+    }
+    let written = match (method, args.len()) {
+        ("or_insert", 1) => format!("{}.orInsert({})", receiver, args[0]),
+        ("or_insert_with", 1) => format!("{}.orInsertWith({})", receiver, args[0]),
+        ("or_default", 0) => {
+            // The value type is the entry's second argument, and its default is
+            // what Rust's `V: Default` would have supplied.
+            let value = held.get(1)?;
+            match crate::derives::default_value::default_value(reg, value) {
+                Ok(default) => format!("{}.orDefault(() => {})", receiver, default),
+                Err(why) => {
+                    return Some(MethodTranslation::Refused {
+                        message: format!(
+                            "`or_default()` needs the value type's default, and {}",
+                            why
+                        ),
+                        fallback: Box::new(MethodTranslation::Passthrough),
+                    })
+                }
+            }
+        }
+        _ => return None,
+    };
+    Some(MethodTranslation::Expr(written))
 }

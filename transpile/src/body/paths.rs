@@ -175,7 +175,16 @@ impl BodyTranslator<'_> {
             if self.boxed.borrow().iter().any(|name| *name == written) {
                 return format!("{}.value", written);
             }
+            // A non-`Copy` `const` is a fresh value at each use, so the port
+            // emitted it as a function and this use calls it.
+            if self.names_a_fresh_const(std::slice::from_ref(&ident)) {
+                return format!("{}()", written);
+            }
             return written;
+        }
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        if self.names_a_fresh_const(&segments) {
+            return format!("{}()", Self::path_static(path));
         }
         Self::path_static(path)
     }

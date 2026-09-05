@@ -23,7 +23,7 @@ describe('candidate_changes unit tests', () => {
     candidates.addQuery(q2, 0);
     expect(candidates.queryCount()).toEqual(2);
     if (!(!(candidates.length === 0))) throw new Error('assertion failed');
-    const queryMap = new HashMap();
+    const queryMap = new HashMap<QueryId, number[]>();
     for (const qc of candidates.queryIter()) {
       const values = [...qc].copied();
       queryMap.set(qc.queryId, values);

@@ -39,7 +39,7 @@ export class AuthData extends Struct {
 
   static fromJson(value: unknown): Result<AuthData, JsonError> {
     try {
-      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
       return Result.Ok(new AuthData(_0));
@@ -90,7 +90,7 @@ export class Attestation extends Struct {
 
   static fromJson(value: unknown): Result<Attestation, JsonError> {
     try {
-      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
+      const _r_0 = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
       return Result.Ok(new Attestation(_0));

@@ -145,7 +145,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 "the entries of this `hashmap!` are not `key => value` pairs the engine could \
                  read, so the map is empty",
             );
-            format!("new Map() /* hashmap!({}) */", mac.tokens)
+            format!("new HashMap() /* hashmap!({}) */", mac.tokens)
         }),
         "json" => items::json_macro(&mac.tokens, t, at),
         "cfg" | "include_str" | "include_bytes" | "env" | "option_env" | "concat" => {

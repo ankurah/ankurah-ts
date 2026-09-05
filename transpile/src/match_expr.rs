@@ -8,6 +8,7 @@ mod option_chain;
 
 use crate::name_map;
 use crate::body::{translate_pat, indent, BodyTranslator};
+use crate::control_flow::sentinel::{jumps_in, jumps_out, leaves_the_function};
 
 /// Translate a match expression in return position (adds return to each arm)
 pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
@@ -64,10 +65,90 @@ enum Position {
     Returning,
 }
 
+/// Every variant more than one arm of this match names.
+///
+/// Rust reads those arms in ORDER, testing the patterns inside the payload; the
+/// runtime's match has one key per variant and no order at all.
+fn variants_named_twice(arms: &[&syn::Arm]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut twice: Vec<String> = Vec::new();
+    for arm in arms.iter().copied() {
+        let cases: Vec<&syn::Pat> = match &arm.pat {
+            syn::Pat::Or(or_pat) => or_pat.cases.iter().collect(),
+            other => vec![other],
+        };
+        for case in cases {
+            let Some((variant, _)) = payload_of(case) else { continue };
+            if seen.contains(&variant) {
+                if !twice.contains(&variant) {
+                    twice.push(variant);
+                }
+            } else {
+                seen.push(variant);
+            }
+        }
+    }
+    twice
+}
+
+/// A name for the arm's parameter that nothing else in the arm answers to.
+fn arm_parameter(fields: &[(String, String)], body: &syn::Expr) -> String {
+    let taken = declared_in(body);
+    let clashes = |name: &str| {
+        fields.iter().any(|(local, _)| local == name) || taken.iter().any(|n| n == name)
+    };
+    if !clashes("v") {
+        return "v".to_string();
+    }
+    for n in 0.. {
+        let candidate = if n == 0 { "_v".to_string() } else { format!("_v{}", n) };
+        if !clashes(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("the search is unbounded")
+}
+
+/// Every name a `let` inside this expression binds.
+///
+/// A superset: a `let` in a nested BLOCK opens its own scope and could reuse
+/// the parameter's name legally. Naming the parameter around it costs one
+/// underscore and gets the question right without tracking scopes.
+fn declared_in(body: &syn::Expr) -> Vec<String> {
+    struct Bound {
+        names: Vec<String>,
+    }
+    impl syn::visit::Visit<'_> for Bound {
+        fn visit_local(&mut self, local: &syn::Local) {
+            self.names.extend(crate::body::pattern_names(&local.pat));
+            syn::visit::visit_local(self, local);
+        }
+        // A closure has a scope of its own, and a name inside it shadows
+        // legally.
+        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
+        fn visit_item(&mut self, _: &syn::Item) {}
+    }
+    let mut bound = Bound { names: Vec::new() };
+    syn::visit::Visit::visit_expr(&mut bound, body);
+    bound.names
+}
+
 /// One arm's body, written for the position the match stands in.
+///
+/// F3: whether a value is wanted comes from the POSITION the lowering chose,
+/// never from anything read off the generated text or off an expectation left
+/// standing. An arm of a statement match produces nothing, so its block is a
+/// run of statements — asked as an expression, `{ if n == 0 { return .. } .. }`
+/// came back an arrow function whose value was then written as a statement of
+/// its own.
 fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String {
     match position {
-        Position::Statement => t.expr(body),
+        Position::Statement => match body {
+            syn::Expr::Block(block) if block.label.is_none() => {
+                t.translate_block(&block.block).trim_end().to_string()
+            }
+            other => t.expr(other),
+        },
         Position::Returning => crate::control_flow::translate_expr_in_return_position(body, t),
     }
 }
@@ -238,13 +319,13 @@ fn jump_through_a_value(
     match_expr: &syn::ExprMatch,
     t: &BodyTranslator,
 ) -> String {
-    let previous = t.jump_as_value.replace(true);
-    let written = translate_enum_match(scrutinee, match_expr, t, Position::Statement);
-    t.jump_as_value.set(previous);
+    let (written, _) = crate::control_flow::sentinel::lifting(t, || {
+        translate_enum_match(scrutinee, match_expr, t, Position::Statement)
+    });
 
-    let jumps: Vec<&syn::Arm> = match_expr.arms.iter().filter(|arm| jumps_out(&arm.body)).collect();
+    let jumping: Vec<&syn::Arm> = match_expr.arms.iter().filter(|arm| jumps_out(&arm.body)).collect();
     let mut kinds: Vec<String> = Vec::new();
-    for arm in jumps {
+    for arm in jumping {
         for jump in jumps_in(&arm.body) {
             if !kinds.contains(&jump) {
                 kinds.push(jump);
@@ -252,185 +333,20 @@ fn jump_through_a_value(
         }
     }
     let held = t.hoist_name(written);
-    let mut out = String::new();
-    // The function's own exit first: an arm left with an error, and nothing
-    // below may carry on as if the match had produced a value.
-    if match_expr
-        .arms
-        .iter()
-        .any(|arm| leaves_the_function(&arm.body))
-    {
-        // Inside a lifted arm a `return` leaves the ARM, so the sentinel is
-        // handed on whole for the test outside to unwrap. Unwrapping it here
-        // would hand the enclosing arrow a plain `Result.Err`, which the test
-        // above it does not recognise as an exit — and the error would be read
-        // as the match's value.
-        out.push_str(&if previous {
-            format!("if (({held} as any)?.$jump === 'return') return {held};\n", held = held)
-        } else {
-            format!(
-                "if (({held} as any)?.$jump === 'return') return ({held} as any).$value;\n",
-                held = held
-            )
-        });
-    }
-    for kind in kinds {
-        let (word, label) = match kind.split_once('#') {
-            Some((word, label)) => (word, format!(" && ({held} as any)?.$label === '{label}'", held = held, label = label)),
-            None => (kind.as_str(), String::new()),
-        };
-        let target = match kind.split_once('#') {
-            Some((_, label)) => format!(" {}", label),
-            None => String::new(),
-        };
-        // `?.` rather than a truthiness test: an arm that produces nothing
-        // makes the match's inferred type `void`, which TypeScript refuses to
-        // test for truth.
-        out.push_str(&format!(
-            "if (({held} as any)?.$jump === '{word}'{label}) {word}{target};\n",
-            held = held,
-            word = word,
-            label = label,
-            target = target
-        ));
-    }
-    out.trim_end().to_string()
+    let reader = crate::control_flow::sentinel::reader(
+        t,
+        &held,
+        crate::control_flow::sentinel::Handed {
+            returns: match_expr
+                .arms
+                .iter()
+                .any(|arm| leaves_the_function(&arm.body)),
+            jumps: &kinds,
+        },
+    );
+    reader.trim_end().to_string()
 }
 
-/// Every jump this expression performs, in the arms of a match or the branches
-/// of an `if`, as `break`, `continue`, or either with `#label` after it.
-pub(crate) fn jumps_out_of(expr: &syn::Expr) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_jumps(expr, &mut out);
-    out.dedup();
-    out
-}
-
-/// Every jump an arm's body performs, as `break`, `continue`, or either with
-/// `#label` after it.
-fn jumps_in(expr: &syn::Expr) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_jumps(expr, &mut out);
-    out
-}
-
-fn collect_jumps(expr: &syn::Expr, out: &mut Vec<String>) {
-    match expr {
-        syn::Expr::Break(brk) => out.push(match &brk.label {
-            Some(label) => format!("break#{}", label.ident),
-            None => "break".to_string(),
-        }),
-        syn::Expr::Continue(cont) => out.push(match &cont.label {
-            Some(label) => format!("continue#{}", label.ident),
-            None => "continue".to_string(),
-        }),
-        // A loop of the arm's own catches its own jumps.
-        syn::Expr::Loop(_) | syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Closure(_) => {}
-        syn::Expr::Block(block) => block.block.stmts.iter().for_each(|s| collect_jumps_stmt(s, out)),
-        syn::Expr::If(if_expr) => {
-            if_expr.then_branch.stmts.iter().for_each(|s| collect_jumps_stmt(s, out));
-            if let Some((_, other)) = &if_expr.else_branch {
-                collect_jumps(other, out);
-            }
-        }
-        syn::Expr::Match(m) => m.arms.iter().for_each(|arm| collect_jumps(&arm.body, out)),
-        _ => {}
-    }
-}
-
-fn collect_jumps_stmt(stmt: &syn::Stmt, out: &mut Vec<String>) {
-    match stmt {
-        syn::Stmt::Expr(expr, _) => collect_jumps(expr, out),
-        syn::Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                collect_jumps(&init.expr, out);
-                if let Some((_, diverge)) = &init.diverge {
-                    collect_jumps(diverge, out);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Does this expression leave the FUNCTION — through a `return`, or through
-/// the early exit a `?` performs?
-///
-/// The emitter lifts a block, a value-position `match` and an `if` used as a
-/// value into an arrow function, and a `return` inside an arrow returns from
-/// the arrow. So an expression that leaves the function cannot be lifted as it
-/// stands: the exit is handed back as a value the statement below performs,
-/// exactly as a `break` is. A closure, an `async` block and a nested item
-/// carry their own exits and are not this expression's.
-pub(crate) fn leaves_the_function(expr: &syn::Expr) -> bool {
-    struct Exits {
-        found: bool,
-    }
-    impl syn::visit::Visit<'_> for Exits {
-        fn visit_expr(&mut self, expr: &syn::Expr) {
-            match expr {
-                // `write!(f, "..")?` is not an exit here: a formatter body
-                // APPENDS, so the emitter writes the whole thing as a string
-                // and there is no `Result` to leave with.
-                syn::Expr::Try(t) if crate::body::as_write_macro(&t.expr).is_some() => return,
-                syn::Expr::Return(_) | syn::Expr::Try(_) => {
-                    self.found = true;
-                    return;
-                }
-                // A closure's `return` leaves the closure; an `async` block's
-                // leaves the future. Neither reaches this function.
-                syn::Expr::Closure(_) | syn::Expr::Async(_) => return,
-                _ => {}
-            }
-            syn::visit::visit_expr(self, expr);
-        }
-        fn visit_item(&mut self, _: &syn::Item) {}
-    }
-    let mut exits = Exits { found: false };
-    syn::visit::Visit::visit_expr(&mut exits, expr);
-    exits.found
-}
-
-/// Does this expression, or an arm of it, leave a loop that stands outside it?
-pub(crate) fn jumps_out_of_a_loop(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Match(m) => m.arms.iter().any(|arm| jumps_out(&arm.body)),
-        other => jumps_out(other),
-    }
-}
-
-/// Does this expression leave a loop that stands outside it?
-///
-/// A `break` or a `continue` written inside a loop of its own belongs to that
-/// loop and goes nowhere the arm cannot follow.
-fn jumps_out(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Break(_) | syn::Expr::Continue(_) => true,
-        syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => false,
-        syn::Expr::Closure(_) => false,
-        syn::Expr::Block(block) => block.block.stmts.iter().any(stmt_jumps_out),
-        syn::Expr::If(if_expr) => {
-            if_expr.then_branch.stmts.iter().any(stmt_jumps_out)
-                || if_expr.else_branch.as_ref().is_some_and(|(_, e)| jumps_out(e))
-        }
-        syn::Expr::Match(inner) => inner.arms.iter().any(|arm| jumps_out(&arm.body)),
-        syn::Expr::Unsafe(block) => block.block.stmts.iter().any(stmt_jumps_out),
-        _ => false,
-    }
-}
-
-fn stmt_jumps_out(stmt: &syn::Stmt) -> bool {
-    match stmt {
-        syn::Stmt::Expr(expr, _) => jumps_out(expr),
-        syn::Stmt::Local(local) => local.init.as_ref().is_some_and(|init| {
-            // `let Some(x) = e else { break };` — the else block is where the
-            // jump is written, and it is the whole point of the form.
-            jumps_out(&init.expr)
-                || init.diverge.as_ref().is_some_and(|(_, e)| jumps_out(e))
-        }),
-        _ => false,
-    }
-}
 
 /// A match with a guard, written the one way a guard can be written.
 ///
@@ -490,7 +406,7 @@ fn translate_value_match(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     let binds: Vec<String> = match_expr
         .arms
         .iter()
@@ -750,7 +666,7 @@ fn translate_result_match(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     let binds: Vec<String> = match_expr
         .arms
         .iter()
@@ -919,7 +835,7 @@ fn enum_match_over(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
-    let scrutinee_ty = t.scrutinee_type(&match_expr.expr);
+    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     // Does the match hand a value back at all? A `match` whose Rust value is
     // `()` is run for what its arms do, and an arm that returned what the
     // port's own spelling produced gave it one anyway. Asking is not
@@ -950,6 +866,14 @@ fn enum_match_over(
     // JavaScript keeps the last of those, so the arm the source wrote first
     // never ran.
     let mut written: Vec<String> = Vec::new();
+    // R12: a variant SEVERAL arms name is one Rust tries in order, which this
+    // form cannot — the runtime's match dispatches on the variant alone. The
+    // first arm used to run for every value of the variant:
+    // `Expr::Literal(Literal::Bool(true)) => Ok(True)` answered `Ok(True)` for
+    // `false` as well, and ankql's `Predicate::try_from` turned `FALSE` into
+    // `TRUE`. So the key is a HOLE until the per-variant arm chain lands, and
+    // the wrong answer is not one the port can give.
+    let contested = variants_named_twice(written_arms);
     // An arm that awaits makes the whole match a promise, and the value the
     // match stands for is what the caller wanted, so the call is awaited.
     let mut any_async = false;
@@ -973,6 +897,26 @@ fn enum_match_over(
                 );
                 continue;
             };
+            if contested.contains(&variant) {
+                if written.contains(&variant) {
+                    continue;
+                }
+                written.push(variant.clone());
+                let what = format!(
+                    "`{}` is named by more than one arm of this match, and Rust tries them in \
+                     order against the patterns inside the payload; the runtime's match \
+                     dispatches on the variant alone, so the first arm would run for every \
+                     value of it",
+                    variant
+                );
+                t.report_match_gap(match_expr, what.clone());
+                out.push_str(&format!(
+                    "  {}: () => {},\n",
+                    variant,
+                    crate::body::hole_text(&what)
+                ));
+                continue;
+            }
             if written.contains(&variant) {
                 t.report_match_gap(
                     match_expr,
@@ -985,8 +929,13 @@ fn enum_match_over(
                 continue;
             }
             written.push(variant.clone());
-            // The arm's parameter must not collide with a name the pattern binds.
-            let param = if fields.iter().any(|(local, _)| local == "v") { "_v" } else { "v" };
+            // The arm's parameter must not collide with a name the pattern
+            // binds — nor with one the arm's own BODY declares. `A(n) => { let
+            // v = f(n)?; .. }` wrote `const v` beside the parameter `v`, which
+            // is a redeclaration: the emitted arrow threw a TDZ
+            // `ReferenceError` before it read either.
+            let param = arm_parameter(&fields, &arm.body);
+            let param = param.as_str();
             let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
             let (payload, bound, declared) = arm_declarations(case, param, &fields, t, match_expr);
             // Where the enum handed its payload over, the arm owns what the

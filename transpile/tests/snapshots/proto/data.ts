@@ -292,7 +292,7 @@ export class OperationSet extends Struct {
   }
 
   clone(): OperationSet {
-    return new OperationSet(new Map(Array.from(this._0.entries()).map(([k, v]) => [k, v])));
+    return new OperationSet(this._0.clone());
   }
 
   debug(): string {
@@ -356,7 +356,7 @@ export class Operation extends Struct {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [keyHash(this.diff)].join('|');
+    return [keyHash(this.diff)].map((p) => p.length + ':' + p).join('');
   }
 
   clone(): Operation {
@@ -389,7 +389,7 @@ export class Operation extends Struct {
       if (!('diff' in _o)) {
         return Result.Err(JsonError.custom('missing field `diff`'));
       }
-      const _rdiff = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['diff']);
+      const _rdiff = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['diff']);
       if (_rdiff.isErr()) return Result.Err(_rdiff.unwrapErr());
       const diff = _rdiff.unwrap();
       return Result.Ok(new Operation(diff));
@@ -571,11 +571,11 @@ export class StateBuffers extends Struct {
   }
 
   clone(): StateBuffers {
-    return new StateBuffers(new Map(Array.from(this._0.entries()).map(([k, v]) => [k, v])));
+    return new StateBuffers(this._0.clone());
   }
 
   static default(): StateBuffers {
-    return new StateBuffers(new Map());
+    return new StateBuffers(new HashMap());
   }
 
   debug(): string {
@@ -613,7 +613,7 @@ export class StateBuffers extends Struct {
 
   static fromJson(value: unknown): Result<StateBuffers, JsonError> {
     try {
-      const _r_0 = ((v: unknown) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? jsonMap(jsonAll(Object.entries(v as Record<string, unknown>).map(([k, v]) => jsonMap(((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number') ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(v), (x) => [k, x] as [string, Uint8Array]))), (entries) => new HashMap<string, Uint8Array>(entries)) : Result.Err(JsonError.custom('expected an object'))))(value);
+      const _r_0 = ((v: unknown) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? jsonMap(jsonAll(Object.entries(v as Record<string, unknown>).map(([k, v]) => jsonMap(((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(v), (x) => [k, x] as [string, Uint8Array]))), (entries) => new HashMap<string, Uint8Array>(entries)) : Result.Err(JsonError.custom('expected an object'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
       return Result.Ok(new StateBuffers(_0));

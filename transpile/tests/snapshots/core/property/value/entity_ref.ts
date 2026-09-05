@@ -88,7 +88,7 @@ export class Ref<T extends Model> extends Struct implements Property {
 
   /** The key hash `HashMap` and `HashSet` file this under. */
   hash(): string {
-    return [this.id.hash(), this._phantom.hash()].join('|');
+    return [this.id.hash(), this._phantom.hash()].map((p) => p.length + ':' + p).join('');
   }
 
   clone(): Ref<T> {
@@ -96,7 +96,7 @@ export class Ref<T extends Model> extends Struct implements Property {
   }
 
   debug(): string {
-    return `Ref { id: ${this.id.debug()}, _phantom: ${this._phantom} }`;
+    return `Ref { id: ${this.id}, _phantom: ${this._phantom} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -111,11 +111,19 @@ export class Ref<T extends Model> extends Struct implements Property {
   }
 }
 
-export function EntityId_from<T>(r: Ref<T>): EntityId {
+export function EntityId_fromRefT<T>(r: Ref<T>): EntityId {
   return r.id;
 }
 
-export function Expr_from<T>(r: Ref<T>): Expr {
+export function EntityId_fromRefRefT<T>(r: Ref<T>): EntityId {
+  return r.id.clone();
+}
+
+export function Expr_fromRefT<T>(r: Ref<T>): Expr {
   return Expr.fromEntityId(r.id);
+}
+
+export function Expr_fromRefRefT<T>(r: Ref<T>): Expr {
+  return Expr.fromEntityId((r.id));
 }
 

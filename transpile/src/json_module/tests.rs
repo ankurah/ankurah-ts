@@ -67,11 +67,68 @@ fn a_wide_integer_keeps_its_token() {
     ));
     let ts = f.emitted("lib.rs");
     assert!(!ts.contains("Number(this.unsigned)"), "{}", ts);
-    assert!(!ts.contains("BigInt(v as number)"), "{}", ts);
-    assert!(ts.contains("typeof v === 'bigint' ? Result.Ok(v)"), "{}", ts);
+    assert!(ts.contains("typeof v === 'bigint' && v >= 0n && v <= 18446744073709551615n"), "{}", ts);
+    assert!(
+        ts.contains("typeof v === 'bigint' && v >= -9223372036854775808n && v <= 9223372036854775807n"),
+        "{}",
+        ts
+    );
+    // A `number` wider than 2^53 has already lost digits, so it is refused
+    // rather than converted: `BigInt` of it would invent the difference.
+    assert!(ts.contains("Number.isSafeInteger(v)"), "{}", ts);
     // The value goes out as the bigint it is; `serde_json.stringify` writes the
     // bare integer token.
     assert!(ts.contains("'unsigned': this.unsigned"), "{}", ts);
+}
+
+/// #4: a reader typed by the TypeScript SPELLING accepted `1.5`, `-1` and `256`
+/// for a `u8`, because all three are `typeof v === 'number'`. serde reads the
+/// field by its RUST type, so the check comes from that.
+#[test]
+fn an_integer_field_is_read_by_its_rust_width() {
+    let mut f = built(&format!(
+        "{}pub struct Widths {{ pub byte: u8, pub small: i16, pub big: u32, pub size: usize }}",
+        DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("Number.isInteger(v) && v >= 0 && v <= 255"), "u8:\n{}", ts);
+    assert!(ts.contains("v >= -32768 && v <= 32767"), "i16:\n{}", ts);
+    assert!(ts.contains("v >= 0 && v <= 4294967295"), "u32:\n{}", ts);
+    // R13: usize is 32-bit here, because the port's target is wasm32.
+    assert_eq!(
+        ts.matches("v >= 0 && v <= 4294967295").count(),
+        2,
+        "usize reads as a 32-bit unsigned:\n{}",
+        ts
+    );
+    assert!(ts.contains("expected a u8"), "the message names the width:\n{}", ts);
+}
+
+/// A float field is not an integer field: serde reads any JSON number into an
+/// `f64`, including one written without a fractional part.
+#[test]
+fn a_float_field_takes_any_number() {
+    let mut f = built(&format!("{}pub struct Point {{ pub x: f64 }}", DERIVE));
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("typeof v === 'number' ? Result.Ok(v as number)"), "{}", ts);
+    assert!(!ts.contains("Number.isInteger"), "{}", ts);
+}
+
+/// #2: the runtime `HashMap` a reader BUILDS is tracked whatever it holds, so a
+/// document that fails on a later field has to release it. Taking the container's
+/// ownership from its member left a partly decoded map unreleased.
+#[test]
+fn a_decoded_map_is_released_when_a_later_field_fails() {
+    let mut f = built(&format!(
+        "{}pub struct Holder {{ pub names: std::collections::HashMap<String, String>, pub count: u32 }}",
+        DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(
+        ts.contains("dropOwned([names])"),
+        "the map is released on the `count` error path:\n{}",
+        ts
+    );
 }
 
 /// `#[serde(transparent)]` on a NAMED struct: serde writes the one remaining

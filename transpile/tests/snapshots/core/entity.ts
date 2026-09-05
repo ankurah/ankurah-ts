@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/entity.rs
-import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, dropOwned, tracing, dropUnbound, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, invoke, Invocable, dropOwned, tracing, dropUnbound, checkedAdd, HashMap } from '@ankurah/base';
 import { Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
 import { LineageError, MutationError, RetrievalError, StateError } from './error';
 import { View } from './indexel';
@@ -53,16 +53,12 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   toState(): Result<State, StateError> {
     const state = this.deref().state.read();
     try {
-      let stateBuffers = BTreeMap.default();
+      let stateBuffers = new HashMap();
       for (const [name, backend] of state.value.backends) {
-        try {
-          const _r0 = backend.value.toStateBuffer();
-          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-          const stateBuffer = _r0.unwrap();
-          stateBuffers.insert(name.clone(), stateBuffer);
-        } finally {
-          backend.drop();
-        }
+        const _r0 = backend.value.toStateBuffer();
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        const stateBuffer = _r0.unwrap();
+        stateBuffers.insert(name.clone(), stateBuffer);
       }
       const stateBuffers_1 = new StateBuffers(stateBuffers);
       return Result.Ok(new State(stateBuffers_1, state.value.head.clone()));
@@ -85,7 +81,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   }
 
   static create(id: EntityId, collection: CollectionId): Entity {
-    return new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(Clock.default(), BTreeMap.default())), new EntityKind('Primary', {}), Broadcast.new())));
+    return new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(Clock.default(), new HashMap<string, Arc<PropertyBackend>>())), new EntityKind('Primary', {}), Broadcast.new())));
   }
 
   static fromState(id: EntityId, collection: CollectionId, state: State): Result<Entity, RetrievalError> {
@@ -118,18 +114,14 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
       let operations = new HashMap();
       try {
         for (const [name, backend] of state.value.backends) {
-          try {
-            const _r1 = backend.value.toOperations();
-            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-            {
-              const _v = _r1.unwrap();
-              if (_v != null) {
-                const ops = _v;
-                operations.set(name.clone(), ops);
-              }
+          const _r1 = backend.value.toOperations();
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          {
+            const _v = _r1.unwrap();
+            if (_v != null) {
+              const ops = _v;
+              operations.set(name.clone(), ops);
             }
-          } finally {
-            backend.drop();
           }
         }
         if (operations.size === 0) {
@@ -160,7 +152,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     }
   }
 
-  tryMutate<F, E>(expectedHead: Clock, body: F): Result<boolean, E> {
+  tryMutate<E>(expectedHead: Clock, body: Invocable<[EntityInnerState], Result<void, E>>): Result<boolean, E> {
     let state = this.deref().state.write();
     try {
       if (!state.value.head.equals(expectedHead)) {
@@ -169,7 +161,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         expectedHead.value = _a0;
         return Result.Ok(false);
       }
-      const _r1 = body(state);
+      const _r1 = invoke(body, state);
       if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
       _r1.drop();
       return Result.Ok(true);
@@ -272,7 +264,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           state.head.drop();
           state.head = _a7;
           return Result.Ok([]);
-        }));
+        }, undefined, true));
         if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
         _c9 = _r8.unwrap();
         if (_c9) {
@@ -378,11 +370,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     try {
       let forked = new HashMap();
       for (const [name, backend] of state.value.backends) {
-        try {
-          forked.insert(name.clone(), backend.value.fork());
-        } finally {
-          backend.drop();
-        }
+        forked.insert(name.clone(), backend.value.fork());
       }
       return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
     } finally {
@@ -604,7 +592,7 @@ class EntityInnerState extends Struct {
   }
 
   debug(): string {
-    return `EntityInnerState { head: ${this.head.debug()}, backends: ${this.backends} }`;
+    return `EntityInnerState { head: ${this.head}, backends: ${this.backends} }`;
   }
 }
 
@@ -625,7 +613,7 @@ export class EntityInner extends Struct {
   }
 
   debug(): string {
-    return `EntityInner { id: ${this.id.debug()}, collection: ${this.collection.debug()}, state: ${this.state}, kind: ${this.kind.debug()}, broadcast: ${this.broadcast.debug()} }`;
+    return `EntityInner { id: ${this.id}, collection: ${this.collection.debug()}, state: ${this.state}, kind: ${this.kind.debug()}, broadcast: ${this.broadcast.debug()} }`;
   }
 }
 
@@ -837,7 +825,7 @@ export class WeakEntitySet extends Struct {
   }
 
   static default(): WeakEntitySet {
-    return new WeakEntitySet(Arc.new(new RwLock(new Map())));
+    return new WeakEntitySet(Arc.new(new RwLock(new HashMap())));
   }
 }
 

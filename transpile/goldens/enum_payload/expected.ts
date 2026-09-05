@@ -100,13 +100,13 @@ export class Notice extends Enum<NoticeV> {
         if (!('start' in _o)) {
           return Result.Err(JsonError.custom('missing field `start`'));
         }
-        const _rstart = ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(_o['start']);
+        const _rstart = ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u32'))))(_o['start']);
         if (_rstart.isErr()) return Result.Err(_rstart.unwrapErr());
         const start = _rstart.unwrap();
         if (!('end' in _o)) {
           return Result.Err(JsonError.custom('missing field `end`'));
         }
-        const _rend = ((v: unknown) => (typeof v === 'number' ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a number'))))(_o['end']);
+        const _rend = ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u32'))))(_o['end']);
         if (_rend.isErr()) return Result.Err(_rend.unwrapErr());
         const end = _rend.unwrap();
         

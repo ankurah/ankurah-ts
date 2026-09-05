@@ -14,7 +14,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   }
 
   static new(): PNBackend {
-    return new PNBackend(Arc.new(new RwLock(BTreeMap.default())));
+    return new PNBackend(Arc.new(new RwLock(new HashMap<string, PNValue>())));
   }
 
   get(propertyName: PropertyName): PNValue | null {
@@ -99,7 +99,7 @@ export class PNBackend extends Struct implements PropertyBackend {
 
   static fromStateBuffer(stateBuffer: Uint8Array): Result<PNBackend, RetrievalError> {
     const _r0 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<PropertyName, PNValue>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(PropertyName.decode(_r), PNValue.decode(_r)); } return _m; })(); })();
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    if (_r0.isErr()) return Result.Err(RetrievalError.fromBincodeError(_r0.unwrapErr()));
     const values = _r0.unwrap();
     return Result.Ok(new PNBackend(Arc.new(new RwLock(values))));
   }
@@ -109,7 +109,7 @@ export class PNBackend extends Struct implements PropertyBackend {
     try {
       const diffs = [...values.value].map(([key, value]) => [key, value.diff()]);
       const _r0 = (() => { const _w = new BincodeWriter(); diffs.encode(_w); return _w.finish(); })();
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
       const serializedDiffs = _r0.unwrap();
       return Result.Ok([new Operation(serializedDiffs)]);
     } finally {
@@ -120,7 +120,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   applyOperations(operations: Operation[], _currentHead: Clock, _eventHead: Clock): Result<void, MutationError> {
     for (const operation of operations) {
       const _r0 = (() => { const _r = new BincodeReader(operation.diff); return (() => { const _m = new HashMap<PropertyName, bigint>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(PropertyName.decode(_r), _r.readU64()); } return _m; })(); })();
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
       const diffs = _r0.unwrap();
       let values = this.values.value.write();
       try {

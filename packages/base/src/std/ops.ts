@@ -47,13 +47,17 @@ const RANGES: Record<string, readonly [bigint, bigint]> = {
   u32: [0n, 4294967295n],
   u64: [0n, 18446744073709551615n],
   u128: [0n, (1n << 128n) - 1n],
-  usize: [0n, 18446744073709551615n],
+  // R13: `usize` and `isize` are 32-bit, because the port's target is wasm32.
+  // Ranged as 64-bit, `usize` arithmetic that Rust panics on came back a
+  // rounded double instead. The 8 bytes they occupy on the bincode wire is a
+  // separate fact and belongs to the codec.
+  usize: [0n, 4294967295n],
   i8: [-128n, 127n],
   i16: [-32768n, 32767n],
   i32: [-2147483648n, 2147483647n],
   i64: [-9223372036854775808n, 9223372036854775807n],
   i128: [-(1n << 127n), (1n << 127n) - 1n],
-  isize: [-9223372036854775808n, 9223372036854775807n],
+  isize: [-2147483648n, 2147483647n],
 };
 
 /** What Rust's panic says, so a port failure reads like the Rust one. */
@@ -115,6 +119,15 @@ export function checkedRem(a: number | bigint, b: number | bigint, width: string
   if (BigInt(b as never) === 0n) {
     throw new RangeError('attempt to calculate the remainder with a divisor of zero');
   }
+  // `i32::MIN % -1` is `attempt to calculate the remainder with overflow` in
+  // Rust, for the same reason `i32::MIN / -1` is: the operation is defined in
+  // terms of a quotient the type cannot hold. The mathematical answer is 0, so
+  // the range check never sees it — `checkedDiv` catches its own case because
+  // the quotient IS the answer, and this one has to say so itself.
+  const [low] = range(width);
+  if (BigInt(b as never) === -1n && BigInt(a as never) === low) {
+    overflow('calculate the remainder', width);
+  }
   return apply('calculate the remainder', a, b, width, (x, y) => x % y);
 }
 
@@ -127,7 +140,26 @@ function apply(
 ): number | bigint {
   const exact = combine(BigInt(a as never), BigInt(b as never));
   if (!inRange(exact, width)) overflow(op, width);
-  return typeof a === 'bigint' ? exact : Number(exact);
+  return typeof a === 'bigint' ? exact : exactly(exact, op, width);
+}
+
+/**
+ * The exact integer as a `number`, or a panic where a `number` cannot hold it.
+ *
+ * A width the port spells `number` can still carry a value past
+ * `Number.MAX_SAFE_INTEGER` — `u64` and `i64` are spelled `bigint` for exactly
+ * that reason, but a caller can hand a `number` to any width. `Number(exact)`
+ * there ROUNDS, and a rounded answer is not an answer: it is a wrong number the
+ * program then computes with. Rust has no such case, so a panic is what says so.
+ */
+function exactly(exact: bigint, op: string, width: string): number {
+  const asNumber = Number(exact);
+  if (!Number.isSafeInteger(asNumber)) {
+    throw new RangeError(
+      `attempt to ${op} in ${width}: the answer ${exact} is past what a number holds exactly`,
+    );
+  }
+  return asNumber;
 }
 
 /** `a.wrapping_add(b)` — the release build's answer, always. */
@@ -212,6 +244,8 @@ export function saturatingMul(
 }
 
 /** `a.overflowing_add(b)` — the wrapped answer, and whether it wrapped. */
+export function overflowingAdd(a: number, b: number, width: string): [number, boolean];
+export function overflowingAdd(a: bigint, b: bigint, width: string): [bigint, boolean];
 export function overflowingAdd(
   a: number | bigint,
   b: number | bigint,
@@ -221,6 +255,8 @@ export function overflowingAdd(
   return [wrap(exact, width, typeof a === 'bigint'), !inRange(exact, width)];
 }
 
+export function overflowingSub(a: number, b: number, width: string): [number, boolean];
+export function overflowingSub(a: bigint, b: bigint, width: string): [bigint, boolean];
 export function overflowingSub(
   a: number | bigint,
   b: number | bigint,
@@ -230,6 +266,8 @@ export function overflowingSub(
   return [wrap(exact, width, typeof a === 'bigint'), !inRange(exact, width)];
 }
 
+export function overflowingMul(a: number, b: number, width: string): [number, boolean];
+export function overflowingMul(a: bigint, b: bigint, width: string): [bigint, boolean];
 export function overflowingMul(
   a: number | bigint,
   b: number | bigint,
@@ -260,7 +298,10 @@ function option(exact: bigint, width: string, asBigint: boolean): number | bigin
 
 function bitsOf(width: string): number {
   const digits = width.replace(/^[ui]/, '');
-  if (digits === 'size') return 64;
+  // R13: `usize` and `isize` are 32-bit, because the port's target is wasm32.
+  // This and RANGES are one statement about the same two types; disagreeing,
+  // they wrapped a `usize` at 64 bits and ranged it at 32.
+  if (digits === 'size') return 32;
   const bits = Number(digits);
   if (!Number.isInteger(bits)) {
     throw new RangeError(`\`${width}\` is not an integer type this runtime knows`);

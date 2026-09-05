@@ -162,7 +162,13 @@ impl BodyTranslator<'_> {
             // `Comparison { left, operator: _, .. }` asks nothing of `operator`
             // and takes no name out of it, so the destructuring does not name
             // it either.
-            if Self::binds_nothing(pat) {
+            //
+            // Binding nothing is not the same as asking nothing:
+            // `Wrap::Inner(Status::Requested(_, _))` takes no name and still
+            // tests the variant. Skipped on the binding alone, the TEST went
+            // with it and the arm ran for every `Wrap::Inner` — live in core's
+            // `client_relay`.
+            if Self::binds_nothing(pat) && Self::is_irrefutable(pat) {
                 continue;
             }
             if Self::is_irrefutable(pat) {
@@ -206,7 +212,10 @@ impl BodyTranslator<'_> {
                         // A pattern that only binds takes the whole payload in
                         // one declaration, so `Some((last, rest))` stays the
                         // array destructuring a reader of the port expects.
-                        if Self::binds_nothing(inner) {
+                        // `Some(Status::Requested(_, _))` is not one of those:
+                        // it takes no name and still tests the variant, and the
+                        // test used to go with the binding.
+                        if Self::binds_nothing(inner) && Self::is_irrefutable(inner) {
                             return (format!("{} != null", subject), String::new());
                         }
                         if Self::is_irrefutable(inner) {
@@ -286,6 +295,11 @@ impl BodyTranslator<'_> {
                 // an enum which variant it is.
                 if let Some(number) = self.ordering_variant(&p.path) {
                     return (format!("{} === {}", subject, number), String::new());
+                }
+                let segments: Vec<String> =
+                    p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+                if self.names_a_const(&segments).is_some() {
+                    return self.const_pattern_test(subject, &segments, pat);
                 }
                 let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
                 match name.as_str() {
@@ -403,6 +417,18 @@ impl BodyTranslator<'_> {
                 ));
                 bind.insert_str(0, &format!("const {} = {};\n", var, subject));
                 (test, bind)
+            }
+            // A name that resolves to a `const` is a PATH pattern, not a
+            // binding: Rust compares the subject against the const's value.
+            // Read as a binding, `BASE => ..` bound `bASE` and matched
+            // everything, and the arms below it were reported as unreachable —
+            // the only diagnostic named the wrong arm.
+            syn::Pat::Ident(ident)
+                if ident.subpat.is_none()
+                    && ident.by_ref.is_none()
+                    && self.names_a_const(&[ident.ident.to_string()]).is_some() =>
+            {
+                self.const_pattern_test(subject, &[ident.ident.to_string()], pat)
             }
             syn::Pat::Ident(_) => {
                 let var = Self::pat_static(pat);
@@ -542,4 +568,87 @@ fn is_identifier(text: &str) -> bool {
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+impl<'a> BodyTranslator<'a> {
+    /// Does this path name a `const` or a `static`, rather than a binding?
+    ///
+    /// Rust resolves a pattern's identifier in the VALUE namespace first: a
+    /// name that lands on a const is a comparison against its value, and only a
+    /// name that lands on nothing binds. The registry's value namespace holds
+    /// consts, statics and free functions; a function has a signature and a
+    /// const does not, which is what tells them apart.
+    ///
+    /// The answer carries the const's declared type, because that is what
+    /// decides how the comparison is written.
+    pub(crate) fn names_a_const(&self, segments: &[String]) -> Option<Option<crate::ty::Ty>> {
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let found = tc
+            .registry
+            .lookup(tc.module, crate::registry::Ns::Value, segments);
+        tc.sink.rewind(mark);
+        match found {
+            Ok(Some(crate::registry::Def::Value(id))) => {
+                let value = tc.registry.value(id)?;
+                // A free function is in the value namespace too, and naming one
+                // in a pattern is not a comparison.
+                if value.sig.is_some() {
+                    return None;
+                }
+                Some(value.ty.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Is every use of this name a fresh value, so the emitted name is a
+    /// function this use calls? See `ValueDef::fresh_at_each_use`.
+    pub(crate) fn names_a_fresh_const(&self, segments: &[String]) -> bool {
+        let Some(tc) = self.types.as_ref() else { return false };
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let found = tc
+            .registry
+            .lookup(tc.module, crate::registry::Ns::Value, segments);
+        tc.sink.rewind(mark);
+        match found {
+            Ok(Some(crate::registry::Def::Value(id))) => tc
+                .registry
+                .value(id)
+                .is_some_and(|value| value.fresh_at_each_use),
+            _ => false,
+        }
+    }
+
+    /// The test a const pattern writes: the subject against the const's value.
+    fn const_pattern_test(
+        &self,
+        subject: &str,
+        segments: &[String],
+        pat: &syn::Pat,
+    ) -> (String, String) {
+        let name = crate::name_map::escape_reserved(segments.last().expect("a path has a segment"));
+        let ty = self.names_a_const(segments).flatten();
+        let compares_by_identity = matches!(
+            ty.as_ref().map(|t| t.peel_refs()),
+            Some(crate::ty::Ty::Prim(_)) | Some(crate::ty::Ty::Str) | None
+        );
+        if compares_by_identity {
+            return (format!("{} === {}", subject, name), String::new());
+        }
+        // A const of a type the port writes as an object compares by value in
+        // Rust, and `===` here is reference identity. R12: the arm says so and
+        // stops rather than answering what Rust would not.
+        let hole = self.hole(
+            syn::spanned::Spanned::span(pat),
+            format!(
+                "`{}` is a const of a type the port compares by identity, and Rust compares a \
+                 const pattern by value",
+                segments.join("::")
+            ),
+        );
+        (hole, String::new())
+    }
 }

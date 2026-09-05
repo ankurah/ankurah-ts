@@ -694,9 +694,22 @@ addressed by the step that found it.
   `checkedMul`, `checkedDiv` and `checkedRem`, each of which takes the width by
   name and raises where Rust panics; division and remainder by zero raise as
   Rust does, and integer division truncates towards zero as Rust does.
-  `wrapping_*`, `checked_*`, `saturating_*` and `overflowing_*` map to helpers
-  with Rust's own semantics. Floats are untouched — Rust's `f64` arithmetic is
+  `wrapping_*`, `checked_*`, `saturating_*` and `overflowing_*` map to FREE
+  helpers of the same shape — `wrappingAdd(x, 1, 'u8')` — because a JavaScript
+  number has no methods of those names; the width comes from the resolved
+  receiver type, and a receiver the engine could not type refuses the call
+  rather than guessing one. Floats are untouched — Rust's `f64` arithmetic is
   IEEE and so is JavaScript's.
+
+  R13: `usize` and `isize` are 32-bit here, because the port's target is wasm32.
+  One table in `@ankurah/base`'s `ops.ts` gives the range and the wrap width, so
+  the two cannot disagree; the 8 bytes those types occupy on the bincode wire is
+  a separate fact and belongs to the codec.
+
+  A width the port spells `number` can still be handed an answer past
+  `Number.MAX_SAFE_INTEGER`. The helper PANICS there rather than returning a
+  rounded double: a rounded answer is a wrong number the program then computes
+  with, and Rust has no such case to mirror.
 
   The cost is one call per operation, and the emitted expression is a call
   rather than an operator wherever the answer is not provably in range. The
@@ -882,15 +895,12 @@ addressed by the step that found it.
   `core/src/reactor/watcherset.rs`; the alternatives that agree — two variants of
   one enum — are lowered.
 
-- **Integer overflow is not wrapped, and division by zero does not panic.** Rust
-  wraps in release and panics in debug; JavaScript's numbers grow without bound
-  and its integer division by zero is `Infinity` (or `NaN`), where Rust's
-  panics. The `as` casts and the bit operators DO wrap — that is the type's
-  range, which the cast is about — but `a + b` on a `u8` does not, and `a / b`
-  is written without a zero check. Step 7 decided to leave both rather than
-  wrap every arithmetic operator: wrapping would put a mask on the hot path of
-  arithmetic that never overflows in this corpus, and a zero check would put a
-  branch on every division. Whichever way step 9 goes, it goes for both.
+- **A dynamic shift past the width is JavaScript's masking, not Rust's panic.**
+  `x << n` with `n` a value rather than a literal is `x << (n & 31)` in
+  JavaScript, and `attempt to shift left with overflow` in the build this port
+  mirrors. The three other overflow cases the same debug build panics on —
+  arithmetic, division by zero, remainder by zero — go through R7's helpers and
+  do panic; the shift amount is the one left. It belongs with R7 when it lands.
 - **`/=` evaluates its place twice.** `a[i()] /= 2` is written
   `a[i()] = Math.trunc(a[i()] / 2)`, and a place with a side effect performs it
   twice. Rust evaluates the place once.

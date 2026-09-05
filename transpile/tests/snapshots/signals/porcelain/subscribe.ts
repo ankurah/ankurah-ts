@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
 import { Struct, OwnedClosure, Sender, UnboundedSender } from '@ankurah/base';
-import { ListenerGuard } from '../broadcast';
+import { ListenerGuard } from '../signal';
 
 export class SubscriptionGuard extends Struct {
   _listenerguard: Any;

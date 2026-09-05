@@ -51,7 +51,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
               }
               }
             })();
-            if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+            if ((_m3 as any)?.$jump === 'return') return _m3;
             let _moved4 = false;
             const gapPredicate = (_m3 as any);
             try {

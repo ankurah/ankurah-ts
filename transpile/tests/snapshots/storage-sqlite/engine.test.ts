@@ -52,7 +52,7 @@ describe('engine unit tests', () => {
         try {
           const _r3 = await conn.withConnection((c) => {
             const _r2 = c.queryRow('SELECT jsonb(\'{"key": "value"}\')', [], (row) => row.get(0));
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            if (_r2.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r2.unwrapErr()));
             const value = _r2.unwrap();
             return Result.Ok(value);
           });
@@ -61,7 +61,7 @@ describe('engine unit tests', () => {
           if (!(!result.isEmpty())) throw new Error('jsonb() function should return a non-empty BLOB');
           const _r5 = await conn.withConnection((c) => {
             const _r4 = c.queryRow('SELECT json_extract(jsonb(\'{"territory": "US", "count": 10}\'), \'$.territory\')', [], (row) => row.get(0));
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            if (_r4.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r4.unwrapErr()));
             const value = _r4.unwrap();
             return Result.Ok(value);
           });
@@ -70,7 +70,7 @@ describe('engine unit tests', () => {
           expect(result_1).toEqual('US');
           const _r7 = await conn.withConnection((c) => {
             const _r6 = c.queryRow('SELECT json_extract(jsonb(\'{"count": 9}\'), \'$.count\') > json_extract(jsonb(\'{"count": 10}\'), \'$.count\')', [], (row) => row.get(0));
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+            if (_r6.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r6.unwrapErr()));
             const value = _r6.unwrap();
             return Result.Ok(value);
           });
@@ -122,22 +122,22 @@ describe('engine unit tests', () => {
         try {
           return await conn.withConnection((c) => {
             const _r2 = c.execute('CREATE TABLE test_jsonb (id TEXT PRIMARY KEY, data BLOB)', []);
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            if (_r2.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r2.unwrapErr()));
             _r2.drop();
             const jsonText = '{"territory": "US", "count": 10}';
             const _r3 = c.execute('INSERT INTO test_jsonb (id, data) VALUES (?, jsonb(?))', ['1', jsonText]);
-            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            if (_r3.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r3.unwrapErr()));
             _r3.drop();
             const _r4 = c.queryRow('SELECT COUNT(*) FROM test_jsonb', [], (row) => row.get(0));
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            if (_r4.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r4.unwrapErr()));
             const count = _r4.unwrap();
             expect(count).toEqual(1);
             const _r5 = c.queryRow('SELECT typeof(data) FROM test_jsonb WHERE id = \'1\'', [], (row) => row.get(0));
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+            if (_r5.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r5.unwrapErr()));
             const dataType = _r5.unwrap();
             console.log(`Data column type: ${dataType}`);
             const _r6 = c.queryRow('SELECT json_extract(data, \'$.territory\') FROM test_jsonb WHERE id = \'1\'', [], (row) => row.get(0));
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+            if (_r6.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r6.unwrapErr()));
             const extracted = _r6.unwrap();
             console.log(`Extracted territory: '${extracted}'`);
             const queryParam = 'US';

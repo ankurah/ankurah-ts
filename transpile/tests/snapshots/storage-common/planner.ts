@@ -648,7 +648,7 @@ export class Planner extends Struct {
               let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0]._1) });
               let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0]._1) });
               for (const [op, value] of inequalities) {
-                return op.match({
+                op.match({
                   GreaterThan: () => {
                     let _moved1 = false;
                     const candidate = Endpoint.excl(value.clone());
@@ -791,48 +791,36 @@ export class Planner extends Struct {
   }
 
   isEmptyBounds(bounds: KeyBounds): boolean {
-    const _seq0 = bounds.keyparts;
-    let _at1 = 0;
-    try {
-      while (_at1 < _seq0.length) {
-        const bound = _seq0[_at1++];
-        try {
-          const _v = [bound.low, bound.high];
-          if ((_v[0].is('Value')) && (_v[1].is('Value'))) {
-            const { datum: lowDatum, inclusive: lowIncl } = _v[0].value;
-            const { datum: highDatum, inclusive: highIncl } = _v[1].value;
-            const _v1 = [lowDatum, highDatum];
-            if ((_v1[0].is('Val')) && (_v1[1].is('Val'))) {
-              const { _0: lowVal } = _v1[0].value;
-              const { _0: highVal } = _v1[1].value;
-              const _v2 = lowVal.compareTo(highVal);
-              if (_v2 != null && (_v2 === 1)) {
-                return true;
-              } else if (_v2 != null && (_v2 === 0)) {
-                if (!lowIncl && !highIncl) {
-                  return true;
-                }
-              } else if (_v2 != null && (_v2 === -1)) {
-                {
-                }
-              } else {
-                {
-                }
-              }
-            } else {
-              {
-              }
+    for (const bound of bounds.keyparts) {
+      const _v = [bound.low, bound.high];
+      if ((_v[0].is('Value')) && (_v[1].is('Value'))) {
+        const { datum: lowDatum, inclusive: lowIncl } = _v[0].value;
+        const { datum: highDatum, inclusive: highIncl } = _v[1].value;
+        const _v1 = [lowDatum, highDatum];
+        if ((_v1[0].is('Val')) && (_v1[1].is('Val'))) {
+          const { _0: lowVal } = _v1[0].value;
+          const { _0: highVal } = _v1[1].value;
+          const _v2 = lowVal.compareTo(highVal);
+          if (_v2 != null && (_v2 === 1)) {
+            return true;
+          } else if (_v2 != null && (_v2 === 0)) {
+            if (!lowIncl && !highIncl) {
+              return true;
+            }
+          } else if (_v2 != null && (_v2 === -1)) {
+            {
             }
           } else {
             {
             }
           }
-        } finally {
-          bound.drop();
+        } else {
+          {
+          }
         }
+      } else {
+
       }
-    } finally {
-      dropOwned(_seq0.slice(_at1));
     }
     return false;
   }
@@ -889,7 +877,7 @@ export class Planner extends Struct {
         const plan = _seq1[_at2++];
         let _moved0 = false;
         try {
-          return plan.match({
+          plan.match({
             Index: (v) => {
               const indexSpec = v.indexSpec;
               const scanDirection = v.scanDirection;

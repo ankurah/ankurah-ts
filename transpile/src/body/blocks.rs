@@ -81,6 +81,26 @@ impl BodyTranslator<'_> {
         out
     }
 
+    /// The body of a LOOP, whose value nothing wants.
+    ///
+    /// A block's tail is its value, and a block that is the function's body
+    /// hands that value to the caller — so the tail is written in return
+    /// position. A loop body is neither: Rust types it `()`, and one turn's
+    /// tail is not the function's answer. Written as a return, ankql's
+    /// `generate_expr_sql` came out `return item.match({ .. })` — the loop left
+    /// on its first turn, and the `?` inside an arm returned a bare
+    /// `Result.Err` as the function's value.
+    pub fn translate_loop_block(&self, block: &syn::Block) -> String {
+        self.push_block();
+        let stmts = &block.stmts;
+        self.note_once_closures(stmts);
+        let dispositions = self.analyse_moves(stmts);
+        let ordinals = std::cell::RefCell::new(std::collections::HashMap::new());
+        let out = self.emit_from_at(stmts, 0, &dispositions, &ordinals, false);
+        self.pop_scope();
+        out
+    }
+
     /// A block's statements, with the releases the block owes written into it.
     ///
     /// Every value the block still owns when it ends is released in a
@@ -108,6 +128,19 @@ impl BodyTranslator<'_> {
         dispositions: &ownership::Dispositions,
         ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
     ) -> String {
+        self.emit_from_at(stmts, i, dispositions, ordinals, true)
+    }
+
+    /// The same, with `tail_is_value` saying whether this block's last
+    /// expression is the block's VALUE. It is for every block but a loop body.
+    pub(crate) fn emit_from_at(
+        &self,
+        stmts: &[syn::Stmt],
+        i: usize,
+        dispositions: &ownership::Dispositions,
+        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
+        tail_is_value: bool,
+    ) -> String {
         let Some(stmt) = stmts.get(i) else {
             return String::new();
         };
@@ -120,8 +153,9 @@ impl BodyTranslator<'_> {
             syn::Stmt::Macro(mac) => mac.semi_token.is_none(),
             _ => false,
         };
-        let is_tail =
-            i + 1 == stmts.len() && (matches!(stmt, syn::Stmt::Expr(_, None)) || tail_macro);
+        let is_tail = tail_is_value
+            && i + 1 == stmts.len()
+            && (matches!(stmt, syn::Stmt::Expr(_, None)) || tail_macro);
 
         // What this statement's own `let` should do with each name it binds,
         // read before it is translated because `local()` acts on it.
@@ -177,7 +211,7 @@ impl BodyTranslator<'_> {
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);
 
-        let rest = self.emit_from(stmts, i + 1, dispositions, ordinals);
+        let rest = self.emit_from_at(stmts, i + 1, dispositions, ordinals, tail_is_value);
         // A drop flag is only readable while the local it stands for is in
         // scope. Taking it off again keeps a later block that reuses the name
         // from setting a flag nothing tests.
@@ -298,8 +332,14 @@ impl BodyTranslator<'_> {
                 };
                 if semi.is_some() {
                     format!("{};\n", self.discard(expr, ts))
-                } else {
+                } else if ts.trim_end().ends_with('}') || ts.trim_end().ends_with(';') {
                     format!("{}\n", ts)
+                } else {
+                    // A tail with no semicolon in Rust is still a STATEMENT
+                    // here when nothing wants its value — a loop body's last
+                    // expression — and `return x` with no semicolon after it
+                    // leaves the emitted file leaning on automatic insertion.
+                    format!("{};\n", ts)
                 }
             }
             syn::Stmt::Item(_) => String::new(),

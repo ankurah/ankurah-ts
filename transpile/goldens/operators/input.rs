@@ -229,3 +229,35 @@ pub fn complemented(c: Charge) -> Charge {
 pub fn indexed(c: &Charge) -> i32 {
     c[0]
 }
+
+/// The four explicit families Rust offers for saying what should happen instead
+/// of the debug build's panic. A JavaScript number has none of these as
+/// methods, so `x.wrapping_add(1)` was a `TypeError` at the call; each is a free
+/// helper in `@ankurah/base` that takes the width, because `u8` and `usize` are
+/// both `number` here and the answers differ.
+pub fn wraps(a: u8, b: u8) -> u8 {
+    a.wrapping_add(b)
+}
+
+pub fn saturates(a: u8, b: u8) -> u8 {
+    a.saturating_add(b)
+}
+
+pub fn checks(a: u8, b: u8) -> Option<u8> {
+    a.checked_mul(b)
+}
+
+pub fn overflows(a: u8, b: u8) -> (u8, bool) {
+    a.overflowing_add(b)
+}
+
+/// A unary literal operand keeps the operator's primitive, so the division is
+/// Rust's truncating one and `i32::MIN / -1` panics as Rust's does.
+pub fn divided_by_negative_one(x: i32) -> i32 {
+    x / -1
+}
+
+/// R7 reaches through the cell a `&mut` to a JavaScript value becomes.
+pub fn bump(n: &mut u32) {
+    *n += 1;
+}

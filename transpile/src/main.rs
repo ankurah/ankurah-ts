@@ -230,6 +230,9 @@ fn batch_generate(
     let mut parsed_files: Vec<registry::ExtractedFile> = Vec::new();
     let mut type_to_file: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    // The names a PUBLIC declaration has claimed, so a private one elsewhere
+    // cannot take one back.
+    let mut public_types: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for entry in WalkDir::new(src_dir)
         .into_iter()
@@ -322,12 +325,12 @@ fn batch_generate(
         if declarations_only {
             if let Some(provided) = config.and_then(|c| c.provided_module(&full_path)) {
                 let module = format!("./{}", provided.module);
-                for name in rust_file
+                for (name, public) in rust_file
                     .structs
                     .iter()
-                    .map(|s| s.name.clone())
-                    .chain(rust_file.enums.iter().map(|e| e.name.clone()))
-                    .chain(rust_file.traits.iter().map(|t| t.name.clone()))
+                    .map(|s| (s.name.clone(), s.is_pub))
+                    .chain(rust_file.enums.iter().map(|e| (e.name.clone(), e.is_pub)))
+                    .chain(rust_file.traits.iter().map(|t| (t.name.clone(), t.is_pub)))
                     // A provided module's public functions are part of what it
                     // offers: ankql's parser is one, and `parse_selection` is
                     // what every caller of it names.
@@ -336,10 +339,19 @@ fn batch_generate(
                             .functions
                             .iter()
                             .filter(|f| f.is_pub)
-                            .map(|f| f.ts_name.clone()),
+                            .map(|f| (f.ts_name.clone(), true)),
                     )
                 {
-                    type_to_file.insert(name, module.clone());
+                    // Same rule as an emitted module's: a private declaration
+                    // is not importable, so it does not take a name a public
+                    // one elsewhere carries.
+                    if public {
+                        if public_types.insert(name.clone()) || !type_to_file.contains_key(&name) {
+                            type_to_file.insert(name, module.clone());
+                        }
+                    } else if !public_types.contains(&name) {
+                        type_to_file.insert(name, module.clone());
+                    }
                 }
             }
             parsed_files.push(registry::ExtractedFile {
@@ -353,14 +365,30 @@ fn batch_generate(
             });
             continue;
         }
+        // Which module a name is imported FROM. A private declaration is not
+        // importable at all, so it must not take a name a public one elsewhere
+        // carries: `resultset.rs`'s private `enum IVec` — a byte sort key —
+        // took the name from `util::ivec`'s public `IVec`, and core's
+        // `candidate_changes` then imported an unrelated type from the wrong
+        // module. A private name is recorded only where nothing public claims
+        // it, so that a file which does reach one still resolves.
+        let mut claim = |name: &str, public: bool| {
+            if public {
+                if public_types.insert(name.to_string()) || !type_to_file.contains_key(name) {
+                    type_to_file.insert(name.to_string(), ts_module.clone());
+                }
+            } else if !public_types.contains(name) {
+                type_to_file.insert(name.to_string(), ts_module.clone());
+            }
+        };
         for s in &rust_file.structs {
-            type_to_file.insert(s.name.clone(), ts_module.clone());
+            claim(&s.name, s.is_pub);
         }
         for e in &rust_file.enums {
-            type_to_file.insert(e.name.clone(), ts_module.clone());
+            claim(&e.name, e.is_pub);
         }
         for t in &rust_file.traits {
-            type_to_file.insert(t.name.clone(), ts_module.clone());
+            claim(&t.name, t.is_pub);
         }
         // A module-level `pub fn` is a name every caller imports, exactly as a
         // type is. Without it a call to one resolved to nothing at run time —
@@ -535,6 +563,7 @@ fn batch_generate(
         .filter_map(|f| registry.modules().lookup_file(&f.path))
         .collect();
     registry::narrow_reads_json(&mut registry, &ours);
+    registry::mark_fresh_consts(&mut registry, &parsed_files, &sink);
     let registry = registry;
 
     // Phase 3: Translate all deferred bodies with type context
@@ -803,6 +832,10 @@ fn mark_hand_written_types(
     config: Option<&config::Config>,
 ) {
     let mut ids = Vec::new();
+    let mut reads_json = Vec::new();
+    // Types whose MEMBERS a person wrote, which includes every one of `ids` and
+    // also a sibling crate's provided types.
+    let mut members: Vec<crate::ty::TypeId> = Vec::new();
     for entry in files.iter().filter(|e| e.hand_written) {
         let Some(module) = registry.modules().lookup_file(&entry.path) else {
             continue;
@@ -834,15 +867,41 @@ fn mark_hand_written_types(
             if segments.is_empty() {
                 continue;
             }
+            // The same type, wherever it is declared: a sibling's provided type
+            // has no emitted members either, and asking only THIS crate's root
+            // left 26 `${x.debug()}` calls in core against a method
+            // `id.provided.ts` does not declare.
+            for root in registry.sibling_crate_roots() {
+                if let Ok(Some(registry::Def::Type(id))) = registry.lookup_type(root, &segments) {
+                    members.push(id);
+                }
+            }
             if let Ok(Some(registry::Def::Type(id))) =
                 registry.lookup_type(registry.crate_root(), &segments)
             {
                 ids.push(id);
+                // Whether the hand-written file declares a `static fromJson` is
+                // something only the entry can say: the engine never reads the
+                // TypeScript it did not write. Reading "hand-written" as
+                // evidence of one put `Attested.fromJson` in three emitted call
+                // sites where `auth.provided.ts` declares no such static.
+                if cfg.provided_impls[fqn].reads_json {
+                    reads_json.push(id);
+                }
             }
         }
     }
-    for id in ids {
-        registry.mark_hand_written(id);
+    for id in members {
+        registry.mark_members_hand_written(id);
+    }
+    for id in &ids {
+        registry.mark_hand_written(*id);
+        // Whatever the Rust derive said, a type whose class the port does not
+        // emit has only the members the person who wrote the file wrote.
+        registry.clear_reads_json(*id);
+    }
+    for id in reads_json {
+        registry.mark_reads_json(id);
     }
 }
 
@@ -1220,6 +1279,9 @@ fn translate_module_consts(
             .rust_ty
             .as_ref()
             .and_then(|written| tc.resolve_written_type(written).ok());
+        c.fresh_at_each_use = want
+            .as_ref()
+            .is_some_and(|ty| ownership::fresh_at_each_use(&tc.probe(), ty, c.is_static));
         let translator = body::BodyTranslator::with_context("Self", tc);
         let written = match &want {
             Some(ty) => translator.expecting(&init, Some(ty), || translator.expr_value(&init)),
@@ -1298,10 +1360,29 @@ fn translate_fn_body(
         // so a signature only moves where the syntax was wrong. A type the
         // engine could not name keeps what it had, which is where it stood
         // before.
+        // A type parameter whose only bound is a callable one is written as the
+        // callable itself, and the resolution here would put the bare parameter
+        // name back — which names nothing, because the generics list no longer
+        // declares it.
+        let arguments: Vec<syn::Type> =
+            func.params.iter().filter_map(|p| p.rust_ty.clone()).collect();
+        let callables = extract::callable_only_params_of(
+            &func.syn_generics,
+            &arguments,
+            func.rust_return.as_ref(),
+        );
         for param in func.params.iter_mut() {
             let Some(written) = param.rust_ty.as_ref() else {
                 continue;
             };
+            if let syn::Type::Path(path) = written {
+                if let Some(name) = path.path.get_ident().map(|i| i.to_string()) {
+                    if let Some(spelling) = callables.get(&name) {
+                        param.ty = spelling.clone();
+                        continue;
+                    }
+                }
+            }
             if names_an_alias(registry, module, written) {
                 continue;
             }

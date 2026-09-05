@@ -155,7 +155,7 @@ describe('client_relay unit tests', () => {
         relay.notifyPeerConnected(peerId);
         relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
         if (!(((_v) => {
-          if (!(_v != null)) return false;
+          if (!(_v != null && (_v.is('Requested')))) return false;
           return true;
         })(relay.getStatus(queryId)))) throw new Error('assertion failed');
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
@@ -309,7 +309,7 @@ describe('client_relay unit tests', () => {
               info.status = new Status('Failed', {});
             }
           }
-        })()
+        })();
         relay.notifyPeerConnected(peerId);
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
         const sentRequests = mockSender.getSentRequests();

@@ -163,11 +163,42 @@ describe('serde_json.parse keeps an integer token', () => {
     expect(parsed('9007199254740991')).toBe(9007199254740991);
   });
 
-  test('a fractional or exponential number is a number, whatever its size', () => {
+  test('a fractional or exponential number is a number', () => {
     expect(parsed('1.5')).toBe(1.5);
     expect(parsed('-0.25')).toBe(-0.25);
-    expect(parsed('1e400')).toBe(Infinity);
+    expect(parsed('1e30')).toBe(1e30);
     expect(parsed('9007199254740993.0')).toBe(9007199254740992);
+  });
+
+  // serde_json refuses a float the format cannot hold rather than reading it as
+  // an infinity, and `Infinity` is not a value it can write back out.
+  test('an exponent past what a double holds is out of range', () => {
+    refused('1e400');
+    refused('1e999');
+    refused('-1e400');
+  });
+
+  // JSON's number grammar, which `Number()` is looser than: `Number('01')` is 1,
+  // `Number('1.')` is 1 and `Number('.5')` is 0.5, and none of the three is a
+  // JSON number.
+  test('a malformed number token is refused', () => {
+    refused('01');
+    refused('-01');
+    refused('1.');
+    refused('.5');
+    refused('1e');
+    refused('1e+');
+  });
+
+  // A raw control character inside a string is not JSON. `JSON.parse` says so by
+  // THROWING, and the throw used to travel out of `parse` — an exception where
+  // `from_str` answers `Err`, at seven live boundaries.
+  test('a control character inside a string is an Err, not a throw', () => {
+    refused(`"a${String.fromCharCode(1)}b"`);
+    refused(`{"k": "a${String.fromCharCode(0)}b"}`);
+    refused(String.raw`"\uZZZZ"`);
+    // The escaped spelling is the legal one.
+    expect(parsed(String.raw`"a\u0001b"`)).toBe(`a${String.fromCharCode(1)}b`);
   });
 
   test('everything else reads as JSON.parse reads it', () => {

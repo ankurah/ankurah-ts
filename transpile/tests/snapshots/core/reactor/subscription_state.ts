@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/subscription_state.rs
-import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, dropUnbound, checkedSub, HashMap, HashSet, spawn } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, checkedSub, HashMap, HashSet, spawn } from '@ankurah/base';
 import { Entity } from '../entity';
 import { ContextData, Node } from '../node';
 import { AbstractEntity, ChangeNotification } from '../reactor';
@@ -94,21 +94,17 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
           const updateItems = [];
           try {
             for (const [queryId, queryState] of state.queries) {
-              try {
-                for (const entityId of queryState.resultset.keys()) {
-                  {
-                    const _v = state.entities.get(entityId);
-                    if (_v != null) {
-                      const entity = _v;
-                      updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
-                    }
+              for (const entityId of queryState.resultset.keys()) {
+                {
+                  const _v = state.entities.get(entityId);
+                  if (_v != null) {
+                    const entity = _v;
+                    updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
                   }
                 }
-                queryState.resultset.clear();
-                queryState.resultset.setLoaded(false);
-              } finally {
-                queryState.drop();
               }
+              queryState.resultset.clear();
+              queryState.resultset.setLoaded(false);
             }
             state.entitySubscriptions.clear();
             state.entities.clear();
@@ -149,28 +145,16 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         try {
           let state = this.deref().state.lock();
           try {
-            return state.value.queries.entry(queryId).intoMatch({
+            return state.value.queries.entry(queryId).match({
               Vacant: (_v) => {
                 const v = _v._0;
-                let _moved3 = false;
-                try {
-                  _moved3 = true;
-                  _moved0 = true;
-                  _moved2 = true;
-                  _moved1 = true;
-                  v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset, 0));
-                  return Result.Ok([]);
-                } finally {
-                  if (!_moved3) dropOwned(v);
-                }
+                _moved0 = true;
+                _moved2 = true;
+                _moved1 = true;
+                v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset, 0));
+                return Result.Ok([]);
               },
-              Occupied: (v) => {
-                try {
-                  return Result.Err(AnyhowError.msg(`Query ${queryId.debug()} already exists`));
-                } finally {
-                  dropUnbound(v, []);
-                }
-              },
+              Occupied: (v) => Result.Err(AnyhowError.msg(`Query ${queryId} already exists`)),
             });
           } finally {
             state.drop();
@@ -259,7 +243,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                     }
                   };
                   const entityId = entity.id();
-                  tracing.debug(`Entity ${entityId.debug()} no longer matches predicate`);
+                  tracing.debug(`Entity ${entityId} no longer matches predicate`);
                   removedEntities.push(entityId);
                   reactorUpdates.pushRemove(entity, queryId);
                   return false;
@@ -575,39 +559,32 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     try {
       try {
         try {
-          const _seq1 = gapsToFill;
-          let _at2 = 0;
-          try {
-            while (_at2 < _seq1.length) {
-              const [, , , , resultset, , ] = _seq1[_at2++];
-              resultset.clearGapDirty();
-            }
-          } finally {
-            dropOwned(_seq1.slice(_at2));
+          for (const [, , , , resultset, , ] of gapsToFill) {
+            resultset.clearGapDirty();
           }
           const gapFillFutures = [...gapsToFill].map(([queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize]) => {
             return Subscription.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
           });
           const gapResults = await future.joinAll(gapFillFutures);
-          const _seq4 = gapResults;
-          let _at5 = 0;
+          const _seq2 = gapResults;
+          let _at3 = 0;
           try {
-            while (_at5 < _seq4.length) {
-              const [queryId, gapItems] = _seq4[_at5++];
-              let _moved3 = false;
+            while (_at3 < _seq2.length) {
+              const [queryId, gapItems] = _seq2[_at3++];
+              let _moved1 = false;
               try {
                 if (!(gapItems.length === 0)) {
                   const entityIds = [...gapItems].map((item) => AbstractEntity.id(item.entity));
                   this.addEntityWatchers(queryId, [...entityIds]);
-                  _moved3 = true;
+                  _moved1 = true;
                   items.push(...gapItems);
                 }
               } finally {
-                if (!_moved3) dropOwned(gapItems);
+                if (!_moved1) dropOwned(gapItems);
               }
             }
           } finally {
-            dropOwned(_seq4.slice(_at5));
+            dropOwned(_seq2.slice(_at3));
           }
           if (!(items.length === 0)) {
             _moved0 = true;
@@ -712,28 +689,18 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     try {
       let state = this.deref().state.lock();
       try {
-        return state.value.queries.entry(queryId).intoMatch({
+        return state.value.queries.entry(queryId).match({
           Vacant: (_v) => {
             const v = _v._0;
-            let _moved1 = false;
-            try {
-              const resultset = EntityResultSet.empty();
-              const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
-              _moved1 = true;
-              _moved0 = true;
-              v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset.clone(), 0));
-              return resultset;
-            } finally {
-              if (!_moved1) dropOwned(v);
-            }
+            const resultset = EntityResultSet.empty();
+            const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+            _moved0 = true;
+            v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset.clone(), 0));
+            return resultset;
           },
           Occupied: (v) => {
             const o = v._0;
-            try {
-              return o.get().resultset.clone();
-            } finally {
-              dropOwned(o);
-            }
+            return o.get().resultset.clone();
           },
         });
       } finally {

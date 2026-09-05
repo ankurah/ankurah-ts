@@ -53,6 +53,51 @@ export function JsValue_fromValue(value: Value): unknown {
   }
 }
 
+export function JsValue_fromRefValue(value: Value): unknown {
+  return value.match({
+    String: (v) => {
+      const s = v._0;
+      return JsValue.fromStr(s);
+    },
+    I16: (v) => {
+      const i = v._0;
+      return JsValue.fromF64(i);
+    },
+    I32: (v) => {
+      const i = v._0;
+      return JsValue.fromF64(i);
+    },
+    I64: (v) => {
+      const i = v._0;
+      return JsValue.fromF64(Number(i));
+    },
+    F64: (v) => {
+      const f = v._0;
+      return JsValue.fromF64(f);
+    },
+    Bool: (v) => {
+      const b = v._0;
+      return JsValue.fromBool(b);
+    },
+    EntityId: (v) => {
+      const entityId = v._0;
+      return JsValue.fromStr(entityId.toBase64());
+    },
+    Object: (v) => {
+      const bytes = v._0;
+      return jsSys.Uint8Array.from(bytes.slice(0));
+    },
+    Binary: (v) => {
+      const bytes = v._0;
+      return jsSys.Uint8Array.from(bytes.slice(0));
+    },
+    Json: (v) => {
+      const json = v._0;
+      return serdeWasmBindgen.toValue(json).unwrapOr(JsValue.NULL);
+    },
+  });
+}
+
 export function Value_tryFromJsValue(value: unknown): Result<Value, unknown> {
   if ((value === null) || (value === undefined)) {
     return Result.Err(value);

@@ -375,6 +375,9 @@ pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &Rust
                 name: c.name.clone(),
                 ty: None,
                 sig: None,
+                // Settled after the impl table is built, where `Copy` can be
+                // asked; a const that is not a fresh value is the common case.
+                fresh_at_each_use: false,
             },
             vis,
         );
@@ -387,6 +390,7 @@ pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &Rust
                 name: f.name.clone(),
                 ty: None,
                 sig: None,
+                fresh_at_each_use: false,
             },
             vis,
         );
@@ -703,8 +707,9 @@ fn thiserror_from_impls(
                     bindings: Vec::new(),
                 }),
                 // The derive writes `impl From<the field's type>`, so the
-                // field's type as written is what names the emitted static.
-                trait_args_written: vec![crate::name_map::map_type(&field.rust_ty)],
+                // field's type as Rust wrote it is what names the emitted
+                // static — the same spelling `trait_type_arg_paths` gives.
+                trait_args_written: vec![crate::types::rust_source_path(&field.rust_ty)],
                 assoc_types: HashMap::new(),
                 methods: HashMap::new(),
             }));
@@ -1100,3 +1105,45 @@ impl TypeRegistry {
         }
     }
 }
+
+/// Which module-level `const`s are a fresh value at each use, recorded so that
+/// every use of the name — in this module or another — writes the call.
+///
+/// Asked here rather than at emission because a path in one module names a
+/// const declared in another, and the answer has to be the same in both.
+pub fn mark_fresh_consts(
+    registry: &mut TypeRegistry,
+    files: &[ExtractedFile],
+    sink: &crate::diag::DiagSink,
+) {
+    let mut fresh: Vec<super::ValueId> = Vec::new();
+    for entry in files {
+        let Some(module) = registry.modules().lookup_file(&entry.path) else {
+            continue;
+        };
+        for c in &entry.file.consts {
+            let Some(written) = c.rust_ty.as_ref() else { continue };
+            let tc = crate::infer::TypeContext::new(&*registry, module, None, Vec::new(), sink);
+            let mark = tc.sink.mark();
+            let resolved = tc.resolve_written_type(written).ok();
+            let is_fresh = resolved.is_some_and(|ty| {
+                crate::ownership::fresh_at_each_use(&tc.probe(), &ty, c.is_static)
+            });
+            tc.sink.rewind(mark);
+            if !is_fresh {
+                continue;
+            }
+            if let Ok(Some(super::Def::Value(id))) =
+                registry.lookup(module, super::Ns::Value, &[c.name.clone()])
+            {
+                fresh.push(id);
+            }
+        }
+    }
+    for id in fresh {
+        if let Some(value) = registry.value_mut(id) {
+            value.fresh_at_each_use = true;
+        }
+    }
+}
+

@@ -140,8 +140,8 @@ fn a_move_closure_that_captures_a_droppable_becomes_an_owned_closure() {
             .messages()
             .iter()
             .any(|m| m.contains("this closure owns `a`")
-                && m.contains("cannot see this call site")),
-        "a call site the emitter did not rewrite is reported: {:?}",
+                && m.contains("cannot see THIS call site")),
+        "a call site the emitter cannot reach is reported: {:?}",
         fixture.messages()
     );
 }
@@ -990,7 +990,8 @@ fn a_compound_deref_assignment_releases_its_guard_too() {
         "impl Held { pub fn f(&self) { *self.cell.lock().unwrap() += 1; } }",
         "f",
     );
-    assert!(ts.contains("_t0.value += 1;"), "{}", ts);
+    // The guard's value is a `u32`, so the increment goes through R7's helper.
+    assert!(ts.contains("_t0.value = checkedAdd(_t0.value, 1, 'u32');"), "{}", ts);
     assert_eq!(ts.matches("_t0.drop();").count(), 1, "{}", ts);
 }
 
@@ -1231,11 +1232,17 @@ fn a_guard_the_runtimes_match_cannot_carry_is_reported() {
         "a guarded consuming match has no form here and says so: {:?}",
         said
     );
+    // R12: two arms naming one variant is a variant Rust tries in ORDER, which
+    // this form cannot, so the key is a hole rather than the first arm run for
+    // every value of the variant.
     assert!(
-        said.iter().any(|m| m.contains("a second arm names `One`")),
-        "and so does a second arm naming a variant already written: {:?}",
+        said.iter()
+            .any(|m| m.contains("`One` is named by more than one arm")),
+        "and so does a variant several arms name: {:?}",
         said
     );
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(ts.contains("One: () => unsupported("), "{}", ts);
 }
 
 #[test]

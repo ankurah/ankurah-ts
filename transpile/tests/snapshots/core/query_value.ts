@@ -17,15 +17,19 @@ export class QueryValue extends Enum<QueryValueV> {
     return new QueryValue('String', { _0: s });
   }
 
-  static fromBigint(i: bigint): QueryValue {
+  static fromI64(i: bigint): QueryValue {
     return new QueryValue('Int', { _0: i });
   }
 
-  static fromNumber(i: number): QueryValue {
+  static fromI32(i: number): QueryValue {
     return new QueryValue('Int', { _0: BigInt(i) });
   }
 
-  static fromBoolean(b: boolean): QueryValue {
+  static fromF64(f: number): QueryValue {
+    return new QueryValue('Float', { _0: f });
+  }
+
+  static fromBool(b: boolean): QueryValue {
     return new QueryValue('Bool', { _0: b });
   }
 

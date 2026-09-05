@@ -631,6 +631,14 @@ where the name is itself a `&mut` PARAMETER: Rust reborrows there and needs no
 `&mut` to say so, and handing `buffer.value` on would give the callee a copy —
 which is the defect this rule exists to remove.
 
+**Only a LOCAL can be held in a cell.** `&mut c.field`, a returned `&mut usize`,
+a `&'a mut String` in a struct: each of those is a place the port has no cell
+for, and passing the field's value hands the callee a copy whose writes reach
+nobody. The site says so and stops there (R12) rather than running an update
+that goes nowhere. A cell that could stand for an arbitrary place — a getter and
+a setter closed over the owner — would settle it, and nothing in the corpus has
+needed one yet.
+
 | Rust | TypeScript |
 |---|---|
 | `fn f(buffer: &mut String)` | `function f(buffer: BorrowMut<string>)` |
@@ -668,3 +676,47 @@ one. A hole is not an error anything catches, and nothing in the port handles
 |---|---|
 | a shape the engine reports and cannot write | `unsupported('a consuming match arm with a guard')` |
 | that hole reached at run time | `UnsupportedShape: the port has no translation for this: …` |
+
+## A parse answers a `Result`, and never throws past its caller
+
+`serde_json::from_str` answers `Result<T, serde_json::Error>`, and the port's
+`serde_json.parse` answers `Result<unknown, JsonError>` for the same reason: at
+seven live boundaries — storage-sqlite's engine, core's `system`, the property
+value reader — the caller reads the failure as a value it owns and releases.
+
+A reader that throws instead breaks that in two ways. The caller has no `catch`
+around a call it was told answers a `Result`, so the throw travels to whatever
+`await` is on the stack; and the `JsonError` the failure would have carried is
+never built, so the position and the message are lost. The port's reader
+therefore raises its own `Fault` for every refusal and `parse` turns each into
+an `Err` — including the ones the host's `JSON.parse` refuses by throwing, which
+are wrapped rather than let past:
+
+| document | serde_json | the port |
+|---|---|---|
+| `"a<U+0001>b"` | `Err(control character … while parsing a string)` | the same, as an `Err` |
+| `"\uZZZZ"` | `Err(invalid escape)` | `Err(invalid string)` |
+| `01`, `1.`, `.5`, `1e`, `1e+` | `Err` — none is a JSON number | `Err(invalid number)` |
+| `1e999` | `Err(number out of range)` | the same |
+
+`Number()` accepts all five of the malformed tokens (`Number('01')` is 1,
+`Number('.5')` is 0.5, `Number('1e999')` is `Infinity`), which is why reading a
+token with it accepted documents Rust refuses.
+
+## `entry` owns the key it was handed
+
+`map.entry(k)` is the one place Rust's map API takes the key BEFORE it knows
+whether it needs it, and every one of the three ways of finishing the entry —
+`or_insert(v)`, `or_insert_with(f)`, `or_default()` — consumes it. So the port's
+`MapEntry` releases what the map turned out not to need:
+
+| Rust | occupied | vacant |
+|---|---|---|
+| `entry(k).or_insert(v)` | `k` and `v` are both released | `k` and `v` go into the map |
+| `entry(k).or_insert_with(f)` | `k` and `f` are released; `f` is not called | `f` is invoked and its answer goes in |
+| `entry(k).or_default()` | the port spells it `orDefault(thunk)` — there is no `V: Default` to read | the same |
+
+What `or_insert` hands back is a `&mut V` INTO THE MAP, not a copy of the value:
+`*counts.entry(w).or_insert(0) += 1` has to count, and a plain `BorrowMut` holds
+a copy, so the increment landed on the copy and the map never changed. Writing
+through it releases what the map held, which is what Rust's `*slot = v` does.
