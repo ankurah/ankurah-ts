@@ -3,7 +3,7 @@
 // hands each value to the field it was written beside.
 
 import { expect, test } from 'bun:test';
-import { FLOOR, Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, arm, bump, collection, movedOrigin, radix, shifted, word } from './input.ts';
+import { FLOOR, Rec, SYSTEM_COLLECTION, TAG_NULL, TAG_STRING, WORDS, arm, bump, collection, movedOrigin, ordered, radix, shifted, word, wrapAround } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a const carries its value, not `undefined`', () => {
@@ -57,6 +57,22 @@ test('a const in a pattern is a comparison, not a binding', () => {
   expect(radix(36)).toBe(1);
   expect(radix(0)).toBe(2);
   expect(radix(7)).toBe(3);
+});
+
+// J: `const LATE = EARLY + 1;` written above `const EARLY = 1;` is
+// `ReferenceError: Cannot access 'EARLY' before initialization` at module load,
+// so the whole file failed to load. That this test runs at all is half the
+// point; the value is the other half.
+test('a const whose initialiser names a later one loads and answers', () => {
+  expect(ordered()).toBe(3);
+});
+
+// K: Rust's atomics WRAP at their width whatever the build's debug assertions
+// say. `+= 1` on a `number` went on counting, so the port answered 4294967296
+// where Rust answers 0.
+test('an atomic wraps at its width', () => {
+  expect(wrapAround()).toBe(4294967295);
+  expect(wrapAround()).toBe(0);
 });
 
 test('nothing leaked and nothing was reported', async () => {

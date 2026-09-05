@@ -669,6 +669,12 @@ fn render_result_arm(
     drop(_bindings);
     let flags = t.flag_sets_for(&arm.body);
     let inner = crate::ownership::hoisted(&format!("{}\n", body), &lifted);
+    // A borrowed `Result` is still its owner's: the payload is READ, not taken.
+    let reader = match (reader, matches!(scrutinee_ty, Some(crate::ty::Ty::Ref { .. }))) {
+        ("unwrap", true) => "okRef",
+        ("unwrapErr", true) => "errRef",
+        (owned, _) => owned,
+    };
     format!(
         "const {} = {}.{}();\n{}",
         name,

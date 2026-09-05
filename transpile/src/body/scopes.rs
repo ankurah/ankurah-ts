@@ -288,6 +288,34 @@ impl<'a> BodyTranslator<'a> {
         self.or_fallback(resolved, "the pattern's names are bound without types")
     }
 
+    /// Write `body` with the pattern lowering told what the value being taken
+    /// apart IS, for a site that writes the test after its binding scope has
+    /// closed.
+    ///
+    /// `enter_pattern` sets the same flag, and most sites write the test inside
+    /// the scope it opens; the `if let` lowering writes its branch first and its
+    /// test afterwards, so it says so here instead.
+    pub(crate) fn matching<R>(
+        &self,
+        scrutinee: Option<&crate::ty::Ty>,
+        body: impl FnOnce() -> R,
+    ) -> R {
+        let held = self
+            .borrowed_subject
+            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
+        let written = body();
+        self.borrowed_subject.set(held);
+        written
+    }
+
+    /// Is the value the pattern being written is matched against borrowed?
+    ///
+    /// `enter_pattern` sets it from the scrutinee's type and the scope it opens
+    /// restores it, so it answers for the pattern currently being written.
+    pub(crate) fn matches_a_reference(&self) -> bool {
+        self.borrowed_subject.get()
+    }
+
     /// Open a scope holding the names a pattern introduces, typed from the value
     /// being taken apart. The scope closes when the returned guard drops.
     ///
@@ -302,8 +330,11 @@ impl<'a> BodyTranslator<'a> {
         scrutinee: Option<&crate::ty::Ty>,
     ) -> PatternScope<'t, 'a> {
         self.push_block();
+        let borrowed_before = self
+            .borrowed_subject
+            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
         self.bind_pattern_here(pat, scrutinee);
-        PatternScope { translator: self }
+        PatternScope { translator: self, borrowed_before }
     }
 
     /// Write out what a native-type translation decided, reporting the calls it
@@ -422,10 +453,18 @@ impl<'a> BodyTranslator<'a> {
         self.bound_closure_helper(callee).is_some()
     }
 
-    /// Which helper a call on a bound closure goes through: `invoke` where the
-    /// bound is `FnOnce`, which Rust takes BY VALUE, and `invokeRef` where it is
-    /// `Fn` or `FnMut`, which Rust takes by reference and the caller may call
-    /// again.
+    /// Which helper a call on a bound closure goes through.
+    ///
+    /// `invoke` calls and then releases, which is right where the CALL is what
+    /// consumes the closure — an `FnOnce` bound, and only when the parameter is
+    /// written by value. `invokeRef` calls and leaves the closure whole, which
+    /// is right for an `Fn` or `FnMut` bound (the call borrows, and the body may
+    /// call again) and for anything written `&F` or `&mut F`, where the closure
+    /// is somebody else's.
+    ///
+    /// A by-value `Fn`/`FnMut` parameter is still the body's to release — Rust
+    /// drops it at the end — and that release is the parameter's, not the
+    /// call's: `claim_params` writes it.
     pub(crate) fn bound_closure_helper(&self, callee: &syn::Expr) -> Option<&'static str> {
         let syn::Expr::Path(path) = callee else { return None };
         if path.path.segments.len() != 1 {
@@ -444,11 +483,15 @@ impl<'a> BodyTranslator<'a> {
         }
         let tc = tc.borrow();
         crate::infer::expected::fn_shape(tc.registry, &ty, &tc.param_bounds)?;
-        let once = crate::infer::expected::takes_the_closure_by_value(
-            tc.registry,
-            &ty,
-            &tc.param_bounds,
-        );
+        // A parameter written `&F` or `&mut F` is the caller's whatever it is
+        // bounded by, so no call on it may release it.
+        let borrowed = matches!(ty, crate::ty::Ty::Ref { .. });
+        let once = !borrowed
+            && crate::infer::expected::consumed_by_the_call(
+                tc.registry,
+                &ty,
+                &tc.param_bounds,
+            );
         Some(if once { "invoke" } else { "invokeRef" })
     }
 
@@ -464,6 +507,30 @@ impl<'a> BodyTranslator<'a> {
     pub(crate) fn discards(&self, call: &syn::ExprMethodCall) -> bool {
         let at = syn::spanned::Spanned::span(&call.method).start();
         self.discarded_call.get() == Some((at.line, at.column))
+    }
+
+    /// Is this call the one a `*` is about to write through?
+    ///
+    /// `*map.entry(k).or_insert(0) += 1` stores into the map, and the deref arm
+    /// wants the write-through `Slot` the finisher hands back. Every other use
+    /// of the same finisher reads the VALUE the slot holds.
+    pub(crate) fn is_written_through(&self, call: &syn::ExprMethodCall) -> bool {
+        let at = syn::spanned::Spanned::span(&call.method).start();
+        self.written_through.get() == Some((at.line, at.column))
+    }
+
+    /// Write `body` with `expr` marked as the place a `*` reaches through.
+    pub(crate) fn through_place<R>(&self, expr: &syn::Expr, body: impl FnOnce() -> R) -> R {
+        let marked = match expr {
+            syn::Expr::MethodCall(call) => {
+                let at = syn::spanned::Spanned::span(&call.method).start();
+                self.written_through.replace(Some((at.line, at.column)))
+            }
+            _ => self.written_through.replace(None),
+        };
+        let out = body();
+        self.written_through.set(marked);
+        out
     }
 
     /// Note every local this block binds to a closure that hands a capture

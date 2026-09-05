@@ -237,6 +237,11 @@ fn collect_jumps(expr: &syn::Expr, enclosing: &mut Vec<Option<String>>, out: &mu
                     None => "break".to_string(),
                 });
             }
+            // `break 'a f(break 'b)` is legal Rust, and the payload's own jump
+            // leaves before this one does.
+            if let Some(value) = &brk.expr {
+                collect_jumps(value, enclosing, out);
+            }
         }
         syn::Expr::Continue(cont) => {
             if !caught_here(enclosing, &cont.label) {
@@ -253,12 +258,20 @@ fn collect_jumps(expr: &syn::Expr, enclosing: &mut Vec<Option<String>>, out: &mu
         syn::Expr::Loop(l) => within(l.label.as_ref(), enclosing, |e| {
             l.body.stmts.iter().for_each(|s| collect_jumps_stmt(s, e, out))
         }),
+        // A `while` evaluates its condition on every turn, INSIDE the loop, so
+        // a jump written there names this loop like one in the body.
         syn::Expr::While(w) => within(w.label.as_ref(), enclosing, |e| {
+            collect_jumps(&w.cond, e, out);
             w.body.stmts.iter().for_each(|s| collect_jumps_stmt(s, e, out))
         }),
-        syn::Expr::ForLoop(f) => within(f.label.as_ref(), enclosing, |e| {
-            f.body.stmts.iter().for_each(|s| collect_jumps_stmt(s, e, out))
-        }),
+        // A `for` evaluates its sequence ONCE, before the loop, so a jump
+        // written there names an enclosing loop and not this one.
+        syn::Expr::ForLoop(f) => {
+            collect_jumps(&f.expr, enclosing, out);
+            within(f.label.as_ref(), enclosing, |e| {
+                f.body.stmts.iter().for_each(|s| collect_jumps_stmt(s, e, out))
+            })
+        }
         // A closure carries its own control flow, and Rust does not let a jump
         // cross into one.
         syn::Expr::Closure(_) | syn::Expr::Async(_) => {}
@@ -273,6 +286,7 @@ fn collect_jumps(expr: &syn::Expr, enclosing: &mut Vec<Option<String>>, out: &mu
             .iter()
             .for_each(|s| collect_jumps_stmt(s, enclosing, out)),
         syn::Expr::If(if_expr) => {
+            collect_jumps(&if_expr.cond, enclosing, out);
             if_expr
                 .then_branch
                 .stmts
@@ -282,11 +296,44 @@ fn collect_jumps(expr: &syn::Expr, enclosing: &mut Vec<Option<String>>, out: &mu
                 collect_jumps(other, enclosing, out);
             }
         }
-        syn::Expr::Match(m) => m
-            .arms
-            .iter()
-            .for_each(|arm| collect_jumps(&arm.body, enclosing, out)),
-        _ => {}
+        syn::Expr::Match(m) => {
+            collect_jumps(&m.expr, enclosing, out);
+            for arm in &m.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    collect_jumps(guard, enclosing, out);
+                }
+                collect_jumps(&arm.body, enclosing, out);
+            }
+        }
+        // Everything else: a jump may be written below ANY expression — a call
+        // argument, a method argument, a binary operand, a tuple element, an
+        // index, an `await`, a `?`. The catch-all used to stop here, so the
+        // reader analysis never saw those and emission wrote a bare `break`
+        // inside an arrow, which a JavaScript engine refuses to parse. `syn`'s
+        // own walk visits every child expression, and each of them comes back
+        // through this same dispatch.
+        other => {
+            let mut walk = Children { enclosing, out };
+            syn::visit::visit_expr(&mut walk, other);
+        }
+    }
+}
+
+/// `syn`'s default walk, routed back through `collect_jumps` at every child.
+///
+/// For: enumerating the expression kinds that may hold a jump is a list nobody
+/// can keep complete, and the one it was written as missed every ordinary
+/// expression. This asks `syn` for the children instead, and the kinds that
+/// need their own treatment — the loops, the closures, the blocks — are the
+/// ones `collect_jumps` still names.
+struct Children<'a> {
+    enclosing: &'a mut Vec<Option<String>>,
+    out: &'a mut Vec<String>,
+}
+
+impl syn::visit::Visit<'_> for Children<'_> {
+    fn visit_expr(&mut self, expr: &syn::Expr) {
+        collect_jumps(expr, self.enclosing, self.out);
     }
 }
 

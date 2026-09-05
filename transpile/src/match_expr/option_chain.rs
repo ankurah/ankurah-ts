@@ -77,7 +77,12 @@ pub fn translate(
             wrote_every_arm = false;
             continue;
         }
-        let (test, bind) = t.pattern_test(&subject, &arm.pat);
+        // The test is written before the binding scope is opened, so the
+        // borrowed-ness of the value being taken apart is said here: a borrowed
+        // `Option<Result<..>>` reads the inner payload rather than unwrapping
+        // it, which would mark the `Result` moved.
+        let (test, bind) =
+            t.matching(scrutinee_ty.as_ref(), || t.pattern_test(&subject, &arm.pat));
         let _entered = t.enter_pattern(&arm.pat, scrutinee_ty.as_ref());
         let owned = payload_owned(&arm.pat, arm, takes, t);
         // The binding stands OUTSIDE the `try`, because the `finally` that

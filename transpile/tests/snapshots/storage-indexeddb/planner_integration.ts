@@ -25,7 +25,7 @@ function nextUpperBound(value: Value): [Value, boolean] | null {
     },
     I64: (_v) => {
       const v = _v._0;
-      return [new Value('I64', { _0: v.saturatingAdd(1n) }), true] as any;
+      return [new Value('I64', { _0: saturatingAdd(v, 1n, 'i64') }), true] as any;
     },
     F64: (_v) => {
       const v = _v._0;
@@ -153,7 +153,7 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
     return [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues];
   }
   let _moved2 = false;
-  const canonicalRange = new CanonicalRange(lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen], upperTuple.length === 0 ? null : [upperTuple, upperOpen]);
+  const canonicalRange = new CanonicalRange((lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen]), (upperTuple.length === 0 ? null : [upperTuple, upperOpen]));
   try {
     _moved2 = true;
     return [canonicalRange, eqPrefixLen, eqPrefixValues];
@@ -217,7 +217,7 @@ function idbKeyTuple(parts: Value[]): Result<JsValue, Error> {
 
 export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirection): Result<[IdbKeyRange, boolean, number, Value[]], Error> {
   const [canonicalRange, eqPrefixLen, eqPrefixValues] = normalize(bounds);
-  const adjustedRange = scanDirection.equals(new ScanDirection('Reverse', {})) && (canonicalRange.upper == null) && eqPrefixLen > 0 && (canonicalRange.lower != null) ? (() => {
+  const adjustedRange = (scanDirection.equals(new ScanDirection('Reverse', {})) && (canonicalRange.upper == null) && eqPrefixLen > 0 && (canonicalRange.lower != null) ? (() => {
     {
       const _v2 = eqPrefixValues.at(-1);
       if (_v2 != null) {
@@ -251,7 +251,7 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
       return canonicalRange;
     }
     }
-  })() : canonicalRange;
+  })() : canonicalRange);
   try {
     const _r2 = toIdbKeyrange(adjustedRange);
     if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
@@ -338,7 +338,7 @@ function valuesToJsArray(values: Value[]): Result<string, Error> {
       },
       Bool: (v) => {
         const b = v._0;
-        result.pushStr(b ? '1' : '0');
+        result.pushStr((b ? '1' : '0'));
       },
       EntityId: (v) => {
         const entityId = v._0;

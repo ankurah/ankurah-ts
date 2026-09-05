@@ -19,6 +19,9 @@ mod set; // HashSet<T>/BTreeSet<T> → Set<T>
 mod string; // String/&str → string // Arc<T>/Weak<T> — reference-counted pointer
 
 #[cfg(test)]
+#[path = "tests_entry.rs"]
+mod tests_entry;
+#[cfg(test)]
 #[path = "tests_ordering.rs"]
 mod tests_ordering;
 
@@ -60,24 +63,49 @@ pub fn translate_method(
     rust_method: &str,
     args: &[String],
 ) -> MethodTranslation {
-    translate_method_using(reg, receiver_ty, receiver, rust_method, args, true, &nullable::Once::unasked())
+    translate_method_using(
+        reg,
+        receiver_ty,
+        receiver,
+        rust_method,
+        args,
+        used_and_read(),
+        &nullable::Once::unasked(),
+    )
 }
 
-/// The same, told whether the call's answer is used.
+/// What the position a call stands in says about its answer.
 ///
-/// `HashMap::insert` answers the value it displaced and hands ownership of it
-/// to the caller; a statement that discards the answer leaves the container to
-/// release it. The two are different runtime methods, so the question has to
-/// reach here.
+/// Two questions, both the caller's rather than the call's. `HashMap::insert`
+/// answers the value it displaced and hands ownership of it to the caller; a
+/// statement that discards the answer leaves the container to release it, and
+/// the two are different runtime methods. And `map.entry(k).or_insert(0)` is a
+/// write-through `Slot`, which a `*` stores into and every other position reads
+/// the value out of.
+#[derive(Clone, Copy)]
+pub struct Position {
+    /// Is the call's answer used at all?
+    pub used: bool,
+    /// Is the answer read as a VALUE, rather than written through by a `*`?
+    pub reads_as_value: bool,
+}
+
+/// The position a caller with nothing to say about it stands in.
+pub fn used_and_read() -> Position {
+    Position { used: true, reads_as_value: true }
+}
+
+/// The same, told what the position the call stands in wants of its answer.
 pub fn translate_method_using(
     reg: &TypeRegistry,
     receiver_ty: &Ty,
     receiver: &str,
     rust_method: &str,
     args: &[String],
-    used: bool,
+    at: Position,
     once: &nullable::Once<'_>,
 ) -> MethodTranslation {
+    let used = at.used;
     // Check type-erased conversions first (apply to any type)
     if let Some(result) = conversion::translate(receiver, rust_method, args) {
         return MethodTranslation::Expr(result);
@@ -113,7 +141,9 @@ pub fn translate_method_using(
     // A `map.entry(k)` is not a shape the table below knows: it is the std
     // surface's own `Entry`, and the three ways Rust finishes one are methods
     // the runtime's `MapEntry` spells differently.
-    if let Some(translated) = map::translate_entry(reg, receiver_ty, receiver, rust_method, args) {
+    if let Some(translated) =
+        map::translate_entry(reg, receiver_ty, receiver, rust_method, args, at.reads_as_value)
+    {
         return translated;
     }
 
@@ -134,7 +164,7 @@ pub fn translate_method_using(
         JsShape::Rc(name) => match arc::translate(&name, receiver, rust_method, args) {
             MethodTranslation::Passthrough => match inner_of(reg, receiver_ty) {
                 Some((inner, accessor)) => {
-                    translate_method_using(reg, &inner, &format!("{}{}", receiver, accessor), rust_method, args, used, once)
+                    translate_method_using(reg, &inner, &format!("{}{}", receiver, accessor), rust_method, args, at, once)
                 }
                 None => MethodTranslation::Passthrough,
             },
@@ -144,20 +174,52 @@ pub fn translate_method_using(
         // `serde_json::Value` and `JsValue`: the value JavaScript already holds.
         JsShape::Unknown => js_value::translate(reg, receiver_ty, receiver, rust_method, args),
         // An `AtomicBool` is a boolean here, and `load`/`store`/`swap` on one are
-        // the same rewrites the numeric atomics take.
-        JsShape::Number | JsShape::Boolean => {
+        // the same rewrites the numeric atomics take. A `bigint` takes the same
+        // arm: `u64::wrapping_add` is the same free helper `u32::wrapping_add`
+        // is, told a different width — written as a METHOD it was a `TypeError`
+        // on every 64-bit receiver.
+        JsShape::Number | JsShape::Boolean | JsShape::BigInt => {
             // The WIDTH is what the arithmetic helpers need, and only the
             // resolved type carries it: `u8` and `usize` are both `number`.
             let width = match receiver_ty.peel_refs() {
                 Ty::Prim(prim) => Some(*prim),
-                _ => None,
+                // An ATOMIC is the value it holds, and it holds a width:
+                // `AtomicU32::fetch_add` wraps at 2^32 whatever the build's
+                // debug assertions say, and the port went on counting in a
+                // double.
+                other => atomic_width(reg, other),
             };
             number::translate(receiver, rust_method, args, width)
         }
         // `Box<T>` and `&T` are the value they hold.
-        JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, used, once),
+        JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, at, once),
         _ => MethodTranslation::Passthrough,
     }
+}
+
+
+/// The integer width an atomic holds, where the receiver is one.
+///
+/// An atomic IS the value it holds here, and `fetch_add` is a read-modify-write
+/// of the place — but Rust's atomics WRAP at their width, whatever the build's
+/// debug assertions say, and a `+=` on a `number` goes on counting.
+/// `AtomicU64` is deliberately absent: the port writes it as a `number` (its
+/// entry in `system_shapes` is `Form::Number`) where Rust holds a `u64`, so a
+/// `u64` width here would put a `bigint` operand beside a `number` place —
+/// which JavaScript refuses to mix. That disagreement is a type-mapping gap,
+/// not a wrapping one, and `number::translate` reports the operation rather
+/// than writing either wrong answer.
+fn atomic_width(reg: &TypeRegistry, ty: &Ty) -> Option<crate::ty::Prim> {
+    let Ty::Named { id, .. } = ty else { return None };
+    for (path, prim) in [
+        ("std::sync::atomic::AtomicUsize", crate::ty::Prim::Usize),
+        ("std::sync::atomic::AtomicU32", crate::ty::Prim::U32),
+    ] {
+        if reg.system_type(path) == Some(*id) {
+            return Some(prim);
+        }
+    }
+    None
 }
 
 /// What a wrapper holds, and how the emitted code reaches it.

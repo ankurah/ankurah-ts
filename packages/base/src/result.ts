@@ -62,6 +62,23 @@ function callOwning<A, R>(f: Invocable<[A], R>, payload: A): R {
   }
 }
 
+/**
+ * The closure a variant did not call, released.
+ *
+ * Rust's `map`, `map_err`, `and_then`, `or_else` and `unwrap_or_else` take `f`
+ * BY VALUE, so `f` is dropped at the end of the call whichever variant the
+ * Result turned out to be — `Ok(7).unwrap_or_else(f)` never calls `f` and still
+ * drops it. The branch that does not call it is the only place left to do that
+ * here, so it says so out loud.
+ *
+ * A plain function reaches none of `dropOwned`'s branches and is left alone; an
+ * `OwnedClosure` has a `drop()` for it to find, and dropping one releases the
+ * captures the call would have consumed.
+ */
+function unused<A, R>(f: Invocable<[A], R>): void {
+  dropOwned(f);
+}
+
 export class Result<T, E> extends Enum<ResultV<T, E>> {
   static Ok<T, E = never>(value: T): Result<T, E> {
     return new Result<T, E>('Ok', { _0: value });
@@ -79,6 +96,32 @@ export class Result<T, E> extends Enum<ResultV<T, E>> {
 
   isErr(): boolean {
     return this.type === 'Err';
+  }
+
+  /**
+   * `&self` reads of the payload, for a match written against a REFERENCE.
+   *
+   * Rust's `match &result { Ok(v) => … }` binds `v: &T` and leaves the `Result`
+   * whole; `unwrap()` is the `self` form and takes the wrapper apart. The port
+   * read a borrowed match with `unwrap()`, which marks the `Result` moved — so
+   * the second read of the same value was `Result was used after being moved`.
+   *
+   * Each of these checks the variant, because reading the payload of the other
+   * one hands back a value of the wrong type and the mistake surfaces far from
+   * here.
+   */
+  okRef(): T {
+    if (this.type !== 'Ok') {
+      throw new Error(`called okRef() on Err: ${describe((this.value as { _0: unknown })._0)}`);
+    }
+    return (this.value as { _0: T })._0;
+  }
+
+  errRef(): E {
+    if (this.type !== 'Err') {
+      throw new Error(`called errRef() on Ok: ${describe((this.value as { _0: unknown })._0)}`);
+    }
+    return (this.value as { _0: E })._0;
   }
 
   // ── self in Rust: these consume the Result. Each takes the payload out and
@@ -137,31 +180,46 @@ export class Result<T, E> extends Enum<ResultV<T, E>> {
 
   unwrapOrElse(f: Invocable<[E], T>): T {
     const { ok, payload } = this.#consume();
-    if (ok) return payload as T;
+    if (ok) {
+      unused(f);
+      return payload as T;
+    }
     return callOwning(f, payload as E); // the error moves into f
   }
 
   map<U>(f: Invocable<[T], U>): Result<U, E> {
     const { ok, payload } = this.#consume();
-    if (!ok) return Result.Err(payload as E); // the error moves into the new Result
+    if (!ok) {
+      unused(f);
+      return Result.Err(payload as E); // the error moves into the new Result
+    }
     return Result.Ok(callOwning(f, payload as T));
   }
 
   mapErr<F>(f: Invocable<[E], F>): Result<T, F> {
     const { ok, payload } = this.#consume();
-    if (ok) return Result.Ok(payload as T); // the value moves into the new Result
+    if (ok) {
+      unused(f);
+      return Result.Ok(payload as T); // the value moves into the new Result
+    }
     return Result.Err(callOwning(f, payload as E));
   }
 
   andThen<U>(f: Invocable<[T], Result<U, E>>): Result<U, E> {
     const { ok, payload } = this.#consume();
-    if (!ok) return Result.Err(payload as E);
+    if (!ok) {
+      unused(f);
+      return Result.Err(payload as E);
+    }
     return callOwning(f, payload as T);
   }
 
   orElse<F>(f: Invocable<[E], Result<T, F>>): Result<T, F> {
     const { ok, payload } = this.#consume();
-    if (ok) return Result.Ok(payload as T);
+    if (ok) {
+      unused(f);
+      return Result.Ok(payload as T);
+    }
     return callOwning(f, payload as E);
   }
 

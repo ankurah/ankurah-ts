@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
-import { Struct, Result, Arc, dropOwned, tracing, checkedAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, tracing, checkedAdd, wrappingAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
 import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { Attested, EntityState, EventId, State, CollectionId, EntityId, Event } from '@ankurah/proto';
 import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig } from '@ankurah/storage-common';
@@ -31,7 +31,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
 
   async executePlanQuery(index: IdbIndex, keyRange: IdbKeyRange | null, predicate: Predicate, cursorDirection: IdbCursorDirection, limit: bigint | null, collectionId: CollectionId, upperOpenEnded: boolean, eqPrefixLen: number, eqPrefixValues: Value[], orderBySpill: OrderByComponents): Promise<Result<Attested<EntityState>[], RetrievalError>> {
     const needsSpillSort = !(orderBySpill.spill.length === 0);
-    const effectivePrefixLen = upperOpenEnded && eqPrefixLen > 0 && !this.prefixGuardDisabled.value ? eqPrefixLen : 0;
+    const effectivePrefixLen = (upperOpenEnded && eqPrefixLen > 0 && !this.prefixGuardDisabled.value ? eqPrefixLen : 0);
     const scanner = IdbIndexScanner.new(index.clone(), keyRange, cursorDirection, effectivePrefixLen, eqPrefixValues);
     try {
       let stream = undefined /* pin!(scanner . scan ()) */;
@@ -126,7 +126,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
 
   async setState(state: Attested<EntityState>): Promise<Result<boolean, MutationError>> {
     try {
-      (() => { const _v = this.invocationCount; this.invocationCount += 1; return _v; })();
+      (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
       const _lock = await this.mutex.lock();
       try {
         const dbConnection = await this.db.getConnection();
@@ -264,7 +264,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
   }
 
   async fetchStates(selection: Selection): Promise<Result<Attested<EntityState>[], RetrievalError>> {
-    const _invocation = (() => { const _v = this.invocationCount; this.invocationCount += 1; return _v; })();
+    const _invocation = (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
     const _lock = await this.mutex.lock();
     try {
       const amendedSelection = addCollection(selection, this.collectionId);
@@ -346,7 +346,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
   }
 
   async addEvent(attestedEvent: Attested<Event>): Promise<Result<boolean, MutationError>> {
-    const invocation = (() => { const _v = this.invocationCount; this.invocationCount += 1; return _v; })();
+    const invocation = (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
     tracing.debug(`IndexedDBBucket(${this.collectionId}).add_event(${invocation})`);
     const _lock = await this.mutex.lock();
     try {

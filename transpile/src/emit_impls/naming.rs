@@ -57,6 +57,10 @@ struct Candidate {
     plain: bool,
     leaf: String,
     identity: Identity,
+    /// The source as the engine resolved it, where it could. Read only to ask
+    /// whether the source owns anything, which is what decides whether a
+    /// reference is observable.
+    resolved: Option<Ty>,
 }
 
 /// Every conversion static the impl table implies, named.
@@ -79,6 +83,7 @@ pub fn resolve_conversion_names(reg: &TypeRegistry) -> ConversionNames {
     for ((self_id, unqualified_name), members) in groups {
         let identities: std::collections::HashSet<&Identity> =
             members.iter().map(|c| &c.identity).collect();
+        report_reference_merges(reg, self_id, &members);
         for candidate in &members {
             // One identity means one method, whatever the source paths say:
             // `From<&str>` and `From<String>` are the same `from(v: string)`,
@@ -118,6 +123,66 @@ pub fn resolve_conversion_names(reg: &TypeRegistry) -> ConversionNames {
         }
     }
     out
+}
+
+
+/// Two impls that differ only by a `&` on a source the port gives no class to
+/// are ONE emitted method, and the site says so.
+///
+/// The `by_ref` bit marks a reference only where the source has an emitted
+/// class, because that is where the difference is observable — `From<Literal>`
+/// consumes what it is handed and `From<&Literal>` does not. A slice, an array
+/// and a container have no class of their own, so `From<[T; N]>` and
+/// `From<&[T; N]>` are one identity here, one emitted method, and one of the two
+/// BODIES is lost: Rust's borrowed impl clones each element where the owned one
+/// moves it. The engine cannot tell whether an open `T` owns anything, so it
+/// cannot decide the pair either; what it can do is stop losing the body in
+/// silence.
+fn report_reference_merges(reg: &TypeRegistry, self_id: TypeId, members: &[&Candidate]) {
+    let probe = crate::registry::Probe::new(reg, reg.crate_root());
+    for (at, one) in members.iter().enumerate() {
+        for other in members.iter().skip(at + 1) {
+            if one.identity != other.identity {
+                continue;
+            }
+            let (owned, borrowed) = match (one.written.starts_with('&'), other.written.starts_with('&')) {
+                (false, true) => (one, other),
+                (true, false) => (other, one),
+                _ => continue,
+            };
+            if owned.written != borrowed.written.trim_start_matches('&') {
+                continue;
+            }
+            // Only where the source could own something. A `String` is a
+            // `string` here and the port has nothing to release, so
+            // `From<String>` and `From<&String>` really are one conversion —
+            // §4.7's rule, and reporting it would be noise. A value the runtime
+            // owns, or one the engine cannot name, is the case where the two
+            // bodies differ.
+            let owns = match &owned.resolved {
+                Some(ty) => !matches!(
+                    crate::ownership::drops_of(&probe, ty.peel_refs()),
+                    crate::ownership::Drops::Nothing
+                ),
+                None => false,
+            };
+            if !owns {
+                continue;
+            }
+            crate::diag::pending::park_at(
+                0,
+                0,
+                format!(
+                    "`{}` converts from `{}` and from `{}`, and the port gives that source \
+no class of its own — so the two are one emitted method and one of the two bodies is \
+lost; Rust's borrowed impl clones what the owned one moves",
+                    reg.describe(&Ty::Named { id: self_id, args: Vec::new() }),
+                    owned.written,
+                    borrowed.written
+                ),
+            );
+        }
+    }
 }
 
 /// Every `From` / `TryFrom` impl in the table, with what names it.
@@ -168,12 +233,14 @@ fn candidates(reg: &TypeRegistry) -> Vec<Candidate> {
                 source: same_type(written.trim_start_matches('&')),
                 by_ref,
             },
+            resolved: implemented.args.first().cloned(),
             leaf: source_leaf,
             written,
         });
     }
     out
 }
+
 
 /// The name this impl takes when nothing contests it.
 ///
@@ -285,4 +352,85 @@ pub fn conversion_name_of_impl(reg: &TypeRegistry, id: ImplId) -> Option<String>
     let self_id = def.self_ty.peel_refs().id()?;
     let written = def.trait_args_written.first()?;
     conversion_name(self_id, written)
+}
+
+#[cfg(test)]
+mod source_tests {
+    use crate::testing::Fixture;
+
+    /// R8's identity is the RUST source, and it reaches all the way down. Two
+    /// conversions whose sources differ only inside their arguments —
+    /// `From<Vec<u32>>` and `From<Vec<i32>>` — both spell `number[]` in
+    /// TypeScript, so they were one identity: one emitted static, one body, and
+    /// the other lost with no diagnostic at all.
+    #[test]
+    fn two_generic_sources_are_two_conversions() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct T(pub String);\n\
+             impl From<Vec<u32>> for T { fn from(v: Vec<u32>) -> Self { T(String::new()) } }\n\
+             impl From<Vec<i32>> for T { fn from(v: Vec<i32>) -> Self { T(String::new()) } }\n\
+             impl From<&[u32]> for T { fn from(v: &[u32]) -> Self { T(String::new()) } }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("static fromVecU32("), "{ts}");
+        assert!(ts.contains("static fromVecI32("), "{ts}");
+        assert!(ts.contains("static fromU32("), "{ts}");
+    }
+
+    /// `From<&str>` and `From<String>` are still ONE conversion: `str` is
+    /// `String`'s borrowed form, the port writes both as `string`, and there is
+    /// nothing a caller could tell apart (fixpass3's §4.7).
+    #[test]
+    fn the_borrowed_form_of_a_string_is_still_one_conversion() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct T(pub String);\n\
+             impl From<String> for T { fn from(v: String) -> Self { T(v) } }\n\
+             impl From<&str> for T { fn from(v: &str) -> Self { T(v.to_string()) } }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert_eq!(ts.matches("static from").count(), 1, "{ts}");
+    }
+
+    /// A reference marks the name only where the source has a class of its own,
+    /// so `From<[T; N]>` and `From<&[T; N]>` are one emitted method and one of
+    /// the two BODIES is lost — Rust's borrowed impl clones what the owned one
+    /// moves. The engine cannot decide the pair; it can stop losing the body in
+    /// silence.
+    #[test]
+    fn a_reference_merge_the_engine_cannot_decide_is_reported() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Held { pub n: u32 }\n\
+             pub struct T(pub String);\n\
+             impl From<Vec<Held>> for T { fn from(v: Vec<Held>) -> Self { T(String::new()) } }\n\
+             impl From<&Vec<Held>> for T { fn from(v: &Vec<Held>) -> Self { T(String::new()) } }",
+        )]);
+        let _ = f.emitted("lib.rs");
+        assert!(
+            f.messages().iter().any(|m| m.contains("one of the two bodies is lost")),
+            "{:?}",
+            f.messages()
+        );
+    }
+
+    /// And a source the port has nothing to release is NOT reported: a `String`
+    /// is a `string` here, so `From<String>` and `From<&String>` really are one
+    /// conversion.
+    #[test]
+    fn a_reference_merge_over_a_value_that_owns_nothing_is_not_reported() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct T(pub String);\n\
+             impl From<Vec<u32>> for T { fn from(v: Vec<u32>) -> Self { T(String::new()) } }\n\
+             impl From<&Vec<u32>> for T { fn from(v: &Vec<u32>) -> Self { T(String::new()) } }",
+        )]);
+        let _ = f.emitted("lib.rs");
+        assert!(
+            !f.messages().iter().any(|m| m.contains("one of the two bodies is lost")),
+            "{:?}",
+            f.messages()
+        );
+    }
 }

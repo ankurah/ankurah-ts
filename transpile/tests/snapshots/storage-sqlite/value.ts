@@ -94,7 +94,7 @@ export class SqliteValue extends Enum<SqliteValueV> {
         },
         Bool: (v) => {
           const b = v._0;
-          return new SqliteValue('Integer', { _0: b ? 1 : 0 });
+          return new SqliteValue('Integer', { _0: (b ? 1 : 0) });
         },
         EntityId: (v) => {
           const id = v._0;

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/struct_bincode/src/input.rs
-import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
@@ -122,6 +122,87 @@ export class Signature extends Struct {
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
       return Result.Ok(new Signature(_0));
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
+}
+
+export class Sizes extends Struct {
+  readonly one: number;
+  readonly many: number[];
+  readonly nested: number[][];
+  readonly signed: number[];
+  readonly narrow: number[];
+
+  constructor(one: number, many: number[], nested: number[][], signed: number[], narrow: number[]) {
+    super();
+    this.one = one;
+    this.many = many;
+    this.nested = nested;
+    this.signed = signed;
+    this.narrow = narrow;
+  }
+
+  encode(writer: BincodeWriter): void {
+    writer.writeU64(BigInt(this.one));
+    writer.writeVec(this.many, (w, item) => w.writeU64(BigInt(item)));
+    writer.writeVec(this.nested, (w, item) => w.writeVec(item, (w, item) => w.writeU64(BigInt(item))));
+    writer.writeVec(this.signed, (w, item) => w.writeI64(BigInt(item)));
+    writer.writeVec(this.narrow, (w, item) => w.writeU32(item));
+  }
+
+  static decode(reader: BincodeReader): Sizes {
+    const one = Number(reader.readU64());
+    const many = reader.readVec((r) => Number(r.readU64()));
+    const nested = reader.readVec((r) => r.readVec((r) => Number(r.readU64())));
+    const signed = reader.readVec((r) => Number(r.readI64()));
+    const narrow = reader.readVec((r) => r.readU32());
+    return new Sizes(one, many, nested, signed, narrow);
+  }
+
+  toJSON(): unknown {
+    return { 'one': this.one, 'many': this.many, 'nested': this.nested, 'signed': this.signed, 'narrow': this.narrow };
+  }
+
+  static fromJson(value: unknown): Result<Sizes, JsonError> {
+    try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `Sizes`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('one' in _o)) {
+        return Result.Err(JsonError.custom('missing field `one`'));
+      }
+      const _rone = ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a usize'))))(_o['one']);
+      if (_rone.isErr()) return Result.Err(_rone.unwrapErr());
+      const one = _rone.unwrap();
+      if (!('many' in _o)) {
+        return Result.Err(JsonError.custom('missing field `many`'));
+      }
+      const _rmany = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a usize'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['many']);
+      if (_rmany.isErr()) return Result.Err(_rmany.unwrapErr());
+      const many = _rmany.unwrap();
+      if (!('nested' in _o)) {
+        return Result.Err(JsonError.custom('missing field `nested`'));
+      }
+      const _rnested = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (Array.isArray(v) ? jsonAll(v.map((v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a usize'))))) : Result.Err(JsonError.custom('expected an array'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['nested']);
+      if (_rnested.isErr()) return Result.Err(_rnested.unwrapErr());
+      const nested = _rnested.unwrap();
+      if (!('signed' in _o)) {
+        return Result.Err(JsonError.custom('missing field `signed`'));
+      }
+      const _rsigned = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (typeof v === 'number' && Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected an isize'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['signed']);
+      if (_rsigned.isErr()) return Result.Err(_rsigned.unwrapErr());
+      const signed = _rsigned.unwrap();
+      if (!('narrow' in _o)) {
+        return Result.Err(JsonError.custom('missing field `narrow`'));
+      }
+      const _rnarrow = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4294967295 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u32'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['narrow']);
+      if (_rnarrow.isErr()) return Result.Err(_rnarrow.unwrapErr());
+      const narrow = _rnarrow.unwrap();
+      return Result.Ok(new Sizes(one, many, nested, signed, narrow));
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));

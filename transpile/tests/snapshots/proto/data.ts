@@ -34,7 +34,7 @@ export class Event extends Struct {
   toString(): string {
     const _t0 = this.id();
     try {
-      return `Event(${_t0.toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${this.isEntityCreate() ? '(create) ' : ''}${this.parent.toBase64Short()} ${[...this.operations.deref()].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
+      return `Event(${_t0.toBase64Short()} ${this.collection}/${this.entityId.toBase64Short()} ${(this.isEntityCreate() ? '(create) ' : '')}${this.parent.toBase64Short()} ${[...this.operations.deref()].map(([backend, ops]) => `${backend} => ${[...ops].map((op) => op.diff.length).reduce((a, b) => a + b, 0)}b`).join(' ')})`;
     } finally {
       _t0.drop();
     }
@@ -68,6 +68,8 @@ export class Event extends Struct {
   }
 
   static fromJson(value: unknown): Result<Event, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `Event`'));
@@ -79,28 +81,36 @@ export class Event extends Struct {
       const _rcollection = ((v: unknown) => CollectionId.fromJson(v))(_o['collection']);
       if (_rcollection.isErr()) return Result.Err(_rcollection.unwrapErr());
       const collection = _rcollection.unwrap();
+      $built.push(collection);
       if (!('entity_id' in _o)) {
-        return ((e: JsonError) => { dropOwned([collection]); return Result.Err(e); })(JsonError.custom('missing field `entity_id`'));
+        return Result.Err(JsonError.custom('missing field `entity_id`'));
       }
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
-      if (_rentityId.isErr()) return ((e: JsonError) => { dropOwned([collection]); return Result.Err(e); })(_rentityId.unwrapErr());
+      if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('operations' in _o)) {
-        return ((e: JsonError) => { dropOwned([collection, entityId]); return Result.Err(e); })(JsonError.custom('missing field `operations`'));
+        return Result.Err(JsonError.custom('missing field `operations`'));
       }
       const _roperations = ((v: unknown) => OperationSet.fromJson(v))(_o['operations']);
-      if (_roperations.isErr()) return ((e: JsonError) => { dropOwned([collection, entityId]); return Result.Err(e); })(_roperations.unwrapErr());
+      if (_roperations.isErr()) return Result.Err(_roperations.unwrapErr());
       const operations = _roperations.unwrap();
+      $built.push(operations);
       if (!('parent' in _o)) {
-        return ((e: JsonError) => { dropOwned([collection, entityId, operations]); return Result.Err(e); })(JsonError.custom('missing field `parent`'));
+        return Result.Err(JsonError.custom('missing field `parent`'));
       }
       const _rparent = ((v: unknown) => Clock.fromJson(v))(_o['parent']);
-      if (_rparent.isErr()) return ((e: JsonError) => { dropOwned([collection, entityId, operations]); return Result.Err(e); })(_rparent.unwrapErr());
+      if (_rparent.isErr()) return Result.Err(_rparent.unwrapErr());
       const parent = _rparent.unwrap();
-      return Result.Ok(new Event(collection, entityId, operations, parent));
+      $built.push(parent);
+      const $out = new Event(collection, entityId, operations, parent);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -162,6 +172,8 @@ export class EventFragment extends Struct {
   }
 
   static fromJson(value: unknown): Result<EventFragment, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `EventFragment`'));
@@ -173,22 +185,29 @@ export class EventFragment extends Struct {
       const _roperations = ((v: unknown) => OperationSet.fromJson(v))(_o['operations']);
       if (_roperations.isErr()) return Result.Err(_roperations.unwrapErr());
       const operations = _roperations.unwrap();
+      $built.push(operations);
       if (!('parent' in _o)) {
-        return ((e: JsonError) => { dropOwned([operations]); return Result.Err(e); })(JsonError.custom('missing field `parent`'));
+        return Result.Err(JsonError.custom('missing field `parent`'));
       }
       const _rparent = ((v: unknown) => Clock.fromJson(v))(_o['parent']);
-      if (_rparent.isErr()) return ((e: JsonError) => { dropOwned([operations]); return Result.Err(e); })(_rparent.unwrapErr());
+      if (_rparent.isErr()) return Result.Err(_rparent.unwrapErr());
       const parent = _rparent.unwrap();
+      $built.push(parent);
       if (!('attestations' in _o)) {
-        return ((e: JsonError) => { dropOwned([operations, parent]); return Result.Err(e); })(JsonError.custom('missing field `attestations`'));
+        return Result.Err(JsonError.custom('missing field `attestations`'));
       }
       const _rattestations = ((v: unknown) => AttestationSet.fromJson(v))(_o['attestations']);
-      if (_rattestations.isErr()) return ((e: JsonError) => { dropOwned([operations, parent]); return Result.Err(e); })(_rattestations.unwrapErr());
+      if (_rattestations.isErr()) return Result.Err(_rattestations.unwrapErr());
       const attestations = _rattestations.unwrap();
-      return Result.Ok(new EventFragment(operations, parent, attestations));
+      $built.push(attestations);
+      const $out = new EventFragment(operations, parent, attestations);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -245,6 +264,8 @@ export class StateFragment extends Struct {
   }
 
   static fromJson(value: unknown): Result<StateFragment, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `StateFragment`'));
@@ -256,16 +277,22 @@ export class StateFragment extends Struct {
       const _rstate = ((v: unknown) => State.fromJson(v))(_o['state']);
       if (_rstate.isErr()) return Result.Err(_rstate.unwrapErr());
       const state = _rstate.unwrap();
+      $built.push(state);
       if (!('attestations' in _o)) {
-        return ((e: JsonError) => { dropOwned([state]); return Result.Err(e); })(JsonError.custom('missing field `attestations`'));
+        return Result.Err(JsonError.custom('missing field `attestations`'));
       }
       const _rattestations = ((v: unknown) => AttestationSet.fromJson(v))(_o['attestations']);
-      if (_rattestations.isErr()) return ((e: JsonError) => { dropOwned([state]); return Result.Err(e); })(_rattestations.unwrapErr());
+      if (_rattestations.isErr()) return Result.Err(_rattestations.unwrapErr());
       const attestations = _rattestations.unwrap();
-      return Result.Ok(new StateFragment(state, attestations));
+      $built.push(attestations);
+      const $out = new StateFragment(state, attestations);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -329,14 +356,21 @@ export class OperationSet extends Struct {
   }
 
   static fromJson(value: unknown): Result<OperationSet, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       const _r_0 = ((v: unknown) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? jsonMap(jsonAll(Object.entries(v as Record<string, unknown>).map(([k, v]) => jsonMap(((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => Operation.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(v), (x) => [k, x] as [string, Operation[]]))), (entries) => new HashMap<string, Operation[]>(entries)) : Result.Err(JsonError.custom('expected an object'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
-      return Result.Ok(new OperationSet(_0));
+      $built.push(_0);
+      const $out = new OperationSet(_0);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -449,6 +483,8 @@ export class EntityState extends Struct {
   }
 
   static fromJson(value: unknown): Result<EntityState, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `EntityState`'));
@@ -460,22 +496,29 @@ export class EntityState extends Struct {
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
       if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('collection' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `collection`'));
+        return Result.Err(JsonError.custom('missing field `collection`'));
       }
       const _rcollection = ((v: unknown) => CollectionId.fromJson(v))(_o['collection']);
-      if (_rcollection.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rcollection.unwrapErr());
+      if (_rcollection.isErr()) return Result.Err(_rcollection.unwrapErr());
       const collection = _rcollection.unwrap();
+      $built.push(collection);
       if (!('state' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(JsonError.custom('missing field `state`'));
+        return Result.Err(JsonError.custom('missing field `state`'));
       }
       const _rstate = ((v: unknown) => State.fromJson(v))(_o['state']);
-      if (_rstate.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(_rstate.unwrapErr());
+      if (_rstate.isErr()) return Result.Err(_rstate.unwrapErr());
       const state = _rstate.unwrap();
-      return Result.Ok(new EntityState(entityId, collection, state));
+      $built.push(state);
+      const $out = new EntityState(entityId, collection, state);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -528,6 +571,8 @@ export class State extends Struct {
   }
 
   static fromJson(value: unknown): Result<State, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `State`'));
@@ -539,16 +584,22 @@ export class State extends Struct {
       const _rstateBuffers = ((v: unknown) => StateBuffers.fromJson(v))(_o['state_buffers']);
       if (_rstateBuffers.isErr()) return Result.Err(_rstateBuffers.unwrapErr());
       const stateBuffers = _rstateBuffers.unwrap();
+      $built.push(stateBuffers);
       if (!('head' in _o)) {
-        return ((e: JsonError) => { dropOwned([stateBuffers]); return Result.Err(e); })(JsonError.custom('missing field `head`'));
+        return Result.Err(JsonError.custom('missing field `head`'));
       }
       const _rhead = ((v: unknown) => Clock.fromJson(v))(_o['head']);
-      if (_rhead.isErr()) return ((e: JsonError) => { dropOwned([stateBuffers]); return Result.Err(e); })(_rhead.unwrapErr());
+      if (_rhead.isErr()) return Result.Err(_rhead.unwrapErr());
       const head = _rhead.unwrap();
-      return Result.Ok(new State(stateBuffers, head));
+      $built.push(head);
+      const $out = new State(stateBuffers, head);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -612,14 +663,21 @@ export class StateBuffers extends Struct {
   }
 
   static fromJson(value: unknown): Result<StateBuffers, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       const _r_0 = ((v: unknown) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? jsonMap(jsonAll(Object.entries(v as Record<string, unknown>).map(([k, v]) => jsonMap(((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(v), (x) => [k, x] as [string, Uint8Array]))), (entries) => new HashMap<string, Uint8Array>(entries)) : Result.Err(JsonError.custom('expected an object'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
-      return Result.Ok(new StateBuffers(_0));
+      $built.push(_0);
+      const $out = new StateBuffers(_0);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

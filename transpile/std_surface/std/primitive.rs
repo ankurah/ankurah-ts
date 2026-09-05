@@ -239,6 +239,67 @@ impl usize {
     pub fn overflowing_mul(self, rhs: usize) -> (usize, bool) { todo!() }
 }
 
+// `i8` and `i128` complete the set: every other integer width already declares
+// these, and a width missing them sent every `wrapping_add` on it to the
+// name-by-name table, which wrote a method no `number` and no `bigint` has.
+impl i8 {
+    pub const MIN: i8 = 0;
+    pub const MAX: i8 = 0;
+    pub fn to_be_bytes(self) -> [u8; 1] { todo!() }
+    pub fn from_be_bytes(bytes: [u8; 1]) -> i8 { todo!() }
+    pub fn abs(self) -> i8 { todo!() }
+    pub fn signum(self) -> i8 { todo!() }
+    pub fn min(self, other: i8) -> i8 { todo!() }
+    pub fn max(self, other: i8) -> i8 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: i8) -> i8 { todo!() }
+    pub fn wrapping_sub(self, rhs: i8) -> i8 { todo!() }
+    pub fn wrapping_mul(self, rhs: i8) -> i8 { todo!() }
+    pub fn saturating_add(self, rhs: i8) -> i8 { todo!() }
+    pub fn saturating_sub(self, rhs: i8) -> i8 { todo!() }
+    pub fn saturating_mul(self, rhs: i8) -> i8 { todo!() }
+    pub fn checked_add(self, rhs: i8) -> Option<i8> { todo!() }
+    pub fn checked_sub(self, rhs: i8) -> Option<i8> { todo!() }
+    pub fn checked_mul(self, rhs: i8) -> Option<i8> { todo!() }
+    pub fn checked_div(self, rhs: i8) -> Option<i8> { todo!() }
+    pub fn checked_rem(self, rhs: i8) -> Option<i8> { todo!() }
+    pub fn overflowing_add(self, rhs: i8) -> (i8, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: i8) -> (i8, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: i8) -> (i8, bool) { todo!() }
+}
+
+impl i128 {
+    pub const MIN: i128 = 0;
+    pub const MAX: i128 = 0;
+    pub fn to_be_bytes(self) -> [u8; 16] { todo!() }
+    pub fn from_be_bytes(bytes: [u8; 16]) -> i128 { todo!() }
+    pub fn abs(self) -> i128 { todo!() }
+    pub fn signum(self) -> i128 { todo!() }
+    pub fn min(self, other: i128) -> i128 { todo!() }
+    pub fn max(self, other: i128) -> i128 { todo!() }
+    // Rust declares the four explicit arithmetic families on EVERY integer
+    // width, and the port's `@ankurah/base` has a free helper for each. Where a
+    // width was missing one, the call resolved to nothing and every value it
+    // produced was left untyped, so the next call fell back too.
+    pub fn wrapping_add(self, rhs: i128) -> i128 { todo!() }
+    pub fn wrapping_sub(self, rhs: i128) -> i128 { todo!() }
+    pub fn wrapping_mul(self, rhs: i128) -> i128 { todo!() }
+    pub fn saturating_add(self, rhs: i128) -> i128 { todo!() }
+    pub fn saturating_sub(self, rhs: i128) -> i128 { todo!() }
+    pub fn saturating_mul(self, rhs: i128) -> i128 { todo!() }
+    pub fn checked_add(self, rhs: i128) -> Option<i128> { todo!() }
+    pub fn checked_sub(self, rhs: i128) -> Option<i128> { todo!() }
+    pub fn checked_mul(self, rhs: i128) -> Option<i128> { todo!() }
+    pub fn checked_div(self, rhs: i128) -> Option<i128> { todo!() }
+    pub fn checked_rem(self, rhs: i128) -> Option<i128> { todo!() }
+    pub fn overflowing_add(self, rhs: i128) -> (i128, bool) { todo!() }
+    pub fn overflowing_sub(self, rhs: i128) -> (i128, bool) { todo!() }
+    pub fn overflowing_mul(self, rhs: i128) -> (i128, bool) { todo!() }
+}
+
 impl i16 {
     pub const MIN: i16 = 0;
     pub const MAX: i16 = 0;

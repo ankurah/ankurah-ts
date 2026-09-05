@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/auth.rs
-import { Struct, Result, JsonError, jsonAll, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { Attested } from './auth.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 export { Attested };
@@ -156,14 +156,21 @@ export class AttestationSet extends Struct {
   }
 
   static fromJson(value: unknown): Result<AttestationSet, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => Attestation.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(value);
       if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
       const _0 = _r_0.unwrap();
-      return Result.Ok(new AttestationSet(_0));
+      $built.push(_0);
+      const $out = new AttestationSet(_0);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

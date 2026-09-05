@@ -25,19 +25,19 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
     try {
       return op.match({
         Equal: () => {
-          const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+          const entry = this.eq.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
           invoke(f, entry);
         },
         NotEqual: () => {
-          const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []);
+          const entry = this.ne.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
           invoke(f, entry);
         },
         GreaterThan: () => {
-          const entry = this.gt.entry(Collatable_dispatch_toBytes(value)).orDefault();
+          const entry = this.gt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
           invoke(f, entry);
         },
         LessThan: () => {
-          const entry = this.lt.entry(Collatable_dispatch_toBytes(value)).orDefault();
+          const entry = this.lt.entry(Collatable_dispatch_toBytes(value)).orDefault(() => []).value;
           invoke(f, entry);
         },
         GreaterThanOrEqual: () => {
@@ -45,10 +45,10 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
             const _v = Collatable_dispatch_predecessorBytes(value);
             if (_v != null) {
               const pred = _v;
-              const entry = this.gt.entry(pred).orDefault();
+              const entry = this.gt.entry(pred).orDefault(() => []).value;
               invoke(f, entry);
             } else {
-            const entry = this.gt.entry([]).orDefault();
+            const entry = this.gt.entry([]).orDefault(() => []).value;
             invoke(f, entry);
           }
           }
@@ -58,7 +58,7 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
             const _v1 = Collatable_dispatch_successorBytes(value);
             if (_v1 != null) {
               const succ = _v1;
-              const entry = this.lt.entry(succ).orDefault();
+              const entry = this.lt.entry(succ).orDefault(() => []).value;
               invoke(f, entry);
             }
           }

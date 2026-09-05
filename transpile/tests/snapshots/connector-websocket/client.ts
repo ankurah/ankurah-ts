@@ -120,7 +120,7 @@ class ClientInner extends Drop {
           })();
           const _t4 = this.reconnectDelay.borrow();
           try {
-            const nextDelay = (checkedAdd(_t4.value, 500n, 'u64')).min(MAX_RECONNECT_DELAY);
+            const nextDelay = (($a, $b) => $a < $b ? $a : $b)((checkedAdd(_t4.value, 500n, 'u64')), MAX_RECONNECT_DELAY);
             _t4.drop();
             const _t5 = this.reconnectDelay.borrowMut();
             try {
@@ -144,7 +144,7 @@ class ClientInner extends Drop {
           })();
           const _t7 = this.reconnectDelay.borrow();
           try {
-            const nextDelay = (checkedAdd(_t7.value, 500n, 'u64')).min(MAX_RECONNECT_DELAY);
+            const nextDelay = (($a, $b) => $a < $b ? $a : $b)((checkedAdd(_t7.value, 500n, 'u64')), MAX_RECONNECT_DELAY);
             _t7.drop();
             const _t8 = this.reconnectDelay.borrowMut();
             try {

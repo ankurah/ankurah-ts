@@ -59,3 +59,20 @@ impl Registry {
         self.entries.get(&id).map(|e| e.weight).ok_or_else(|| format!("no {}", id))
     }
 }
+
+impl Registry {
+    /// `ok_or`'s error is a VALUE: Rust builds it before it branches and drops
+    /// it again on the path that hands it nowhere. Written inside the `Err`
+    /// branch the port built it only there — a different program — and hoisted
+    /// with no release the `Ok` path leaked it.
+    pub fn take_or_spare(&mut self, id: u32, weight: u32) -> Result<Entry, Entry> {
+        self.entries.remove(&id).ok_or(Entry { weight })
+    }
+
+    /// `map_or`'s default is the same value, and this one is a PLACE: the local
+    /// was moved into the call, so the branch that runs the closure is the only
+    /// place left to release it.
+    pub fn entry_or(&self, id: u32, spare: Entry) -> Entry {
+        self.entries.get(&id).map_or(spare, |e| Entry { weight: e.weight })
+    }
+}

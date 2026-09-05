@@ -9,7 +9,7 @@
 
 import { expect, test } from 'bun:test';
 import { OwnedClosure } from '@ankurah/base';
-import { Entity, borrow, borrowing, consumed, handsAPlainOne, handsAWrappedOne, plain, runLater, runNow, throughABound } from './input.ts';
+import { Entity, borrow, borrowing, consumed, handsAPlainOne, handsAWrappedOne, plain, runLater, runNow, throughABound, twiceByReference, twiceByValue } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('borrow leaves the Entity to its owner', () => {
@@ -66,6 +66,37 @@ test('a callee that sees only the bound calls either shape', () => {
   expect(
     throughABound(new OwnedClosure<[number], number>([entity], (n) => n + entity.name.length), 1),
   ).toBe(3);
+});
+
+// A callable parameter written BY VALUE is the body's: Rust drops it at the end
+// of the body, and only the CALL borrows. The port wrote the call as
+// `invokeRef`, which is right, and released nothing — so every capture of every
+// wrapped closure handed to one leaked.
+test('a by-value callable parameter is released by the body it was handed to', () => {
+  const held = new Entity('abc');
+  const f = new OwnedClosure<[number], number>([held], (n) => n + held.name.length);
+  expect(twiceByValue(f, 1)).toBe(8);
+  // Called twice — an `FnMut` bound, so the call borrows — and released once,
+  // at the end of the body, which is where Rust drops it.
+  expect(f.isDropped).toBe(true);
+});
+
+// The same bound written `&mut F`: the closure is the caller's, and a release
+// written in the callee would drop a value somebody else still holds.
+test('a by-reference callable parameter is left to its owner', () => {
+  const held = new Entity('abc');
+  const f = new OwnedClosure<[number], number>([held], (n) => n + held.name.length);
+  expect(twiceByReference(f, 1)).toBe(8);
+  expect(f.isDropped).toBe(false);
+  // Still callable, which is the whole point of the reference form.
+  expect(twiceByReference(f, 2)).toBe(10);
+  f.drop();
+});
+
+// A plain function reaches none of `dropOwned`'s branches.
+test('a plain function handed by value is left alone', () => {
+  expect(twiceByValue((n: number) => n * 2, 3)).toBe(12);
+  expect(twiceByReference((n: number) => n * 2, 3)).toBe(12);
 });
 
 test('nothing leaked and nothing was reported', async () => {

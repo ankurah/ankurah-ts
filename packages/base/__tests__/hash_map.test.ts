@@ -38,6 +38,33 @@ class Colliding extends Struct {
   equals(other: Colliding): boolean { return this.n === other.n; }
 }
 
+/**
+ * A key that reads its own bytes to hash and to compare, and reads them through
+ * the liveness check.
+ *
+ * `Id` above answers both from fields it can still see after a drop, so a key
+ * used after being released answers correctly by luck. This one does not: it is
+ * how a `#[derive(Hash)]` on a type with a droppable field behaves, and it is
+ * what caught an entry Slot keyed by the lookup key it had already released.
+ */
+class CheckedKey extends Struct {
+  #bytes: Uint8Array;
+  constructor(...bytes: number[]) {
+    super('CheckedKey');
+    this.#bytes = Uint8Array.from(bytes);
+  }
+  get bytes(): Uint8Array {
+    this.assertNotDropped();
+    return this.#bytes;
+  }
+  hash(): string { return this.bytes.join('.'); }
+  equals(other: CheckedKey): boolean {
+    const mine = this.bytes;
+    const theirs = other.bytes;
+    return mine.length === theirs.length && mine.every((b, at) => b === theirs[at]);
+  }
+}
+
 /** A droppable value, so a test can see what the map released. */
 class Held extends Drop {
   dropCount = 0;
@@ -431,6 +458,35 @@ describe('entry', () => {
     map.drop();
   });
 
+  // X4: the occupied path releases the LOOKUP key, and the Slot it handed back
+  // held that same released key — so its first read hashed a dropped value.
+  test('an occupied entry hands back a slot on the stored entry, not the released key', () => {
+    const map = new HashMap<CheckedKey, Held>();
+    map.set(new CheckedKey(1), new Held('first'));
+
+    const lookup = new CheckedKey(1);
+    const slot = map.entry(lookup).orInsert(new Held('unused'));
+    expect(lookup.isDropped).toBe(true);
+    // Reading and writing through the slot reach the map, and neither of them
+    // touches the key the entry released.
+    expect(slot.value.tag).toBe('first');
+    slot.value = new Held('second');
+    expect(map.get(probe(new CheckedKey(1)))?.tag).toBe('second');
+    map.drop();
+  });
+
+  // X5: the vacant path called the factory before the map took the key, so a
+  // factory that throws left the key with nobody. Rust's unwind drops it.
+  test('a vacant orInsertWith releases its key when the factory throws', () => {
+    const map = new HashMap<CheckedKey, Held>();
+    const key = new CheckedKey(2);
+    expect(() => map.entry(key).orInsertWith(() => { throw new Error('boom'); }))
+      .toThrow('boom');
+    expect(key.isDropped).toBe(true);
+    expect(map.size).toBe(0);
+    map.drop();
+  });
+
   test('writing through the slot releases what the map held', () => {
     const map = new HashMap<string, Held>();
     const first = new Held('first');
@@ -439,6 +495,61 @@ describe('entry', () => {
     expect(first.dropCount).toBe(1);
     expect(map.get('k')?.tag).toBe('second');
     map.drop();
+  });
+});
+
+// X6: `clone()` walked a value's own surface, and an array and a typed array
+// have no `clone()` — so a cloned map handed its copy the very same array, both
+// maps owned one set of elements, and dropping both dropped each element twice.
+describe('clone walks what a container holds', () => {
+  test('an array value is cloned element by element', () => {
+    // The element carries a `clone()`, which is what `#[derive(Clone)]` on the
+    // containing type requires of it; the ARRAY is what had none, and what both
+    // maps used to share.
+    class Piece extends Drop {
+      dropCount = 0;
+      constructor(readonly tag: string) { super(`Piece(${tag})`); }
+      clone(): Piece { return new Piece(this.tag); }
+      protected override onDrop(): void { this.dropCount++; }
+    }
+    const map = new HashMap<string, Piece[]>();
+    const piece = new Piece('one');
+    map.set('k', [piece]);
+
+    const copy = map.clone();
+    const theirs = copy.get('k') as Piece[];
+    expect(theirs).not.toBe(map.get('k'));
+    expect(theirs[0]).not.toBe(piece);
+    map.drop();
+    // The original's element went with it; the copy's is its own and is still
+    // alive, so dropping the copy releases a different object.
+    expect(piece.dropCount).toBe(1);
+    expect((theirs[0] as Piece).dropCount).toBe(0);
+    copy.drop();
+    expect(piece.dropCount).toBe(1);
+    expect((theirs[0] as Piece).dropCount).toBe(1);
+  });
+
+  test('a typed array value is copied, not shared', () => {
+    const map = new HashMap<string, Uint8Array>();
+    map.set('k', Uint8Array.from([1, 2, 3]));
+    const copy = map.clone();
+    const mine = map.get('k') as Uint8Array;
+    const theirs = copy.get('k') as Uint8Array;
+    expect(theirs).not.toBe(mine);
+    theirs[0] = 9;
+    expect(mine[0]).toBe(1);
+    map.drop();
+    copy.drop();
+  });
+
+  test('a set of arrays is cloned the same way', () => {
+    const set = new HashSet<number[]>();
+    set.insert([1, 2]);
+    const copy = set.clone();
+    expect(copy.has([1, 2])).toBe(true);
+    set.drop();
+    copy.drop();
   });
 });
 

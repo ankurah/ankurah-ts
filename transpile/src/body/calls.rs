@@ -46,13 +46,24 @@ impl BodyTranslator<'_> {
                     _ => (receiver_ty.clone(), receiver.to_string()),
                 };
                 let bind_receiver = |written: &str| self.name_once(Some(receiver_expr), written);
-                let bind_eager = |_: usize, written: &str| Some(written.to_string());
+                let bind_eager = |_: usize, written: &str| {
+                    Some(native_types::nullable::Eager {
+                        name: written.to_string(),
+                        release: None,
+                    })
+                };
                 let once = native_types::nullable::Once {
                     bind_receiver: &bind_receiver,
                     bind_eager: &bind_eager,
                 };
                 let translated = native_types::translate_method_using(
-                    tc_ref.registry, &target, &receiver, rust_method, args, used, &once,
+                    tc_ref.registry,
+                    &target,
+                    &receiver,
+                    rust_method,
+                    args,
+                    native_types::Position { used, reads_as_value: true },
+                    &once,
                 );
                 drop(tc_ref);
                 return self.render_translation(
@@ -126,7 +137,7 @@ impl BodyTranslator<'_> {
     /// statement it stands in, and both reads read that name.
     pub(crate) fn name_once(&self, expr: Option<&syn::Expr>, written: &str) -> String {
         match expr {
-            Some(expr) if reads_the_same_twice(expr) => written.to_string(),
+            Some(expr) if reads_a_place_twice(expr, written) => written.to_string(),
             // With no expression to ask about there is nothing to decide from,
             // and a value read twice is the defect: the name is taken.
             _ => self.hoist_name(written.to_string()),
@@ -134,37 +145,86 @@ impl BodyTranslator<'_> {
     }
 
     /// A value Rust evaluates BEFORE it branches — `ok_or`'s error, `map_or`'s
-    /// default — where the port can name it.
+    /// default — named where it stands, with the release the other branch owes.
     ///
-    /// Rust builds such a value on both paths and drops it on the one that does
-    /// not use it. Naming it here restores the order; it does not restore the
-    /// drop, because there is nothing at this point to release it under. So a
-    /// value that owns something stays inside the branch and the difference is
-    /// said out loud, rather than being built on both paths and leaked on one.
-    pub(crate) fn name_eager(&self, expr: Option<&syn::Expr>, written: &str) -> Option<String> {
+    /// Rust builds such a value on both paths and drops it on the one that
+    /// hands it nowhere. Naming it before the branch restores the evaluation,
+    /// and handing the release back with the name restores the drop: the
+    /// combinator writes it into the branch that does not use the value. Only a
+    /// value whose type the engine could not name is left inside the branch,
+    /// because a release written against a type nobody could name would drop
+    /// something somebody else owns; that one is reported.
+    pub(crate) fn name_eager(
+        &self,
+        expr: Option<&syn::Expr>,
+        written: &str,
+    ) -> Option<crate::native_types::nullable::Eager> {
+        use crate::native_types::nullable::Eager;
         let expr = expr?;
-        if reads_the_same_twice(expr) {
-            return Some(written.to_string());
-        }
-        if self.owns_something(expr) {
+        let drops = self.eager_drops(expr);
+        // A place is read where it stands — reading a name or a field again
+        // runs nothing — but the MOVE is still a move: the caller's own
+        // analysis has already given the value away to this call, so the branch
+        // that hands it nowhere is the only place left to release it.
+        let name = if reads_a_place_twice(expr, written) {
+            written.to_string()
+        } else {
+            self.hoist_name(written.to_string())
+        };
+        if matches!(drops, crate::ownership::Drops::Unknown) {
+            // The evaluation is still restored — the name stands before the
+            // branch — and the drop is what is missing: a release written
+            // against a type nobody could name would drop something somebody
+            // else owns.
             self.fallback(
                 syn::spanned::Spanned::span(expr),
                 "Rust evaluates this argument before it branches and drops it on the path that \
-                 does not use it; the port has no name here to drop it under, so it is \
-                 evaluated inside the branch that uses it instead",
+                 does not use it; the engine cannot name what this argument is, so no release \
+                 is written for it",
             );
-            return None;
         }
-        Some(self.hoist_name(written.to_string()))
+        let release = drops.release_expr(&name);
+        Some(Eager { name, release })
     }
 
-    /// Does this expression produce something the runtime releases?
-    fn owns_something(&self, expr: &syn::Expr) -> bool {
-        let Some(tc) = &self.types else { return true };
+    /// What the runtime owes a value this expression produces.
+    ///
+    /// `Unknown` where there is no type context or the expression does not
+    /// resolve: that is the answer that keeps the argument inside its branch.
+    fn eager_drops(&self, expr: &syn::Expr) -> crate::ownership::Drops {
+        let Some(tc) = &self.types else { return crate::ownership::Drops::Unknown };
         let tc = tc.borrow();
-        let Ok(ty) = tc.resolve_expr(expr) else { return true };
-        crate::ownership::drops_of(&tc.probe(), &ty).is_droppable()
+        let Ok(ty) = tc.resolve_expr(expr) else { return crate::ownership::Drops::Unknown };
+        crate::ownership::drops_of(&tc.probe(), &ty)
     }
+}
+
+/// Can this expression be written twice without the program noticing — as Rust
+/// reads it, AND as the port writes it?
+///
+/// Both halves are needed. `RetrievalError::NoDurablePeers` is a name in Rust
+/// and reading it twice runs nothing; the port writes it
+/// `new RetrievalError('NoDurablePeers', {})`, and writing THAT twice builds two
+/// objects, one of which nobody owns. A `const` of a non-`Copy` type is the same
+/// shape one form over: the port writes each use as a call (fixpass3's §4.6).
+fn reads_a_place_twice(expr: &syn::Expr, written: &str) -> bool {
+    reads_the_same_twice(expr) && written_is_a_place(written)
+}
+
+/// Does writing this emitted text a second time do any work?
+///
+/// The Rust shape has already been narrowed to a place or a literal, so what is
+/// left to exclude is the text the port wrote for one that DOES something: a
+/// construction (`new RetrievalError('NoDurablePeers', {})` for a unit variant),
+/// a call (`ORIGIN()` for a non-`Copy` const), an interpolated string, an arrow.
+/// A name, a member of one, an index into one and a literal all stand as they
+/// are.
+fn written_is_a_place(written: &str) -> bool {
+    !written.is_empty()
+        && !written.contains('(')
+        && !written.contains('`')
+        && !written.contains("=>")
+        && !written.contains("new ")
 }
 
 /// Can this expression be written twice without the program noticing?

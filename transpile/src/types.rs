@@ -382,7 +382,13 @@ impl ImplInfo {
                                 .map(|s| s.ident.to_string())
                                 .unwrap_or_default()
                         }
-                        other => crate::name_map::map_type(other),
+                        // A leaf that carries ARGUMENTS keeps its Rust spelling
+                        // too. Written in TypeScript, `Vec<u32>` and `Vec<i32>`
+                        // are both `number[]` — so two impls with two different
+                        // bodies were one identity, and the second was dropped
+                        // with no diagnostic. R8's rule is the Rust source, and
+                        // it reaches all the way down.
+                        other => rust_spelling(other),
                     };
                     let qualifier = match inner {
                         syn::Type::Path(p) if p.path.segments.len() > 1 => p
@@ -587,6 +593,58 @@ impl FieldInfo {
 /// the spelling both halves of the naming agree on. A leaf that carries type
 /// arguments keeps the spelling that shows what they are, because there is no
 /// method name to build out of one either way.
+
+/// A written type as RUST spells it, leaf by leaf.
+///
+/// Not `map_type`: this is what tells two conversion sources apart, and the
+/// TypeScript spelling erases the difference the impls are written for. Only
+/// the parts a source type can be made of are rendered — a path, a reference, a
+/// slice, an array, a tuple — and anything else falls back to `map_type`, which
+/// is what it had before.
+pub fn rust_spelling(ty: &syn::Type) -> String {
+    match ty {
+        syn::Type::Reference(r) => format!("&{}", rust_spelling(&r.elem)),
+        syn::Type::Slice(s) => format!("[{}]", rust_spelling(&s.elem)),
+        syn::Type::Array(a) => format!(
+            "[{}; {}]",
+            rust_spelling(&a.elem),
+            quote::ToTokens::to_token_stream(&a.len).to_string().replace(' ', "")
+        ),
+        syn::Type::Paren(p) => rust_spelling(&p.elem),
+        syn::Type::Group(g) => rust_spelling(&g.elem),
+        syn::Type::Tuple(t) => format!(
+            "({})",
+            t.elems.iter().map(rust_spelling).collect::<Vec<_>>().join(", ")
+        ),
+        syn::Type::Path(p) => {
+            let Some(segment) = p.path.segments.last() else {
+                return crate::name_map::map_type(ty);
+            };
+            let leaf = segment.ident.to_string();
+            match &segment.arguments {
+                syn::PathArguments::None => leaf,
+                syn::PathArguments::AngleBracketed(args) => {
+                    let inner: Vec<String> = args
+                        .args
+                        .iter()
+                        .filter_map(|a| match a {
+                            syn::GenericArgument::Type(t) => Some(rust_spelling(t)),
+                            _ => None,
+                        })
+                        .collect();
+                    if inner.is_empty() {
+                        leaf
+                    } else {
+                        format!("{}<{}>", leaf, inner.join(", "))
+                    }
+                }
+                syn::PathArguments::Parenthesized(_) => crate::name_map::map_type(ty),
+            }
+        }
+        other => crate::name_map::map_type(other),
+    }
+}
+
 pub fn rust_source_path(ty: &syn::Type) -> String {
     let (inner, borrowed) = match ty {
         syn::Type::Reference(r) => (&*r.elem, "&"),

@@ -102,7 +102,7 @@ export class SqlBuilder extends Struct {
           this.pushSql(`"${escaped}"`);
         } else {
           const first = path.first().replace('"', '""');
-          const jsonPath = path.steps.length === 2 ? `$.${path.steps[1].replace('\'', '\'\'')}` : `$.${[...path.steps].skip(1).map((s) => s.replace('\'', '\'\'')).join('.')}`;
+          const jsonPath = (path.steps.length === 2 ? `$.${path.steps[1].replace('\'', '\'\'')}` : `$.${[...path.steps].skip(1).map((s) => s.replace('\'', '\'\'')).join('.')}`);
           this.pushSql(`json_extract("${first}", '${jsonPath}')`);
         }
       },
@@ -146,7 +146,7 @@ export class SqlBuilder extends Struct {
       },
       Bool: (v) => {
         const b = v._0;
-        this.pushParam(new rusqlite.types.Value('Integer', { _0: b ? 1 : 0 }));
+        this.pushParam(new rusqlite.types.Value('Integer', { _0: (b ? 1 : 0) }));
       },
       I16: (v) => {
         const i = v._0;
@@ -195,7 +195,7 @@ export class SqlBuilder extends Struct {
           },
           Bool: (v) => {
             const b = v._0;
-            this.pushParam(new rusqlite.types.Value('Integer', { _0: b ? 1 : 0 }));
+            this.pushParam(new rusqlite.types.Value('Integer', { _0: (b ? 1 : 0) }));
           },
           Null: () => {
             this.pushParam(rusqlite.types.Value.Null);

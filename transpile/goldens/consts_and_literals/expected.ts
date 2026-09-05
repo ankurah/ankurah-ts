@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/consts_and_literals/src/input.rs
-import { Struct, checkedAdd } from '@ankurah/base';
+import { Struct, checkedAdd, wrappingAdd } from '@ankurah/base';
 
 export class Rec extends Struct {
   readonly first: number;
@@ -69,7 +69,7 @@ export function movedOrigin(): number {
 }
 
 export function bump(): number {
-  return (() => { const _v = COUNTER; COUNTER += 1; return _v; })();
+  return (() => { const _v = COUNTER; COUNTER = wrappingAdd(COUNTER, 1, 'usize'); return _v; })();
 }
 
 export function arm(ready: boolean): boolean {
@@ -85,6 +85,14 @@ export function radix(n: number): number {
   } else {
     return 3;
   }
+}
+
+export function ordered(): number {
+  return LATEST;
+}
+
+export function wrapAround(): number {
+  return (() => { const _v = WRAPS; WRAPS = wrappingAdd(WRAPS, 1, 'u32'); return _v; })();
 }
 
 export const TAG_NULL: number = 0;
@@ -108,4 +116,12 @@ export let READY: boolean = false;
 export const FLOOR: bigint = -9007199254740991n;
 
 export const BASE: number = 36;
+
+export const EARLY: number = 1;
+
+export let WRAPS: number = 4294967295;
+
+export const LATE: number = checkedAdd(EARLY, 1, 'u32');
+
+export const LATEST: number = checkedAdd(LATE, EARLY, 'u32');
 

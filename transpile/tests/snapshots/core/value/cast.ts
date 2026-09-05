@@ -223,16 +223,16 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('String', { _0: b.toString() }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('I16'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('I16', { _0: b ? 1 : 0 }));
+    return Result.Ok(new Value('I16', { _0: (b ? 1 : 0) }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('I32'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('I32', { _0: b ? 1 : 0 }));
+    return Result.Ok(new Value('I32', { _0: (b ? 1 : 0) }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('I64'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('I64', { _0: b ? 1 : 0 }));
+    return Result.Ok(new Value('I64', { _0: (b ? 1 : 0) }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('F64'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('F64', { _0: b ? 1.0 : 0.0 }));
+    return Result.Ok(new Value('F64', { _0: (b ? 1.0 : 0.0) }));
   } else if ((_v[0].is('I16')) && (_v[1].is('Bool'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('Bool', { _0: n !== 0 }));

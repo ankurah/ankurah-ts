@@ -88,22 +88,27 @@ impl Prim {
     /// where that is what they are; the 8 bytes they occupy on the bincode wire
     /// is a separate fact, and belongs to the codec.
     ///
-    /// `u128` is left out: its maximum does not fit the `i128` this answers in,
-    /// and nothing in the port reads or writes one.
-    pub fn range(self) -> Option<(i128, i128)> {
+    /// The answer is `(i128, u128)` rather than a pair of one type, because no
+    /// single Rust integer holds both `i128::MIN` and `u128::MAX`. Every
+    /// maximum is non-negative and every minimum fits an `i128`, so the pair is
+    /// exact for all twelve widths — `u128` included, which used to be left out
+    /// and therefore accepted `-1` in a JSON document and was filtered out of
+    /// the arithmetic dispatch.
+    pub fn range(self) -> Option<(i128, u128)> {
         Some(match self {
             Prim::U8 => (0, 255),
             Prim::U16 => (0, 65_535),
             Prim::U32 => (0, 4_294_967_295),
             Prim::Usize => (0, 4_294_967_295),
             Prim::U64 => (0, 18_446_744_073_709_551_615),
+            Prim::U128 => (0, u128::MAX),
             Prim::I8 => (-128, 127),
             Prim::I16 => (-32_768, 32_767),
             Prim::I32 => (-2_147_483_648, 2_147_483_647),
             Prim::Isize => (-2_147_483_648, 2_147_483_647),
             Prim::I64 => (-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
-            Prim::I128 => (i128::MIN, i128::MAX),
-            Prim::U128 | Prim::Bool | Prim::Char | Prim::F32 | Prim::F64 => return None,
+            Prim::I128 => (i128::MIN, i128::MAX as u128),
+            Prim::Bool | Prim::Char | Prim::F32 | Prim::F64 => return None,
         })
     }
 

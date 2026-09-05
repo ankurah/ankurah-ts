@@ -89,7 +89,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
   } else if ((_v[0].is('Bool')) && (_v[1].is('Bool'))) {
     {
       const b = Value_toBytes(value)[0];
-      return Result.Ok(new Uint8Array([!descending ? b : wrappingSub((255), b, 'u8')]));
+      return Result.Ok(new Uint8Array([(!descending ? b : wrappingSub((255), b, 'u8'))]));
     }
   } else if ((_v[0].is('EntityId')) && (_v[1].is('EntityId'))) {
     const { _0: entityId } = _v[0].value;
@@ -144,7 +144,7 @@ function encodeJsonValue(json: unknown, descending: boolean): Uint8Array {
       Null: () => [JSON_TAG_NULL, []] as any,
       Bool: (v) => {
         const b = v._0;
-        return [JSON_TAG_BOOL, [b ? 1 : 0]] as any;
+        return [JSON_TAG_BOOL, [(b ? 1 : 0)]] as any;
       },
       Number: (v) => {
         const n = v._0;

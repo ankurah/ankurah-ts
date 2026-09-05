@@ -91,6 +91,24 @@ impl<'a> BodyTranslator<'a> {
     /// it, exactly as it drops a `let`. The flags are registered here, before
     /// the scope's text is written, because a branch inside it sets them.
     pub fn claim_bindings(&self, names: &[String], body: &[syn::Stmt]) -> Vec<ownership::Owned> {
+        self.claim_bindings_as(names, &|name| {
+            self.types.as_ref().and_then(|tc| tc.borrow().lookup(name))
+        }, body)
+    }
+
+    /// The same, told what each name's type is.
+    ///
+    /// For: `for ref item in owned_vec` binds a REFERENCE into the element the
+    /// iterator handed out, and the loop still owns that element — Rust's
+    /// `IntoIter` drops it at the end of the turn. The BINDING's own type is a
+    /// `&T`, which owns nothing, so the loop asks under the element's type
+    /// instead and the release lands on the name the loop wrote.
+    pub fn claim_bindings_as(
+        &self,
+        names: &[String],
+        type_of: &dyn Fn(&str) -> Option<crate::ty::Ty>,
+        body: &[syn::Stmt],
+    ) -> Vec<ownership::Owned> {
         let Some(tc) = &self.types else {
             return Vec::new();
         };
@@ -104,7 +122,7 @@ impl<'a> BodyTranslator<'a> {
             ownership::Dispositions::build(&[(0, names.to_vec())], sites);
         let mut owned = Vec::new();
         for name in names {
-            let Some(ty) = tc.borrow().lookup(name) else {
+            let Some(ty) = type_of(name) else {
                 continue;
             };
             let drops = ownership::drops_of(&tc.borrow().probe(), &ty);

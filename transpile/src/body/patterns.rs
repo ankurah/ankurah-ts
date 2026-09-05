@@ -258,15 +258,23 @@ impl BodyTranslator<'_> {
                             Some(_) => self.fresh_temp(),
                             None => "v".to_string(),
                         };
+                        // A borrowed `Result` is still its owner's: `match
+                        // &r { Ok(v) => .. }` binds `v: &T` and leaves the
+                        // wrapper whole. `unwrap()` is the `self` form and
+                        // marks it moved, so a second read of the same value
+                        // was `Result was used after being moved`.
+                        let borrowed = self.matches_a_reference();
                         if name == "Ok" {
+                            let read = if borrowed { "okRef" } else { "unwrap" };
                             (
                                 format!("{}.isOk()", subject),
-                                format!("const {} = {}.unwrap();\n", var, subject),
+                                format!("const {} = {}.{}();\n", var, subject, read),
                             )
                         } else {
+                            let read = if borrowed { "errRef" } else { "unwrapErr" };
                             (
                                 format!("{}.isErr()", subject),
-                                format!("const {} = {}.unwrapErr();\n", var, subject),
+                                format!("const {} = {}.{}();\n", var, subject, read),
                             )
                         }
                     }
@@ -673,6 +681,42 @@ fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> (String, Stri
         }
     }
     (hole, bind)
+}
+
+#[cfg(test)]
+mod const_pattern_tests {
+    use crate::testing::Fixture;
+
+    /// A const pattern binds NOTHING: Rust compares the subject against the
+    /// const's value. Read as a binding, the arm owned a value nothing
+    /// declared — `match p { ORIGIN => true, _ => false }` released `oRIGIN`,
+    /// an identifier the emitted file never introduces, and the arm the hole
+    /// had replaced still carried it.
+    #[test]
+    fn a_const_pattern_binds_nothing_and_releases_nothing() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Point { pub x: i32 }\n             impl Drop for Point { fn drop(&mut self) {} }\n             pub const ORIGIN: Point = Point { x: 0 };\n             pub fn at_origin(p: Point) -> bool { match p { ORIGIN => true, _ => false } }",
+        )]);
+        let ts = f.translated_method("lib.rs", "at_origin");
+        assert!(ts.contains("if (unsupported("), "the test is the hole:\n{ts}");
+        assert!(!ts.contains("oRIGIN"), "and it declares no binding:\n{ts}");
+        // The subject is still the body's, released where nothing took it.
+        assert!(ts.contains("p.drop()"), "{ts}");
+    }
+
+    /// The same for a const the port compares by value, which is not a hole:
+    /// no binding there either, and the arms below it are reachable.
+    #[test]
+    fn a_primitive_const_pattern_is_a_comparison() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub const LIMIT: i32 = 5;\n             pub fn at_limit(n: i32) -> bool { match n { LIMIT => true, _ => false } }",
+        )]);
+        let ts = f.translated_method("lib.rs", "at_limit");
+        assert!(ts.contains("n === LIMIT"), "{ts}");
+        assert!(!ts.contains("const lIMIT"), "{ts}");
+    }
 }
 
 #[cfg(test)]

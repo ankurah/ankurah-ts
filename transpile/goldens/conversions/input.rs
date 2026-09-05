@@ -53,3 +53,21 @@ pub fn narrow(n: u64) -> u32 {
 pub fn truncate(f: f64) -> i32 {
     f as i32
 }
+
+// I: two conversions whose sources are GENERIC merged onto one static, and the
+// second body was dropped with no diagnostic — `From<Vec<u32>>` and
+// `From<Vec<i32>>` both spell `number[]` in TypeScript, and R8's identity is the
+// RUST source, which reaches all the way down now.
+pub struct Sizes(pub String);
+
+impl From<Vec<u32>> for Sizes {
+    fn from(v: Vec<u32>) -> Self { Sizes(format!("u{}", v.len())) }
+}
+
+impl From<Vec<i32>> for Sizes {
+    fn from(v: Vec<i32>) -> Self { Sizes(format!("i{}", v.len())) }
+}
+
+impl From<&[u32]> for Sizes {
+    fn from(v: &[u32]) -> Self { Sizes(format!("s{}", v.len())) }
+}

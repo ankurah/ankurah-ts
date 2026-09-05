@@ -98,7 +98,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
       if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f > 0.0)) {
         return null;
       } else {
-        const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
         const nextBits = checkedAdd(bits, 1n, 'u64');
         return nextBits.toBeBytes().slice();
       }
@@ -170,7 +170,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
       if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f < 0.0)) {
         return null;
       } else {
-        const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
         const prevBits = checkedSub(bits, 1n, 'u64');
         return prevBits.toBeBytes().slice();
       }

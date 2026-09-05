@@ -14,7 +14,7 @@
 total = 66
 
 [proto]
-total = 171
+total = 172
 
 [proto.by_cause]
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand, so it has no emitted X to call" = 45
@@ -36,6 +36,7 @@ total = 171
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 2
 "X between X and X resolves through X, and no impl in the table performs it" = 1
 "X between X and X resolves through X, and the impl is the declared surface's, so the comparison is the runtime's own and X supplies none" = 1
+"X converts from X" = 1
 "X has a type the engine cannot say owns anything, so nothing releases it" = 1
 "X is printed with X, and the port's X has no alternate form, so it is printed the ordinary way" = 1
 "X's X prints under Debug as whatever its X says, because X has no Debug rendering in the port" = 1
@@ -44,7 +45,7 @@ total = 171
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 160
+total = 161
 
 [ankql.by_cause]
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 48
@@ -63,6 +64,7 @@ total = 160
 "X does not name a function here" = 2
 "X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 2
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 2
+"X converts from X" = 1
 "X is lowered as a X without the engine having named what it tests" = 1
 "X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 1
 "X's X prints under Debug as whatever its X says, because X is not declared" = 1
@@ -103,7 +105,7 @@ total = 255
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 2277
+total = 2278
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 636
@@ -199,6 +201,7 @@ total = 2277
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two are written for the same type through a reference and without one, and emission erases the reference, so they are one function here" = 1
 "X casts a JavaScript value to a type the emitted call does not name, so the value stands as it is and nothing checks it" = 1
 "X converts X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
+"X converts from X" = 1
 "X for X emits a method called X, and something on this class already has that name" = 1
 "X here tests an X inside a function returning a X, which Rust does not allow, so one of the two types is not what the engine read" = 1
 "X is called on a value the engine cannot say owns anything, so nothing releases it" = 1
@@ -223,7 +226,7 @@ total = 2277
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [storage-common]
-total = 1006
+total = 1009
 
 [storage-common.by_cause]
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 463
@@ -244,9 +247,11 @@ total = 1006
 "no declaration for trait X" = 4
 "no arm of this match has a type the engine could read" = 3
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
+"Rust evaluates this argument before it branches and drops it on the path that does not use it" = 2
 "X between X and X resolves through X, and no impl in the table performs it" = 2
 "X's X prints under Debug as whatever its X says, because X has no Debug rendering in the port" = 2
 "path qualifiers std, collections are dropped by name" = 2
+"X converts from X" = 1
 "X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 1
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 1
 "X is declared with 1 type argument(s) but 0 written here" = 1
@@ -257,7 +262,7 @@ total = 1006
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 1
 
 [storage-sqlite]
-total = 233
+total = 234
 
 [storage-sqlite.by_cause]
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 35
@@ -286,6 +291,7 @@ total = 233
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 2
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 2
 "X converts X to X, which is not a conversion between two numbers" = 1
+"X converts from X" = 1
 "X here is neither a boolean negation nor an integer's complement, so it resolves through X, which the engine does not write" = 1
 "X is printed with X, and it prints as whatever its X says, because X has no Debug rendering in the port" = 1
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 1
@@ -335,7 +341,7 @@ total = 332
 "Rust evaluates this argument before it branches and drops it on the path that does not use it" = 1
 "X converts a X to a X, and no impl converts them" = 1
 "X converts a X to a X, and the impl that performs it the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
-"X converts from X and from another source, and both are emitted as X" = 1
+"X converts from X" = 1
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X dereferences without a field to assign through" = 1
 "X has no declared type" = 1
@@ -350,7 +356,7 @@ total = 332
 "this store writes through a dereference the engine could not type, so whether the place holds a guard is not decided and the value it held is not released" = 1
 
 [connector-websocket]
-total = 53
+total = 54
 
 [connector-websocket.by_cause]
 "no declaration for type X" = 10
@@ -361,6 +367,7 @@ total = 53
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 3
 "no method X on X" = 3
 "X does not name a function here" = 2
+"X converts from X" = 1
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 1
 "X has a type the engine cannot say owns anything, so nothing releases it" = 1
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 1
@@ -373,7 +380,7 @@ total = 53
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 1
 
 [connector-local]
-total = 30
+total = 31
 
 [connector-local.by_cause]
 "no declaration for type X" = 9
@@ -381,10 +388,11 @@ total = 30
 "X is a receiver the engine does not model" = 5
 "no declaration for trait X" = 4
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
+"X converts from X" = 1
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 1
 
 [ankurah]
-total = 35
+total = 36
 
 [ankurah.by_cause]
 "X re-exports X, which is a MODULE of that crate, and the port flattens a crate's modules into its package surface, so there is no name to re-export" = 9
@@ -392,3 +400,4 @@ total = 35
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X is a receiver the engine does not model" = 5
 "no declaration for trait X" = 4
+"X converts from X" = 1

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/porcelain/wait.rs
-import { Arc, OwnedClosure, invokeRef, Invocable, tokio } from '@ankurah/base';
+import { Arc, OwnedClosure, invokeRef, Invocable, dropOwned, tokio } from '@ankurah/base';
 
 export interface Wait<T> {
   waitValue(targetValue: T): Promise<void>;
@@ -61,45 +61,49 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
 }
 
 export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, predicate: Invocable<[T], R>): Promise<Output> {
-  const _t0 = self.getReadcell();
   try {
-    {
-      const _v = _t0.with((value) => invokeRef(predicate, value).result());
-      if (_v != null) {
-        const result = _v;
-        return result;
-      }
-    }
-  } finally {
-    _t0.drop();
-  }
-  const [tx, rx] = tokio.sync.mpsc.unbounded_channel();
-  const _subscription = self.listen(Arc.new(new OwnedClosure([tx], (_) => {
-    const __1 = tx.send([]);
-  })));
-  try {
-    while (true) {
-      const _v1 = await rx.recv();
-      if (_v1 != null) {
-        const _t1 = self.getReadcell();
-        try {
-          {
-            const _v2 = _t1.with((value) => invokeRef(predicate, value).result());
-            if (_v2 != null) {
-              const result = _v2;
-              return result;
-            }
-          }
-        } finally {
-          _t1.drop();
+    const _t0 = self.getReadcell();
+    try {
+      {
+        const _v = _t0.with((value) => invokeRef(predicate, value).result());
+        if (_v != null) {
+          const result = _v;
+          return result;
         }
-      } else {
-        break;
       }
+    } finally {
+      _t0.drop();
     }
-    throw new Error('Subscription channel closed unexpectedly - this should not be possible');
+    const [tx, rx] = tokio.sync.mpsc.unbounded_channel();
+    const _subscription = self.listen(Arc.new(new OwnedClosure([tx], (_) => {
+      const __1 = tx.send([]);
+    })));
+    try {
+      while (true) {
+        const _v1 = await rx.recv();
+        if (_v1 != null) {
+          const _t1 = self.getReadcell();
+          try {
+            {
+              const _v2 = _t1.with((value) => invokeRef(predicate, value).result());
+              if (_v2 != null) {
+                const result = _v2;
+                return result;
+              }
+            }
+          } finally {
+            _t1.drop();
+          }
+        } else {
+          break;
+        }
+      }
+      throw new Error('Subscription channel closed unexpectedly - this should not be possible');
+    } finally {
+      _subscription.drop();
+    }
   } finally {
-    _subscription.drop();
+    dropOwned(predicate);
   }
 }
 

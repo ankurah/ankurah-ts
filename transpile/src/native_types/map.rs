@@ -93,21 +93,30 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
 /// to do, so the port passes the value type's default as a thunk — which is
 /// what `MapEntry::orDefault` takes. Emitted without one, `orDefault()` invoked
 /// `undefined`.
+///
+/// A finisher answers `&'a mut V` in Rust and a write-through `Slot` here,
+/// which is what `*counts.entry(w).or_insert(0) += 1` stores into. Every OTHER
+/// position reads the value the slot holds: `entry(k).or_default().push(v)` is
+/// a call on the `Vec`, and a `Slot` has no `push`.
 pub fn translate_entry(
     reg: &TypeRegistry,
     receiver_ty: &Ty,
     receiver: &str,
     method: &str,
     args: &[String],
+    reads_as_value: bool,
 ) -> Option<MethodTranslation> {
-    let entry = reg.system_type("std::collections::hash_map::Entry")?;
     let Ty::Named { id, args: held } = receiver_ty.peel_refs() else {
         return None;
     };
-    if *id != entry {
+    // `hash_map::Entry` and `btree_map::Entry` are two declarations, as they are
+    // in std. Reading only the first left every `BTreeMap` entry to the
+    // name-by-name table, which wrote `orDefault()` with no thunk — and
+    // `orDefault(undefined)` invokes `undefined` on the first unseen key.
+    if !is_entry(reg, *id) {
         return None;
     }
-    let written = match (method, args.len()) {
+    let finished = match (method, args.len()) {
         ("or_insert", 1) => format!("{}.orInsert({})", receiver, args[0]),
         ("or_insert_with", 1) => format!("{}.orInsertWith({})", receiver, args[0]),
         ("or_default", 0) => {
@@ -129,5 +138,14 @@ pub fn translate_entry(
         }
         _ => return None,
     };
+    let written = if reads_as_value { format!("{}.value", finished) } else { finished };
     Some(MethodTranslation::Expr(written))
+}
+
+/// Is this the `Entry` of one of the two maps the port writes as one runtime
+/// container?
+fn is_entry(reg: &TypeRegistry, id: crate::ty::TypeId) -> bool {
+    ["std::collections::hash_map::Entry", "std::collections::btree_map::Entry"]
+        .iter()
+        .any(|path| reg.system_type(path) == Some(id))
 }

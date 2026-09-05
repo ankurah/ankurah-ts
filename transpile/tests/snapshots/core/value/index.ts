@@ -213,7 +213,7 @@ export class Value extends Enum<ValueV> {
     } else if ((_v[0].is('I64')) && (_v[1].is('I64'))) {
       const { _0: a } = _v[0].value;
       const { _0: b } = _v[1].value;
-      return a.compareTo(b);
+      return (($a, $b) => $a < $b ? -1 : $a > $b ? 1 : 0)(a, b);
     } else if ((_v[0].is('F64')) && (_v[1].is('F64'))) {
       const { _0: a } = _v[0].value;
       const { _0: b } = _v[1].value;

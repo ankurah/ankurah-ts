@@ -96,17 +96,19 @@ pub fn translate(
         // Store — assignment (strip Ordering arg)
         "store" if args.len() >= 1 => format!("{} = {}", receiver, args[0]),
 
-        // Fetch-add — returns old value, increments
-        "fetch_add" if args.len() >= 1 => format!(
-            "(() => {{ const _v = {}; {} += {}; return _v; }})()",
-            receiver, receiver, args[0]
-        ),
-
-        // Fetch-sub
-        "fetch_sub" if args.len() >= 1 => format!(
-            "(() => {{ const _v = {}; {} -= {}; return _v; }})()",
-            receiver, receiver, args[0]
-        ),
+        // Fetch-add — answers the old value and stores the new one.
+        //
+        // Rust's atomics WRAP at their width, whatever the build's debug
+        // assertions say: `AtomicU32::MAX.fetch_add(1)` stores `0`. A `+=` on a
+        // `number` went on counting, so the port and Rust disagreed from the
+        // first overflow on — and a `static mut` beside it already went through
+        // the checked helper, so the two spellings of one idea disagreed too.
+        "fetch_add" if args.len() >= 1 => {
+            return atomic_rmw("wrappingAdd", "+", receiver, &args[0], width)
+        }
+        "fetch_sub" if args.len() >= 1 => {
+            return atomic_rmw("wrappingSub", "-", receiver, &args[0], width)
+        }
 
         // Compare-and-swap
         "compare_exchange" if args.len() >= 2 => format!(
@@ -141,10 +143,21 @@ pub fn translate(
         // and `Math.min`/`Math.max` become `NaN` where Rust ignores a `NaN`
         // operand. The rule is stated once, in `@ankurah/base`.
         "round" if args.is_empty() => return float_helper("floatRound", "round", &[receiver], width),
-        "abs" if args.is_empty() => format!("Math.abs({})", receiver),
+        "abs" if args.is_empty() => match bigint_backed(width) {
+            // `Math.abs` converts its argument to a number, which throws on a
+            // `bigint`. Written out, each operand is read once.
+            true => format!("(($x) => $x < 0n ? -$x : $x)({})", receiver),
+            false => format!("Math.abs({})", receiver),
+        },
         "sqrt" if args.is_empty() => format!("Math.sqrt({})", receiver),
         "signum" if args.is_empty() => {
-            return float_helper("floatSignum", "signum", &[receiver], width)
+            if bigint_backed(width) {
+                return MethodTranslation::Expr(format!(
+                    "(($x) => $x < 0n ? -1n : $x > 0n ? 1n : 0n)({})",
+                    receiver
+                ));
+            }
+            return float_helper("floatSignum", "signum", &[receiver], width);
         }
         "is_nan" if args.is_empty() => format!("Number.isNaN({})", receiver),
         "is_finite" if args.is_empty() => format!("Number.isFinite({})", receiver),
@@ -153,15 +166,79 @@ pub fn translate(
         }
         "powi" | "powf" if args.len() == 1 => format!("({} ** {})", receiver, args[0]),
         "min" if args.len() == 1 => {
-            return float_helper("floatMin", "min", &[receiver, &args[0]], width)
+            if bigint_backed(width) {
+                return MethodTranslation::Expr(format!(
+                    "(($a, $b) => $a < $b ? $a : $b)({}, {})",
+                    receiver, args[0]
+                ));
+            }
+            return float_helper("floatMin", "min", &[receiver, &args[0]], width);
         }
         "max" if args.len() == 1 => {
-            return float_helper("floatMax", "max", &[receiver, &args[0]], width)
+            if bigint_backed(width) {
+                return MethodTranslation::Expr(format!(
+                    "(($a, $b) => $a > $b ? $a : $b)({}, {})",
+                    receiver, args[0]
+                ));
+            }
+            return float_helper("floatMax", "max", &[receiver, &args[0]], width);
         }
 
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)
+}
+
+
+/// One atomic read-modify-write: the old value out, the wrapped new value in.
+///
+/// The width is the atomic's own. Without one the helper cannot answer, so the
+/// operation is refused rather than written with a guessed width — the same
+/// rule the explicit families take.
+fn atomic_rmw(
+    helper: &str,
+    operator: &str,
+    receiver: &str,
+    operand: &str,
+    width: Option<crate::ty::Prim>,
+) -> MethodTranslation {
+    let plain = format!(
+        "(() => {{ const _v = {r}; {r} = {r} {op} {n}; return _v; }})()",
+        r = receiver,
+        op = operator,
+        n = operand
+    );
+    match width {
+        Some(prim) => MethodTranslation::Expr(format!(
+            "(() => {{ const _v = {r}; {r} = {h}({r}, {n}, '{w}'); return _v; }})()",
+            r = receiver,
+            h = helper,
+            n = operand,
+            w = crate::operators::primitives::width_name(prim)
+        )),
+        // The one atomic that reaches here with no width is `AtomicU64`, whose
+        // TypeScript spelling and whose Rust width disagree — see
+        // `native_types::atomic_width`.
+        None => MethodTranslation::Refused {
+            message:
+                "this atomic wraps at a width the port does not write it as, so the update is                  an ordinary `+=` and does not wrap where Rust does"
+                    .to_string(),
+            fallback: Box::new(MethodTranslation::Expr(plain)),
+        },
+    }
+}
+
+/// Is this width one the port writes as a `bigint`?
+///
+/// `Math.abs`, `Math.sign`, `Math.min` and `Math.max` each convert their
+/// arguments to a number, and converting a `bigint` throws. So a 64- or
+/// 128-bit width takes the comparison written out instead, in an arrow that
+/// reads each operand exactly once.
+fn bigint_backed(width: Option<crate::ty::Prim>) -> bool {
+    matches!(
+        width,
+        Some(crate::ty::Prim::U64 | crate::ty::Prim::I64 | crate::ty::Prim::U128 | crate::ty::Prim::I128)
+    )
 }
 
 /// One of the four methods whose JavaScript spelling answers something else for
@@ -247,6 +324,47 @@ mod tests {
         );
     }
 
+    /// Every integer width takes the free helper, not only the ones the port
+    /// writes as a `number`. A `bigint` has no `saturatingAdd` of its own, and
+    /// `v.saturatingAdd(1n)` was live at storage-indexeddb's `next_upper_bound`
+    /// — raised on every I64-keyed index range. `isize` is a `number` here and
+    /// had the same defect; `u128` had it AND was filtered out of the dispatch
+    /// altogether, because `Prim::range()` had no entry for it.
+    #[test]
+    fn every_integer_width_reaches_the_family_helper() {
+        use crate::ty::Prim;
+        for (prim, name) in [
+            (Prim::U64, "u64"),
+            (Prim::I64, "i64"),
+            (Prim::Isize, "isize"),
+            (Prim::U128, "u128"),
+            (Prim::I128, "i128"),
+            (Prim::I8, "i8"),
+        ] {
+            assert_eq!(
+                widened("x", "saturating_add", &["1"], Some(prim)),
+                format!("saturatingAdd(x, 1, '{name}')")
+            );
+        }
+    }
+
+    /// `Math.abs`, `Math.sign`, `Math.min` and `Math.max` each convert their
+    /// arguments to a number, and converting a `bigint` throws. The comparison
+    /// is written out instead, in an arrow that reads each operand once.
+    #[test]
+    fn min_max_abs_and_signum_on_a_bigint_width_avoid_math() {
+        use crate::ty::Prim;
+        assert_eq!(widened("a", "min", &["b"], Some(Prim::U64)), "(($a, $b) => $a < $b ? $a : $b)(a, b)");
+        assert_eq!(widened("a", "max", &["b"], Some(Prim::I128)), "(($a, $b) => $a > $b ? $a : $b)(a, b)");
+        assert_eq!(widened("v", "abs", &[], Some(Prim::I64)), "(($x) => $x < 0n ? -$x : $x)(v)");
+        assert_eq!(
+            widened("v", "signum", &[], Some(Prim::I64)),
+            "(($x) => $x < 0n ? -1n : $x > 0n ? 1n : 0n)(v)"
+        );
+        // A width the port writes as a `number` keeps the `Math.*` call.
+        assert_eq!(widened("a", "min", &["b"], Some(Prim::I32)), "Math.min(a, b)");
+    }
+
     /// Without the width the helper cannot answer, so the call is refused
     /// rather than written with a guessed one.
     #[test]
@@ -290,7 +408,13 @@ mod tests {
 
         assert_eq!(widened("n", "min", &["m"], Some(Prim::I32)), "Math.min(n, m)");
         assert_eq!(widened("n", "max", &["m"], Some(Prim::Usize)), "Math.max(n, m)");
-        assert_eq!(widened("n", "signum", &[], Some(Prim::I64)), "Math.sign(n)");
+        // PREMISE CHANGED 2026-09-05 (fixpass5 item 3): this line used to read
+        // `Math.sign(n)` for an `i64`. An `i64` is a `bigint` here and
+        // `Math.sign` converts its argument to a number, which throws on one —
+        // so the width that decides `Math.*` against the base helper is the
+        // FLOAT question, and there is a second question underneath it, which
+        // is whether the receiver is a `bigint` at all.
+        assert_eq!(widened("n", "signum", &[], Some(Prim::I32)), "Math.sign(n)");
 
         match translate("n", "round", &[], None) {
             MethodTranslation::Refused { message, fallback } => {

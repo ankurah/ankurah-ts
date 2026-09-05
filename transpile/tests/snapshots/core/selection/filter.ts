@@ -262,36 +262,40 @@ function evaluateSubPath<I extends Filterable>(item: I, propertyName: string, su
 }
 
 function compareValuesWithCast(left: Value, right: Value, op: (arg0: Value, arg1: Value) => boolean): boolean {
-  if (ValueType.of(left) === ValueType.of(right)) {
-    return invokeRef(op, left, right);
+  try {
+    if (ValueType.of(left) === ValueType.of(right)) {
+      return invokeRef(op, left, right);
+    }
+    {
+      const _v = Value_castTo(right, ValueType.of(left));
+      if (_v.isOk()) {
+        const castedRight = _v.unwrap();
+        try {
+          return invokeRef(op, left, castedRight);
+        } finally {
+          castedRight.drop();
+        }
+      } else {
+      _v.drop();
+    }
+    }
+    {
+      const _v1 = Value_castTo(left, ValueType.of(right));
+      if (_v1.isOk()) {
+        const castedLeft = _v1.unwrap();
+        try {
+          return invokeRef(op, castedLeft, right);
+        } finally {
+          castedLeft.drop();
+        }
+      } else {
+      _v1.drop();
+    }
+    }
+    return false;
+  } finally {
+    dropOwned(op);
   }
-  {
-    const _v = Value_castTo(right, ValueType.of(left));
-    if (_v.isOk()) {
-      const castedRight = _v.unwrap();
-      try {
-        return invokeRef(op, left, castedRight);
-      } finally {
-        castedRight.drop();
-      }
-    } else {
-    _v.drop();
-  }
-  }
-  {
-    const _v1 = Value_castTo(left, ValueType.of(right));
-    if (_v1.isOk()) {
-      const castedLeft = _v1.unwrap();
-      try {
-        return invokeRef(op, castedLeft, right);
-      } finally {
-        castedLeft.drop();
-      }
-    } else {
-    _v1.drop();
-  }
-  }
-  return false;
 }
 
 export function evaluatePredicate<I extends Filterable>(item: I, predicate: Predicate): Result<boolean, Error> {

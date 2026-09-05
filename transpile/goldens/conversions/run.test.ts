@@ -6,7 +6,7 @@
 // narrowing keeps the low bits, and a float truncates towards zero.
 
 import { expect, test } from 'bun:test';
-import { Name, Tag, fromCall, named, narrow, owned, truncate, widen } from './input.ts';
+import { Name, Sizes, Tag, fromCall, named, narrow, owned, truncate, widen } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('.into() reaches the From impl and consumes what it converted', () => {
@@ -52,6 +52,22 @@ test('a float outside the range saturates rather than wrapping', () => {
 
 test('a NaN becomes zero, as Rust says', () => {
   expect(truncate(Number.NaN)).toBe(0);
+});
+
+// I: `From<Vec<u32>>` and `From<Vec<i32>>` both spell `number[]` in TypeScript,
+// so the two impls were one identity — one emitted static, one body, and the
+// other lost with no diagnostic. R8's identity is the RUST source, and it
+// reaches all the way down now.
+test('two conversions whose sources differ only in Rust each keep their body', () => {
+  const fromU = Sizes.fromVecU32([1, 2]);
+  expect(fromU._0).toBe('u2');
+  const fromI = Sizes.fromVecI32([1, 2, 3]);
+  expect(fromI._0).toBe('i3');
+  const fromSlice = Sizes.fromU32([1]);
+  expect(fromSlice._0).toBe('s1');
+  fromU.drop();
+  fromI.drop();
+  fromSlice.drop();
 });
 
 test('nothing leaked and nothing was reported', async () => {

@@ -55,7 +55,7 @@ function convertJsonBoolsToNumbers(json: unknown): unknown {
   return json.match({
     Bool: (v) => {
       const b = v._0;
-      return serdeJson.Value.Number(b ? (1) : (0));
+      return serdeJson.Value.Number((b ? (1) : (0)));
     },
     Array: (v) => {
       const arr = v._0;
@@ -114,7 +114,7 @@ export function JsValue_fromIdbValue(value: IdbValue): unknown {
       },
       Bool: (v) => {
         const b = v._0;
-        return JsValue.fromF64(b ? 1.0 : 0.0);
+        return JsValue.fromF64((b ? 1.0 : 0.0));
       },
       String: (v) => {
         const s = v._0;

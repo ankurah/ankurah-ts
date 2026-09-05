@@ -9,7 +9,7 @@
 // second clone leaked.
 
 import { expect, test } from 'bun:test';
-import { Bag, Key, built, counted, ordered, tagged } from './input.ts';
+import { Bag, Key, Lists, built, counted, ordered, tagged } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('from builds a map a rebuilt key can look up', () => {
@@ -57,6 +57,48 @@ test('entry counts, and reads the place once', () => {
   b.drop();
   counts.drop();
   for (const w of words) w.drop();
+});
+
+// The three ways of finishing an entry that the counter above does not use.
+// Each of these raised `TypeError: ....push is not a function` at the parent:
+// the finisher answers the write-through `Slot`, and the emitted code used it
+// as the value it points at.
+test('or_default reads the place as a value', () => {
+  const l = Lists.new();
+  l.pushDefault(new Key('a'), 1);
+  l.pushDefault(new Key('a'), 2);
+  const ask = new Key('a');
+  expect(l.count(ask)).toBe(2);
+  ask.drop();
+  l.drop();
+});
+
+test('or_insert and or_insert_with read the place as a value', () => {
+  const l = Lists.new();
+  l.pushInsert(new Key('a'), 1);
+  l.pushWith(new Key('a'), 2);
+  l.pushWith(new Key('b'), 3);
+  const a = new Key('a');
+  const b = new Key('b');
+  expect(l.count(a)).toBe(2);
+  expect(l.count(b)).toBe(1);
+  a.drop();
+  b.drop();
+  l.drop();
+});
+
+// A `BTreeMap` receiver: the value type an `or_default()` needs a thunk for was
+// read off `hash_map::Entry` alone, so this one emitted `orDefault()` and
+// invoked `undefined` on the first unseen key.
+test('a BTreeMap entry gets its thunk too', () => {
+  const l = Lists.new();
+  l.pushOrdered('x', 1);
+  l.pushOrdered('x', 2);
+  l.pushOrdered('y', 3);
+  expect(l.orderedCount('x')).toBe(2);
+  expect(l.orderedCount('y')).toBe(1);
+  expect(l.orderedCount('z')).toBe(0);
+  l.drop();
 });
 
 test('nothing leaked and nothing was dropped twice', () => {

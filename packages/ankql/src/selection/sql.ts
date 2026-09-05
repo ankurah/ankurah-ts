@@ -39,7 +39,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
         },
         Bool: (v) => {
           const b = v._0;
-          buffer.value += b ? 'true' : 'false';
+          buffer.value += (b ? 'true' : 'false');
         },
         String: (v) => {
           const s = v._0;
@@ -148,7 +148,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
               },
               Bool: (v) => {
                 const b = v._0;
-                buffer.value += b ? 'true' : 'false';
+                buffer.value += (b ? 'true' : 'false');
               },
               EntityId: (v) => {
                 const ulid = v._0;

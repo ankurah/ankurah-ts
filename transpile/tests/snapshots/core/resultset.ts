@@ -524,56 +524,60 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
   }
 
   retainDirty(shouldRetain: Invocable<[E], boolean>): EntityId[] {
-    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
-    let removedIds = [];
-    let i = 0;
-    const wasAtLimit = (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!));
-    while (i < guard.value.order.length) {
-      if (guard.value.order[i].dirty) {
-        const shouldKeep = invokeRef(shouldRetain, guard.value.order[i].entity);
-        if (shouldKeep) {
-          const keySpec = guard.value.keySpec.clone();
-          {
-            const _v = keySpec;
-            if (_v != null) {
-              const keySpec = _v;
-              try {
-                guard.value.order[i].sortKey = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
-              } finally {
-                keySpec.drop();
-              }
-            } else {
-            dropOwned(_v);
+    try {
+      const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+      let removedIds = [];
+      let i = 0;
+      const wasAtLimit = (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!));
+      while (i < guard.value.order.length) {
+        if (guard.value.order[i].dirty) {
+          const shouldKeep = invokeRef(shouldRetain, guard.value.order[i].entity);
+          if (shouldKeep) {
+            const keySpec = guard.value.keySpec.clone();
+            {
+              const _v = keySpec;
+              if (_v != null) {
+                const keySpec = _v;
+                try {
+                  guard.value.order[i].sortKey = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
+                } finally {
+                  keySpec.drop();
+                }
+              } else {
+              dropOwned(_v);
+            }
+            }
+            guard.value.order[i].dirty = false;
+            i = checkedAdd(i, 1, 'i32');
+          } else {
+            const removedEntry = guard.value.order.splice(i, 1)[0];
+            try {
+              const removedId = removedEntry.entity.id();
+              guard.value.index.delete(removedId);
+              removedIds.push(removedId);
+            } finally {
+              removedEntry.drop();
+            }
           }
-          }
-          guard.value.order[i].dirty = false;
-          i = checkedAdd(i, 1, 'i32');
         } else {
-          const removedEntry = guard.value.order.splice(i, 1)[0];
-          try {
-            const removedId = removedEntry.entity.id();
-            guard.value.index.delete(removedId);
-            removedIds.push(removedId);
-          } finally {
-            removedEntry.drop();
-          }
+          i = checkedAdd(i, 1, 'i32');
         }
-      } else {
-        i = checkedAdd(i, 1, 'i32');
       }
-    }
-    guard.value.index.clear();
-    const indexUpdates = [...guard.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
-    for (const [id, i] of indexUpdates) {
-      guard.value.index.set(id, i);
-    }
-    if (!(removedIds.length === 0)) {
-      this.changed = true;
-      if ((!guard.value.gapDirty) && wasAtLimit && (guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!))) {
-        guard.value.gapDirty = true;
+      guard.value.index.clear();
+      const indexUpdates = [...guard.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
+      for (const [id, i] of indexUpdates) {
+        guard.value.index.set(id, i);
       }
+      if (!(removedIds.length === 0)) {
+        this.changed = true;
+        if ((!guard.value.gapDirty) && wasAtLimit && (guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!))) {
+          guard.value.gapDirty = true;
+        }
+      }
+      return removedIds;
+    } finally {
+      dropOwned(shouldRetain);
     }
-    return removedIds;
   }
 
   replaceAll(entities: E[]): void {

@@ -145,3 +145,58 @@ fn a_match_over_a_reference_binds_a_borrow() {
         "the payload stays the enum\u{2019}s:\n{ts}"
     );
 }
+
+/// A `Result` matched against a REFERENCE is READ, not taken apart. `unwrap()`
+/// is Rust's `self` form and marks the runtime `Result` moved, so the second
+/// read of the same value raised `Result was used after being moved`. RFC 2005
+/// again: a pattern matched against a reference binds by reference, and the
+/// payload read has to agree with the binding.
+#[test]
+fn matching_a_borrowed_result_reads_its_payload() {
+    const PRELUDE: &str = "pub struct Held { pub n: u32 }\n\
+                           pub fn read(h: &Held) -> u32 { h.n }\n";
+    let cases = [
+        (
+            "pub fn f(v: &Result<Held, Held>) -> u32 { \
+             match v { Ok(i) => read(i), Err(e) => read(e) } }",
+            "f",
+        ),
+        (
+            "pub fn g(v: &Result<Held, Held>) -> u32 { \
+             if let Ok(i) = v { read(i) } else { 0 } }",
+            "g",
+        ),
+        (
+            "pub fn h(v: &Option<Result<Held, Held>>) -> u32 { \
+             match v { Some(Ok(i)) => read(i), Some(Err(e)) => read(e), None => 0 } }",
+            "h",
+        ),
+    ];
+    for (rust, method) in cases {
+        let mut fixture = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            &format!("{}{}", PRELUDE, rust),
+        )]);
+        let ts = fixture.translated_method("lib.rs", method);
+        assert!(!ts.contains("unwrap()"), "{method} consumes a borrowed Result:\n{ts}");
+        assert!(!ts.contains("unwrapErr()"), "{method} consumes a borrowed Result:\n{ts}");
+        assert!(ts.contains("okRef()"), "{method}:\n{ts}");
+    }
+}
+
+/// An OWNED `Result` is still taken apart: the match is what moved it, and the
+/// arm owns what it was handed.
+#[test]
+fn matching_an_owned_result_still_consumes_it() {
+    let mut fixture = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub struct Held { pub n: u32 }\n\
+         pub fn read(h: &Held) -> u32 { h.n }\n\
+         pub fn f(v: Result<Held, Held>) -> u32 { \
+         match v { Ok(i) => read(&i), Err(e) => read(&e) } }",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(ts.contains("v.unwrap()"), "{ts}");
+    assert!(ts.contains("v.unwrapErr()"), "{ts}");
+    assert!(!ts.contains("okRef"), "{ts}");
+}

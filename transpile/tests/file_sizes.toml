@@ -1,0 +1,40 @@
+# Transpiler source files over 600 lines, written by
+# transpile/tests/file_sizes.rs. The project's rule is that a file stays under
+# about 600 lines and is split before it grows past one; this ledger is the
+# ratchet that keeps the rule from going backwards while the files that are
+# already over it come down.
+#
+# Matched EXACTLY: a file that grows fails, a file that shrinks fails until its
+# number comes down with it, a new file over the line fails, and a file that
+# drops under it fails until its line is taken out.
+#
+# Generated: do not hand-edit. Refresh with:
+#     cd transpile && UPDATE_FILE_SIZES=1 cargo test --test file_sizes
+
+[over]
+"src/bincode_module.rs" = 914
+"src/body.rs" = 1556
+"src/body/blocks.rs" = 601
+"src/body/paths.rs" = 619
+"src/body/patterns.rs" = 760
+"src/body/scopes.rs" = 655
+"src/cfg.rs" = 744
+"src/codegen.rs" = 1804
+"src/config.rs" = 899
+"src/convert.rs" = 702
+"src/emit.rs" = 1498
+"src/extract.rs" = 1250
+"src/infer/context.rs" = 1439
+"src/macros.rs" = 720
+"src/main.rs" = 1571
+"src/match_expr.rs" = 995
+"src/match_expr/catch_all.rs" = 803
+"src/ownership/moves.rs" = 755
+"src/ownership/tests.rs" = 1414
+"src/registry/build.rs" = 1149
+"src/registry/engine_tests.rs" = 1289
+"src/registry/method.rs" = 1155
+"src/registry/method_tests.rs" = 726
+"src/registry/mod.rs" = 851
+"src/types.rs" = 674
+"tests/oracle.rs" = 879

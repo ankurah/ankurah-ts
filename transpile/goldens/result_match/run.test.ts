@@ -13,10 +13,13 @@ import {
   borrowFailure,
   consumeEntity,
   consumeFailure,
+  entityWidth,
   fetch,
+  maybeWidth,
   orDefault,
   score,
   width,
+  widthOf,
 } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
@@ -67,6 +70,32 @@ test('orDefault hands the Ok payload out and releases the Err payload', () => {
   const fallback = orDefault('');
   expect(fallback.name).toBe('fallback');
   fallback.drop();
+});
+
+// X9: a match written against a REFERENCE reads the payload and leaves the
+// `Result` whole. Read with `unwrap()`, the Result was marked moved, so the
+// SECOND read of the same value raised `Result was used after being moved`.
+test('matching a borrowed Result reads it without consuming it', () => {
+  const ok = fetch('abcd');
+  expect(widthOf(ok)).toBe(4);
+  // Twice, which is the whole point: the caller still owns it.
+  expect(widthOf(ok)).toBe(4);
+  expect(entityWidth(ok)).toBe(4);
+  ok.drop();
+
+  const err = fetch('');
+  expect(widthOf(err)).toBe(5);
+  expect(widthOf(err)).toBe(5);
+  expect(entityWidth(err)).toBe(0);
+  err.drop();
+});
+
+test('and nested under a borrowed Option', () => {
+  const ok = fetch('abcd');
+  expect(maybeWidth(ok)).toBe(4);
+  expect(maybeWidth(ok)).toBe(4);
+  ok.drop();
+  expect(maybeWidth(null)).toBe(0);
 });
 
 test('nothing leaked and nothing was reported', async () => {

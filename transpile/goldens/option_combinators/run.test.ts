@@ -6,7 +6,7 @@
 // false branch.
 
 import { expect, test } from 'bun:test';
-import { Registry } from './input.ts';
+import { Entry, Registry } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a receiver with an effect runs once, and its value is what comes back', () => {
@@ -52,6 +52,41 @@ test('the reading combinators answer what Rust answers', () => {
   expect(r.isHeavy(99)).toBe(false);
   expect(r.weightOrFail(1).unwrap()).toBe(5);
   expect(r.weightOrFail(99).unwrapErr()).toBe('no 99');
+  r.drop();
+});
+
+test("ok_or's error is built before the branch and released where it is not used", () => {
+  const r = Registry.new();
+  r.put(1, 5);
+  // The `Ok` path: the spare error was built — Rust builds it too — and the
+  // branch that hands it nowhere releases it. Nothing here can release it, so
+  // a leak is the transpiler's.
+  const taken = r.takeOrSpare(1, 9);
+  expect(taken.isOk()).toBe(true);
+  const entry = taken.unwrap();
+  expect(entry.weight).toBe(5);
+  entry.drop();
+  // The `Err` path: the spare is what comes back, and it is the driver's now.
+  const missing = r.takeOrSpare(99, 9);
+  expect(missing.isErr()).toBe(true);
+  const spare = missing.unwrapErr();
+  expect(spare.weight).toBe(9);
+  spare.drop();
+  r.drop();
+});
+
+test("map_or's default is released on the path that runs the closure", () => {
+  const r = Registry.new();
+  r.put(1, 5);
+  // `Some`: the closure's value comes back and the default the call was handed
+  // is released, because Rust drops it there.
+  const mapped = r.entryOr(1, new Entry(9));
+  expect(mapped.weight).toBe(5);
+  mapped.drop();
+  // `None`: the default IS the answer.
+  const fallback = r.entryOr(99, new Entry(9));
+  expect(fallback.weight).toBe(9);
+  fallback.drop();
   r.drop();
 });
 

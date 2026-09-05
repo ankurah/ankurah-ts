@@ -40,7 +40,7 @@ fn fn_traits(reg: &TypeRegistry) -> Vec<crate::ty::TypeId> {
 /// `Fn` and `FnMut` are taken by reference: the caller keeps the closure and may
 /// call it again, so a callee must not release it. `FnOnce` is consumed by the
 /// call, and what its captures owe is released there.
-pub fn takes_the_closure_by_value(
+pub fn consumed_by_the_call(
     reg: &TypeRegistry,
     ty: &Ty,
     param_bounds: &[(String, TraitRef)],

@@ -706,6 +706,17 @@ addressed by the step that found it.
   the two cannot disagree; the 8 bytes those types occupy on the bincode wire is
   a separate fact and belongs to the codec.
 
+  An ATOMIC wraps rather than panicking. Rust's `fetch_add` and `fetch_sub` are
+  defined to wrap at the width whatever the build's debug assertions say —
+  `AtomicU32::MAX.fetch_add(1)` stores `0` — so those two go through
+  `wrappingAdd` and `wrappingSub` with the atomic's own width, where a
+  `static mut` beside them goes through `checkedAdd`. The two spellings of one
+  idea used to disagree: the atomic went on counting in a double. `AtomicU64` is
+  the one atomic this cannot be written for, because the port spells it a
+  `number` and Rust holds a `u64` in it — a `bigint` operand beside a `number`
+  place is something JavaScript refuses to mix — so its update stays an ordinary
+  `+=` and the site says so.
+
   A width the port spells `number` can still be handed an answer past
   `Number.MAX_SAFE_INTEGER`. The helper PANICS there rather than returning a
   rounded double: a rounded answer is a wrong number the program then computes
@@ -818,24 +829,42 @@ addressed by the step that found it.
     alone because a comment is not an expression: one written where an argument
     stood did not parse, and a file that does not parse stops the TypeScript
     compiler from checking anything else in the project.
-  - **A closure whose body hands a capture away owns nothing of it.** Rust moves
-    the capture into the body when an `FnOnce` runs, so the closure has nothing
-    left to drop; the runtime's `OwnedClosure` keeps its captures private and
-    offers no call that transfers them, so listing one drops it a second time
-    when the closure is dropped — a fatal — and leaving it out leaks it only
-    where the closure is never called. The capture is left out and the site says
-    so. The runtime change that would close it is a `callOnce` that marks the
-    closure moved before running the body.
+  - **A closure that moves ONE capture and reads another drops neither.**
+    (Rewritten 2026-09-05: the gap this bullet used to record — a closure whose
+    body hands a capture away owning nothing of it — is closed. The runtime has
+    `OwnedClosure.callOnce`, which marks the closure moved before running the
+    body, and `$consumesCaptures`, which the emitter sets from the same question
+    it already asks to choose `call` from `callOnce`; `invoke` calls a reading
+    closure and then drops it, so its captures' glue runs once.) What is left is
+    that `$consumesCaptures` is ONE boolean for the whole closure. A body that
+    hands `a` away and only reads `b` sets it, `callOnce` marks every capture
+    transferred, and `b` is released by nobody. Closing it needs a per-capture
+    disposition — a flag per capture, or a `callOnce` that releases the ones the
+    body did not move.
   - **An `if let` that takes a payload out of a wrapper leaves the wrapper.**
     The path where the pattern did not match releases the value it tested, as a
     `while let` does; the path that matched has taken the payload, and marking
     the wrapper moved is what `intoMatch` does and an `if` cannot. An
     `Option<T>` has no wrapper — it is `T | null` — so only an enum reaches
     this.
-  - **Two `From` impls for one target that differ only in a reference are one
-    function here.** `impl From<EntityId> for Ref<T>` and `impl From<&EntityId>
-    for Ref<T>` take the same emitted name, because emission erases the
-    reference; the second is dropped and the site says so. Six in the corpus.
+  - **Two `From` impls for one target that differ only in a reference are two
+    functions, and a call reaches the owned one.** (Rewritten 2026-09-05: the
+    gap this bullet used to record — the second impl dropped, the site saying so
+    — is closed. R8 made the conversion's identity its RUST source, and a
+    reference to a type the port gives a class to marks the name, so
+    `impl From<Ref<T>> for EntityId` and `impl From<&Ref<T>> for EntityId` emit
+    `EntityId_fromRefT` and `EntityId_fromRefRefT`. Both bodies are kept, which
+    matters: four of the corpus's six pairs really do differ — the borrowed form
+    clones what the owned one moves, or the owned form releases what the
+    borrowed one must not.) What is left is the CHOICE at the call site:
+    `(&r.id).into()` is written against the owned static, because the resolution
+    peels the reference before it looks the impl up. Six emitted `..Ref..`
+    functions therefore have no caller, and where the pair's two Rust bodies are
+    identical — `proto/id.rs`'s `From<EntityId> for String` and
+    `From<&EntityId> for String`, and the same pair for `ankql::ast::Expr` — the
+    two emitted functions are identical too. They stay: making them one function
+    would be reading identical TypeScript bodies as one conversion, which is the
+    rule R8 retracted.
   - **A `?` inside a match arm, where the match is a statement.** An arm is an
     arrow function, so the early exit leaves the arm rather than the function.
     Where the match is the enclosing function's value the arm's `Result` is what
@@ -901,9 +930,17 @@ addressed by the step that found it.
   mirrors. The three other overflow cases the same debug build panics on —
   arithmetic, division by zero, remainder by zero — go through R7's helpers and
   do panic; the shift amount is the one left. It belongs with R7 when it lands.
-- **`/=` evaluates its place twice.** `a[i()] /= 2` is written
-  `a[i()] = Math.trunc(a[i()] / 2)`, and a place with a side effect performs it
-  twice. Rust evaluates the place once.
+- **A compound assignment into an INDEX evaluates the index twice.**
+  (Rewritten 2026-09-05: the bullet this replaces said `/=` evaluates its place
+  twice, and that is no longer true of the form the corpus writes. `*place op=
+  value` binds the place once — `const _m0 = m.entry(k).orInsert(0); _m0.value =
+  checkedAdd(_m0.value, 1, 'i32')` — so an `entry` is made once and its key
+  cloned once.) What is left is the INDEX form: `a[i()] /= 2` is written
+  `a[i()] = checkedDiv(a[i()], 2, 'i32')`, so an index expression that calls
+  something calls it twice. A field or a local index is not this — reading
+  `s.f` or `a[n]` again reads the same storage and runs nothing, which is the
+  same reason Rust may read it once. No corpus site writes a call inside the
+  index of a compound assignment.
 - **A `String` is ordered by UTF-16 code unit, not by byte.** A derived `Ord`
   compares strings with JavaScript's `<`, which orders by code unit; Rust
   compares a `String` by byte. The two agree below U+10000 and disagree on the
@@ -919,11 +956,17 @@ addressed by the step that found it.
 - **A function whose body awaits is not always emitted `async`.** 45 sites in
   core say "'await' expressions are only allowed within async functions"; the
   `async` belongs on whatever function the emitter wrapped the body in.
-- **`#[derive(Serialize, Deserialize)]` writes the bincode half and not the
-  JSON half.** `encode`/`decode` are emitted; `toJSON`/`static fromJson` are
-  not, and what error type an emitted `fromJson` answers with is a contract
-  question that has not been put. The provided proto ids carry hand-written
-  JSON, which is what `json_serde.test.ts` exercises.
+- **`#[derive(Serialize, Deserialize)]`'s JSON half is refused for a type whose
+  provided parts do not declare it.** (Rewritten 2026-09-05: the bullet this
+  replaces said the JSON half is not emitted at all. It is: `encode`/`decode`
+  and `toJSON`/`static fromJson` are all written, and an emitted `fromJson`
+  answers `Result<T, JsonError>`.) What decides WHICH types get the pair is
+  fixpass3's §4.2: a `[provided_impls]` entry says whether its hand-written file
+  declares `fromJson`, `transpile/tests/declared_members.rs` reads the file and
+  fails if the claim is false, and a generated type that reaches a provided type
+  which declares neither half has both of its own halves refused — the pair is
+  refused as one, because a `toJSON` with no `fromJson` writes text nothing can
+  read back. Seven proto types carry neither half for that reason.
 
 ## 8. Non-goals
 

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/owned_closures/src/input.rs
-import { Struct, OwnedClosure, invoke, invokeRef, Invocable, checkedAdd } from '@ankurah/base';
+import { Struct, OwnedClosure, invoke, invokeRef, Invocable, dropOwned, checkedAdd } from '@ankurah/base';
 
 export class Entity extends Struct {
   readonly name: string;
@@ -72,5 +72,17 @@ export function handsAWrappedOne(entity: Entity): number {
 
 export function handsAPlainOne(n: number): number {
   return throughABound((x) => x + 1, n);
+}
+
+export function twiceByValue(f: Invocable<[number], number>, n: number): number {
+  try {
+    return invokeRef(f, n) + invokeRef(f, n);
+  } finally {
+    dropOwned(f);
+  }
+}
+
+export function twiceByReference(f: Invocable<[number], number>, n: number): number {
+  return invokeRef(f, n) + invokeRef(f, n);
 }
 

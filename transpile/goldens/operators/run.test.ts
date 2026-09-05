@@ -7,7 +7,7 @@
 
 import { expect, test } from 'bun:test';
 import { BorrowMut } from '@ankurah/base';
-import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, bump, chargeNegated, checks, combined, different, dividedByNegativeOne, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, negated, overflows, same, saturates, shift64, shiftAssign32, shiftAssign8, shifted, shifts, toF32, toI64, toU64, wraps, complemented as complemented_ } from './input.ts';
+import { Boxed, Charge, Left, Parcel, Right, Tag, Weight, bigger, borrowedSum, bump, chargeNegated, checks, combined, different, dividedByNegativeOne, eagerAnd, eagerOr, flipped, genericSum, halves, heavier, indexed, laterLocal, magnitude, negated, overflows, same, saturateIsize, saturateU64, saturates, shift64, shiftAssign32, shiftAssign8, shifted, shifts, smaller, toF32, toI64, toU64, wrapI64, wrapU128, wraps, complemented as complemented_ } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('== compares values, not references', () => {
@@ -165,6 +165,33 @@ test('R7 reaches through the cell a &mut to a value becomes', () => {
   bump(cell);
   expect(cell.value).toBe(4294967295);
   expect(() => bump(cell)).toThrow('attempt to add with overflow');
+});
+
+// The explicit arithmetic families on the widths the port writes as a `bigint`,
+// and on `isize`, which it writes as a `number`. Each of these was a method the
+// value does not have: `v.saturatingAdd(1n)` on a `bigint` raised at
+// storage-indexeddb's `next_upper_bound` for every I64-keyed index range.
+test('the arithmetic families reach a bigint width', () => {
+  expect(saturateU64(1n)).toBe(2n);
+  // `saturating_add` stops at the maximum rather than wrapping or growing.
+  expect(saturateU64(18446744073709551615n)).toBe(18446744073709551615n);
+  expect(wrapI64(-9223372036854775808n)).toBe(9223372036854775807n);
+  expect(wrapU128(0n)).toBe(1n);
+  expect(wrapU128((1n << 128n) - 1n)).toBe(0n);
+});
+
+test('and isize, which is a number and 32-bit here (R13)', () => {
+  expect(saturateIsize(1)).toBe(2);
+  expect(saturateIsize(2147483647)).toBe(2147483647);
+});
+
+// `Math.min` and `Math.abs` convert their arguments to numbers, and converting
+// a `bigint` throws.
+test('min and abs on a bigint width do not go through Math', () => {
+  expect(smaller(3n, 9n)).toBe(3n);
+  expect(smaller(9n, 3n)).toBe(3n);
+  expect(magnitude(-5n)).toBe(5n);
+  expect(magnitude(5n)).toBe(5n);
 });
 
 test('nothing leaked and nothing was reported', async () => {

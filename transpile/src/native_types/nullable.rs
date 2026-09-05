@@ -29,19 +29,54 @@ pub struct Once<'a> {
     /// in, and answer that name. A place comes back unchanged.
     pub bind_receiver: &'a dyn Fn(&str) -> String,
     /// The same for an argument Rust evaluates BEFORE it branches — `ok_or`'s
-    /// error and `map_or`'s default, which are values and not closures. Nothing
-    /// comes back where naming it would change what the program owns: Rust
-    /// builds such a value and drops it on the path that does not use it, and
-    /// there is no name here to drop it under, so the argument stays in the
-    /// branch and the caller reports the difference.
-    pub bind_eager: &'a dyn Fn(usize, &str) -> Option<String>,
+    /// error and `map_or`'s default, which are values and not closures. The
+    /// answer carries the release the OTHER branch owes, because Rust builds
+    /// such a value on both paths and drops it on the path that hands it
+    /// nowhere. Nothing comes back where the engine could not name what the
+    /// argument is: no release can be written for a type nobody could name, so
+    /// the argument stays inside the branch and the caller reports it.
+    pub bind_eager: &'a dyn Fn(usize, &str) -> Option<Eager>,
+}
+
+/// An eager argument the caller has named, and what the branch that hands it
+/// nowhere owes it.
+///
+/// For: `o.ok_or(build())` builds the error in Rust whether or not `o` is
+/// `None`, and drops it again where `o` was `Some`. Writing the argument inside
+/// the `Err` branch restored neither the evaluation nor the drop; writing it
+/// before the branch and releasing it in the other one restores both.
+pub struct Eager {
+    /// What to write where the argument stood — a hoisted name, or the
+    /// argument itself where reading it twice runs nothing.
+    pub name: String,
+    /// The release the branch that does not hand the value on runs, where the
+    /// value owns something. `None` where it owns nothing.
+    pub release: Option<String>,
 }
 
 impl Once<'_> {
     /// The `Once` for a caller that has no expressions to ask about — the
     /// ownership pass, which asks only WHETHER a call has a translation.
     pub fn unasked() -> Once<'static> {
-        Once { bind_receiver: &|written| written.to_string(), bind_eager: &|_, written| Some(written.to_string()) }
+        Once {
+            bind_receiver: &|written| written.to_string(),
+            bind_eager: &|_, written| Some(Eager { name: written.to_string(), release: None }),
+        }
+    }
+}
+
+/// The used branch of a combinator whose eager argument owns something: the
+/// release first, then the value the branch hands on.
+///
+/// The release stands FIRST because Rust drops the argument whether the branch
+/// returns or panics, and a release written before the branch's own work runs
+/// on both of those paths without a `try`. Nothing the branch does can observe
+/// the difference: the argument was moved into the call, so no other name
+/// reaches it.
+fn releasing(release: &Option<String>, value: String) -> String {
+    match release {
+        Some(release) => format!("({}, {})", release, value),
+        None => value,
     }
 }
 
@@ -81,15 +116,25 @@ pub fn translate(receiver: &str, method: &str, args: &[String], once: &Once<'_>)
             format!("({} != null && ({})({}!))", subject, args[0], subject)
         }
         "ok_or" if args.len() == 1 => {
-            let error = (once.bind_eager)(0, &args[0]).unwrap_or_else(|| args[0].clone());
-            format!("({} != null ? Result.Ok({}!) : Result.Err({}))", subject, subject, error)
+            let eager = (once.bind_eager)(0, &args[0]);
+            let (error, release) = match eager {
+                Some(eager) => (eager.name, eager.release),
+                None => (args[0].clone(), None),
+            };
+            let ok = releasing(&release, format!("Result.Ok({}!)", subject));
+            format!("({} != null ? {} : Result.Err({}))", subject, ok, error)
         }
         "ok_or_else" if args.len() == 1 => {
             format!("({} != null ? Result.Ok({}!) : Result.Err(({})()))", subject, subject, args[0])
         }
         "map_or" if args.len() == 2 => {
-            let default = (once.bind_eager)(0, &args[0]).unwrap_or_else(|| args[0].clone());
-            format!("({} != null ? ({})({}!) : {})", subject, args[1], subject, default)
+            let eager = (once.bind_eager)(0, &args[0]);
+            let (default, release) = match eager {
+                Some(eager) => (eager.name, eager.release),
+                None => (args[0].clone(), None),
+            };
+            let mapped = releasing(&release, format!("({})({}!)", args[1], subject));
+            format!("({} != null ? {} : {})", subject, mapped, default)
         }
         "map_or_else" if args.len() == 2 => {
             format!("({} != null ? ({})({}!) : ({})())", subject, args[1], subject, args[0])
@@ -112,24 +157,45 @@ mod tests {
     use super::*;
 
     /// A caller that names every receiver `_v0` and every eager argument `_e0`,
-    /// so the tests read the shape rather than the numbering.
+    /// so the tests read the shape rather than the numbering. An eager argument
+    /// that owns something is written `owned(..)` here and comes back with the
+    /// release the other branch owes.
     fn named() -> Once<'static> {
         Once {
             bind_receiver: &|written| {
                 if written.contains('(') { "_v0".to_string() } else { written.to_string() }
             },
             bind_eager: &|_, written| {
-                Some(if written.contains('(') { "_e0".to_string() } else { written.to_string() })
+                let owns = written.starts_with("owned");
+                let name =
+                    if written.contains('(') { "_e0".to_string() } else { written.to_string() };
+                let release = owns.then(|| format!("{}.drop()", name));
+                Some(Eager { name, release })
             },
         }
     }
 
-    fn expr(receiver: &str, method: &str, args: &[&str]) -> String {
+    /// A caller that could not name what the argument is, so no release can be
+    /// written and the argument stays inside its branch.
+    fn unnamed() -> Once<'static> {
+        Once {
+            bind_receiver: &|written| {
+                if written.contains('(') { "_v0".to_string() } else { written.to_string() }
+            },
+            bind_eager: &|_, _| None,
+        }
+    }
+
+    fn expr_with(once: &Once<'_>, receiver: &str, method: &str, args: &[&str]) -> String {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        match translate(receiver, method, &args, &named()) {
+        match translate(receiver, method, &args, once) {
             MethodTranslation::Expr(ts) => ts,
             _ => panic!("`{method}` has no expression translation"),
         }
+    }
+
+    fn expr(receiver: &str, method: &str, args: &[&str]) -> String {
+        expr_with(&named(), receiver, method, args)
     }
 
     /// A JavaScript value is neither borrowed nor owned, so the conversions
@@ -216,6 +282,43 @@ mod tests {
         assert_eq!(
             expr("o", "map_or_else", &["d", "f"]),
             "(o != null ? (f)(o!) : (d)())"
+        );
+    }
+
+    /// PREMISE CHANGED 2026-09-05 (fixpass5 item 1): fixpass4's §3.3 left an
+    /// eager argument that OWNS something inside its branch, because naming it
+    /// restored the evaluation and not the drop. The release is written now:
+    /// the branch that hands the value nowhere runs it, which is where Rust
+    /// drops it.
+    #[test]
+    fn an_eager_argument_that_owns_something_is_released_on_the_other_path() {
+        assert_eq!(
+            expr("o", "ok_or", &["owned()"]),
+            "(o != null ? (_e0.drop(), Result.Ok(o!)) : Result.Err(_e0))"
+        );
+        assert_eq!(
+            expr("o", "map_or", &["owned()", "f"]),
+            "(o != null ? (_e0.drop(), (f)(o!)) : _e0)"
+        );
+        // A place is read where it stands, and the move is still a move: the
+        // release is written for it too.
+        assert_eq!(
+            expr("o", "ok_or", &["ownedLocal"]),
+            "(o != null ? (ownedLocal.drop(), Result.Ok(o!)) : Result.Err(ownedLocal))"
+        );
+    }
+
+    /// A caller with nothing to say about the argument leaves it where it
+    /// stood: the combinator writes no release it was not handed one for.
+    #[test]
+    fn an_argument_the_caller_does_not_name_stays_in_its_branch() {
+        assert_eq!(
+            expr_with(&unnamed(), "o", "ok_or", &["build()"]),
+            "(o != null ? Result.Ok(o!) : Result.Err(build()))"
+        );
+        assert_eq!(
+            expr_with(&unnamed(), "o", "map_or", &["build()", "f"]),
+            "(o != null ? (f)(o!) : build())"
         );
     }
 }

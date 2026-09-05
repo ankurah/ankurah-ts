@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, HashMap, HashSet, keyHash, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, wrappingAdd, HashMap, HashSet, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -141,7 +141,7 @@ export class Ref<T> extends Struct {
   }
 
   listen<L>(listener: L): ListenerGuard<T> {
-    const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId += 1; return _v; })();
+    const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId = wrappingAdd(this._0._0.value.nextId, 1, 'usize'); return _v; })();
     const _t0 = this._0._0.value.listeners.write();
     try {
       _t0.value.set(id, IntoBroadcastListener_dispatch_intoBroadcastListener(listener));
@@ -222,29 +222,17 @@ export function intoBroadcastListener<F extends (arg0: T) => void, T>(self: F): 
 }
 
 export function Arc_Fn1_intoBroadcastListener<T>(self: Arc<(arg0: T) => void>): BroadcastListener<T> {
-  try {
-    return new BroadcastListener('Payload', { _0: self });
-  } finally {
-    self.drop();
-  }
+  return new BroadcastListener('Payload', { _0: self });
 }
 
 export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<() => void>): BroadcastListener<T> {
-  try {
-    return new BroadcastListener('NotifyOnly', { _0: self });
-  } finally {
-    self.drop();
-  }
+  return new BroadcastListener('NotifyOnly', { _0: self });
 }
 
 export function UnboundedSender_intoBroadcastListener<T>(self: UnboundedSender<T>): BroadcastListener<T> {
-  try {
-    return new BroadcastListener('Payload', { _0: Arc.new(new OwnedClosure([this], (value) => {
-      const _ = self.send(value);
-    })) });
-  } finally {
-    self.drop();
-  }
+  return new BroadcastListener('Payload', { _0: Arc.new(new OwnedClosure([this], (value) => {
+    const _ = self.send(value);
+  })) });
 }
 
 export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListener<T> {

@@ -80,6 +80,15 @@ pub fn js_shape(reg: &TypeRegistry, ty: &Ty) -> JsShape {
     }
 }
 
+/// The shape each width takes, which has to be the same answer the TYPE mapping
+/// gives — a shape that says `Plain` for a width the port writes `number` sends
+/// every call on it to the name-by-name table, and `v.saturatingAdd(1n)` is a
+/// method a `bigint` does not have.
+///
+/// R13: `isize` is 32-bit here and written `number`; the 128-bit widths are
+/// written `bigint`, as `u64` and `i64` are. `char` is the one width whose
+/// TypeScript spelling is not numeric — it is a `string` — and it has no
+/// arithmetic in Rust either.
 fn prim_shape(p: Prim) -> JsShape {
     match p {
         Prim::U8
@@ -89,12 +98,12 @@ fn prim_shape(p: Prim) -> JsShape {
         | Prim::I8
         | Prim::I16
         | Prim::I32
+        | Prim::Isize
         | Prim::F32
         | Prim::F64 => JsShape::Number,
-        Prim::U64 | Prim::I64 => JsShape::BigInt,
+        Prim::U64 | Prim::I64 | Prim::U128 | Prim::I128 => JsShape::BigInt,
         Prim::Bool => JsShape::Boolean,
-        // `char`, `isize` and the 128-bit widths have no mapping of their own.
-        Prim::Char | Prim::Isize | Prim::U128 | Prim::I128 => JsShape::Plain,
+        Prim::Char => JsShape::Plain,
     }
 }
 

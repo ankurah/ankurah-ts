@@ -32,6 +32,8 @@ pub mod temporaries;
 #[cfg(test)]
 mod borrowing_tests;
 #[cfg(test)]
+mod callable_tests;
+#[cfg(test)]
 mod tests;
 
 pub use glue::{drops_of, fresh_at_each_use, Drops};

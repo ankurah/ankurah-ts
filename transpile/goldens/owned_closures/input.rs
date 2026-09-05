@@ -73,3 +73,24 @@ pub fn hands_a_wrapped_one(entity: Entity) -> usize {
 pub fn hands_a_plain_one(n: usize) -> usize {
     through_a_bound(|x| x + 1, n)
 }
+
+/// A callable parameter written BY VALUE is the body's: Rust drops it at the
+/// end, and only the CALL borrows. The port wrote the call as `invokeRef`,
+/// which leaves the closure whole, and nothing released it — so every capture
+/// of every wrapped closure handed to one leaked. Live at core's
+/// `ResultSet::retain_dirty` and signals' `Value::set_with`.
+pub fn twice_by_value<F>(mut f: F, n: usize) -> usize
+where
+    F: FnMut(usize) -> usize,
+{
+    f(n) + f(n)
+}
+
+/// The same bound written as a REFERENCE. Here the closure is the caller's, and
+/// releasing it in this body would drop a value somebody else still holds.
+pub fn twice_by_reference<F>(f: &mut F, n: usize) -> usize
+where
+    F: FnMut(usize) -> usize,
+{
+    f(n) + f(n)
+}

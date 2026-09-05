@@ -329,7 +329,16 @@ class JsonReader {
       this.skipWhitespace();
       if (this.#text[this.#at] !== ':') throw this.fail('expected `:`');
       this.#at += 1;
-      out[key] = this.value();
+      // `defineProperty`, not assignment: `out['__proto__'] = v` sets the
+      // object's PROTOTYPE instead of creating the member, so the key vanished
+      // from `hasOwnProperty` and `stringify` wrote the document back without
+      // it. serde_json treats `__proto__` as an ordinary key, and so does this.
+      Object.defineProperty(out, key, {
+        value: this.value(),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
       this.skipWhitespace();
       const ch = this.#text[this.#at];
       if (ch === ',') {
@@ -386,6 +395,11 @@ class JsonReader {
         // `Err`, and seven live boundaries — storage-sqlite's engine, core's
         // system, the value reader — call `parse` for a `Result`.
         const quoted = this.#text.slice(start, this.#at);
+        // `JSON.parse` accepts a lone `\uD800` and hands back a string no
+        // encoder can write out again; serde_json answers
+        // `Err(unexpected end of hex escape)`. The escapes are checked here and
+        // decoded by the host, so there is still only one unescaper.
+        this.refuseAnUnpairedSurrogate(quoted);
         try {
           return JSON.parse(quoted) as string;
         } catch {
@@ -400,6 +414,48 @@ class JsonReader {
       this.#at += 1;
     }
     throw this.fail('unterminated string');
+  }
+
+  /**
+   * Refuse a `\uD800`-`\uDFFF` escape that is not half of a pair.
+   *
+   * A surrogate is half a code point. Written alone it is a string JavaScript
+   * holds and no UTF-8 encoder can write, so serde_json refuses it at the
+   * escape — and `JSON.parse` does not, so the port used to accept a document
+   * Rust rejects and then produce text `stringify` could not write back.
+   *
+   * Only ESCAPED surrogates: a raw one in the source text is already refused by
+   * the host's reader, and a well-formed pair is one code point.
+   */
+  private refuseAnUnpairedSurrogate(quoted: string): void {
+    for (let at = 0; at < quoted.length; at++) {
+      if (quoted[at] !== '\\') continue;
+      if (quoted[at + 1] !== 'u') {
+        // Any other escape is two characters; skipping the second keeps a
+        // `\\\\` from being read as the start of an escape.
+        at += 1;
+        continue;
+      }
+      const code = Number.parseInt(quoted.slice(at + 2, at + 6), 16);
+      at += 5;
+      if (!Number.isNaN(code) && code >= 0xd800 && code <= 0xdbff) {
+        // A high surrogate: the next escape has to be its low half.
+        const low = Number.parseInt(quoted.slice(at + 3, at + 7), 16);
+        const paired =
+          quoted[at + 1] === '\\' &&
+          quoted[at + 2] === 'u' &&
+          !Number.isNaN(low) &&
+          low >= 0xdc00 &&
+          low <= 0xdfff;
+        if (!paired) throw this.fail('unexpected end of hex escape');
+        at += 6;
+        continue;
+      }
+      if (!Number.isNaN(code) && code >= 0xdc00 && code <= 0xdfff) {
+        // A low surrogate with no high half in front of it.
+        throw this.fail('unexpected end of hex escape');
+      }
+    }
   }
 
   private literal(word: string): void {

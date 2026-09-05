@@ -240,7 +240,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const fromSubject = this.subjectFrontier.remove(id);
     const fromOther = this.otherFrontier.remove(id);
     const [isCommon, origins] = (() => {
-      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default());
+      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default()).value;
       nodeState.markSeenFrom(fromSubject, fromOther);
       if (fromSubject && !this.originalOtherEvents.has(id) && !nodeState.isCommon()) {
         {
@@ -262,7 +262,7 @@ class Comparison<G extends GetEvents> extends Struct {
         this.outstandingHeads.delete(h);
       }
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default()).value;
         if (fromOther) {
           parentState.origins.augment(origins);
         }
@@ -270,7 +270,7 @@ class Comparison<G extends GetEvents> extends Struct {
       }
     } else if (fromOther) {
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
+        const parentState = this.states.entry(p.clone()).orDefault(() => State.default()).value;
         parentState.origins.augment(origins);
       }
     }
@@ -301,7 +301,7 @@ class Comparison<G extends GetEvents> extends Struct {
 
   determineFinalOrdering(): Ordering<Id> {
     if (this.unseenOtherHeads === 0) {
-      return this.initialHeadsEqual ? new Ordering('Equal', {}) : new Ordering('Descends', {});
+      return (this.initialHeadsEqual ? new Ordering('Equal', {}) : new Ordering('Descends', {}));
     }
     if (!this.anyCommon || !(this.outstandingHeads.size === 0)) {
       return new Ordering('Incomparable', {});

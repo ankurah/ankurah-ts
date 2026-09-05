@@ -51,3 +51,30 @@ pub fn or_default(raw: &str) -> Entity {
         Err(failure) => Entity { name: "fallback".to_string() },
     }
 }
+
+// X9: a match written against a REFERENCE reads the payload and leaves the
+// `Result` whole (RFC 2005: a pattern matched against a reference binds by
+// reference). The port read it with `unwrap()`, which is Rust's `self` form and
+// marks the `Result` moved — so the second read of the same value was
+// `Result was used after being moved`.
+pub fn width_of(result: &Result<Entity, Failure>) -> usize {
+    match result {
+        Ok(entity) => borrow_entity(entity),
+        Err(failure) => borrow_failure(failure),
+    }
+}
+
+/// The same through an `if let`, whose test is written after its branch.
+pub fn entity_width(result: &Result<Entity, Failure>) -> usize {
+    if let Ok(entity) = result { borrow_entity(entity) } else { 0 }
+}
+
+/// And nested under a borrowed `Option`, where the inner `Result` is borrowed
+/// too.
+pub fn maybe_width(result: &Option<Result<Entity, Failure>>) -> usize {
+    match result {
+        Some(Ok(entity)) => borrow_entity(entity),
+        Some(Err(failure)) => borrow_failure(failure),
+        None => 0,
+    }
+}

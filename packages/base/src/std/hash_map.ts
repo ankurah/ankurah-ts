@@ -173,20 +173,42 @@ export class HashMap<K, V> {
   }
 
   /**
+   * TS-only: the stored entry for a key, or `null` where the map has none.
+   *
+   * `map.entry(k)` hands back a `&mut V` INTO the map, and the entry is what
+   * that reference points at: it is the same object for as long as the map
+   * holds it, and it does not have to be looked up again. `$`-namespaced
+   * because it is the runtime's own seam and no Rust field name can collide
+   * with one.
+   */
+  $findEntry(key: K): Entry<K, V> | null {
+    this.#guard.assertNotDropped();
+    const found = this.#table.find(key);
+    return found === null ? null : (found.bucket[found.at] as Entry<K, V>);
+  }
+
+  /** TS-only: store a key the caller has established is absent, and hand back
+   * the entry that now holds it. */
+  $addEntry(key: K, value: V): Entry<K, V> {
+    this.#guard.assertNotDropped();
+    return this.#table.add(key, value);
+  }
+
+  /** TS-only: read through a `&mut V` this map handed out. */
+  $readEntry(entry: Entry<K, V>): V {
+    this.#guard.assertNotDropped();
+    return entry.value;
+  }
+
+  /**
    * TS-only: write through a `&mut V` this map handed out.
    *
    * `*map.entry(k).or_insert(0) += 1` writes the VALUE and leaves the key
    * alone; going back through `set` handed the map the key it is already
-   * storing, which is a self-assignment and a fatal. `$`-namespaced because it
-   * is the runtime's own seam and no Rust field name can collide with one.
+   * storing, which is a self-assignment and a fatal.
    */
-  $writeSlot(key: K, value: V): void {
+  $writeEntry(entry: Entry<K, V>, value: V): void {
     this.#guard.assertNotDropped();
-    const found = this.#table.find(key);
-    if (found === null) {
-      throw new Error('BUG: a slot was written through for a key the map no longer has');
-    }
-    const entry = found.bucket[found.at] as Entry<K, V>;
     if (entry.value === value) return;
     // Rust's `*slot = v` drops what was there.
     dropOwned(entry.value);
@@ -303,26 +325,39 @@ export class MapEntry<K, V> {
 
   /** `or_insert(v)`: the value there, or `v` put there. */
   orInsert(value: V): BorrowMut<V> {
-    if (this.#map.has(this.#key)) {
+    const found = this.#map.$findEntry(this.#key);
+    if (found !== null) {
       dropOwned(this.#key);
       dropOwned(value);
-    } else {
-      dropOwned(this.#map.insert(this.#key, value));
+      // The STORED entry, never the lookup key that was just released: a Slot
+      // holding the released key raised `used after being dropped` on its first
+      // read.
+      return new Slot(this.#map, found);
     }
-    return new Slot(this.#map, this.#key);
+    return new Slot(this.#map, this.#map.$addEntry(this.#key, value));
   }
 
   /** `or_insert_with(f)`: `f` is called only where there is nothing there. */
   orInsertWith(make: Invocable<[], V>): BorrowMut<V> {
-    if (this.#map.has(this.#key)) {
+    const found = this.#map.$findEntry(this.#key);
+    if (found !== null) {
       dropOwned(this.#key);
       // Rust consumes `f` whether or not it calls it, and a closure that owns
       // captures has to be released here or they leak.
       dropOwned(make);
-    } else {
-      dropOwned(this.#map.insert(this.#key, invoke(make)));
+      return new Slot(this.#map, found);
     }
-    return new Slot(this.#map, this.#key);
+    // The key is the entry's until the map takes it. A factory that throws
+    // leaves it with nobody, which Rust's unwind does not: the entry owns the
+    // key from `entry(k)` onwards and drops it on the way out.
+    let value: V;
+    try {
+      value = invoke(make);
+    } catch (thrown) {
+      dropOwned(this.#key);
+      throw thrown;
+    }
+    return new Slot(this.#map, this.#map.$addEntry(this.#key, value));
   }
 
   /**
@@ -346,22 +381,22 @@ export class MapEntry<K, V> {
  */
 class Slot<K, V> extends BorrowMut<V> {
   readonly #map: HashMap<K, V>;
-  readonly #key: K;
+  readonly #entry: Entry<K, V>;
 
-  constructor(map: HashMap<K, V>, key: K) {
+  constructor(map: HashMap<K, V>, entry: Entry<K, V>) {
     super(undefined as never);
     this.#map = map;
-    this.#key = key;
+    this.#entry = entry;
   }
 
   override get value(): V {
-    return this.#map.get(this.#key) as V;
+    return this.#map.$readEntry(this.#entry);
   }
 
   override set value(v: V) {
     // Through the map's own seam: `set` would hand it the key it is already
     // storing, which is a self-assignment and a fatal.
-    this.#map.$writeSlot(this.#key, v);
+    this.#map.$writeEntry(this.#entry, v);
   }
 }
 

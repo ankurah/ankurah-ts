@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/operators/src/input.rs
-import { Struct, boolAnd, boolOr, BorrowMut, checkedAdd, checkedDiv, wrappingAdd, checkedMulOption, saturatingAdd, overflowingAdd } from '@ankurah/base';
+import { Struct, boolAnd, boolOr, BorrowMut, checkedAdd, checkedDiv, wrappingAdd, wrappingSub, checkedMulOption, saturatingAdd, overflowingAdd } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly id: number;
@@ -267,5 +267,29 @@ export function dividedByNegativeOne(x: number): number {
 
 export function bump(n: BorrowMut<number>): void {
   n.value = checkedAdd(n.value, 1, 'u32');
+}
+
+export function saturateU64(v: bigint): bigint {
+  return saturatingAdd(v, 1n, 'u64');
+}
+
+export function wrapI64(v: bigint): bigint {
+  return wrappingSub(v, 1n, 'i64');
+}
+
+export function saturateIsize(v: number): number {
+  return saturatingAdd(v, 1, 'isize');
+}
+
+export function wrapU128(v: bigint): bigint {
+  return wrappingAdd(v, 1n, 'u128');
+}
+
+export function smaller(a: bigint, b: bigint): bigint {
+  return (($a, $b) => $a < $b ? $a : $b)(a, b);
+}
+
+export function magnitude(v: bigint): bigint {
+  return (($x) => $x < 0n ? -$x : $x)(v);
 }
 

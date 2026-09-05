@@ -71,6 +71,8 @@ export class SubscriptionUpdateItem extends Struct {
   }
 
   static fromJson(value: unknown): Result<SubscriptionUpdateItem, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `SubscriptionUpdateItem`'));
@@ -82,28 +84,36 @@ export class SubscriptionUpdateItem extends Struct {
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
       if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('collection' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `collection`'));
+        return Result.Err(JsonError.custom('missing field `collection`'));
       }
       const _rcollection = ((v: unknown) => CollectionId.fromJson(v))(_o['collection']);
-      if (_rcollection.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rcollection.unwrapErr());
+      if (_rcollection.isErr()) return Result.Err(_rcollection.unwrapErr());
       const collection = _rcollection.unwrap();
+      $built.push(collection);
       if (!('content' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(JsonError.custom('missing field `content`'));
+        return Result.Err(JsonError.custom('missing field `content`'));
       }
       const _rcontent = ((v: unknown) => UpdateContent.fromJson(v))(_o['content']);
-      if (_rcontent.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(_rcontent.unwrapErr());
+      if (_rcontent.isErr()) return Result.Err(_rcontent.unwrapErr());
       const content = _rcontent.unwrap();
+      $built.push(content);
       if (!('predicate_relevance' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, collection, content]); return Result.Err(e); })(JsonError.custom('missing field `predicate_relevance`'));
+        return Result.Err(JsonError.custom('missing field `predicate_relevance`'));
       }
       const _rpredicateRelevance = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => (Array.isArray(v) && v.length === 2 ? ((a: unknown[]) => jsonAll([((v: unknown) => QueryId.fromJson(v))(a[0]), ((v: unknown) => MembershipChange.fromJson(v))(a[1])]))(v) : Result.Err(JsonError.custom('expected an array of 2'))))) : Result.Err(JsonError.custom('expected an array'))))(_o['predicate_relevance']);
-      if (_rpredicateRelevance.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection, content]); return Result.Err(e); })(_rpredicateRelevance.unwrapErr());
+      if (_rpredicateRelevance.isErr()) return Result.Err(_rpredicateRelevance.unwrapErr());
       const predicateRelevance = _rpredicateRelevance.unwrap();
-      return Result.Ok(new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance));
+      $built.push(predicateRelevance);
+      const $out = new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -150,6 +160,8 @@ export class NodeUpdate extends Struct {
   }
 
   static fromJson(value: unknown): Result<NodeUpdate, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `NodeUpdate`'));
@@ -161,28 +173,36 @@ export class NodeUpdate extends Struct {
       const _rid = ((v: unknown) => UpdateId.fromJson(v))(_o['id']);
       if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
       const id = _rid.unwrap();
+      $built.push(id);
       if (!('from' in _o)) {
-        return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(JsonError.custom('missing field `from`'));
+        return Result.Err(JsonError.custom('missing field `from`'));
       }
       const _rfrom = ((v: unknown) => EntityId.fromJson(v))(_o['from']);
-      if (_rfrom.isErr()) return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(_rfrom.unwrapErr());
+      if (_rfrom.isErr()) return Result.Err(_rfrom.unwrapErr());
       const from = _rfrom.unwrap();
+      $built.push(from);
       if (!('to' in _o)) {
-        return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(JsonError.custom('missing field `to`'));
+        return Result.Err(JsonError.custom('missing field `to`'));
       }
       const _rto = ((v: unknown) => EntityId.fromJson(v))(_o['to']);
-      if (_rto.isErr()) return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(_rto.unwrapErr());
+      if (_rto.isErr()) return Result.Err(_rto.unwrapErr());
       const to = _rto.unwrap();
+      $built.push(to);
       if (!('body' in _o)) {
-        return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(JsonError.custom('missing field `body`'));
+        return Result.Err(JsonError.custom('missing field `body`'));
       }
       const _rbody = ((v: unknown) => NodeUpdateBody.fromJson(v))(_o['body']);
-      if (_rbody.isErr()) return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(_rbody.unwrapErr());
+      if (_rbody.isErr()) return Result.Err(_rbody.unwrapErr());
       const body = _rbody.unwrap();
-      return Result.Ok(new NodeUpdate(id, from, to, body));
+      $built.push(body);
+      const $out = new NodeUpdate(id, from, to, body);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -229,6 +249,8 @@ export class NodeUpdateAck extends Struct {
   }
 
   static fromJson(value: unknown): Result<NodeUpdateAck, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `NodeUpdateAck`'));
@@ -240,28 +262,36 @@ export class NodeUpdateAck extends Struct {
       const _rid = ((v: unknown) => UpdateId.fromJson(v))(_o['id']);
       if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
       const id = _rid.unwrap();
+      $built.push(id);
       if (!('from' in _o)) {
-        return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(JsonError.custom('missing field `from`'));
+        return Result.Err(JsonError.custom('missing field `from`'));
       }
       const _rfrom = ((v: unknown) => EntityId.fromJson(v))(_o['from']);
-      if (_rfrom.isErr()) return ((e: JsonError) => { dropOwned([id]); return Result.Err(e); })(_rfrom.unwrapErr());
+      if (_rfrom.isErr()) return Result.Err(_rfrom.unwrapErr());
       const from = _rfrom.unwrap();
+      $built.push(from);
       if (!('to' in _o)) {
-        return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(JsonError.custom('missing field `to`'));
+        return Result.Err(JsonError.custom('missing field `to`'));
       }
       const _rto = ((v: unknown) => EntityId.fromJson(v))(_o['to']);
-      if (_rto.isErr()) return ((e: JsonError) => { dropOwned([id, from]); return Result.Err(e); })(_rto.unwrapErr());
+      if (_rto.isErr()) return Result.Err(_rto.unwrapErr());
       const to = _rto.unwrap();
+      $built.push(to);
       if (!('body' in _o)) {
-        return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(JsonError.custom('missing field `body`'));
+        return Result.Err(JsonError.custom('missing field `body`'));
       }
       const _rbody = ((v: unknown) => NodeUpdateAckBody.fromJson(v))(_o['body']);
-      if (_rbody.isErr()) return ((e: JsonError) => { dropOwned([id, from, to]); return Result.Err(e); })(_rbody.unwrapErr());
+      if (_rbody.isErr()) return Result.Err(_rbody.unwrapErr());
       const body = _rbody.unwrap();
-      return Result.Ok(new NodeUpdateAck(id, from, to, body));
+      $built.push(body);
+      const $out = new NodeUpdateAck(id, from, to, body);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -314,6 +344,8 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
   }
 
   static fromJson(value: unknown): Result<NodeUpdateBody, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected a variant of `NodeUpdateBody`'));
@@ -330,13 +362,18 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
         const _ritems = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => SubscriptionUpdateItem.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_o['items']);
         if (_ritems.isErr()) return Result.Err(_ritems.unwrapErr());
         const items = _ritems.unwrap();
+        $built.push(items);
 
-        return Result.Ok(new NodeUpdateBody('SubscriptionUpdate', { items: items }));
+        const $out = new NodeUpdateBody('SubscriptionUpdate', { items: items });
+        $kept = true;
+        return Result.Ok($out);
       }
       return Result.Err(JsonError.custom('no variant of `NodeUpdateBody` matches this JSON'));
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -414,6 +451,8 @@ export class UpdateContent extends Enum<UpdateContentV> {
   }
 
   static fromJson(value: unknown): Result<UpdateContent, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected a variant of `UpdateContent`'));
@@ -423,8 +462,11 @@ export class UpdateContent extends Enum<UpdateContentV> {
         const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EventFragment.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(o['EventOnly']);
         if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
         const _0 = _r_0.unwrap();
+        $built.push(_0);
 
-        return Result.Ok(new UpdateContent('EventOnly', { _0: _0 }));
+        const $out = new UpdateContent('EventOnly', { _0: _0 });
+        $kept = true;
+        return Result.Ok($out);
       }
       if ('StateAndEvent' in o) {
         if (!Array.isArray(o['StateAndEvent']) || o['StateAndEvent'].length !== 2) {
@@ -434,16 +476,22 @@ export class UpdateContent extends Enum<UpdateContentV> {
         const _r_0 = ((v: unknown) => StateFragment.fromJson(v))(_a[0]);
         if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
         const _0 = _r_0.unwrap();
+        $built.push(_0);
         const _r_1 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EventFragment.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_a[1]);
-        if (_r_1.isErr()) return ((e: JsonError) => { dropOwned([_0]); return Result.Err(e); })(_r_1.unwrapErr());
+        if (_r_1.isErr()) return Result.Err(_r_1.unwrapErr());
         const _1 = _r_1.unwrap();
+        $built.push(_1);
 
-        return Result.Ok(new UpdateContent('StateAndEvent', { _0: _0, _1: _1 }));
+        const $out = new UpdateContent('StateAndEvent', { _0: _0, _1: _1 });
+        $kept = true;
+        return Result.Ok($out);
       }
       return Result.Err(JsonError.custom('no variant of `UpdateContent` matches this JSON'));
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

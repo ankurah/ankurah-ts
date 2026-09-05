@@ -368,7 +368,16 @@ fn encode_expr_with(value: &str, ts_type: &str, wr: &str, ty: Option<&Ty>) -> St
             let inner = &t[..t.len()-2];
             let elem = element_of(ty);
             match width_of(elem) {
-                Some(width) => format!("{}.writeVec({}, (w, item) => w.write{}(item))", wr, value, width),
+                // The element takes the same boundary conversion a field of the
+                // same type takes: `usize` is eight bytes on the wire and a
+                // `number` here, and `setBigUint64` throws on a number.
+                Some(width) => format!(
+                    "{}.writeVec({}, (w, item) => w.write{}({}))",
+                    wr,
+                    value,
+                    width,
+                    widened("item", elem)
+                ),
                 None if is_primitive_type(inner) && elem.is_none() => {
                     format!("{}.writeVec({}, (w, item) => w.write{}(item))", wr, value, capitalize(inner))
                 }
@@ -596,7 +605,13 @@ pub(crate) fn decode_expr_with(ts_type: &str, rd: &str, ty: Option<&Ty>) -> Stri
             let inner = &t[..t.len()-2];
             let elem = element_of(ty);
             match width_of(elem) {
-                Some(width) => format!("{}.readVec((r) => r.read{}())", rd, width),
+                // And back: a `usize` element read as a `bigint` landed in a
+                // `number[]` field.
+                Some(width) => format!(
+                    "{}.readVec((r) => {})",
+                    rd,
+                    narrowed(&format!("r.read{}()", width), elem)
+                ),
                 None if is_primitive_type(inner) && elem.is_none() => {
                     format!("{}.readVec((r) => r.read{}())", rd, capitalize(inner))
                 }
@@ -791,6 +806,32 @@ mod width_tests {
 
     fn built(src: &str) -> Fixture {
         Fixture::build(&[("lib.rs", src)])
+    }
+
+    /// The same conversion INSIDE a sequence. `writeVec(this.e, (w, item) =>
+    /// w.writeU64(item))` handed `setBigUint64` a number, which throws, and
+    /// `readVec((r) => r.readU64())` put a `bigint[]` into a `number[]` field.
+    /// The boundary is the element writer and reader as much as the field's.
+    #[test]
+    fn a_usize_inside_a_sequence_converts_at_the_boundary() {
+        let mut f = built(&format!(
+            "use std::collections::HashMap;\n{}pub struct Row {{ pub e: Vec<usize>, pub v: Vec<isize>, pub n: Vec<Vec<usize>>, pub m: HashMap<String, usize>, pub p: Vec<u32> }}",
+            DERIVE
+        ));
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("writeVec(this.e, (w, item) => w.writeU64(BigInt(item)))"), "{}", ts);
+        assert!(ts.contains("writeVec(this.v, (w, item) => w.writeI64(BigInt(item)))"), "{}", ts);
+        assert!(ts.contains("readVec((r) => Number(r.readU64()))"), "{}", ts);
+        assert!(ts.contains("readVec((r) => Number(r.readI64()))"), "{}", ts);
+        // One level down, and through a map's value.
+        assert!(
+            ts.contains("w.writeVec(item, (w, item) => w.writeU64(BigInt(item)))"),
+            "{}",
+            ts
+        );
+        assert!(ts.contains("writer.writeString(k); writer.writeU64(BigInt(v))"), "{}", ts);
+        // A width the port already spells the same on both sides is untouched.
+        assert!(ts.contains("writeVec(this.p, (w, item) => w.writeU32(item))"), "{}", ts);
     }
 
     /// The WIRE width, not the memory width. serde's `Serialize for usize`

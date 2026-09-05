@@ -95,3 +95,37 @@ export function orDefault(raw: string): Entity {
   }
 }
 
+export function widthOf(result: Result<Entity, Failure>): number {
+  if (result.isOk()) {
+    const entity = result.okRef();
+    return borrowEntity(entity);
+  } else {
+    const failure = result.errRef();
+    return borrowFailure(failure);
+  }
+}
+
+export function entityWidth(result: Result<Entity, Failure>): number {
+  {
+    const _v = result;
+    if (_v.isOk()) {
+      const entity = _v.okRef();
+      return borrowEntity(entity);
+    } else {
+    return 0;
+  }
+  }
+}
+
+export function maybeWidth(result: Result<Entity, Failure> | null): number {
+  if (result != null && (result.isOk())) {
+    const entity = result.okRef();
+    return borrowEntity(entity);
+  } else if (result != null && (result.isErr())) {
+    const failure = result.errRef();
+    return borrowFailure(failure);
+  } else {
+    return 0;
+  }
+}
+

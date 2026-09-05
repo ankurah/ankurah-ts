@@ -538,6 +538,77 @@ describe('Result move semantics', () => {
     expect(third.dropCount).toBe(1);
   });
 
+  // Rust's `map`, `map_err`, `and_then`, `or_else` and `unwrap_or_else` take
+  // `f` BY VALUE, so `f` is dropped at the end of the call whichever variant
+  // the Result turned out to be: `Ok(7).unwrap_or_else(f)` never calls `f` and
+  // still drops it. The branch that does not call it is the only place left to
+  // do that here.
+  test('the five closure-taking methods drop the closure the branch did not call', () => {
+    const untaken: [string, () => void][] = [
+      ['unwrapOrElse on Ok', () => {
+        const held = new Inner();
+        const f = new OwnedClosure<[string], Inner>([held], () => held);
+        Result.Ok<number, string>(7).unwrapOrElse(f as never);
+        expect(f.isDropped).toBe(true);
+        expect(held.dropCount).toBe(1);
+      }],
+      ['map on Err', () => {
+        const held = new Inner();
+        const f = new OwnedClosure<[number], number>([held], (n) => n);
+        Result.Err<number, string>('e').map(f as never).drop();
+        expect(f.isDropped).toBe(true);
+        expect(held.dropCount).toBe(1);
+      }],
+      ['mapErr on Ok', () => {
+        const held = new Inner();
+        const f = new OwnedClosure<[string], string>([held], (e) => e);
+        Result.Ok<number, string>(7).mapErr(f as never).drop();
+        expect(f.isDropped).toBe(true);
+        expect(held.dropCount).toBe(1);
+      }],
+      ['andThen on Err', () => {
+        const held = new Inner();
+        const f = new OwnedClosure<[number], Result<number, string>>([held], (n) => Result.Ok(n));
+        Result.Err<number, string>('e').andThen(f as never).drop();
+        expect(f.isDropped).toBe(true);
+        expect(held.dropCount).toBe(1);
+      }],
+      ['orElse on Ok', () => {
+        const held = new Inner();
+        const f = new OwnedClosure<[string], Result<number, string>>([held], () => Result.Ok(0));
+        Result.Ok<number, string>(7).orElse(f as never).drop();
+        expect(f.isDropped).toBe(true);
+        expect(held.dropCount).toBe(1);
+      }],
+    ];
+    for (const [, run] of untaken) run();
+  });
+
+  // The other half of the same matrix: the branch that DOES call the closure
+  // consumes it, and must not release it a second time.
+  test('the branch that calls the closure leaves the release to invoke', () => {
+    const held = new Inner();
+    const f = new OwnedClosure<[number], number>([held], (n) => n + 1);
+    expect(Result.Ok<number, string>(7).map(f as never).unwrap()).toBe(8);
+    // `invoke` called a reading closure and then dropped it, which is where its
+    // captures' glue runs.
+    expect(f.isDropped).toBe(true);
+    expect(held.dropCount).toBe(1);
+
+    const second = new Inner();
+    const g = new OwnedClosure<[string], number>([second], () => 99);
+    expect(Result.Err<number, string>('e').unwrapOrElse(g as never)).toBe(99);
+    expect(g.isDropped).toBe(true);
+    expect(second.dropCount).toBe(1);
+  });
+
+  // A plain function is not an owned value: releasing one must reach none of
+  // `dropOwned`'s branches, and the untaken branch must still answer.
+  test('a plain function handed to an untaken branch is left alone', () => {
+    expect(Result.Ok<number, string>(7).unwrapOrElse(() => 0)).toBe(7);
+    expect(Result.Ok<number, string>(7).mapErr((e) => e).unwrap()).toBe(7);
+  });
+
   test('unwrapOr drops the default it did not need', () => {
     const payload = new Inner();
     const unused = new Inner();

@@ -356,7 +356,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
             placeholderIsJsonb.push(isJsonb);
           }
           const columnsStr = [...columns].map((c) => `"${c}"`).join(', ');
-          const placeholders = [...placeholderIsJsonb].map((isJsonb) => isJsonb ? 'jsonb(?)' : '?').join(', ');
+          const placeholders = [...placeholderIsJsonb].map((isJsonb) => (isJsonb ? 'jsonb(?)' : '?')).join(', ');
           const updateStr = [...columns].skip(1).map((c) => `"${c}" = excluded."${c}"`).join(', ');
           const query = `INSERT INTO "${tableName}"(${columnsStr}) VALUES(${placeholders})\n               ON CONFLICT("id") DO UPDATE SET ${updateStr}`;
           tracing.debug(`set_state query: ${query}`);
@@ -521,7 +521,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           const needsPostFilter = split.needsPostFilter();
           const remainingPredicate = split.remainingPredicate.clone();
           try {
-            const sqlSelection = new Selection(split.takeField('sqlPredicate'), effectiveSelection.orderBy.clone(), needsPostFilter ? null : effectiveSelection.limit);
+            const sqlSelection = new Selection(split.takeField('sqlPredicate'), effectiveSelection.orderBy.clone(), (needsPostFilter ? null : effectiveSelection.limit));
             try {
               let _moved2 = false;
               let builder = SqlBuilder.withFields(['id', 'state_buffer', 'head', 'attestations']);

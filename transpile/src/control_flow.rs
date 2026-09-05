@@ -31,6 +31,33 @@ pub fn translate_if(if_expr: &syn::ExprIf, t: &BodyTranslator) -> String {
 }
 
 /// The same `if`, where each branch produces the enclosing block's value.
+
+/// Does this `loop` hand a value out through a `break`?
+///
+/// `loop { break }` is a statement whose value is `()`; `loop { break 9 }` is an
+/// expression whose value is the payload, and in tail position that payload is
+/// what the function answers.
+fn breaks_with_a_value(loop_expr: &syn::ExprLoop) -> bool {
+    struct Carried {
+        found: bool,
+    }
+    impl syn::visit::Visit<'_> for Carried {
+        fn visit_expr_break(&mut self, brk: &syn::ExprBreak) {
+            if brk.expr.is_some() {
+                self.found = true;
+            }
+        }
+        // A nested loop's own `break` names that loop, not this one.
+        fn visit_expr_loop(&mut self, _: &syn::ExprLoop) {}
+        fn visit_expr_while(&mut self, _: &syn::ExprWhile) {}
+        fn visit_expr_for_loop(&mut self, _: &syn::ExprForLoop) {}
+        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
+    }
+    let mut carried = Carried { found: false };
+    syn::visit::Visit::visit_block(&mut carried, &loop_expr.body);
+    carried.found
+}
+
 pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -> String {
     match expr {
         syn::Expr::If(if_expr) => translate_if_at(if_expr, t, Position::Returning),
@@ -56,7 +83,15 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
             };
             format!("{{\n{}}}", indent(&body))
         }
-        // A loop is a statement and its value is `()`.
+        // A `for` and a `while` are statements whose value is `()`; Rust gives
+        // neither a `break` payload. A `loop` may have one — `loop { .. break 9 }`
+        // — and in TAIL position that payload IS what the function answers.
+        // Written as a statement it came out `break /* 9 */` and the function
+        // fell off the end returning `undefined`.
+        syn::Expr::Loop(loop_expr) if breaks_with_a_value(loop_expr) => {
+            let (held, lifted) = t.with_own_hoists(|| t.expr_value(expr));
+            format!("{}return {};", crate::ownership::hoisted("", &lifted), held)
+        }
         syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => t.expr(expr),
         // These already leave the function, so putting a `return` in front of
         // one wrote `return return Result.Ok(..)`, which does not parse.
@@ -296,7 +331,10 @@ fn translate_if_let(
         Some(var) if t.writes_the_value_not_the_result(&let_expr.expr) => {
             ("true".to_string(), format!("const {} = {};\n", var, subject))
         }
-        _ => t.pattern_test(&subject, &let_expr.pat),
+        // The binding scope closed at `drop(bound)` above, so the borrowed-ness
+        // of the value being taken apart is said again here: a borrowed
+        // `Result` is READ, not unwrapped.
+        _ => t.matching(scrutinee_ty.as_ref(), || t.pattern_test(&subject, &let_expr.pat)),
     };
     // A guard is written after the pattern's names, because it reads them.
     let body = if guard_str.is_empty() {

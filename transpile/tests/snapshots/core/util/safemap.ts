@@ -32,11 +32,15 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   }
 
   retain(cb: (arg0: K, arg1: V) => boolean): void {
-    const _t0 = this._0.write();
     try {
-      { for (const [_k, _v] of _t0.value) { if (!(((k, v) => invokeRef(cb, k, v))(_k, _v))) _t0.value.delete(_k); } };
+      const _t0 = this._0.write();
+      try {
+        { for (const [_k, _v] of _t0.value) { if (!(((k, v) => invokeRef(cb, k, v))(_k, _v))) _t0.value.delete(_k); } };
+      } finally {
+        _t0.drop();
+      }
     } finally {
-      _t0.drop();
+      dropOwned(cb);
     }
   }
 
@@ -145,7 +149,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   push(key: K, value: H): void {
     const _t0 = this._0.write();
     try {
-      _t0.value.entry(key).orDefault(() => []).push(value);
+      _t0.value.entry(key).orDefault(() => []).value.push(value);
     } finally {
       _t0.drop();
     }
@@ -169,7 +173,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   setInsert(key: K, value: H): void {
     const _t0 = this._0.write();
     try {
-      _t0.value.entry(key).orDefault(() => new HashSet()).add(value);
+      _t0.value.entry(key).orDefault(() => new HashSet()).value.add(value);
     } finally {
       _t0.drop();
     }

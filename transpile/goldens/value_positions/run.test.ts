@@ -8,7 +8,7 @@
 // value.
 
 import { expect, test } from 'bun:test';
-import { firstEven, pick, total, untilZero } from './input.ts';
+import { compared, firstEven, firstEvenTail, jumpInABlockArgument, jumpInAnArgument, operand, pick, spin, total, untilZero } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a loop standing where a value is wanted answers what it broke with', () => {
@@ -36,6 +36,35 @@ test('the whole loop runs, not only its first turn', () => {
   const answer = total([0, 0, 0]);
   expect(answer.isOk()).toBe(true);
   expect(answer.unwrap()).toBe(3);
+});
+
+// X8: an `if` as an ordinary binary operand, and a ternary written bare beside
+// a comparison.
+test('a value-position if stands where an operand stands', () => {
+  expect(operand(true)).toBe(4);
+  expect(operand(false)).toBe(5);
+  // `a === yes ? 1 : 2` reads as `(a === yes) ? 1 : 2`, which answered 2 for
+  // every `a` that is not `true`.
+  expect(compared(1, true)).toBe(true);
+  expect(compared(1, false)).toBe(false);
+  expect(compared(2, false)).toBe(true);
+});
+
+// X1: a labelled jump below an ordinary expression — a call argument, and a
+// block used as one.
+test('a labelled break inside a call argument leaves the loop', () => {
+  expect(jumpInAnArgument(3)).toBe(3);
+  expect(jumpInAnArgument(0)).toBe(0);
+  expect(jumpInABlockArgument(true)).toBe(0);
+});
+
+// H: a value-position `loop` in TAIL position discarded its `break` payload —
+// `break /* 9 */` — and the function fell off the end returning `undefined`.
+test('a tail-position loop keeps its break payload', () => {
+  expect(firstEvenTail(7)).toBe(8);
+  expect(firstEvenTail(4)).toBe(4);
+  // And one with no payload is still a statement whose value is `()`.
+  expect(spin(3)).toBe(3);
 });
 
 test('nothing leaked and nothing was dropped twice', () => {

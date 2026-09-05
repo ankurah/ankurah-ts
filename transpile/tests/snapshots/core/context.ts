@@ -407,39 +407,40 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
     let _moved0 = false;
     try {
       const _m1 = this.node.getDurablePeerRandom();
-      const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err(new RetrievalError('NoDurablePeers', {})));
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-      const peerId = _r2.unwrap();
-      const _r3 = await this.node.fetchEntitiesFromLocal(collectionId, selection);
+      const _m2 = new RetrievalError('NoDurablePeers', {});
+      const _r3 = (_m1 != null ? (_m2.drop(), Result.Ok(_m1!)) : Result.Err(_m2));
       if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-      const knownMatchedEntities = _r3.unwrap();
+      const peerId = _r3.unwrap();
+      const _r4 = await this.node.fetchEntitiesFromLocal(collectionId, selection);
+      if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+      const knownMatchedEntities = _r4.unwrap();
       try {
         const knownMatches = [...knownMatchedEntities].map((entity) => {
-          const _t4 = entity.head();
+          const _t5 = entity.head();
           try {
-            return new KnownEntity(entity.id(), _t4.clone());
+            return new KnownEntity(entity.id(), _t5.clone());
           } finally {
-            _t4.drop();
+            _t5.drop();
           }
         });
         const selectionClone = selection.clone();
         try {
           _moved0 = true;
-          const _r5 = await this.node.request(peerId, this.cdata, new NodeRequestBody('Fetch', { collection: collectionId.clone(), selection: selection, knownMatches: knownMatches }));
-          if (_r5.isErr()) return Result.Err(RetrievalError.fromRequestError(_r5.unwrapErr()));
-          return await (_r5.unwrap().intoMatch({
+          const _r6 = await this.node.request(peerId, this.cdata, new NodeRequestBody('Fetch', { collection: collectionId.clone(), selection: selection, knownMatches: knownMatches }));
+          if (_r6.isErr()) return Result.Err(RetrievalError.fromRequestError(_r6.unwrapErr()));
+          return await (_r6.unwrap().intoMatch({
             Fetch: async (v) => {
               const deltas = v._0;
-              let _moved6 = false;
+              let _moved7 = false;
               try {
                 const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-                _moved6 = true;
-                const _r7 = await NodeApplier.applyDeltas(this.node, peerId, deltas, retriever);
-                if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
-                _r7.drop();
+                _moved7 = true;
+                const _r8 = await NodeApplier.applyDeltas(this.node, peerId, deltas, retriever);
+                if (_r8.isErr()) return Result.Err(RetrievalError.fromApplyError(_r8.unwrapErr()));
+                _r8.drop();
                 return await this.node.fetchEntitiesFromLocal(collectionId, selectionClone);
               } finally {
-                if (!_moved6) dropOwned(deltas);
+                if (!_moved7) dropOwned(deltas);
               }
             },
             Error: (v) => {

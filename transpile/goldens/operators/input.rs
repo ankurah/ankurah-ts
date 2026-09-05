@@ -261,3 +261,34 @@ pub fn divided_by_negative_one(x: i32) -> i32 {
 pub fn bump(n: &mut u32) {
     *n += 1;
 }
+
+// The four explicit arithmetic families are free helpers taking the WIDTH, and
+// which width a receiver has is the only thing that says which. A `u64` and an
+// `i64` are `bigint` here, and a `bigint` has no `saturatingAdd` of its own:
+// written as a method, storage-indexeddb's `next_upper_bound` raised on every
+// I64-keyed index range. `isize` is a `number` here and had the same defect.
+pub fn saturate_u64(v: u64) -> u64 {
+    v.saturating_add(1)
+}
+
+pub fn wrap_i64(v: i64) -> i64 {
+    v.wrapping_sub(1)
+}
+
+pub fn saturate_isize(v: isize) -> isize {
+    v.saturating_add(1)
+}
+
+pub fn wrap_u128(v: u128) -> u128 {
+    v.wrapping_add(1)
+}
+
+/// `Math.min` converts its arguments to numbers, and converting a `bigint`
+/// throws. A 64-bit width takes the comparison written out.
+pub fn smaller(a: u64, b: u64) -> u64 {
+    a.min(b)
+}
+
+pub fn magnitude(v: i64) -> i64 {
+    v.abs()
+}

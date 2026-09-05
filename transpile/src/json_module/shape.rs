@@ -40,6 +40,16 @@ impl Shape {
     }
 }
 
+
+/// Is `v` an array of BYTES?
+///
+/// One predicate, because two places read one: the ordinary `Vec<u8>` field and
+/// a field routed through `#[serde(with = "json_as_bytes")]`. A `Uint8Array`
+/// truncates whatever it is handed, so `[-1, 256, 1.5]` became `[255, 0, 1]`
+/// and the document was accepted; serde reads each element as a `u8`.
+const BYTE_ARRAY: &str = "Array.isArray(v) && v.every((b) => typeof b === 'number' \
+                          && Number.isInteger(b) && b >= 0 && b <= 255)";
+
 /// The shape of one field, `#[serde(with = "..")]` included.
 pub(super) fn of_field(
     reg: &TypeRegistry,
@@ -52,10 +62,16 @@ pub(super) fn of_field(
         Some("json_as_bytes") => Ok(Shape {
             write: "Array.from(new TextEncoder().encode(serde_json.stringify($V).unwrap()))"
                 .to_string(),
-            read: "(Array.isArray(v) \
-                   ? serde_json.parse(new TextDecoder().decode(new Uint8Array(v as number[]))) \
-                   : Result.Err(JsonError.custom('expected an array of bytes')))"
-                .to_string(),
+            // The SAME byte test the ordinary `Vec<u8>` reader makes: serde
+            // reads each element as a `u8` before anything decodes them, and a
+            // `Uint8Array` truncates whatever it is handed — `[305]` became
+            // byte 49 and this answered `Ok(1)` where serde answers `Err`.
+            read: format!(
+                "({bytes} \
+                 ? serde_json.parse(new TextDecoder().decode(new Uint8Array(v as number[]))) \
+                 : Result.Err(JsonError.custom('expected an array of bytes')))",
+                bytes = BYTE_ARRAY
+            ),
             owns: false,
         }),
         Some(module) => Err(format!(
@@ -93,6 +109,15 @@ pub(super) fn of_type(
     };
     let inner_ty = || element_of(ty);
     match ts_ty {
+        // A `char` is a `string` here and exactly ONE code point in Rust:
+        // serde reads `"ab"` and `""` as errors, and the port read any string
+        // at all. `[...v].length` counts code points, not UTF-16 units, so an
+        // astral character is one.
+        "string" if is_char(ty) => Ok(checked(
+            "typeof v === 'string' && [...v].length === 1",
+            "a char",
+            "string",
+        )),
         "string" => Ok(checked("typeof v === 'string'", "a string", "string")),
         "boolean" => Ok(checked("typeof v === 'boolean'", "a boolean", "boolean")),
         "number" => Ok(match integer_prim(ty) {
@@ -172,11 +197,11 @@ pub(super) fn of_type(
             // A `Uint8Array` truncates whatever it is handed, so `[-1, 256, 1.5]`
             // became `[255, 0, 1]` and the document was accepted. serde reads
             // each element as a `u8`.
-            read: "(Array.isArray(v) && v.every((b) => typeof b === 'number' \
-                   && Number.isInteger(b) && b >= 0 && b <= 255) \
-                   ? Result.Ok(new Uint8Array(v as number[])) \
-                   : Result.Err(JsonError.custom('expected an array of bytes')))"
-                .to_string(),
+            read: format!(
+                "({bytes} ? Result.Ok(new Uint8Array(v as number[])) \
+                 : Result.Err(JsonError.custom('expected an array of bytes')))",
+                bytes = BYTE_ARRAY
+            ),
             owns: false,
         }),
         t if t.ends_with(" | null") => {
@@ -338,6 +363,16 @@ fn article(prim: crate::ty::Prim) -> String {
     let name = prim.rust_name();
     let article = if name.starts_with('i') { "an" } else { "a" };
     format!("{article} {name}")
+}
+
+
+/// Is this field a `char`, rather than one of the other Rust types the port
+/// writes as a `string`?
+fn is_char(ty: Option<&crate::ty::Ty>) -> bool {
+    matches!(
+        ty.map(crate::ty::Ty::peel_refs),
+        Some(crate::ty::Ty::Prim(crate::ty::Prim::Char))
+    )
 }
 
 /// The integer width this field really is, where the resolution settled it.

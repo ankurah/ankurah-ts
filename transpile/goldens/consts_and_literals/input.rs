@@ -12,7 +12,7 @@
 //! DECLARATION order. Two fields of one type swap in silence, which is what
 //! `connectors/local-process/src/lib.rs:70` does with its two `EntityId`s.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 pub const TAG_NULL: u8 = 0x00;
 pub const TAG_STRING: u8 = 0x04;
@@ -94,4 +94,27 @@ pub fn radix(n: u32) -> u32 {
         0 => 2,
         _ => 3,
     }
+}
+
+// J: Rust's items are order-independent; JavaScript's `const` is not. `const
+// LATE = EARLY + 1;` written above `const EARLY = 1;` is
+// `ReferenceError: Cannot access 'EARLY' before initialization` at module load,
+// so the whole file fails to load and every import of it with it. The emitted
+// consts are ordered by what their initialisers name.
+pub const LATE: u32 = EARLY + 1;
+pub const EARLY: u32 = 1;
+pub const LATEST: u32 = LATE + EARLY;
+
+pub fn ordered() -> u32 {
+    LATEST
+}
+
+// K: Rust's atomics WRAP at their width whatever the build's debug assertions
+// say — `AtomicU32::MAX.fetch_add(1)` stores `0` — and a `+=` on a `number`
+// went on counting. A `static mut` beside it already went through the checked
+// helper, so the two spellings of one idea disagreed.
+pub static WRAPS: AtomicU32 = AtomicU32::new(4294967295);
+
+pub fn wrap_around() -> u32 {
+    WRAPS.fetch_add(1, Ordering::SeqCst)
 }

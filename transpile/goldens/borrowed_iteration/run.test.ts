@@ -9,7 +9,7 @@
 
 import { expect, test } from 'bun:test';
 import { HashMap } from '@ankurah/base';
-import { Cell, Key, Ordering, firstWidth, orderingWidth, sumAmp, sumBorrowed, sumConsuming, widths } from './input.ts';
+import { Cell, Key, Ordering, firstWidth, orderingWidth, refWidths, refWidthsBorrowed, sumAmp, sumBorrowed, sumConsuming, widths } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 function filled(): HashMap<Key, Cell> {
@@ -52,6 +52,23 @@ test('an if-let over a reference leaves the vector to the field', () => {
   // The field still holds its keys, so a second read answers the same.
   expect(orderingWidth(ordering)).toBe(3);
   ordering.drop();
+});
+
+// An explicit `ref` binding over an OWNED sequence: Rust's `IntoIter` hands out
+// one element per turn and drops it at the end of that turn. The binding's own
+// type is a `&Key`, which owns nothing, so nothing released the element — and
+// the tail release starts after the current index, so it could not reach one
+// the turn had already handed out. Every element leaked.
+test('a ref binding over an owned vec releases each element', () => {
+  expect(refWidths([new Key('a'), new Key('bb')])).toBe(3);
+});
+
+test('and over a reference it releases nothing, because it owns nothing', () => {
+  const keys = [new Key('a'), new Key('bb')];
+  expect(refWidthsBorrowed(keys)).toBe(3);
+  // The caller still holds them, so a second read answers the same.
+  expect(refWidthsBorrowed(keys)).toBe(3);
+  for (const key of keys) key.drop();
 });
 
 test('nothing leaked and nothing was dropped twice', () => {

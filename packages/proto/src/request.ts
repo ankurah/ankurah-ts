@@ -84,6 +84,8 @@ export class KnownEntity extends Struct {
   }
 
   static fromJson(value: unknown): Result<KnownEntity, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `KnownEntity`'));
@@ -95,16 +97,22 @@ export class KnownEntity extends Struct {
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
       if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('head' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `head`'));
+        return Result.Err(JsonError.custom('missing field `head`'));
       }
       const _rhead = ((v: unknown) => Clock.fromJson(v))(_o['head']);
-      if (_rhead.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rhead.unwrapErr());
+      if (_rhead.isErr()) return Result.Err(_rhead.unwrapErr());
       const head = _rhead.unwrap();
-      return Result.Ok(new KnownEntity(entityId, head));
+      $built.push(head);
+      const $out = new KnownEntity(entityId, head);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -151,6 +159,8 @@ export class CausalAssertion extends Struct {
   }
 
   static fromJson(value: unknown): Result<CausalAssertion, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `CausalAssertion`'));
@@ -162,28 +172,36 @@ export class CausalAssertion extends Struct {
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
       if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('subject' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `subject`'));
+        return Result.Err(JsonError.custom('missing field `subject`'));
       }
       const _rsubject = ((v: unknown) => Clock.fromJson(v))(_o['subject']);
-      if (_rsubject.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rsubject.unwrapErr());
+      if (_rsubject.isErr()) return Result.Err(_rsubject.unwrapErr());
       const subject = _rsubject.unwrap();
+      $built.push(subject);
       if (!('other' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, subject]); return Result.Err(e); })(JsonError.custom('missing field `other`'));
+        return Result.Err(JsonError.custom('missing field `other`'));
       }
       const _rother = ((v: unknown) => Clock.fromJson(v))(_o['other']);
-      if (_rother.isErr()) return ((e: JsonError) => { dropOwned([entityId, subject]); return Result.Err(e); })(_rother.unwrapErr());
+      if (_rother.isErr()) return Result.Err(_rother.unwrapErr());
       const other = _rother.unwrap();
+      $built.push(other);
       if (!('relation' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, subject, other]); return Result.Err(e); })(JsonError.custom('missing field `relation`'));
+        return Result.Err(JsonError.custom('missing field `relation`'));
       }
       const _rrelation = ((v: unknown) => CausalRelation.fromJson(v))(_o['relation']);
-      if (_rrelation.isErr()) return ((e: JsonError) => { dropOwned([entityId, subject, other]); return Result.Err(e); })(_rrelation.unwrapErr());
+      if (_rrelation.isErr()) return Result.Err(_rrelation.unwrapErr());
       const relation = _rrelation.unwrap();
-      return Result.Ok(new CausalAssertion(entityId, subject, other, relation));
+      $built.push(relation);
+      const $out = new CausalAssertion(entityId, subject, other, relation);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -222,6 +240,8 @@ export class CausalAssertionFragment extends Struct {
   }
 
   static fromJson(value: unknown): Result<CausalAssertionFragment, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `CausalAssertionFragment`'));
@@ -233,16 +253,22 @@ export class CausalAssertionFragment extends Struct {
       const _rrelation = ((v: unknown) => CausalRelation.fromJson(v))(_o['relation']);
       if (_rrelation.isErr()) return Result.Err(_rrelation.unwrapErr());
       const relation = _rrelation.unwrap();
+      $built.push(relation);
       if (!('attestations' in _o)) {
-        return ((e: JsonError) => { dropOwned([relation]); return Result.Err(e); })(JsonError.custom('missing field `attestations`'));
+        return Result.Err(JsonError.custom('missing field `attestations`'));
       }
       const _rattestations = ((v: unknown) => AttestationSet.fromJson(v))(_o['attestations']);
-      if (_rattestations.isErr()) return ((e: JsonError) => { dropOwned([relation]); return Result.Err(e); })(_rattestations.unwrapErr());
+      if (_rattestations.isErr()) return Result.Err(_rattestations.unwrapErr());
       const attestations = _rattestations.unwrap();
-      return Result.Ok(new CausalAssertionFragment(relation, attestations));
+      $built.push(attestations);
+      const $out = new CausalAssertionFragment(relation, attestations);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -289,6 +315,8 @@ export class EntityDelta extends Struct {
   }
 
   static fromJson(value: unknown): Result<EntityDelta, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `EntityDelta`'));
@@ -300,22 +328,29 @@ export class EntityDelta extends Struct {
       const _rentityId = ((v: unknown) => EntityId.fromJson(v))(_o['entity_id']);
       if (_rentityId.isErr()) return Result.Err(_rentityId.unwrapErr());
       const entityId = _rentityId.unwrap();
+      $built.push(entityId);
       if (!('collection' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(JsonError.custom('missing field `collection`'));
+        return Result.Err(JsonError.custom('missing field `collection`'));
       }
       const _rcollection = ((v: unknown) => CollectionId.fromJson(v))(_o['collection']);
-      if (_rcollection.isErr()) return ((e: JsonError) => { dropOwned([entityId]); return Result.Err(e); })(_rcollection.unwrapErr());
+      if (_rcollection.isErr()) return Result.Err(_rcollection.unwrapErr());
       const collection = _rcollection.unwrap();
+      $built.push(collection);
       if (!('content' in _o)) {
-        return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(JsonError.custom('missing field `content`'));
+        return Result.Err(JsonError.custom('missing field `content`'));
       }
       const _rcontent = ((v: unknown) => DeltaContent.fromJson(v))(_o['content']);
-      if (_rcontent.isErr()) return ((e: JsonError) => { dropOwned([entityId, collection]); return Result.Err(e); })(_rcontent.unwrapErr());
+      if (_rcontent.isErr()) return Result.Err(_rcontent.unwrapErr());
       const content = _rcontent.unwrap();
-      return Result.Ok(new EntityDelta(entityId, collection, content));
+      $built.push(content);
+      const $out = new EntityDelta(entityId, collection, content);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -467,6 +502,8 @@ export class CausalRelation extends Enum<CausalRelationV> {
   }
 
   static fromJson(value: unknown): Result<CausalRelation, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (typeof value === 'string') {
         switch (value) {
@@ -490,20 +527,25 @@ export class CausalRelation extends Enum<CausalRelationV> {
         const _rmeet = ((v: unknown) => Clock.fromJson(v))(_o['meet']);
         if (_rmeet.isErr()) return Result.Err(_rmeet.unwrapErr());
         const meet = _rmeet.unwrap();
+        $built.push(meet);
         if (!('subject' in _o)) {
-          return ((e: JsonError) => { dropOwned([meet]); return Result.Err(e); })(JsonError.custom('missing field `subject`'));
+          return Result.Err(JsonError.custom('missing field `subject`'));
         }
         const _rsubject = ((v: unknown) => Clock.fromJson(v))(_o['subject']);
-        if (_rsubject.isErr()) return ((e: JsonError) => { dropOwned([meet]); return Result.Err(e); })(_rsubject.unwrapErr());
+        if (_rsubject.isErr()) return Result.Err(_rsubject.unwrapErr());
         const subject = _rsubject.unwrap();
+        $built.push(subject);
         if (!('other' in _o)) {
-          return ((e: JsonError) => { dropOwned([meet, subject]); return Result.Err(e); })(JsonError.custom('missing field `other`'));
+          return Result.Err(JsonError.custom('missing field `other`'));
         }
         const _rother = ((v: unknown) => Clock.fromJson(v))(_o['other']);
-        if (_rother.isErr()) return ((e: JsonError) => { dropOwned([meet, subject]); return Result.Err(e); })(_rother.unwrapErr());
+        if (_rother.isErr()) return Result.Err(_rother.unwrapErr());
         const other = _rother.unwrap();
+        $built.push(other);
         
-        return Result.Ok(new CausalRelation('DivergedSince', { meet: meet, subject: subject, other: other }));
+        const $out = new CausalRelation('DivergedSince', { meet: meet, subject: subject, other: other });
+        $kept = true;
+        return Result.Ok($out);
       }
       if ('Disjoint' in o) {
         if (o['Disjoint'] === null || typeof o['Disjoint'] !== 'object' || Array.isArray(o['Disjoint'])) {
@@ -513,20 +555,25 @@ export class CausalRelation extends Enum<CausalRelationV> {
         const _rgca = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => Clock.fromJson(v))(v)))(_o['gca']);
         if (_rgca.isErr()) return Result.Err(_rgca.unwrapErr());
         const gca = _rgca.unwrap();
+        $built.push(gca);
         if (!('subject_root' in _o)) {
-          return ((e: JsonError) => { dropOwned([gca]); return Result.Err(e); })(JsonError.custom('missing field `subject_root`'));
+          return Result.Err(JsonError.custom('missing field `subject_root`'));
         }
         const _rsubjectRoot = ((v: unknown) => EventId.fromJson(v))(_o['subject_root']);
-        if (_rsubjectRoot.isErr()) return ((e: JsonError) => { dropOwned([gca]); return Result.Err(e); })(_rsubjectRoot.unwrapErr());
+        if (_rsubjectRoot.isErr()) return Result.Err(_rsubjectRoot.unwrapErr());
         const subjectRoot = _rsubjectRoot.unwrap();
+        $built.push(subjectRoot);
         if (!('other_root' in _o)) {
-          return ((e: JsonError) => { dropOwned([gca, subjectRoot]); return Result.Err(e); })(JsonError.custom('missing field `other_root`'));
+          return Result.Err(JsonError.custom('missing field `other_root`'));
         }
         const _rotherRoot = ((v: unknown) => EventId.fromJson(v))(_o['other_root']);
-        if (_rotherRoot.isErr()) return ((e: JsonError) => { dropOwned([gca, subjectRoot]); return Result.Err(e); })(_rotherRoot.unwrapErr());
+        if (_rotherRoot.isErr()) return Result.Err(_rotherRoot.unwrapErr());
         const otherRoot = _rotherRoot.unwrap();
+        $built.push(otherRoot);
         
-        return Result.Ok(new CausalRelation('Disjoint', { gca: gca, subjectRoot: subjectRoot, otherRoot: otherRoot }));
+        const $out = new CausalRelation('Disjoint', { gca: gca, subjectRoot: subjectRoot, otherRoot: otherRoot });
+        $kept = true;
+        return Result.Ok($out);
       }
       if ('BudgetExceeded' in o) {
         if (o['BudgetExceeded'] === null || typeof o['BudgetExceeded'] !== 'object' || Array.isArray(o['BudgetExceeded'])) {
@@ -539,19 +586,25 @@ export class CausalRelation extends Enum<CausalRelationV> {
         const _rsubject = ((v: unknown) => Clock.fromJson(v))(_o['subject']);
         if (_rsubject.isErr()) return Result.Err(_rsubject.unwrapErr());
         const subject = _rsubject.unwrap();
+        $built.push(subject);
         if (!('other' in _o)) {
-          return ((e: JsonError) => { dropOwned([subject]); return Result.Err(e); })(JsonError.custom('missing field `other`'));
+          return Result.Err(JsonError.custom('missing field `other`'));
         }
         const _rother = ((v: unknown) => Clock.fromJson(v))(_o['other']);
-        if (_rother.isErr()) return ((e: JsonError) => { dropOwned([subject]); return Result.Err(e); })(_rother.unwrapErr());
+        if (_rother.isErr()) return Result.Err(_rother.unwrapErr());
         const other = _rother.unwrap();
+        $built.push(other);
         
-        return Result.Ok(new CausalRelation('BudgetExceeded', { subject: subject, other: other }));
+        const $out = new CausalRelation('BudgetExceeded', { subject: subject, other: other });
+        $kept = true;
+        return Result.Ok($out);
       }
       return Result.Err(JsonError.custom('no variant of `CausalRelation` matches this JSON'));
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -627,6 +680,8 @@ export class DeltaContent extends Enum<DeltaContentV> {
   }
 
   static fromJson(value: unknown): Result<DeltaContent, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected a variant of `DeltaContent`'));
@@ -643,8 +698,11 @@ export class DeltaContent extends Enum<DeltaContentV> {
         const _rstate = ((v: unknown) => StateFragment.fromJson(v))(_o['state']);
         if (_rstate.isErr()) return Result.Err(_rstate.unwrapErr());
         const state = _rstate.unwrap();
+        $built.push(state);
         
-        return Result.Ok(new DeltaContent('StateSnapshot', { state: state }));
+        const $out = new DeltaContent('StateSnapshot', { state: state });
+        $kept = true;
+        return Result.Ok($out);
       }
       if ('EventBridge' in o) {
         if (o['EventBridge'] === null || typeof o['EventBridge'] !== 'object' || Array.isArray(o['EventBridge'])) {
@@ -657,8 +715,11 @@ export class DeltaContent extends Enum<DeltaContentV> {
         const _revents = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EventFragment.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_o['events']);
         if (_revents.isErr()) return Result.Err(_revents.unwrapErr());
         const events = _revents.unwrap();
+        $built.push(events);
         
-        return Result.Ok(new DeltaContent('EventBridge', { events: events }));
+        const $out = new DeltaContent('EventBridge', { events: events });
+        $kept = true;
+        return Result.Ok($out);
       }
       if ('StateAndRelation' in o) {
         if (o['StateAndRelation'] === null || typeof o['StateAndRelation'] !== 'object' || Array.isArray(o['StateAndRelation'])) {
@@ -671,19 +732,25 @@ export class DeltaContent extends Enum<DeltaContentV> {
         const _rstate = ((v: unknown) => StateFragment.fromJson(v))(_o['state']);
         if (_rstate.isErr()) return Result.Err(_rstate.unwrapErr());
         const state = _rstate.unwrap();
+        $built.push(state);
         if (!('relation' in _o)) {
-          return ((e: JsonError) => { dropOwned([state]); return Result.Err(e); })(JsonError.custom('missing field `relation`'));
+          return Result.Err(JsonError.custom('missing field `relation`'));
         }
         const _rrelation = ((v: unknown) => CausalAssertionFragment.fromJson(v))(_o['relation']);
-        if (_rrelation.isErr()) return ((e: JsonError) => { dropOwned([state]); return Result.Err(e); })(_rrelation.unwrapErr());
+        if (_rrelation.isErr()) return Result.Err(_rrelation.unwrapErr());
         const relation = _rrelation.unwrap();
+        $built.push(relation);
         
-        return Result.Ok(new DeltaContent('StateAndRelation', { state: state, relation: relation }));
+        const $out = new DeltaContent('StateAndRelation', { state: state, relation: relation });
+        $kept = true;
+        return Result.Ok($out);
       }
       return Result.Err(JsonError.custom('no variant of `DeltaContent` matches this JSON'));
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

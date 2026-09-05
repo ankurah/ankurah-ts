@@ -1217,13 +1217,30 @@ pub(crate) fn source_reads_as_plain(source: &str) -> bool {
 /// only, first letter capitalised. `T[]` is `T` and `Uint8Array` is itself; a
 /// spelling with nothing left in it has no fragment to give.
 pub(crate) fn name_fragment(spelling: &str) -> Option<String> {
-    let kept: String = spelling.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-    let mut chars = kept.chars();
-    let first = chars.next()?;
+    // Each RUN of letters and digits is capitalised, so a spelling that carries
+    // arguments reads as the words it is made of: `Vec<u32>` is `VecU32` rather
+    // than `Vecu32`. A single-run spelling — `i32`, `str` — is unaffected, and
+    // so is a two-run one whose second run is already capitalised
+    // (`bincode::Error` is `BincodeError` either way).
+    let mut out = String::new();
+    let mut starting = true;
+    for ch in spelling.chars() {
+        if !ch.is_ascii_alphanumeric() {
+            starting = true;
+            continue;
+        }
+        if starting {
+            out.extend(ch.to_uppercase());
+            starting = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    let first = out.chars().next()?;
     if first.is_ascii_digit() {
         return None;
     }
-    Some(first.to_uppercase().chain(chars).collect())
+    Some(out)
 }
 
 /// The source type's name as a conversion static spells it.

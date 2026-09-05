@@ -42,21 +42,22 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   unsubscribe(subId: ReactorSubscriptionId): Result<void, SubscriptionError> {
-    const _m2 = (() => {
+    const _m3 = (() => {
       {
         let subscriptions = this._0.value.subscriptions.lock();
         try {
           const _m0 = subscriptions.value.remove(subId);
-          const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {})));
-          if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-          return _r1.unwrap();
+          const _m1 = new SubscriptionError('SubscriptionNotFound', {});
+          const _r2 = (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
+          if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
+          return _r2.unwrap();
         } finally {
           subscriptions.drop();
         }
       }
     })();
-    if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-    const subscription = (_m2 as any);
+    if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+    const subscription = (_m3 as any);
     const queries = subscription.takeAllQueries();
     let watcherSet = this._0.value.watcherSet.value.lock();
     try {
@@ -78,24 +79,25 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   removeQuery(subscriptionId: ReactorSubscriptionId, queryId: QueryId): Result<void, SubscriptionError> {
-    const _m2 = (() => {
+    const _m3 = (() => {
       {
         const subscriptions = this._0.value.subscriptions.lock();
         try {
           const _m0 = subscriptions.value.get(subscriptionId);
-          const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {})));
-          if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-          return _r1.unwrap();
+          const _m1 = new SubscriptionError('SubscriptionNotFound', {});
+          const _r2 = (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
+          if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
+          return _r2.unwrap();
         } finally {
           subscriptions.drop();
         }
       }
     })();
-    if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-    const subscription = (_m2 as any);
-    const _r3 = subscription.removeQuery(queryId).okOr(new SubscriptionError('PredicateNotFound', {}));
-    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-    const queryState = _r3.unwrap();
+    if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+    const subscription = (_m3 as any);
+    const _r4 = subscription.removeQuery(queryId).okOr(new SubscriptionError('PredicateNotFound', {}));
+    if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+    const queryState = _r4.unwrap();
     {
       const _v = queryState.selection;
       if (_v != null) {

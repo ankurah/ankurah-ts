@@ -31,11 +31,25 @@ export interface Hashable {
  *
  * `#[derive(Clone)]` on a map clones every key and every value; the port has no
  * type information here, so the value's own surface is what says which it is.
+ *
+ * A SEQUENCE is walked. An array is what the port writes a `Vec<T>` and a tuple
+ * as, and a typed array is what it writes a `Vec<u8>` as; neither has a
+ * `clone()`, so both used to come back as the very same object — and a map that
+ * handed its clone the same array then owned one set of elements twice, so
+ * dropping both maps dropped each element twice.
  */
 export function cloned<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
   const own = (value as { clone?: unknown }).clone;
-  return typeof own === 'function' ? (own.call(value) as T) : value;
+  if (typeof own === 'function') return own.call(value) as T;
+  if (Array.isArray(value)) return value.map((element) => cloned(element)) as T;
+  // A typed array is copied through its own constructor, which is what the
+  // emitter writes for a `Vec<u8>` field (`new Uint8Array(x)`).
+  if (ArrayBuffer.isView(value)) {
+    const make = (value as object).constructor as new (from: unknown) => T;
+    return new make(value);
+  }
+  return value;
 }
 
 /** One entry. A plain record: it is the table's, and nothing else names it. */
@@ -142,13 +156,22 @@ export class Table<K, V> {
     return null;
   }
 
-  /** Store a key the caller has established is absent. */
-  add(key: K, value: V): void {
+  /**
+   * Store a key the caller has established is absent, and hand back the entry
+   * that now holds it.
+   *
+   * The entry is the stable thing: a `&mut V` into the map has to keep reaching
+   * the same storage, and holding the LOOKUP key instead meant re-hashing a key
+   * the entry had already released.
+   */
+  add(key: K, value: V): Entry<K, V> {
     const hash = keyHash(key);
+    const entry: Entry<K, V> = { key, value };
     const bucket = this.#buckets.get(hash);
-    if (bucket === undefined) this.#buckets.set(hash, [{ key, value }]);
-    else bucket.push({ key, value });
+    if (bucket === undefined) this.#buckets.set(hash, [entry]);
+    else bucket.push(entry);
     this.#size++;
+    return entry;
   }
 
   /** Unhook an entry a lookup found, and hand it over. Releases nothing. */

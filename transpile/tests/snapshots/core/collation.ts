@@ -188,7 +188,7 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
       if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f > 0.0)) {
         return null;
       } else {
-        const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
         const nextBits = checkedAdd(bits, 1n, 'u64');
         return nextBits.toBeBytes().slice();
       }
@@ -289,7 +289,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
       if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f < 0.0)) {
         return null;
       } else {
-        const bits = f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits());
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
         const prevBits = checkedSub(bits, 1n, 'u64');
         return prevBits.toBeBytes().slice();
       }
@@ -524,7 +524,7 @@ export function F64_successorBytes(self: number): Uint8Array | null {
   if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self > 0.0)) {
     return null;
   } else {
-    const bits = self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits());
+    const bits = (self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits()));
     const nextBits = checkedAdd(bits, 1n, 'u64');
     return nextBits.toBeBytes().slice();
   }
@@ -534,7 +534,7 @@ export function F64_predecessorBytes(self: number): Uint8Array | null {
   if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self < 0.0)) {
     return null;
   } else {
-    const bits = self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits());
+    const bits = (self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits()));
     const prevBits = checkedSub(bits, 1n, 'u64');
     return prevBits.toBeBytes().slice();
   }

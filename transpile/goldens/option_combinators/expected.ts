@@ -47,7 +47,7 @@ export class Registry extends Struct {
 
   heavyWeight(id: number): number | null {
     const _m0 = this.entries.get(id);
-    return (_m0 != null ? ((e) => e.weight > 2 ? e.weight : null)(_m0!) : null);
+    return (_m0 != null ? ((e) => (e.weight > 2 ? e.weight : null))(_m0!) : null);
   }
 
   isHeavy(id: number): boolean {
@@ -59,6 +59,17 @@ export class Registry extends Struct {
     const _m0 = this.entries.get(id);
     const _m1 = (_m0 != null ? ((e) => e.weight)(_m0!) : null);
     return (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => `no ${id}`)()));
+  }
+
+  takeOrSpare(id: number, weight: number): Result<Entry, Entry> {
+    const _m0 = this.entries.remove(id);
+    const _m1 = new Entry(weight);
+    return (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
+  }
+
+  entryOr(id: number, spare: Entry): Entry {
+    const _m0 = this.entries.get(id);
+    return (_m0 != null ? (spare.drop(), ((e) => new Entry(e.weight))(_m0!)) : spare);
   }
 }
 

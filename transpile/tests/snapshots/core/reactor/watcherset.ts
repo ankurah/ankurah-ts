@@ -35,7 +35,7 @@ export class WatcherSet extends Struct {
           if (_v != null) {
             const value = _v;
             for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
             }
           }
         }
@@ -46,7 +46,7 @@ export class WatcherSet extends Struct {
       if (_v1 != null) {
         const watchers = _v1;
         for (const [subscriptionId, queryId] of [...watchers]) {
-          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
         }
       }
     }
@@ -59,11 +59,11 @@ export class WatcherSet extends Struct {
             Predicate: (v) => {
               const subscriptionId = v._0;
               const queryId = v._1;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addQuery(queryId, offset);
             },
             Subscription: (v) => {
               const subscriptionId = v._0;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).addEntity(offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.clone())).value.addEntity(offset);
             },
           });
         }
@@ -78,7 +78,7 @@ export class WatcherSet extends Struct {
           const entityId = v.entityId;
           const subscriptionId = v.subscriptionId;
           const queryId = v.queryId;
-          this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+          this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
         },
         Remove: (v) => {
           const entityId = v.entityId;
@@ -107,7 +107,7 @@ export class WatcherSet extends Struct {
   }
 
   addEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
-    this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
+    this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
   }
 
   removeEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
@@ -144,7 +144,7 @@ export class WatcherSet extends Struct {
 
   addPredicateEntityWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, entityIds: EntityId[]): void {
     for (const entityId of entityIds) {
-      this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+      this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
     }
   }
 
@@ -179,7 +179,7 @@ export class WatcherSet extends Struct {
             try {
               try {
                 const propertyPath = PropertyPath.fromPath(path);
-                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
+                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default()).value;
                 return op.match({
                   Add: () => {
                     index.add((literal).clone(), operator.clone(), watcherId);
@@ -218,7 +218,7 @@ export class WatcherSet extends Struct {
         throw new Error('unimplemented');
       },
       True: () => {
-        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet());
+        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet()).value;
         return op.match({
           Add: () => {
             set.add(watcherId);

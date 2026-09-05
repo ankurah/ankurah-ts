@@ -182,3 +182,85 @@ fn a_statement_match_inside_a_lift_keeps_its_exit() {
         "the statement match reads its own arms' exit, and the lift reads that:\n{ts}"
     );
 }
+
+/// A jump may be written below ANY expression, and the analysis that decides
+/// whether a body has to be lifted used to stop at every kind but blocks, ifs,
+/// matches and loops. So `sink({ break 'outer; })` was emitted
+/// `sink(break outer)` — a `break` is a statement in JavaScript, and the module
+/// carrying one does not parse at all.
+#[test]
+fn a_jump_below_an_ordinary_expression_is_found() {
+    use crate::control_flow::sentinel::jumps_out;
+    for rust in [
+        "'outer: loop { sink({ break 'outer; }); }",
+        "'outer: loop { sink(if a { break 'outer } else { 1 }); }",
+        "'outer: loop { let _ = 1 + { break 'outer; }; }",
+        "'outer: loop { let _ = (a, { break 'outer; }); }",
+        "'outer: loop { let _ = xs[{ break 'outer; }]; }",
+        "'outer: loop { let _ = f().g({ break 'outer; }); }",
+        "'outer: loop { while { break 'outer; } { } }",
+        "'outer: loop { for _x in { break 'outer; } { } }",
+        "'outer: loop { match { break 'outer; } { _ => () } }",
+    ] {
+        let expr: syn::Expr = syn::parse_str(rust).expect("parses");
+        // The jump names the loop written OUTSIDE the expression being asked
+        // about, so the loop's own body is what carries it out.
+        let syn::Expr::Loop(l) = &expr else { panic!("a loop") };
+        let inner = syn::Expr::Block(syn::ExprBlock {
+            attrs: Vec::new(),
+            label: None,
+            block: l.body.clone(),
+        });
+        assert!(jumps_out(&inner), "no jump found in `{rust}`");
+    }
+}
+
+/// A jump the expression's own loop catches does not leave it.
+#[test]
+fn a_jump_its_own_loop_catches_is_not_a_jump_out() {
+    use crate::control_flow::sentinel::jumps_out;
+    let expr: syn::Expr =
+        syn::parse_str("{ 'inner: loop { sink({ break 'inner; }); } }").expect("parses");
+    assert!(!jumps_out(&expr));
+}
+
+/// A closure is a control-flow boundary: Rust does not let a jump cross into
+/// one, so a `break` written inside a closure body names a loop inside it.
+#[test]
+fn a_closure_body_is_not_searched() {
+    use crate::control_flow::sentinel::jumps_out;
+    let expr: syn::Expr =
+        syn::parse_str("{ let f = || { 'inner: loop { break 'inner; } }; }").expect("parses");
+    assert!(!jumps_out(&expr));
+}
+
+/// H: a value-position `loop` in TAIL position is what the function ANSWERS.
+/// Written as a statement it came out `break /* 9 */` and the function fell off
+/// the end returning `undefined`; the `let` form was already hoisted and
+/// labelled.
+#[test]
+fn a_tail_position_loop_keeps_its_break_payload() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn tail(mut i: u32) -> u32 { loop { i += 1; if i > 3 { break 9 } } }",
+    )]);
+    let ts = f.translated_method("lib.rs", "tail");
+    assert!(!ts.contains("break /*"), "the payload is not a comment:\n{ts}");
+    assert!(ts.contains("let _lv0;"), "{ts}");
+    assert!(ts.contains("_lv0 = 9;"), "{ts}");
+    assert!(ts.contains("return _lv0;"), "{ts}");
+}
+
+/// A tail `loop` with no payload is still a statement whose value is `()`, and
+/// nothing is hoisted for it.
+#[test]
+fn a_tail_loop_with_no_payload_is_a_statement() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn spin(mut n: u32) -> u32 { let mut seen = 0u32; \
+         loop { if n == 0 { break; } n -= 1; seen += 1; } seen }",
+    )]);
+    let ts = f.translated_method("lib.rs", "spin");
+    assert!(!ts.contains("_lv"), "nothing is hoisted for it:\n{ts}");
+    assert!(ts.contains("return seen;"), "{ts}");
+}

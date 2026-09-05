@@ -113,13 +113,29 @@ fn provided_types_declaring_from_json() -> BTreeSet<String> {
         let file = provided_file(crates, fqn, path);
         let text = std::fs::read_to_string(&file)
             .unwrap_or_else(|e| panic!("[provided_impls] {fqn} names {}, which cannot be read: {e}", file.display()));
-        assert!(
-            text.contains("static fromJson("),
-            "[provided_impls] {fqn} says `reads_json = true`, but {} declares no \
-             `static fromJson`. Either the file lost it or the entry is wrong; emitted code \
-             calls that static.",
-            file.display()
-        );
+        // The CLASS, not the file. `id.provided.ts` declares six classes and six
+        // statics, so a claim about any one of them passed as long as some other
+        // class in the same file had one — which is the "unverified claim one
+        // indirection further on" this check exists to stop.
+        let members = declared_members_of(&text, &class).unwrap_or_else(|| {
+            panic!(
+                "[provided_impls] {fqn} says `reads_json = true`, but {} declares no \
+                 `export class {class}`.",
+                file.display()
+            )
+        });
+        // BOTH halves. §4.2's contract is that the pair is refused as one, so a
+        // file with `fromJson` and no `toJSON` would let `x.toJSON()` be emitted
+        // against nothing.
+        for member in ["static fromJson(", "toJSON("] {
+            assert!(
+                members.contains(member),
+                "[provided_impls] {fqn} says `reads_json = true`, but class `{class}` in {} \
+                 declares no `{member}`. Either the file lost it or the entry is wrong; \
+                 emitted code calls both halves.",
+                file.display()
+            );
+        }
         checked += 1;
         out.insert(class);
     }
@@ -127,6 +143,73 @@ fn provided_types_declaring_from_json() -> BTreeSet<String> {
         checked > 0,
         "no [provided_impls] entry says `reads_json = true`, so this check is proving nothing"
     );
+    out
+}
+
+
+/// The body of one `export class` in a provided file, or `None` where the file
+/// declares no class of that name.
+///
+/// Brace depth from the class's own `{`, so a nested class or an object literal
+/// inside a method does not end it early. Line comments and block comments are
+/// dropped first, so a member named only in a comment does not satisfy a check
+/// — which is the whole point of reading the file rather than trusting the
+/// entry.
+fn declared_members_of(text: &str, class: &str) -> Option<String> {
+    let text = without_comments(text);
+    let head = format!("export class {}", class);
+    // The class name has to END there: `export class Entity` must not match
+    // `export class EntityId`.
+    let mut from = 0usize;
+    let start = loop {
+        let at = text[from..].find(&head)? + from;
+        let after = text[at + head.len()..].chars().next()?;
+        if !(after.is_alphanumeric() || after == '_') {
+            break at;
+        }
+        from = at + head.len();
+    };
+    let open = text[start..].find('{')? + start;
+    let mut depth = 0usize;
+    for (at, ch) in text[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(text[open..open + at].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The file with its comments removed, so a member named in one does not
+/// satisfy a check.
+fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes: Vec<char> = text.chars().collect();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at] == '/' && at + 1 < bytes.len() && bytes[at + 1] == '/' {
+            while at < bytes.len() && bytes[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if bytes[at] == '/' && at + 1 < bytes.len() && bytes[at + 1] == '*' {
+            at += 2;
+            while at + 1 < bytes.len() && !(bytes[at] == '*' && bytes[at + 1] == '/') {
+                at += 1;
+            }
+            at = (at + 2).min(bytes.len());
+            continue;
+        }
+        out.push(bytes[at]);
+        at += 1;
+    }
     out
 }
 

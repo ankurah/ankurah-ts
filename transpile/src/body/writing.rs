@@ -65,6 +65,16 @@ pub fn pattern_names(pat: &syn::Pat) -> Vec<String> {
     bound_names(pat)
 }
 
+
+/// Is this identifier written the way Rust writes a `const`?
+///
+/// At least one letter, and no lowercase one. A binding is `snake_case` and a
+/// const is `SCREAMING_SNAKE_CASE`, and rustc warns on either written the other
+/// way round.
+fn names_a_constant(ident: &str) -> bool {
+    ident.chars().any(|c| c.is_alphabetic()) && !ident.chars().any(|c| c.is_lowercase())
+}
+
 pub(crate) fn bound_names(pat: &syn::Pat) -> Vec<String> {
     let mut out = Vec::new();
     collect_bound(pat, &mut out);
@@ -73,6 +83,18 @@ pub(crate) fn bound_names(pat: &syn::Pat) -> Vec<String> {
 
 pub(crate) fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
     match pat {
+        // A SCREAMING_SNAKE_CASE name in a pattern is a CONST, not a binding:
+        // Rust compares the subject against its value. Read as a binding, the
+        // arm owned a value nothing declared — `match p { ORIGIN => true, .. }`
+        // released `oRIGIN`, an identifier the emitted file never introduces.
+        // The convention is the one every other path in this file already
+        // reads a const by; `names_a_const` asks the registry where it can, and
+        // this function has no registry to ask.
+        syn::Pat::Ident(ident) if names_a_constant(&ident.ident.to_string()) => {
+            if let Some((_, sub)) = &ident.subpat {
+                collect_bound(sub, out);
+            }
+        }
         syn::Pat::Ident(ident) => {
             out.push(name_map::escape_reserved(&name_map::to_camel_case(
                 &ident.ident.to_string(),
@@ -173,12 +195,18 @@ pub fn strip_binding(pat: &syn::Pat) -> &syn::Pat {
 }
 
 /// A scope holding one pattern's bindings; it closes when this drops.
+///
+/// It also carries whether the value being taken apart is BORROWED, restored
+/// when the scope closes: a match over an owned value written inside a borrowed
+/// one answers for itself.
 pub struct PatternScope<'t, 'a> {
     pub(crate) translator: &'t BodyTranslator<'a>,
+    pub(crate) borrowed_before: bool,
 }
 
 impl Drop for PatternScope<'_, '_> {
     fn drop(&mut self) {
+        self.translator.borrowed_subject.set(self.borrowed_before);
         self.translator.pop_scope();
     }
 }

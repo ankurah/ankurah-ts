@@ -262,3 +262,48 @@ describe('serde_json.stringify writes a bigint as a bare integer token', () => {
     expect(written({ a: 1, b: undefined })).toBe('{"a":1}');
   });
 });
+
+// X15: `out['__proto__'] = value` sets the object's PROTOTYPE instead of
+// creating the member, so a document with that key parsed to an object that
+// did not hold it — `hasOwnProperty('__proto__')` was false and `stringify`
+// wrote the document back without it. serde_json treats `__proto__` as an
+// ordinary key.
+describe('a key named __proto__ is an ordinary key', () => {
+  test('it becomes an own member, and the prototype is untouched', () => {
+    const value = parsed('{"__proto__":{"polluted":true},"a":1}') as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(value, '__proto__')).toBe(true);
+    expect((value['__proto__'] as Record<string, unknown>)['polluted']).toBe(true);
+    // Nothing was written to the prototype: an ordinary object still has none
+    // of it.
+    expect(({} as Record<string, unknown>)['polluted']).toBe(undefined);
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+  });
+
+  test('and it survives a round trip', () => {
+    const value = parsed('{"__proto__":1}');
+    expect(written(value)).toBe('{"__proto__":1}');
+  });
+});
+
+// M: `JSON.parse` accepts a lone `\uD800` and hands back a string no UTF-8
+// encoder can write out again; serde_json answers
+// `Err(unexpected end of hex escape)`. Fifty documents through both agreed 49
+// times, and this was the one that did not.
+describe('an unpaired surrogate escape is refused', () => {
+  test('a lone high or low surrogate is an error', () => {
+    refused('"\\ud800"');
+    refused('"\\udc00"');
+    refused('"\\ud800a"');
+    refused('"\\ud800\\u0041"');
+  });
+
+  test('a well-formed pair is one code point', () => {
+    expect(parsed('"\\ud800\\udc00"')).toBe('\u{10000}');
+    expect(parsed('"\\ud83d\\ude80"')).toBe('\u{1F680}');
+  });
+
+  test('and an escaped backslash is not the start of an escape', () => {
+    expect(parsed('"\\\\ud800"')).toBe('\\ud800');
+    expect(parsed('"a\\\\b"')).toBe('a\\b');
+  });
+});

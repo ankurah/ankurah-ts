@@ -32,7 +32,16 @@ impl<'a> BodyTranslator<'a> {
         let Some(tc) = &self.types else {
             return Vec::new();
         };
-        let names: Vec<String> = params.iter().map(|(name, _)| name.clone()).collect();
+        // The scan spells the receiver `this` whatever the emitted parameter is
+        // called, because that is what a method's body writes. An impl with no
+        // class of its own is emitted as module-level functions whose first
+        // parameter is named `self`, so the two spellings have to be lined up
+        // or every move of the receiver is invisible and the body releases a
+        // value it handed away.
+        let scan_name = |name: &str| {
+            if name == self.self_name { "this".to_string() } else { name.to_string() }
+        };
+        let names: Vec<String> = params.iter().map(|(name, _)| scan_name(name)).collect();
         let scan = ownership::Scan::new(self);
         // Every site in the body stands after the parameter list, so the
         // parameters are the declaration each one is attributed to.
@@ -41,10 +50,11 @@ impl<'a> BodyTranslator<'a> {
         let mut owned = Vec::new();
         for (name, ty) in params {
             let drops = ownership::drops_of(&tc.borrow().probe(), ty);
+            let drops = if drops.is_droppable() { drops } else { self.callable_by_value(ty) };
             if !drops.is_droppable() {
                 continue;
             }
-            let flag = match dispositions.of(name, 1) {
+            let flag = match dispositions.of(&scan_name(name), 1) {
                 ownership::Disposition::Moved | ownership::Disposition::Unsure => continue,
                 ownership::Disposition::Kept => None,
                 ownership::Disposition::Flagged => {
@@ -62,6 +72,40 @@ impl<'a> BodyTranslator<'a> {
             });
         }
         owned
+    }
+
+
+    /// A callable parameter the body OWNS, and therefore owes a release.
+    ///
+    /// `fn f<F: Fn(u32) -> u32>(f: F)` takes `f` by value and drops it at the
+    /// end of the body; only the CALL borrows. The port wrote the call as
+    /// `invokeRef`, which leaves the closure whole, and nothing released it — so
+    /// every capture of every `OwnedClosure` handed to such a parameter leaked.
+    /// Two live sites: core's `ResultSet::retain_dirty` and signals'
+    /// `Value::set_with`.
+    ///
+    /// `Drops::Cascade`, which is `dropOwned(f)`: a plain function reaches none
+    /// of that function's branches and is left alone, and an `OwnedClosure` has
+    /// a `drop()` for it to find.
+    ///
+    /// Three parameters are NOT this. One written `&F` or `&mut F` is somebody
+    /// else's. One whose bound is `FnOnce` alone is consumed by its call, and
+    /// `invoke` releases it there — a second release would be a double drop.
+    /// And a parameter whose type is not a callable bound at all is an ordinary
+    /// value, already answered by `drops_of`.
+    fn callable_by_value(&self, ty: &crate::ty::Ty) -> ownership::Drops {
+        if matches!(ty, crate::ty::Ty::Ref { .. }) {
+            return ownership::Drops::Unknown;
+        }
+        let Some(tc) = &self.types else { return ownership::Drops::Unknown };
+        let tc = tc.borrow();
+        if crate::infer::expected::fn_shape(tc.registry, ty, &tc.param_bounds).is_none() {
+            return ownership::Drops::Unknown;
+        }
+        if crate::infer::expected::consumed_by_the_call(tc.registry, ty, &tc.param_bounds) {
+            return ownership::Drops::Unknown;
+        }
+        ownership::Drops::Cascade
     }
 
     /// Which of this block's locals were handed to somebody else before it

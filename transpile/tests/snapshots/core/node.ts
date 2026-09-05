@@ -214,20 +214,21 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         const auth = _r2.unwrap();
         try {
           const _m4 = this.deref().value.peerConnections.get(nodeId);
-          const _r5 = (_m4 != null ? Result.Ok(_m4!) : Result.Err(new RequestError('PeerNotConnected', {})));
-          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-          const connection = _r5.unwrap();
+          const _m5 = new RequestError('PeerNotConnected', {});
+          const _r6 = (_m4 != null ? (_m5.drop(), Result.Ok(_m4!)) : Result.Err(_m5));
+          if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+          const connection = _r6.unwrap();
           try {
             _moved0 = true;
             connection.value.pendingRequests.insert(requestId, responseTx);
             _moved3 = true;
             _moved1 = true;
-            const _r6 = connection.value.sendMessage(new NodeMessage('Request', { auth: auth, request: request }));
-            if (_r6.isErr()) return Result.Err(RequestError.fromSendError(_r6.unwrapErr()));
-            _r6.drop();
-            const _r7 = (await responseRx).mapErr((_) => new RequestError('InternalChannelClosed', {}));
-            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-            return _r7.unwrap();
+            const _r7 = connection.value.sendMessage(new NodeMessage('Request', { auth: auth, request: request }));
+            if (_r7.isErr()) return Result.Err(RequestError.fromSendError(_r7.unwrapErr()));
+            _r7.drop();
+            const _r8 = (await responseRx).mapErr((_) => new RequestError('InternalChannelClosed', {}));
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            return _r8.unwrap();
           } finally {
             connection.drop();
           }
@@ -287,7 +288,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   async handleMessage(message: NodeMessage): Promise<Result<void, Error>> {
-    const _m13 = await (message.intoMatch<any>({
+    const _m14 = await (message.intoMatch<any>({
       Update: async (v) => {
         const update = v._0;
         let _moved0 = false;
@@ -418,17 +419,18 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         try {
           tracing.debug(`Node ${this.deref().value.id} received response ${response}`);
           const _m9 = this.deref().value.peerConnections.get(response.from);
-          const _r10 = (_m9 != null ? Result.Ok(_m9!) : Result.Err(new RequestError('PeerNotConnected', {})));
-          if (_r10.isErr()) return { $jump: 'return', $value: Result.Err(_r10.unwrapErr()) };
-          const connection = _r10.unwrap();
+          const _m10 = new RequestError('PeerNotConnected', {});
+          const _r11 = (_m9 != null ? (_m10.drop(), Result.Ok(_m9!)) : Result.Err(_m10));
+          if (_r11.isErr()) return { $jump: 'return', $value: Result.Err(_r11.unwrapErr()) };
+          const connection = _r11.unwrap();
           try {
             {
               const _v10 = connection.value.pendingRequests.remove(response.requestId);
               if (_v10 != null) {
                 const tx = _v10;
-                const _r11 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => AnyhowError.msg(`Failed to send response: ${e}`));
-                if (_r11.isErr()) return { $jump: 'return', $value: Result.Err(_r11.unwrapErr()) };
-                _r11.drop();
+                const _r12 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => AnyhowError.msg(`Failed to send response: ${e}`));
+                if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
+                _r12.drop();
               }
             }
           } finally {
@@ -446,9 +448,9 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           if (_v11 != null) {
             const peerState = _v11;
             try {
-              const _r12 = peerState.value.subscriptionHandler.removePredicate(queryId);
-              if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
-              _r12.drop();
+              const _r13 = peerState.value.subscriptionHandler.removePredicate(queryId);
+              if (_r13.isErr()) return { $jump: 'return', $value: Result.Err(_r13.unwrapErr()) };
+              _r13.drop();
             } finally {
               peerState.drop();
             }
@@ -456,7 +458,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         }
       },
     }));
-    if ((_m13 as any)?.$jump === 'return') return (_m13 as any).$value;
+    if ((_m14 as any)?.$jump === 'return') return (_m14 as any).$value;
     return Result.Ok([]);
   }
 
@@ -979,48 +981,49 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
 
   async getFromPeer(collectionId: CollectionId, ids: EntityId[], cdata: ContextData): Promise<Result<void, RetrievalError>> {
     const _m0 = this.getDurablePeerRandom();
-    const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new RetrievalError('NoDurablePeers', {})));
-    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-    const peerId = _r1.unwrap();
-    const _r2 = (await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids }))).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+    const _m1 = new RetrievalError('NoDurablePeers', {});
+    const _r2 = (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
     if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-    return await (_r2.unwrap().intoMatch({
+    const peerId = _r2.unwrap();
+    const _r3 = (await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids }))).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+    return await (_r3.unwrap().intoMatch({
       Get: async (v) => {
         const states = v._0;
-        let _moved3 = false;
+        let _moved4 = false;
         try {
-          const _r4 = await this.deref().value.collections.get(collectionId);
-          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-          const collection = _r4.unwrap();
+          const _r5 = await this.deref().value.collections.get(collectionId);
+          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+          const collection = _r5.unwrap();
           try {
-            _moved3 = true;
-            const _seq8 = states;
-            let _at9 = 0;
+            _moved4 = true;
+            const _seq9 = states;
+            let _at10 = 0;
             try {
-              while (_at9 < _seq8.length) {
-                const state = _seq8[_at9++];
-                let _moved5 = false;
+              while (_at10 < _seq9.length) {
+                const state = _seq9[_at10++];
+                let _moved6 = false;
                 try {
-                  const _r6 = this.deref().value.policyAgent.validateReceivedState(this, peerId, state);
-                  if (_r6.isErr()) return Result.Err(RetrievalError.fromAccessDenied(_r6.unwrapErr()));
-                  _r6.drop();
-                  _moved5 = true;
-                  const _r7 = (await collection.deref().value.setState(state)).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
-                  if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+                  const _r7 = this.deref().value.policyAgent.validateReceivedState(this, peerId, state);
+                  if (_r7.isErr()) return Result.Err(RetrievalError.fromAccessDenied(_r7.unwrapErr()));
                   _r7.drop();
+                  _moved6 = true;
+                  const _r8 = (await collection.deref().value.setState(state)).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+                  if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+                  _r8.drop();
                 } finally {
-                  if (!_moved5) state.drop();
+                  if (!_moved6) state.drop();
                 }
               }
             } finally {
-              dropOwned(_seq8.slice(_at9));
+              dropOwned(_seq9.slice(_at10));
             }
             return Result.Ok([]);
           } finally {
             collection.drop();
           }
         } finally {
-          if (!_moved3) dropOwned(states);
+          if (!_moved4) dropOwned(states);
         }
       },
       Error: (v) => {

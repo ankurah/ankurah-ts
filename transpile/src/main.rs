@@ -1368,7 +1368,10 @@ fn translate_fn_body(
             let Some(written) = param.rust_ty.as_ref() else {
                 continue;
             };
-            if let syn::Type::Path(path) = written {
+            // The reference is peeled, because emission erases it: `f: &mut F`
+            // and `f: F` are one TypeScript parameter, and the rule that writes
+            // the callable in place of the parameter name has to reach both.
+            if let syn::Type::Path(path) = extract::peel_written_refs(written) {
                 if let Some(name) = path.path.get_ident().map(|i| i.to_string()) {
                     if let Some(spelling) = callables.get(&name) {
                         param.ty = spelling.clone();

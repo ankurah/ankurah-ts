@@ -21,7 +21,7 @@ export class CallbackObserver extends Struct implements Observer {
     this.withContext(this._0.value.callback);
   }
 
-  withContext<F extends Invocable<[], void>>(f: F): void {
+  withContext(f: Invocable<[], void>): void {
     this.markAllForRemoval();
     CurrentObserver.set(this.clone());
     invokeRef(f);

@@ -111,6 +111,21 @@ pub fn owned_array_loop(
     )
 }
 
+
+/// Does this pattern bind the whole element by reference — `ref item` or
+/// `ref mut item`?
+///
+/// Only the whole one: a `ref` inside a destructuring binds part of an element
+/// the loop already released field by field, and claiming the part as well
+/// would release it twice.
+fn binds_the_whole_element_by_reference(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Ident(ident) => ident.by_ref.is_some() && ident.subpat.is_none(),
+        syn::Pat::Paren(p) => binds_the_whole_element_by_reference(&p.pat),
+        _ => false,
+    }
+}
+
 impl<'a> BodyTranslator<'a> {
     /// `for x in seq { .. }`, with what the loop owns released where Rust
     /// releases it.
@@ -137,7 +152,29 @@ impl<'a> BodyTranslator<'a> {
         let _bindings = self.enter_pattern(&for_loop.pat, item.as_ref());
         let owned = match form {
             Iterate::Borrowed => Vec::new(),
-            _ => self.claim_bindings(&crate::body::pattern_names(&for_loop.pat), &for_loop.body.stmts),
+            // Over an OWNED sequence the loop owns the element it was handed,
+            // whatever the pattern binds of it. A `ref` binding's own type is a
+            // `&T`, which owns nothing, so the ELEMENT's type decides — and the
+            // release lands on the name the loop wrote, which is the element
+            // itself. Without it `for ref item in owned_vec` leaked every
+            // element: the tail release starts after the current index and
+            // cannot reach what the turn already handed out.
+            _ => {
+                let names = crate::body::pattern_names(&for_loop.pat);
+                let element = item.clone();
+                let binds_by_reference = binds_the_whole_element_by_reference(&for_loop.pat);
+                self.claim_bindings_as(
+                    &names,
+                    &|name| {
+                        if binds_by_reference {
+                            element.clone()
+                        } else {
+                            self.types.as_ref().and_then(|tc| tc.borrow().lookup(name))
+                        }
+                    },
+                    &for_loop.body.stmts,
+                )
+            }
         };
         let body = crate::control_flow::sentinel::inside_a_loop(self, &for_loop.label, || {
             self.translate_loop_block(&for_loop.body)

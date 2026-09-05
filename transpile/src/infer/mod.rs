@@ -1,5 +1,7 @@
 //! Answering "what is the type of this expression?" for the body translator.
 
+/// What a call resolves to, and what it wants of its arguments.
+mod calls;
 pub mod closures;
 #[cfg(test)]
 mod closure_tests;

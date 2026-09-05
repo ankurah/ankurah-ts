@@ -117,6 +117,13 @@ fn a_float_field_takes_any_number() {
 /// #2: the runtime `HashMap` a reader BUILDS is tracked whatever it holds, so a
 /// document that fails on a later field has to release it. Taking the container's
 /// ownership from its member left a partly decoded map unreleased.
+///
+/// PREMISE CHANGED 2026-09-05 (fixpass5 item 9, X14): the release used to be a
+/// closure written into every `return` on the error paths, which covered an
+/// expected `Err` and NOT an exception — a throwing property getter on a late
+/// field left every earlier field with nobody. R4 says a decoder owns what it
+/// has built until it RETURNS one, and a `finally` over a bag is the only form
+/// that covers both, so what this test now pins is the bag and the flag.
 #[test]
 fn a_decoded_map_is_released_when_a_later_field_fails() {
     let mut f = built(&format!(
@@ -124,9 +131,65 @@ fn a_decoded_map_is_released_when_a_later_field_fails() {
         DERIVE
     ));
     let ts = f.emitted("lib.rs");
+    assert!(ts.contains("$built.push(names);"), "the map goes into the bag:\n{}", ts);
     assert!(
-        ts.contains("dropOwned([names])"),
-        "the map is released on the `count` error path:\n{}",
+        ts.contains("finally {\n      if (!$kept) dropOwned($built);"),
+        "and the bag is released unless the reader handed one back:\n{}",
+        ts
+    );
+    // The flag is set AFTER the value is built and before it is returned, so a
+    // constructor that raised would still leave the fields to the `finally`.
+    assert!(ts.contains("const $out = new Holder(names, count);\n      $kept = true;"), "{}", ts);
+}
+
+/// An EXCEPTION during a late field is the path a per-return closure could not
+/// cover, and the reader with nothing to release writes neither the bag nor the
+/// `finally`.
+#[test]
+fn a_reader_that_owns_nothing_writes_no_cleanup() {
+    let mut f = built(&format!(
+        "{}pub struct Plain {{ pub a: String, pub b: u8 }}",
+        DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(!ts.contains("$built"), "nothing to release:\n{}", ts);
+    assert!(!ts.contains("$kept"), "nothing to release:\n{}", ts);
+}
+
+/// X12: a field named `value` declared `const value = _rvalue.unwrap();` in the
+/// same block as the parameter `value`, so every read of the parameter above it
+/// was `Cannot access 'value' before initialization` and the reader answered
+/// `Err` for every document. The parameter takes a name none of the members
+/// holds.
+#[test]
+fn a_field_named_value_does_not_shadow_the_readers_parameter() {
+    let mut f = built(&format!(
+        "{}pub struct Nested {{ pub value: String }}",
+        DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("static fromJson($value: unknown)"), "{}", ts);
+    assert!(ts.contains("const value = _rvalue.unwrap();"), "{}", ts);
+    // And a struct with no such field keeps the plain name.
+    let mut g = built(&format!("{}pub struct Plain {{ pub a: String }}", DERIVE));
+    let plain = g.emitted("lib.rs");
+    assert!(plain.contains("static fromJson(value: unknown)"), "{}", plain);
+}
+
+/// X13: `#[serde(with = "json_as_bytes")]` handed its array straight to
+/// `Uint8Array`, which truncates — `[305]` became byte 49 and the reader
+/// answered `Ok`. serde reads each element as a `u8` before anything decodes
+/// them, and both byte readers make the same test.
+#[test]
+fn the_json_as_bytes_module_checks_its_bytes() {
+    let mut f = built(&format!(
+        "mod json_as_bytes {{}}\n{}pub struct Doc {{ #[serde(with = \"json_as_bytes\")] pub body: String }}",
+        DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(
+        ts.contains("v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255)"),
+        "the with-module reader checks its bytes:\n{}",
         ts
     );
 }
@@ -194,7 +257,7 @@ fn a_nested_failure_passes_out_and_releases_what_is_built() {
         reader
     );
     assert!(
-        reader.contains("dropOwned([first])"),
+        reader.contains("$built.push(first);"),
         "the first field is released when the second fails:\n{}",
         reader
     );

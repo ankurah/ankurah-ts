@@ -16,7 +16,7 @@ export class Bucket extends Struct {
   }
 
   effective(openEnded: boolean): number {
-    const effective = openEnded && this.prefixLen > 0 && !this.guardDisabled ? this.prefixLen : 0;
+    const effective = (openEnded && this.prefixLen > 0 && !this.guardDisabled ? this.prefixLen : 0);
     return effective;
   }
 

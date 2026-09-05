@@ -116,3 +116,30 @@ export function orderingWidth(o: Ordering): number {
   return total;
 }
 
+export function refWidths(keys: Key[]): number {
+  let total = 0;
+  const _seq0 = keys;
+  let _at1 = 0;
+  try {
+    while (_at1 < _seq0.length) {
+      const key = _seq0[_at1++];
+      try {
+        total = checkedAdd(total, key.name.length, 'usize');
+      } finally {
+        key.drop();
+      }
+    }
+  } finally {
+    dropOwned(_seq0.slice(_at1));
+  }
+  return total;
+}
+
+export function refWidthsBorrowed(keys: Key[]): number {
+  let total = 0;
+  for (const key of keys) {
+    total = checkedAdd(total, key.name.length, 'usize');
+  }
+  return total;
+}
+

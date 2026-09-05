@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/livequery.rs
-import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, Notify, tokio, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, wrappingAdd, Notify, tokio, spawn } from '@ankurah/base';
 import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
 import { BroadcastId, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard, CurrentObserver } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
@@ -105,7 +105,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     const _r0 = newSelection.tryInto().mapErr((e) => e);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const newSelection_1 = _r0.unwrap();
-    const newVersion = checkedAdd((() => { const _v = this._0.value.currentVersion; this._0.value.currentVersion += 1; return _v; })(), 1, 'u32');
+    const newVersion = checkedAdd((() => { const _v = this._0.value.currentVersion; this._0.value.currentVersion = wrappingAdd(this._0.value.currentVersion, 1, 'u32'); return _v; })(), 1, 'u32');
     this._0.value.resultset.setLoaded(false);
     this._0.value.selection.set([newSelection_1.clone(), newVersion]);
     const hasRelay = this._0.value.node.hasSubscriptionRelay();

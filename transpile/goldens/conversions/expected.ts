@@ -27,6 +27,27 @@ export class Name extends Struct {
   }
 }
 
+export class Sizes extends Struct {
+  readonly _0: string;
+
+  constructor(_0: string) {
+    super();
+    this._0 = _0;
+  }
+
+  static fromVecU32(v: number[]): Sizes {
+    return new Sizes(`u${v.length}`);
+  }
+
+  static fromVecI32(v: number[]): Sizes {
+    return new Sizes(`i${v.length}`);
+  }
+
+  static fromU32(v: number[]): Sizes {
+    return new Sizes(`s${v.length}`);
+  }
+}
+
 export function named(tag: Tag): Name {
   return Name.fromTag(tag);
 }

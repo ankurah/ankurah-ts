@@ -38,3 +38,46 @@ pub fn counted(words: &Vec<Key>) -> HashMap<Key, u32> {
     }
     counts
 }
+
+/// The three ways of finishing an entry that the counter above does not use.
+/// Each reads the place as a VALUE: `or_insert` answers a `&mut V`, and
+/// `.push(..)` is a call on the `Vec` it points at, which the runtime's
+/// write-through `Slot` has no method of its own for.
+pub struct Lists {
+    pub by_name: HashMap<Key, Vec<u32>>,
+    pub ordered: BTreeMap<String, Vec<u32>>,
+}
+
+impl Lists {
+    pub fn new() -> Self {
+        Lists { by_name: HashMap::new(), ordered: BTreeMap::new() }
+    }
+
+    pub fn push_default(&mut self, k: Key, v: u32) {
+        self.by_name.entry(k).or_default().push(v);
+    }
+
+    pub fn push_insert(&mut self, k: Key, v: u32) {
+        self.by_name.entry(k).or_insert(Vec::new()).push(v);
+    }
+
+    pub fn push_with(&mut self, k: Key, v: u32) {
+        self.by_name.entry(k).or_insert_with(|| Vec::new()).push(v);
+    }
+
+    /// A `BTreeMap` receiver. The value type an `or_default()` needs a thunk
+    /// for is read off `btree_map::Entry` as well as off `hash_map::Entry` —
+    /// read off only the first, this emitted `orDefault()` with no thunk, and
+    /// `orDefault(undefined)` invokes `undefined` on the first unseen key.
+    pub fn push_ordered(&mut self, k: String, v: u32) {
+        self.ordered.entry(k).or_default().push(v);
+    }
+
+    pub fn count(&self, k: &Key) -> usize {
+        self.by_name.get(k).map_or(0, |v| v.len())
+    }
+
+    pub fn ordered_count(&self, k: &String) -> usize {
+        self.ordered.get(k).map_or(0, |v| v.len())
+    }
+}

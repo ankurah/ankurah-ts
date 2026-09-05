@@ -74,7 +74,7 @@ export class Planner extends Struct {
               }
               const _t1 = [...orderBy];
               try {
-                const coveredIneq = _t1.some((item) => item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false);
+                const coveredIneq = _t1.some((item) => (item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false));
                 if (!coveredIneq) {
                   if (!inequalities.isEmpty()) {
                     {
@@ -228,10 +228,10 @@ export class Planner extends Struct {
           let _moved6 = false;
           const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, (appliedIneq != null ? (([f, ]) => f)(appliedIneq!) : null));
           try {
-            const scanDirection = this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
+            const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
               Desc: () => new ScanDirection('Reverse', {}),
               Asc: () => new ScanDirection('Forward', {}),
-            });
+            }));
             let _moved7 = false;
             const orderBy_1 = (() => {
               if (!this.config.supportsDescIndexes) {
@@ -318,10 +318,10 @@ export class Planner extends Struct {
           let _moved7 = false;
           const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, primary._0);
           try {
-            const scanDirection = this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
+            const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
               Desc: () => new ScanDirection('Reverse', {}),
               Asc: () => new ScanDirection('Forward', {}),
-            });
+            }));
             let covered = new HashSet();
             covered.extend([...equalities].map(([f, ]) => f.asStr()));
             covered.insert(primary._0);

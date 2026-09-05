@@ -72,3 +72,26 @@ pub fn ordering_width(o: &Ordering) -> usize {
     }
     total
 }
+
+// An explicit `ref` binding over an OWNED sequence still consumes the sequence:
+// Rust's `IntoIter` hands out one element per turn and drops it at the end of
+// that turn, and the `ref` binds a reference INTO the element the loop owns. The
+// binding's own type is a `&Key`, which owns nothing, so nothing released the
+// element — and the tail release starts after the current index and cannot
+// reach what the turn already handed out.
+pub fn ref_widths(keys: Vec<Key>) -> usize {
+    let mut total = 0usize;
+    for ref key in keys {
+        total += key.name.len();
+    }
+    total
+}
+
+/// The same written over a REFERENCE, which owns nothing at all.
+pub fn ref_widths_borrowed(keys: &Vec<Key>) -> usize {
+    let mut total = 0usize;
+    for ref key in keys {
+        total += key.name.len();
+    }
+    total
+}

@@ -109,6 +109,8 @@ export class KeySpec extends Struct {
   }
 
   static fromJson(value: unknown): Result<KeySpec, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `KeySpec`'));
@@ -120,10 +122,15 @@ export class KeySpec extends Struct {
       const _rkeyparts = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => IndexKeyPart.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_o['keyparts']);
       if (_rkeyparts.isErr()) return Result.Err(_rkeyparts.unwrapErr());
       const keyparts = _rkeyparts.unwrap();
-      return Result.Ok(new KeySpec(keyparts));
+      $built.push(keyparts);
+      const $out = new KeySpec(keyparts);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -255,6 +262,8 @@ export class IndexKeyPart extends Struct {
   }
 
   static fromJson(value: unknown): Result<IndexKeyPart, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `IndexKeyPart`'));
@@ -275,22 +284,29 @@ export class IndexKeyPart extends Struct {
       const _rdirection = ((v: unknown) => IndexDirection.fromJson(v))(_o['direction']);
       if (_rdirection.isErr()) return Result.Err(_rdirection.unwrapErr());
       const direction = _rdirection.unwrap();
+      $built.push(direction);
       if (!('value_type' in _o)) {
-        return ((e: JsonError) => { dropOwned([direction]); return Result.Err(e); })(JsonError.custom('missing field `value_type`'));
+        return Result.Err(JsonError.custom('missing field `value_type`'));
       }
       const _rvalueType = ((v: unknown) => ValueType.fromJson(v))(_o['value_type']);
-      if (_rvalueType.isErr()) return ((e: JsonError) => { dropOwned([direction]); return Result.Err(e); })(_rvalueType.unwrapErr());
+      if (_rvalueType.isErr()) return Result.Err(_rvalueType.unwrapErr());
       const valueType = _rvalueType.unwrap();
+      $built.push(valueType);
       const _rnulls = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => NullsOrder.fromJson(v))(v)))(_o['nulls']);
-      if (_rnulls.isErr()) return ((e: JsonError) => { dropOwned([direction, valueType]); return Result.Err(e); })(_rnulls.unwrapErr());
+      if (_rnulls.isErr()) return Result.Err(_rnulls.unwrapErr());
       const nulls = _rnulls.unwrap();
+      $built.push(nulls);
       const _rcollation = ((v: unknown) => (v == null ? Result.Ok(null) : ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(v)))(_o['collation']);
-      if (_rcollation.isErr()) return ((e: JsonError) => { dropOwned([direction, valueType, nulls]); return Result.Err(e); })(_rcollation.unwrapErr());
+      if (_rcollation.isErr()) return Result.Err(_rcollation.unwrapErr());
       const collation = _rcollation.unwrap();
-      return Result.Ok(new IndexKeyPart(column, subPath, direction, valueType, nulls, collation));
+      const $out = new IndexKeyPart(column, subPath, direction, valueType, nulls, collation);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

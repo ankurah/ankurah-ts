@@ -43,13 +43,9 @@ export function Sender_intoSubscribeListener<T>(self: Sender<T>): SubscribeListe
 }
 
 export function UnboundedSender_intoSubscribeListener<T>(self: UnboundedSender<T>): SubscribeListener<T> {
-  try {
-    return new OwnedClosure([this], (value) => {
-      const _ = self.send(value);
-    });
-  } finally {
-    self.drop();
-  }
+  return new OwnedClosure([this], (value) => {
+    const _ = self.send(value);
+  });
 }
 
 export function intoSubscribeListener<F extends (arg0: T) => void, T>(self: F): SubscribeListener<T> {

@@ -61,7 +61,51 @@ fn a_static_with_interior_mutability_is_reassignable() {
          pub fn bump() -> usize { COUNTER.fetch_add(1, Ordering::SeqCst) }",
     );
     assert!(ts.contains("export let COUNTER: number = 0;"), "{ts}");
-    assert!(ts.contains("COUNTER += 1"), "{ts}");
+    // PREMISE CHANGED 2026-09-05 (fixpass5 item 11, K): this line used to read
+    // `COUNTER += 1`. Rust's atomics WRAP at their width whatever the build's
+    // debug assertions say — `AtomicU32::MAX.fetch_add(1)` stores `0` — and a
+    // `+=` on a `number` went on counting, so the port and Rust disagreed from
+    // the first overflow on. A `static mut` beside it already went through the
+    // checked helper, so the two spellings of one idea disagreed too.
+    assert!(ts.contains("COUNTER = wrappingAdd(COUNTER, 1, 'usize')"), "{ts}");
+}
+
+/// The atomic's own width is what the wrap is taken at: an `AtomicU32` wraps at
+/// 2^32 and an `AtomicUsize` at 2^32 on this target (R13), and a `fetch_sub`
+/// takes the same helper the other way.
+#[test]
+fn an_atomic_wraps_at_its_own_width() {
+    let ts = emitted(
+        "use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};\n\
+         pub static SMALL: AtomicU32 = AtomicU32::new(0);\n\
+         pub static SIZE: AtomicUsize = AtomicUsize::new(0);\n\
+         pub fn b() -> u32 { SMALL.fetch_add(1, Ordering::SeqCst) }\n\
+         pub fn c() -> usize { SIZE.fetch_sub(1, Ordering::SeqCst) }",
+    );
+    assert!(ts.contains("SMALL = wrappingAdd(SMALL, 1, 'u32')"), "{ts}");
+    assert!(ts.contains("SIZE = wrappingSub(SIZE, 1, 'usize')"), "{ts}");
+}
+
+/// `AtomicU64` is the one atomic whose TypeScript spelling and whose Rust width
+/// disagree: the port writes it as a `number` and Rust holds a `u64`, so a
+/// `u64` width here would put a `bigint` operand beside a `number` place, which
+/// JavaScript refuses to mix. The update stays an ordinary `+=` and the site
+/// says what it does not do.
+#[test]
+fn a_sixty_four_bit_atomic_says_it_does_not_wrap() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::atomic::{AtomicU64, Ordering};\n\
+         pub static WIDE: AtomicU64 = AtomicU64::new(0);\n\
+         pub fn a() -> u64 { WIDE.fetch_add(1, Ordering::SeqCst) }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("WIDE = WIDE + 1"), "{ts}");
+    assert!(
+        f.messages().iter().any(|m| m.contains("does not wrap where Rust does")),
+        "{:?}",
+        f.messages()
+    );
 }
 
 /// F13: `AtomicBool::new` was not lowered at all, so six emitted places built an

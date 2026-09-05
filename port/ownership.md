@@ -738,3 +738,127 @@ What `or_insert` hands back is a `&mut V` INTO THE MAP, not a copy of the value:
 `*counts.entry(w).or_insert(0) += 1` has to count, and a plain `BorrowMut` holds
 a copy, so the increment landed on the copy and the map never changed. Writing
 through it releases what the map held, which is what Rust's `*slot = v` does.
+
+The `&mut V` points at the STORED ENTRY, never at the lookup key. An occupied
+entry releases the key it was handed — the map keeps the one it already has —
+and a slot holding that released key hashed a dropped value the first time
+anything read it. The entry is the stable thing: one object for as long as the
+map holds it, and no second lookup.
+
+The key is the entry's until the map takes it. A vacant `or_insert_with(f)`
+whose `f` throws leaves the key with nobody, and Rust's unwind does not: the
+throw path releases it.
+
+`clone()` on either container walks what it holds. A value's own `clone()` where
+it has one; an array element by element, by the same rule, because that is what
+the port writes a `Vec<T>` and a tuple as; a typed array copied through its own
+constructor, because that is what it writes a `Vec<u8>` as. Neither of the last
+two has a `clone()` of its own, so both used to come back as the very same
+object — and a cloned map that shared its arrays owned one set of elements
+twice, so dropping both maps dropped each element twice.
+
+## An eager combinator argument is built before the branch and released in the other one
+
+`Option::ok_or(err)` and `Option::map_or(default, f)` take VALUES, not closures:
+Rust builds the argument before it looks at the option, and drops it again on
+the path that hands it nowhere. Two things follow, and the port owes both.
+
+The value is named before the branch, so the work it does happens where Rust
+does it. And the branch that does NOT hand it on releases it:
+
+```ts
+const _m1 = new RetrievalError('NoDurablePeers', {});
+return (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
+```
+
+The release stands FIRST inside that branch, before the value the branch hands
+on. Rust drops the argument whether the branch returns or panics, and a release
+written before the branch's own work runs on both of those paths without a
+`try`. Nothing the branch does can observe the difference, because the argument
+was moved into the call and no other name reaches it.
+
+An argument that is already a place — a local handed to `ok_or` — is not named
+again, and still gets the release: the move is a move whether or not the port
+had to write a name for it.
+
+The one case with no release is an argument whose type the engine could not
+name. A release written against a guess would drop a value somebody else owns,
+so none is written and the site is reported. Two sites in the corpus, both
+`Poll::Ready(None)` under an open item type in `storage/common/src/sorting.rs`.
+
+## A callable parameter written by value is the body's
+
+Rust's `fn f<F: Fn(u32) -> u32>(g: F)` takes `g` BY VALUE. It is dropped at the
+end of the body; only the CALL borrows it, and the body may call it as often as
+the bound allows. So the port owes two separate things, and reading them as one
+is what leaked.
+
+The CALL goes through `invokeRef`, which calls and leaves the closure whole —
+for an `Fn` or `FnMut` bound whether the parameter is written `F`, `&F` or
+`&mut F`, because a call under any of those borrows. `invoke`, which calls and
+then releases, is for the one case where the call itself consumes the closure: a
+bound that is `FnOnce` and nothing else, on a parameter written by value.
+
+The RELEASE belongs to the parameter, not to the call: a by-value callable
+parameter is one of the body's owned values, released in the same `finally` as
+any other, and released nowhere if the body hands it on. It is written
+`dropOwned(f)`, because either shape may arrive — a plain function reaches none
+of `dropOwned`'s branches and is left alone, and an `OwnedClosure` has a
+`drop()` for it to find.
+
+A parameter written `&F` or `&mut F` is somebody else's and the body releases
+nothing.
+
+## The five `Result` methods that take a closure release it either way
+
+`map`, `map_err`, `and_then`, `or_else` and `unwrap_or_else` take `f` by value in
+Rust, so `f` is dropped at the end of the call whichever variant the `Result`
+turned out to be: `Ok(7).unwrap_or_else(f)` never calls `f` and still drops it.
+The branch that calls it leaves the release to `invoke`; the branch that does not
+call it releases `f` itself.
+
+## A `Result` matched against a reference is read, not taken apart
+
+Rust's `match &result { Ok(v) => … }` binds `v: &T` and leaves the `Result`
+whole; `match result { Ok(v) => … }` binds `v: T` and consumes it. `unwrap()`
+and `unwrapErr()` are the `self` forms — each takes the payload out and marks
+the `Result` moved — so reading a borrowed match with one of them made the
+second read of the same value `Result was used after being moved`.
+
+`okRef()` and `errRef()` are the `&self` forms. They check the variant, read the
+payload and leave the `Result` its owner's, and they are what the emitter writes
+wherever the value being taken apart is a reference — a `match`, an `if let`, a
+`while let`, and an inner `Result` under a borrowed `Option`.
+
+## A decoder's cleanup is a bag and a `finally`, not a closure per return
+
+R4: a decoder owns what it has built until it RETURNS one. The emitted
+`fromJson` used to write the release into every early `return` — a closure that
+dropped the fields decoded so far and then answered `Err`. That covers an
+expected failure and not an EXCEPTION: a throwing property getter on a late
+field left every earlier field with nobody, because the outer `catch` answers
+`Err` and no release edge ran.
+
+So a reader that owns anything declares a bag and a flag, fills the bag as it
+goes, sets the flag once it has built the value, and releases the bag in a
+`finally` unless the flag is set:
+
+```ts
+const $built: unknown[] = [];
+let $kept = false;
+try {
+  …
+  $built.push(kid);
+  …
+  const $out = new Outer(kid, kids, last);
+  $kept = true;
+  return Result.Ok($out);
+} catch (e) { … } finally {
+  if (!$kept) dropOwned($built);
+}
+```
+
+The flag is set AFTER the value is built and before it is returned, so a
+constructor that raised would still leave the fields to the `finally` — which is
+what Rust's unwind does. A reader with nothing to release writes neither the bag
+nor the `finally`.

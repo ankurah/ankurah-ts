@@ -97,7 +97,7 @@ export class Selection extends Struct {
         return !columns.includes(colName);
       })];
     })(this.orderBy!) : null);
-    const orderBy_1 = (orderBy != null ? ((v) => v.isEmpty() ? null : v)(orderBy!) : null);
+    const orderBy_1 = (orderBy != null ? ((v) => (v.isEmpty() ? null : v))(orderBy!) : null);
     return new Selection(this.predicate.assumeNull(columns), orderBy_1, this.limit);
   }
 
@@ -228,6 +228,8 @@ export class OrderByItem extends Struct {
   }
 
   static fromJson(value: unknown): Result<OrderByItem, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
     try {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return Result.Err(JsonError.custom('expected an object for `OrderByItem`'));
@@ -239,16 +241,22 @@ export class OrderByItem extends Struct {
       const _rpath = ((v: unknown) => PathExpr.fromJson(v))(_o['path']);
       if (_rpath.isErr()) return Result.Err(_rpath.unwrapErr());
       const path = _rpath.unwrap();
+      $built.push(path);
       if (!('direction' in _o)) {
-        return ((e: JsonError) => { dropOwned([path]); return Result.Err(e); })(JsonError.custom('missing field `direction`'));
+        return Result.Err(JsonError.custom('missing field `direction`'));
       }
       const _rdirection = ((v: unknown) => OrderDirection.fromJson(v))(_o['direction']);
-      if (_rdirection.isErr()) return ((e: JsonError) => { dropOwned([path]); return Result.Err(e); })(_rdirection.unwrapErr());
+      if (_rdirection.isErr()) return Result.Err(_rdirection.unwrapErr());
       const direction = _rdirection.unwrap();
-      return Result.Ok(new OrderByItem(path, direction));
+      $built.push(direction);
+      const $out = new OrderByItem(path, direction);
+      $kept = true;
+      return Result.Ok($out);
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }
@@ -347,8 +355,16 @@ export class Expr extends Enum<ExprV> {
     return new Expr('Literal', { _0: lit });
   }
 
-  static fromT<T>(vec: T[]): Expr {
+  static fromVecT<T>(vec: T[]): Expr {
     return new Expr('ExprList', { _0: [...vec].map((item) => item) });
+  }
+
+  static fromTN<T>(arr: T[]): Expr {
+    return new Expr('ExprList', { _0: [...arr].map((item) => item) });
+  }
+
+  static fromT<T>(slice: T[]): Expr {
+    return new Expr('ExprList', { _0: [...slice].map((item) => item.clone()) });
   }
 
   clone(): Expr {
@@ -737,7 +753,7 @@ export type PredicateV = {
 
 export class Predicate extends Enum<PredicateV> {
 
-  walk<T, F extends Invocable<[T, Predicate], T>>(accumulator: T, visitor: F): T {
+  walk<T>(accumulator: T, visitor: Invocable<[T, Predicate], T>): T {
     const accumulator_1 = invokeRef(visitor, accumulator, this);
     return this.match({
       And: (v) => {

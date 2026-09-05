@@ -67,7 +67,7 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
     return [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues];
   }
   let _moved1 = false;
-  const canonicalRange = new CanonicalRange(lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen], upperTuple.length === 0 ? null : [upperTuple, upperOpen]);
+  const canonicalRange = new CanonicalRange((lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen]), (upperTuple.length === 0 ? null : [upperTuple, upperOpen]));
   try {
     _moved1 = true;
     return [canonicalRange, eqPrefixLen, eqPrefixValues];

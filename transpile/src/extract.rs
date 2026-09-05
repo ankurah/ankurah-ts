@@ -1022,6 +1022,17 @@ pub(crate) fn callable_only_params_of(
     out
 }
 
+/// The written type with its references peeled, for the questions emission has
+/// already erased the reference from.
+pub(crate) fn peel_written_refs(ty: &syn::Type) -> &syn::Type {
+    match ty {
+        syn::Type::Reference(r) => peel_written_refs(&r.elem),
+        syn::Type::Paren(p) => peel_written_refs(&p.elem),
+        syn::Type::Group(g) => peel_written_refs(&g.elem),
+        other => other,
+    }
+}
+
 /// Does this signature name the type parameter anywhere but as the whole type
 /// of exactly one argument?
 fn mentions_beyond_one_parameter(
@@ -1029,7 +1040,12 @@ fn mentions_beyond_one_parameter(
     returned: Option<&syn::Type>,
     name: &str,
 ) -> bool {
-    let is_the_parameter = |ty: &syn::Type| match ty {
+    // A reference is peeled first: emission erases it, so `f: &mut F` and
+    // `f: F` are the same TypeScript parameter and the same question is being
+    // asked of both. Testing the WRITTEN type missed every `&F` and `&mut F` —
+    // ankql's `Predicate::walk` kept `<F extends Invocable<..>>` and answered
+    // `unknown` at six sites, which is precisely what this rule exists to stop.
+    let is_the_parameter = |ty: &syn::Type| match peel_written_refs(ty) {
         syn::Type::Path(path) => path.path.get_ident().is_some_and(|i| i == name),
         _ => false,
     };

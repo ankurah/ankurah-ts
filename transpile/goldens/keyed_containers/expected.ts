@@ -43,6 +43,47 @@ export class Bag extends Struct {
   }
 }
 
+export class Lists extends Struct {
+  readonly byName: HashMap<Key, number[]>;
+  readonly ordered: HashMap<string, number[]>;
+
+  constructor(byName: HashMap<Key, number[]>, ordered: HashMap<string, number[]>) {
+    super();
+    this.byName = byName;
+    this.ordered = ordered;
+  }
+
+  static new(): Lists {
+    return new Lists(new HashMap<Key, number[]>(), new HashMap<string, number[]>());
+  }
+
+  pushDefault(k: Key, v: number): void {
+    this.byName.entry(k).orDefault(() => []).value.push(v);
+  }
+
+  pushInsert(k: Key, v: number): void {
+    this.byName.entry(k).orInsert([]).value.push(v);
+  }
+
+  pushWith(k: Key, v: number): void {
+    this.byName.entry(k).orInsertWith(() => []).value.push(v);
+  }
+
+  pushOrdered(k: string, v: number): void {
+    this.ordered.entry(k).orDefault(() => []).value.push(v);
+  }
+
+  count(k: Key): number {
+    const _m0 = this.byName.get(k);
+    return (_m0 != null ? ((v) => v.length)(_m0!) : 0);
+  }
+
+  orderedCount(k: string): number {
+    const _m0 = this.ordered.get(k);
+    return (_m0 != null ? ((v) => v.length)(_m0!) : 0);
+  }
+}
+
 export function built(): HashMap<Key, number> {
   return HashMap.from([[new Key('a'), 1]]);
 }

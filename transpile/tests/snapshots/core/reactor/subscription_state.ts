@@ -385,7 +385,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                     }
                   } else {
                     {
-                      watcherChanges.push(matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId));
+                      watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
                       return null;
                     }
                   }

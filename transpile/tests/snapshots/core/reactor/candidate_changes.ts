@@ -24,7 +24,7 @@ export class CandidateChanges<C> extends Struct {
   }
 
   addQuery(queryId: QueryId, offset: number): void {
-    this.queryOffsets.entry(queryId).orDefault(() => IVec.default()).add(offset);
+    this.queryOffsets.entry(queryId).orDefault(() => IVec.default()).value.add(offset);
   }
 
   isEmpty(): boolean {
