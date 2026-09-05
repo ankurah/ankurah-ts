@@ -12,11 +12,11 @@ export function Value_toBytes(self: Value): Uint8Array {
     },
     I16: (v) => {
       const x = v._0;
-      return (x).toBeBytes().slice();
+      return (BigInt(x)).toBeBytes().slice();
     },
     I32: (v) => {
       const x = v._0;
-      return (x).toBeBytes().slice();
+      return (BigInt(x)).toBeBytes().slice();
     },
     I64: (v) => {
       const x = v._0;
@@ -40,7 +40,7 @@ export function Value_toBytes(self: Value): Uint8Array {
     },
     Bool: (v) => {
       const b = v._0;
-      return [b] as any;
+      return [Number(b)] as any;
     },
     EntityId: (v) => {
       const entityId = v._0;
@@ -74,7 +74,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
       if (x === i16.MAX) {
         return null;
       } else {
-        return (checkedAdd((x), 1n, 'i64')).toBeBytes().slice();
+        return (checkedAdd((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
       }
     },
     I32: (v) => {
@@ -82,7 +82,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
       if (x === i32.MAX) {
         return null;
       } else {
-        return (checkedAdd((x), 1n, 'i64')).toBeBytes().slice();
+        return (checkedAdd((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
       }
     },
     I64: (v) => {
@@ -146,7 +146,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
       if (x === i16.MIN) {
         return null;
       } else {
-        return (checkedSub((x), 1n, 'i64')).toBeBytes().slice();
+        return (checkedSub((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
       }
     },
     I32: (v) => {
@@ -154,7 +154,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
       if (x === i32.MIN) {
         return null;
       } else {
-        return (checkedSub((x), 1n, 'i64')).toBeBytes().slice();
+        return (checkedSub((BigInt(x)), 1n, 'i64')).toBeBytes().slice();
       }
     },
     I64: (v) => {

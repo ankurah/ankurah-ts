@@ -386,18 +386,24 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
                 let inner_ty = self.resolve_expr(&unary.expr)?;
-                self.probe()
+                // A `*` the port has nothing to take is one the port ALREADY
+                // took: `Box<T>` is `T` here, so `&**expr` over a
+                // `&Box<Expr>` has one reference to peel and no box behind it,
+                // and the second `*` was refused — which left `Predicate::
+                // IsNull`'s inner match untyped, so its catch-all could not be
+                // expanded and `expr.match({ Path: .. })` reached the runtime's
+                // fatal for every `Expr` that is not a `Path`. The erasure is
+                // the port's own, made once by the type mapping, so the
+                // resolution agrees with it here rather than reporting it at
+                // every mention — the same reading fixpass3 §4.12 gave a const
+                // generic argument. `deref_accessor_of` still refuses, because
+                // `*x = y` has to name a field and a value that is its own
+                // dereference has none.
+                Ok(self
+                    .probe()
                     .deref_once(&inner_ty)
                     .map(|step| step.to)
-                    .ok_or_else(|| {
-                        self.refuse(
-                            expr.span(),
-                            format!(
-                                "`{}` does not dereference",
-                                self.registry.describe(&inner_ty)
-                            ),
-                        )
-                    })
+                    .unwrap_or(inner_ty))
             }
 
             // The port models an async function as returning the type it

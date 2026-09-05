@@ -30,6 +30,9 @@ impl BodyTranslator<'_> {
         // taking a module-level function's `self` parameter back to `this` read
         // a binding that does not exist there.
         let base = if base == "self" { self.self_name.to_string() } else { base };
+        // A field read off an awaited value needs the same parentheses a method
+        // call on one needs: JavaScript's `await` binds looser than the `.`.
+        let base = crate::body::parenthesise_receiver(&field.base, base);
         // Reading a field off something the expression itself produced —
         // `m.lock().unwrap().n` — leaves that value with nobody to release it.
         // Rust drops it at the end of the statement, and it is the guard case

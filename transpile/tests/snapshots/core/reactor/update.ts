@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/update.rs
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, derivedEquals, derivedClone } from '@ankurah/base';
 import { Attested, Event, QueryId } from '@ankurah/proto';
 
 export class ReactorUpdate<E = Entity, Ev = Attested<Event>> extends Struct {
@@ -41,14 +41,14 @@ export class ReactorUpdateItem<E = Entity, Ev extends Clone = Attested<Event>> e
   }
 
   equals(other: ReactorUpdateItem<E, Ev>): boolean {
-    if (!this.entity.equals(other.entity)) return false;
-    { if (this.events.length !== other.events.length) return false; for (let i = 0; i < this.events.length; i++) { if (!this.events[i].equals(other.events[i])) return false; } }
+    if (!derivedEquals(this.entity, other.entity)) return false;
+    { if (this.events.length !== other.events.length) return false; for (let i = 0; i < this.events.length; i++) { if (!derivedEquals(this.events[i], other.events[i])) return false; } }
     { if (this.predicateRelevance.length !== other.predicateRelevance.length) return false; for (let i = 0; i < this.predicateRelevance.length; i++) { if (!this.predicateRelevance[i].equals(other.predicateRelevance[i])) return false; } }
     return true;
   }
 
   clone(): ReactorUpdateItem<E, Ev> {
-    return new ReactorUpdateItem(this.entity.clone(), this.events.map(e => e.clone()), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
+    return new ReactorUpdateItem(derivedClone(this.entity), this.events.map(e => derivedClone(e)), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
   }
 
   debug(): string {

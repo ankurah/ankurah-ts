@@ -54,7 +54,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
     (_m0 as any);
     let guard = this.cached.value.write();
     try {
-      if (guard.value == null) {
+      if ((guard.value == null)) {
         const output = this.source.with((input) => (this.transform)(input));
         guard.value = output;
       }

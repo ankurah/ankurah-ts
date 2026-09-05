@@ -2,6 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { SqlBuilder } from './sql_builder';
+import { parseSelection } from '@ankurah/ankql';
 
 describe('sql_builder unit tests', () => {
   test('test_simple_equality', () => {

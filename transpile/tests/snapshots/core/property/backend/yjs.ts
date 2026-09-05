@@ -28,7 +28,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
   getString(propertyName: string): string | null {
     const txn = this.doc.transact();
     const text = txn.getText(propertyName.asRef());
-    return text != null ? ((t) => t.getString(txn))(text!) : null;
+    return (text != null ? ((t) => t.getString(txn))(text!) : null);
   }
 
   insert(propertyName: string, index: number, value: string): Result<void, MutationError> {

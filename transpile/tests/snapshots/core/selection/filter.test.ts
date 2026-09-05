@@ -3,6 +3,7 @@
 import { describe, test, expect } from 'bun:test';
 import { FilterIterator, FilterResult } from './filter';
 import { Struct, dropOwned } from '@ankurah/base';
+import { parseSelection } from '@ankurah/ankql';
 
 class TestItem extends Struct implements Filterable {
   name: string;

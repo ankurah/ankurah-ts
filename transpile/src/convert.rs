@@ -264,7 +264,22 @@ impl BodyTranslator<'_> {
             // `n.clone()` was a TypeError at run time.
             JsShape::Number | JsShape::BigInt | JsShape::Boolean => Some(receiver.to_string()),
             JsShape::Bytes => Some(format!("{}.slice()", receiver)),
-            JsShape::Array(_) => Some(format!("[...{}]", receiver)),
+            // An array is copied element by element, by the element's own Clone
+            // shape: `[...xs]` copies the ARRAY and leaves both copies holding
+            // the same elements, which in the port is two owners for one value.
+            JsShape::Array(inner) => {
+                let element = crate::native_types::array::Element::of(tc.registry, &inner);
+                match crate::native_types::array::copy(receiver, &element, &format!("[...{}]", receiver)) {
+                    Ok(written) => Some(written),
+                    Err(why) => {
+                        self.fallback(
+                            span,
+                            format!("`{}` copies an array, which clones each element, and {}", method, why),
+                        );
+                        Some(format!("[...{}]", receiver))
+                    }
+                }
+            }
             // `ToOwned` for everything else in the corpus is `Clone`, and the
             // emitted class carries `clone`.
             _ => Some(format!("{}.clone()", receiver)),

@@ -11,7 +11,73 @@ pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
     }
 }
 
-pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
+/// What an array holds, as the copier needs to know it.
+///
+/// For: `to_vec` and `to_owned` on a slice CLONE each element — Rust's
+/// signature says `T: Clone` — and `slice()` copies the array while leaving both
+/// copies holding the same elements. In the port that is two owners for one
+/// value: core's `subscription_state.ts`, `node.ts` and proto's `clock.ts` each
+/// handed a caller an array whose elements the original still released.
+pub struct Element {
+    /// The type the port writes the element as.
+    pub written: String,
+    /// Whether the port has a copy for it — either one it writes out, or the
+    /// element's own `clone()`.
+    pub has_clone: bool,
+}
+
+impl Element {
+    /// Nothing is known about the element: the untyped path, and `Uint8Array`'s
+    /// fallback, which never reaches the copier.
+    pub fn unknown() -> Element {
+        Element { written: String::new(), has_clone: false }
+    }
+
+    /// What the registry says this element is.
+    pub fn of(reg: &crate::registry::TypeRegistry, ty: &crate::ty::Ty) -> Element {
+        let written = crate::name_map::map_ty(reg, ty);
+        // A copy the port writes out — a spread, a `new Uint8Array`, a `map` —
+        // asks nothing of the element. One that is only `e.clone()` does, and
+        // the registry is what says whether the element has one.
+        let asks_for_clone =
+            crate::derives::cloning::clone_of("e", &written) == "e.clone()";
+        let has_clone = !asks_for_clone
+            || reg
+                .system_type(crate::registry::CLONE_PATH)
+                .is_some_and(|clone| {
+                    crate::registry::Probe::new(reg, reg.crate_root()).implements(ty, clone)
+                });
+        Element { written, has_clone }
+    }
+}
+
+/// A copy of an array, element by element — or the reason the port cannot make
+/// one.
+///
+/// `shallow` is what to write where the elements need no copy of their own: a
+/// number and a string are copied by being read, so the copy of the array is
+/// the whole copy.
+pub(crate) fn copy(receiver: &str, element: &Element, shallow: &str) -> Result<String, String> {
+    let each = crate::derives::cloning::clone_of("e", &element.written);
+    if element.written.is_empty() || each == "e" {
+        return Ok(shallow.to_string());
+    }
+    if !element.has_clone {
+        return Err(format!(
+            "`{}` has no `clone()` in the port, so the copy would hold what the original still \
+             owns",
+            element.written
+        ));
+    }
+    Ok(format!("{}.map((e) => {})", receiver, each))
+}
+
+pub fn translate(
+    receiver: &str,
+    method: &str,
+    args: &[String],
+    element: &Element,
+) -> MethodTranslation {
     let result = match method {
         // Properties (not methods in JS)
         "len" => format!("{}.length", receiver),
@@ -48,11 +114,18 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "drain" => format!("{}.splice(0)", receiver),
         "clear" => format!("{}.length = 0", receiver),
         "truncate" if args.len() == 1 => format!("{}.length = {}", receiver, args[0]),
-        "retain" if args.len() == 1 => {
-            // Vec::retain is in-place filter. JS doesn't have this natively.
-            // We emit a splice-based approach or just use filter + reassign
-            format!("/* TODO: retain */ {}.filter({})", receiver, args[0])
-        }
+        // `Vec::retain` keeps what the predicate accepts, IN PLACE, and DROPS
+        // what it rejects. `filter` answers a new array and leaves the original
+        // as it was, so the two lines the emitter wrote — a `/* TODO */` comment
+        // and a `filter` whose answer nobody read — changed nothing at all. The
+        // loop below compacts the array where it stands and releases each
+        // element it passes over, which is what Rust does with them.
+        "retain" if args.len() == 1 => format!(
+            "(($xs) => {{ let $at = 0; for (let $i = 0; $i < $xs.length; $i++) {{ if \
+             (({})($xs[$i])) {{ $xs[$at++] = $xs[$i]; }} else {{ dropOwned($xs[$i]); }} }} \
+             $xs.length = $at; }})({})",
+            args[0], receiver
+        ),
         "split_last" => format!(
             "{}.length > 0 ? [{}.at(-1), {}.slice(0, -1)] : null",
             receiver, receiver, receiver
@@ -62,13 +135,24 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             receiver, receiver, receiver
         ),
 
+        // `to_vec` and `to_owned` on a slice COPY it, and Rust's own signature
+        // says how: `T: Clone`, one clone per element. `slice()` copies the
+        // ARRAY and leaves both copies holding the same elements, so the port
+        // had two owners for one value and the second drop was a fatal. Each
+        // element is copied by its own Clone shape; where that is nothing —
+        // a number, a string — the copy of the array is the whole copy, and
+        // `slice()` is what it was.
+        "to_vec" | "to_owned" => match copy(receiver, element, &format!("{}.slice()", receiver)) {
+            Ok(written) => written,
+            Err(why) => {
+                return MethodTranslation::Refused {
+                    message: format!("`{}` copies a slice, which clones each element, and {}", method, why),
+                    fallback: Box::new(MethodTranslation::Expr(format!("{}.slice()", receiver))),
+                }
+            }
+        },
+
         // Iterator entry points — these convert to array operations
-        // `to_vec` and `to_owned` on a slice COPY it, which is what
-        // `Array.prototype.slice()` with no arguments does. A `[usize]` used to
-        // be written as a `Uint8Array`, whose `slice` this borrowed; now that
-        // only `[u8]` is bytes, an ordinary array owes the same answer, and
-        // `parentIds.toVec()` — a method no array has — was what it gave.
-        "to_vec" | "to_owned" => format!("{}.slice()", receiver),
 
         "iter" | "into_iter" => format!("[...{}]", receiver),
         "values" => format!("[...{}]", receiver),
@@ -89,17 +173,56 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
 mod tests {
     use super::*;
 
-    /// `to_vec`/`to_owned` on a slice COPY it. While every numeric slice was
-    /// written as a `Uint8Array` these borrowed that type's translation; once
-    /// only `[u8]` was bytes, six emitted sites read `xs.toVec()`, which no
-    /// JavaScript array has.
+    fn holding(written: &str, has_clone: bool) -> Element {
+        Element { written: written.to_string(), has_clone }
+    }
+
+    fn expr(receiver: &str, method: &str, element: &Element) -> String {
+        match translate(receiver, method, &[], element) {
+            MethodTranslation::Expr(ts) => ts,
+            MethodTranslation::Refused { fallback, .. } => match *fallback {
+                MethodTranslation::Expr(ts) => ts,
+                _ => panic!("{method} refuses with no fallback expression"),
+            },
+            _ => panic!("{method} has no expression translation"),
+        }
+    }
+
+    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 5): what this used to assert is
+    /// that `to_vec` is `slice()`, full stop. `slice()` copies the ARRAY and
+    /// leaves both copies holding the same elements, and Rust's own signature
+    /// says otherwise — `T: Clone`, one clone per element. The port had two
+    /// owners for one value: core's `subscription_state.ts` and `node.ts`, and
+    /// proto's `clock.ts`.
     #[test]
-    fn to_vec_on_an_array_is_a_copy() {
+    fn to_vec_on_an_array_clones_each_element() {
         for method in ["to_vec", "to_owned"] {
-            match translate("xs", method, &[]) {
-                MethodTranslation::Expr(ts) => assert_eq!(ts, "xs.slice()"),
-                _ => panic!("{method} has no expression translation"),
+            // Nothing inside to copy: the copy of the array is the whole copy.
+            assert_eq!(expr("xs", method, &holding("number", true)), "xs.slice()");
+            assert_eq!(
+                expr("xs", method, &holding("Event", true)),
+                "xs.map((e) => e.clone())"
+            );
+            // The element's own shape decides, at any depth.
+            assert_eq!(
+                expr("xs", method, &holding("Uint8Array", true)),
+                "xs.map((e) => new Uint8Array(e))"
+            );
+            // With nothing known about the element the copy is what it was.
+            assert_eq!(expr("xs", method, &Element::unknown()), "xs.slice()");
+        }
+    }
+
+    /// An element with no `clone()` is reported rather than shared: the fallback
+    /// keeps the shape of the output, and the diagnostic says what it does not
+    /// do.
+    #[test]
+    fn an_element_with_no_clone_is_reported() {
+        match translate("xs", "to_vec", &[], &holding("Opaque", false)) {
+            MethodTranslation::Refused { message, .. } => {
+                assert!(message.contains("has no `clone()`"), "{}", message)
             }
+            _ => panic!("an element with no clone is refused"),
         }
     }
 }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result, JsonError, OwnershipFatal, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
@@ -78,7 +78,7 @@ export class CollectionId extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new CollectionId(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

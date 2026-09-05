@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/filtering.rs
-import { Struct, unsupported } from '@ankurah/base';
+import { Struct, Result } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
-import { Filterable, Context } from '@ankurah/core';
+import { Filterable, Context, evaluatePredicate } from '@ankurah/core';
 import { Item } from '@ankurah/proto';
 
 export class FilteredStream<I> extends Struct {
@@ -54,7 +54,14 @@ export class ExtractIdsStream<I> extends Struct {
 
   pollNext(cx: Context): Poll<Item | null> {
     return Pin.new(this.inner).pollNext(cx).match({
-      Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+      Ready: (v) => {
+        if (v._0 != null) {
+          const item = v._0;
+          return new Poll('Ready', { _0: Result.Ok(item.entityId()) });
+        } else {
+          return new Poll('Ready', { _0: null });
+        }
+      },
       Pending: () => Poll.Pending,
     });
   }

@@ -14,7 +14,7 @@ describe('collation unit tests', () => {
     if (!(!Str_isMaximum(s))) throw new Error('assertion failed');
     const empty = '';
     if (!(Str_isMinimum(empty))) throw new Error('assertion failed');
-    if (!(Str_predecessorBytes(empty) == null)) throw new Error('assertion failed');
+    if (!((Str_predecessorBytes(empty) == null))) throw new Error('assertion failed');
   });
 
   test('test_integer_collation', () => {

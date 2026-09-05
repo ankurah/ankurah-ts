@@ -226,7 +226,7 @@ export class Planner extends Struct {
             return new Plan('EmptyScan', {});
           }
           let _moved6 = false;
-          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, appliedIneq != null ? (([f, ]) => f)(appliedIneq!) : null);
+          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, (appliedIneq != null ? (([f, ]) => f)(appliedIneq!) : null));
           try {
             const scanDirection = this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
               Desc: () => new ScanDirection('Reverse', {}),
@@ -255,7 +255,7 @@ export class Planner extends Struct {
                   firstDir.drop();
                 }
               } else {
-                return OrderByComponents.new(orderBy.slice(), []);
+                return OrderByComponents.new(orderBy.map((e) => e.clone()), []);
               }
             })();
             try {
@@ -284,7 +284,7 @@ export class Planner extends Struct {
   buildIneqFirstPlan(equalities: [string, Value][], inequalities: IndexMap<string, [ComparisonOperator, Value][], RandomState>, orderBy: OrderByItem[], conjuncts: Predicate[]): Plan | null {
     const _t0 = [...orderBy];
     try {
-      const _r2 = _t0.findMap((item) => {
+      const _r3 = _t0.findMap((item) => {
         if (item.path.isSimple()) {
           const name = item.path.first();
           return inequalities.getKeyValue(name).map(([k, v]) => [k.asStr(), v]);
@@ -294,27 +294,28 @@ export class Planner extends Struct {
       }).orElse(() => {
         const _t1 = inequalities.iter();
         try {
-          return _t1.next() != null ? (([k, v]) => [k.asStr(), v])(_t1.next()!) : null;
+          const _m2 = _t1.next();
+          return (_m2 != null ? (([k, v]) => [k.asStr(), v])(_m2!) : null);
         } finally {
           dropOwned(_t1);
         }
       });
-      if (_r2 == null) return null;
-      const primary = _r2;
-      let _moved3 = false;
+      if (_r3 == null) return null;
+      const primary = _r3;
+      let _moved4 = false;
       const indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));
       try {
         const primaryValue = primary._1[0]._1;
         indexKeyparts.push(IndexKeyPart.ascPath(primary._0, ValueType.of(primaryValue)));
-        const _r4 = this.buildBounds(equalities, primary, indexKeyparts);
-        if (_r4 == null) return null;
-        let _moved5 = false;
-        const bounds = _r4;
+        const _r5 = this.buildBounds(equalities, primary, indexKeyparts);
+        if (_r5 == null) return null;
+        let _moved6 = false;
+        const bounds = _r5;
         try {
           if (this.isEmptyBounds(bounds)) {
             return new Plan('EmptyScan', {});
           }
-          let _moved6 = false;
+          let _moved7 = false;
           const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, primary._0);
           try {
             const scanDirection = this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
@@ -336,25 +337,25 @@ export class Planner extends Struct {
                 }
               }
             }
-            let _moved7 = false;
+            let _moved8 = false;
             const orderBy_1 = OrderByComponents.new(presort, spill);
             try {
-              _moved5 = true;
               _moved6 = true;
               _moved7 = true;
-              _moved3 = true;
+              _moved8 = true;
+              _moved4 = true;
               return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
             } finally {
-              if (!_moved7) orderBy_1.drop();
+              if (!_moved8) orderBy_1.drop();
             }
           } finally {
-            if (!_moved6) remainingPredicate.drop();
+            if (!_moved7) remainingPredicate.drop();
           }
         } finally {
-          if (!_moved5) bounds.drop();
+          if (!_moved6) bounds.drop();
         }
       } finally {
-        if (!_moved3) dropOwned(indexKeyparts);
+        if (!_moved4) dropOwned(indexKeyparts);
       }
     } finally {
       dropOwned(_t0);
@@ -634,7 +635,8 @@ export class Planner extends Struct {
       const fullPath = keypart.fullPath();
       const _t0 = [...equalities];
       try {
-        const equalityValue = _t0.find(([field, ]) => field === fullPath) != null ? (([, value]) => value)(_t0.find(([field, ]) => field === fullPath)!) : null;
+        const _m1 = _t0.find(([field, ]) => field === fullPath);
+        const equalityValue = (_m1 != null ? (([, value]) => value)(_m1!) : null);
         {
           const _v1 = equalityValue;
           if (_v1 != null) {
@@ -650,59 +652,59 @@ export class Planner extends Struct {
               for (const [op, value] of inequalities) {
                 op.match({
                   GreaterThan: () => {
-                    let _moved1 = false;
+                    let _moved2 = false;
                     const candidate = Endpoint.excl(value.clone());
                     try {
                       if (this.isMoreRestrictiveLower(candidate, low)) {
-                        _moved1 = true;
-                        const _a2 = candidate;
+                        _moved2 = true;
+                        const _a3 = candidate;
                         low.drop();
-                        low = _a2;
+                        low = _a3;
                       }
                     } finally {
-                      if (!_moved1) candidate.drop();
+                      if (!_moved2) candidate.drop();
                     }
                   },
                   GreaterThanOrEqual: () => {
-                    let _moved3 = false;
+                    let _moved4 = false;
                     const candidate = Endpoint.incl(value.clone());
                     try {
                       if (this.isMoreRestrictiveLower(candidate, low)) {
-                        _moved3 = true;
-                        const _a4 = candidate;
+                        _moved4 = true;
+                        const _a5 = candidate;
                         low.drop();
-                        low = _a4;
+                        low = _a5;
                       }
                     } finally {
-                      if (!_moved3) candidate.drop();
+                      if (!_moved4) candidate.drop();
                     }
                   },
                   LessThan: () => {
-                    let _moved5 = false;
+                    let _moved6 = false;
                     const candidate = Endpoint.excl(value.clone());
                     try {
                       if (this.isMoreRestrictiveUpper(candidate, high)) {
-                        _moved5 = true;
-                        const _a6 = candidate;
+                        _moved6 = true;
+                        const _a7 = candidate;
                         high.drop();
-                        high = _a6;
+                        high = _a7;
                       }
                     } finally {
-                      if (!_moved5) candidate.drop();
+                      if (!_moved6) candidate.drop();
                     }
                   },
                   LessThanOrEqual: () => {
-                    let _moved7 = false;
+                    let _moved8 = false;
                     const candidate = Endpoint.incl(value.clone());
                     try {
                       if (this.isMoreRestrictiveUpper(candidate, high)) {
-                        _moved7 = true;
-                        const _a8 = candidate;
+                        _moved8 = true;
+                        const _a9 = candidate;
                         high.drop();
-                        high = _a8;
+                        high = _a9;
                       }
                     } finally {
-                      if (!_moved7) candidate.drop();
+                      if (!_moved8) candidate.drop();
                     }
                   },
                   Equal: () => {},
@@ -930,7 +932,7 @@ export class Planner extends Struct {
                   Desc: () => new ScanDirection('Reverse', {}),
                 });
                 const presort = [firstItem.clone()];
-                const spill = orderItems.slice(1).slice();
+                const spill = orderItems.slice(1).map((e) => e.clone());
                 return [direction, OrderByComponents.new(presort, spill)];
               } else {
                 return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.clone())];

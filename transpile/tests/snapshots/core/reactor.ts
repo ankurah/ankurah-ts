@@ -42,20 +42,21 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   unsubscribe(subId: ReactorSubscriptionId): Result<void, SubscriptionError> {
-    const _m1 = (() => {
+    const _m2 = (() => {
       {
         let subscriptions = this._0.value.subscriptions.lock();
         try {
-          const _r0 = subscriptions.value.remove(subId) != null ? Result.Ok(subscriptions.value.remove(subId)!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {}));
-          if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
-          return _r0.unwrap();
+          const _m0 = subscriptions.value.remove(subId);
+          const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {})));
+          if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
+          return _r1.unwrap();
         } finally {
           subscriptions.drop();
         }
       }
     })();
-    if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-    const subscription = (_m1 as any);
+    if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
+    const subscription = (_m2 as any);
     const queries = subscription.takeAllQueries();
     let watcherSet = this._0.value.watcherSet.value.lock();
     try {
@@ -77,23 +78,24 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   removeQuery(subscriptionId: ReactorSubscriptionId, queryId: QueryId): Result<void, SubscriptionError> {
-    const _m1 = (() => {
+    const _m2 = (() => {
       {
         const subscriptions = this._0.value.subscriptions.lock();
         try {
-          const _r0 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {}));
-          if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
-          return _r0.unwrap();
+          const _m0 = subscriptions.value.get(subscriptionId);
+          const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new SubscriptionError('SubscriptionNotFound', {})));
+          if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
+          return _r1.unwrap();
         } finally {
           subscriptions.drop();
         }
       }
     })();
-    if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-    const subscription = (_m1 as any);
-    const _r2 = subscription.removeQuery(queryId).okOr(new SubscriptionError('PredicateNotFound', {}));
-    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-    const queryState = _r2.unwrap();
+    if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
+    const subscription = (_m2 as any);
+    const _r3 = subscription.removeQuery(queryId).okOr(new SubscriptionError('PredicateNotFound', {}));
+    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+    const queryState = _r3.unwrap();
     {
       const _v = queryState.selection;
       if (_v != null) {
@@ -168,31 +170,32 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       try {
         try {
           try {
-            const _m2 = (() => {
+            const _m3 = (() => {
               {
                 const subscriptions = this._0.value.subscriptions.lock();
                 try {
-                  const _r1 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
-                  if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-                  return _r1.unwrap();
+                  const _m1 = subscriptions.value.get(subscriptionId);
+                  const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
+                  if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
+                  return _r2.unwrap();
                 } finally {
                   subscriptions.drop();
                 }
               }
             })();
-            if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-            const subscription = (_m2 as any);
-            const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
-            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-            const includedEntities = _r3.unwrap();
-            _moved0 = true;
-            const _r4 = subscription.registerQuery(queryId, collectionId.clone(), resultset.clone(), gapFetcher);
+            if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+            const subscription = (_m3 as any);
+            const _r4 = await node.fetchEntitiesFromLocal(collectionId, selection);
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            _r4.drop();
-            let reactorUpdateItems = [];
-            const _r5 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, 1, reactorUpdateItems);
+            const includedEntities = _r4.unwrap();
+            _moved0 = true;
+            const _r5 = subscription.registerQuery(queryId, collectionId.clone(), resultset.clone(), gapFetcher);
             if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            const _newlyAdded = _r5.unwrap();
+            _r5.drop();
+            let reactorUpdateItems = [];
+            const _r6 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, 1, reactorUpdateItems);
+            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+            const _newlyAdded = _r6.unwrap();
             await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
             resultset.setLoaded(true);
             preNotifyHook.preNotify(1);
@@ -218,24 +221,25 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         const _r0 = await node.fetchEntitiesFromLocal(collectionId, selection);
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         const includedEntities = _r0.unwrap();
-        const _m2 = (() => {
+        const _m3 = (() => {
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _r1 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
-              if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-              return _r1.unwrap();
+              const _m1 = subscriptions.value.get(subscriptionId);
+              const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
+              if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
+              return _r2.unwrap();
             } finally {
               subscriptions.drop();
             }
           }
         })();
-        if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-        const subscription = (_m2 as any);
+        if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+        const subscription = (_m3 as any);
         let reactorUpdateItems = [];
-        const _r3 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, reactorUpdateItems);
-        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-        const _newlyAdded = _r3.unwrap();
+        const _r4 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, reactorUpdateItems);
+        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+        const _newlyAdded = _r4.unwrap();
         await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
         preNotifyHook.preNotify(version);
         if (!(reactorUpdateItems.length === 0)) {
@@ -274,24 +278,25 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             try {
               _moved0 = true;
               return [...candidatesBySub].filterMap(([subId, candidates]) => {
-                return subscriptions.value.get(subId) != null ? ((subscription) => subscription.clone().evaluateChanges(candidates))(subscriptions.value.get(subId)!) : null;
+                const _m1 = subscriptions.value.get(subId);
+                return (_m1 != null ? ((subscription) => subscription.clone().evaluateChanges(candidates))(_m1!) : null);
               });
             } finally {
               subscriptions.drop();
             }
           })();
-          const allWatcherChanges = await joinAll(evaluations).intoIter().flatten();
+          const allWatcherChanges = (await joinAll(evaluations)).intoIter().flatten();
           let watcherSet = this._0.value.watcherSet.value.lock();
           try {
-            const _seq1 = allWatcherChanges;
-            let _at2 = 0;
+            const _seq2 = allWatcherChanges;
+            let _at3 = 0;
             try {
-              while (_at2 < _seq1.length) {
-                const change = _seq1[_at2++];
+              while (_at3 < _seq2.length) {
+                const change = _seq2[_at3++];
                 watcherSet.value.applyWatcherChange(change);
               }
             } finally {
-              dropOwned(_seq1.slice(_at2));
+              dropOwned(_seq2.slice(_at3));
             }
           } finally {
             watcherSet.drop();
@@ -329,35 +334,36 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   async upsertQuery<SE, PA>(subscriptionId: ReactorSubscriptionId, queryId: QueryId, collectionId: CollectionId, selection: Selection, node: Node<SE, PA>, cdata: ContextData, version: number): Promise<Result<Entity[], Error>> {
     try {
       try {
-        const _m1 = (() => {
+        const _m2 = (() => {
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _r0 = subscriptions.value.get(subscriptionId) != null ? Result.Ok(subscriptions.value.get(subscriptionId)!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))());
-              if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
-              return _r0.unwrap();
+              const _m0 = subscriptions.value.get(subscriptionId);
+              const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
+              if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
+              return _r1.unwrap();
             } finally {
               subscriptions.drop();
             }
           }
         })();
-        if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-        const subscription = (_m1 as any);
-        const _r2 = await node.fetchEntitiesFromLocal(collectionId, selection);
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        let _moved3 = false;
-        const includedEntities = _r2.unwrap();
+        if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
+        const subscription = (_m2 as any);
+        const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        let _moved4 = false;
+        const includedEntities = _r3.unwrap();
         try {
           const resultset = subscription.upsertQuery(queryId, collectionId.clone(), node, cdata);
-          _moved3 = true;
-          const _r4 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, []);
-          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-          let allEntities = _r4.unwrap();
+          _moved4 = true;
+          const _r5 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, []);
+          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+          let allEntities = _r5.unwrap();
           await subscription.fillGapsForQueryEntities(queryId, allEntities);
           resultset.setLoaded(true);
           return Result.Ok(allEntities);
         } finally {
-          if (!_moved3) dropOwned(includedEntities);
+          if (!_moved4) dropOwned(includedEntities);
         }
       } finally {
         selection.drop();

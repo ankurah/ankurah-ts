@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/sqlite/src/engine.rs
 import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, HashSet, AsyncMutex, tokio } from '@ankurah/base';
-import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, Json, State, Value } from '@ankurah/core';
+import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, Json, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, StateBuffers } from '@ankurah/proto';
 import { PooledConnection, SqliteConnectionManager } from './connection';
 import { SqliteError } from './error';
@@ -65,7 +65,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
     if (!SqliteStorageEngine.saneName(collectionId.asStr())) {
       return Result.Err(new RetrievalError('InvalidBucketName', {}));
     }
-    const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
@@ -98,11 +98,11 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
   }
 
   async deleteAllCollections(): Promise<Result<boolean, MutationError>> {
-    const _r0 = await this.pool.get().mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
-      return await conn.withConnection((c) => {
+      return (await conn.withConnection((c) => {
         const _r1 = c.prepare('SELECT name FROM sqlite_master WHERE type=\'table\' AND name NOT LIKE \'sqlite_%\'');
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         let stmt = _r1.unwrap();
@@ -118,7 +118,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
           _r3.drop();
         }
         return Result.Ok(true);
-      }).mapErr((e) => new MutationError('General', { _0: e }));
+      })).mapErr((e) => new MutationError('General', { _0: e }));
     } finally {
       dropOwned(conn);
     }
@@ -269,7 +269,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
 
   async setState(state: Attested<EntityState>): Promise<Result<boolean, MutationError>> {
     try {
-      const _r0 = await this.pool.get().mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
+      const _r0 = (await this.pool.get()).mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const conn = _r0.unwrap();
       try {
@@ -303,9 +303,9 @@ export class SqliteBucket extends Struct implements StorageCollection {
                   }
                   _moved5 = true;
                   let _moved6 = false;
-                  const sqliteValue = value != null ? ((v) => v)(value!) : null;
+                  const sqliteValue = (value != null ? ((v) => v)(value!) : null);
                   try {
-                    const isJsonb = sqliteValue != null && ((v) => v.isJsonb())(sqliteValue!);
+                    const isJsonb = (sqliteValue != null && ((v) => v.isJsonb())(sqliteValue!));
                     if (!this.hasColumn(column)) {
                       {
                         const _v = sqliteValue;
@@ -417,14 +417,14 @@ export class SqliteBucket extends Struct implements StorageCollection {
   }
 
   async getState(id: EntityId): Promise<Result<Attested<EntityState>, RetrievalError>> {
-    const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
       const tableName = this.stateTable();
       const idStr = id.toBase64();
       const collectionId = this.collectionId.clone();
-      const _r10 = await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+      const _r10 = (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
         const query = `SELECT "id", "state_buffer", "head", "attestations" FROM "${tableName}" WHERE "id" = ?`;
         const result = c.queryRow(query, [idStr], (row) => {
           const _r1 = row.get(0);
@@ -475,7 +475,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         } finally {
           result.drop();
         }
-      }, undefined, true)).mapErr((e) => (() => {
+      }, undefined, true))).mapErr((e) => (() => {
         if (e.is('Rusqlite') && (e.value._0.is('QueryReturnedNoRows'))) {
           return new RetrievalError('EntityNotFound', { _0: id });
         } else {
@@ -492,7 +492,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
 
   async fetchStates(selection: Selection): Promise<Result<Attested<EntityState>[], RetrievalError>> {
     tracing.debug(`SqliteBucket(${this.collectionId}).fetch_states: ${selection.debug()}`);
-    const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
@@ -633,7 +633,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
   }
 
   async addEvent(entityEvent: Attested<Event>): Promise<Result<boolean, MutationError>> {
-    const _r0 = await this.pool.get().mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new MutationError('General', { _0: new SqliteError('Pool', { _0: e.toString() }) }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
@@ -652,12 +652,12 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const eventId = _t4.toBase64();
         const entityId = entityEvent.payload.entityId.toBase64();
         const query = `INSERT INTO "${tableName}"("id", "entity_id", "operations", "parent", "attestations") VALUES(?, ?, ?, ?, ?)\n               ON CONFLICT ("id") DO NOTHING`;
-        return await conn.withConnection((c) => {
+        return (await conn.withConnection((c) => {
           const _r5 = c.execute(query, [eventId, entityId, operations, parentJson, attestations]);
           if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
           const affected = _r5.unwrap();
           return Result.Ok(affected > 0);
-        }).mapErr((e) => new MutationError('General', { _0: e }));
+        })).mapErr((e) => new MutationError('General', { _0: e }));
       } finally {
         _t4.drop();
       }
@@ -671,7 +671,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
       if (eventIds.length === 0) {
         return Result.Ok([]);
       }
-      const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+      const _r0 = (await this.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const conn = _r0.unwrap();
       try {
@@ -679,7 +679,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const collectionId = this.collectionId.clone();
         const idStrings = [...eventIds].map((id) => id.toBase64());
         const numIds = idStrings.length;
-        return await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+        return (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
           const placeholders = (undefined /* range 0..numIds */).map((_) => '?').join(', ');
           const query = `SELECT "id", "entity_id", "operations", "parent", "attestations" FROM "${tableName}" WHERE "id" IN (${placeholders})`;
           const _r1 = c.prepare(query);
@@ -752,7 +752,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
             }
           }
           return Result.Ok(events);
-        }, undefined, true)).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
+        }, undefined, true))).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
       } finally {
         dropOwned(conn);
       }
@@ -762,14 +762,14 @@ export class SqliteBucket extends Struct implements StorageCollection {
   }
 
   async dumpEntityEvents(entityId: EntityId): Promise<Result<Attested<Event>[], RetrievalError>> {
-    const _r0 = await this.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+    const _r0 = (await this.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const conn = _r0.unwrap();
     try {
       const tableName = this.eventTable();
       const collectionId = this.collectionId.clone();
       const entityIdStr = entityId.toBase64();
-      return await conn.withConnection(new OwnedClosure([collectionId], (c) => {
+      return (await conn.withConnection(new OwnedClosure([collectionId], (c) => {
         const query = `SELECT "id", "operations", "parent", "attestations" FROM "${tableName}" WHERE "entity_id" = ?`;
         const _r1 = c.prepare(query);
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
@@ -832,7 +832,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           }
         }
         return Result.Ok(events);
-      }, undefined, true)).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
+      }, undefined, true))).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
     } finally {
       dropOwned(conn);
     }

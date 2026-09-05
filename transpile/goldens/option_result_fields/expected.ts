@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_result_fields/src/input.rs
-import { Struct, Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Slot extends Struct {
@@ -58,7 +58,7 @@ export class Slot extends Struct {
       const count = _rcount.unwrap();
       return Result.Ok(new Slot(name, count));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

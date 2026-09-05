@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
 import { Struct, Result, Arc, dropOwned, tracing, checkedAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
-import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, State, Value } from '@ankurah/core';
+import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { Attested, EntityState, EventId, State, CollectionId, EntityId, Event } from '@ankurah/proto';
 import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig } from '@ankurah/storage-common';
 import { Database } from './database';
@@ -273,10 +273,11 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         try {
           const plans = planner.plan(amendedSelection, 'id');
           try {
-            const _r0 = plans[0] != null ? Result.Ok(plans[0]!) : Result.Err((() => new RetrievalError('StorageError', { _0: 'No plan generated' }))());
-            if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-            const plan = _r0.unwrap();
-            const _m8 = await (async () => {
+            const _m0 = plans[0];
+            const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => new RetrievalError('StorageError', { _0: 'No plan generated' }))()));
+            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+            const plan = _r1.unwrap();
+            const _m9 = await (async () => {
               return await (plan.match<any>({
                 EmptyScan: () => {
                   return { $jump: 'return', $value: Result.Ok([]) };
@@ -287,36 +288,36 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                   const scanDirection = v.scanDirection;
                   const remainingPredicate = v.remainingPredicate;
                   const orderBySpill = v.orderBySpill;
-                  const _r1 = await this.db.assureIndexExists(indexSpec).mapErr((e) => new RetrievalError('StorageError', { _0: `ensure index exists: ${e}` }));
-                  if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-                  _r1.drop();
+                  const _r2 = (await this.db.assureIndexExists(indexSpec)).mapErr((e) => new RetrievalError('StorageError', { _0: `ensure index exists: ${e}` }));
+                  if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
+                  _r2.drop();
                   const dbConnection = await this.db.getConnection();
                   const collectionId = this.collectionId.clone();
                   try {
                     const limit = selection.limit;
                     return SendWrapper.new((async () => {
-                      const _r2 = Result_JsValue_require(dbConnection.transactionWithStr('entities'), 'create transaction');
-                      if (_r2.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r2.unwrapErr()));
-                      const transaction = _r2.unwrap();
-                      const _r3 = Result_JsValue_require(transaction.objectStore('entities'), 'get object store');
+                      const _r3 = Result_JsValue_require(dbConnection.transactionWithStr('entities'), 'create transaction');
                       if (_r3.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r3.unwrapErr()));
-                      const store = _r3.unwrap();
-                      const _r4 = Result_JsValue_require(store.index(indexSpec.nameWith('', '__')), 'get index');
+                      const transaction = _r3.unwrap();
+                      const _r4 = Result_JsValue_require(transaction.objectStore('entities'), 'get object store');
                       if (_r4.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r4.unwrapErr()));
-                      const index = _r4.unwrap();
-                      const _r5 = planBoundsToIdbRange(bounds, scanDirection).mapErr((e) => new RetrievalError('StorageError', { _0: `bounds conversion: ${e}` }));
-                      if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-                      const [keyRange, upperOpenEnded, eqPrefixLen, eqPrefixValues] = _r5.unwrap();
-                      const cursorDirection = scanDirectionToCursorDirection(scanDirection);
-                      const _r6 = await this.executePlanQuery(index, keyRange, remainingPredicate, cursorDirection, limit, collectionId, upperOpenEnded, eqPrefixLen, eqPrefixValues, orderBySpill);
+                      const store = _r4.unwrap();
+                      const _r5 = Result_JsValue_require(store.index(indexSpec.nameWith('', '__')), 'get index');
+                      if (_r5.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r5.unwrapErr()));
+                      const index = _r5.unwrap();
+                      const _r6 = planBoundsToIdbRange(bounds, scanDirection).mapErr((e) => new RetrievalError('StorageError', { _0: `bounds conversion: ${e}` }));
                       if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-                      let _moved7 = false;
-                      const results = _r6.unwrap();
+                      const [keyRange, upperOpenEnded, eqPrefixLen, eqPrefixValues] = _r6.unwrap();
+                      const cursorDirection = scanDirectionToCursorDirection(scanDirection);
+                      const _r7 = await this.executePlanQuery(index, keyRange, remainingPredicate, cursorDirection, limit, collectionId, upperOpenEnded, eqPrefixLen, eqPrefixValues, orderBySpill);
+                      if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+                      let _moved8 = false;
+                      const results = _r7.unwrap();
                       try {
-                        _moved7 = true;
+                        _moved8 = true;
                         return Result.Ok(results);
                       } finally {
-                        if (!_moved7) dropOwned(results);
+                        if (!_moved8) dropOwned(results);
                       }
                     })());
                   } finally {
@@ -328,8 +329,8 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 },
               }));
             })();
-            if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
-            return await (_m8 as any);
+            if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
+            return await (_m9 as any);
           } finally {
             dropOwned(plans);
           }

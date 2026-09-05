@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safemap.rs
-import { Struct, Result, RwLock, invokeRef, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, RwLock, invokeRef, dropOwned, HashMap, HashSet } from '@ankurah/base';
 
 export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Default & Debug> extends Struct {
   _0: RwLock<HashMap<K, V>>;
@@ -34,7 +34,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   retain(cb: (arg0: K, arg1: V) => boolean): void {
     const _t0 = this._0.write();
     try {
-      { for (const [_k, _v] of _t0.value) { if (!((k, v) => invokeRef(cb, k, v)(_k, _v))) _t0.value.delete(_k); } };
+      { for (const [_k, _v] of _t0.value) { if (!(((k, v) => invokeRef(cb, k, v))(_k, _v))) _t0.value.delete(_k); } };
     } finally {
       _t0.drop();
     }
@@ -158,7 +158,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
         const _v = _t0.value.get(key);
         if (_v != null) {
           const v = _v;
-          /* TODO: retain */ v.filter((h) => h !== value);
+          (($xs) => { let $at = 0; for (let $i = 0; $i < $xs.length; $i++) { if (((h) => h !== value)($xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); } } $xs.length = $at; })(v);
         }
       }
     } finally {

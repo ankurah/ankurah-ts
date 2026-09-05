@@ -156,7 +156,7 @@ struct Remainder {
 /// Only then does it stand for the whole variant. A sub-pattern that asks a
 /// question of the payload — a literal, a nested variant, a range — leaves the
 /// values it does not match to whatever comes after.
-fn covers_its_variant(pat: &syn::Pat) -> bool {
+pub(super) fn covers_its_variant(pat: &syn::Pat) -> bool {
     match pat {
         syn::Pat::TupleStruct(ts) => ts.elems.iter().all(BodyTranslator::is_irrefutable),
         syn::Pat::Struct(st) => st.fields.iter().all(|f| BodyTranslator::is_irrefutable(&f.pat)),
@@ -194,43 +194,35 @@ pub(super) fn lower(
                     why
                 ),
             );
-            return super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
+            let unwritable = super::chain::Fallthrough::Unwritable(format!(
+                "the arm that matches anything cannot be written here because {}",
+                why
+            ));
+            return super::enum_match_over(scrutinee, match_expr, &split.named, t, position, &unwritable);
         }
     };
     if rest.is_empty() {
         // Every variant is already named, so Rust's arm is unreachable and
         // rustc says as much. Writing it would be writing a branch that cannot
         // run; leaving it out changes nothing.
-        return super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
+        return super::enum_match_over(
+            scrutinee,
+            match_expr,
+            &split.named,
+            t,
+            position,
+            &super::chain::Fallthrough::Exhaustive,
+        );
     }
     let takes = t.match_takes(match_expr);
     let consuming = takes == crate::ownership::scrutinee::Takes::Payload;
 
+    // A variant an arm names WITHOUT covering belongs to both: to the arm, for
+    // the values its inner pattern matches, and to the catch-all for the rest.
+    // The chain inside that variant's key is what holds both, so the expansion
+    // leaves it alone rather than writing a second key for it.
     let mut rest = rest;
-    if !contested.is_empty() {
-        // An arm that tests INSIDE a variant and a catch-all below it need one
-        // form that can do both: test the payload, and fall through to the next
-        // arm when the test fails. A borrowing match is written as the if-chain
-        // that can, and never reaches here. This one hands its payload to the
-        // arms, which needs `intoMatch` — one arm per variant, with nowhere to
-        // fall through to — so the values the testing arm does not match have
-        // no arm of their own, and that is said rather than passed over.
-        t.report_match_gap(
-            match_expr,
-            format!(
-                "an arm tests inside `{}` and a later arm matches anything, which needs a test \
-                 that can fall through — and this match hands its payload to the arms, which \
-                 needs `intoMatch`, whose one arm per variant has nowhere to fall through to; \
-                 the arm that tests runs for every `{}`",
-                contested.join("`, `"),
-                contested.join("`, `"),
-            ),
-        );
-        rest.retain(|(name, _)| !contested.contains(name));
-        if rest.is_empty() {
-            return super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
-        }
-    }
+    rest.retain(|(name, _)| !contested.contains(name));
 
     let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     // The arms read the subject as well as matching on it, and Rust evaluates
@@ -299,7 +291,7 @@ pub(super) fn lower(
     // `intoMatch` releases nothing of its own on any path out. An arm that
     // rebuilds the value owns it through the value it built; one that does not
     // rebuild it owns the payload directly and says so here.
-    let release_rest = if consuming && !declares { "dropUnbound(v, []);\n".to_string() } else { String::new() };
+    let owes_payload = consuming && !declares;
 
     // One body, however many variants are left to it. The expansion writes the
     // catch-all's body once per remaining variant, and `core/src/value/index.ts`
@@ -319,24 +311,33 @@ pub(super) fn lower(
         t.hoist_name(format!("({}) => {{\n{}}}", param, indent(&inner)))
     });
 
-    let mut written = super::enum_match_over(scrutinee, match_expr, &split.named, t, position);
+    let fallback = Fallback {
+        class: &class,
+        consuming,
+        scrutinee,
+        bound: bound.as_deref(),
+        declares,
+        flags: &flags,
+        body: &body,
+        owned: &owned,
+        lifted: &lifted,
+        produces,
+        is_async,
+        owes_payload,
+        hoisted: hoisted_body.as_deref(),
+        rest_body: &split.rest.body,
+    };
+    let mut written = super::enum_match_over(
+        scrutinee,
+        match_expr,
+        &split.named,
+        t,
+        position,
+        &super::chain::Fallthrough::CatchAll(&fallback),
+    );
     let mut arms = String::new();
     for (variant, has_payload) in &rest {
-        // A borrowing match leaves the enum whole, so the subject *is* the
-        // value; a consuming one has only the payload, and the value is that
-        // payload back under the variant this arm matched.
-        let whole = if consuming {
-            format!("new {}('{}', v)", class, variant)
-        } else {
-            scrutinee.to_string()
-        };
-        let bindings = match (&bound, declares) {
-            (Some(name), true) => format!("{}const {} = {};\n", flags, name, whole),
-            _ => flags.clone(),
-        };
-        // A unit variant's payload is empty, so there is nothing in it to own.
-        let release = if *has_payload { release_rest.clone() } else { String::new() };
-        let takes_payload = consuming && (declares || !release.is_empty());
+        let Pieces { bindings, release, takes_payload, whole } = fallback.pieces(variant, *has_payload, "v");
         if let Some(rest_body) = &hoisted_body {
             // The arm is the call. What it owns it settles here — the payload
             // no name took — and the flags it owes stand before the call.
@@ -386,6 +387,111 @@ pub(super) fn lower(
     }
     written
 }
+
+/// What one arm of the expansion — or one chain's `else` — writes around the
+/// catch-all's body.
+struct Pieces {
+    /// The drop flags the arm owes and the name it gives the whole value.
+    bindings: String,
+    /// What the arm's `finally` says about the payload no name took.
+    release: String,
+    /// Whether the arm is handed the payload at all.
+    takes_payload: bool,
+    /// The whole value, as the arm can name it.
+    whole: String,
+}
+
+/// The catch-all's body, ready to stand where the catch-all would have run.
+///
+/// For: the expansion writes one arm per variant the source left to the `_`,
+/// and a contested variant's arm CHAIN needs the same body as its last `else` —
+/// so the two ask one thing for it. `lower` builds this once it has written the
+/// catch-all's body, which is why the chain is written after the named arms
+/// rather than with them.
+pub(super) struct Fallback<'a> {
+    class: &'a str,
+    consuming: bool,
+    scrutinee: &'a str,
+    bound: Option<&'a str>,
+    declares: bool,
+    flags: &'a str,
+    body: &'a str,
+    owned: &'a [crate::ownership::Owned],
+    lifted: &'a [crate::ownership::Hoist],
+    produces: bool,
+    pub(super) is_async: bool,
+    /// Whether a consuming arm that does not rebuild the value owes the payload
+    /// a release.
+    owes_payload: bool,
+    /// The local closure the body was hoisted into, where it was worth one.
+    hoisted: Option<&'a str>,
+    /// The catch-all's body as it was written, for the names it declares.
+    pub(super) rest_body: &'a syn::Expr,
+}
+
+impl<'a> Fallback<'a> {
+    fn pieces(&self, variant: &str, has_payload: bool, param: &str) -> Pieces {
+        // A borrowing match leaves the enum whole, so the subject *is* the
+        // value; a consuming one has only the payload, and the value is that
+        // payload back under the variant this arm matched.
+        let whole = if self.consuming {
+            format!("new {}('{}', {})", self.class, variant, param)
+        } else {
+            self.scrutinee.to_string()
+        };
+        let bindings = match (self.bound, self.declares) {
+            (Some(name), true) => format!("{}const {} = {};\n", self.flags, name, whole),
+            _ => self.flags.to_string(),
+        };
+        // A unit variant's payload is empty, so there is nothing in it to own.
+        let release = if has_payload && self.owes_payload {
+            format!("dropUnbound({}, []);\n", param)
+        } else {
+            String::new()
+        };
+        let takes_payload = self.consuming && (self.declares || !release.is_empty());
+        Pieces { bindings, release, takes_payload, whole }
+    }
+
+    /// The catch-all's body for this variant, as the statements a chain's last
+    /// `else` holds.
+    pub(super) fn statements(
+        &self,
+        variant: &str,
+        has_payload: bool,
+        param: &str,
+        t: &BodyTranslator,
+    ) -> String {
+        let Pieces { bindings, release, whole, .. } = self.pieces(variant, has_payload, param);
+        if let Some(hoisted) = self.hoisted {
+            let call = match (self.bound, self.declares) {
+                (Some(_), true) => format!("{}({})", hoisted, whole),
+                _ => format!("{}()", hoisted),
+            };
+            let inner = if release.is_empty() {
+                format!("return {};\n", call)
+            } else {
+                format!("try {{\n  return {};\n}} finally {{\n{}}}\n", call, indent(&release))
+            };
+            return format!("{}{}", self.flags, inner);
+        }
+        super::arms::arm_block(
+            super::ArmParts {
+                variant,
+                bindings,
+                param: None,
+                body: self.body,
+                owned: self.owned,
+                lifted: self.lifted,
+                produces: self.produces,
+                is_async: self.is_async,
+                release_rest: release,
+            },
+            t,
+        )
+    }
+}
+
 
 /// The TypeScript name of the subject, where the subject is a plain name.
 ///
@@ -662,11 +768,15 @@ mod tests {
         assert!(ts.contains("is('I')"), "{}", ts);
     }
 
-    /// The consuming form has no such rewrite — the if-chain reads the payload
-    /// without marking the enum moved — so it says so rather than running the
-    /// testing arm for every value of the variant in silence.
+    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 1): the test this replaces
+    /// asserted that a CONSUMING match with an arm testing inside its variant
+    /// was reported and the arm then ran for every value of that variant — the
+    /// if-chain the borrowing form is rewritten to reads the payload without
+    /// marking the enum moved, so it was not available here. The arm chain is:
+    /// the key keeps `intoMatch`'s payload and the branches inside it make the
+    /// test the key cannot, with the catch-all's body as the last `else`.
     #[test]
-    fn a_consuming_match_that_tests_inside_a_variant_is_reported() {
+    fn a_consuming_match_that_tests_inside_a_variant_is_a_chain() {
         let mut f = built(
             "pub struct Inner;\n\
              pub enum Lit { S(Inner), I(Inner) }\n\
@@ -675,10 +785,18 @@ mod tests {
                match e { Ex::Literal(Lit::I(i)) => 7, _ => 99 }\n\
              }",
         );
-        let _ = f.translated_method("lib.rs", "rank");
+        let ts = f.translated_method("lib.rs", "rank");
+        assert!(ts.contains("e.intoMatch({"), "{}", ts);
+        // The test the key used to be unable to make.
+        assert!(ts.contains("Literal: (v) => {"), "{}", ts);
+        assert!(ts.contains("if (v._0.is('I')) {"), "{}", ts);
+        assert!(ts.contains("return 7;"), "{}", ts);
+        // and the catch-all's body where the test fails.
+        assert!(ts.contains("} else {"), "{}", ts);
+        assert!(ts.contains("return 99;"), "{}", ts);
         assert!(
-            f.messages().iter().any(|m| m.contains("nowhere to fall through to")),
-            "{:?}",
+            !f.messages().iter().any(|m| m.contains("nowhere to fall through to")),
+            "the gap that report named is closed: {:?}",
             f.messages()
         );
     }

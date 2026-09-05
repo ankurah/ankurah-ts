@@ -57,7 +57,7 @@ export function remove(observer: Observer): void {
           }
         }
       }
-      /* TODO: retain */ stack_1.value.filter((o) => Observer_dispatch_observerId(o.value) !== targetId);
+      (($xs) => { let $at = 0; for (let $i = 0; $i < $xs.length; $i++) { if (((o) => Observer_dispatch_observerId(o.value) !== targetId)($xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); } } $xs.length = $at; })(stack_1.value);
     } finally {
       stack_1.drop();
     }

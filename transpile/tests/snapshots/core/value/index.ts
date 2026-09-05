@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
-import { Enum, Result, JsonError, serde_json, OwnershipFatal, HashMap, HashSet } from '@ankurah/base';
+import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, HashMap, HashSet } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { PropertyError } from '../property/traits';
 import { Json } from '../property/value/json';
@@ -724,7 +724,7 @@ export class ValueType extends Enum<ValueTypeV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `ValueType` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

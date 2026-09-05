@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/lineage.rs
-import { Struct, Enum, Result, dropOwned, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, derivedClone, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
 import { RetrievalError } from './error';
 import { TClock, TClock_dispatch_members, TEvent_dispatch_id, TEvent_dispatch_parent } from './retrieval';
 import { Attested, Event } from '@ankurah/proto';
@@ -41,11 +41,11 @@ export class EventAccumulator<Event extends Clone> extends Struct {
   }
 
   isAtLimit(): boolean {
-    return this.maximum != null ? ((max) => this.events.length >= max)(this.maximum!) : false;
+    return (this.maximum != null ? ((max) => this.events.length >= max)(this.maximum!) : false);
   }
 
   clone(): EventAccumulator<Event> {
-    return new EventAccumulator(this.events.map(e => e.clone()), this.maximum);
+    return new EventAccumulator(this.events.map(e => derivedClone(e)), this.maximum);
   }
 
   debug(): string {
@@ -189,7 +189,7 @@ class Comparison<G extends GetEvents> extends Struct {
 
   takeAccumulatedEvents(): Attested<Event>[] | null {
     try {
-      return this.subjectEventAccumulator != null ? ((acc) => acc.takeEvents())(this.subjectEventAccumulator!) : null;
+      return (this.subjectEventAccumulator != null ? ((acc) => acc.takeEvents())(this.subjectEventAccumulator!) : null);
     } finally {
       this.drop();
     }
@@ -310,7 +310,10 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   computeNotDescendsOrdering(): Ordering<Id> {
-    const meet = [...[...this.meetCandidates].filter((id) => this.states.get(id) != null ? ((state) => state.commonChildCount)(this.states.get(id)!) : 0 === 0)];
+    const meet = [...[...this.meetCandidates].filter((id) => {
+      const _m0 = this.states.get(id);
+      return (_m0 != null ? ((state) => state.commonChildCount)(_m0!) : 0) === 0;
+    })];
     if (this.headOverlap) {
       return new Ordering('PartiallyDescends', { meet: meet });
     } else {
@@ -342,8 +345,8 @@ export class Ordering<Id> extends Enum<OrderingV> {
         break;
       }
       case 'BudgetExceeded': {
-        if (!(this.value as any).subjectFrontier.equals((other.value as any).subjectFrontier)) return false;
-        if (!(this.value as any).otherFrontier.equals((other.value as any).otherFrontier)) return false;
+        { if ((this.value as any).subjectFrontier.size !== (other.value as any).subjectFrontier.size) return false; for (const e of (this.value as any).subjectFrontier) { if (!(other.value as any).subjectFrontier.has(e)) return false; } }
+        { if ((this.value as any).otherFrontier.size !== (other.value as any).otherFrontier.size) return false; for (const e of (this.value as any).otherFrontier) { if (!(other.value as any).otherFrontier.has(e)) return false; } }
         break;
       }
     }

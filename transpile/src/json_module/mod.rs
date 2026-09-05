@@ -367,14 +367,18 @@ fn reader(
     for line in body.statements.lines() {
         out.push_str(&format!("      {}\n", line));
     }
-    // The reader never throws for a decode failure, and something else still
-    // can: `toJSON` on a moved value raises, and so does the ownership runtime.
-    // An `OwnershipFatal` is rethrown, because a `catch` that swallows one
-    // disarms the leak registry inside every emitted reader
-    // (`port/ownership.md`).
+    // The reader never throws for a decode failure, and two other things still
+    // can. `toJSON` on a moved value raises, and so does the ownership runtime:
+    // an `OwnershipFatal` is rethrown, because a `catch` that swallows one
+    // disarms the leak registry inside every emitted reader. And an R12 HOLE
+    // throws an `UnsupportedShape`, which says the port has no lowering for a
+    // Rust shape: a `catch` that turns it into a decode error answers `Err` for
+    // a gap in the ENGINE, which is the loud-into-silent trade R12 exists to
+    // refuse (`port/ownership.md`).
     out.push_str(&format!(
-        "    }} catch (e) {{\n      if (e instanceof OwnershipFatal) throw e;\n      \
-         return Result.Err({}.fromException(e));\n    }}\n  }}\n",
+        "    }} catch (e) {{\n      if (e instanceof OwnershipFatal || e instanceof \
+         UnsupportedShape) throw e;\n      return Result.Err({}.fromException(e));\n    \
+         }}\n  }}\n",
         ERROR_TYPE
     ));
     out

@@ -153,3 +153,43 @@ fn a_free_function_reads_the_same_naming() {
     assert!(ts.contains("export function String_fromTag("), "{ts}");
     assert!(ts.contains("export function String_fromRefTag("), "{ts}");
 }
+
+/// R12: a method whose emitted name is taken is dropped, and every call to it
+/// goes to the other one — but a method carrying a HOLE is the engine refusing a
+/// shape it cannot write, and dropping it drops the refusal. `Property::
+/// from_value` for `Json` collided with `From<serde_json::Value>` on
+/// `fromValue`; the diagnostic was filed and `Json.fromValue` answered
+/// `new Json(value)` where Rust answers `Err(PropertyError::Missing)`.
+#[test]
+fn a_dropped_method_carrying_a_hole_is_written_under_its_trait() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Held { pub n: u32 }\n\
+         pub enum Slot { Held(Held), Empty }\n\
+         pub struct Box2(pub u32);\n\
+         pub trait Take { fn take_from(slot: Option<Slot>) -> Result<Box2, String>; }\n\
+         impl Box2 {\n\
+           pub fn take_from(n: u32) -> Box2 { Box2(n) }\n\
+         }\n\
+         impl Take for Box2 {\n\
+           fn take_from(slot: Option<Slot>) -> Result<Box2, String> {\n\
+             match slot {\n\
+               Some(Slot::Held(h)) => Ok(Box2(h.n)),\n\
+               _ => Err(\"empty\".to_string()),\n\
+             }\n\
+           }\n\
+         }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    // The inherent method keeps the name every call site writes.
+    assert!(ts.contains("static takeFrom(n: number): Box2"), "{}", ts);
+    // and the trait's, whose body the engine refused, is written under the
+    // trait rather than dropped with its refusal inside it.
+    assert!(ts.contains("static Take_takeFrom("), "{}", ts);
+    assert!(ts.contains("unsupported("), "{}", ts);
+    assert!(
+        f.messages().iter().any(|m| m.contains("this one carries a hole")),
+        "and it says what it did and what it did not do: {:?}",
+        f.messages()
+    );
+}

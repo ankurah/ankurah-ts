@@ -208,15 +208,22 @@ fn a_nested_failure_passes_out_and_releases_what_is_built() {
 /// A `catch` that swallows an `OwnershipFatal` disarms the leak registry inside
 /// every emitted reader. `port/ownership.md` says so; the 49 emitted catch
 /// blocks did not.
+///
+/// PREMISE EXTENDED 2026-09-05 (fixpass4 item 7): an `UnsupportedShape` is
+/// rethrown with it. That is what an R12 hole throws, and it says the ENGINE has
+/// no lowering for a Rust shape — answering `Err` for one turns a loud refusal
+/// into a silent wrong answer.
 #[test]
-fn the_catch_rethrows_an_ownership_fatal() {
+fn the_catch_rethrows_an_ownership_fatal_and_an_unsupported_shape() {
     let mut f = built(&format!("{}pub struct Row {{ pub text: String }}", DERIVE));
     let ts = f.emitted("lib.rs");
     assert!(
-        ts.contains("if (e instanceof OwnershipFatal) throw e;"),
+        ts.contains("if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;"),
         "{}",
         ts
     );
+    // and the name is imported, or the test the `catch` makes is a ReferenceError.
+    assert!(ts.contains("UnsupportedShape") && ts.contains("from '@ankurah/base'"), "{}", ts);
 }
 
 /// A type whose JSON half was refused has no `fromJson`, and neither does

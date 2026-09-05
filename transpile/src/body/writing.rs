@@ -15,7 +15,16 @@ use crate::name_map;
 /// reads the `.` after a digit as a decimal point rather than a member access.
 /// Rust has no such ambiguity, so nothing in the source says the parentheses
 /// are needed; the literal is what says it.
-pub(crate) fn parenthesise_literal(receiver: &syn::Expr, written: String) -> String {
+pub(crate) fn parenthesise_receiver(receiver: &syn::Expr, written: String) -> String {
+    // Rust's `.await` is postfix and binds tighter than whatever follows it;
+    // JavaScript's `await` is a PREFIX operator that binds LOOSER than member
+    // access. So `parse(s).await.unwrap()` came out `await parse(s).unwrap()`,
+    // which JavaScript reads as `await (parse(s).unwrap())` — `unwrap` asked of
+    // the promise, which has none. 52 sites, core's `lineage.test.ts` and
+    // storage-sqlite's `engine.ts` among them.
+    if written.starts_with("await ") {
+        return format!("({})", written);
+    }
     let is_number = match receiver {
         syn::Expr::Lit(lit) => matches!(lit.lit, syn::Lit::Int(_) | syn::Lit::Float(_)),
         // `(-1).abs()`: the minus is part of the literal as far as this is

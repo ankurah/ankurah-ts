@@ -785,8 +785,7 @@ fn features_declared_by(table: &toml::Table) -> Vec<String> {
             }
         }
     }
-    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        let Some(deps) = table.get(section).and_then(|d| d.as_table()) else { continue };
+    for deps in dependency_tables(table) {
         for (dep, spec) in deps {
             let optional = spec.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
             if !optional || explicit_deps.iter().any(|d| d == dep) {
@@ -827,4 +826,74 @@ fn declared_features(
         out.insert(name.to_string(), features_declared_by(&table));
     }
     out
+}
+
+/// Every table in a `Cargo.toml` that declares dependencies.
+///
+/// Three at the top level, and three more under EACH `[target.<selector>]` — a
+/// crate that says `[target.'cfg(target_arch = "wasm32")'.dependencies]
+/// getrandom = { optional = true }` has declared the implicit feature
+/// `getrandom` just as surely as a top-level table would. Reading only the top
+/// three made a `#[cfg(feature = "getrandom")]` a question nothing answers,
+/// which is how a typo and a real feature look the same.
+fn dependency_tables(table: &toml::Table) -> Vec<&toml::Table> {
+    const SECTIONS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut out: Vec<&toml::Table> = Vec::new();
+    for section in SECTIONS {
+        if let Some(deps) = table.get(section).and_then(|d| d.as_table()) {
+            out.push(deps);
+        }
+    }
+    let Some(targets) = table.get("target").and_then(|t| t.as_table()) else { return out };
+    for selector in targets.values() {
+        let Some(selector) = selector.as_table() else { continue };
+        for section in SECTIONS {
+            if let Some(deps) = selector.get(section).and_then(|d| d.as_table()) {
+                out.push(deps);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::features_declared_by;
+
+    /// PREMISE EXTENDED 2026-09-05 (fixpass4 item 10, C6'): an optional
+    /// dependency declares an implicit feature of the same name, and it does so
+    /// from a TARGET-SPECIFIC table exactly as it does from a top-level one.
+    /// Reading only the three top-level tables left every target-gated optional
+    /// dependency out of the list, so `#[cfg(feature = "getrandom")]` was a
+    /// question nothing answered — indistinguishable from a typo.
+    #[test]
+    fn an_optional_dependency_under_a_target_selector_is_a_feature() {
+        let manifest: toml::Table = r#"
+            [features]
+            wasm = ["dep:js-sys"]
+
+            [dependencies]
+            serde = "1"
+            tracing = { version = "0.1", optional = true }
+
+            [target.'cfg(target_arch = "wasm32")'.dependencies]
+            js-sys = { version = "0.3", optional = true }
+            getrandom = { version = "0.2", optional = true }
+
+            [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+            tokio = { version = "1", optional = true }
+        "#
+        .parse()
+        .expect("the fixture is valid TOML");
+        let declared = features_declared_by(&manifest);
+        assert!(declared.iter().any(|f| f == "wasm"), "{:?}", declared);
+        assert!(declared.iter().any(|f| f == "default"), "{:?}", declared);
+        assert!(declared.iter().any(|f| f == "tracing"), "a top-level one: {:?}", declared);
+        assert!(declared.iter().any(|f| f == "getrandom"), "a target-gated one: {:?}", declared);
+        assert!(declared.iter().any(|f| f == "tokio"), "and a target-gated dev one: {:?}", declared);
+        // `dep:js-sys` says js-sys is switched ON by a feature and is not one.
+        assert!(!declared.iter().any(|f| f == "js-sys"), "{:?}", declared);
+        // A dependency that is not optional declares nothing.
+        assert!(!declared.iter().any(|f| f == "serde"), "{:?}", declared);
+    }
 }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/update.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
@@ -102,7 +102,7 @@ export class SubscriptionUpdateItem extends Struct {
       const predicateRelevance = _rpredicateRelevance.unwrap();
       return Result.Ok(new SubscriptionUpdateItem(entityId, collection, content, predicateRelevance));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -181,7 +181,7 @@ export class NodeUpdate extends Struct {
       const body = _rbody.unwrap();
       return Result.Ok(new NodeUpdate(id, from, to, body));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -260,7 +260,7 @@ export class NodeUpdateAck extends Struct {
       const body = _rbody.unwrap();
       return Result.Ok(new NodeUpdateAck(id, from, to, body));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -335,7 +335,7 @@ export class NodeUpdateBody extends Enum<NodeUpdateBodyV> {
       }
       return Result.Err(JsonError.custom('no variant of `NodeUpdateBody` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -442,7 +442,7 @@ export class UpdateContent extends Enum<UpdateContentV> {
       }
       return Result.Err(JsonError.custom('no variant of `UpdateContent` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -526,7 +526,7 @@ export class MembershipChange extends Enum<MembershipChangeV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `MembershipChange` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -609,7 +609,7 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
       }
       return Result.Err(JsonError.custom('no variant of `NodeUpdateAckBody` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

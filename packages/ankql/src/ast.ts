@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -72,7 +72,7 @@ export class PathExpr extends Struct {
       const steps = _rsteps.unwrap();
       return Result.Ok(new PathExpr(steps));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -91,13 +91,13 @@ export class Selection extends Struct {
   }
 
   assumeNull(columns: string[]): Selection {
-    const orderBy = this.orderBy != null ? ((items) => {
+    const orderBy = (this.orderBy != null ? ((items) => {
       return [...[...items].filter((item) => {
         const colName = item.path.property();
         return !columns.includes(colName);
       })];
-    })(this.orderBy!) : null;
-    const orderBy_1 = orderBy != null ? ((v) => v.isEmpty() ? null : v)(orderBy!) : null;
+    })(this.orderBy!) : null);
+    const orderBy_1 = (orderBy != null ? ((v) => v.isEmpty() ? null : v)(orderBy!) : null);
     return new Selection(this.predicate.assumeNull(columns), orderBy_1, this.limit);
   }
 
@@ -160,7 +160,7 @@ export class Selection extends Struct {
   }
 
   clone(): Selection {
-    return new Selection(this.predicate.clone(), this.orderBy != null ? this.orderBy.map(e => e.clone()) : null, this.limit);
+    return new Selection(this.predicate.clone(), (this.orderBy != null ? this.orderBy.map(e => e.clone()) : null), this.limit);
   }
 
   debug(): string {
@@ -247,7 +247,7 @@ export class OrderByItem extends Struct {
       const direction = _rdirection.unwrap();
       return Result.Ok(new OrderByItem(path, direction));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -718,7 +718,7 @@ export class OrderDirection extends Enum<OrderDirectionV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `OrderDirection` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -811,7 +811,7 @@ export class Predicate extends Enum<PredicateV> {
           const _v1 = [left, right];
           if (((_v1[0].is('Path'))) || ((_v1[1].is('Path')))) {
             const path = (((_v1[0].is('Path')))) ? _v1[0].value._0 : (((_v1[1].is('Path')))) ? _v1[1].value._0 : undefined;
-            return columns.includes(path.property().toString());
+            return columns.includes(path.property());
           } else {
             return false;
           }
@@ -836,13 +836,18 @@ export class Predicate extends Enum<PredicateV> {
         return expr.match({
           Path: (v) => {
             const path = v._0;
-            const isNull = columns.includes(path.property().toString());
+            const isNull = columns.includes(path.property());
             if (isNull) {
               return new Predicate('True', {});
             } else {
               return new Predicate('IsNull', { _0: expr.clone() });
             }
           },
+          Literal: () => new Predicate('IsNull', { _0: expr.clone() }),
+          Predicate: () => new Predicate('IsNull', { _0: expr.clone() }),
+          InfixExpr: () => new Predicate('IsNull', { _0: expr.clone() }),
+          ExprList: () => new Predicate('IsNull', { _0: expr.clone() }),
+          Placeholder: () => new Predicate('IsNull', { _0: expr.clone() }),
         });
       },
       And: (v) => {
@@ -953,7 +958,7 @@ export class Predicate extends Enum<PredicateV> {
     let _moved1 = false;
     const result = _r0.unwrap();
     try {
-      if (valuesIter.next() != null) {
+      if ((valuesIter.next() != null)) {
         return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
       }
       _moved1 = true;
@@ -1314,7 +1319,7 @@ export class ComparisonOperator extends Enum<ComparisonOperatorV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `ComparisonOperator` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -1408,7 +1413,7 @@ export class InfixOperator extends Enum<InfixOperatorV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `InfixOperator` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

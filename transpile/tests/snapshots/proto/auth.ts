@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/auth.rs
-import { Struct, Result, JsonError, jsonAll, OwnershipFatal } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { Attested } from './auth.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 export { Attested };
@@ -44,7 +44,7 @@ export class AuthData extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new AuthData(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -95,7 +95,7 @@ export class Attestation extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new Attestation(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -162,7 +162,7 @@ export class AttestationSet extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new AttestationSet(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -193,7 +193,7 @@ export class Principal extends Struct {
     try {
       return Result.Ok(new Principal());
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

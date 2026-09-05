@@ -1,0 +1,16 @@
+# How many R12 holes each crate's emitted output carries, written by
+# transpile/tests/hole_ledger.rs. Matched EXACTLY in both directions: a
+# hole that appears has to be recorded, and one that disappears has to be
+# explained. Generated: do not hand-edit. Refresh with:
+#     cd transpile && UPDATE_HOLE_LEDGER=1 cargo test --test hole_ledger
+
+"ankql" = 0
+"ankurah" = 0
+"connector-local" = 0
+"connector-websocket" = 0
+"core" = 6
+"proto" = 0
+"signals" = 0
+"storage-common" = 0
+"storage-indexeddb" = 0
+"storage-sqlite" = 0

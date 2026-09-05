@@ -42,7 +42,8 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
   root(): Attested<EntityState> | null {
     const _t0 = this._0.value.root.read();
     try {
-      return _t0.value != null ? ((r) => r.clone())(_t0.value!) : null;
+      const _m1 = _t0.value;
+      return (_m1 != null ? ((r) => r.clone())(_m1!) : null);
     } finally {
       _t0.drop();
     }
@@ -112,42 +113,43 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
             lwwBackend.value.set('item', _r3.unwrap());
             const _r4 = systemEntity.generateCommitEvent();
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            const _r5 = _r4.unwrap() != null ? Result.Ok(_r4.unwrap()!) : Result.Err(AnyhowError.msg('Expected event'));
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            let _moved6 = false;
-            const event = _r5.unwrap();
+            const _m5 = _r4.unwrap();
+            const _r6 = (_m5 != null ? Result.Ok(_m5!) : Result.Err(AnyhowError.msg('Expected event')));
+            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+            let _moved7 = false;
+            const event = _r6.unwrap();
             try {
               const root = Clock.fromEventId(event.id());
               try {
-                _moved6 = true;
-                const _r7 = await storage.deref().value.addEvent(event);
-                if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-                _r7.drop();
-                systemEntity.commitHead(root.clone());
-                const _r8 = systemEntity.toEntityState();
+                _moved7 = true;
+                const _r8 = await storage.deref().value.addEvent(event);
                 if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-                let _moved9 = false;
-                const attestedState = Attested.fromEntityState(_r8.unwrap());
+                _r8.drop();
+                systemEntity.commitHead(root.clone());
+                const _r9 = systemEntity.toEntityState();
+                if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                let _moved10 = false;
+                const attestedState = Attested.fromEntityState(_r9.unwrap());
                 try {
-                  const _r10 = await storage.deref().value.setState(attestedState.clone());
-                  if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-                  _r10.drop();
+                  const _r11 = await storage.deref().value.setState(attestedState.clone());
+                  if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+                  _r11.drop();
                   let items = this._0.value.items.write();
                   try {
                     _moved2 = true;
                     items.value.push(systemEntity);
-                    _moved9 = true;
-                    const _t11 = this._0.value.root.write();
+                    _moved10 = true;
+                    const _t12 = this._0.value.root.write();
                     try {
-                      _t11.value = attestedState;
-                    } finally {
-                      _t11.drop();
-                    }
-                    const _t12 = this._0.value.systemReady.write();
-                    try {
-                      _t12.value = true;
+                      _t12.value = attestedState;
                     } finally {
                       _t12.drop();
+                    }
+                    const _t13 = this._0.value.systemReady.write();
+                    try {
+                      _t13.value = true;
+                    } finally {
+                      _t13.drop();
                     }
                     this._0.value.systemReadyNotify.notifyWaiters();
                     return Result.Ok([]);
@@ -155,13 +157,13 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                     items.drop();
                   }
                 } finally {
-                  if (!_moved9) attestedState.drop();
+                  if (!_moved10) attestedState.drop();
                 }
               } finally {
                 root.drop();
               }
             } finally {
-              if (!_moved6) event.drop();
+              if (!_moved7) event.drop();
             }
           } finally {
             lwwBackend.drop();
@@ -215,7 +217,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                   root_1.drop();
                 }
               })();
-              const _r3 = await this.hardReset().mapErr((e) => new MutationError('General', { _0: io.Error.other(e.toString()) }));
+              const _r3 = (await this.hardReset()).mapErr((e) => new MutationError('General', { _0: io.Error.other(e.toString()) }));
               if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
               _r3.drop();
             } finally {
@@ -304,7 +306,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
   }
 
   isLoaded(): boolean {
-    return this._0.value.loaded.get() != null;
+    return (this._0.value.loaded.get() != null);
   }
 
   async waitLoaded(): Promise<void> {

@@ -1,6 +1,6 @@
 // TS-ONLY: Tests for the value-keyed HashMap and HashSet (src/std/hash_map.ts).
 import { describe, test, expect, afterEach } from 'bun:test';
-import { HashMap, HashSet, Struct, Drop, clearFatalLatch } from '../src/index.ts';
+import { HashMap, HashSet, Struct, Drop, clearFatalLatch, keyHash, derivedEquals, derivedClone } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
 installOwnershipTestHooks();
@@ -452,5 +452,76 @@ describe('from', () => {
     const set = HashSet.from(['a', 'b', 'a']);
     expect(set.size).toBe(2);
     set.drop();
+  });
+});
+
+describe('the bucket label of a sequence', () => {
+  // A1.11's collision, one level down. Each part carries its own LENGTH, so no
+  // separator can be forged out of the parts themselves: joining with a comma
+  // made `['a', 'b']` and `['a,s:b']` one label, which is a `Vec<String>` field
+  // of a derived key colliding with a single string that spells the join.
+  test('two sequences are one label only when they hold the same things', () => {
+    expect(keyHash(['a', 'b'])).not.toBe(keyHash(['a,s:b']));
+    expect(keyHash(['a', 'b'])).toBe(keyHash(['a', 'b']));
+    expect(keyHash(['ab'])).not.toBe(keyHash(['a', 'b']));
+    expect(keyHash([1, 2])).not.toBe(keyHash(['n:1,n:2']));
+    // A nested sequence is a part like any other, and carries its own length.
+    expect(keyHash([['a'], ['b']])).not.toBe(keyHash([['a', 'b']]));
+  });
+
+  test('and a map keys by it, so two such keys are two entries', () => {
+    const map = new HashMap<string[], number>();
+    map.set(['a', 'b'], 1);
+    map.set(['a,s:b'], 2);
+    expect(map.size).toBe(2);
+    expect(map.get(['a', 'b'])).toBe(1);
+    expect(map.get(['a,s:b'])).toBe(2);
+    map.drop();
+  });
+});
+
+describe('a field written as a type parameter', () => {
+  // `T` is a number in one instantiation and a class in another, and the
+  // emitter cannot tell which: `.equals()` and `.clone()` on a number are both
+  // TypeErrors, so the derived comparison and the derived copy decide by the
+  // value's own surface at run time.
+  test('a primitive is compared by identity and copied by being read', () => {
+    expect(derivedEquals(1, 1)).toBe(true);
+    expect(derivedEquals(1, 2)).toBe(false);
+    expect(derivedEquals('a', 'a')).toBe(true);
+    expect(derivedClone(1)).toBe(1);
+    expect(derivedClone('a')).toBe('a');
+  });
+
+  test('a sequence is compared and copied element by element', () => {
+    expect(derivedEquals([1, 2], [1, 2])).toBe(true);
+    expect(derivedEquals([1, 2], [1, 3])).toBe(false);
+    expect(derivedClone([1, 2])).toEqual([1, 2]);
+  });
+
+  test('an object answers its own equals and its own clone', () => {
+    const a = new Id(new Uint8Array([1, 2]));
+    const b = new Id(new Uint8Array([1, 2]));
+    expect(derivedEquals(a, b)).toBe(true);
+    a.drop();
+    b.drop();
+
+    class Counted extends Struct {
+      constructor(readonly n: number) { super(); }
+      clone(): Counted { return new Counted(this.n); }
+      equals(other: Counted): boolean { return this.n === other.n; }
+    }
+    const one = new Counted(1);
+    const copy = derivedClone(one);
+    expect(copy).not.toBe(one);
+    expect(derivedEquals(copy, one)).toBe(true);
+    one.drop();
+    copy.drop();
+  });
+
+  test('and one declaring neither is REFUSED, because Rust\'s bound excludes it', () => {
+    class Bare {}
+    expect(() => derivedEquals(new Bare(), new Bare())).toThrow('declares no equals()');
+    expect(() => derivedClone(new Bare())).toThrow('declares no clone()');
   });
 });

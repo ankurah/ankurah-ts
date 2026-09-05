@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/ready_chunks.rs
-import { Struct, unsupported } from '@ankurah/base';
+import { Struct } from '@ankurah/base';
 import { Context } from '../context';
 import { Item } from '@ankurah/proto';
 
@@ -27,7 +27,14 @@ export class ReadyChunks<F extends Future> extends Struct {
   pollNext(cx: Context): Poll<Item | null> {
     let batch = [];
     const _m0 = this.inner.pollNextUnpin(cx).match<any>({
-      Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+      Ready: (v) => {
+        if (v._0 != null) {
+          const item = v._0;
+          return batch.push(item);
+        } else {
+          return { $jump: 'return', $value: new Poll('Ready', { _0: null }) }
+        }
+      },
       Pending: () => {
         return { $jump: 'return', $value: Poll.Pending }
       },

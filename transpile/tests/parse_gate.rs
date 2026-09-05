@@ -22,7 +22,7 @@
 
 mod common;
 
-use common::{collect_files_with_ext, run_batch, support_tree, transpile_dir, TempDir};
+use common::{collect_files_with_ext, crates_in_scope, run_batch, transpile_dir, TempDir};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -234,16 +234,20 @@ fn join_specifier(dir: &str, specifier: &str) -> String {
     parts.join("/")
 }
 
-/// Every `catch` the engine writes rethrows an `OwnershipFatal`.
+/// Every `catch` the engine writes rethrows an `OwnershipFatal` and an
+/// `UnsupportedShape`.
 ///
-/// For: the ownership runtime says a value was used after it was dropped, or
-/// dropped twice, by THROWING — that is the whole mechanism by which a port bug
-/// stops a run instead of quietly answering nonsense. A `catch` that turns such
-/// a throw into an ordinary `Err` disarms it for everything inside the block,
-/// and the emitted JSON readers wrap their whole body in one. So the rule from
-/// `port/ownership.md` is a property of the OUTPUT, not of one emitter: no
-/// matter which part of the engine writes a `catch`, the first thing inside it
-/// re-throws a fatal.
+/// For: each of those two throws says the run must stop, and a `catch` that
+/// turns one into an ordinary `Err` disarms it for everything inside the block
+/// — and the emitted JSON readers wrap their whole body in one. The ownership
+/// runtime says a value was used after it was dropped, or dropped twice, by
+/// throwing an `OwnershipFatal`: that is the whole mechanism by which a port bug
+/// stops a run instead of quietly answering nonsense. An R12 hole throws an
+/// `UnsupportedShape`: that says the ENGINE has no lowering for a Rust shape,
+/// and answering `Err` for it is the loud-into-silent trade R12 exists to
+/// refuse. So the rule from `port/ownership.md` is a property of the OUTPUT, not
+/// of one emitter: no matter which part of the engine writes a `catch`, the
+/// first thing inside it re-throws both.
 ///
 /// The check reads emitted text rather than the engine's format strings so that
 /// a `catch` written by some future emitter is caught the day it appears.
@@ -262,7 +266,13 @@ fn no_emitted_catch_swallows_an_ownership_fatal() {
                 examined += 1;
                 let rest: String = text.lines().skip(line_no + 1).take(2).collect::<Vec<_>>().join(" ");
                 let same_line = line.split_once("catch").map(|(_, t)| t.to_string()).unwrap_or_default();
-                if format!("{same_line} {rest}").contains("instanceof OwnershipFatal) throw") {
+                let head = format!("{same_line} {rest}");
+                let rethrows = |what: &str| {
+                    head.split("throw ").next().is_some_and(|before| {
+                        before.contains(&format!("instanceof {}", what))
+                    })
+                };
+                if rethrows("OwnershipFatal") && rethrows("UnsupportedShape") {
                     continue;
                 }
                 swallowing.push(format!("{package}/{name}:{}: {}", line_no + 1, line.trim()));
@@ -276,9 +286,9 @@ fn no_emitted_catch_swallows_an_ownership_fatal() {
     );
     assert!(
         swallowing.is_empty(),
-        "{} emitted `catch` block(s) of {examined} do not rethrow an OwnershipFatal, so a \
-         double-drop or a use-after-drop inside them is answered as an ordinary error \
-         (port/ownership.md):\n  {}",
+        "{} emitted `catch` block(s) of {examined} do not rethrow BOTH an OwnershipFatal and \
+         an UnsupportedShape, so a double-drop, a use-after-drop, or an R12 hole inside them \
+         is answered as an ordinary error (port/ownership.md):\n  {}",
         swallowing.len(),
         swallowing.join("\n  ")
     );
@@ -312,64 +322,6 @@ fn refusal(file: &Path) -> Option<String> {
 }
 
 /// Every crate the port is in scope for, as its package name and the directory
-/// `batch` is pointed at.
-///
-/// The list comes from `transpile.toml` rather than from a table here, so a
-/// crate entering or leaving the port's scope moves this test with it. Where
-/// each crate's sources sit comes from the crate's own `Cargo.toml`, the same
-/// way the engine's sibling loader finds them.
-fn crates_in_scope() -> Vec<(String, PathBuf)> {
-    let config = transpile_dir().join("transpile.toml");
-    let text = std::fs::read_to_string(&config).unwrap_or_else(|e| panic!("cannot read {}: {e}", config.display()));
-    let table: toml::Table = text.parse().expect("transpile.toml is not valid TOML");
-    let crates = table
-        .get("crates")
-        .and_then(|v| v.as_table())
-        .unwrap_or_else(|| panic!("transpile.toml has no [crates] table"));
-
-    let manifests = manifests_under(&support_tree());
-    let mut out = Vec::new();
-    for (crate_name, package) in crates {
-        let package = package.as_str().unwrap_or_else(|| panic!("[crates] {crate_name} is not a string"));
-        let dir = manifests.get(crate_name).unwrap_or_else(|| {
-            panic!("no Cargo.toml under {} declares the package `{crate_name}`", support_tree().display())
-        });
-        let src = dir.join("src");
-        assert!(src.is_dir(), "`{crate_name}` has no src/ at {}", src.display());
-        out.push((package.to_string(), src));
-    }
-    out.sort();
-    out
-}
-
-/// Every Cargo package under the corpus, by name, and the directory it lives in.
-fn manifests_under(root: &Path) -> BTreeMap<String, PathBuf> {
-    let mut out = BTreeMap::new();
-    walk_manifests(root, &mut out);
-    out
-}
-
-fn walk_manifests(dir: &Path, out: &mut BTreeMap<String, PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        if path.is_dir() {
-            // `target/` holds thousands of vendored manifests and no corpus crate.
-            if name == "target" || name == "node_modules" || name.starts_with('.') {
-                continue;
-            }
-            walk_manifests(&path, out);
-        } else if name == "Cargo.toml" {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(manifest) = text.parse::<toml::Table>() else { continue };
-            if let Some(package) = manifest.get("package").and_then(|v| v.as_table()).and_then(|t| t.get("name")).and_then(|v| v.as_str()) {
-                out.insert(package.to_string(), path.parent().unwrap().to_path_buf());
-            }
-        }
-    }
-}
-
 fn render(refused: &BTreeMap<String, Vec<String>>) -> String {
     let total: usize = refused.values().map(Vec::len).sum();
     let mut out = String::new();

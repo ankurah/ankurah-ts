@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/sys.rs
-import { Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type ItemV = {
@@ -91,7 +91,7 @@ export class Item extends Enum<ItemV> {
       }
       return Result.Ok(new Item('Other', {}));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

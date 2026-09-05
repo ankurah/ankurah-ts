@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/request.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -103,7 +103,7 @@ export class KnownEntity extends Struct {
       const head = _rhead.unwrap();
       return Result.Ok(new KnownEntity(entityId, head));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -182,7 +182,7 @@ export class CausalAssertion extends Struct {
       const relation = _rrelation.unwrap();
       return Result.Ok(new CausalAssertion(entityId, subject, other, relation));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -241,7 +241,7 @@ export class CausalAssertionFragment extends Struct {
       const attestations = _rattestations.unwrap();
       return Result.Ok(new CausalAssertionFragment(relation, attestations));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -314,7 +314,7 @@ export class EntityDelta extends Struct {
       const content = _rcontent.unwrap();
       return Result.Ok(new EntityDelta(entityId, collection, content));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -550,7 +550,7 @@ export class CausalRelation extends Enum<CausalRelationV> {
       }
       return Result.Err(JsonError.custom('no variant of `CausalRelation` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -682,7 +682,7 @@ export class DeltaContent extends Enum<DeltaContentV> {
       }
       return Result.Err(JsonError.custom('no variant of `DeltaContent` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

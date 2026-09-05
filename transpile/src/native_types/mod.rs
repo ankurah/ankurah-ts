@@ -12,7 +12,7 @@ pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime p
 pub(crate) mod iterator; // Iterator trait methods on arrays
 mod js_value; // serde_json::Value / JsValue → unknown
 mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
-mod nullable; // Option<T> → T | null
+pub mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
 pub(crate) mod ordering; // std::cmp::Ordering → -1 | 0 | 1
 mod set; // HashSet<T>/BTreeSet<T> → Set<T>
@@ -60,7 +60,7 @@ pub fn translate_method(
     rust_method: &str,
     args: &[String],
 ) -> MethodTranslation {
-    translate_method_using(reg, receiver_ty, receiver, rust_method, args, true)
+    translate_method_using(reg, receiver_ty, receiver, rust_method, args, true, &nullable::Once::unasked())
 }
 
 /// The same, told whether the call's answer is used.
@@ -76,6 +76,7 @@ pub fn translate_method_using(
     rust_method: &str,
     args: &[String],
     used: bool,
+    once: &nullable::Once<'_>,
 ) -> MethodTranslation {
     // Check type-erased conversions first (apply to any type)
     if let Some(result) = conversion::translate(receiver, rust_method, args) {
@@ -119,11 +120,11 @@ pub fn translate_method_using(
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
-        JsShape::Array(_) => array::translate(receiver, rust_method, args),
+        JsShape::Array(inner) => array::translate(receiver, rust_method, args, &array::Element::of(reg, &inner)),
         // A `Vec<u8>` is a `Uint8Array`, which is fixed-length and shares only
         // the reading half of an array's surface.
         JsShape::Bytes => bytes::translate(receiver, rust_method, args),
-        JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args),
+        JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args, once),
         JsShape::Map(_, _) => map::translate_using_result(receiver, rust_method, args, used),
         JsShape::Set(_) => set::translate_using_result(receiver, rust_method, args, used),
         // An `Arc<T>` answers `Arc`'s own methods; everything else is a method
@@ -133,7 +134,7 @@ pub fn translate_method_using(
         JsShape::Rc(name) => match arc::translate(&name, receiver, rust_method, args) {
             MethodTranslation::Passthrough => match inner_of(reg, receiver_ty) {
                 Some((inner, accessor)) => {
-                    translate_method_using(reg, &inner, &format!("{}{}", receiver, accessor), rust_method, args, used)
+                    translate_method_using(reg, &inner, &format!("{}{}", receiver, accessor), rust_method, args, used, once)
                 }
                 None => MethodTranslation::Passthrough,
             },
@@ -154,7 +155,7 @@ pub fn translate_method_using(
             number::translate(receiver, rust_method, args, width)
         }
         // `Box<T>` and `&T` are the value they hold.
-        JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, used),
+        JsShape::SameAs(inner) => translate_method_using(reg, &inner, receiver, rust_method, args, used, once),
         _ => MethodTranslation::Passthrough,
     }
 }
@@ -218,7 +219,7 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
 
         // .retain(predicate) — works for Map/Set/Vec when type unknown
         "retain" if args.len() == 1 => format!(
-            "{{ for (const [_k, _v] of {}) {{ if (!({}(_k, _v))) {}.delete(_k); }} }}",
+            "{{ for (const [_k, _v] of {}) {{ if (!(({})(_k, _v))) {}.delete(_k); }} }}",
             receiver, args[0], receiver
         ),
 

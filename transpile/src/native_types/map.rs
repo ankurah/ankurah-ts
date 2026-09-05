@@ -68,9 +68,13 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "values_mut" => format!("{}.values()", receiver),
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
 
-        // retain(|k, v| predicate) → manual delete loop
+        // `retain(|k, v| p)` is a delete loop. The predicate is PARENTHESISED,
+        // because an arrow's body extends as far as it can: `(k, v) =>
+        // invokeRef(cb, k, v)(_k, _v)` made the call part of the body, so what
+        // the `!` tested was the arrow itself — an object, always truthy — and
+        // nothing was ever deleted.
         "retain" if args.len() == 1 => format!(
-            "{{ for (const [_k, _v] of {}) {{ if (!({}(_k, _v))) {}.delete(_k); }} }}",
+            "{{ for (const [_k, _v] of {}) {{ if (!(({})(_k, _v))) {}.delete(_k); }} }}",
             receiver, args[0], receiver
         ),
 

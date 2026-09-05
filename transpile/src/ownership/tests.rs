@@ -1232,17 +1232,21 @@ fn a_guard_the_runtimes_match_cannot_carry_is_reported() {
         "a guarded consuming match has no form here and says so: {:?}",
         said
     );
-    // R12: two arms naming one variant is a variant Rust tries in ORDER, which
-    // this form cannot, so the key is a hole rather than the first arm run for
-    // every value of the variant.
+    // PREMISE CHANGED 2026-09-05 (fixpass4 item 1): what this used to assert is
+    // that a variant SEVERAL arms name is a hole, full stop. The arm chain
+    // writes those arms in Rust order now, so the hole here is the GUARD's:
+    // a guard reads names the pattern binds inside the branch it guards, so it
+    // cannot be written where the test belongs, and R12 makes that arm and the
+    // arms below it a hole rather than a body run for every value of `One`.
     assert!(
-        said.iter()
-            .any(|m| m.contains("`One` is named by more than one arm")),
-        "and so does a variant several arms name: {:?}",
+        said.iter().any(|m| m.contains("an arm naming `One` has a guard")),
+        "and the chain refuses the guard rather than dropping it: {:?}",
         said
     );
     let ts = fixture.translated_method("lib.rs", "f");
-    assert!(ts.contains("One: () => unsupported("), "{}", ts);
+    assert!(ts.contains("One: (v) => {"), "{}", ts);
+    assert!(ts.contains("unsupported("), "{}", ts);
+    assert!(!ts.contains("One: (v) => take("), "the guarded arm does not run: {}", ts);
 }
 
 #[test]

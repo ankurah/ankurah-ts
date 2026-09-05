@@ -27,7 +27,7 @@ export class WebsocketClient extends Struct {
   }
 
   async ready(): Promise<Result<void, string>> {
-    return await new ReadyFuture(this.inner.clone()).mapErr((_) => 'unreachable');
+    return (await new ReadyFuture(this.inner.clone())).mapErr((_) => 'unreachable');
   }
 
   jsConnectionState(): ConnectionStateEnumSignal {

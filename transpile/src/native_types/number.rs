@@ -134,22 +134,73 @@ pub fn translate(
         "trunc" if args.is_empty() => format!("Math.trunc({})", receiver),
         "floor" if args.is_empty() => format!("Math.floor({})", receiver),
         "ceil" if args.is_empty() => format!("Math.ceil({})", receiver),
-        "round" if args.is_empty() => format!("Math.round({})", receiver),
+        // `round`, `signum`, `min` and `max` each read like the Rust method of
+        // the same name and each answers differently for a value the corpus can
+        // hold: `Math.round` rounds half UP where Rust rounds half away from
+        // ZERO, `Math.sign` answers a signed zero where Rust's signum has none,
+        // and `Math.min`/`Math.max` become `NaN` where Rust ignores a `NaN`
+        // operand. The rule is stated once, in `@ankurah/base`.
+        "round" if args.is_empty() => return float_helper("floatRound", "round", &[receiver], width),
         "abs" if args.is_empty() => format!("Math.abs({})", receiver),
         "sqrt" if args.is_empty() => format!("Math.sqrt({})", receiver),
-        "signum" if args.is_empty() => format!("Math.sign({})", receiver),
+        "signum" if args.is_empty() => {
+            return float_helper("floatSignum", "signum", &[receiver], width)
+        }
         "is_nan" if args.is_empty() => format!("Number.isNaN({})", receiver),
         "is_finite" if args.is_empty() => format!("Number.isFinite({})", receiver),
         "is_infinite" if args.is_empty() => {
             format!("(!Number.isFinite({}) && !Number.isNaN({}))", receiver, receiver)
         }
         "powi" | "powf" if args.len() == 1 => format!("({} ** {})", receiver, args[0]),
-        "min" if args.len() == 1 => format!("Math.min({}, {})", receiver, args[0]),
-        "max" if args.len() == 1 => format!("Math.max({}, {})", receiver, args[0]),
+        "min" if args.len() == 1 => {
+            return float_helper("floatMin", "min", &[receiver, &args[0]], width)
+        }
+        "max" if args.len() == 1 => {
+            return float_helper("floatMax", "max", &[receiver, &args[0]], width)
+        }
 
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)
+}
+
+/// One of the four methods whose JavaScript spelling answers something else for
+/// a float.
+///
+/// An INTEGER receiver keeps the `Math.*` call: Rust's `i32::signum`,
+/// `i32::min` and `i32::max` answer exactly what `Math.sign`, `Math.min` and
+/// `Math.max` answer, and an integer has no `round` at all. A FLOAT goes to the
+/// base helper. Where the engine could not resolve the receiver's width it
+/// cannot say which, and says so rather than picking one — the two answers
+/// differ for `-2.5`, for `-0.0` and for `NaN`.
+fn float_helper(
+    helper: &str,
+    method: &str,
+    operands: &[&str],
+    width: Option<crate::ty::Prim>,
+) -> MethodTranslation {
+    let math = format!(
+        "Math.{}({})",
+        match method {
+            "signum" => "sign",
+            other => other,
+        },
+        operands.join(", ")
+    );
+    match width {
+        Some(prim) if prim.is_integer() => MethodTranslation::Expr(math),
+        Some(_) => MethodTranslation::Expr(format!("{}({})", helper, operands.join(", "))),
+        None => MethodTranslation::Refused {
+            message: format!(
+                "`{}` answers one thing for an integer and another for a float — half away from \
+                 zero rather than half up, a signum with no zero, a `NaN` operand ignored rather \
+                 than spreading — and the engine could not resolve the receiver's type, so which \
+                 of the two this is was not decided",
+                method
+            ),
+            fallback: Box::new(MethodTranslation::Expr(math)),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +268,36 @@ mod tests {
         assert_eq!(expr("n", "abs", &[]), "Math.abs(n)");
         assert_eq!(expr("n", "is_nan", &[]), "Number.isNaN(n)");
         assert_eq!(expr("n", "powi", &["2"]), "(n ** 2)");
-        assert_eq!(expr("n", "min", &["m"]), "Math.min(n, m)");
+    }
+
+    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 11, N8): `min` used to be
+    /// pinned as `Math.min(n, m)` whatever the receiver was. `Math.round`,
+    /// `Math.sign`, `Math.min` and `Math.max` each read like the Rust method of
+    /// the same name and each answers differently for a value the corpus can
+    /// hold: half UP rather than half away from zero, a signed zero where Rust's
+    /// signum has none, and `NaN` where Rust ignores a `NaN` operand. So a FLOAT
+    /// receiver goes through the base helper that states the rule, an INTEGER
+    /// keeps the `Math.*` call — Rust's integer `signum`, `min` and `max` answer
+    /// exactly what those do — and a receiver the engine could not type is
+    /// reported rather than decided.
+    #[test]
+    fn the_four_methods_that_disagree_go_by_the_receivers_type() {
+        use crate::ty::Prim;
+        assert_eq!(widened("n", "min", &["m"], Some(Prim::F64)), "floatMin(n, m)");
+        assert_eq!(widened("n", "max", &["m"], Some(Prim::F32)), "floatMax(n, m)");
+        assert_eq!(widened("n", "round", &[], Some(Prim::F64)), "floatRound(n)");
+        assert_eq!(widened("n", "signum", &[], Some(Prim::F64)), "floatSignum(n)");
+
+        assert_eq!(widened("n", "min", &["m"], Some(Prim::I32)), "Math.min(n, m)");
+        assert_eq!(widened("n", "max", &["m"], Some(Prim::Usize)), "Math.max(n, m)");
+        assert_eq!(widened("n", "signum", &[], Some(Prim::I64)), "Math.sign(n)");
+
+        match translate("n", "round", &[], None) {
+            MethodTranslation::Refused { message, fallback } => {
+                assert!(message.contains("could not resolve the receiver's type"), "{}", message);
+                assert!(matches!(*fallback, MethodTranslation::Expr(ref ts) if ts == "Math.round(n)"));
+            }
+            _ => panic!("an untyped receiver is reported, not decided"),
+        }
     }
 }

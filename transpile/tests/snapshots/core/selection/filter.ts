@@ -20,7 +20,8 @@ export class FilterIterator<I extends Iterator> extends Struct {
   }
 
   next<R>(): FilterResult<R> | null {
-    return this.iter.next() != null ? ((item) => (() => {
+    const _m0 = this.iter.next();
+    return (_m0 != null ? ((item) => (() => {
       const _v3 = evaluatePredicate(item, this.predicate);
       if (_v3.isOk()) {
         const _v5 = _v3.unwrap();
@@ -29,7 +30,7 @@ export class FilterIterator<I extends Iterator> extends Struct {
         const e = _v3.unwrapErr();
         return new FilterResult('Error', { _0: item, _1: e });
       }
-    })())(this.iter.next()!) : null;
+    })())(_m0!) : null);
   }
 }
 
@@ -204,18 +205,20 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
       const path = v._0;
       if (path.isSimple()) {
         const name = path.first();
-        const _r0 = item.value(name) != null ? Result.Ok(item.value(name)!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))());
-        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-        return Result.Ok(new ExprOutput('Value', { _0: _r0.unwrap() }));
+        const _m0 = item.value(name);
+        const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))()));
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        return Result.Ok(new ExprOutput('Value', { _0: _r1.unwrap() }));
       } else {
         const first = path.first();
         if (first === item.collection()) {
           const remaining = path.steps.slice(1);
           if (remaining.length === 1) {
             const name = remaining[0];
-            const _r1 = item.value(name) != null ? Result.Ok(item.value(name)!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))());
-            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-            return Result.Ok(new ExprOutput('Value', { _0: _r1.unwrap() }));
+            const _m2 = item.value(name);
+            const _r3 = (_m2 != null ? Result.Ok(_m2!) : Result.Err((() => new Error('PropertyNotFound', { _0: name }))()));
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            return Result.Ok(new ExprOutput('Value', { _0: _r3.unwrap() }));
           }
           const propertyName = remaining[0];
           const subPath = remaining.slice(1);
@@ -230,9 +233,9 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
       const exprs = v._0;
       let result = [];
       for (const expr of exprs) {
-        const _r2 = evaluateExpr(item, expr);
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        result.push(_r2.unwrap());
+        const _r4 = evaluateExpr(item, expr);
+        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+        result.push(_r4.unwrap());
       }
       return Result.Ok(new ExprOutput('List', { _0: result }));
     },
@@ -242,14 +245,17 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
 }
 
 function evaluateSubPath<I extends Filterable>(item: I, propertyName: string, subPath: string[]): Result<ExprOutput<Value>, Error> {
-  const _r0 = item.value(propertyName) != null ? Result.Ok(item.value(propertyName)!) : Result.Err((() => new Error('PropertyNotFound', { _0: propertyName }))());
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-  const propertyValue = _r0.unwrap();
+  const _m0 = item.value(propertyName);
+  const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => new Error('PropertyNotFound', { _0: propertyName }))()));
+  if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+  const propertyValue = _r1.unwrap();
   try {
     const path = [...subPath].map((s) => s.asRef());
-    return propertyValue.extractAtPath(path) != null ? (ExprOutput.Value)(propertyValue.extractAtPath(path)!) : null != null ? Result.Ok(propertyValue.extractAtPath(path) != null ? (ExprOutput.Value)(propertyValue.extractAtPath(path)!) : null!) : Result.Err((() => {
+    const _m2 = propertyValue.extractAtPath(path);
+    const _m3 = (_m2 != null ? (ExprOutput.Value)(_m2!) : null);
+    return (_m3 != null ? Result.Ok(_m3!) : Result.Err((() => {
       return new Error('PropertyNotFound', { _0: `Sub-path '${[...subPath].map((s) => s.asRef()).join('.')}' not found in property '${propertyName}'` });
-    })());
+    })()));
   } finally {
     propertyValue.drop();
   }
@@ -302,26 +308,49 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const rightVal = _r1.unwrap();
         try {
-          const _m19 = (() => {
+          const _m28 = (() => {
             return operator.match<any>({
-              Equal: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.equals(b)))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
-              NotEqual: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => !a.equals(b)))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
-              GreaterThan: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) > 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
-              GreaterThanOrEqual: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) >= 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
-              LessThan: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) < 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
-              LessThanOrEqual: () => leftVal.asValue().zip(rightVal.asValue()) != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) <= 0))(leftVal.asValue().zip(rightVal.asValue())!) : null ?? false,
+              Equal: () => {
+                const _m2 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m2 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.equals(b)))(_m2!) : null) ?? false;
+              },
+              NotEqual: () => {
+                const _m5 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m5 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => !a.equals(b)))(_m5!) : null) ?? false;
+              },
+              GreaterThan: () => {
+                const _m8 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m8 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) > 0))(_m8!) : null) ?? false;
+              },
+              GreaterThanOrEqual: () => {
+                const _m11 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m11 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) >= 0))(_m11!) : null) ?? false;
+              },
+              LessThan: () => {
+                const _m14 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m14 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) < 0))(_m14!) : null) ?? false;
+              },
+              LessThanOrEqual: () => {
+                const _m17 = leftVal.asValue().zip(rightVal.asValue());
+                return (_m17 != null ? (([l, r]) => compareValuesWithCast(l, r, (a, b) => a.compareTo(b) <= 0))(_m17!) : null) ?? false;
+              },
               In: () => {
-                const _r14 = leftVal.asValue() != null ? Result.Ok(leftVal.asValue()!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected single value for IN left operand' }))());
-                if (_r14.isErr()) return { $jump: 'return', $value: Result.Err(_r14.unwrapErr()) };
-                const value = _r14.unwrap();
-                const _r15 = rightVal.asList() != null ? Result.Ok(rightVal.asList()!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected list for IN right operand' }))());
-                if (_r15.isErr()) return { $jump: 'return', $value: Result.Err(_r15.unwrapErr()) };
-                const list = _r15.unwrap();
-                const _t16 = [...list];
+                const _m20 = leftVal.asValue();
+                const _r21 = (_m20 != null ? Result.Ok(_m20!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected single value for IN left operand' }))()));
+                if (_r21.isErr()) return { $jump: 'return', $value: Result.Err(_r21.unwrapErr()) };
+                const value = _r21.unwrap();
+                const _m22 = rightVal.asList();
+                const _r23 = (_m22 != null ? Result.Ok(_m22!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected list for IN right operand' }))()));
+                if (_r23.isErr()) return { $jump: 'return', $value: Result.Err(_r23.unwrapErr()) };
+                const list = _r23.unwrap();
+                const _t24 = [...list];
                 try {
-                  return _t16.some((item) => item.asValue() != null ? ((v) => compareValuesWithCast(value, v, (a, b) => a.equals(b)))(item.asValue()!) : null ?? false);
+                  return _t24.some((item) => {
+                    const _m25 = item.asValue();
+                    return (_m25 != null ? ((v) => compareValuesWithCast(value, v, (a, b) => a.equals(b)))(_m25!) : null) ?? false;
+                  });
                 } finally {
-                  dropOwned(_t16);
+                  dropOwned(_t24);
                 }
               },
               Between: () => {
@@ -329,8 +358,8 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
               },
             });
           })();
-          if ((_m19 as any)?.$jump === 'return') return (_m19 as any).$value;
-          return Result.Ok((_m19 as any));
+          if ((_m28 as any)?.$jump === 'return') return (_m28 as any).$value;
+          return Result.Ok((_m28 as any));
         } finally {
           rightVal.drop();
         }
@@ -341,36 +370,36 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
     And: (v) => {
       const left = v._0;
       const right = v._1;
-      const _r20 = evaluatePredicate(item, left);
-      if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
-      const _r21 = evaluatePredicate(item, right);
-      if (_r21.isErr()) return Result.Err(_r21.unwrapErr());
-      return Result.Ok(_r20.unwrap() && _r21.unwrap());
+      const _r29 = evaluatePredicate(item, left);
+      if (_r29.isErr()) return Result.Err(_r29.unwrapErr());
+      const _r30 = evaluatePredicate(item, right);
+      if (_r30.isErr()) return Result.Err(_r30.unwrapErr());
+      return Result.Ok(_r29.unwrap() && _r30.unwrap());
     },
     Or: (v) => {
       const left = v._0;
       const right = v._1;
-      const _r22 = evaluatePredicate(item, left);
-      if (_r22.isErr()) return Result.Err(_r22.unwrapErr());
-      const _r23 = evaluatePredicate(item, right);
-      if (_r23.isErr()) return Result.Err(_r23.unwrapErr());
-      return Result.Ok(_r22.unwrap() || _r23.unwrap());
+      const _r31 = evaluatePredicate(item, left);
+      if (_r31.isErr()) return Result.Err(_r31.unwrapErr());
+      const _r32 = evaluatePredicate(item, right);
+      if (_r32.isErr()) return Result.Err(_r32.unwrapErr());
+      return Result.Ok(_r31.unwrap() || _r32.unwrap());
     },
     Not: (v) => {
       const pred = v._0;
-      const _r24 = evaluatePredicate(item, pred);
-      if (_r24.isErr()) return Result.Err(_r24.unwrapErr());
-      return Result.Ok(!_r24.unwrap());
+      const _r33 = evaluatePredicate(item, pred);
+      if (_r33.isErr()) return Result.Err(_r33.unwrapErr());
+      return Result.Ok(!_r33.unwrap());
     },
     IsNull: (v) => {
       const expr = v._0;
-      const _r25 = evaluateExpr(item, expr);
-      if (_r25.isErr()) return Result.Err(_r25.unwrapErr());
-      const _t26 = _r25.unwrap();
+      const _r34 = evaluateExpr(item, expr);
+      if (_r34.isErr()) return Result.Err(_r34.unwrapErr());
+      const _t35 = _r34.unwrap();
       try {
-        return Result.Ok(_t26.isNone());
+        return Result.Ok(_t35.isNone());
       } finally {
-        _t26.drop();
+        _t35.drop();
       }
     },
     True: () => Result.Ok(true),

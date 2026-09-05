@@ -124,7 +124,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
     },
     Bool: (v) => {
       const b = v._0;
-      return [b] as any;
+      return [Number(b)] as any;
     },
     EntityId: (v) => {
       const ulid = v._0;

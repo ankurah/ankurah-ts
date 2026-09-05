@@ -116,8 +116,17 @@ describe('type_resolver unit tests', () => {
           try {
             return right.intoMatch({
               Literal: (v) => {
-                const { _0: n } = v._0.value._0.value;
-                expect(n.asI64()).toEqual(9n);
+                if (v._0.is('Json') && (v._0.value._0.is('Number'))) {
+                  const { _0: n } = v._0.value._0.value;
+                  expect(n.asI64()).toEqual(9n);
+                } else {
+                  const other = new Expr('Literal', v);
+                  try {
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  } finally {
+                    other.drop();
+                  }
+                }
               },
               Path: (v) => {
                 const other = new Expr('Path', v);
@@ -185,8 +194,17 @@ describe('type_resolver unit tests', () => {
           try {
             return right.intoMatch({
               Literal: (v) => {
-                const { _0: s } = v._0.value;
-                expect(s).toEqual('test');
+                if (v._0.is('String')) {
+                  const { _0: s } = v._0.value;
+                  expect(s).toEqual('test');
+                } else {
+                  const other = new Expr('Literal', v);
+                  try {
+                    throw new Error(`Expected String literal, got ${other.debug()}`)
+                  } finally {
+                    other.drop();
+                  }
+                }
               },
               Path: (v) => {
                 const other = new Expr('Path', v);

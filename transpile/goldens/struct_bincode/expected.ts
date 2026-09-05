@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/struct_bincode/src/input.rs
-import { Struct, Result, JsonError, OwnershipFatal } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
@@ -76,7 +76,7 @@ export class Envelope extends Struct {
       const payload = _rpayload.unwrap();
       return Result.Ok(new Envelope(id, label, payload));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -123,7 +123,7 @@ export class Signature extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new Signature(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

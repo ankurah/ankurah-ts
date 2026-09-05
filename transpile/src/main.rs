@@ -462,14 +462,7 @@ fn batch_generate(
                     });
                 }
                 for entry in &loaded.files {
-                    for name in entry
-                        .file
-                        .structs
-                        .iter()
-                        .map(|s| s.name.clone())
-                        .chain(entry.file.enums.iter().map(|e| e.name.clone()))
-                        .chain(entry.file.traits.iter().map(|t| t.name.clone()))
-                    {
+                    for name in siblings::importable_names(&entry.file) {
                         // This crate's own declarations win: a name it declares
                         // is its own, whatever a sibling calls the same thing.
                         type_to_file

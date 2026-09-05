@@ -386,3 +386,62 @@ pub fn run_tries(crate_name: &str, src_rel: &str) -> Vec<TryRow> {
         })
         .collect()
 }
+
+/// Every crate in the port's scope, with the directory `batch` is pointed at.
+///
+/// The list comes from `transpile.toml` rather than from a table here, so a
+/// crate entering or leaving the port's scope moves the tests that walk it.
+/// Where each crate's sources sit comes from the crate's own `Cargo.toml`, the
+/// way the engine's sibling loader finds them.
+pub fn crates_in_scope() -> Vec<(String, PathBuf)> {
+    let config = transpile_dir().join("transpile.toml");
+    let text = std::fs::read_to_string(&config).unwrap_or_else(|e| panic!("cannot read {}: {e}", config.display()));
+    let table: toml::Table = text.parse().expect("transpile.toml is not valid TOML");
+    let crates = table
+        .get("crates")
+        .and_then(|v| v.as_table())
+        .unwrap_or_else(|| panic!("transpile.toml has no [crates] table"));
+
+    let manifests = manifests_under(&support_tree());
+    let mut out = Vec::new();
+    for (crate_name, package) in crates {
+        let package = package.as_str().unwrap_or_else(|| panic!("[crates] {crate_name} is not a string"));
+        let dir = manifests.get(crate_name).unwrap_or_else(|| {
+            panic!("no Cargo.toml under {} declares the package `{crate_name}`", support_tree().display())
+        });
+        let src = dir.join("src");
+        assert!(src.is_dir(), "`{crate_name}` has no src/ at {}", src.display());
+        out.push((package.to_string(), src));
+    }
+    out.sort();
+    out
+}
+
+/// Every Cargo package under the corpus, by name, and the directory it lives in.
+pub fn manifests_under(root: &Path) -> BTreeMap<String, PathBuf> {
+    let mut out = BTreeMap::new();
+    walk_manifests(root, &mut out);
+    out
+}
+
+fn walk_manifests(dir: &Path, out: &mut BTreeMap<String, PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        if path.is_dir() {
+            // `target/` holds thousands of vendored manifests and no corpus crate.
+            if name == "target" || name == "node_modules" || name.starts_with('.') {
+                continue;
+            }
+            walk_manifests(&path, out);
+        } else if name == "Cargo.toml" {
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(manifest) = text.parse::<toml::Table>() else { continue };
+            if let Some(package) = manifest.get("package").and_then(|v| v.as_table()).and_then(|t| t.get("name")).and_then(|v| v.as_str()) {
+                out.insert(package.to_string(), path.parent().unwrap().to_path_buf());
+            }
+        }
+    }
+}
+

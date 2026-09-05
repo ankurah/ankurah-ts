@@ -111,7 +111,7 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
   (() => {
     let entries = inner.value.entries.write();
     try {
-      { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
+      { for (const [_k, _v] of entries.value) { if (!(((_, entry) => !entry.markedForRemoval)(_k, _v))) entries.value.delete(_k); } };
     } finally {
       entries.drop();
     }

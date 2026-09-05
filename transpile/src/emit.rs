@@ -449,8 +449,29 @@ fn emit_trait_methods(
             if *trait_name == "From" && type_args.iter().any(|a| a == "never" || a == "Infallible") {
                 continue;
             }
-            let ret_override = trait_method_mapping(trait_name, &method.name).and_then(|m| m.1);
-            let ts_name = trait_method_name(trait_name, type_args, method, self_type, self_id);
+            let mut ret_override = trait_method_mapping(trait_name, &method.name).and_then(|m| m.1);
+            let mut ts_name = trait_method_name(trait_name, type_args, method, self_type, self_id);
+            // R9's other half. `Ord::cmp` and `PartialOrd::partial_cmp` are both
+            // `compareTo` here. Where the partial one FORWARDS to the total one
+            // they are the same method and the forwarding body is dropped, just
+            // below. Where it does NOT forward they are two answers — Rust lets
+            // a partial order disagree with a total one, and a `partial_cmp`
+            // written out is a body of its own — and one name cannot hold both:
+            // whichever the source wrote first took it. `cmp` keeps `compareTo`,
+            // which is what the runtime's sorts and the derived `equals` call;
+            // the partial one is written as `partialCompareTo`.
+            if *trait_name == "PartialOrd"
+                && method.name == "partial_cmp"
+                && !forwards_to_itself(method, &ts_name)
+                && writes_a_total_order(trait_fns)
+            {
+                ts_name = "partialCompareTo".to_string();
+                // `compareTo` answers a number because a total order always
+                // has one. A partial order does not: `partial_cmp` answers
+                // `Option<Ordering>`, and the port writes that as `number |
+                // null`, which is what the body already returns.
+                ret_override = None;
+            }
             // `Drop` declares `onDrop` protected, so the override has to say so.
             let modifiers = if *trait_name == "Drop" { "protected override " } else { "" };
             let signature = format!(
@@ -470,10 +491,15 @@ fn emit_trait_methods(
             // not written; the one with something in it keeps the name.
             if forwards_to_itself(method, &ts_name) {
                 crate::diag::pending::park(
+                    // The body's own span where the extraction still carries it,
+                    // and the return type's otherwise — a body already
+                    // translated has had its AST taken, and the fallback then
+                    // put every one of these reports at `<file>:1:1`.
                     method
                         .body_ast
                         .as_ref()
                         .map(syn::spanned::Spanned::span)
+                        .or_else(|| method.rust_return.as_ref().map(syn::spanned::Spanned::span))
                         .unwrap_or_else(proc_macro2::Span::call_site),
                     format!(
                         "`{}::{}` for `{}` is written as a call to `{}`, which is the name it \
@@ -515,6 +541,58 @@ fn emit_trait_methods(
                 };
                 out.push('\n');
                 emit_method_with(out, &m, self_type, modifiers);
+            } else if method.body_ts.as_deref().is_some_and(|b| b.contains("unsupported(")) {
+                // R12: the body carries a HOLE — the engine's own refusal to
+                // write a shape it has no lowering for. Dropping the method
+                // drops the refusal with it, and a refusal that is not in the
+                // emitted file is not a refusal: `Property::from_value` for
+                // `Json` collided with `From<serde_json::Value>` on `fromValue`,
+                // and `Json.fromValue` answered `new Json(value)` where Rust
+                // answers `Err(PropertyError::Missing)`. So the drop is refused
+                // and the method is written under the trait that declares it,
+                // which is the same disambiguation the free-function path
+                // already uses.
+                let qualified = format!("{}_{}", trait_name, ts_name);
+                crate::diag::pending::park(
+                    method
+                        .rust_return
+                        .as_ref()
+                        .map(syn::spanned::Spanned::span)
+                        .or_else(|| method.body_ast.as_ref().map(syn::spanned::Spanned::span))
+                        .unwrap_or_else(proc_macro2::Span::call_site),
+                    format!(
+                        "`{}` for `{}` emits a method called `{}`, and something on this class \
+                         already has that name; this one carries a hole, which is the engine \
+                         refusing a shape it cannot write, so it is emitted as `{}` rather than \
+                         dropped — a call written as `{}` still goes to the other",
+                        trait_name, self_type, ts_name, qualified, ts_name
+                    ),
+                );
+                if emitted.insert(qualified.clone()) {
+                    let m = FnInfo {
+                        name: method.name.clone(),
+                        ts_name: qualified,
+                        is_pub: method.is_pub,
+                        vis: method.vis,
+                        is_async: method.is_async,
+                        is_static: method.is_static,
+                        self_kind: method.self_kind,
+                        self_receiver: method.self_receiver.clone(),
+                        has_default_body: method.has_default_body,
+                        params: method.params.clone(),
+                        return_type: ret_override.map(|s| s.to_string())
+                            .unwrap_or_else(|| method.return_type.clone()),
+                        rust_return: method.rust_return.clone(),
+                        generics: with_impl_params(&method.generics, impl_params, method, self_type),
+                        type_params: method.type_params.clone(),
+                        syn_generics: method.syn_generics.clone(),
+                        is_test: false,
+                        body_ast: None,
+                        body_ts: method.body_ts.clone(),
+                    };
+                    out.push('\n');
+                    emit_method_with(out, &m, self_type, modifiers);
+                }
             } else if signatures.get(&ts_name) != Some(&signature)
                 || !matches!(trait_name, &"From" | &"TryFrom")
             {
@@ -567,6 +645,11 @@ fn emit_derive_methods(
     equality_of: Option<String>,
 ) {
     let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
+    // The type's own parameters. A field written as one of these is a field
+    // whose comparison and whose copy emission cannot fix — `T` is a number in
+    // `Holder<u32>` and a class in `Holder<Item>` — so those go to the runtime
+    // helpers that decide by the value's own surface.
+    let params = declared_parameters(generics);
     let field_names: Vec<&str> = fields.iter()
         .filter_map(|f| f.name.as_deref())
         .collect();
@@ -596,9 +679,9 @@ fn emit_derive_methods(
                     if is_nullable {
                         out.push_str(&format!("    if (this.{} === null && other.{} === null) {{ /* both null, ok */ }}\n", n, n));
                         out.push_str(&format!("    else if (this.{} === null || other.{} === null) return false;\n", n, n));
-                        out.push_str(&format!("    else {}\n", emit_field_eq(n, base_ty)));
+                        out.push_str(&format!("    else {}\n", emit_field_eq(n, base_ty, &params)));
                     } else {
-                        out.push_str(&format!("    {}\n", emit_field_eq(n, base_ty)));
+                        out.push_str(&format!("    {}\n", emit_field_eq(n, base_ty, &params)));
                     }
                 }
                 out.push_str("    return true;\n  }\n");
@@ -646,68 +729,7 @@ fn emit_derive_methods(
                             .filter_map(|f| {
                                 let n = f.name.as_deref()?;
                                 let ty = f.ts_ty(reg);
-                                let base_ty = ty.trim_end_matches(" | null");
-                                Some(if is_primitive_ts_type(base_ty) {
-                                    format!("this.{}", n)
-                                } else if base_ty == "Uint8Array" {
-                                    if ty.ends_with(" | null") {
-                                        format!("this.{} != null ? new Uint8Array(this.{}) : null", n, n)
-                                    } else {
-                                        format!("new Uint8Array(this.{})", n)
-                                    }
-                                } else if base_ty.ends_with("[]") {
-                                    // Array — map clone
-                                    let inner = &base_ty[..base_ty.len()-2];
-                                    let clone_expr = if is_primitive_ts_type(inner) {
-                                        format!("[...this.{}]", n)
-                                    } else if inner.starts_with('[') && inner.contains(',') {
-                                        // Array of tuples — clone each tuple element
-                                        let tuple_inner = &inner[1..inner.len()-1];
-                                        let parts: Vec<&str> = tuple_inner.split(", ").collect();
-                                        let clones: Vec<String> = parts.iter().enumerate()
-                                            .map(|(i, ty)| {
-                                                if is_primitive_ts_type(ty.trim()) {
-                                                    format!("e[{}]", i)
-                                                } else {
-                                                    format!("e[{}].clone()", i)
-                                                }
-                                            })
-                                            .collect();
-                                        format!("this.{}.map(e => [{}] as {})", n, clones.join(", "), inner)
-                                    } else {
-                                        format!("this.{}.map(e => e.clone())", n)
-                                    };
-                                    if ty.ends_with(" | null") {
-                                        format!("this.{} != null ? {} : null", n, clone_expr)
-                                    } else {
-                                        clone_expr
-                                    }
-                                } else if base_ty.starts_with('[') && base_ty.ends_with(']') && base_ty.contains(',') {
-                                    // Tuple — clone each element
-                                    let inner = &base_ty[1..base_ty.len()-1];
-                                    let parts: Vec<&str> = inner.split(", ").collect();
-                                    let clones: Vec<String> = parts.iter().enumerate()
-                                        .map(|(i, ty)| {
-                                            if is_primitive_ts_type(ty.trim()) {
-                                                format!("this.{}[{}]", n, i)
-                                            } else {
-                                                format!("this.{}[{}].clone()", n, i)
-                                            }
-                                        })
-                                        .collect();
-                                    format!("[{}] as {}", clones.join(", "), base_ty)
-                                } else if base_ty.starts_with("HashMap<") || base_ty.starts_with("HashSet<") {
-                                    // The runtime container's own clone, which
-                                    // walks its keys and values by their Clone
-                                    // shape. `new Map(...)` built a JavaScript
-                                    // `Map` — identity-keyed, and shallow, so
-                                    // both maps then owned one set of values.
-                                    format!("this.{}.clone()", n)
-                                } else if ty.ends_with(" | null") {
-                                    format!("this.{}?.clone() ?? null", n)
-                                } else {
-                                    format!("this.{}.clone()", n)
-                                })
+                                Some(crate::derives::cloning::clone_within(&format!("this.{}", n), &ty, &params))
                             })
                             .collect();
                         out.push_str(&format!("\n  clone(): {} {{\n    return new {}({});\n  }}\n",
@@ -762,85 +784,31 @@ fn emit_derive_methods(
     }
 }
 
-fn is_primitive_ts_type(ty: &str) -> bool {
+pub(crate) fn is_primitive_ts_type(ty: &str) -> bool {
     matches!(ty, "string" | "boolean" | "number" | "bigint")
 }
 
-/// Generate an equality check expression for a field
-/// One field compared for equality, by the two places it is read from.
-///
-/// `mine` and `theirs` are written expressions, not names, so the same rules
-/// serve a struct's `this.x`/`other.x` and an enum payload's
-/// `(this.value as any)._0`.
-pub(crate) fn field_eq_at(mine: &str, theirs: &str, ty: &str) -> String {
-    if is_primitive_ts_type(ty) {
-        format!("if ({} !== {}) return false;", mine, theirs)
-    } else if ty == "Uint8Array" {
-        format!(
-            "{{ if ({m}.length !== {o}.length) return false; for (let i = 0; i < {m}.length; i++) {{ if ({m}[i] !== {o}[i]) return false; }} }}",
-            m = mine, o = theirs
-        )
-    } else if ty.starts_with("HashMap<") {
-        // Size, keys AND VALUES. Comparing size and keys alone answered `true`
-        // for two maps that agree about which keys they hold and about nothing
-        // else — proto's `data.ts` compared two `HashMap<PropertyName, Value>`
-        // that way, and a derived `equals` that ignores half the map is a wrong
-        // answer wherever the type is a HashMap key.
-        let value_ty = map_value_ty(ty);
-        let compare = if is_primitive_ts_type(&value_ty) {
-            "if (_w !== v) return false;".to_string()
-        } else {
-            format!("if (!{}) return false;", eq_call("v", "_w", &value_ty))
-        };
-        format!(
-            "{{ if ({m}.size !== {o}.size) return false; for (const [k, v] of {m}) {{ if (!{o}.has(k)) return false; const _w = {o}.get(k)!; {c} }} }}",
-            m = mine, o = theirs, c = compare
-        )
-    } else if ty.ends_with("[]") {
-        let inner = &ty[..ty.len() - 2];
-        let compare = if is_primitive_ts_type(inner) {
-            format!("if ({}[i] !== {}[i]) return false;", mine, theirs)
-        } else {
-            format!("if (!{}) return false;", eq_call(&format!("{}[i]", mine), &format!("{}[i]", theirs), inner))
-        };
-        format!(
-            "{{ if ({m}.length !== {o}.length) return false; for (let i = 0; i < {m}.length; i++) {{ {c} }} }}",
-            m = mine, o = theirs, c = compare
-        )
-    } else {
-        format!("if (!{}) return false;", eq_call(mine, theirs, ty))
-    }
+fn emit_field_eq(name: &str, ty: &str, params: &[String]) -> String {
+    crate::derives::equality::field_eq_within(
+        &format!("this.{}", name),
+        &format!("other.{}", name),
+        ty,
+        params,
+    )
 }
 
-/// Two values of one type compared. A `Uint8Array` and an array have no
-/// `equals`, so a nested one is compared elementwise where it stands.
-fn eq_call(mine: &str, theirs: &str, ty: &str) -> String {
-    if is_primitive_ts_type(ty) {
-        format!("{} === {}", mine, theirs)
-    } else {
-        format!("{}.equals({})", mine, theirs)
-    }
-}
-
-/// `V` of a written `HashMap<K, V>`, at the top level of the argument list.
-fn map_value_ty(ty: &str) -> String {
-    let Some(inner) = ty.strip_prefix("HashMap<").and_then(|r| r.strip_suffix('>')) else {
-        return "unknown".to_string();
+/// The parameter names a written generic list declares: `<T extends Clone, E>`
+/// is `T` and `E`. Read from the written list rather than from the declaration,
+/// because that is what the field types were written against.
+fn declared_parameters(generics: &str) -> Vec<String> {
+    let Some(inner) = generics.trim().strip_prefix('<').and_then(|g| g.strip_suffix('>')) else {
+        return Vec::new();
     };
-    let mut depth = 0usize;
-    for (at, ch) in inner.char_indices() {
-        match ch {
-            '<' | '(' | '[' => depth += 1,
-            '>' | ')' | ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => return inner[at + 1..].trim().to_string(),
-            _ => {}
-        }
-    }
-    "unknown".to_string()
-}
-
-fn emit_field_eq(name: &str, ty: &str) -> String {
-    field_eq_at(&format!("this.{}", name), &format!("other.{}", name), ty)
+    crate::derives::top_level_parts(inner)
+        .into_iter()
+        .filter_map(|part| part.split_whitespace().next().map(str::to_string))
+        .filter(|name| !name.is_empty())
+        .collect()
 }
 
 fn emit_struct_bincode(
@@ -1420,6 +1388,12 @@ pub(crate) fn impl_method_name(
 /// forwarding one reads `return this.compareTo(other)` — a method that calls
 /// itself and never returns. The question is asked of the TRANSLATED body,
 /// because that is where the two names have become one.
+/// Does this type write `Ord::cmp` as well, which is the method that keeps
+/// `compareTo`?
+fn writes_a_total_order(trait_fns: &[(&str, &[String], &FnInfo, &[String])]) -> bool {
+    trait_fns.iter().any(|(name, _, method, _)| *name == "Ord" && method.name == "cmp")
+}
+
 fn forwards_to_itself(method: &FnInfo, ts_name: &str) -> bool {
     let Some(body) = method.body_ts.as_deref() else { return false };
     let statements: Vec<&str> = body.lines().map(str::trim).filter(|l| !l.is_empty()).collect();

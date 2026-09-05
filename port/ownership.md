@@ -211,6 +211,13 @@ emits. Anything else is refused by name — a plain throw, because the insert di
 not happen and nothing is corrupted — rather than falling back to identity,
 which is the bug these containers exist to prevent.
 
+A sequence's bucket label carries each part's LENGTH, so no separator can be
+forged out of the parts themselves: joining with a comma made `['a', 'b']` and
+`['a,s:b']` one label, and a `Vec<String>` field of a derived key then collided
+with a single string that happened to spell the join. The derived `hash()` the
+emitter writes length-prefixes its fields for the same reason; this is that rule
+for the sequence a tuple and a `Vec` are written as.
+
 The map owns its keys and its values, and dropping it releases both. Rust's
 `insert(k, v)` keeps the key it already has and drops the one it was handed, so
 `insert` returns the displaced *value* and releases the surplus *key*; `set(k, v)`
@@ -301,6 +308,17 @@ emitted code can tell an ownership bug from a Rust error value. A `catch` block
 that handles a Rust error type must test for `OwnershipFatal` and rethrow it
 unconditionally — the runtime has already found something Rust would not have
 compiled, and nothing after it can be trusted.
+
+**And it must rethrow an `UnsupportedShape` the same way.** That is what an R12
+hole throws, and it says the ENGINE has no lowering for a Rust shape — not that
+the data was bad. A `catch` that answers `Err` for one turns a loud refusal into
+a silent wrong answer, which is the trade R12 exists to refuse. So the first
+line inside every generated `catch` is `if (e instanceof OwnershipFatal || e
+instanceof UnsupportedShape) throw e;`, and
+`transpile/tests/parse_gate.rs::no_emitted_catch_swallows_an_ownership_fatal`
+reads the emitted text of all ten crates to hold it: the rule is a property of
+the OUTPUT, so a `catch` written by some future emitter is caught the day it
+appears.
 
 **`setOnFatal(handler)`** replaces what a fatal does, for a host that has to stop
 differently — killing a worker, failing one request. The default throws an

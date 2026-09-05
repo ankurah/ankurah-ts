@@ -56,6 +56,26 @@ export class Lines extends Struct {
   }
 }
 
+export class Size extends Struct {
+  readonly _0: number;
+
+  constructor(_0: number) {
+    super();
+    this._0 = _0;
+  }
+
+  toString(): string {
+    let _result = '';
+    _result += 'Size(';
+    if (this._0 > 100) {
+      _result += 'big)';
+      return _result;
+    }
+    _result += `${this._0})`;
+    return _result;
+  }
+}
+
 export function greeting(peer: Peer): string {
   return `hello ${peer.name}`;
 }

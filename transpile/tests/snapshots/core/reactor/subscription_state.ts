@@ -204,19 +204,20 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         try {
           const state = stateGuard.value;
           try {
-            const _r1 = state.queries.get(queryId) != null ? Result.Ok(state.queries.get(queryId)!) : Result.Err((() => AnyhowError.msg('Query not found for update'))());
-            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-            const queryState = _r1.unwrap();
-            const isFirstUpdate = queryState.selection == null;
+            const _m1 = state.queries.get(queryId);
+            const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg('Query not found for update'))()));
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            const queryState = _r2.unwrap();
+            const isFirstUpdate = (queryState.selection == null);
             const oldSelection = queryState.selection.replace(selection.clone());
             try {
-              const _r2 = selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null.transpose();
-              if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-              queryState.resultset.orderBy(_r2.unwrap());
-              if (isFirstUpdate || oldSelection != null ? ((s) => s.limit)(oldSelection!) : null !== selection.limit) {
-                queryState.resultset.limit(selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null);
+              const _r3 = (selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null).transpose();
+              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              queryState.resultset.orderBy(_r3.unwrap());
+              if (isFirstUpdate || (oldSelection != null ? ((s) => s.limit)(oldSelection!) : null) !== selection.limit) {
+                queryState.resultset.limit((selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null));
               }
-              let _moved3 = false;
+              let _moved4 = false;
               let rwResultset = queryState.resultset.write();
               try {
                 const newlyAdded = [];
@@ -251,7 +252,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 queryState.paused = false;
                 queryState.version = version;
                 rwResultset.setLoaded(true);
-                _moved3 = true;
+                _moved4 = true;
                 rwResultset.drop();
                 _moved0 = true;
                 stateGuard.drop();
@@ -269,7 +270,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                   }
                 })();
                 if (shouldUpdateWatchers) {
-                  const oldPred = oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null;
+                  const oldPred = (oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null);
                   this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
                 }
                 if (!(newlyAdded.length === 0)) {
@@ -285,7 +286,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 }
                 return Result.Ok(newlyAdded);
               } finally {
-                if (!_moved3) rwResultset.drop();
+                if (!_moved4) rwResultset.drop();
               }
             } finally {
               dropOwned(oldSelection);
@@ -460,7 +461,8 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     const gapData = (() => {
       const state = this.deref().state.lock();
       try {
-        return state.value.queries.get(queryId) != null ? ((queryState) => this.extractGapData(queryId, queryState))(state.value.queries.get(queryId)!) : null;
+        const _m0 = state.value.queries.get(queryId);
+        return (_m0 != null ? ((queryState) => this.extractGapData(queryId, queryState))(_m0!) : null);
       } finally {
         state.drop();
       }
@@ -482,7 +484,8 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     const gapData = (() => {
       const state = this.deref().state.lock();
       try {
-        return state.value.queries.get(queryId) != null ? ((queryState) => this.extractGapData(queryId, queryState))(state.value.queries.get(queryId)!) : null;
+        const _m0 = state.value.queries.get(queryId);
+        return (_m0 != null ? ((queryState) => this.extractGapData(queryId, queryState))(_m0!) : null);
       } finally {
         state.drop();
       }

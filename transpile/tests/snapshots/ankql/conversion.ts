@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/conversion.rs
-import { Result, dropUnbound, unsupported } from '@ankurah/base';
+import { Result, dropUnbound } from '@ankurah/base';
 import { Expr, Literal, Predicate, Selection } from './ast';
 import { ParseError } from './error';
 import { parseSelection } from './parser';
@@ -26,7 +26,19 @@ export function Predicate_tryFromExpr(value: Expr): Result<Predicate, ParseError
       return Result.Ok(p);
     },
     Placeholder: () => Result.Ok(new Predicate('Placeholder', {})),
-    Literal: () => unsupported('`Literal` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+    Literal: (v) => {
+      if (v._0.is('Bool') && (v._0.value._0 === true)) {
+        return Result.Ok(new Predicate('True', {}));
+      } else if (v._0.is('Bool') && (v._0.value._0 === false)) {
+        return Result.Ok(new Predicate('False', {}));
+      } else {
+        try {
+          return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));
+        } finally {
+          dropUnbound(v, []);
+        }
+      }
+    },
     Path: (v) => {
       try {
         return Result.Err(new ParseError('InvalidPredicate', { _0: 'Expression is not a predicate' }));

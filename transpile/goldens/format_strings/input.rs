@@ -93,3 +93,21 @@ impl std::fmt::Display for Lines {
 pub fn absent(a: u32) -> String {
     format!("{0} {1}", a)
 }
+
+/// Every `write!` inside a `Display` APPENDS to what the formatter has composed,
+/// in all the forms a source writes it: with and without `?`, with and without a
+/// semicolon — and as `return write!(..)`, which appends and THEN answers.
+/// Read as an ordinary `return`, that last one made the string it wrote the
+/// whole answer and discarded everything written before it: `Size(200)` printed
+/// as `big)` where Rust prints `Size(big)`.
+pub struct Size(pub u32);
+
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Size(")?;
+        if self.0 > 100 {
+            return write!(f, "big)");
+        }
+        write!(f, "{})", self.0)
+    }
+}

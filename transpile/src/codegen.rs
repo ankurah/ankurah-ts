@@ -197,7 +197,7 @@ fn merge_named_imports(
     let mut order: Vec<String> = Vec::new();
     let mut body = String::new();
     let mut marker: Option<usize> = None;
-    let mut add = |names: &mut std::collections::BTreeMap<String, Vec<String>>, module: &str, name: String| {
+    let add = |names: &mut std::collections::BTreeMap<String, Vec<String>>, module: &str, name: String| {
         let list = names.entry(module.to_string()).or_default();
         if !list.contains(&name) {
             list.push(name);
@@ -325,7 +325,7 @@ fn writes_through(c: &crate::types::ConstInfo) -> bool {
     name.starts_with("Atomic") || name == "Cell"
 }
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 74] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 81] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -336,8 +336,19 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 74] = [
     // What an emitted `fromJson` answers with: serde_json::Error's stand-in,
     // the lossless reader and writer, and the two combinators a list or a map
     // reads through. `dropOwned` releases what a failed decode had already
-    // built, and `OwnershipFatal` is what its `catch` has to rethrow.
+    // built, and `OwnershipFatal` and `UnsupportedShape` are the two its
+    // `catch` has to rethrow — one is the ownership runtime saying the program
+    // is broken, the other is an R12 hole saying the ENGINE is.
     "JsonError", "serde_json", "jsonAll", "jsonMap", "dropOwned", "OwnershipFatal",
+    "UnsupportedShape",
+    // What a derived `equals` and a derived `clone` ask of a field written as
+    // the type's own PARAMETER: `T` is a number in one instantiation and a class
+    // in another, so the decision is the value's own surface at run time.
+    "derivedEquals", "derivedClone",
+    // The four float methods whose JavaScript spelling answers something else:
+    // half away from zero rather than half up, a signum with no zero, and a
+    // `NaN` operand ignored rather than spreading.
+    "floatRound", "floatSignum", "floatMin", "floatMax",
     // The logger every `tracing::` macro writes a call on.
     "tracing",
     // What a consuming match arm releases the payload it took no name for
@@ -1361,13 +1372,16 @@ pub fn generate_test_ts_with_imports(
                 .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let call = format!("({}() => {{\n{}\n    }})()", async_kw, inner);
+            // An ASYNC body answers a promise OF the `Result`, and `await`
+            // binds looser than the call that follows it: `await f().unwrap()`
+            // is `await (f().unwrap())`, so `unwrap` was asked of the promise.
+            // A promise has none, so every async test that answered a `Result`
+            // threw — on `Ok` as well as on `Err`.
+            let answer = if f.is_async { format!("(await {})", call) } else { call };
             out.push_str(&format!(
-                "  test('{}', {}() => {{\n    {}({}() => {{\n{}\n    }})().unwrap();\n  }});\n\n",
-                test_name,
-                async_kw,
-                if f.is_async { "await " } else { "" },
-                async_kw,
-                inner
+                "  test('{}', {}() => {{\n    {}.unwrap();\n  }});\n\n",
+                test_name, async_kw, answer
             ));
             continue;
         }
@@ -1582,6 +1596,36 @@ mod tests {
         assert!(answering.contains("})().unwrap();"), "{}", answering);
         let plain = ts.split("test('answers_nothing'").nth(1).expect("the other test is emitted");
         assert!(!plain.contains("})().unwrap();"), "a test that answers nothing is left alone:\n{}", plain);
+    }
+
+    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 4): the test above covers only
+    /// a SYNC test, and the async form was the one that was wrong. `await` binds
+    /// looser than the call that follows it, so `await f().unwrap()` is `await
+    /// (f().unwrap())` — `unwrap` asked of the promise, which has none, so every
+    /// async test answering a `Result` threw on `Ok` as well as on `Err`.
+    #[test]
+    fn an_async_test_unwraps_the_awaited_value_and_not_the_promise() {
+        let f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "pub async fn parse(s: &str) -> Result<usize, String> { Ok(s.len()) }\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+               use super::*;\n\
+               #[tokio::test]\n\
+               async fn answers_a_result() -> Result<(), String> {\n\
+                 let n = parse(\"ab\").await?;\n\
+                 assert_eq!(n, 2);\n\
+                 Ok(())\n\
+               }\n\
+             }",
+        )]);
+        let ts = generate_test_ts_with_imports(&f.reg, &f.files[0].file, "lib.rs", &HashMap::new(), "index")
+            .expect("the file declares tests");
+        assert!(ts.contains("(await (async () => {"), "{}", ts);
+        assert!(ts.contains("})()).unwrap();"), "{}", ts);
+        // and not the promise: `await (async () => { .. })().unwrap()` would
+        // read `unwrap` off the promise the arrow answers.
+        assert!(!ts.contains("})().unwrap();"), "{}", ts);
     }
 
     /// A crate is ONE TypeScript module, so several Rust modules reach the same

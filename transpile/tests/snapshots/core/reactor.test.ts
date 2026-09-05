@@ -38,7 +38,8 @@ class TestEntity extends Struct implements Filterable, AbstractEntity {
   value(field: string): Value | null {
     const _t0 = this.state.value.lock();
     try {
-      return _t0.value.get(field) != null ? (Value.String)(_t0.value.get(field)!) : null;
+      const _m1 = _t0.value.get(field);
+      return (_m1 != null ? (Value.String)(_m1!) : null);
     } finally {
       _t0.drop();
     }
@@ -72,7 +73,7 @@ class TestEvent extends Struct {
   equals(other: TestEvent): boolean {
     if (!this.id.equals(other.id)) return false;
     if (!this.collection.equals(other.collection)) return false;
-    { if (this.changes.size !== other.changes.size) return false; for (const [k, v] of this.changes) { if (!other.changes.has(k)) return false; const _w = other.changes.get(k)!; if (_w !== v) return false; } }
+    { if (this.changes.size !== other.changes.size) return false; for (const [k, v] of this.changes) { if (!other.changes.has(k)) return false; const _w = other.changes.get(k)!; if (v !== _w) return false; } }
     return true;
   }
 
@@ -168,7 +169,7 @@ describe('reactor unit tests', () => {
             const mockGapFetcher = Arc.new(MockGapFetcher.new());
             const mockNode = new MockNode([entity1.clone()]);
             try {
-              await reactor.addQueryAndNotify(rsub.id(), queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, []).unwrap();
+              (await reactor.addQueryAndNotify(rsub.id(), queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
               const _t0 = [new ReactorUpdate([new ReactorUpdateItem(entity1.clone(), [], [[queryId, new MembershipChange('Initial', {})]])])];
               try {
                 expect(check()).toEqual(_t0);

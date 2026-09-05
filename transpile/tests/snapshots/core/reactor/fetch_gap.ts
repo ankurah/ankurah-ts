@@ -25,64 +25,65 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
   }
 
   async fetchGap(collectionId: CollectionId, selection: Selection, lastEntity: Entity | null, gapSize: number): Promise<Result<Entity[], RetrievalError>> {
-    const _r0 = this.weakNode.upgrade() != null ? Result.Ok(this.weakNode.upgrade()!) : Result.Err((() => RetrievalError.storage(io.Error.other('Node has been dropped, cannot fill gap')))());
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-    let _moved1 = false;
-    const nodeInner = _r0.unwrap();
+    const _m0 = this.weakNode.upgrade();
+    const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => RetrievalError.storage(io.Error.other('Node has been dropped, cannot fill gap')))()));
+    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+    let _moved2 = false;
+    const nodeInner = _r1.unwrap();
     try {
-      _moved1 = true;
+      _moved2 = true;
       const node = new Node(nodeInner);
       const nodeContext = new NodeAndContext(node, this.cdata.clone());
-      const _m5 = (() => {
+      const _m6 = (() => {
         {
           const _v1 = lastEntity;
           if (_v1 != null) {
             const last = _v1;
-            const _m3 = (() => {
+            const _m4 = (() => {
               {
                 const _v = selection.orderBy;
                 if (_v != null) {
                   const orderBy = _v;
-                  const _r2 = buildContinuationPredicate(selection.predicate, orderBy, last).mapErr((e) => RetrievalError.storage(io.Error.other(e)));
-                  if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
-                  return _r2.unwrap();
+                  const _r3 = buildContinuationPredicate(selection.predicate, orderBy, last).mapErr((e) => RetrievalError.storage(io.Error.other(e)));
+                  if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
+                  return _r3.unwrap();
                 } else {
                 return selection.predicate.clone();
               }
               }
             })();
-            if ((_m3 as any)?.$jump === 'return') return _m3;
-            let _moved4 = false;
-            const gapPredicate = (_m3 as any);
+            if ((_m4 as any)?.$jump === 'return') return _m4;
+            let _moved5 = false;
+            const gapPredicate = (_m4 as any);
             try {
-              _moved4 = true;
+              _moved5 = true;
               return new Selection(gapPredicate, selection.orderBy.clone(), BigInt(gapSize));
             } finally {
-              if (!_moved4) gapPredicate.drop();
+              if (!_moved5) gapPredicate.drop();
             }
           } else {
           return new Selection(selection.predicate.clone(), selection.orderBy.clone(), BigInt(gapSize));
         }
         }
       })();
-      if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
-      let _moved6 = false;
-      const gapSelection = (_m5 as any);
+      if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
+      let _moved7 = false;
+      const gapSelection = (_m6 as any);
       try {
-        _moved6 = true;
-        let _moved7 = false;
+        _moved7 = true;
+        let _moved8 = false;
         const matchArgs = new MatchArgs(gapSelection, false);
         try {
-          _moved7 = true;
+          _moved8 = true;
           return await nodeContext.fetchEntities(collectionId, matchArgs);
         } finally {
-          if (!_moved7) matchArgs.drop();
+          if (!_moved8) matchArgs.drop();
         }
       } finally {
-        if (!_moved6) gapSelection.drop();
+        if (!_moved7) gapSelection.drop();
       }
     } finally {
-      if (!_moved1) nodeInner.drop();
+      if (!_moved2) nodeInner.drop();
     }
   }
 

@@ -2114,6 +2114,10 @@ import {
   wrappingAdd,
   wrappingMul,
   wrappingSub,
+  floatRound,
+  floatSignum,
+  floatMin,
+  floatMax,
 } from '../src/std/ops.ts';
 
 describe('checked arithmetic panics where the debug build does', () => {
@@ -2199,5 +2203,45 @@ describe('the four families say what should happen instead', () => {
   test('overflowing says whether it wrapped', () => {
     expect(overflowingAdd(1, 2, 'u8')).toEqual([3, false]);
     expect(overflowingAdd(255, 1, 'u8')).toEqual([0, true]);
+  });
+});
+
+// ── The float methods JavaScript answers differently ────────────────────
+//
+// Each of these reads like the Rust method of the same name and disagrees with
+// it about a value the corpus can hold, so each was a silent wrong answer where
+// the emitted code wrote `Math.round`, `Math.sign`, `Math.min` or `Math.max`.
+
+describe('the float methods answer what Rust answers', () => {
+  test('round is half away from zero, not half up', () => {
+    expect(floatRound(2.5)).toBe(3);
+    expect(floatRound(2.4)).toBe(2);
+    // The disagreement: `Math.round(-2.5)` is -2.
+    expect(floatRound(-2.5)).toBe(-3);
+    expect(floatRound(-2.4)).toBe(-2);
+    expect(floatRound(-0.5)).toBe(-1);
+    expect(floatRound(0)).toBe(0);
+  });
+
+  test('signum has no zero, because a float zero carries a sign', () => {
+    expect(floatSignum(3.5)).toBe(1);
+    expect(floatSignum(-3.5)).toBe(-1);
+    // The disagreement: `Math.sign(0)` is `0` and `Math.sign(-0)` is `-0`.
+    expect(floatSignum(0)).toBe(1);
+    expect(floatSignum(-0)).toBe(-1);
+    expect(Number.isNaN(floatSignum(NaN))).toBe(true);
+  });
+
+  test('min and max ignore a NaN operand instead of becoming one', () => {
+    expect(floatMin(1, 2)).toBe(1);
+    expect(floatMax(1, 2)).toBe(2);
+    // The disagreement: `Math.min(NaN, 2)` is NaN, and a running minimum over
+    // data with one missing value stayed NaN for the rest of the fold.
+    expect(floatMin(NaN, 2)).toBe(2);
+    expect(floatMin(2, NaN)).toBe(2);
+    expect(floatMax(NaN, 2)).toBe(2);
+    expect(floatMax(2, NaN)).toBe(2);
+    expect(Number.isNaN(floatMin(NaN, NaN))).toBe(true);
+    expect(Number.isNaN(floatMax(NaN, NaN))).toBe(true);
   });
 });

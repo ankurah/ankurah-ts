@@ -4,7 +4,7 @@
 // argument by position, by name, or — since Rust 2021 — by naming a variable.
 
 import { expect, test } from 'bun:test';
-import { Lines, Parts, Peer, absent, braces, captured, debugged, greeting, named, positional, refuse } from './input.ts';
+import { Lines, Parts, Peer, Size, absent, braces, captured, debugged, greeting, named, positional, refuse } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('{} renders the value itself', () => {
@@ -63,4 +63,15 @@ test('a placeholder with no argument is written as undefined and reported', () =
 
 test('nothing leaked and nothing was reported', async () => {
   await expectNoOwnershipReports();
+});
+
+test('a `return write!(..)` inside a Display appends and then answers', () => {
+  const small = new Size(7);
+  expect(small.toString()).toBe('Size(7)');
+  small.drop();
+  // The defective path: the early `return` used to make what it wrote the whole
+  // answer, so this was `big)` and the `Size(` before it was thrown away.
+  const big = new Size(200);
+  expect(big.toString()).toBe('Size(big)');
+  big.drop();
 });

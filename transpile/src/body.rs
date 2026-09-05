@@ -65,6 +65,24 @@ pub(crate) fn as_write_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
     }
 }
 
+/// The write a formatter statement performs, and whether the statement LEAVES
+/// the formatter having performed it.
+///
+/// `write!(f, "..")` appends and carries on; `return write!(f, "..")` appends
+/// and then answers what the formatter has composed. The second was read as an
+/// ordinary `return`, so the string it wrote became the whole answer and
+/// everything written before it was discarded: `Display for Size` answered
+/// `'big)'` where Rust answers `Size(big)`.
+pub(crate) fn formatter_write(expr: &syn::Expr) -> Option<(&syn::Macro, bool)> {
+    match expr {
+        syn::Expr::Return(ret) => {
+            let value = ret.expr.as_deref()?;
+            as_write_macro(value).map(|mac| (mac, true))
+        }
+        _ => as_write_macro(expr).map(|mac| (mac, false)),
+    }
+}
+
 /// Extract the Macro from an expression (for write! detection)
 fn extract_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
     if let syn::Expr::Macro(mac) = expr {
@@ -371,7 +389,7 @@ impl<'a> BodyTranslator<'a> {
                     self.expr(&call.receiver)
                 });
                 let receiver = self.hoist_receiver(call, receiver);
-                let receiver = parenthesise_literal(&call.receiver, receiver);
+                let receiver = parenthesise_receiver(&call.receiver, receiver);
                 let rust_method = call.method.to_string();
                 let ts_method = name_map::map_fn_name(&rust_method);
 
@@ -536,6 +554,16 @@ impl<'a> BodyTranslator<'a> {
                             written.extend(args.iter().cloned());
                             return format!("{}({})", name, written.join(", "));
                         }
+                        let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
+                        let bind_receiver =
+                            |written: &str| self.name_once(Some(&call.receiver), written);
+                        let bind_eager = |at: usize, written: &str| {
+                            self.name_eager(call_args.get(at), written)
+                        };
+                        let once = native_types::nullable::Once {
+                            bind_receiver: &bind_receiver,
+                            bind_eager: &bind_eager,
+                        };
                         let translated = native_types::translate_method_using(
                             tc_ref.registry,
                             found.receiver_type(),
@@ -543,6 +571,7 @@ impl<'a> BodyTranslator<'a> {
                             &rust_method,
                             &args,
                             !self.discards(call),
+                            &once,
                         );
                         drop(tc_ref);
                         return self.render_translation(

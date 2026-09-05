@@ -66,7 +66,7 @@ export class SqlBuilder extends Struct {
 
   build(): Result<[string, Value[]], SqlGenerationError> {
     try {
-      if (this.fields.length === 0 || this.tableName == null) {
+      if (this.fields.length === 0 || (this.tableName == null)) {
         return Result.Ok([this.sql, this.params]);
       }
       const fieldsClause = [...this.fields].map((field) => `"${field.replace('"', '""')}"`).join(', ');

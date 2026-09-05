@@ -45,8 +45,14 @@ impl BodyTranslator<'_> {
                     }
                     _ => (receiver_ty.clone(), receiver.to_string()),
                 };
+                let bind_receiver = |written: &str| self.name_once(Some(receiver_expr), written);
+                let bind_eager = |_: usize, written: &str| Some(written.to_string());
+                let once = native_types::nullable::Once {
+                    bind_receiver: &bind_receiver,
+                    bind_eager: &bind_eager,
+                };
                 let translated = native_types::translate_method_using(
-                    tc_ref.registry, &target, &receiver, rust_method, args, used,
+                    tc_ref.registry, &target, &receiver, rust_method, args, used, &once,
                 );
                 drop(tc_ref);
                 return self.render_translation(
@@ -102,4 +108,93 @@ impl BodyTranslator<'_> {
         )
     }
 
+}
+
+// ── Reading a value once ────────────────────────────────────────────
+//
+// An `Option` combinator is written as the test it is, and a test reads the
+// value it tests and then reads it AGAIN to hand it on. Rust reads it once. So
+// the receiver is given one name before the test, unless reading it twice is
+// the same as reading it once.
+
+impl BodyTranslator<'_> {
+    /// One name for a value a translation reads twice.
+    ///
+    /// A place comes back as it is: reading a name, a field of one or an index
+    /// into one reads the same storage again and runs nothing, which is the
+    /// same reason Rust may read it once. Anything else is named before the
+    /// statement it stands in, and both reads read that name.
+    pub(crate) fn name_once(&self, expr: Option<&syn::Expr>, written: &str) -> String {
+        match expr {
+            Some(expr) if reads_the_same_twice(expr) => written.to_string(),
+            // With no expression to ask about there is nothing to decide from,
+            // and a value read twice is the defect: the name is taken.
+            _ => self.hoist_name(written.to_string()),
+        }
+    }
+
+    /// A value Rust evaluates BEFORE it branches — `ok_or`'s error, `map_or`'s
+    /// default — where the port can name it.
+    ///
+    /// Rust builds such a value on both paths and drops it on the one that does
+    /// not use it. Naming it here restores the order; it does not restore the
+    /// drop, because there is nothing at this point to release it under. So a
+    /// value that owns something stays inside the branch and the difference is
+    /// said out loud, rather than being built on both paths and leaked on one.
+    pub(crate) fn name_eager(&self, expr: Option<&syn::Expr>, written: &str) -> Option<String> {
+        let expr = expr?;
+        if reads_the_same_twice(expr) {
+            return Some(written.to_string());
+        }
+        if self.owns_something(expr) {
+            self.fallback(
+                syn::spanned::Spanned::span(expr),
+                "Rust evaluates this argument before it branches and drops it on the path that \
+                 does not use it; the port has no name here to drop it under, so it is \
+                 evaluated inside the branch that uses it instead",
+            );
+            return None;
+        }
+        Some(self.hoist_name(written.to_string()))
+    }
+
+    /// Does this expression produce something the runtime releases?
+    fn owns_something(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return true };
+        let tc = tc.borrow();
+        let Ok(ty) = tc.resolve_expr(expr) else { return true };
+        crate::ownership::drops_of(&tc.probe(), &ty).is_droppable()
+    }
+}
+
+/// Can this expression be written twice without the program noticing?
+///
+/// A name, a field of one, an index into one, a literal: reading it again reads
+/// the same storage and runs nothing. A call, a `?`, an `await`, an operator —
+/// anything that DOES something — is written once and read through a name.
+/// `is_place` answers a different question (what a statement has to release) and
+/// counts `x?` as a place, which reading twice would unwrap twice.
+fn reads_the_same_twice(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Path(_) | syn::Expr::Lit(_) => true,
+        syn::Expr::Field(field) => reads_the_same_twice(&field.base),
+        syn::Expr::Index(index) => {
+            reads_the_same_twice(&index.expr) && reads_the_same_twice(&index.index)
+        }
+        syn::Expr::Unary(unary) => {
+            matches!(unary.op, syn::UnOp::Deref(_)) && reads_the_same_twice(&unary.expr)
+        }
+        syn::Expr::Reference(r) => reads_the_same_twice(&r.expr),
+        syn::Expr::Paren(p) => reads_the_same_twice(&p.expr),
+        syn::Expr::Group(g) => reads_the_same_twice(&g.expr),
+        // A JavaScript value is neither borrowed nor owned, so the four `as_`
+        // conversions between those states are the value itself — the port
+        // writes `self.order_by.as_ref()` as `this.orderBy`, which is the place
+        // it started as.
+        syn::Expr::MethodCall(call) if call.args.is_empty() => {
+            matches!(call.method.to_string().as_str(), "as_ref" | "as_mut" | "as_deref" | "as_deref_mut")
+                && reads_the_same_twice(&call.receiver)
+        }
+        _ => false,
+    }
 }

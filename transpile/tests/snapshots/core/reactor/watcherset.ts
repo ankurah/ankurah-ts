@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
-import { Struct, Enum, Arc, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Arc, unsupported, HashMap, HashSet } from '@ankurah/base';
 import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
@@ -173,7 +173,9 @@ export class WatcherSet extends Struct {
         const right = v.right;
         {
           const _v = [left, right];
-          if (false) {
+          if (unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole')) {
+            const path = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole');
+            const literal = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole');
             try {
               try {
                 const propertyPath = PropertyPath.fromPath(path);

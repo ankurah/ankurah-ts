@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/lww.rs
-import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, HashMap } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, UnsupportedShape, HashMap } from '@ankurah/base';
 import { Operation } from '@ankurah/proto';
 import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
 import { BincodeReader, BincodeWriter } from './codec';
@@ -53,7 +53,8 @@ export class LWWBackend extends Struct implements PropertyBackend {
   get(propertyName: PropertyName): Value | null {
     const values = this.values.read();
     try {
-      return values.value.get(propertyName) != null ? ((entry) => entry.value.clone())(values.value.get(propertyName)!) : null;
+      const _m0 = values.value.get(propertyName);
+      return (_m0 != null ? ((entry) => entry.value.clone())(_m0!) : null);
     } finally {
       values.drop();
     }
@@ -275,7 +276,7 @@ export class LWWDiff extends Struct {
       const data = _rdata.unwrap();
       return Result.Ok(new LWWDiff(version, data));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

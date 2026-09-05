@@ -3,12 +3,14 @@
 //! Handles Option match (Some/None → null checks), Result match (Ok/Err → try/catch),
 //! and enum match (variants → .match({}) pattern).
 
+mod arms;
 mod catch_all;
+mod chain;
 mod option_chain;
 
-use crate::name_map;
 use crate::body::{translate_pat, indent, BodyTranslator};
 use crate::control_flow::sentinel::{jumps_in, jumps_out, leaves_the_function};
+use arms::{arm_statements, payload_of, render_arm, ArmParts};
 
 /// Translate a match expression in return position (adds return to each arm)
 pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
@@ -63,74 +65,6 @@ fn scrutinee_of(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
 enum Position {
     Statement,
     Returning,
-}
-
-/// Every variant more than one arm of this match names.
-///
-/// Rust reads those arms in ORDER, testing the patterns inside the payload; the
-/// runtime's match has one key per variant and no order at all.
-fn variants_named_twice(arms: &[&syn::Arm]) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
-    let mut twice: Vec<String> = Vec::new();
-    for arm in arms.iter().copied() {
-        let cases: Vec<&syn::Pat> = match &arm.pat {
-            syn::Pat::Or(or_pat) => or_pat.cases.iter().collect(),
-            other => vec![other],
-        };
-        for case in cases {
-            let Some((variant, _)) = payload_of(case) else { continue };
-            if seen.contains(&variant) {
-                if !twice.contains(&variant) {
-                    twice.push(variant);
-                }
-            } else {
-                seen.push(variant);
-            }
-        }
-    }
-    twice
-}
-
-/// A name for the arm's parameter that nothing else in the arm answers to.
-fn arm_parameter(fields: &[(String, String)], body: &syn::Expr) -> String {
-    let taken = declared_in(body);
-    let clashes = |name: &str| {
-        fields.iter().any(|(local, _)| local == name) || taken.iter().any(|n| n == name)
-    };
-    if !clashes("v") {
-        return "v".to_string();
-    }
-    for n in 0.. {
-        let candidate = if n == 0 { "_v".to_string() } else { format!("_v{}", n) };
-        if !clashes(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("the search is unbounded")
-}
-
-/// Every name a `let` inside this expression binds.
-///
-/// A superset: a `let` in a nested BLOCK opens its own scope and could reuse
-/// the parameter's name legally. Naming the parameter around it costs one
-/// underscore and gets the question right without tracking scopes.
-fn declared_in(body: &syn::Expr) -> Vec<String> {
-    struct Bound {
-        names: Vec<String>,
-    }
-    impl syn::visit::Visit<'_> for Bound {
-        fn visit_local(&mut self, local: &syn::Local) {
-            self.names.extend(crate::body::pattern_names(&local.pat));
-            syn::visit::visit_local(self, local);
-        }
-        // A closure has a scope of its own, and a name inside it shadows
-        // legally.
-        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
-        fn visit_item(&mut self, _: &syn::Item) {}
-    }
-    let mut bound = Bound { names: Vec::new() };
-    syn::visit::Visit::visit_expr(&mut bound, body);
-    bound.names
 }
 
 /// One arm's body, written for the position the match stands in.
@@ -810,7 +744,14 @@ fn translate_enum_match(
         }
         return catch_all::lower(scrutinee, match_expr, &split, t, position);
     }
-    enum_match_over(scrutinee, match_expr, &arms_of(match_expr), t, position)
+    enum_match_over(
+        scrutinee,
+        match_expr,
+        &arms_of(match_expr),
+        t,
+        position,
+        &chain::Fallthrough::Exhaustive,
+    )
 }
 
 /// Every arm, as the slice the writer below takes.
@@ -826,14 +767,19 @@ fn variants_of(pat: &syn::Pat) -> Vec<String> {
         other => payload_of(other).map(|(v, _)| v).into_iter().collect(),
     }
 }
-
 /// The runtime's own match written over exactly these arms.
+///
+/// One key per variant. Where several arms name one variant — or where one arm
+/// names a variant it does not COVER and a catch-all stands below — the key
+/// holds the arm CHAIN instead: Rust tries those arms in order against the
+/// patterns inside the payload, and `chain::write` is that order made explicit.
 fn enum_match_over(
     scrutinee: &str,
     match_expr: &syn::ExprMatch,
     written_arms: &[&syn::Arm],
     t: &BodyTranslator,
     position: Position,
+    fall: &chain::Fallthrough<'_>,
 ) -> String {
     let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
     // Does the match hand a value back at all? A `match` whose Rust value is
@@ -859,32 +805,27 @@ fn enum_match_over(
     // that the answer is read by the test the caller writes and by nothing
     // else, and keeps the arms from having to agree.
     let out_ty = if t.jump_as_value.get() { "<any>" } else { "" };
-    let mut out = format!("{}.{}{}({{\n", scrutinee, method, out_ty);
 
-    // One key per variant. Two arms naming one variant — which Rust reads in
-    // order and this form cannot — used to emit the same key twice, and
-    // JavaScript keeps the last of those, so the arm the source wrote first
-    // never ran.
-    let mut written: Vec<String> = Vec::new();
-    // R12: a variant SEVERAL arms name is one Rust tries in order, which this
-    // form cannot — the runtime's match dispatches on the variant alone. The
-    // first arm used to run for every value of the variant:
-    // `Expr::Literal(Literal::Bool(true)) => Ok(True)` answered `Ok(True)` for
-    // `false` as well, and ankql's `Predicate::try_from` turned `FALSE` into
-    // `TRUE`. So the key is a HOLE until the per-variant arm chain lands, and
-    // the wrong answer is not one the port can give.
-    let contested = variants_named_twice(written_arms);
-    // An arm that awaits makes the whole match a promise, and the value the
-    // match stands for is what the caller wanted, so the call is awaited.
+    // A variant several arms name, and a variant one arm names without covering
+    // it, are both written as ONE key holding the chain those arms describe.
+    let has_catch_all = !matches!(fall, chain::Fallthrough::Exhaustive);
+    let contested = chain::contested(written_arms, has_catch_all);
+    // The chain's arms share one parameter, so the name has to avoid every name
+    // any of their bodies declares — and the catch-all's, which stands as the
+    // chain's last `else`. It is chosen before any of them is translated,
+    // because the bindings are written out of it.
+    let chain_params = chain::parameters(written_arms, &contested, fall);
+
+    // The keys are written in the order the source names them, which is where
+    // a chained variant's key stands too — at its FIRST arm. Each arm is
+    // translated where the source wrote it, so the temporaries the bodies take
+    // are numbered in source order.
+    let mut keys: Vec<(String, Written)> = Vec::new();
     let mut any_async = false;
     for arm in written_arms.iter().copied() {
         // An `|` pattern writes one body for several variants; each gets its own
         // arm with the same body, bound through its own payload.
-        let cases: Vec<&syn::Pat> = match &arm.pat {
-            syn::Pat::Or(or_pat) => or_pat.cases.iter().collect(),
-            other => vec![other],
-        };
-        for case in cases {
+        for case in arms::cases_of(&arm.pat) {
             let Some((variant, fields)) = payload_of(case) else {
                 // A catch-all is lowered before this point, so a pattern with
                 // no variant here is one the runtime's match has no key for at
@@ -898,26 +839,26 @@ fn enum_match_over(
                 continue;
             };
             if contested.contains(&variant) {
-                if written.contains(&variant) {
-                    continue;
-                }
-                written.push(variant.clone());
-                let what = format!(
-                    "`{}` is named by more than one arm of this match, and Rust tries them in \
-                     order against the patterns inside the payload; the runtime's match \
-                     dispatches on the variant alone, so the first arm would run for every \
-                     value of it",
-                    variant
+                let param = chain_params
+                    .iter()
+                    .find(|(name, _)| *name == variant)
+                    .map(|(_, param)| param.clone())
+                    .expect("every chained variant is given a parameter");
+                let link = arms::translate_link(
+                    case, &variant, &param, &fields, arm, t, match_expr, position, produces,
+                    takes, scrutinee_ty.as_ref(), &mut any_async,
                 );
-                t.report_match_gap(match_expr, what.clone());
-                out.push_str(&format!(
-                    "  {}: () => {},\n",
-                    variant,
-                    crate::body::hole_text(&what)
-                ));
+                match keys.iter_mut().find(|(name, _)| *name == variant) {
+                    Some((_, Written::Chain { links, .. })) => links.push(link),
+                    Some(_) => unreachable!("a contested variant is only ever written as a chain"),
+                    None => keys.push((
+                        variant.clone(),
+                        Written::Chain { links: vec![link], param, has_payload: !fields.is_empty() },
+                    )),
+                }
                 continue;
             }
-            if written.contains(&variant) {
+            if keys.iter().any(|(name, _)| *name == variant) {
                 t.report_match_gap(
                     match_expr,
                     format!(
@@ -928,289 +869,46 @@ fn enum_match_over(
                 );
                 continue;
             }
-            written.push(variant.clone());
-            // The arm's parameter must not collide with a name the pattern
-            // binds — nor with one the arm's own BODY declares. `A(n) => { let
-            // v = f(n)?; .. }` wrote `const v` beside the parameter `v`, which
-            // is a redeclaration: the emitted arrow threw a TDZ
-            // `ReferenceError` before it read either.
-            let param = arm_parameter(&fields, &arm.body);
-            let param = param.as_str();
-            let _bindings = t.enter_pattern(case, scrutinee_ty.as_ref());
-            let (payload, bound, declared) = arm_declarations(case, param, &fields, t, match_expr);
-            // Where the enum handed its payload over, the arm owns what the
-            // pattern named and releases it however the arm is left.
-            let names: Vec<String> = match takes {
-                crate::ownership::scrutinee::Takes::Payload => declared,
-                crate::ownership::scrutinee::Takes::Nothing => Vec::new(),
-            };
-            let owned = t.claim_bindings(
-                &names,
-                std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
+            let text = arms::translate_arm(
+                case, &variant, &fields, arm, t, match_expr, position, produces, takes,
+                scrutinee_ty.as_ref(), &mut any_async,
             );
-            // An arm is an arrow function, so what the arm's own expression
-            // lifted out of itself stays inside it: the declaration names
-            // values the arm's payload produced, which do not exist outside.
-            // A block body is written as the arrow's own statements, with the
-            // `return` on its tail; as an immediately-called function it
-            // computed the arm's value and threw it away, and a `return`
-            // written inside it left the inner function rather than the
-            // enclosing one.
-            let (body, lifted) = t.with_own_hoists(|| t.statements(&arm.body));
-            let body = body.trim_end().to_string();
-            drop(_bindings);
-            // An arm is an arrow function, so a `?` inside one returns from the
-            // arm. Where the match is the enclosing function's value that is
-            // exactly right — the arm's `Result` is what the function returns —
-            // and where it is a statement it is not, and nobody sees the error.
-            // `leaves_the_loop` routes such a match through the sentinel, which
-            // sets `jump_as_value`; anything still here has no route.
-            if position == Position::Statement
-                && !t.jump_as_value.get()
-                && leaves_the_function(&arm.body)
-            {
-                t.report_match_gap(
-                    match_expr,
-                    "an arm leaves early, and the arm is an arrow function whose `return` \
-                     leaves the arm rather than the function, so nobody sees the error it \
-                     left with",
-                );
-            }
-            // An arm is an arrow function, so a local this arm hands away sets
-            // its drop flag here — the same line the enclosing block would have
-            // written had the arm been a statement of it.
-            let flags = t.flag_sets_for(&arm.body);
-            let is_async = crate::control_flow::awaiting::awaits(&arm.body);
-            any_async |= is_async;
-            // A consuming arm owns every part of the payload, including the
-            // parts its pattern wrote `_` for: `intoMatch` releases nothing of
-            // its own on any path out, so an unowned part is a leak.
-            let release_rest = match takes {
-                crate::ownership::scrutinee::Takes::Payload if leaves_payload_unbound(case) => {
-                    format!("dropUnbound({}, [{}]);\n", param, bound.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(", "))
-                }
-                _ => String::new(),
-            };
-            out.push_str(&render_arm(
-                ArmParts {
-                    variant: &variant,
-                    bindings: format!("{}{}", flags, payload),
-                    param: (!fields.is_empty() || !release_rest.is_empty()).then(|| param.to_string()),
-                    body: &body,
-                    owned: &owned,
-                    lifted: &lifted,
-                    produces,
-                    is_async,
-                    release_rest,
-                },
-                t,
-            ));
+            keys.push((variant, Written::Arm(text)));
         }
     }
 
+    let mut out = format!("{}.{}{}({{\n", scrutinee, method, out_ty);
+    for (variant, written) in keys {
+        match written {
+            Written::Arm(text) => out.push_str(&text),
+            Written::Chain { links, param, has_payload } => {
+                // A chain awaits where any of its branches does, and the
+                // catch-all's body is one of them.
+                let awaits = links.iter().any(|link| link.is_async)
+                    || matches!(fall, chain::Fallthrough::CatchAll(f) if f.is_async);
+                let body = chain::write(links, fall, &variant, has_payload, &param, t);
+                let keyword = if awaits { "async " } else { "" };
+                let head = if has_payload {
+                    format!("  {}: {}({}) => ", variant, keyword, param)
+                } else {
+                    format!("  {}: {}() => ", variant, keyword)
+                };
+                out.push_str(&format!("{}{{\n{}  }},\n", head, indent(&indent(&body))));
+            }
+        }
+    }
     out.push_str("})");
     if any_async { format!("await ({})", out) } else { out }
 }
 
-/// What one arm declares out of the payload it was handed, and which payload
-/// keys those declarations took.
-///
-/// A slot whose pattern only binds is one name: `const token = v._0;`. A slot
-/// whose pattern ASKS something —
-/// `SqliteError::Rusqlite(rusqlite::Error::QueryReturnedNoRows)` names a variant
-/// and then tests inside it — cannot have its question asked here: the
-/// runtime's `.match({..})` dispatches on the outer variant alone and has
-/// nowhere to fall through to. The question is reported, and the names the
-/// inner pattern binds are still taken out of the places they live in, so the
-/// arm reads the values it was written for on the path it was written for.
-/// Writing the pattern where the binding's name belongs produced `const
-/// rusqlite.Error.QueryReturnedNoRows = v._0;` (123 parse errors in
-/// storage-sqlite's engine.ts); giving the slot a fresh name instead left the
-/// arm's body naming a binding nothing declared.
-fn arm_declarations(
-    pat: &syn::Pat,
-    param: &str,
-    fields: &[(String, String)],
-    t: &BodyTranslator,
-    match_expr: &syn::ExprMatch,
-) -> (String, Vec<String>, Vec<String>) {
-    let subpats: Vec<&syn::Pat> = match pat {
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().collect(),
-        syn::Pat::Struct(st) => st.fields.iter().map(|f| &*f.pat).collect(),
-        _ => Vec::new(),
-    };
-    let mut text = String::new();
-    let mut bound_keys = Vec::new();
-    let mut names = Vec::new();
-    for (i, (local, accessor)) in fields.iter().enumerate() {
-        let place = format!("{}.{}", param, accessor);
-        match subpats.get(i) {
-            Some(sub) if !BodyTranslator::is_irrefutable(sub) => {
-                t.report_match_gap(
-                    match_expr,
-                    format!(
-                        "this arm tests inside the payload of `{}`, and the runtime's match dispatches \
-                         on the variant alone with no later arm to fall through to, so the \
-                         inner test is not made and the arm runs for every `{}`",
-                        accessor, accessor
-                    ),
-                );
-                let (_, bind) = t.pattern_test(&place, sub);
-                text.push_str(&bind);
-                bound_keys.push(accessor.clone());
-                names.extend(crate::body::pattern_names(sub));
-            }
-            _ => {
-                if local == "_" {
-                    continue;
-                }
-                text.push_str(&format!("const {} = {};\n", local, place));
-                bound_keys.push(accessor.clone());
-                names.push(local.clone());
-            }
-        }
-    }
-    (text, bound_keys, names)
+/// One key of the runtime's match, before the keys are written out in order.
+enum Written {
+    /// The one arm that names this variant, already rendered.
+    Arm(String),
+    /// The arms that name it, to be written as the chain Rust tries.
+    Chain { links: Vec<chain::Link>, param: String, has_payload: bool },
 }
 
-/// The variant a pattern names and the payload slots it takes out of it, as
-/// (local name, accessor within the arm's payload).
-fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)>)> {
-    match pat {
-        syn::Pat::TupleStruct(ts) => {
-            let variant = ts.path.segments.last()?.ident.to_string();
-            let fields = ts
-                .elems
-                .iter()
-                .enumerate()
-                .map(|(i, p)| (translate_pat(p), format!("_{}", i)))
-                .collect();
-            Some((variant, fields))
-        }
-        syn::Pat::Struct(s) => {
-            let variant = s.path.segments.last()?.ident.to_string();
-            let fields = s
-                .fields
-                .iter()
-                .map(|f| {
-                    let member = match &f.member {
-                        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-                        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-                    };
-                    (translate_pat(&f.pat), member)
-                })
-                .collect();
-            Some((variant, fields))
-        }
-        syn::Pat::Path(p) => Some((p.path.segments.last()?.ident.to_string(), Vec::new())),
-        _ => None,
-    }
-}
-
-/// One arm of a `.match({..})`, as the pieces the two callers assemble it from.
-///
-/// `enum_match_over` writes an arm the source named; `catch_all` writes one per
-/// variant the source left to its `_`. Both need the same decisions made the
-/// same way — whether the arm's value needs a `return`, whether its releases
-/// need a block, whether it is `async` — so both build one of these and hand it
-/// to `render_arm`. The catch-all used to format its arms itself and lost the
-/// match's value in every position but the enclosing function's return.
-pub(super) struct ArmParts<'a> {
-    /// The key the runtime's match dispatches on.
-    pub variant: &'a str,
-    /// What the arm declares before its body: the drop flags a hand-away owes,
-    /// and the names the arm takes out of the value it was given.
-    pub bindings: String,
-    /// The payload parameter, where the arm takes one.
-    pub param: Option<String>,
-    pub body: &'a str,
-    pub owned: &'a [crate::ownership::Owned],
-    pub lifted: &'a [crate::ownership::Hoist],
-    /// Whether the match hands a value back at all.
-    pub produces: bool,
-    pub is_async: bool,
-    /// What this arm's outermost `finally` says about the parts of the payload
-    /// no name took. A consuming arm owns the whole payload from the moment it
-    /// is called — `intoMatch` releases nothing of its own, on any path — so an
-    /// arm that binds only some of it releases the rest here.
-    pub release_rest: String,
-}
-
-/// One arm of a `.match({..})`.
-///
-/// The payload's names are declared inside the arm, from the value the arm is
-/// handed. They used to be substituted into the rendered TypeScript by walking
-/// its characters, which could not tell a binding from the same word inside a
-/// string literal or a comment, and knew nothing of a name shadowed further in.
-pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
-    let ArmParts { variant, bindings, param, body, owned, lifted, produces, is_async, release_rest } = parts;
-    // An arm is an arrow function, and JavaScript's `await` belongs to the
-    // nearest one — so an arm that awaits is `async`, and the whole `.match`
-    // is awaited where it stands.
-    let keyword = if is_async { "async " } else { "" };
-    let head = match &param {
-        Some(param) => format!("  {}: {}({}) => ", variant, keyword, param),
-        None => format!("  {}: {}() => ", variant, keyword),
-    };
-    if owned.is_empty() && lifted.is_empty() && release_rest.is_empty() {
-        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces));
-    }
-    // An arm that owns what it was handed, that lifted a declaration out of its
-    // own body, or that owes the payload a release, is always a block: the
-    // release goes in a `finally`, so the arm cannot be the bare expression
-    // form.
-    let mut inner = t.wrap_bindings(
-        owned,
-        crate::ownership::hoisted(&arm_statements(body, produces), lifted),
-    );
-    if !release_rest.is_empty() {
-        inner = format!("try {{\n{}}} finally {{\n{}}}\n", indent(&inner), indent(&release_rest));
-    }
-    format!(
-        "{}{{\n{}  }},\n",
-        head,
-        indent(&indent(&format!("{}{}", bindings, inner)))
-    )
-}
-
-/// Does this pattern leave part of the variant's payload with no name?
-///
-/// Rust makes a tuple or struct pattern name every slot unless it writes `..`,
-/// so the only unnamed parts are the ones the source wrote `_` for and the ones
-/// a `..` stands in for. A consuming arm owes those a release, because nothing
-/// else holds them any more.
-fn leaves_payload_unbound(pat: &syn::Pat) -> bool {
-    match pat {
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().any(|p| {
-            matches!(p, syn::Pat::Rest(_)) || BodyTranslator::binds_nothing(p)
-        }),
-        syn::Pat::Struct(st) => {
-            st.rest.is_some() || st.fields.iter().any(|f| BodyTranslator::binds_nothing(&f.pat))
-        }
-        // `E::Unit` names a variant with no payload: Rust rejects the path form
-        // for a variant that carries one.
-        _ => false,
-    }
-}
-
-/// An arm body as statements: its own control flow where it has some, and
-/// otherwise the `return` that makes its value the arm's.
-fn arm_statements(body: &str, produces: bool) -> String {
-    if body.trim().is_empty() {
-        return String::new();
-    }
-    if is_statements(body) {
-        return format!("{}\n", body);
-    }
-    // An arm of a match whose Rust value is `()` produces nothing. Handing back
-    // what the port's own spelling produced — `Array.prototype.push` answers a
-    // number where `Vec::push` answers nothing — gave the match a value its
-    // position could not take.
-    if !produces {
-        return format!("{};\n", body);
-    }
-    format!("return {};\n", body)
-}
 
 /// Does this body already read as a run of statements?
 pub(crate) fn is_statements(body: &str) -> bool {
@@ -1240,52 +938,6 @@ pub(crate) fn begins_a_statement(body: &str) -> bool {
     ["const ", "let ", "var ", "if ", "for ", "while ", "do ", "return ", "throw ", "{"]
         .iter()
         .any(|opener| body.starts_with(opener))
-}
-
-/// An arm's value: its declarations, then the body. A body that is already a
-/// sequence of statements keeps its own control flow; anything else is the
-/// value the arm produces.
-fn as_arm_value(body: &str, bindings: &str, produces: bool) -> String {
-    // An arm whose body is nothing — `Self::Large(_) => { /* Vec drops itself */ }`
-    // — still has to be a function. `Large: (v) => ,` is not one.
-    if body.trim().is_empty() {
-        if bindings.trim().is_empty() {
-            return "{}".to_string();
-        }
-        return format!("{{\n{}  }}", indent(&indent(bindings)));
-    }
-    let statements = is_statements(body);
-    // An arm that produces nothing is always written as statements: the bare
-    // expression form would make the arrow hand back whatever the expression
-    // produced, and the match's own value is `()`.
-    if !produces {
-        return format!(
-            "{{\n{}  }}",
-            indent(&indent(&format!("{}{}\n", bindings, arm_statements(body, false).trim_end())))
-        );
-    }
-    // A tuple literal confuses TypeScript's inference across arms: `match`
-    // takes its result type from the first arm it reads, and `[null, events]`
-    // makes every later arm an error against it.
-    let value = if body.starts_with('[') {
-        format!("{} as any", body)
-    } else {
-        body.to_string()
-    };
-    if bindings.is_empty() && !statements {
-        return value;
-    }
-    let tail = if statements {
-        body.to_string()
-    } else {
-        format!("return {};", value)
-    };
-    // The arm sits two spaces in, so its block's contents sit at four and the
-    // closing brace lines up with the arm.
-    format!(
-        "{{\n{}  }}",
-        indent(&indent(&format!("{}{}\n", bindings, tail)))
-    )
 }
 
 #[cfg(test)]

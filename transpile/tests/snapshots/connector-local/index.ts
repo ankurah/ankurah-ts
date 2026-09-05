@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/connectors/local-process/src/lib.rs
 import { Struct, Drop, Result, JoinHandle, tokio, mpsc, Sender, Receiver } from '@ankurah/base';
-import { Node, PeerSender, PolicyAgent, SendError, StorageEngine, WeakNode } from '@ankurah/core';
+import { Node, PeerSender, PolicyAgent, SendError, StorageEngine, WeakNode, spawn } from '@ankurah/core';
 import { EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
 export class LocalProcessSender extends Struct implements PeerSender {

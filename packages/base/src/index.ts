@@ -40,7 +40,7 @@ export { AsyncMutex, AsyncMutexGuard } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
-export { HashMap, HashSet, MapEntry, keyHash, keysEqual, type Hashable } from './std/hash_map.ts';
+export { HashMap, HashSet, MapEntry, keyHash, keysEqual, cloned, derivedEquals, derivedClone, type Hashable } from './std/hash_map.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
 export {
   boolAnd,
@@ -62,6 +62,10 @@ export {
   overflowingAdd,
   overflowingSub,
   overflowingMul,
+  floatRound,
+  floatSignum,
+  floatMin,
+  floatMax,
 } from './std/ops.ts';
 
 // ── tokio ───────────────────────────────────────────────────────────────

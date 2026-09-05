@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -99,7 +99,7 @@ export class Event extends Struct {
       const parent = _rparent.unwrap();
       return Result.Ok(new Event(collection, entityId, operations, parent));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -187,7 +187,7 @@ export class EventFragment extends Struct {
       const attestations = _rattestations.unwrap();
       return Result.Ok(new EventFragment(operations, parent, attestations));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -264,7 +264,7 @@ export class StateFragment extends Struct {
       const attestations = _rattestations.unwrap();
       return Result.Ok(new StateFragment(state, attestations));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -287,7 +287,7 @@ export class OperationSet extends Struct {
   }
 
   equals(other: OperationSet): boolean {
-    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; if (!v.equals(_w)) return false; } }
+    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; { if (v.length !== _w.length) return false; for (let i1 = 0; i1 < v.length; i1++) { if (!v[i1].equals(_w[i1])) return false; } } } }
     return true;
   }
 
@@ -335,7 +335,7 @@ export class OperationSet extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new OperationSet(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -394,7 +394,7 @@ export class Operation extends Struct {
       const diff = _rdiff.unwrap();
       return Result.Ok(new Operation(diff));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -474,7 +474,7 @@ export class EntityState extends Struct {
       const state = _rstate.unwrap();
       return Result.Ok(new EntityState(entityId, collection, state));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -547,7 +547,7 @@ export class State extends Struct {
       const head = _rhead.unwrap();
       return Result.Ok(new State(stateBuffers, head));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -566,7 +566,7 @@ export class StateBuffers extends Struct {
   }
 
   equals(other: StateBuffers): boolean {
-    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; if (!v.equals(_w)) return false; } }
+    { if (this._0.size !== other._0.size) return false; for (const [k, v] of this._0) { if (!other._0.has(k)) return false; const _w = other._0.get(k)!; { if (v.length !== _w.length) return false; for (let i1 = 0; i1 < v.length; i1++) { if (v[i1] !== _w[i1]) return false; } } } }
     return true;
   }
 
@@ -618,7 +618,7 @@ export class StateBuffers extends Struct {
       const _0 = _r_0.unwrap();
       return Result.Ok(new StateBuffers(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

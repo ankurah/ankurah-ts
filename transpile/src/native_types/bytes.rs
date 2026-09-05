@@ -24,7 +24,7 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             // What the array translations would have written. It does not run,
             // and the diagnostic above says so; keeping it means the shape of
             // the output does not change until a growable byte type is chosen.
-            fallback: Box::new(super::array::translate(receiver, method, args)),
+            fallback: Box::new(super::array::translate(receiver, method, args, &super::array::Element::unknown())),
         };
     }
 

@@ -5,17 +5,17 @@ import { SqliteStorageEngine } from './engine';
 import { Result, dropOwned } from '@ankurah/base';
 import { SqliteError } from './error';
 import { SqlBuilder } from './sql_builder';
-import { Predicate, Selection } from '@ankurah/ankql';
+import { Predicate, Selection, parseSelection } from '@ankurah/ankql';
 
 describe('engine unit tests', () => {
   test('test_open_in_memory', async () => {
-    const engine = await SqliteStorageEngine.openInMemory().unwrap();
+    const engine = (await SqliteStorageEngine.openInMemory()).unwrap();
     try {
-      const collection = await engine.collection('test_collection').unwrap();
+      const collection = (await engine.collection('test_collection')).unwrap();
       try {
         const all = new Selection(new Predicate('True', {}), null, null);
         try {
-          const _t0 = await collection.value.fetchStates(all).unwrap();
+          const _t0 = (await collection.value.fetchStates(all)).unwrap();
           try {
             if (!(_t0.length === 0)) throw new Error('assertion failed');
           } finally {
@@ -41,12 +41,12 @@ describe('engine unit tests', () => {
   });
 
   test('test_jsonb_function_availability', async () => {
-    await (async () => {
-      const _r0 = await SqliteStorageEngine.openInMemory().mapErr((e) => new SqliteError('DDL', { _0: e.toString() }));
+    (await (async () => {
+      const _r0 = (await SqliteStorageEngine.openInMemory()).mapErr((e) => new SqliteError('DDL', { _0: e.toString() }));
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const engine = _r0.unwrap();
       try {
-        const _r1 = await engine.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+        const _r1 = (await engine.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const conn = _r1.unwrap();
         try {
@@ -84,11 +84,11 @@ describe('engine unit tests', () => {
       } finally {
         engine.drop();
       }
-    })().unwrap();
+    })()).unwrap();
   });
 
   test('test_json_path_query', async () => {
-    await (async () => {
+    (await (async () => {
       const selection = parseSelection('data.status = \'active\'');
       let _moved0 = false;
       let builder = SqlBuilder.withFields(['id', 'state_buffer']);
@@ -107,16 +107,16 @@ describe('engine unit tests', () => {
       } finally {
         if (!_moved0) builder.drop();
       }
-    })().unwrap();
+    })()).unwrap();
   });
 
   test('test_jsonb_storage_and_parameterized_query', async () => {
-    await (async () => {
-      const _r0 = await SqliteStorageEngine.openInMemory().mapErr((e) => new SqliteError('DDL', { _0: e.toString() }));
+    (await (async () => {
+      const _r0 = (await SqliteStorageEngine.openInMemory()).mapErr((e) => new SqliteError('DDL', { _0: e.toString() }));
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const engine = _r0.unwrap();
       try {
-        const _r1 = await engine.pool.get().mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+        const _r1 = (await engine.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const conn = _r1.unwrap();
         try {
@@ -162,7 +162,7 @@ describe('engine unit tests', () => {
       } finally {
         engine.drop();
       }
-    })().unwrap();
+    })()).unwrap();
   });
 
 });

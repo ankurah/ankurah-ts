@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/sorting.rs
-import { Struct, dropOwned, unsupported, checkedAdd } from '@ankurah/base';
+import { Struct, dropOwned, checkedAdd } from '@ankurah/base';
 import { Filterable, Value, Context } from '@ankurah/core';
 import { OrderByComponents } from './types';
 import { OrderByItem } from '@ankurah/ankql';
@@ -58,13 +58,25 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
         })();
         if ((_m0 as any)?.$jump === 'break') break;
         const pollResult = (_m0 as any);
-        const _m1 = pollResult.match<any>({
-          Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+        const _m2 = pollResult.match<any>({
+          Ready: (v) => {
+            if (v._0 != null) {
+              const item = v._0;
+              this_.currentPartition.push(item);
+            } else {
+              let items = mem.take(this_.currentPartition);
+              sortItemsByOrder(items, this_.orderBy.spill);
+              this_.sortedPartition = items.intoIter();
+              this_.inner = null;
+              const _m1 = new Poll('Ready', { _0: null });
+              return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => new Poll('Ready', { _0: iter.next() }))(this_.sortedPartition!) : _m1) };
+            }
+          },
           Pending: () => {
             return { $jump: 'return', $value: Poll.Pending }
           },
         });
-        if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+        if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
       }
       return new Poll('Ready', { _0: null });
     }
@@ -86,7 +98,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
       if (this_.exhausted) {
         return new Poll('Ready', { _0: null });
       }
-      const _m2 = (() => {
+      const _m3 = (() => {
         {
           const _v5 = this_.inner;
           if (!(_v5 != null)) {
@@ -96,15 +108,67 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
           return Pin.new(inner).pollNext(cx);
         }
       })();
-      if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-      const pollResult = (_m2 as any);
-      const _m3 = pollResult.match<any>({
-        Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+      if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+      const pollResult = (_m3 as any);
+      const _m8 = pollResult.match<any>({
+        Ready: (v) => {
+          if (v._0 != null) {
+            const item = v._0;
+            let _moved4 = false;
+            const itemKey = extractPartitionKey(item, this_.orderBy.presort);
+            try {
+              _match7: {
+                if (this_.currentPartitionKey == null) {
+                  {
+                    _moved4 = true;
+                    const _a5 = itemKey;
+                    dropOwned(this_.currentPartitionKey);
+                    this_.currentPartitionKey = _a5;
+                    this_.currentPartition.push(item);
+                  }
+                  break _match7;
+                }
+                if (this_.currentPartitionKey != null) {
+                  const currentKey = this_.currentPartitionKey;
+                  if (currentKey === itemKey) {
+                    {
+                      this_.currentPartition.push(item);
+                    }
+                    break _match7;
+                  }
+                }
+                if (this_.currentPartitionKey != null) {
+                  {
+                    let partition = mem.take(this_.currentPartition);
+                    sortItemsByOrder(partition, this_.orderBy.spill);
+                    this_.sortedPartition = partition.intoIter();
+                    _moved4 = true;
+                    const _a6 = itemKey;
+                    dropOwned(this_.currentPartitionKey);
+                    this_.currentPartitionKey = _a6;
+                    this_.currentPartition.push(item);
+                  }
+                  break _match7;
+                }
+              }
+            } finally {
+              if (!_moved4) dropOwned(itemKey);
+            }
+          } else {
+            this_.exhausted = true;
+            this_.inner = null;
+            if (!(this_.currentPartition.length === 0)) {
+              let partition = mem.take(this_.currentPartition);
+              sortItemsByOrder(partition, this_.orderBy.spill);
+              this_.sortedPartition = partition.intoIter();
+            }
+          }
+        },
         Pending: () => {
           return { $jump: 'return', $value: Poll.Pending }
         },
       });
-      if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+      if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
     }
   }
 }
@@ -136,7 +200,15 @@ export class LimitedStream<I> extends Struct {
       }
     }
     return Pin.new(this.inner).pollNext(cx).match({
-      Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+      Ready: (v) => {
+        if (v._0 != null) {
+          const item = v._0;
+          this.count = checkedAdd(this.count, 1n, 'u64');
+          return new Poll('Ready', { _0: item });
+        } else {
+          return new Poll('Ready', { _0: null });
+        }
+      },
       Pending: () => Poll.Pending,
     });
   }
@@ -255,13 +327,49 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
           })();
           if ((_m1 as any)?.$jump === 'break') break;
           const pollResult = (_m1 as any);
-          const _m2 = pollResult.match<any>({
-            Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+          const _m3 = pollResult.match<any>({
+            Ready: (v) => {
+              if (v._0 != null) {
+                const item = v._0;
+                const heapItem = new HeapItem(item, this_.orderBy.spill.clone());
+                if (heap.len() < this_.k) {
+                  heap.push(heapItem);
+                } else {
+                  const _v3 = heap.peek();
+                  if (_v3 != null) {
+                    const worst = _v3;
+                    if (heapItem < worst) {
+                      dropOwned(heap.pop());
+                      heap.push(heapItem);
+                    }
+                  }
+                }
+              } else {
+                this_.inner = null;
+                _moved0 = true;
+                const topK = heap.intoIter().map((h) => h.item);
+                sortItemsByOrder(topK, this_.orderBy.spill);
+                this_.sortedPartition = [...topK];
+                const _m2 = new Poll('Ready', { _0: null });
+                return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => {
+                  {
+                    const _v4 = iter.next();
+                    if (_v4 != null) {
+                      const item = _v4;
+                      this_.emittedCount = checkedAdd(this_.emittedCount, 1, 'usize');
+                      return new Poll('Ready', { _0: item });
+                    } else {
+                    return new Poll('Ready', { _0: null });
+                  }
+                  }
+                })(this_.sortedPartition!) : _m2) };
+              }
+            },
             Pending: () => {
               return { $jump: 'return', $value: Poll.Pending }
             },
           });
-          if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
+          if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
         }
         return new Poll('Ready', { _0: null });
       } finally {
@@ -273,13 +381,13 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
         return new Poll('Ready', { _0: null });
       }
       {
-        const _v4 = this_.sortedPartition;
-        if (_v4 != null) {
-          const sortedIter = _v4;
+        const _v6 = this_.sortedPartition;
+        if (_v6 != null) {
+          const sortedIter = _v6;
           {
-            const _v3 = sortedIter.next();
-            if (_v3 != null) {
-              const item = _v3;
+            const _v5 = sortedIter.next();
+            if (_v5 != null) {
+              const item = _v5;
               this_.emittedCount = checkedAdd(this_.emittedCount, 1, 'usize');
               return new Poll('Ready', { _0: item });
             }
@@ -290,25 +398,77 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
       if (this_.exhausted) {
         return new Poll('Ready', { _0: null });
       }
-      const _m3 = (() => {
+      const _m4 = (() => {
         {
-          const _v5 = this_.inner;
-          if (!(_v5 != null)) {
+          const _v7 = this_.inner;
+          if (!(_v7 != null)) {
             return { $jump: 'return', $value: new Poll('Ready', { _0: null }) };
           }
-          const inner = _v5;
+          const inner = _v7;
           return Pin.new(inner).pollNext(cx);
         }
       })();
-      if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
-      const pollResult = (_m3 as any);
-      const _m4 = pollResult.match<any>({
-        Ready: () => unsupported('`Ready` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+      if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+      const pollResult = (_m4 as any);
+      const _m9 = pollResult.match<any>({
+        Ready: (v) => {
+          if (v._0 != null) {
+            const item = v._0;
+            let _moved5 = false;
+            const itemKey = extractPartitionKey(item, this_.orderBy.presort);
+            try {
+              _match8: {
+                if (this_.currentPartitionKey == null) {
+                  {
+                    _moved5 = true;
+                    const _a6 = itemKey;
+                    dropOwned(this_.currentPartitionKey);
+                    this_.currentPartitionKey = _a6;
+                    this_.currentPartition.push(item);
+                  }
+                  break _match8;
+                }
+                if (this_.currentPartitionKey != null) {
+                  const currentKey = this_.currentPartitionKey;
+                  if (currentKey === itemKey) {
+                    {
+                      this_.currentPartition.push(item);
+                    }
+                    break _match8;
+                  }
+                }
+                if (this_.currentPartitionKey != null) {
+                  {
+                    let partition = mem.take(this_.currentPartition);
+                    sortItemsByOrder(partition, this_.orderBy.spill);
+                    this_.sortedPartition = partition.intoIter();
+                    _moved5 = true;
+                    const _a7 = itemKey;
+                    dropOwned(this_.currentPartitionKey);
+                    this_.currentPartitionKey = _a7;
+                    this_.currentPartition.push(item);
+                  }
+                  break _match8;
+                }
+              }
+            } finally {
+              if (!_moved5) dropOwned(itemKey);
+            }
+          } else {
+            this_.exhausted = true;
+            this_.inner = null;
+            if (!(this_.currentPartition.length === 0)) {
+              let partition = mem.take(this_.currentPartition);
+              sortItemsByOrder(partition, this_.orderBy.spill);
+              this_.sortedPartition = partition.intoIter();
+            }
+          }
+        },
         Pending: () => {
           return { $jump: 'return', $value: Poll.Pending }
         },
       });
-      if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+      if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
     }
   }
 }

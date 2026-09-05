@@ -204,6 +204,25 @@ pub fn declarations(sibling: &Sibling, config: &Config, corpus_root: &Path) -> R
     Ok(Load { files: out, failures })
 }
 
+/// Every top-level name a CALLER of this file can import: the types it declares
+/// and the module-level `pub fn`s it declares.
+///
+/// For: the registry maps each importable name to the package that declares it,
+/// and it has to answer the same for a crate being transpiled and for one read
+/// as a dependency — a name that resolves in one run and not the other is the
+/// equivalence gap. The sibling path listed types and traits and stopped there,
+/// so a call across a crate boundary emitted a bare unresolved name: 14
+/// `parseSelection` sites, `parseSelection is not defined` in every one.
+pub fn importable_names(file: &crate::types::RustFile) -> Vec<String> {
+    file.structs
+        .iter()
+        .map(|s| s.name.clone())
+        .chain(file.enums.iter().map(|e| e.name.clone()))
+        .chain(file.traits.iter().map(|t| t.name.clone()))
+        .chain(file.functions.iter().filter(|f| f.is_pub).map(|f| f.ts_name.clone()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +296,25 @@ mod tests {
                 .iter()
                 .any(|e| e.written.contains("JsValue")),
             "the config excludes that impl"
+        );
+    }
+
+    /// PREMISE ADDED 2026-09-05 (fixpass4 item 6): every KIND of top-level name
+    /// a caller imports has to come back from a sibling, not only the types.
+    /// A module-level `pub fn` is a name a caller imports exactly as a type is,
+    /// and it was the one kind the sibling path left out.
+    #[test]
+    fn a_siblings_importable_names_cover_every_kind_a_caller_imports() {
+        let (_, load) = ankql_as_a_sibling();
+        let names: Vec<String> =
+            load.files.iter().flat_map(|f| importable_names(&f.file)).collect();
+        // a struct, an enum, a trait-free module-level function
+        assert!(names.iter().any(|n| n == "Selection"), "a struct: {:?}", names);
+        assert!(names.iter().any(|n| n == "Predicate"), "an enum: {:?}", names);
+        assert!(
+            names.iter().any(|n| n == "parseSelection"),
+            "a module-level `pub fn`, in the TypeScript spelling a caller writes: {:?}",
+            names
         );
     }
 

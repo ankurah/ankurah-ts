@@ -626,7 +626,8 @@ export class WeakEntity extends Struct {
   }
 
   upgrade(): Entity | null {
-    return this._0.upgrade() != null ? (Entity)(this._0.upgrade()!) : null;
+    const _m0 = this._0.upgrade();
+    return (_m0 != null ? (Entity)(_m0!) : null);
   }
 }
 

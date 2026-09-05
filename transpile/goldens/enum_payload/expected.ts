@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/enum_payload/src/input.rs
-import { Enum, Result, JsonError, OwnershipFatal } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type NoticeV = {
@@ -114,7 +114,7 @@ export class Notice extends Enum<NoticeV> {
       }
       return Result.Err(JsonError.custom('no variant of `Notice` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

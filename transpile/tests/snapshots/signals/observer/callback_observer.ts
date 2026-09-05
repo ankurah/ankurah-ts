@@ -52,7 +52,7 @@ export class CallbackObserver extends Struct implements Observer {
   sweepMarkedListeners(): void {
     let entries = this._0.value.entries.write();
     try {
-      { for (const [_k, _v] of entries.value) { if (!((_, entry) => !entry.markedForRemoval(_k, _v))) entries.value.delete(_k); } };
+      { for (const [_k, _v] of entries.value) { if (!(((_, entry) => !entry.markedForRemoval)(_k, _v))) entries.value.delete(_k); } };
     } finally {
       entries.drop();
     }
@@ -129,7 +129,8 @@ class WeakCallbackObserver extends Struct {
   }
 
   upgrade(): CallbackObserver | null {
-    return this._0.upgrade() != null ? (CallbackObserver)(this._0.upgrade()!) : null;
+    const _m0 = this._0.upgrade();
+    return (_m0 != null ? (CallbackObserver)(_m0!) : null);
   }
 }
 

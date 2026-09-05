@@ -12,7 +12,7 @@ use crate::macros;
 use crate::ownership;
 
 use super::{
-    as_move_closure, as_write_macro, extract_macro, is_match_with_write_arms,
+    as_move_closure, extract_macro, is_match_with_write_arms,
     is_mut_binding, is_write_macro, is_write_macro_path, pattern_names, references_var,
     BodyTranslator,
 };
@@ -192,7 +192,9 @@ impl BodyTranslator<'_> {
             // reach: it rewrote the lines that read `return Result.Ok(..)`, and
             // a tail `write!(f, "b")` is not one of those, so everything the
             // body had written before it was thrown away.
-            if let Some(mac) = as_write_macro(expr).filter(|_| self.formatter) {
+            if let Some((mac, _)) =
+                crate::body::formatter_write(expr).filter(|_| self.formatter)
+            {
                 let written = macros::translate_macro(mac, self);
                 self.wrote_result.set(true);
                 format!("_result += {};\nreturn _result;\n", written)
@@ -273,12 +275,17 @@ impl BodyTranslator<'_> {
                 // semicolon-form write was an unused string expression and a
                 // tail write replaced everything before it.
                 if self.formatter {
-                    if let Some(mac) = as_write_macro(expr) {
+                    if let Some((mac, returns)) = crate::body::formatter_write(expr) {
                         let written = macros::translate_macro(mac, self);
                         self.wrote_result.set(true);
-                        return match semi {
-                            Some(_) => format!("_result += {};\n", written),
-                            None => format!("_result += {};\nreturn _result;\n", written),
+                        // A write that LEAVES the formatter — a tail, or an
+                        // explicit `return write!(..)` — appends and then
+                        // answers what has been composed. One that carries on
+                        // only appends.
+                        return if returns || semi.is_none() {
+                            format!("_result += {};\nreturn _result;\n", written)
+                        } else {
+                            format!("_result += {};\n", written)
                         };
                     }
                 }
@@ -556,4 +563,39 @@ fn cells_wanted(block: &syn::Block) -> Vec<String> {
     let mut borrows = Borrows { names: Vec::new() };
     syn::visit::Visit::visit_block(&mut borrows, block);
     borrows.names
+}
+
+#[cfg(test)]
+mod formatter_tests {
+    use crate::testing::Fixture;
+
+    /// Every `write!` inside a `Display` APPENDS to what the formatter has
+    /// composed, in each of the forms a source writes it. `return write!(..)`
+    /// was read as an ordinary `return`, so the string it wrote became the whole
+    /// answer and everything written before it was discarded: `Size(200)`
+    /// printed as `big)` where Rust prints `Size(big)`.
+    #[test]
+    fn a_returned_write_appends_and_then_answers_the_accumulator() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "use std::fmt;\n\
+             pub struct Size(pub u32);\n\
+             impl fmt::Display for Size {\n\
+               fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n\
+                 write!(f, \"Size(\")?;\n\
+                 if self.0 > 100 {\n\
+                   return write!(f, \"big)\");\n\
+                 }\n\
+                 write!(f, \"{})\", self.0)\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(ts.contains("_result += 'big)';"), "the write appends:\n{}", ts);
+        assert!(!ts.contains("return 'big)';"), "and does not replace:\n{}", ts);
+        // The early exit still leaves, with what the formatter has composed.
+        let early = ts.find("_result += 'big)';").expect("the append");
+        let answer = ts[early..].find("return _result;").expect("and the answer after it");
+        assert!(answer < 40, "the return follows the append:\n{}", &ts[early..early + 80]);
+    }
 }

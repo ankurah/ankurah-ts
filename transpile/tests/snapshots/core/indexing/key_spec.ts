@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/indexing/key_spec.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ValueType } from '../value/index';
 import { PathExpr } from '@ankurah/ankql';
@@ -23,7 +23,7 @@ export class KeySpec extends Struct {
         Desc: () => 'desc',
       });
       const colName = k.fullPath();
-      if (k.collation != null || k.nulls != null) {
+      if ((k.collation != null) || (k.nulls != null)) {
         let extras = [];
         {
           const _v = k.collation;
@@ -122,7 +122,7 @@ export class KeySpec extends Struct {
       const keyparts = _rkeyparts.unwrap();
       return Result.Ok(new KeySpec(keyparts));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -224,7 +224,7 @@ export class IndexKeyPart extends Struct {
   }
 
   clone(): IndexKeyPart {
-    return new IndexKeyPart(this.column, this.subPath != null ? [...this.subPath] : null, this.direction.clone(), this.valueType.clone(), this.nulls?.clone() ?? null, this.collation);
+    return new IndexKeyPart(this.column, (this.subPath != null ? [...this.subPath] : null), this.direction.clone(), this.valueType.clone(), this.nulls?.clone() ?? null, this.collation);
   }
 
   debug(): string {
@@ -289,7 +289,7 @@ export class IndexKeyPart extends Struct {
       const collation = _rcollation.unwrap();
       return Result.Ok(new IndexKeyPart(column, subPath, direction, valueType, nulls, collation));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -372,7 +372,7 @@ export class IndexDirection extends Enum<IndexDirectionV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `IndexDirection` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }
@@ -451,7 +451,7 @@ export class NullsOrder extends Enum<NullsOrderV> {
       const o = value as Record<string, unknown>;
       return Result.Err(JsonError.custom('no variant of `NullsOrder` matches this JSON'));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

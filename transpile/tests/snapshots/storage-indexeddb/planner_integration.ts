@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
-import { Result, AnyhowError, tracing, unsupported, checkedAdd, saturatingAdd } from '@ankurah/base';
+import { Result, AnyhowError, tracing, checkedAdd, saturatingAdd } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
 import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
@@ -8,7 +8,13 @@ import { EntityId } from '@ankurah/proto';
 
 function nextUpperBound(value: Value): [Value, boolean] | null {
   return value.match({
-    Bool: () => unsupported('`Bool` is named by more than one arm of this match, and Rust tries them in order against the patterns inside the payload; the runtime\'s match dispatches on the variant alone, so the first arm would run for every value of it'),
+    Bool: (v) => {
+      if (v._0 === false) {
+        return [new Value('Bool', { _0: true }), true];
+      } else {
+        return [new Value('I32', { _0: 2 }), true];
+      }
+    },
     I16: (_v) => {
       const v = _v._0;
       return [new Value('I16', { _0: saturatingAdd(v, 1, 'i16') }), true] as any;
@@ -100,10 +106,14 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
         return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
       },
       Value: (v) => {
-        const { _0: val } = v.datum.value;
-        const inclusive = v.inclusive;
-        upperTuple.push(val.clone());
-        upperOpen = !inclusive;
+        if (v.datum.is('Val')) {
+          const { _0: val } = v.datum.value;
+          const inclusive = v.inclusive;
+          upperTuple.push(val.clone());
+          upperOpen = !inclusive;
+        } else {
+          return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+        }
       },
       UnboundedLow: () => {
         return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
@@ -207,7 +217,7 @@ function idbKeyTuple(parts: Value[]): Result<JsValue, Error> {
 
 export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirection): Result<[IdbKeyRange, boolean, number, Value[]], Error> {
   const [canonicalRange, eqPrefixLen, eqPrefixValues] = normalize(bounds);
-  const adjustedRange = scanDirection.equals(new ScanDirection('Reverse', {})) && canonicalRange.upper == null && eqPrefixLen > 0 && canonicalRange.lower != null ? (() => {
+  const adjustedRange = scanDirection.equals(new ScanDirection('Reverse', {})) && (canonicalRange.upper == null) && eqPrefixLen > 0 && (canonicalRange.lower != null) ? (() => {
     {
       const _v2 = eqPrefixValues.at(-1);
       if (_v2 != null) {
@@ -218,7 +228,7 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
             const [nextValue, isOpen] = _v1;
             let _moved0 = false;
             try {
-              let upperTuple = eqPrefixValues.slice(0, eqPrefixLen).slice();
+              let upperTuple = eqPrefixValues.slice(0, eqPrefixLen).map((e) => e.clone());
               {
                 const _v = upperTuple.lastMut();
                 if (_v != null) {

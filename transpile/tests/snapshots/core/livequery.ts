@@ -51,7 +51,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
               _moved4 = true;
               _moved5 = true;
               const me = new EntityLiveQuery(Arc.new(new Inner(queryId, node.clone(), subscription, resultset.clone(), Mut.new(null), tokio.sync.Notify.new(), 0, 1, Mut.new([args.selection.clone(), 1]), collectionId.clone(), gapFetcher)));
-              const hasRelay = node.deref().value.subscriptionRelay != null;
+              const hasRelay = (node.deref().value.subscriptionRelay != null);
               if (args.cached || !hasRelay) {
                 const me2 = me.clone();
                 tracing.debug(`LiveQuery::new() spawning initialization task for durable node predicate ${queryId}`);
@@ -237,7 +237,8 @@ export class WeakEntityLiveQuery extends Struct implements RemoteQuerySubscriber
   }
 
   upgrade(): EntityLiveQuery | null {
-    return this._0.upgrade() != null ? (EntityLiveQuery)(this._0.upgrade()!) : null;
+    const _m0 = this._0.upgrade();
+    return (_m0 != null ? (EntityLiveQuery)(_m0!) : null);
   }
 
   clone(): WeakEntityLiveQuery {

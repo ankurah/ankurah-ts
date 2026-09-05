@@ -123,7 +123,7 @@ export class CanonicalRange extends Struct {
   }
 
   clone(): CanonicalRange {
-    return new CanonicalRange([this.lower[0].clone(), this.lower[1]] as [Value[], boolean], [this.upper[0].clone(), this.upper[1]] as [Value[], boolean]);
+    return new CanonicalRange((this.lower != null ? [this.lower[0].map(e1 => e1.clone()), this.lower[1]] as [Value[], boolean] : null), (this.upper != null ? [this.upper[0].map(e1 => e1.clone()), this.upper[1]] as [Value[], boolean] : null));
   }
 
   debug(): string {

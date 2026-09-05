@@ -308,3 +308,61 @@ function bitsOf(width: string): number {
   }
   return bits;
 }
+
+// ── The float methods JavaScript spells the same and answers differently ──
+//
+// `Math.round`, `Math.sign`, `Math.min` and `Math.max` each read like the Rust
+// method of the same name and each disagrees with it about a value the corpus
+// can hold. Written as the `Math.*` call they were, the port answered something
+// else and nothing said so, which is why they are helpers rather than a
+// spelling: a helper is one place to state the rule and one place to test it.
+
+/**
+ * Rust's `f64::round`: half away from ZERO.
+ *
+ * `Math.round` rounds half UP, so the two agree on every positive value and
+ * disagree on every negative half: `(-2.5).round()` is `-3` in Rust and `-2` in
+ * JavaScript. A sort key, a midpoint, a mean — anything that lands on a half
+ * and can be negative — comes out one apart.
+ */
+export function floatRound(value: number): number {
+  return value < 0 ? -Math.round(-value) : Math.round(value);
+}
+
+/**
+ * Rust's `f64::signum`: `1.0` for anything positive, `-1.0` for anything
+ * negative, and `NaN` for `NaN`.
+ *
+ * `Math.sign` answers `+0` for `+0.0` and `-0` for `-0.0`, where Rust answers
+ * `1.0` and `-1.0` — Rust's signum has no zero, because a float's zero carries
+ * a sign and the signum reports it. The two agree about `NaN`.
+ */
+export function floatSignum(value: number): number {
+  if (Number.isNaN(value)) return NaN;
+  // `Object.is` is what tells `-0` from `0`; `<` and `>` cannot.
+  return value < 0 || Object.is(value, -0) ? -1 : 1;
+}
+
+/**
+ * Rust's `f64::min`: the OTHER operand where one is `NaN`.
+ *
+ * `Math.min` answers `NaN` if either operand is, and Rust ignores a `NaN`
+ * operand entirely — `f64::NAN.min(2.0)` is `2.0`. A running minimum over data
+ * with one missing value is `NaN` for the rest of the fold under `Math.min`,
+ * and the value Rust would have found under this.
+ *
+ * Rust also settles the two zeros: `min` may answer either `-0.0` or `0.0` for
+ * `(-0.0).min(0.0)`, so `Math.min`'s `-0` is one of the answers it allows.
+ */
+export function floatMin(left: number, right: number): number {
+  if (Number.isNaN(left)) return right;
+  if (Number.isNaN(right)) return left;
+  return Math.min(left, right);
+}
+
+/** Rust's `f64::max`: the OTHER operand where one is `NaN`. */
+export function floatMax(left: number, right: number): number {
+  if (Number.isNaN(left)) return right;
+  if (Number.isNaN(right)) return left;
+  return Math.max(left, right);
+}

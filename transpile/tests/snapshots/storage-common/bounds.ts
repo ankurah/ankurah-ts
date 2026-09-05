@@ -44,10 +44,14 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
     }
     const _m0 = bound.high.match<any>({
       Value: (v) => {
-        const { _0: val } = v.datum.value;
-        const inclusive = v.inclusive;
-        upperTuple.push(val.clone());
-        upperOpen = !inclusive;
+        if (v.datum.is('Val')) {
+          const { _0: val } = v.datum.value;
+          const inclusive = v.inclusive;
+          upperTuple.push(val.clone());
+          upperOpen = !inclusive;
+        } else {
+          return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+        }
       },
       UnboundedHigh: (v) => {
         return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };

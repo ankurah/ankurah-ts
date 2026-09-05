@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/json.rs
-import { Struct, Result, JsonError, OwnershipFatal } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, unsupported } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Value } from '../../value/index';
 import { Property } from '../index';
@@ -88,6 +88,10 @@ export class Json extends Struct implements Property {
     return Result.Ok(new Value('Json', { _0: structuredClone(this._0) }));
   }
 
+  static Property_fromValue(value: Value | null): Result<Json, PropertyError> {
+    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  }
+
   equals(other: Json): boolean {
     if (!this._0.equals(other._0)) return false;
     return true;
@@ -121,7 +125,7 @@ export class Json extends Struct implements Property {
       const _0 = _r_0.unwrap();
       return Result.Ok(new Json(_0));
     } catch (e) {
-      if (e instanceof OwnershipFatal) throw e;
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
       return Result.Err(JsonError.fromException(e));
     }
   }

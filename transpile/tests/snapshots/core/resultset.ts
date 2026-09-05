@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/resultset.rs
-import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, checkedAdd, HashMap } from '@ankurah/base';
 import { Broadcast, BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from './entity';
 import { View } from './indexel';
@@ -92,7 +92,8 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
     CurrentObserver.track(this);
     const st = this._0.value.state.lock();
     try {
-      return st.value.index.get(id) != null ? ((i) => st.value.order[i].entity.clone())(st.value.index.get(id)!) : null;
+      const _m0 = st.value.index.get(id);
+      return (_m0 != null ? ((i) => st.value.order[i].entity.clone())(_m0!) : null);
     } finally {
       st.drop();
     }
@@ -138,7 +139,8 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
   lastEntity(): E | null {
     const st = this._0.value.state.lock();
     try {
-      return st.value.order.at(-1) != null ? ((entry) => entry.entity.clone())(st.value.order.at(-1)!) : null;
+      const _m0 = st.value.order.at(-1);
+      return (_m0 != null ? ((entry) => entry.entity.clone())(_m0!) : null);
     } finally {
       st.drop();
     }
@@ -275,7 +277,8 @@ export class ResultSet<R extends View> extends Struct implements Signal, Get<E[]
   }
 
   byId(id: EntityId): R | null {
-    return this._0.byId(id) != null ? ((e) => R.fromEntity(e))(this._0.byId(id)!) : null;
+    const _m0 = this._0.byId(id);
+    return (_m0 != null ? ((e) => R.fromEntity(e))(_m0!) : null);
   }
 
   iter(): ResultSetIter<E> {
@@ -404,7 +407,7 @@ class EntityEntry<E extends AbstractEntity> extends Struct {
   }
 
   clone(): EntityEntry<E> {
-    return new EntityEntry(this.entity.clone(), this.sortKey?.clone() ?? null, this.dirty);
+    return new EntityEntry(derivedClone(this.entity), this.sortKey?.clone() ?? null, this.dirty);
   }
 
   debug(): string {
@@ -436,7 +439,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     if (guard.value.index.has(id)) {
       return false;
     }
-    const sortKey = guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null;
+    const sortKey = (guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null);
     const entry = new EntityEntry(entity, sortKey, false);
     const pos = guard.value.order.binarySearchBy((existing) => {
       const _v = [existing.sortKey, entry.sortKey];
@@ -488,7 +491,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
       const _v = guard.value.index.remove(id);
       if (_v != null) {
         const idx = _v;
-        if (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!)) {
+        if ((guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!))) {
           guard.value.gapDirty = true;
         }
         guard.value.order.splice(idx, 1)[0];
@@ -524,7 +527,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
     let removedIds = [];
     let i = 0;
-    const wasAtLimit = guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!);
+    const wasAtLimit = (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!));
     while (i < guard.value.order.length) {
       if (guard.value.order[i].dirty) {
         const shouldKeep = invokeRef(shouldRetain, guard.value.order[i].entity);
@@ -566,7 +569,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     }
     if (!(removedIds.length === 0)) {
       this.changed = true;
-      if ((!guard.value.gapDirty) && wasAtLimit && guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!)) {
+      if ((!guard.value.gapDirty) && wasAtLimit && (guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!))) {
         guard.value.gapDirty = true;
       }
     }
@@ -578,11 +581,11 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     guard.value.order.length = 0;
     guard.value.index.clear();
     for (const entity of entities) {
-      const sortKey = guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null;
+      const sortKey = (guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null);
       const entry = new EntityEntry(entity, sortKey, false);
       guard.value.order.push(entry);
     }
-    if (guard.value.keySpec != null) {
+    if ((guard.value.keySpec != null)) {
       guard.value.order.sort((a, b) => {
         const _v = [a.sortKey, b.sortKey];
         if ((_v[0] != null) && (_v[1] != null)) {

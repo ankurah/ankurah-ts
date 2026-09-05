@@ -101,58 +101,58 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('I32', { _0: n }));
   } else if ((_v[0].is('I16')) && (_v[1].is('I64'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('I64', { _0: n }));
+    return Result.Ok(new Value('I64', { _0: BigInt(n) }));
   } else if ((_v[0].is('I16')) && (_v[1].is('F64'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('F64', { _0: n }));
   } else if ((_v[0].is('I32')) && (_v[1].is('I16'))) {
     const { _0: n } = _v[0].value;
     if (n >= i16.MIN && n <= i16.MAX) {
-      return Result.Ok(new Value('I16', { _0: n }));
+      return Result.Ok(new Value('I16', { _0: ((n << 16) >> 16) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I16', {}) }));
     }
   } else if ((_v[0].is('I32')) && (_v[1].is('I64'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('I64', { _0: n }));
+    return Result.Ok(new Value('I64', { _0: BigInt(n) }));
   } else if ((_v[0].is('I32')) && (_v[1].is('F64'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('F64', { _0: n }));
   } else if ((_v[0].is('I64')) && (_v[1].is('I16'))) {
     const { _0: n } = _v[0].value;
     if (n >= i16.MIN && n <= i16.MAX) {
-      return Result.Ok(new Value('I16', { _0: n }));
+      return Result.Ok(new Value('I16', { _0: Number(BigInt.asIntN(16, n)) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I16', {}) }));
     }
   } else if ((_v[0].is('I64')) && (_v[1].is('I32'))) {
     const { _0: n } = _v[0].value;
     if (n >= i32.MIN && n <= i32.MAX) {
-      return Result.Ok(new Value('I32', { _0: n }));
+      return Result.Ok(new Value('I32', { _0: Number(BigInt.asIntN(32, n)) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I32', {}) }));
     }
   } else if ((_v[0].is('I64')) && (_v[1].is('F64'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('F64', { _0: n }));
+    return Result.Ok(new Value('F64', { _0: Number(n) }));
   } else if ((_v[0].is('F64')) && (_v[1].is('I16'))) {
     const { _0: n } = _v[0].value;
     if (Number.isFinite(n) && n >= i16.MIN && n <= i16.MAX) {
-      return Result.Ok(new Value('I16', { _0: n }));
+      return Result.Ok(new Value('I16', { _0: Math.min(Math.max(Math.trunc(n) || 0, -32768), 32767) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I16', {}) }));
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('I32'))) {
     const { _0: n } = _v[0].value;
     if (Number.isFinite(n) && n >= i32.MIN && n <= i32.MAX) {
-      return Result.Ok(new Value('I32', { _0: n }));
+      return Result.Ok(new Value('I32', { _0: Math.min(Math.max(Math.trunc(n) || 0, -2147483648), 2147483647) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I32', {}) }));
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('I64'))) {
     const { _0: n } = _v[0].value;
     if (Number.isFinite(n) && n >= i64.MIN && n <= i64.MAX) {
-      return Result.Ok(new Value('I64', { _0: n }));
+      return Result.Ok(new Value('I64', { _0: (($v) => $v < -9223372036854775808n ? -9223372036854775808n : $v > 9223372036854775807n ? 9223372036854775807n : $v)(BigInt(Math.min(Math.max(Math.trunc(n) || 0, -9223372036854775808), 9223372036854775807))) }));
     } else {
       return Result.Err(new CastError('NumericOverflow', { value: n.toString(), targetType: new ValueType('I64', {}) }));
     }
@@ -241,7 +241,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Bool', { _0: n !== 0 }));
   } else if ((_v[0].is('I64')) && (_v[1].is('Bool'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('Bool', { _0: n !== 0 }));
+    return Result.Ok(new Value('Bool', { _0: n !== 0n }));
   } else if ((_v[0].is('F64')) && (_v[1].is('Bool'))) {
     const { _0: f } = _v[0].value;
     return Result.Ok(new Value('Bool', { _0: f !== 0.0 }));
@@ -253,10 +253,10 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Json', { _0: n }));
   } else if ((_v[0].is('I32')) && (_v[1].is('Json'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: n }));
+    return Result.Ok(new Value('Json', { _0: BigInt(n) }));
   } else if ((_v[0].is('I16')) && (_v[1].is('Json'))) {
     const { _0: n } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: n }));
+    return Result.Ok(new Value('Json', { _0: BigInt(n) }));
   } else if ((_v[0].is('F64')) && (_v[1].is('Json'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('Json', { _0: n }));

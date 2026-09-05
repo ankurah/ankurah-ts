@@ -374,21 +374,7 @@ impl BodyTranslator<'_> {
                     // read from the alternative whose test passed.
                     _ => match per_alternative(&tests, &binds) {
                         Some(bind) => (tests.join(" || "), bind),
-                        None => {
-                            self.fallback(
-                                syn::spanned::Spanned::span(or),
-                                "the alternatives of this pattern bind their names in a form \
-                                 the translator cannot read back — each alternative has to \
-                                 bind the same names, one `const` apiece — so the arm is \
-                                 written as one that never matches",
-                            );
-                            // NOT `true`: an arm whose test cannot be written
-                            // and which is taken anyway runs a body naming the
-                            // very bindings the alternatives disagreed about,
-                            // so the suite dies on a ReferenceError instead of
-                            // on the engine's own report.
-                            ("false".to_string(), String::new())
-                        }
+                        None => unreadable_alternatives(self, or),
                     },
                 }
             }
@@ -650,5 +636,81 @@ impl<'a> BodyTranslator<'a> {
             ),
         );
         (hole, String::new())
+    }
+}
+
+
+/// An or-pattern whose alternatives bind their names in a form the translator
+/// cannot read back, as the R12 hole it is.
+///
+/// PREMISE CHANGED 2026-09-05 (fixpass4 item 6): what stood here was `false` —
+/// an arm written as one that never matches. That is a wrong answer twice over.
+/// The branch is SKIPPED, so the program carries on as though the pattern had
+/// not matched (core's `watcherset.ts` never registered an index watcher), and
+/// the skipped branch still carried its own releases, naming bindings nothing
+/// declared: `if (false) { .. } finally { literal.drop() }` is a
+/// `ReferenceError` waiting for the day the test stops being `false`.
+///
+/// R12: the test is the hole, so reaching the branch reports what the port
+/// cannot do; and the names the branch's body reads are declared from a hole
+/// too, so the emitted text is still one a JavaScript engine loads and
+/// TypeScript types (`unsupported` answers `never`).
+fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> (String, String) {
+    let what = "the alternatives of this pattern bind their names in a form the translator \
+                cannot read back — each alternative has to bind the same names, one `const` \
+                apiece — so this branch is a hole";
+    t.fallback(syn::spanned::Spanned::span(or), what);
+    let hole = crate::body::hole_text(what);
+    let mut declared: Vec<String> = Vec::new();
+    let mut bind = String::new();
+    for case in &or.cases {
+        for name in crate::body::pattern_names(case) {
+            if declared.contains(&name) {
+                continue;
+            }
+            bind.push_str(&format!("const {} = {};\n", name, hole));
+            declared.push(name);
+        }
+    }
+    (hole, bind)
+}
+
+#[cfg(test)]
+mod or_pattern_tests {
+    use crate::testing::Fixture;
+
+    /// PREMISE CHANGED 2026-09-05 (fixpass4 item 6): an or-pattern the
+    /// translator cannot read back used to be written as a branch that never
+    /// matches. That is a wrong answer twice: the program carried on as though
+    /// the pattern had not matched — core's `watcherset.ts` never registered an
+    /// index watcher — and the skipped branch still carried its own releases,
+    /// naming bindings nothing declared.
+    #[test]
+    fn an_or_pattern_the_translator_cannot_read_back_is_a_hole() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Lit { pub n: u32 }\n\
+             pub struct Path { pub s: String }\n\
+             pub enum Side { Literal(Lit), Property(Path) }\n\
+             pub fn pair(left: Side, right: Side) -> u32 {\n\
+               if let (Side::Property(p), Side::Literal(l)) | (Side::Literal(l), Side::Property(p)) = (left, right) {\n\
+                 l.n\n\
+               } else {\n\
+                 0\n\
+               }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "pair");
+        assert!(ts.contains("if (unsupported("), "the test is the hole:\n{}", ts);
+        // and every name the branch reads is declared, from a hole, so what is
+        // emitted is still text a JavaScript engine loads.
+        assert!(ts.contains("const l = unsupported("), "{}", ts);
+        assert!(ts.contains("const p = unsupported("), "{}", ts);
+        assert!(!ts.contains("if (false)"), "{}", ts);
+        assert!(
+            f.messages().iter().any(|m| m.contains("cannot read back")),
+            "and it says why: {:?}",
+            f.messages()
+        );
     }
 }

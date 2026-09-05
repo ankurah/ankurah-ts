@@ -74,9 +74,19 @@ export function keyHash(key: unknown): string {
   if (key === null) return 'z:';
   const obj = key as object;
   if (isSequence(obj)) {
+    // Each part carries its own LENGTH, so no separator can be forged out of
+    // the parts themselves. Joining with a comma made `["a", "b"]` and
+    // `["a,s:b"]` one label — a `Vec<String>` field of a derived key collided
+    // with a single string that happened to spell the join — and two keys in
+    // one bucket that `equals` then had to tell apart. The derived `hash()` the
+    // emitter writes already length-prefixes its fields; this is the same rule
+    // for the sequence a tuple and a `Vec` are written as.
     const parts: string[] = [];
-    for (let at = 0; at < obj.length; at++) parts.push(keyHash(obj[at]));
-    return `[${parts.join(',')}]`;
+    for (let at = 0; at < obj.length; at++) {
+      const part = keyHash(obj[at]);
+      parts.push(`${part.length}:${part}`);
+    }
+    return `[${parts.join('')}]`;
   }
   const own = (obj as Partial<Hashable>).hash;
   if (typeof own === 'function') return `h:${String(own.call(obj))}`;
@@ -170,3 +180,46 @@ export class Table<K, V> {
  * through a `DropGuard` the way `Mutex` and `RwLock` are, and does not extend
  * `AkObject`.
  */
+
+/**
+ * Two values of a type PARAMETER, compared the way `#[derive(PartialEq)]`
+ * compares them.
+ *
+ * For: a field written as `T` is one the emitter cannot compare — `T` is a
+ * number in `Holder<u32>` and a class in `Holder<Item>`, and `.equals()` on a
+ * number is a TypeError — so the decision is the value's own surface at run
+ * time. `keysEqual` is that walk; what this adds is the REFUSAL, because Rust's
+ * derive on a generic carries `T: PartialEq` and a value declaring no `equals`
+ * is one that bound excludes. Answering `false` for it would turn a value the
+ * port should not be holding into a quiet "not equal".
+ */
+export function derivedEquals(left: unknown, right: unknown): boolean {
+  refuseWithout(left, 'equals', 'PartialEq');
+  return keysEqual(left, right);
+}
+
+/**
+ * One value of a type PARAMETER, copied the way `#[derive(Clone)]` copies it.
+ *
+ * `cloned` is the walk — the value itself where the port writes it as a
+ * primitive, its own `clone()` where it has one — and this adds the refusal, for
+ * the same reason: `#[derive(Clone)]` on a generic carries `T: Clone`, and
+ * handing back a shared object for a value declaring no `clone()` would give one
+ * value two owners and the second drop would be a fatal.
+ */
+export function derivedClone<T>(value: T): T {
+  refuseWithout(value, 'clone', 'Clone');
+  return cloned(value);
+}
+
+/** The refusal both of the above make, worded from what is missing. */
+function refuseWithout(value: unknown, member: string, derive: string): void {
+  if (value === null || typeof value !== 'object' || isSequence(value)) return;
+  if (typeof (value as Record<string, unknown>)[member] === 'function') return;
+  throw new Error(
+    `BUG: ${(value as object).constructor?.name ?? '(anonymous)'} stands where a type ` +
+    `parameter\nis declared, and it declares no ${member}(). Rust's #[derive(${derive})] on a ` +
+    `generic\ncarries a ${derive} bound on that parameter, so this is a value the port put ` +
+    `there\nand Rust would not have.`,
+  );
+}

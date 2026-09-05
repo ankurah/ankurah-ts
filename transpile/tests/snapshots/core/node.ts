@@ -22,7 +22,7 @@ import { expandStates } from './util/expand_states';
 import { Iterable_dispatch_iterable } from './util/iterable';
 import { SafeMap } from './util/safemap';
 import { SafeSet } from './util/safeset';
-import { ParseError, Predicate, Selection } from '@ankurah/ankql';
+import { ParseError, Predicate, Selection, parseSelection } from '@ankurah/ankql';
 import { Get } from '@ankurah/signals';
 
 export class PeerState extends Struct {
@@ -213,20 +213,21 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         let _moved3 = false;
         const auth = _r2.unwrap();
         try {
-          const _r4 = this.deref().value.peerConnections.get(nodeId) != null ? Result.Ok(this.deref().value.peerConnections.get(nodeId)!) : Result.Err(new RequestError('PeerNotConnected', {}));
-          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-          const connection = _r4.unwrap();
+          const _m4 = this.deref().value.peerConnections.get(nodeId);
+          const _r5 = (_m4 != null ? Result.Ok(_m4!) : Result.Err(new RequestError('PeerNotConnected', {})));
+          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+          const connection = _r5.unwrap();
           try {
             _moved0 = true;
             connection.value.pendingRequests.insert(requestId, responseTx);
             _moved3 = true;
             _moved1 = true;
-            const _r5 = connection.value.sendMessage(new NodeMessage('Request', { auth: auth, request: request }));
-            if (_r5.isErr()) return Result.Err(RequestError.fromSendError(_r5.unwrapErr()));
-            _r5.drop();
-            const _r6 = await responseRx.mapErr((_) => new RequestError('InternalChannelClosed', {}));
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-            return _r6.unwrap();
+            const _r6 = connection.value.sendMessage(new NodeMessage('Request', { auth: auth, request: request }));
+            if (_r6.isErr()) return Result.Err(RequestError.fromSendError(_r6.unwrapErr()));
+            _r6.drop();
+            const _r7 = (await responseRx).mapErr((_) => new RequestError('InternalChannelClosed', {}));
+            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+            return _r7.unwrap();
           } finally {
             connection.drop();
           }
@@ -286,14 +287,15 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   async handleMessage(message: NodeMessage): Promise<Result<void, Error>> {
-    const _m10 = await (message.intoMatch<any>({
+    const _m13 = await (message.intoMatch<any>({
       Update: async (v) => {
         const update = v._0;
         let _moved0 = false;
         try {
           tracing.debug(`Node(${this.deref().value.id}) received update ${update}`);
+          const _m1 = this.deref().value.peerConnections.get(update.from);
           {
-            const _v4 = this.deref().value.peerConnections.get(update.from) != null ? ((c) => c.value.sender.cloned())(this.deref().value.peerConnections.get(update.from)!) : null;
+            const _v4 = (_m1 != null ? ((c) => c.value.sender.cloned())(_m1!) : null);
             if (_v4 != null) {
               const sender = _v4;
               const _from = update.from;
@@ -303,13 +305,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   tracing.warn(`${this.deref().value.id} received message from ${update.from} but is not the intended recipient`);
                   return { $jump: 'return', $value: Result.Ok([]) };
                 }
-                let _moved1 = false;
+                let _moved2 = false;
                 const id = update.id.clone();
                 try {
                   const to = update.from;
                   const from = this.deref().value.id;
                   _moved0 = true;
-                  let _moved2 = false;
+                  let _moved3 = false;
                   const body = await (async () => {
                     const _v2 = await this.handleUpdate(update);
                     if (_v2.isOk()) {
@@ -321,16 +323,16 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     }
                   })();
                   try {
-                    _moved1 = true;
                     _moved2 = true;
-                    const _r3 = sender.sendMessage(new NodeMessage('UpdateAck', { _0: new NodeUpdateAck(id, from, to, body) }));
-                    if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
-                    _r3.drop();
+                    _moved3 = true;
+                    const _r4 = sender.sendMessage(new NodeMessage('UpdateAck', { _0: new NodeUpdateAck(id, from, to, body) }));
+                    if (_r4.isErr()) return { $jump: 'return', $value: Result.Err(_r4.unwrapErr()) };
+                    _r4.drop();
                   } finally {
-                    if (!_moved2) body.drop();
+                    if (!_moved3) body.drop();
                   }
                 } finally {
-                  if (!_moved1) id.drop();
+                  if (!_moved2) id.drop();
                 }
               } finally {
                 _id.drop();
@@ -352,28 +354,29 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
       Request: async (v) => {
         const auth = v.auth;
         const request = v.request;
-        let _moved4 = false;
+        let _moved5 = false;
         try {
           try {
             tracing.debug(`Node(${this.deref().value.id}) received request ${request}`);
+            const _m6 = this.deref().value.peerConnections.get(request.from);
             {
-              const _v9 = this.deref().value.peerConnections.get(request.from) != null ? ((c) => c.value.sender.cloned())(this.deref().value.peerConnections.get(request.from)!) : null;
+              const _v9 = (_m6 != null ? ((c) => c.value.sender.cloned())(_m6!) : null);
               if (_v9 != null) {
                 const sender = _v9;
                 const from = request.from;
-                let _moved5 = false;
+                let _moved7 = false;
                 const requestId = request.id.clone();
                 try {
                   if (!request.to.equals(this.deref().value.id)) {
                     tracing.warn(`${this.deref().value.id} received message from ${request.from} but is not the intended recipient`);
                     return { $jump: 'return', $value: Result.Ok([]) };
                   }
-                  let _moved6 = false;
+                  let _moved8 = false;
                   const body = await (async () => {
                     const _v7 = await this.deref().value.policyAgent.checkRequest(this, auth, request);
                     if (_v7.isOk()) {
                       const cdata = _v7.unwrap();
-                      _moved4 = true;
+                      _moved5 = true;
                       const _v8 = await this.handleRequest(cdata, request);
                       if (_v8.isOk()) {
                         const result = _v8.unwrap();
@@ -392,19 +395,19 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     }
                   })();
                   try {
-                    _moved5 = true;
-                    _moved6 = true;
+                    _moved7 = true;
+                    _moved8 = true;
                     const _result = sender.sendMessage(new NodeMessage('Response', { _0: new NodeResponse(requestId, this.deref().value.id, from, body) }));
                   } finally {
-                    if (!_moved6) body.drop();
+                    if (!_moved8) body.drop();
                   }
                 } finally {
-                  if (!_moved5) requestId.drop();
+                  if (!_moved7) requestId.drop();
                 }
               }
             }
           } finally {
-            if (!_moved4) request.drop();
+            if (!_moved5) request.drop();
           }
         } finally {
           dropOwned(auth);
@@ -414,17 +417,18 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         const response = v._0;
         try {
           tracing.debug(`Node ${this.deref().value.id} received response ${response}`);
-          const _r7 = this.deref().value.peerConnections.get(response.from) != null ? Result.Ok(this.deref().value.peerConnections.get(response.from)!) : Result.Err(new RequestError('PeerNotConnected', {}));
-          if (_r7.isErr()) return { $jump: 'return', $value: Result.Err(_r7.unwrapErr()) };
-          const connection = _r7.unwrap();
+          const _m9 = this.deref().value.peerConnections.get(response.from);
+          const _r10 = (_m9 != null ? Result.Ok(_m9!) : Result.Err(new RequestError('PeerNotConnected', {})));
+          if (_r10.isErr()) return { $jump: 'return', $value: Result.Err(_r10.unwrapErr()) };
+          const connection = _r10.unwrap();
           try {
             {
               const _v10 = connection.value.pendingRequests.remove(response.requestId);
               if (_v10 != null) {
                 const tx = _v10;
-                const _r8 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => AnyhowError.msg(`Failed to send response: ${e}`));
-                if (_r8.isErr()) return { $jump: 'return', $value: Result.Err(_r8.unwrapErr()) };
-                _r8.drop();
+                const _r11 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => AnyhowError.msg(`Failed to send response: ${e}`));
+                if (_r11.isErr()) return { $jump: 'return', $value: Result.Err(_r11.unwrapErr()) };
+                _r11.drop();
               }
             }
           } finally {
@@ -442,9 +446,9 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           if (_v11 != null) {
             const peerState = _v11;
             try {
-              const _r9 = peerState.value.subscriptionHandler.removePredicate(queryId);
-              if (_r9.isErr()) return { $jump: 'return', $value: Result.Err(_r9.unwrapErr()) };
-              _r9.drop();
+              const _r12 = peerState.value.subscriptionHandler.removePredicate(queryId);
+              if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
+              _r12.drop();
             } finally {
               peerState.drop();
             }
@@ -452,7 +456,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         }
       },
     }));
-    if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
+    if ((_m13 as any)?.$jump === 'return') return (_m13 as any).$value;
     return Result.Ok([]);
   }
 
@@ -688,13 +692,14 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           try {
             try {
               try {
-                const _r33 = this.deref().value.peerConnections.get(request.from) != null ? Result.Ok(this.deref().value.peerConnections.get(request.from)!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))());
-                if (_r33.isErr()) return Result.Err(_r33.unwrapErr());
-                const peerState = _r33.unwrap();
+                const _m33 = this.deref().value.peerConnections.get(request.from);
+                const _r34 = (_m33 != null ? Result.Ok(_m33!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))()));
+                if (_r34.isErr()) return Result.Err(_r34.unwrapErr());
+                const peerState = _r34.unwrap();
                 try {
-                  const _r34 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
-                  if (_r34.isErr()) return Result.Err(_r34.unwrapErr());
-                  const cdata_1 = _r34.unwrap();
+                  const _r35 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
+                  if (_r35.isErr()) return Result.Err(_r35.unwrapErr());
+                  const cdata_1 = _r35.unwrap();
                   _moved30 = true;
                   _moved31 = true;
                   _moved32 = true;
@@ -749,7 +754,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   async relayToRequiredPeers(cdata: ContextData, id: TransactionId, events: Attested<Event>[]): Promise<Result<void, MutationError>> {
     try {
       for (const peerId of this.getDurablePeers()) {
-        const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.slice() }));
+        const _v = await this.request(peerId, cdata, new NodeRequestBody('CommitTransaction', { id: id.clone(), events: events.map((e) => e.clone()) }));
         if (_v.isOk()) {
           const _v2 = _v.unwrap();
           return Result.Err(new MutationError('General', { _0: io.Error.other(`Peer ${peerId} rejected: ${e}`) }));
@@ -973,48 +978,49 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   async getFromPeer(collectionId: CollectionId, ids: EntityId[], cdata: ContextData): Promise<Result<void, RetrievalError>> {
-    const _r0 = this.getDurablePeerRandom() != null ? Result.Ok(this.getDurablePeerRandom()!) : Result.Err(new RetrievalError('NoDurablePeers', {}));
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-    const peerId = _r0.unwrap();
-    const _r1 = await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids })).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+    const _m0 = this.getDurablePeerRandom();
+    const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err(new RetrievalError('NoDurablePeers', {})));
     if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-    return await (_r1.unwrap().intoMatch({
+    const peerId = _r1.unwrap();
+    const _r2 = (await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids }))).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    return await (_r2.unwrap().intoMatch({
       Get: async (v) => {
         const states = v._0;
-        let _moved2 = false;
+        let _moved3 = false;
         try {
-          const _r3 = await this.deref().value.collections.get(collectionId);
-          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-          const collection = _r3.unwrap();
+          const _r4 = await this.deref().value.collections.get(collectionId);
+          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+          const collection = _r4.unwrap();
           try {
-            _moved2 = true;
-            const _seq7 = states;
-            let _at8 = 0;
+            _moved3 = true;
+            const _seq8 = states;
+            let _at9 = 0;
             try {
-              while (_at8 < _seq7.length) {
-                const state = _seq7[_at8++];
-                let _moved4 = false;
+              while (_at9 < _seq8.length) {
+                const state = _seq8[_at9++];
+                let _moved5 = false;
                 try {
-                  const _r5 = this.deref().value.policyAgent.validateReceivedState(this, peerId, state);
-                  if (_r5.isErr()) return Result.Err(RetrievalError.fromAccessDenied(_r5.unwrapErr()));
-                  _r5.drop();
-                  _moved4 = true;
-                  const _r6 = await collection.deref().value.setState(state).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
-                  if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+                  const _r6 = this.deref().value.policyAgent.validateReceivedState(this, peerId, state);
+                  if (_r6.isErr()) return Result.Err(RetrievalError.fromAccessDenied(_r6.unwrapErr()));
                   _r6.drop();
+                  _moved5 = true;
+                  const _r7 = (await collection.deref().value.setState(state)).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+                  if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+                  _r7.drop();
                 } finally {
-                  if (!_moved4) state.drop();
+                  if (!_moved5) state.drop();
                 }
               }
             } finally {
-              dropOwned(_seq7.slice(_at8));
+              dropOwned(_seq8.slice(_at9));
             }
             return Result.Ok([]);
           } finally {
             collection.drop();
           }
         } finally {
-          if (!_moved2) dropOwned(states);
+          if (!_moved3) dropOwned(states);
         }
       },
       Error: (v) => {
@@ -1192,7 +1198,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   hasSubscriptionRelay(): boolean {
-    return this.deref().value.subscriptionRelay != null;
+    return (this.deref().value.subscriptionRelay != null);
   }
 
   toString(): string {
@@ -1209,7 +1215,8 @@ export class WeakNode<SE, PA extends PolicyAgent> extends Struct {
   }
 
   upgrade(): Node<SE, PA> | null {
-    return this._0.upgrade() != null ? (Node)(this._0.upgrade()!) : null;
+    const _m0 = this._0.upgrade();
+    return (_m0 != null ? (Node)(_m0!) : null);
   }
 
   clone(): WeakNode<SE, PA> {

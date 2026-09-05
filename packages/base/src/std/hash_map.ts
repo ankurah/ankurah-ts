@@ -39,7 +39,7 @@ import { dropContainer } from './guard.ts';
 import { dropOwned, isCopyLike } from '../object.ts';
 import { Table, cloned, type Entry } from './hash_key.ts';
 import { fatalSelfAssignment } from '../drop_registry.ts';
-export { keyHash, keysEqual, type Hashable } from './hash_key.ts';
+export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, type Hashable } from './hash_key.ts';
 import { BorrowMut } from './borrow.ts';
 import { invoke, type Invocable } from '../closure.ts';
 

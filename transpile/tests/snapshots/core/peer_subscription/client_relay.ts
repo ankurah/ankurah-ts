@@ -194,7 +194,8 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                 const node = _v4;
                 const _t2 = me.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
                 try {
-                  const livequery = _t2.value.get(queryId) != null ? ((state) => state.livequery.clone())(_t2.value.get(queryId)!) : null;
+                  const _m3 = _t2.value.get(queryId);
+                  const livequery = (_m3 != null ? ((state) => state.livequery.clone())(_m3!) : null);
                   _t2.drop();
                   _moved0 = true;
                   _moved1 = true;
@@ -215,9 +216,9 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                           const _v3 = subscriptions.value.get(queryId);
                           if (_v3 != null) {
                             const info = _v3;
-                            const _a3 = new Status('Established', { _0: peerId, _1: version });
+                            const _a4 = new Status('Established', { _0: peerId, _1: version });
                             info.status.drop();
-                            info.status = _a3;
+                            info.status = _a4;
                           }
                         }
                         tracing.debug(`Successfully updated predicate ${queryId} on peer ${peerId} subscription`);
@@ -227,14 +228,14 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                     }
                   } else {
                     const e = _v.unwrapErr();
-                    let _moved4 = false;
+                    let _moved5 = false;
                     try {
                       {
-                        _moved4 = true;
+                        _moved5 = true;
                         await me.handleError(queryId, peerId, e, livequery);
                       }
                     } finally {
-                      if (!_moved4) e.drop();
+                      if (!_moved5) e.drop();
                     }
                   }
                 } finally {
@@ -339,7 +340,8 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
   getStatus(queryId: QueryId): Status | null {
     const subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
     try {
-      return subscriptions.value.get(queryId) != null ? ((info) => info.status.clone())(subscriptions.value.get(queryId)!) : null;
+      const _m0 = subscriptions.value.get(queryId);
+      return (_m0 != null ? ((info) => info.status.clone())(_m0!) : null);
     } finally {
       subscriptions.drop();
     }
@@ -424,7 +426,8 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           const version = content.value.version;
           const _t0 = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
           try {
-            const livequery = _t0.value.get(queryId) != null ? ((state) => state.livequery.clone())(_t0.value.get(queryId)!) : null;
+            const _m1 = _t0.value.get(queryId);
+            const livequery = (_m1 != null ? ((state) => state.livequery.clone())(_m1!) : null);
             _t0.drop();
             const _v = await TNode_dispatch_remoteSubscribe(node.value, targetPeer, queryId, content.value.collectionId.clone(), predicate, contextData, version);
             if (_v.isOk()) {
@@ -443,9 +446,9 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                     const _v3 = subscriptions.value.get(queryId);
                     if (_v3 != null) {
                       const info = _v3;
-                      const _a1 = new Status('Established', { _0: targetPeer, _1: version });
+                      const _a2 = new Status('Established', { _0: targetPeer, _1: version });
                       info.status.drop();
-                      info.status = _a1;
+                      info.status = _a2;
                     }
                   }
                   tracing.debug(`Successfully registered predicate ${queryId} on peer ${targetPeer} subscription`);
@@ -455,14 +458,14 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
               }
             } else {
               const e = _v.unwrapErr();
-              let _moved2 = false;
+              let _moved3 = false;
               try {
                 {
-                  _moved2 = true;
+                  _moved3 = true;
                   await this.handleError(queryId, targetPeer, e, livequery);
                 }
               } finally {
-                if (!_moved2) e.drop();
+                if (!_moved3) e.drop();
               }
             }
           } finally {
@@ -639,20 +642,21 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
   let _moved0 = false;
   try {
     try {
-      const _r1 = self.upgrade() != null ? Result.Ok(self.upgrade()!) : Result.Err((() => new RetrievalError('Other', { _0: 'Node has been dropped' }))());
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-      const node = _r1.unwrap();
+      const _m1 = self.upgrade();
+      const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => new RetrievalError('Other', { _0: 'Node has been dropped' }))()));
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      const node = _r2.unwrap();
       try {
-        const _r2 = await node.fetchEntitiesFromLocal(collectionId, selection);
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        let _moved3 = false;
-        const knownMatches = [..._r2.unwrap()].map((entity) => new KnownEntity(entity.id(), entity.head()));
+        const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        let _moved4 = false;
+        const knownMatches = [..._r3.unwrap()].map((entity) => new KnownEntity(entity.id(), entity.head()));
         try {
-          _moved3 = true;
-          const _r4 = await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches })).mapErr((e) => new RetrievalError('RequestError', { _0: e }));
-          if (_r4.isErr()) return { $jump: 'return', $value: Result.Err(_r4.unwrapErr()) };
-          const _m5 = await (async () => {
-            return _r4.unwrap().intoMatch<any>({
+          _moved4 = true;
+          const _r5 = (await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches }))).mapErr((e) => new RetrievalError('RequestError', { _0: e }));
+          if (_r5.isErr()) return { $jump: 'return', $value: Result.Err(_r5.unwrapErr()) };
+          const _m6 = await (async () => {
+            return _r5.unwrap().intoMatch<any>({
               QuerySubscribed: (v) => {
                 const _responseQueryId = v.queryId;
                 const deltas = v.deltas;
@@ -684,26 +688,26 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
               },
             });
           })();
-          if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
-          const deltas = (_m5 as any);
+          if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
+          const deltas = (_m6 as any);
           tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
           _moved0 = true;
           const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
           const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
           try {
             const eventStoreResult = await retriever.storeUsedEvents();
-            const _r6 = applyResult;
-            if (_r6.isErr()) return Result.Err(RetrievalError.fromApplyError(_r6.unwrapErr()));
-            _r6.drop();
-            const _r7 = eventStoreResult;
-            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+            const _r7 = applyResult;
+            if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
             _r7.drop();
+            const _r8 = eventStoreResult;
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            _r8.drop();
             return Result.Ok([]);
           } finally {
             applyResult.drop();
           }
         } finally {
-          if (!_moved3) dropOwned(knownMatches);
+          if (!_moved4) dropOwned(knownMatches);
         }
       } finally {
         node.drop();
@@ -717,13 +721,14 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
 }
 
 export async function WeakNode_peerUnsubscribe<SE extends StorageEngine, PA extends PolicyAgent>(self: WeakNode<SE, PA>, peerId: EntityId, queryId: QueryId): Promise<Result<void, AnyhowError>> {
-  const _r0 = self.upgrade() != null ? Result.Ok(self.upgrade()!) : Result.Err((() => AnyhowError.msg('Node has been dropped'))());
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-  const node = _r0.unwrap();
+  const _m0 = self.upgrade();
+  const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => AnyhowError.msg('Node has been dropped'))()));
+  if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+  const node = _r1.unwrap();
   try {
-    const _r1 = await node.deref().value.requestRemoteUnsubscribe(queryId, [peerId]);
-    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-    _r1.drop();
+    const _r2 = await node.deref().value.requestRemoteUnsubscribe(queryId, [peerId]);
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    _r2.drop();
     return Result.Ok([]);
   } finally {
     node.drop();

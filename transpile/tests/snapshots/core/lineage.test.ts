@@ -102,13 +102,13 @@ describe('lineage unit tests', () => {
       try {
         const descendant = new TestClock([3]);
         try {
-          const _t0 = await compare(store, descendant, ancestor, 100).unwrap();
+          const _t0 = (await compare(store, descendant, ancestor, 100)).unwrap();
           try {
             expect(_t0).toEqual(new Ordering('Descends', {}));
           } finally {
             _t0.drop();
           }
-          const _t1 = await compare(store, ancestor, descendant, 100).unwrap();
+          const _t1 = (await compare(store, ancestor, descendant, 100)).unwrap();
           try {
             const _t2 = new Ordering('NotDescends', { meet: [1] });
             try {
@@ -145,13 +145,13 @@ describe('lineage unit tests', () => {
         try {
           const descendant = new TestClock([5]);
           try {
-            const _t0 = await compare(store, descendant, ancestor, 100).unwrap();
+            const _t0 = (await compare(store, descendant, ancestor, 100)).unwrap();
             try {
               expect(_t0).toEqual(new Ordering('Descends', {}));
             } finally {
               _t0.drop();
             }
-            const _t1 = await compare(store, ancestor, descendant, 100).unwrap();
+            const _t1 = (await compare(store, ancestor, descendant, 100)).unwrap();
             try {
               const _t2 = new Ordering('NotDescends', { meet: [1] });
               try {
@@ -174,13 +174,13 @@ describe('lineage unit tests', () => {
         try {
           const descendant = new TestClock([5]);
           try {
-            const _t3 = await compare(store, descendant, ancestor, 100).unwrap();
+            const _t3 = (await compare(store, descendant, ancestor, 100)).unwrap();
             try {
               expect(_t3).toEqual(new Ordering('Descends', {}));
             } finally {
               _t3.drop();
             }
-            const _t4 = await compare(store, ancestor, descendant, 100).unwrap();
+            const _t4 = (await compare(store, ancestor, descendant, 100)).unwrap();
             try {
               const _t5 = new Ordering('NotDescends', { meet: [2, 3] });
               try {
@@ -203,7 +203,7 @@ describe('lineage unit tests', () => {
         try {
           const b = new TestClock([3]);
           try {
-            const _t6 = await compare(store, a, b, 100).unwrap();
+            const _t6 = (await compare(store, a, b, 100)).unwrap();
             try {
               const _t7 = new Ordering('NotDescends', { meet: [1] });
               try {
@@ -214,7 +214,7 @@ describe('lineage unit tests', () => {
             } finally {
               _t6.drop();
             }
-            const _t8 = await compare(store, b, a, 100).unwrap();
+            const _t8 = (await compare(store, b, a, 100)).unwrap();
             try {
               const _t9 = new Ordering('NotDescends', { meet: [1] });
               try {
@@ -237,7 +237,7 @@ describe('lineage unit tests', () => {
         try {
           const b = new TestClock([2, 3]);
           try {
-            const _t10 = await compare(store, a, b, 100).unwrap();
+            const _t10 = (await compare(store, a, b, 100)).unwrap();
             try {
               const _t11 = new Ordering('PartiallyDescends', { meet: [3] });
               try {
@@ -276,7 +276,7 @@ describe('lineage unit tests', () => {
         try {
           const b = new TestClock([8]);
           try {
-            const _t0 = await compare(store, a, b, 100).unwrap();
+            const _t0 = (await compare(store, a, b, 100)).unwrap();
             try {
               expect(_t0).toEqual(new Ordering('Incomparable', {}));
             } finally {
@@ -294,7 +294,7 @@ describe('lineage unit tests', () => {
         try {
           const b = new TestClock([8]);
           try {
-            const _t1 = await compare(store, a, b, 100).unwrap();
+            const _t1 = (await compare(store, a, b, 100)).unwrap();
             try {
               expect(_t1).toEqual(new Ordering('Incomparable', {}));
             } finally {
@@ -312,7 +312,7 @@ describe('lineage unit tests', () => {
         try {
           const b = new TestClock([5, 8]);
           try {
-            const _t2 = await compare(store, a, b, 100).unwrap();
+            const _t2 = (await compare(store, a, b, 100)).unwrap();
             try {
               expect(_t2).toEqual(new Ordering('Incomparable', {}));
             } finally {
@@ -338,19 +338,19 @@ describe('lineage unit tests', () => {
       try {
         const nonEmpty = new TestClock([1]);
         try {
-          const _t0 = await compare(store, empty, empty, 100).unwrap();
+          const _t0 = (await compare(store, empty, empty, 100)).unwrap();
           try {
             expect(_t0).toEqual(new Ordering('Incomparable', {}));
           } finally {
             _t0.drop();
           }
-          const _t1 = await compare(store, nonEmpty, empty, 100).unwrap();
+          const _t1 = (await compare(store, nonEmpty, empty, 100)).unwrap();
           try {
             expect(_t1).toEqual(new Ordering('Incomparable', {}));
           } finally {
             _t1.drop();
           }
-          const _t2 = await compare(store, empty, nonEmpty, 100).unwrap();
+          const _t2 = (await compare(store, empty, nonEmpty, 100)).unwrap();
           try {
             expect(_t2).toEqual(new Ordering('Incomparable', {}));
           } finally {
@@ -383,7 +383,7 @@ describe('lineage unit tests', () => {
         try {
           const descendant = new TestClock([4]);
           try {
-            const _t0 = await compare(store, descendant, ancestor, 2).unwrap();
+            const _t0 = (await compare(store, descendant, ancestor, 2)).unwrap();
             try {
               const _t1 = new Ordering('BudgetExceeded', { subjectFrontier: [2], otherFrontier: [] });
               try {
@@ -406,13 +406,13 @@ describe('lineage unit tests', () => {
         try {
           const descendant = new TestClock([4, 5]);
           try {
-            const _t2 = await compare(store, descendant, ancestor, 10).unwrap();
+            const _t2 = (await compare(store, descendant, ancestor, 10)).unwrap();
             try {
               expect(_t2).toEqual(new Ordering('Descends', {}));
             } finally {
               _t2.drop();
             }
-            const _t3 = await compare(store, ancestor, descendant, 2).unwrap();
+            const _t3 = (await compare(store, ancestor, descendant, 2)).unwrap();
             try {
               const _t4 = new Ordering('BudgetExceeded', { subjectFrontier: [], otherFrontier: [2] });
               try {
@@ -441,7 +441,7 @@ describe('lineage unit tests', () => {
       store.add(1, []);
       const clock = new TestClock([1]);
       try {
-        const _t0 = await compare(store, clock, clock, 100).unwrap();
+        const _t0 = (await compare(store, clock, clock, 100)).unwrap();
         try {
           expect(_t0).toEqual(new Ordering('Equal', {}));
         } finally {
@@ -467,13 +467,13 @@ describe('lineage unit tests', () => {
       try {
         const bigOther = new TestClock([1, 2, 3, 4, 5, 6]);
         try {
-          const _t0 = await compare(store, subject, bigOther, 1000).unwrap();
+          const _t0 = (await compare(store, subject, bigOther, 1000)).unwrap();
           try {
             expect(_t0).toEqual(new Ordering('Descends', {}));
           } finally {
             _t0.drop();
           }
-          const _t1 = await compare(store, bigOther, subject, 1000).unwrap();
+          const _t1 = (await compare(store, bigOther, subject, 1000)).unwrap();
           try {
             const _t2 = new Ordering('NotDescends', { meet: [1, 2, 3, 4, 5, 6] });
             try {
@@ -509,19 +509,19 @@ describe('lineage unit tests', () => {
           try {
             const clock3 = new TestClock([3]);
             try {
-              const _t0 = await compareUnstoredEvent(store, unstoredEvent, clock1, 100).unwrap();
+              const _t0 = (await compareUnstoredEvent(store, unstoredEvent, clock1, 100)).unwrap();
               try {
                 expect(_t0).toEqual(new Ordering('Descends', {}));
               } finally {
                 _t0.drop();
               }
-              const _t1 = await compareUnstoredEvent(store, unstoredEvent, clock2, 100).unwrap();
+              const _t1 = (await compareUnstoredEvent(store, unstoredEvent, clock2, 100)).unwrap();
               try {
                 expect(_t1).toEqual(new Ordering('Descends', {}));
               } finally {
                 _t1.drop();
               }
-              const _t2 = await compareUnstoredEvent(store, unstoredEvent, clock3, 100).unwrap();
+              const _t2 = (await compareUnstoredEvent(store, unstoredEvent, clock3, 100)).unwrap();
               try {
                 expect(_t2).toEqual(new Ordering('Descends', {}));
               } finally {
@@ -529,7 +529,7 @@ describe('lineage unit tests', () => {
               }
               const unstoredMergeEvent = new TestEvent(5, new TestClock([2, 3]));
               try {
-                const _t3 = await compareUnstoredEvent(store, unstoredMergeEvent, clock1, 100).unwrap();
+                const _t3 = (await compareUnstoredEvent(store, unstoredMergeEvent, clock1, 100)).unwrap();
                 try {
                   expect(_t3).toEqual(new Ordering('Descends', {}));
                 } finally {
@@ -538,7 +538,7 @@ describe('lineage unit tests', () => {
                 store.add(10, []);
                 const incomparableClock = new TestClock([10]);
                 try {
-                  const _t4 = await compareUnstoredEvent(store, unstoredEvent, incomparableClock, 100).unwrap();
+                  const _t4 = (await compareUnstoredEvent(store, unstoredEvent, incomparableClock, 100)).unwrap();
                   try {
                     expect(_t4).toEqual(new Ordering('Incomparable', {}));
                   } finally {
@@ -548,13 +548,13 @@ describe('lineage unit tests', () => {
                   try {
                     const emptyClock = new TestClock([]);
                     try {
-                      const _t5 = await compareUnstoredEvent(store, rootEvent, emptyClock, 100).unwrap();
+                      const _t5 = (await compareUnstoredEvent(store, rootEvent, emptyClock, 100)).unwrap();
                       try {
                         expect(_t5).toEqual(new Ordering('Incomparable', {}));
                       } finally {
                         _t5.drop();
                       }
-                      const _t6 = await compareUnstoredEvent(store, rootEvent, clock1, 100).unwrap();
+                      const _t6 = (await compareUnstoredEvent(store, rootEvent, clock1, 100)).unwrap();
                       try {
                         expect(_t6).toEqual(new Ordering('Incomparable', {}));
                       } finally {
@@ -562,7 +562,7 @@ describe('lineage unit tests', () => {
                       }
                       const emptyClock_1 = new TestClock([]);
                       try {
-                        const _t7 = await compareUnstoredEvent(store, unstoredEvent, emptyClock_1, 100).unwrap();
+                        const _t7 = (await compareUnstoredEvent(store, unstoredEvent, emptyClock_1, 100)).unwrap();
                         try {
                           expect(_t7).toEqual(new Ordering('Incomparable', {}));
                         } finally {
@@ -610,7 +610,7 @@ describe('lineage unit tests', () => {
       try {
         const clock3 = new TestClock([3]);
         try {
-          const _t0 = await compareUnstoredEvent(store, unstoredEvent, clock3, 100).unwrap();
+          const _t0 = (await compareUnstoredEvent(store, unstoredEvent, clock3, 100)).unwrap();
           try {
             expect(_t0).toEqual(new Ordering('Descends', {}));
           } finally {
@@ -619,7 +619,7 @@ describe('lineage unit tests', () => {
           store.add(4, [3]);
           const clockWithEvent = new TestClock([4]);
           try {
-            const _t1 = await compareUnstoredEvent(store, unstoredEvent, clockWithEvent, 100).unwrap();
+            const _t1 = (await compareUnstoredEvent(store, unstoredEvent, clockWithEvent, 100)).unwrap();
             try {
               expect(_t1).toEqual(new Ordering('Equal', {}));
             } finally {
@@ -627,7 +627,7 @@ describe('lineage unit tests', () => {
             }
             const clockWithMultiple = new TestClock([3, 4]);
             try {
-              const _t2 = await compareUnstoredEvent(store, unstoredEvent, clockWithMultiple, 100).unwrap();
+              const _t2 = (await compareUnstoredEvent(store, unstoredEvent, clockWithMultiple, 100)).unwrap();
               try {
                 expect(_t2).toEqual(new Ordering('Incomparable', {}));
               } finally {
@@ -666,7 +666,7 @@ describe('lineage unit tests', () => {
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
           while (true) {
             {
-              const _v = await comparison.step();
+              const _v = (await comparison.step());
               if (_v != null) {
                 const ordering = _v;
                 expect(ordering).toEqual(new Ordering('Descends', {}));
@@ -705,7 +705,7 @@ describe('lineage unit tests', () => {
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
           while (true) {
             {
-              const _v = await comparison.step();
+              const _v = (await comparison.step());
               if (_v != null) {
                 const ordering = _v;
                 expect(ordering).toEqual(new Ordering('Descends', {}));
@@ -748,7 +748,7 @@ describe('lineage unit tests', () => {
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
           while (true) {
             {
-              const _v = await comparison.step();
+              const _v = (await comparison.step());
               if (_v != null) {
                 const ordering = _v;
                 expect(ordering).toEqual(new Ordering('Equal', {}));
@@ -785,7 +785,7 @@ describe('lineage unit tests', () => {
           let comparison = Comparison.newWithAccumulator(store, subject, other, 100, accumulator);
           while (true) {
             {
-              const _v = await comparison.step();
+              const _v = (await comparison.step());
               if (_v != null) {
                 const ordering = _v;
                 if (!(ordering.is('NotDescends'))) throw new Error('assertion failed');
