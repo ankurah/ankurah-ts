@@ -1,88 +1,90 @@
 // MIRRORS: ankurah/core/src/query_value.rs
-
-import type { EntityId } from '@ankurah/proto';
-import { EntityId as EntityIdClass } from '@ankurah/proto';
+import { Enum, Result } from '@ankurah/base';
 import { Expr, Literal, ParseError } from '@ankurah/ankql';
+import { EntityId } from '@ankurah/proto';
 
-// ---------------------------------------------------------------------------
-// QueryValue — value type for query parameter substitution
-// ---------------------------------------------------------------------------
+export type QueryValueV = {
+  String: { _0: string };
+  Int: { _0: bigint };
+  Float: { _0: number };
+  Bool: { _0: boolean };
+  EntityId: { _0: string };
+};
 
-/**
- * Value type for query parameter substitution.
- *
- * Rust: `pub enum QueryValue { String, Int, Float, Bool, EntityId }`
- * TS: Discriminated union [A8].
- *
- * Used with `fetch()`, `query()`, etc. to fill in `?` placeholders:
- * ```
- * ops.fetch(ctx, "name = ?", [queryValueString("Alice")])
- * ```
- */
-export type QueryValue =
-  | { type: 'String'; value: string }
-  | { type: 'Int'; value: number }
-  | { type: 'Float'; value: number }
-  | { type: 'Bool'; value: boolean }
-  | { type: 'EntityId'; value: string }; // base64 string for compatibility, matching Rust FFI
+export class QueryValue extends Enum<QueryValueV> {
 
-// ---------------------------------------------------------------------------
-// Factory helpers (matching Rust From impls)
-// ---------------------------------------------------------------------------
+  static fromString(s: string): QueryValue {
+    return new QueryValue('String', { _0: s });
+  }
 
-/** Create a String QueryValue. Mirrors Rust `From<String> for QueryValue`. */
-export function queryValueString(s: string): QueryValue {
-  return { type: 'String', value: s };
-}
+  static fromI64(i: bigint): QueryValue {
+    return new QueryValue('Int', { _0: i });
+  }
 
-/** Create an Int QueryValue. Mirrors Rust `From<i64> for QueryValue`. */
-export function queryValueInt(i: number): QueryValue {
-  return { type: 'Int', value: i };
-}
+  static fromI32(i: number): QueryValue {
+    return new QueryValue('Int', { _0: BigInt(i) });
+  }
 
-/** Create a Float QueryValue. Mirrors Rust `From<f64> for QueryValue`. */
-export function queryValueFloat(f: number): QueryValue {
-  return { type: 'Float', value: f };
-}
+  static fromF64(f: number): QueryValue {
+    return new QueryValue('Float', { _0: f });
+  }
 
-/** Create a Bool QueryValue. Mirrors Rust `From<bool> for QueryValue`. */
-export function queryValueBool(b: boolean): QueryValue {
-  return { type: 'Bool', value: b };
-}
+  static fromBool(b: boolean): QueryValue {
+    return new QueryValue('Bool', { _0: b });
+  }
 
-/** Create an EntityId QueryValue. Mirrors Rust `From<EntityId> for QueryValue`. */
-export function queryValueEntityId(id: EntityId): QueryValue {
-  return { type: 'EntityId', value: id.toBase64() };
-}
+  static fromEntityId(id: EntityId): QueryValue {
+    return new QueryValue('EntityId', { _0: id.toBase64() });
+  }
 
-// ---------------------------------------------------------------------------
-// Conversion: QueryValue -> Expr
-// ---------------------------------------------------------------------------
+  clone(): QueryValue {
+    return new QueryValue(this.type, { ...this.value });
+  }
 
-/**
- * Convert a QueryValue to an AnkQL Expr.
- *
- * Rust: `impl TryFrom<QueryValue> for ankql::ast::Expr`
- * Throws ParseError on invalid EntityId.
- */
-export function queryValueToExpr(qv: QueryValue): Expr {
-  switch (qv.type) {
-    case 'String':
-      return Expr.Literal(Literal.String(qv.value));
-    case 'Int':
-      // Divergence: Rust uses i64 -> Literal::I64(bigint). TS uses number -> I64(bigint) [E3].
-      return Expr.Literal(Literal.I64(BigInt(qv.value)));
-    case 'Float':
-      return Expr.Literal(Literal.F64(qv.value));
-    case 'Bool':
-      return Expr.Literal(Literal.Bool(qv.value));
-    case 'EntityId': {
-      try {
-        const id = EntityIdClass.fromBase64(qv.value);
-        return Expr.Literal(Literal.EntityId(id.toBytes()));
-      } catch (e) {
-        throw new ParseError(`Invalid EntityId: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+  debug(): string {
+    return this.match({
+      String: (v) => `String(${JSON.stringify(v._0)})`,
+      Int: (v) => `Int(${String(v._0)})`,
+      Float: (v) => `Float(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
+      Bool: (v) => `Bool(${String(v._0)})`,
+      EntityId: (v) => `EntityId(${JSON.stringify(v._0)})`,
+    });
   }
 }
+
+export function Expr_tryFromQueryValue(value: QueryValue): Result<Expr, ParseError> {
+  try {
+    const _m1 = (() => {
+      return value.match<any>({
+        String: (v) => {
+          const s = v._0;
+          return new Expr('Literal', { _0: new Literal('String', { _0: s }) });
+        },
+        Int: (v) => {
+          const i = v._0;
+          return new Expr('Literal', { _0: new Literal('I64', { _0: i }) });
+        },
+        Float: (v) => {
+          const f = v._0;
+          return new Expr('Literal', { _0: new Literal('F64', { _0: f }) });
+        },
+        Bool: (v) => {
+          const b = v._0;
+          return new Expr('Literal', { _0: new Literal('Bool', { _0: b }) });
+        },
+        EntityId: (v) => {
+          const s = v._0;
+          const _r0 = EntityId.fromBase64(s).mapErr((e) => new ParseError('InvalidPredicate', { _0: `Invalid EntityId: ${e}` }));
+          if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
+          const id = _r0.unwrap();
+          return new Expr('Literal', { _0: new Literal('EntityId', { _0: id.toUlid() }) });
+        },
+      });
+    })();
+    if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+    return Result.Ok((_m1 as any));
+  } finally {
+    value.drop();
+  }
+}
+

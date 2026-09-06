@@ -111,6 +111,9 @@ impl<'a> Fallback<'a> {
                 value: self.value,
                 is_async: self.is_async,
                 release_rest: release,
+                // A chain link and a catch-all are always written as a
+                // block, so the bare-expression cast never applies to them.
+                tuple: false,
             },
             t,
         )

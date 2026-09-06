@@ -13,7 +13,7 @@
 
 [over]
 "src/bincode_module.rs" = 913
-"src/body.rs" = 1329
+"src/body.rs" = 1319
 "src/cfg.rs" = 742
 "src/codegen.rs" = 1479
 "src/config.rs" = 890
@@ -28,7 +28,7 @@
 "src/ownership/tests.rs" = 1326
 "src/registry/build.rs" = 1137
 "src/registry/engine_tests.rs" = 1289
-"src/registry/method.rs" = 1107
+"src/registry/method.rs" = 1063
 "src/registry/method_tests.rs" = 726
 "src/registry/mod.rs" = 785
 "tests/oracle.rs" = 879

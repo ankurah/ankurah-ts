@@ -3,7 +3,7 @@ import { checkedDiv } from '@ankurah/base';
 
 function compress(bytes: Uint8Array, target: number): Uint8Array {
   const segSize = checkedDiv(bytes.length, target, 'usize');
-  return bytes.chunks(segSize).map((c) => [...c].fold(0, (acc, x) => acc ^ x));
+  return Uint8Array.from(bytes.chunks(segSize).map((c) => [...c].fold(0, (acc, x) => acc ^ x)));
 }
 
 export function humanize(bytes: Uint8Array, wordsOut: number): string {

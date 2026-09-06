@@ -129,8 +129,10 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         } else {
           _moved0 = true;
           const operations_1 = new OperationSet(operations);
+          const _b2 = this.deref().collection.clone();
+          const _b3 = state.value.head.clone();
           _moved0 = true;
-          const event = new Event(this.deref().collection.clone(), this.deref().id, operations_1, state.value.head.clone());
+          const event = new Event(_b2, this.deref().id, operations_1, _b3);
           return Result.Ok(event);
         }
       } finally {

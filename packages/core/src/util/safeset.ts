@@ -1,41 +1,78 @@
 // MIRRORS: ankurah/core/src/util/safeset.rs
-//
-// Rust's SafeSet wraps HashSet with RwLock for concurrent access safety.
-// Divergence: JS is single-threaded — no lock needed. Plain Set suffices [E8].
-// We preserve the API surface for port fidelity.
+import { Struct, Result, RwLock, HashSet } from '@ankurah/base';
 
-/**
- * A simple Set wrapper mirroring Rust's SafeSet API.
- *
- * Rust: `pub struct SafeSet<T>(RwLock<HashSet<T>>)`
- * Divergence: No RwLock — JS is single-threaded [E8].
- */
-export class SafeSet<T> {
-  private set: Set<T> = new Set();
+export class SafeSet<T extends Hash & Eq & Clone & Debug> extends Struct {
+  _0: RwLock<HashSet<T>>;
+
+  constructor(_0: RwLock<HashSet<T>>) {
+    super();
+    this._0 = _0;
+  }
+
+  static new<T>(): SafeSet<T> {
+    return new SafeSet(new RwLock(new HashSet()));
+  }
 
   insert(value: T): boolean {
-    if (this.set.has(value)) return false;
-    this.set.add(value);
-    return true;
+    const _t0 = this._0.write();
+    try {
+      return _t0.value.insert(value);
+    } finally {
+      _t0.drop();
+    }
   }
 
   remove(value: T): boolean {
-    return this.set.delete(value);
+    const _t0 = this._0.write();
+    try {
+      return _t0.value.remove(value);
+    } finally {
+      _t0.drop();
+    }
   }
 
   contains(value: T): boolean {
-    return this.set.has(value);
+    const _t0 = this._0.read();
+    try {
+      return _t0.value.has(value);
+    } finally {
+      _t0.drop();
+    }
   }
 
   isEmpty(): boolean {
-    return this.set.size === 0;
+    const _t0 = this._0.read();
+    try {
+      return _t0.value.size === 0;
+    } finally {
+      _t0.drop();
+    }
   }
 
   len(): number {
-    return this.set.size;
+    const _t0 = this._0.read();
+    try {
+      return _t0.value.size;
+    } finally {
+      _t0.drop();
+    }
   }
 
   toVec(): T[] {
-    return [...this.set];
+    const _t0 = this._0.read();
+    try {
+      return [...[..._t0.value]];
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  toString(): Result {
+    return `SafeSet { ${this._0.read()} }`;
+  }
+
+  static default<T>(): SafeSet<T> {
+    return SafeSet.new();
   }
 }
+

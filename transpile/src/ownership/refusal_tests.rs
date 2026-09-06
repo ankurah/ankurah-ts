@@ -58,3 +58,36 @@ fn a_refused_statement_releases_what_it_was_going_to_hand_away() {
     let hole = ts.find("unsupported(").expect("the collect was expected to refuse");
     assert!(released < hole, "the release stands below the hole that throws:\n{}", ts);
 }
+
+/// A method declared `self` takes its receiver with it, and a receiver that is
+/// a FIELD of a place is a partial move.
+///
+/// Rust takes the field out of the struct and leaves the rest where it was.
+/// Written as a plain property read the struct and the callee both owned it, so
+/// the block's own `pair.drop()` released a value the callee had already taken
+/// — `BUG: Entity was used after being moved`. Six of ankql's seven
+/// `ast.test.ts` failures are `selection.predicate.populate(..)`, that shape.
+/// `takeField` is the same call `let x = s.field` has always written; only this
+/// position was not asking for it.
+#[test]
+fn a_self_method_on_a_field_takes_the_field_out() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Entity { pub name: String }\n\
+         impl Entity {\n\
+           pub fn into_name(self) -> String { self.name }\n\
+           pub fn width(&self) -> usize { self.name.len() }\n\
+         }\n\
+         pub struct Pair { pub one: Entity, pub two: Entity }\n\
+         pub fn name_of(pair: Pair) -> String { pair.one.into_name() }\n\
+         pub fn width_of(pair: &Pair) -> usize { pair.one.width() }",
+    )]);
+    let taken = f.translated_method("lib.rs", "name_of");
+    assert!(taken.contains("pair.takeField('one')"), "the field is taken out:\n{}", taken);
+    assert!(taken.contains("pair.drop()"), "the struct is still the block's:\n{}", taken);
+
+    // A `&self` method takes nothing, and the field is read where it is.
+    let read = f.translated_method("lib.rs", "width_of");
+    assert!(read.contains("pair.one.width()"), "{}", read);
+    assert!(!read.contains("takeField"), "a borrow takes nothing:\n{}", read);
+}

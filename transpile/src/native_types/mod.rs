@@ -88,11 +88,16 @@ pub struct Position {
     pub used: bool,
     /// Is the answer read as a VALUE, rather than written through by a `*`?
     pub reads_as_value: bool,
+    /// Does the lowering own the sequence's ELEMENTS? A consuming iterator
+    /// terminal does, and then it is what releases the ones it does not hand
+    /// back (F1). The call's own text cannot say — `xs.find(p)` looks the same
+    /// either way — so the translator that resolved the method says instead.
+    pub elements: iterator::Elements,
 }
 
 /// The position a caller with nothing to say about it stands in.
 pub fn used_and_read() -> Position {
-    Position { used: true, reads_as_value: true }
+    Position { used: true, reads_as_value: true, elements: iterator::Elements::Borrowed }
 }
 
 /// The same, told what the position the call stands in wants of its answer.
@@ -150,12 +155,20 @@ pub fn translate_method_using(
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
-        JsShape::Array(inner) => array::translate(receiver, rust_method, args, &array::Element::of(reg, &inner)),
+        JsShape::Array(inner) => {
+            array::translate(receiver, rust_method, args, &array::Element::of(reg, &inner), at.elements)
+        }
         // A `Vec<u8>` is a `Uint8Array`, which is fixed-length and shares only
         // the reading half of an array's surface.
         JsShape::Bytes => bytes::translate(receiver, rust_method, args),
         JsShape::Nullable(_) => nullable::translate(receiver, rust_method, args, once),
-        JsShape::Map(_, _) => map::translate_using_result(receiver, rust_method, args, used),
+        JsShape::Map(_, value) => map::translate_using_result(
+            receiver,
+            rust_method,
+            args,
+            used,
+            crate::name_map::shape::writes_by_reference(reg, &value),
+        ),
         JsShape::Set(_) => set::translate_using_result(receiver, rust_method, args, used),
         // An `Arc<T>` answers `Arc`'s own methods; everything else is a method
         // on the `T` inside it, reached the way the runtime holds it — Rust's
@@ -266,7 +279,12 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
     }
 
     // Iterator methods are commonly called on untyped receivers
-    if let Some(result) = iterator::translate(receiver, rust_method, args, iterator::Receiver::Unknown) {
+    // A receiver the engine could not name has no ownership answer, so the
+    // reading helpers are what is written and the site is already reported for
+    // being untyped.
+    if let Some(result) =
+        iterator::translate(receiver, rust_method, args, iterator::Receiver::Unknown, iterator::Elements::Borrowed)
+    {
         return MethodTranslation::Expr(result);
     }
 

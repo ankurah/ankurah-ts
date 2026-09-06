@@ -42,6 +42,13 @@ pub(super) struct ArmParts<'a> {
     /// is called — `intoMatch` releases nothing of its own, on any path — so an
     /// arm that binds only some of it releases the rest here.
     pub release_rest: String,
+    /// Is the arm's Rust body a TUPLE literal? TypeScript takes a `match`'s
+    /// result type from the first arm it reads, and a tuple written in one arm
+    /// makes every later arm an error against it — so that arm is cast. Read
+    /// from the ARM, never from the emitted text: `[...exprs].every(p)` starts
+    /// with a bracket and is a boolean, and `sql_builder.ts`'s
+    /// `can_pushdown_expr` was cast for it (E16).
+    pub tuple: bool,
 }
 
 /// One arm of a `.match({..})`.
@@ -51,7 +58,8 @@ pub(super) struct ArmParts<'a> {
 /// its characters, which could not tell a binding from the same word inside a
 /// string literal or a comment, and knew nothing of a name shadowed further in.
 pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
-    let ArmParts { variant, bindings, param, body, owned, lifted, produces, value, is_async, release_rest } = parts;
+    let ArmParts { variant, bindings, param, body, owned, lifted, produces, value, is_async, release_rest, tuple } =
+        parts;
     // An arm is an arrow function, and JavaScript's `await` belongs to the
     // nearest one — so an arm that awaits is `async`, and the whole `.match`
     // is awaited where it stands.
@@ -61,14 +69,14 @@ pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
         None => format!("  {}: {}() => ", variant, keyword),
     };
     if owned.is_empty() && lifted.is_empty() && release_rest.is_empty() {
-        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces, value));
+        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces, value, tuple));
     }
     // An arm that owns what it was handed, that lifted a declaration out of its
     // own body, or that owes the payload a release, is always a block: the
     // release goes in a `finally`, so the arm cannot be the bare expression
     // form.
     let inner = arm_block(
-        ArmParts { variant, bindings, param: None, body, owned, lifted, produces, value, is_async, release_rest },
+        ArmParts { variant, bindings, param: None, body, owned, lifted, produces, value, is_async, release_rest, tuple },
         t,
     );
     format!("{}{{\n{}  }},\n", head, indent(&indent(&inner)))

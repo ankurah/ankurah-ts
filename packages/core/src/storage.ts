@@ -1,157 +1,90 @@
 // MIRRORS: ankurah/core/src/storage.rs
+import { Struct, Result, Arc, dropOwned, tracing } from '@ankurah/base';
+import { Attested, CollectionId, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
 
-import type { Attested, CollectionId, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
-import type { Selection } from '@ankurah/ankql';
+export class StorageCollectionWrapper extends Struct {
+  _0: Arc<StorageCollection>;
 
-import { MutationError, RetrievalError } from './error.ts';
+  constructor(_0: Arc<StorageCollection>) {
+    super();
+    this._0 = _0;
+  }
 
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
+  static new(bucket: Arc<StorageCollection>): StorageCollectionWrapper {
+    return new StorageCollectionWrapper(bucket);
+  }
 
-/** Rust: `pub fn state_name(name: &str) -> String` */
+  deref(): Arc<StorageCollection> {
+    return this._0;
+  }
+
+  clone(): StorageCollectionWrapper {
+    return new StorageCollectionWrapper(this._0.clone());
+  }
+}
+
+export interface StorageEngine {
+  collection(id: CollectionId): Promise<Result<Arc<StorageCollection>, RetrievalError>>;
+  deleteAllCollections(): Promise<Result<boolean, MutationError>>;
+}
+
+export abstract class StorageCollection {
+  abstract setState(state: Attested<EntityState>): Promise<Result<boolean, MutationError>>;
+  abstract getState(id: EntityId): Promise<Result<Attested<EntityState>, RetrievalError>>;
+  abstract fetchStates(selection: Selection): Promise<Result<Attested<EntityState>[], RetrievalError>>;
+  async setStates(states: Attested<EntityState>[]): Promise<Result<void, MutationError>> {
+    const _seq1 = states;
+    let _at2 = 0;
+    try {
+      while (_at2 < _seq1.length) {
+        const state = _seq1[_at2++];
+        const _r0 = await this.setState(state);
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        _r0.drop();
+      }
+    } finally {
+      dropOwned(_seq1.slice(_at2));
+    }
+    return Result.Ok([]);
+  }
+  async getStates(ids: EntityId[]): Promise<Result<Attested<EntityState>[], RetrievalError>> {
+    let states = [];
+    for (const id of ids) {
+      const _v = await this.getState(id);
+      if (_v.isOk()) {
+        const state = _v.unwrap();
+        states.push(state)
+      } else {
+        const _v1 = _v.unwrapErr();
+        _arm0: {
+          if (_v1.is('EntityNotFound')) {
+            const _v2 = _v1;
+            try {
+              tracing.warn(`Entity not found: ${id}`);
+            } finally {
+              _v2.drop();
+            }
+            break _arm0;
+          }
+          {
+            const e = _v1;
+            return Result.Err(e)
+          }
+        }
+      }
+    }
+    return Result.Ok(states);
+  }
+  abstract addEvent(entityEvent: Attested<Event>): Promise<Result<boolean, MutationError>>;
+  abstract getEvents(eventIds: EventId[]): Promise<Result<Attested<Event>[], RetrievalError>>;
+  abstract dumpEntityEvents(id: EntityId): Promise<Result<Attested<Event>[], RetrievalError>>;
+}
+
 export function stateName(name: string): string {
   return `${name}_state`;
 }
 
-/** Rust: `pub fn event_name(name: &str) -> String` */
 export function eventName(name: string): string {
   return `${name}_event`;
 }
 
-// ---------------------------------------------------------------------------
-// StorageEngine — trait for storage engine implementations
-// ---------------------------------------------------------------------------
-
-/**
- * Interface for storage engine implementations.
- *
- * Rust: `pub trait StorageEngine: Send + Sync`
- * Divergence: Rust has associated type `type Value`; omitted in TS — unused by trait methods [E8].
- */
-export interface StorageEngine {
-  /**
-   * Opens and/or creates a storage collection.
-   *
-   * Rust: `async fn collection(&self, id: &CollectionId) -> Result<Arc<dyn StorageCollection>, RetrievalError>`
-   */
-  collection(id: CollectionId): Promise<StorageCollection>;
-
-  /**
-   * Delete all collections and their data from the storage engine.
-   *
-   * Rust: `async fn delete_all_collections(&self) -> Result<bool, MutationError>`
-   */
-  deleteAllCollections(): Promise<boolean>;
-}
-
-// ---------------------------------------------------------------------------
-// StorageCollection — trait for collection-level storage operations
-// ---------------------------------------------------------------------------
-
-/**
- * Interface for collection-level storage operations.
- *
- * Rust: `pub trait StorageCollection: Send + Sync`
- * All methods are async (matching Rust async_trait).
- */
-export interface StorageCollection {
-  /**
-   * Set/update the state for an entity.
-   *
-   * Rust: `async fn set_state(&self, state: Attested<EntityState>) -> Result<bool, MutationError>`
-   */
-  setState(state: Attested<EntityState>): Promise<boolean>;
-
-  /**
-   * Get the state for a specific entity.
-   *
-   * Rust: `async fn get_state(&self, id: EntityId) -> Result<Attested<EntityState>, RetrievalError>`
-   */
-  getState(id: EntityId): Promise<Attested<EntityState>>;
-
-  /**
-   * Fetch raw entity states matching a selection (predicate + order by + limit).
-   *
-   * Rust: `async fn fetch_states(&self, selection: &Selection) -> Result<Vec<Attested<EntityState>>, RetrievalError>`
-   */
-  fetchStates(selection: Selection): Promise<Attested<EntityState>[]>;
-
-  /**
-   * Add an event to the collection's event log.
-   *
-   * Rust: `async fn add_event(&self, entity_event: &Attested<Event>) -> Result<bool, MutationError>`
-   */
-  addEvent(event: Attested<Event>): Promise<boolean>;
-
-  /**
-   * Retrieve a list of events by their IDs.
-   *
-   * Rust: `async fn get_events(&self, event_ids: Vec<EventId>) -> Result<Vec<Attested<Event>>, RetrievalError>`
-   */
-  getEvents(eventIds: EventId[]): Promise<Attested<Event>[]>;
-
-  /**
-   * Retrieve all events for an entity from the collection.
-   *
-   * Rust: `async fn dump_entity_events(&self, id: EntityId) -> Result<Vec<Attested<Event>>, RetrievalError>`
-   */
-  dumpEntityEvents(id: EntityId): Promise<Attested<Event>[]>;
-}
-
-// ---------------------------------------------------------------------------
-// Default implementations for StorageCollection
-// ---------------------------------------------------------------------------
-
-/**
- * Set multiple states. Default implementation iterates and calls setState.
- *
- * Rust: `async fn set_states(&self, states: Vec<Attested<EntityState>>) -> Result<(), MutationError>`
- * Divergence: Free function instead of default trait method — TS interfaces cannot have default impls [E7].
- */
-export async function setStates(collection: StorageCollection, states: Attested<EntityState>[]): Promise<void> {
-  for (const state of states) {
-    await collection.setState(state);
-  }
-}
-
-/**
- * Get multiple states by ID. Silently skips entities that are not found.
- *
- * Rust: `async fn get_states(&self, ids: Vec<EntityId>) -> Result<Vec<Attested<EntityState>>, RetrievalError>`
- * Divergence: Free function instead of default trait method — TS interfaces cannot have default impls [E7].
- */
-export async function getStates(collection: StorageCollection, ids: EntityId[]): Promise<Attested<EntityState>[]> {
-  const states: Attested<EntityState>[] = [];
-  for (const id of ids) {
-    try {
-      const state = await collection.getState(id);
-      states.push(state);
-    } catch (e) {
-      if (e instanceof RetrievalError && e.kind === 'EntityNotFound') {
-        console.warn(`Entity not found: ${id}`);
-        continue;
-      }
-      throw e;
-    }
-  }
-  return states;
-}
-
-// ---------------------------------------------------------------------------
-// StorageCollectionWrapper
-// ---------------------------------------------------------------------------
-
-/**
- * Manages the storage and state of the collection without any knowledge of the model type.
- *
- * Rust: `pub struct StorageCollectionWrapper(pub(crate) Arc<dyn StorageCollection>)`
- * Divergence: No Deref — TS has no Deref trait. Access inner via `.inner` field [E8].
- */
-export class StorageCollectionWrapper {
-  readonly inner: StorageCollection;
-
-  constructor(bucket: StorageCollection) {
-    this.inner = bucket;
-  }
-}

@@ -1,647 +1,868 @@
 // MIRRORS: ankurah/core/src/entity.rs
+import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, invoke, Invocable, dropOwned, valueNotEquals, tracing, dropUnbound, checkedAdd, iterFindMap, range, HashMap } from '@ankurah/base';
+import { Clock, CollectionId, EntityId, EntityState, Event, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
+import { LineageError, MutationError, RetrievalError, StateError } from './error';
+import { View } from './indexel';
+import { compare, compareUnstoredEvent } from './lineage';
+import { PropertyBackend, backendFromString } from './property/backend/index';
+import { AbstractEntity } from './reactor';
+import { State } from './reactor/subscription_state';
+import { Filterable } from './selection/filter';
+import { Value } from './value/index';
+import { Broadcast } from '@ankurah/signals';
 
-import {
-  type CollectionId,
-  type EntityId,
-  EntityId as EntityIdClass,
-  type EventId,
-  Clock,
-  State,
-  StateBuffers,
-  EntityState,
-  Event,
-  OperationSet,
-  type Operation,
-} from '@ankurah/proto';
-import {
-  Broadcast,
-  type BroadcastId,
-  type BroadcastListener,
-  ListenerGuard as SignalListenerGuard,
-  type Signal,
-  type Listener,
-  CurrentObserver,
-} from '@ankurah/signals';
-import { Struct } from '@ankurah/base';
+export class Entity extends Struct implements AbstractEntity, Filterable {
+  _0: Arc<EntityInner>;
 
-import type { PropertyBackend } from './property/backend/index.ts';
-import { backendFromString, LWWBackend, YjsBackend } from './property/backend/index.ts';
-import type { PropertyName } from './property/index.ts';
-import type { Value } from './value/index.ts';
-import { MutationError, RetrievalError, StateError } from './error.ts';
-
-// ---------------------------------------------------------------------------
-// EntityKind — Primary vs Transacted
-// ---------------------------------------------------------------------------
-
-/**
- * Tracks whether an entity is a canonical primary entity or a transaction fork.
- *
- * Rust: `pub enum EntityKind { Primary, Transacted { trx_alive, upstream } }`
- * Divergence: Rust uses Arc<AtomicBool> for trx_alive; TS uses shared { value: boolean } [E8].
- * Divergence: Rust uses Arc<EntityInner>; TS uses plain reference [E8].
- */
-export type EntityKind =
-  | { type: 'Primary' }
-  | { type: 'Transacted'; trxAlive: { value: boolean }; upstream: Entity };
-
-// ---------------------------------------------------------------------------
-// EntityInnerState — mutable state behind RwLock in Rust
-// ---------------------------------------------------------------------------
-
-/**
- * Mutable state of an entity.
- *
- * Rust: `struct EntityInnerState { head: Clock, backends: BTreeMap<String, Arc<dyn PropertyBackend>> }`
- * Divergence: No RwLock needed — single-threaded JS [E8].
- * Divergence: No Arc<dyn PropertyBackend> — plain PropertyBackend references [E8].
- */
-interface EntityInnerState {
-  head: Clock;
-  backends: Map<string, PropertyBackend>;
-}
-
-// ---------------------------------------------------------------------------
-// Entity
-// ---------------------------------------------------------------------------
-
-/**
- * Core entity type. Holds identity, collection, property backends, and clock.
- *
- * Rust: `pub struct Entity(Arc<EntityInner>)`
- * Divergence: No Arc — plain class instance (JS single-threaded, GC handles memory) [E8].
- * Divergence: No Deref<Target = EntityInner> — methods defined directly on Entity [E7].
- */
-export class Entity extends Struct {
-  /** Entity identity (immutable). Rust: `pub id: EntityId` */
-  readonly entityId: EntityId;
-
-  /** Collection this entity belongs to (immutable). Rust: `pub collection: CollectionId` */
-  readonly collectionId: CollectionId;
-
-  /** Entity kind: Primary or Transacted. Rust: `pub kind: EntityKind` */
-  readonly kind: EntityKind;
-
-  /** Mutable state (head clock + backends). Rust: `state: RwLock<EntityInnerState>` */
-  private state: EntityInnerState;
-
-  /**
-   * Broadcast for change notifications.
-   * Rust: `pub(crate) broadcast: ankurah_signals::broadcast::Broadcast`
-   */
-  readonly broadcast: Broadcast;
-
-  private constructor(
-    entityId: EntityId,
-    collectionId: CollectionId,
-    kind: EntityKind,
-    state: EntityInnerState,
-  ) {
+  constructor(_0: Arc<EntityInner>) {
     super();
-    this.entityId = entityId;
-    this.collectionId = collectionId;
-    this.kind = kind;
-    this.state = state;
-    this.broadcast = new Broadcast();
+    this._0 = _0;
   }
 
-  // ── Construction ──────────────────────────────────────────────────
-
-  /**
-   * Create a brand new primary entity with empty state.
-   *
-   * Rust: `pub fn create(id: EntityId, collection: CollectionId) -> Self`
-   */
-  static create(id: EntityId, collection: CollectionId): Entity {
-    return new Entity(
-      id,
-      collection,
-      { type: 'Primary' },
-      { head: Clock.default(), backends: new Map() },
-    );
-  }
-
-  /**
-   * Create an entity from persisted state.
-   *
-   * Rust: `fn from_state(id: EntityId, collection: CollectionId, state: &State) -> Result<Self, RetrievalError>`
-   * Throws RetrievalError on failure.
-   */
-  static fromState(
-    id: EntityId,
-    collection: CollectionId,
-    state: State,
-  ): Entity {
-    const backends = new Map<string, PropertyBackend>();
-    for (const [name, buffer] of state.stateBuffers.entries()) {
-      try {
-        backends.set(name, backendFromString(name, buffer));
-      } catch (e) {
-        throw RetrievalError.deserializationError(
-          e instanceof Error ? e : new Error(String(e)),
-        );
-      }
-    }
-    return new Entity(
-      id,
-      collection,
-      { type: 'Primary' },
-      { head: state.head, backends },
-    );
-  }
-
-  // ── Identity & State Access ───────────────────────────────────────
-
-  /**
-   * Get the entity ID.
-   *
-   * Rust: EntityInner has `pub id: EntityId`
-   */
   id(): EntityId {
-    return this.entityId;
+    return this.deref().id;
   }
 
-  /**
-   * Get the collection.
-   *
-   * Rust: EntityInner has `pub collection: CollectionId`
-   */
+  weak(): WeakEntity {
+    return new WeakEntity(this._0.downgrade());
+  }
+
   collection(): CollectionId {
-    return this.collectionId;
+    return this.deref().collection;
   }
 
-  /**
-   * Get the current head clock.
-   *
-   * Rust: `pub fn head(&self) -> Clock`
-   */
   head(): Clock {
-    return this.state.head;
+    const _t0 = this.deref().state.read();
+    try {
+      return _t0.value.head.clone();
+    } finally {
+      _t0.drop();
+    }
   }
 
-  /**
-   * Whether this entity can be mutated (i.e., belongs to a live transaction).
-   *
-   * Rust: `pub fn is_writable(&self) -> bool`
-   */
   isWritable(): boolean {
-    switch (this.kind.type) {
-      case 'Primary':
-        return false;
-      case 'Transacted':
-        return this.kind.trxAlive.value;
-    }
-  }
-
-  // ── State Serialization ───────────────────────────────────────────
-
-  /**
-   * Serialize current entity state.
-   *
-   * Rust: `pub fn to_state(&self) -> Result<State, StateError>`
-   * Throws StateError on failure.
-   */
-  toState(): State {
-    const bufferMap = new Map<string, Uint8Array>();
-    for (const [name, backend] of this.state.backends) {
-      try {
-        bufferMap.set(name, backend.toStateBuffer());
-      } catch (e) {
-        throw StateError.serializationError(
-          e instanceof Error ? e : new Error(String(e)),
-        );
-      }
-    }
-    return new State(new StateBuffers(bufferMap), this.state.head);
-  }
-
-  /**
-   * Serialize current entity state with identity.
-   *
-   * Rust: `pub fn to_entity_state(&self) -> Result<EntityState, StateError>`
-   */
-  toEntityState(): EntityState {
-    const state = this.toState();
-    return new EntityState(this.entityId, this.collectionId, state);
-  }
-
-  // ── Backend Access ────────────────────────────────────────────────
-
-  /**
-   * Get or lazily create a backend by its static class.
-   *
-   * Rust: `pub fn get_backend<P: PropertyBackend>(&self) -> Result<Arc<P>, RetrievalError>`
-   * Divergence: TS uses class reference and string name lookup rather than trait dispatch [E8].
-   */
-  getBackend<P extends PropertyBackend>(
-    backendClass: { propertyBackendName(): string; new (): P; fromStateBuffer(buffer: Uint8Array): P },
-  ): P {
-    const name = backendClass.propertyBackendName();
-    let backend = this.state.backends.get(name);
-    if (!backend) {
-      backend = new backendClass();
-      this.state.backends.set(name, backend);
-    }
-    return backend as P;
-  }
-
-  /**
-   * Get a backend by name string, creating if needed.
-   *
-   * Rust: Uses backend_from_string() factory.
-   */
-  getBackendByName(name: string): PropertyBackend {
-    let backend = this.state.backends.get(name);
-    if (!backend) {
-      backend = backendFromString(name);
-      this.state.backends.set(name, backend);
-    }
-    return backend;
-  }
-
-  /**
-   * Get a property value by field name. Searches all backends.
-   * Used by View getters generated by defineModel().
-   *
-   * Rust: AbstractEntity::value() + Filterable::value() impl on Entity
-   */
-  getPropertyValue(fieldName: string): Value | null {
-    if (fieldName === 'id') {
-      return { type: 'EntityId', value: this.entityId };
-    }
-    for (const backend of this.state.backends.values()) {
-      const value = backend.propertyValue(fieldName);
-      if (value !== null) return value;
-    }
-    return null;
-  }
-
-  /**
-   * Get an active type handle for a field. Used by Mutable getters generated by defineModel().
-   * Returns the appropriate active type (LWW<T> or YrsString) for the field.
-   *
-   * This is used internally by defineModel() generated Mutable classes.
-   */
-  getActiveHandle(fieldName: string, backendKind: string): unknown {
-    // Defer actual handle creation to the caller — this is a hook point.
-    // The defineModel() Mutable getter calls this, then wraps appropriately.
-    const backend = this.getBackendByName(backendKind);
-    return { backend, fieldName, entity: this };
-  }
-
-  /**
-   * Initialize a property value on the entity (for new entity creation).
-   * Called by Model::initialize_new_entity().
-   *
-   * Rust: Delegates to InitializeWith trait impls per field type.
-   */
-  initializeProperty(
-    fieldName: string,
-    value: unknown,
-    backendKind: string,
-  ): void {
-    const backend = this.getBackendByName(backendKind);
-
-    if (backendKind === 'lww') {
-      // Convert value to Value type and set on LWW backend
-      const lww = backend as LWWBackend;
-      const converted = primitiveToValue(value);
-      lww.set(fieldName, converted);
-    } else if (backendKind === 'yjs') {
-      // Insert initial text on Yjs backend
-      const yjs = backend as YjsBackend;
-      if (value !== null && value !== undefined) {
-        yjs.insert(fieldName, 0, String(value));
-      }
-    }
-    // ephemeral fields are not stored in backends
-  }
-
-  // ── Transaction Forking ───────────────────────────────────────────
-
-  /**
-   * Create a transaction fork of this entity. Forks all backends for isolation.
-   *
-   * Rust: `pub fn snapshot(&self, trx_alive: Arc<AtomicBool>) -> Self`
-   * Divergence: trx_alive is { value: boolean } instead of Arc<AtomicBool> [E8].
-   */
-  snapshot(trxAlive: { value: boolean }): Entity {
-    // Fork all backends
-    const forkedBackends = new Map<string, PropertyBackend>();
-    for (const [name, backend] of this.state.backends) {
-      forkedBackends.set(name, backend.fork());
-    }
-
-    return new Entity(
-      this.entityId,
-      this.collectionId,
-      { type: 'Transacted', trxAlive, upstream: this },
-      { head: this.state.head, backends: forkedBackends },
-    );
-  }
-
-  // ── Event Generation (for Transaction commit) ─────────────────────
-
-  /**
-   * Generate a commit event from pending operations.
-   * Returns null if no operations have been generated (no mutations).
-   *
-   * Rust: `pub(crate) fn generate_commit_event(&self) -> Result<Option<Event>, MutationError>`
-   * Throws MutationError on failure.
-   */
-  generateCommitEvent(): Event | null {
-    const operationMap = new Map<string, Operation[]>();
-
-    for (const [backendName, backend] of this.state.backends) {
-      try {
-        const ops = backend.toOperations();
-        if (ops !== null && ops.length > 0) {
-          operationMap.set(backendName, ops);
-        }
-      } catch (e) {
-        throw MutationError.general(
-          e instanceof Error ? e : new Error(String(e)),
-        );
-      }
-    }
-
-    if (operationMap.size === 0) {
-      return null; // No changes
-    }
-
-    return new Event(
-      this.collectionId,
-      this.entityId,
-      new OperationSet(operationMap),
-      this.state.head,
-    );
-  }
-
-  /**
-   * Update the entity's head clock after commit.
-   *
-   * Rust: `pub(crate) fn commit_head(&self, new_head: Clock)`
-   */
-  commitHead(newHead: Clock): void {
-    this.state.head = newHead;
-  }
-
-  // ── Applying Operations ───────────────────────────────────────────
-
-  /**
-   * Apply operations from an event to this entity's backends.
-   *
-   * Rust: This is the inner loop of apply_event().
-   * Throws MutationError on failure.
-   */
-  applyOperations(operationSet: OperationSet): void {
-    for (const [backendName, ops] of operationSet.entries()) {
-      const backend = this.getBackendByName(backendName);
-      backend.applyOperations(ops);
-    }
-  }
-
-  /**
-   * Apply a full event to this entity. Simplified version without lineage comparison.
-   * Sets head to the event's computed ID.
-   *
-   * Rust: `pub async fn apply_event<G>(&self, getter: &G, event: &Event) -> Result<bool, MutationError>`
-   * Note: Full lineage comparison deferred until lineage module is ported.
-   */
-  applyEvent(event: Event): boolean {
-    // For entity creation (empty parent), just apply directly
-    if (event.isEntityCreate()) {
-      if (!this.state.head.isEmpty()) {
-        return false; // Already has state, skip
-      }
-      this.applyOperations(event.operations);
-      this.state.head = Clock.fromEventId(event.id());
-      this.broadcast.send();
-      return true;
-    }
-
-    // Simplified lineage comparison: check if event's parent matches current head.
-    // Rust: compare_unstored_event(getter, event, &head, budget) -> Ordering
-    // - Descends: event.parent == head => new_head = event.id()
-    // - NotDescends: event.parent != head => new_head = head.withEvent(event.id())
-    //   (concurrent commit — both events should appear in head)
-    let newHead: Clock;
-    if (event.parent.equals(this.state.head)) {
-      // Descends: this event follows directly from our head
-      newHead = Clock.fromEventId(event.id());
-    } else {
-      // NotDescends: concurrent commit, merge into head
-      // Rust: head.with_event(event.id())
-      newHead = this.state.head.withEvent(event.id());
-    }
-
-    this.applyOperations(event.operations);
-    this.state.head = newHead;
-    this.broadcast.send();
-    return true;
-  }
-
-  /**
-   * Apply a complete state snapshot.
-   *
-   * Rust: `pub async fn apply_state<G>(&self, getter: &G, state: &State) -> Result<bool, MutationError>`
-   * Simplified version without lineage comparison.
-   */
-  applyState(state: State): boolean {
-    // Replace all backends from state buffers
-    const newBackends = new Map<string, PropertyBackend>();
-    for (const [name, buffer] of state.stateBuffers.entries()) {
-      newBackends.set(name, backendFromString(name, buffer));
-    }
-    this.state.backends = newBackends;
-    this.state.head = state.head;
-    this.broadcast.send();
-    return true;
-  }
-
-  // ── View conversion ───────────────────────────────────────────────
-
-  /**
-   * Get a typed View for this entity, if collection matches.
-   *
-   * Rust: `pub fn view<V: View>(&self) -> Option<V>`
-   */
-  view<V>(viewClass: { fromEntity(entity: Entity): V; }, expectedCollection?: CollectionId): V | null {
-    if (expectedCollection !== undefined && this.collectionId !== expectedCollection) {
-      return null;
-    }
-    return viewClass.fromEntity(this);
-  }
-
-  // ── Signal adapter ───────────────────────────────────────────────
-
-  /** Cached Signal adapter for this entity's broadcast */
-  private _signal: Signal | null = null;
-
-  /**
-   * Get a Signal adapter for this entity's broadcast.
-   * Used by View getters to enable reactive tracking via CurrentObserver.
-   *
-   * Rust: View structs implement Subscribe which provides signal-based tracking.
-   * The derive-generated View getter calls CurrentObserver::track(self) to enable
-   * reactive re-evaluation when the entity changes.
-   * Divergence: Entity provides signal() instead of View implementing Subscribe [E8].
-   */
-  signal(): Signal {
-    if (!this._signal) {
-      const broadcast = this.broadcast;
-      this._signal = {
-        listen(listener: Listener): SignalListenerGuard {
-          const broadcastListener: BroadcastListener<void> = {
-            type: 'NotifyOnly',
-            callback: listener,
-          };
-          const guard = broadcast.reference().listen(broadcastListener);
-          return new SignalListenerGuard(guard);
-        },
-        broadcastId(): BroadcastId {
-          return broadcast.id();
-        },
-      };
-    }
-    return this._signal;
-  }
-
-  // ── Display ───────────────────────────────────────────────────────
-
-  /**
-   * Rust: `impl Display for Entity`
-   * Output: `Entity(collection/entity_id_short clock_short)`
-   */
-  toString(): string {
-    return `Entity(${this.collectionId}/${this.entityId.toBase64Short()} ${this.state.head.toBase64Short()})`;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// WeakEntitySet — registry with deduplication
-// ---------------------------------------------------------------------------
-
-/**
- * Registry and factory for entities. Provides deduplication guarantees.
- *
- * Rust: `pub struct WeakEntitySet(Arc<RwLock<BTreeMap<EntityId, WeakEntity>>>)`
- * Divergence: No Arc/RwLock needed — single-threaded JS [E8].
- * Divergence: Uses WeakRef<Entity> instead of Weak<EntityInner> [E8].
- * Divergence: Uses FinalizationRegistry for auto-cleanup [E8].
- */
-export class WeakEntitySet {
-  private entities: Map<string, WeakRef<Entity>> = new Map();
-  private registry: FinalizationRegistry<string>;
-
-  constructor() {
-    // Auto-cleanup when entities are GC'd
-    this.registry = new FinalizationRegistry((key: string) => {
-      this.entities.delete(key);
+    return this.deref().kind.match({
+      Primary: () => false,
+      Transacted: (v) => {
+        const trxAlive = v.trxAlive;
+        return trxAlive.value;
+      },
     });
   }
 
-  /**
-   * Get a resident entity by ID, if still alive.
-   *
-   * Rust: `pub fn get(&self, id: &EntityId) -> Option<Entity>`
-   */
-  get(id: EntityId): Entity | null {
-    const key = entityIdKey(id);
-    const ref_ = this.entities.get(key);
-    if (!ref_) return null;
-    const entity = ref_.deref();
-    if (!entity) {
-      this.entities.delete(key);
-      return null;
-    }
-    return entity;
-  }
-
-  /**
-   * Create a brand new entity and register it.
-   *
-   * Rust: `pub fn create(&self, collection: CollectionId) -> Entity`
-   */
-  create(collection: CollectionId): Entity {
-    const id = EntityIdClass.new();
-    const entity = Entity.create(id, collection);
-    this.register(entity);
-    return entity;
-  }
-
-  /**
-   * Register an entity in the set. If an entity with the same ID already exists
-   * and is still alive, the existing one is kept.
-   */
-  register(entity: Entity): void {
-    const key = entityIdKey(entity.entityId);
-    const existing = this.entities.get(key)?.deref();
-    if (existing) return; // Already registered and alive
-    const ref_ = new WeakRef(entity);
-    this.entities.set(key, ref_);
-    this.registry.register(entity, key);
-  }
-
-  /**
-   * Get an entity, or create from state if not resident.
-   *
-   * Rust: `pub async fn with_state<R>(...) -> Result<(Option<bool>, Entity), RetrievalError>`
-   * Returns [changed: boolean | null, entity: Entity].
-   * changed = null if entity was not previously on node, true if state was applied, false if already existed.
-   */
-  withState(
-    id: EntityId,
-    collection: CollectionId,
-    state: State,
-  ): [boolean | null, Entity] {
-    const existing = this.get(id);
-    if (existing) {
-      // Entity already resident — apply state if newer
-      const changed = existing.applyState(state);
-      return [changed, existing];
-    }
-
-    // Create new entity from state
-    const entity = Entity.fromState(id, collection, state);
-    this.register(entity);
-    return [null, entity];
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Convert EntityId to a stable string key for Map lookups. */
-function entityIdKey(id: EntityId): string {
-  return id.toBase64();
-}
-
-/**
- * Convert a JS primitive value to a Value union.
- * Used by initializeProperty for LWW fields.
- */
-function primitiveToValue(value: unknown): Value | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === 'string') {
-    return { type: 'String', value };
-  }
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
-      // Use I32 for values within signed 32-bit range, I64 for larger integers
-      if (value >= -2147483648 && value <= 2147483647) {
-        return { type: 'I32', value };
+  toState(): Result<State, StateError> {
+    const state = this.deref().state.read();
+    try {
+      let stateBuffers = new HashMap();
+      for (const [name, backend] of state.value.backends) {
+        const _r0 = backend.value.toStateBuffer();
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        const stateBuffer = _r0.unwrap();
+        stateBuffers.insert(name, stateBuffer);
       }
-      return { type: 'I64', value };
+      const stateBuffers_1 = new StateBuffers(stateBuffers);
+      return Result.Ok(new State(stateBuffers_1, state.value.head.clone()));
+    } finally {
+      state.drop();
     }
-    return { type: 'F64', value };
   }
-  if (typeof value === 'boolean') {
-    return { type: 'Bool', value };
+
+  toEntityState(): Result<EntityState, StateError> {
+    const _r0 = this.toState();
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
+    const state = _r0.unwrap();
+    try {
+      _moved1 = true;
+      return Result.Ok(new EntityState(this.id(), this.deref().collection.clone(), state));
+    } finally {
+      if (!_moved1) state.drop();
+    }
   }
-  // Fall back to JSON for complex types
-  return { type: 'Json', value };
+
+  static create(id: EntityId, collection: CollectionId): Entity {
+    return new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(Clock.default(), new HashMap<string, Arc<PropertyBackend>>())), new EntityKind('Primary', {}), Broadcast.new())));
+  }
+
+  static fromState(id: EntityId, collection: CollectionId, state: State): Result<Entity, RetrievalError> {
+    let _moved0 = false;
+    try {
+      let backends = new HashMap();
+      for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+        const _r1 = backendFromString(name, stateBuffer);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        let _moved2 = false;
+        const backend = _r1.unwrap();
+        try {
+          _moved2 = true;
+          backends.insert(name, backend);
+        } finally {
+          if (!_moved2) backend.drop();
+        }
+      }
+      _moved0 = true;
+      return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(state.head.clone(), backends)), new EntityKind('Primary', {}), Broadcast.new()))));
+    } finally {
+      if (!_moved0) collection.drop();
+    }
+  }
+
+  generateCommitEvent(): Result<Event | null, MutationError> {
+    const state = this.deref().state.read();
+    try {
+      let _moved0 = false;
+      let operations = new HashMap();
+      try {
+        for (const [name, backend] of state.value.backends) {
+          const _r1 = backend.value.toOperations();
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          {
+            const _v = _r1.unwrap();
+            if (_v != null) {
+              const ops = _v;
+              operations.set(name, ops);
+            }
+          }
+        }
+        if (operations.size === 0) {
+          return Result.Ok(null);
+        } else {
+          _moved0 = true;
+          const operations_1 = new OperationSet(operations);
+          const _b2 = this.deref().collection.clone();
+          const _b3 = state.value.head.clone();
+          _moved0 = true;
+          const event = new Event(_b2, this.deref().id, operations_1, _b3);
+          return Result.Ok(event);
+        }
+      } finally {
+        if (!_moved0) dropOwned(operations);
+      }
+    } finally {
+      state.drop();
+    }
+  }
+
+  commitHead(newHead: Clock): void {
+    const _t0 = this.deref().state.write();
+    try {
+      const _a1 = newHead;
+      _t0.value.head.drop();
+      _t0.value.head = _a1;
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  tryMutate<E>(expectedHead: Clock, body: Invocable<[EntityInnerState], Result<void, E>>): Result<boolean, E> {
+    let _moved0 = false;
+    try {
+      let state = this.deref().state.write();
+      try {
+        if (!state.value.head.equals(expectedHead)) {
+          const _a1 = state.value.head.clone();
+          expectedHead.value.drop();
+          expectedHead.value = _a1;
+          return Result.Ok(false);
+        }
+        _moved0 = true;
+        const _r2 = invoke(body, state);
+        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+        _r2.drop();
+        return Result.Ok(true);
+      } finally {
+        state.drop();
+      }
+    } finally {
+      if (!_moved0) dropOwned(body);
+    }
+  }
+
+  view<V extends View>(): V | null {
+    if (valueNotEquals(this.collection(), V.collection())) {
+      return null;
+    } else {
+      return V.fromEntity(this.clone());
+    }
+  }
+
+  async applyEvent<G>(getter: G, event: Event): Promise<Result<boolean, MutationError>> {
+    tracing.debug(`apply_event head: ${event} to ${this}`);
+    if (event.isEntityCreate()) {
+      let _moved0 = false;
+      let state = this.deref().state.write();
+      try {
+        if (state.value.head.isEmpty()) {
+          for (const [backendName, operations] of [...event.operations.deref()]) {
+            const _r1 = state.value.applyOperations(backendName, operations);
+            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+            _r1.drop();
+          }
+          const _a2 = Clock.fromEventId(event.id());
+          state.value.head.drop();
+          state.value.head = _a2;
+          _moved0 = true;
+          state.drop();
+          this.deref().broadcast.send([]);
+          return Result.Ok(true);
+        }
+      } finally {
+        if (!_moved0) state.drop();
+      }
+    }
+    let head = this.head();
+    try {
+      const MAX_RETRIES = 5;
+      const budget = 100;
+      for (const attempt of range(0, MAX_RETRIES)) {
+        const _r3 = await compareUnstoredEvent(getter, event, head, budget);
+        if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r3.unwrapErr())) };
+        const _m5 = await (async () => {
+          return _r3.unwrap().intoMatch<any>({
+            Equal: () => {
+              return { $jump: 'return', $value: Result.Ok(false) };
+            },
+            Descends: () => event.id(),
+            NotDescends: (v) => {
+              try {
+                tracing.warn(`NotDescends - HACK - applying (attempt ${checkedAdd(attempt, 1, 'usize')})`);
+                return head.withEvent(event.id());
+              } finally {
+                dropUnbound(v, []);
+              }
+            },
+            Incomparable: () => {
+              return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
+            },
+            PartiallyDescends: (v) => {
+              const meet = v.meet;
+              let _moved4 = false;
+              try {
+                _moved4 = true;
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
+              } finally {
+                if (!_moved4) dropOwned(meet);
+              }
+            },
+            BudgetExceeded: (v) => {
+              const subjectFrontier = v.subjectFrontier;
+              const otherFrontier = v.otherFrontier;
+              try {
+                try {
+                  tracing.warn(`apply_event budget exhausted after ${budget} events. Assuming Descends. subject_frontier: ${[...subjectFrontier].map((id) => id.toBase64Short()).join(', ')}, other_frontier: ${[...otherFrontier].map((id) => id.toBase64Short()).join(', ')}`);
+                  return event.id();
+                } finally {
+                  dropOwned(otherFrontier);
+                }
+              } finally {
+                dropOwned(subjectFrontier);
+              }
+            },
+          });
+        })();
+        if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
+        const newHead = (_m5 as any);
+        let _c9;
+        const _r8 = this.tryMutate(head, new OwnedClosure([newHead], (state: EntityInnerState) => {
+          for (const [backendName, operations] of [...event.operations.deref()]) {
+            const _r6 = state.applyOperations(backendName, operations);
+            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+            _r6.drop();
+          }
+          const _a7 = newHead;
+          state.head.drop();
+          state.head = _a7;
+          return Result.Ok([]);
+        }, undefined, true));
+        if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+        _c9 = _r8.unwrap();
+        if (_c9) {
+          this.deref().broadcast.send([]);
+          return Result.Ok(true);
+        }
+        continue;
+      }
+      tracing.warn('apply_event retries exhausted while chasing moving head; applying event as Descends');
+      return Result.Err(new MutationError('TOCTOUAttemptsExhausted', {}));
+    } finally {
+      head.drop();
+    }
+  }
+
+  async applyState<G>(getter: G, state: State): Promise<Result<boolean, MutationError>> {
+    let head = this.head();
+    try {
+      const newHead = state.head.clone();
+      try {
+        tracing.debug(`${this} apply_state - new head: ${newHead}`);
+        const budget = 100;
+        const MAX_RETRIES = 5;
+        for (const _attempt of range(0, MAX_RETRIES)) {
+          const _r0 = await compare(getter, newHead, head, budget);
+          if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r0.unwrapErr())) };
+          const _m1 = await (async () => {
+            return _r0.unwrap().intoMatch<any>({
+              Equal: () => {
+                return { $jump: 'return', $value: Result.Ok(false) };
+              },
+              Descends: () => true,
+              NotDescends: (v) => {
+                try {
+                  return { $jump: 'return', $value: Result.Ok(false) };
+                } finally {
+                  dropUnbound(v, []);
+                }
+              },
+              Incomparable: () => {
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
+              },
+              PartiallyDescends: (v) => {
+                const meet = v.meet;
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
+              },
+              BudgetExceeded: (v) => {
+                const subjectFrontier = v.subjectFrontier;
+                const otherFrontier = v.otherFrontier;
+                try {
+                  try {
+                    tracing.warn(`${this} apply_state - budget exhausted after ${budget} events. Assuming Descends. subject: ${subjectFrontier}, other: ${otherFrontier}`);
+                    return true;
+                  } finally {
+                    dropOwned(otherFrontier);
+                  }
+                } finally {
+                  dropOwned(subjectFrontier);
+                }
+              },
+            });
+          })();
+          if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+          const apply = (_m1 as any);
+          if (apply) {
+            let _c5;
+            const _r4 = this.tryMutate(head, (es) => {
+              for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+                const _r2 = backendFromString(name, stateBuffer);
+                if (_r2.isErr()) return Result.Err(MutationError.fromRetrievalError(_r2.unwrapErr()));
+                let _moved3 = false;
+                const backend = _r2.unwrap();
+                try {
+                  _moved3 = true;
+                  es.backends.insert(name, backend);
+                } finally {
+                  if (!_moved3) backend.drop();
+                }
+              }
+              es.head = state.head.clone();
+              return Result.Ok([]);
+            });
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            _c5 = _r4.unwrap();
+            if (_c5) {
+              this.deref().broadcast.send([]);
+              return Result.Ok(true);
+            }
+            continue;
+          }
+        }
+        tracing.warn(`${this} apply_state retries exhausted while chasing moving head`);
+        return Result.Err(new MutationError('TOCTOUAttemptsExhausted', {}));
+      } finally {
+        newHead.drop();
+      }
+    } finally {
+      head.drop();
+    }
+  }
+
+  snapshot(trxAlive: Arc<boolean>): Entity {
+    const state = this.deref().state.read();
+    try {
+      let forked = new HashMap();
+      for (const [name, backend] of state.value.backends) {
+        forked.insert(name, backend.value.fork());
+      }
+      return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
+    } finally {
+      state.drop();
+    }
+  }
+
+  broadcast(): Broadcast<void> {
+    return this.deref().broadcast;
+  }
+
+  getBackend<P extends PropertyBackend>(): Result<Arc<P>, RetrievalError> {
+    const backendName = P.propertyBackendName();
+    let state = this.deref().state.write();
+    try {
+      {
+        const _v = state.value.backends.get(backendName);
+        if (_v != null) {
+          const backend = _v;
+          const _t0 = backend.clone();
+          try {
+            const upcasted = _t0.value.asArcDynAny();
+            return Result.Ok(upcasted.downcast());
+          } finally {
+            _t0.drop();
+          }
+        } else {
+        const _r1 = backendFromString(backendName, null);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        let _moved2 = false;
+        const backend = _r1.unwrap();
+        try {
+          const _t3 = backend.clone();
+          try {
+            const upcasted = _t3.value.asArcDynAny();
+            const typedBackend = upcasted.downcast();
+            _moved2 = true;
+            state.value.backends.set(backendName, backend);
+            return Result.Ok(typedBackend);
+          } finally {
+            _t3.drop();
+          }
+        } finally {
+          if (!_moved2) backend.drop();
+        }
+      }
+      }
+    } finally {
+      state.drop();
+    }
+  }
+
+  values(): [string, Value | null][] {
+    const state = this.deref().state.read();
+    try {
+      return state.value.backends.values().flatMap((backend) => {
+        const _t0 = backend.value.propertyValues();
+        try {
+          return [..._t0].map(([name, value]) => [name, value.clone()]);
+        } finally {
+          dropOwned(_t0);
+        }
+      });
+    } finally {
+      state.drop();
+    }
+  }
+
+  deref(): EntityInner {
+    return this._0;
+  }
+
+  equals(other: Entity): boolean {
+    return Arc.ptrEq(this._0, other._0);
+  }
+
+  value(field: string): Value | null {
+    if (field === 'id') {
+      return new Value('EntityId', { _0: this.deref().id });
+    } else {
+      const state = this.deref().state.read();
+      try {
+        return iterFindMap(state.value.backends.values(), (backend) => backend.value.propertyValue(field));
+      } finally {
+        state.drop();
+      }
+    }
+  }
+
+  toString(): string {
+    return `Entity(${this.deref().collection}/${this.deref().id.toBase64Short()} ${this.head()})`;
+  }
+
+  clone(): Entity {
+    return new Entity(this._0.clone());
+  }
+
+  debug(): string {
+    return `Entity(${this._0.value.debug()})`;
+  }
 }
+
+export class TemporaryEntity extends Struct implements Filterable {
+  _0: Arc<EntityInner>;
+
+  constructor(_0: Arc<EntityInner>) {
+    super();
+    this._0 = _0;
+  }
+
+  static new(id: EntityId, collection: CollectionId, state: State): Result<TemporaryEntity, RetrievalError> {
+    let _moved0 = false;
+    try {
+      let backends = new HashMap();
+      for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+        const _r1 = backendFromString(name, stateBuffer);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        let _moved2 = false;
+        const backend = _r1.unwrap();
+        try {
+          _moved2 = true;
+          backends.insert(name, backend);
+        } finally {
+          if (!_moved2) backend.drop();
+        }
+      }
+      _moved0 = true;
+      return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(state.head.clone(), backends)), new EntityKind('Primary', {}), Broadcast.new()))));
+    } finally {
+      if (!_moved0) collection.drop();
+    }
+  }
+
+  values(): [string, Value | null][] {
+    const state = this._0.value.state.read();
+    try {
+      return state.value.backends.values().flatMap((backend) => backend.value.propertyValues());
+    } finally {
+      state.drop();
+    }
+  }
+
+  deref(): EntityInner {
+    return this._0;
+  }
+
+  collection(): string {
+    return this._0.value.collection.asStr();
+  }
+
+  value(name: string): Value | null {
+    if (name === 'id') {
+      return new Value('EntityId', { _0: this._0.value.id });
+    } else {
+      const state = this._0.value.state.read();
+      try {
+        return iterFindMap(state.value.backends.values(), (backend) => backend.value.propertyValue(name));
+      } finally {
+        state.drop();
+      }
+    }
+  }
+
+  toString(): string {
+    const _t0 = this._0.value.state.read();
+    try {
+      return `TemporaryEntity(${this.deref().collection}/${this.deref().id}) = ${_t0.value.head}`;
+    } finally {
+      _t0.drop();
+    }
+  }
+}
+
+class EntityInnerState extends Struct {
+  head: Clock;
+  backends: HashMap<string, Arc<PropertyBackend>>;
+
+  constructor(head: Clock, backends: HashMap<string, Arc<PropertyBackend>>) {
+    super();
+    this.head = head;
+    this.backends = backends;
+  }
+
+  applyOperations(backendName: string, operations: Operation[]): Result<void, MutationError> {
+    {
+      const _v = this.backends.get(backendName);
+      if (_v != null) {
+        const backend = _v;
+        const _r0 = backend.value.applyOperations(operations);
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        _r0.drop();
+      } else {
+      const _r1 = backendFromString(backendName, null);
+      if (_r1.isErr()) return Result.Err(MutationError.fromRetrievalError(_r1.unwrapErr()));
+      let _moved2 = false;
+      const backend = _r1.unwrap();
+      try {
+        const _r3 = backend.value.applyOperations(operations);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        _r3.drop();
+        _moved2 = true;
+        this.backends.set(backendName, backend);
+      } finally {
+        if (!_moved2) backend.drop();
+      }
+    }
+    }
+    return Result.Ok([]);
+  }
+
+  debug(): string {
+    return `EntityInnerState { head: ${this.head}, backends: ${this.backends} }`;
+  }
+}
+
+export class EntityInner extends Struct {
+  readonly id: EntityId;
+  readonly collection: CollectionId;
+  state: RwLock<EntityInnerState>;
+  kind: EntityKind;
+  broadcast: Broadcast<void>;
+
+  constructor(id: EntityId, collection: CollectionId, state: RwLock<EntityInnerState>, kind: EntityKind, broadcast: Broadcast<void>) {
+    super();
+    this.id = id;
+    this.collection = collection;
+    this.state = state;
+    this.kind = kind;
+    this.broadcast = broadcast;
+  }
+
+  debug(): string {
+    return `EntityInner { id: ${this.id}, collection: ${this.collection.debug()}, state: ${this.state}, kind: ${this.kind.debug()}, broadcast: ${this.broadcast.debug()} }`;
+  }
+}
+
+export class WeakEntity extends Struct {
+  _0: Weak<EntityInner>;
+
+  constructor(_0: Weak<EntityInner>) {
+    super();
+    this._0 = _0;
+  }
+
+  upgrade(): Entity | null {
+    const _m0 = this._0.upgrade();
+    return (_m0 != null ? (Entity)(_m0!) : null);
+  }
+}
+
+export class WeakEntitySet extends Struct {
+  _0: Arc<RwLock<HashMap<EntityId, WeakEntity>>>;
+
+  constructor(_0: Arc<RwLock<HashMap<EntityId, WeakEntity>>>) {
+    super();
+    this._0 = _0;
+  }
+
+  get(id: EntityId): Entity | null {
+    const entities = this._0.value.read();
+    try {
+      {
+        const _v = entities.value.get(id);
+        if (_v != null) {
+          const entity = _v;
+          return entity.upgrade();
+        } else {
+        return null;
+      }
+      }
+    } finally {
+      entities.drop();
+    }
+  }
+
+  async getOrRetrieve<R>(retriever: R, collectionId: CollectionId, id: EntityId): Promise<Result<Entity | null, RetrievalError>> {
+    const _v = this.get(id);
+    if (_v != null) {
+      const entity = _v;
+      return Result.Ok(entity);
+    } else {
+      const _v1 = await retriever.getState(id);
+      if (_v1.isOk()) {
+        const _v2 = _v1.unwrap();
+        if (_v2 == null) {
+          const _v3 = _v2;
+          try {
+            return Result.Ok(null);
+          } finally {
+            dropOwned(_v3);
+          }
+        }
+        {
+          const state = _v2;
+          try {
+            {
+              const _r0 = await this.withState(retriever, id, collectionId.clone(), state.payload.takeField('state'));
+              if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+              const [, entity] = _r0.unwrap();
+              return Result.Ok(entity);
+            }
+          } finally {
+            state.drop();
+          }
+        }
+      } else {
+        const e = _v1.unwrapErr();
+        return Result.Err(e);
+      }
+    }
+  }
+
+  async getRetrieveOrCreate<R>(retriever: R, collectionId: CollectionId, id: EntityId): Promise<Result<Entity, RetrievalError>> {
+    const _r0 = await this.getOrRetrieve(retriever, collectionId, id);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const _v = _r0.unwrap();
+    if (_v != null) {
+      const entity = _v;
+      return Result.Ok(entity);
+    } else {
+      {
+        let entities = this._0.value.write();
+        try {
+          {
+            const _v2 = entities.value.get(id);
+            if (_v2 != null) {
+              const entity = _v2;
+              {
+                const _v1 = entity.upgrade();
+                if (_v1 != null) {
+                  const entity = _v1;
+                  return Result.Ok(entity);
+                }
+              }
+            }
+          }
+          let _moved1 = false;
+          const entity = Entity.create(id, collectionId.clone());
+          try {
+            entities.value.set(id, entity.weak());
+            _moved1 = true;
+            return Result.Ok(entity);
+          } finally {
+            if (!_moved1) entity.drop();
+          }
+        } finally {
+          entities.drop();
+        }
+      }
+    }
+  }
+
+  create(collection: CollectionId): Entity {
+    let entities = this._0.value.write();
+    try {
+      const id = EntityId.new();
+      const entity = Entity.create(id, collection);
+      entities.value.set(id, entity.weak());
+      return entity;
+    } finally {
+      entities.drop();
+    }
+  }
+
+  privateGetOrCreate(id: EntityId, collectionId: CollectionId, state: State): Result<[boolean, Entity], RetrievalError> {
+    let entities = this._0.value.write();
+    try {
+      {
+        const _v1 = entities.value.get(id);
+        if (_v1 != null) {
+          const existingWeak = _v1;
+          {
+            const _v = existingWeak.upgrade();
+            if (_v != null) {
+              const existingEntity = _v;
+              tracing.debug(`Entity ${id} was created by another thread during async work, using that one`);
+              return Result.Ok([true, existingEntity]);
+            }
+          }
+        }
+      }
+      const _r0 = Entity.fromState(id, collectionId.clone(), state);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      let _moved1 = false;
+      const entity = _r0.unwrap();
+      try {
+        entities.value.set(id, entity.weak());
+        _moved1 = true;
+        return Result.Ok([false, entity]);
+      } finally {
+        if (!_moved1) entity.drop();
+      }
+    } finally {
+      entities.drop();
+    }
+  }
+
+  async withState<R>(retriever: R, id: EntityId, collectionId: CollectionId, state: State): Promise<Result<[boolean | null, Entity], RetrievalError>> {
+    try {
+      try {
+        const _m4 = await (async () => {
+          const _v = this.get(id);
+          if (_v != null) {
+            const entity = _v;
+            return entity;
+          } else {
+            const _r0 = await retriever.getState(id);
+            if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
+            {
+              const _v2 = _r0.unwrap();
+              if (_v2 != null) {
+                const storedState = _v2;
+                try {
+                  const _r1 = this.privateGetOrCreate(id, collectionId, storedState.payload.state);
+                  if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
+                  const _t2 = _r1.unwrap();
+                  try {
+                    return _t2[1];
+                  } finally {
+                    dropOwned(_t2);
+                  }
+                } finally {
+                  storedState.drop();
+                }
+              } else {
+              const _r3 = this.privateGetOrCreate(id, collectionId, state);
+              if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
+              const _v1 = _r3.unwrap();
+              if ((_v1[0] === true)) {
+                const entity = _v1[1];
+                return entity;
+              } else {
+                const entity = _v1[1];
+                {
+                  return { $jump: 'return', $value: Result.Ok([null, entity]) };
+                }
+              }
+            }
+            }
+          }
+        })();
+        if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+        let _moved5 = false;
+        const entity = (_m4 as any);
+        try {
+          const _r6 = await entity.applyState(retriever, state);
+          if (_r6.isErr()) return Result.Err(RetrievalError.fromMutationError(_r6.unwrapErr()));
+          const changed = _r6.unwrap();
+          _moved5 = true;
+          return Result.Ok([changed, entity]);
+        } finally {
+          if (!_moved5) entity.drop();
+        }
+      } finally {
+        state.drop();
+      }
+    } finally {
+      collectionId.drop();
+    }
+  }
+
+  clone(): WeakEntitySet {
+    return new WeakEntitySet(this._0.clone());
+  }
+
+  static default(): WeakEntitySet {
+    return new WeakEntitySet(Arc.new(new RwLock(new HashMap())));
+  }
+}
+
+export type EntityKindV = {
+  Primary: {};
+  Transacted: { trxAlive: Arc<boolean>; upstream: Entity };
+};
+
+export class EntityKind extends Enum<EntityKindV> {
+
+  debug(): string {
+    return this.match({
+      Primary: () => 'Primary',
+      Transacted: (v) => `Transacted { trxAlive: ${v.trxAlive}, upstream: ${v.upstream.debug()} }`,
+    });
+  }
+}
+

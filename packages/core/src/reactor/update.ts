@@ -1,71 +1,84 @@
 // MIRRORS: ankurah/core/src/reactor/update.rs
+import { Struct, Enum, derivedEquals, derivedClone } from '@ankurah/base';
+import { Attested, Event, QueryId } from '@ankurah/proto';
 
-import type { QueryId, Attested, Event } from '@ankurah/proto';
-import type { Entity } from '../entity.ts';
+export class ReactorUpdate<E = Entity, Ev = Attested<Event>> extends Struct {
+  readonly items: ReactorUpdateItem<E, Ev>[];
 
-// ---------------------------------------------------------------------------
-// MembershipChange
-// ---------------------------------------------------------------------------
+  constructor(items: ReactorUpdateItem<E, Ev>[]) {
+    super();
+    this.items = items;
+  }
 
-/**
- * Describes how an entity's membership changed for a specific predicate.
- *
- * Rust: `pub enum MembershipChange { Initial, Add, Remove }`
- * Divergence: Unit-only enum → string union (no data variants, no Drop needed) [E8]
- */
-export type MembershipChange = 'Initial' | 'Add' | 'Remove';
+  equals(other: ReactorUpdate<E, Ev>): boolean {
+    { if (this.items.length !== other.items.length) return false; for (let i = 0; i < this.items.length; i++) { if (!this.items[i].equals(other.items[i])) return false; } }
+    return true;
+  }
 
-// ---------------------------------------------------------------------------
-// ReactorUpdate
-// ---------------------------------------------------------------------------
+  clone(): ReactorUpdate<E, Ev> {
+    return new ReactorUpdate(this.items.map(e => e.clone()));
+  }
 
-/**
- * Update from the reactor that supports both single and multi-predicate subscriptions.
- *
- * Rust: `pub struct ReactorUpdate<E = Entity, Ev = Attested<Event>>`
- * Divergence: Rust generics exist only for testing with mock types; TS uses concrete types directly.
- */
-export interface ReactorUpdate {
-  /** All entities that changed, with their relevance information. */
-  items: ReactorUpdateItem[];
+  debug(): string {
+    return `ReactorUpdate { items: ${`[${Array.from(this.items).map((e) => e.debug()).join(', ')}]`} }`;
+  }
 }
 
-// ---------------------------------------------------------------------------
-// ReactorUpdateItem
-// ---------------------------------------------------------------------------
+export class ReactorUpdateItem<E = Entity, Ev extends Clone = Attested<Event>> extends Struct {
+  readonly entity: E;
+  readonly events: Ev[];
+  readonly predicateRelevance: [QueryId, MembershipChange][];
 
-/**
- * A single entity update with all relevance information.
- *
- * Rust: `pub struct ReactorUpdateItem<E = Entity, Ev = Attested<Event>>`
- * Divergence: Rust generics exist only for testing with mock types; TS uses concrete types directly.
- */
-export interface ReactorUpdateItem {
-  /** The entity that changed. */
-  entity: Entity;
+  constructor(entity: E, events: Ev[], predicateRelevance: [QueryId, MembershipChange][]) {
+    super();
+    this.entity = entity;
+    this.events = events;
+    this.predicateRelevance = predicateRelevance;
+  }
 
-  /** Events that caused this update. */
-  events: Attested<Event>[];
+  hasMembershipChange(): boolean {
+    return !(this.predicateRelevance.length === 0);
+  }
 
-  /**
-   * Which predicates this update is relevant to (if any) and how.
-   * Rust: `pub predicate_relevance: Vec<(QueryId, MembershipChange)>`
-   */
-  predicateRelevance: [QueryId, MembershipChange][];
+  equals(other: ReactorUpdateItem<E, Ev>): boolean {
+    if (!derivedEquals(this.entity, other.entity)) return false;
+    { if (this.events.length !== other.events.length) return false; for (let i = 0; i < this.events.length; i++) { if (!derivedEquals(this.events[i], other.events[i])) return false; } }
+    { if (this.predicateRelevance.length !== other.predicateRelevance.length) return false; for (let i = 0; i < this.predicateRelevance.length; i++) { { if (!this.predicateRelevance[i][0].equals(other.predicateRelevance[i][0])) return false; if (!this.predicateRelevance[i][1].equals(other.predicateRelevance[i][1])) return false; } } }
+    return true;
+  }
+
+  clone(): ReactorUpdateItem<E, Ev> {
+    return new ReactorUpdateItem(derivedClone(this.entity), this.events.map(e => derivedClone(e)), this.predicateRelevance.map(e => [e[0].clone(), e[1].clone()] as [QueryId, MembershipChange]));
+  }
+
+  debug(): string {
+    return `ReactorUpdateItem { entity: ${this.entity}, events: ${this.events}, predicateRelevance: ${this.predicateRelevance} }`;
+  }
 }
 
-// ---------------------------------------------------------------------------
-// impl ReactorUpdateItem
-// ---------------------------------------------------------------------------
+export type MembershipChangeV = {
+  Initial: {};
+  Add: {};
+  Remove: {};
+};
 
-/**
- * Check if this item represents any membership change.
- *
- * Rust: `impl ReactorUpdateItem { pub fn has_membership_change(&self) -> bool }`
- */
-export function hasMembershipChange(item: ReactorUpdateItem): boolean {
-  return item.predicateRelevance.length > 0;
+export class MembershipChange extends Enum<MembershipChangeV> {
+
+  clone(): MembershipChange {
+    return new MembershipChange(this.type, { ...this.value });
+  }
+
+  equals(other: MembershipChange): boolean {
+    if (this.type !== other.type) return false;
+    return true;
+  }
+
+  debug(): string {
+    return this.match({
+      Initial: () => 'Initial',
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
+  }
 }
 
-// Note: ReactorUpdate to ChangeSet<Entity> conversion removed since Entity doesn't implement View
-// ReactorUpdate should be converted to ChangeSet<R> at the LiveQuery level instead

@@ -138,7 +138,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
     let values = this.values.write();
     try {
       let changedValues = new HashMap();
-      for (const [name, entry] of values.value.iterMut()) {
+      for (const [name, entry] of [...values.value]) {
         if (!entry.committed) {
           changedValues.insert(name, entry.value.clone());
           entry.committed = true;

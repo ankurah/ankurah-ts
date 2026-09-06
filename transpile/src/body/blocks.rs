@@ -54,21 +54,7 @@ impl BodyTranslator<'_> {
         for param in owned.iter().rev() {
             out = ownership::wrap(&out, param);
         }
-        let mut declarations = String::new();
-        // A formatter composes one string, and every `write!` in it appends to
-        // this. It used to be spliced in by `emit.rs` searching the finished
-        // text for `_result +=`, which found the statement forms and not the
-        // tail — so a `Display` that ended in `write!(f, "b")` answered `"b"`
-        // rather than everything it had written.
-        if self.formatter && self.wrote_result.get() {
-            declarations.push_str("let _result = '';\n");
-        }
-        for param in &owned {
-            if let Some(flag) = &param.flag {
-                declarations.push_str(&format!("let {} = false;\n", flag));
-            }
-        }
-        format!("{}{}", declarations, out)
+        format!("{}{}", self.block_declarations(&owned, &out), out)
     }
 
     pub fn translate_block(&self, block: &syn::Block) -> String {
@@ -167,6 +153,7 @@ impl BodyTranslator<'_> {
         // the flag (J3) — an argument that can throw before the call starts —
         // is collected while it is translated and stands ahead of it.
         let flags = self.flag_sets(stmt);
+        self.own.statement_tail.set(Self::statement_tail_key(stmt));
         let previous_before = std::mem::take(&mut *self.own.before_flags.borrow_mut());
         let mut out = String::new();
 

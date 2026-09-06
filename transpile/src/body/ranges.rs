@@ -27,29 +27,14 @@ impl BodyTranslator<'_> {
                  does not stand where a slice is taken",
             );
         };
-        // A width the port holds in a `bigint` cannot be counted with
-        // `n++` on a number, and a range of one is not a shape the
-        // corpus writes. Refusing it is cheaper than a helper nothing
-        // reaches.
-        let bigint_end = [start, end].iter().any(|e| {
-            self.quietly(|| self.resolve_expr_type(e)).is_ok_and(|ty| {
-                matches!(
-                    ty.peel_refs(),
-                    crate::ty::Ty::Prim(
-                        crate::ty::Prim::U64
-                            | crate::ty::Prim::I64
-                            | crate::ty::Prim::U128
-                            | crate::ty::Prim::I128
-                    )
-                )
-            })
-        });
-        if bigint_end {
-            return self.hole(
-                syn::spanned::Spanned::span(range),
-                "a range over a width the port holds in a `bigint` is not a sequence the \
-                 port builds",
-            );
+        // Only the widths `range`/`rangeIncl` really count. The check used to
+        // name the two it could NOT do — a `bigint` width — and let everything
+        // else through, so a float range came out as `range(0, 1)`, which is
+        // `[0]` and answers `contains` about the wrong values, and a `char`
+        // range came out as `rangeIncl('a', 'c')`, which is `["a"]` because
+        // `'a' + 1` is `"a1"`. Neither said anything. (F3.)
+        if let Some(why) = self.range_endpoint_refusal(start, end) {
+            return self.hole(syn::spanned::Spanned::span(range), why);
         }
         let from = self.expr_value(start);
         let to = self.expr_value(end);
@@ -58,5 +43,157 @@ impl BodyTranslator<'_> {
             syn::RangeLimits::HalfOpen(_) => "range",
         };
         format!("{}({}, {})", helper, from, to)
+    }
+    /// Why this range's endpoints cannot be counted, or `None` where they can.
+    ///
+    /// `range`/`rangeIncl` count with `n++` on a JavaScript number, so the
+    /// widths they implement are the discrete ones a number holds exactly:
+    /// `u8`, `u16`, `u32`, `usize`, `i8`, `i16`, `i32`, `isize`. A `u64` or
+    /// `i64` is a `bigint` here and `n++` is not the same operation; a float
+    /// range is not an iterator in Rust either, and only its `contains` is
+    /// meaningful, which is lowered from the BOUNDS and never reaches this; a
+    /// `char` range is a sequence of code points and the port has no helper for
+    /// it. An endpoint the engine could not TYPE is left alone: that is the
+    /// engine's own gap, reported where the name is, and refusing it would take
+    /// out `for attempt in 0..MAX_RETRIES` over a function-local `const` —
+    /// which is the loop the materialisation was written for.
+    fn range_endpoint_refusal(&self, start: &syn::Expr, end: &syn::Expr) -> Option<String> {
+        use crate::ty::{Prim, Ty};
+        for e in [start, end] {
+            // An endpoint the engine could not type is its own gap and is
+            // reported where the name is: `for attempt in 0..MAX_RETRIES` over
+            // a function-local `const` is one, and it is the very loop the
+            // materialisation was written for. What is refused here is a width
+            // the engine CAN name and `n++` cannot step.
+            let Ok(ty) = self.quietly(|| self.resolve_expr_type(e)) else { continue };
+            match ty.peel_refs() {
+                Ty::Prim(
+                    Prim::U8
+                    | Prim::U16
+                    | Prim::U32
+                    | Prim::Usize
+                    | Prim::I8
+                    | Prim::I16
+                    | Prim::I32
+                    | Prim::Isize,
+                ) => {}
+                Ty::Prim(Prim::U64 | Prim::I64 | Prim::U128 | Prim::I128) => {
+                    return Some(
+                        "a range over a width the port holds in a `bigint` is not a sequence \
+                         the port builds"
+                            .to_string(),
+                    )
+                }
+                Ty::Prim(Prim::F32 | Prim::F64) => {
+                    return Some(
+                        "a float range is not an iterator in Rust either; only `contains` is \
+                         meaningful on one, and that is lowered from the bounds rather \
+                         than from a sequence"
+                            .to_string(),
+                    )
+                }
+                Ty::Prim(Prim::Char) => {
+                    return Some(
+                        "a `char` range is the sequence of its code points, and the port \
+                         writes a `char` as a one-character string, which `n++` does \
+                         not step"
+                            .to_string(),
+                    )
+                }
+                other => {
+                    let named = self
+                        .types
+                        .as_ref()
+                        .map(|tc| tc.borrow().registry.describe(other))
+                        .unwrap_or_else(|| "this type".to_string());
+                    return Some(format!(
+                        "a range over `{named}` is not a sequence the port builds; only a \
+                         discrete integer width is"
+                    ));
+                }
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    fn body(rust: &str, method: &str) -> String {
+        let mut f = Fixture::build(&[("lib.rs", rust)]);
+        f.translated_method("lib.rs", method)
+    }
+
+    /// F3: only the widths `range`/`rangeIncl` really count are built. The
+    /// check named the one width it could NOT do and let everything else
+    /// through, so `('a'..='c')` came out as `rangeIncl('a', 'c')` — which is
+    /// `["a"]`, because `'a' + 1` is the string `"a1"`.
+    #[test]
+    fn only_a_discrete_integer_width_is_materialised() {
+        let chars = body(
+            "pub fn letters() -> Vec<char> { ('a'..='c').collect::<Vec<char>>() }",
+            "letters",
+        );
+        assert!(chars.contains("unsupported("), "{}", chars);
+        assert!(chars.contains("code points"), "{}", chars);
+
+        let floats = body(
+            "pub fn spread() -> Vec<f64> { (0.0f64..1.0f64).collect::<Vec<f64>>() }",
+            "spread",
+        );
+        assert!(floats.contains("unsupported("), "{}", floats);
+        assert!(floats.contains("not an iterator in Rust either"), "{}", floats);
+
+        let ints = body("pub fn ns() -> Vec<u32> { (0u32..4u32).collect() }", "ns");
+        assert!(ints.contains("range(0, 4)"), "{}", ints);
+    }
+
+    /// An endpoint the engine could not TYPE is its own gap, reported where the
+    /// name is. `for attempt in 0..MAX_RETRIES` over a function-local `const`
+    /// is that shape, and it is the loop the materialisation was written for.
+    #[test]
+    fn an_endpoint_the_engine_cannot_type_is_still_built() {
+        let ts = body(
+            "pub fn retries() -> usize {\n\
+               const MAX_RETRIES: usize = 5;\n\
+               let mut n = 0;\n\
+               for _attempt in 0..MAX_RETRIES { n += 1; }\n\
+               n\n\
+             }",
+            "retries",
+        );
+        assert!(ts.contains("range(0, MAX_RETRIES)"), "{}", ts);
+        assert!(!ts.contains("unsupported("), "{}", ts);
+    }
+
+    /// `Range::contains` is a comparison against the two ends, and is the one
+    /// method a range the port cannot count still answers. Written through the
+    /// materialised sequence, `(0.0..1.0).contains(&0.5)` was
+    /// `range(0, 1).contains(0.5)` — an array has no `contains`, and nothing
+    /// said so.
+    #[test]
+    fn contains_is_written_from_the_bounds() {
+        let float = body(
+            "pub fn within(x: f64) -> bool { (0.0f64..1.0f64).contains(&x) }",
+            "within",
+        );
+        assert_eq!(float.lines().find(|l| l.contains("return")).unwrap().trim(), "return (0.0 <= x && x < 1.0);");
+        assert!(!float.contains("unsupported("), "the sequence is never built:\n{}", float);
+
+        let closed = body(
+            "pub fn upto(x: u32) -> bool { (0u32..=16u32).contains(&x) }",
+            "upto",
+        );
+        assert!(closed.contains("(0 <= x && x <= 16)"), "{}", closed);
+    }
+
+    /// E7: `step_by` had no lowering and came out as `(range(0, 10)).stepBy(2)`,
+    /// a method no array declares, with no diagnostic beside it.
+    #[test]
+    fn step_by_is_every_nth_value_of_the_sequence() {
+        let ts = body("pub fn evens() -> Vec<u32> { (0u32..10u32).step_by(2).collect() }", "evens");
+        assert!(ts.contains("stepBy((range(0, 10)), 2)"), "{}", ts);
     }
 }

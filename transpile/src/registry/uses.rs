@@ -2,11 +2,26 @@
 //!
 //! Two shapes need saying out loud. A `use` inside a function BODY is scoped by
 //! Rust to the block it stands in, and the engine's binding table is per
-//! module: the bindings are hoisted, but only where the module does not already
-//! claim the name, because widening a name's scope must not change what another
-//! body in the same module means by it. And `use path::Trait as _;` puts a
-//! trait in scope for method resolution while binding no name at all — which is
-//! why the scope test cannot be a lookup by name.
+//! module, so a body `use` bound nothing at all and every name it introduced
+//! resolved to whatever the module already had, or to nothing.
+//! `core/selection/filter.rs`'s `compare_values_with_cast` writes
+//! `use crate::value::ValueType;` in its body: `ValueType::of(l) ==
+//! ValueType::of(r)` therefore had no type on either side, the equality was
+//! left as `===` between two fresh objects — always false — and no diagnostic
+//! was filed, because an operand the engine could not name reports where the
+//! name was BOUND and nothing bound this one. A body `use` under an alias was
+//! worse: `use crate::value::VT as Inner;` emitted `Inner.of(l)`, a name
+//! nothing declares.
+//!
+//! So the bindings are hoisted — but only where the module does not already
+//! claim the name, by BINDING it or by DECLARING it, because widening a name's
+//! scope must not change what another body in the same module means by it, nor
+//! what the module's own declaration means. A name two different bodies bring
+//! in from two different places is claimed by neither, and both are reported.
+//!
+//! And `use path::Trait as _;` puts a trait in scope for method resolution
+//! while binding no name at all — which is why the scope test cannot be a
+//! lookup by name.
 
 use super::module::{ModuleId, UseBinding};
 use super::build::vis_of;
@@ -23,13 +38,34 @@ pub(super) fn module_use_bindings(
 ) -> Vec<UseBinding> {
     // A module-level `use` binds its names outright. A `use` written inside a
     // body binds them too — Rust scopes it to the block, and the engine's table
-    // is per module — but only where nothing at module level already claims the
-    // name: widening a name's scope must not change what another body in the
-    // same module means by it. A glob is never hoisted, because widening a
-    // glob widens every name it could ever bring.
-    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for u in file.uses.iter().filter(|u| !u.from_body) {
-        claimed.extend(u.bindings.iter().filter_map(|b| b.local.clone()));
+    // is per module — but only where the module does not already claim the
+    // name, by BINDING it or by DECLARING it: widening a name's scope must not
+    // change what another body in the same module means by it, and it must not
+    // change what the module's own `Kind` means either. A glob is never
+    // hoisted, because widening a glob widens every name it could ever bring.
+    //
+    // E8: `claimed` was built from the module's other `use` items alone, so a
+    // module declaring `pub struct Kind` whose body wrote
+    // `use crate::far::Kind;` had the far one hoisted over its own — and every
+    // `Kind` in the file then resolved to a type with different fields.
+    let mut claimed = claimed_names(file);
+    // And a name TWO bodies bring in from different places is claimed by
+    // neither: the module's table has one entry per name, so hoisting both
+    // would leave the second body meaning the first body's type. Rust scopes
+    // each to its own block and the port has no scope to put them in, so both
+    // are reported and neither is hoisted (§3.6).
+    for local in contested_body_names(file) {
+        sink.report(
+            proc_macro2::Span::call_site(),
+            format!(
+                "two function bodies in this module write `use` for different types both \
+                 named `{}`, and the port has one binding table per module: neither is \
+                 hoisted, and each body's `{}` is written from whatever else the module \
+                 says it is",
+                local, local
+            ),
+        );
+        claimed.insert(local);
     }
     let bindings: Vec<UseBinding> = file
         .uses
@@ -50,6 +86,44 @@ pub(super) fn module_use_bindings(
         })
         .collect();
     bindings
+}
+
+/// The names the module claims without any body's help: what its module-level
+/// `use` items bind, and what it DECLARES.
+fn claimed_names(file: &RustFile) -> std::collections::HashSet<String> {
+    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for u in file.uses.iter().filter(|u| !u.from_body) {
+        claimed.extend(u.bindings.iter().filter_map(|b| b.local.clone()));
+    }
+    claimed.extend(file.structs.iter().map(|s| s.name.clone()));
+    claimed.extend(file.enums.iter().map(|e| e.name.clone()));
+    claimed.extend(file.traits.iter().map(|t| t.name.clone()));
+    claimed.extend(file.type_aliases.iter().map(|a| a.name.clone()));
+    claimed.extend(file.consts.iter().map(|c| c.name.clone()));
+    claimed.extend(file.functions.iter().map(|f| f.name.clone()));
+    claimed.extend(file.mod_decls.iter().map(|(name, _)| name.clone()));
+    claimed.extend(file.inline_modules.iter().map(|(name, _)| name.clone()));
+    claimed
+}
+
+/// The names two different function BODIES bring in from two different paths.
+fn contested_body_names(file: &RustFile) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for u in file.uses.iter().filter(|u| u.from_body) {
+        for b in &u.bindings {
+            let Some(local) = &b.local else { continue };
+            let path = b.path.join("::");
+            let paths = seen.entry(local.clone()).or_default();
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    let mut contested: Vec<String> =
+        seen.into_iter().filter(|(_, paths)| paths.len() > 1).map(|(name, _)| name).collect();
+    contested.sort();
+    contested
 }
 
 impl TypeRegistry {
@@ -235,6 +309,64 @@ mod tests {
             !c.messages().iter().any(|m| m.contains("which is not in scope here")),
             "the anonymous import IS the trait being in scope: {:?}",
             c.messages()
+        );
+    }
+
+    /// E8: a `use` inside a body is hoisted only where the module does not
+    /// already claim the name — by BINDING it or by DECLARING it. `claimed`
+    /// was built from the module's other `use` items alone, which is not what
+    /// either doc comment said.
+    #[test]
+    fn a_body_use_does_not_hoist_over_a_name_the_module_declares() {
+        let f = Fixture::build(&[
+            (
+                "lib.rs",
+                "pub mod far;\n\
+                 pub struct Kind { pub here: u32 }\n\
+                 pub fn f() -> u32 { use crate::far::Kind; let k = Kind { there: 1 }; k.there }\n",
+            ),
+            ("far.rs", "pub struct Kind { pub there: u32 }\n"),
+        ]);
+        let module = f.module("lib.rs");
+        let here = f.reg.module_type(module, "Kind").expect("the module declares Kind");
+        // The module's own `Kind` is what the name means, and the body's `use`
+        // did not widen the far one over it.
+        assert_eq!(f.reg.name_of(here), "Kind");
+        let fields = f.reg.def(here).expect("declared").fields.clone();
+        assert!(
+            fields.iter().any(|(name, _)| name == "here"),
+            "the module's own Kind is what the table holds: {:?}",
+            fields
+        );
+    }
+
+    /// §3.6: a name TWO bodies bring in from different places is claimed by
+    /// neither, and BOTH are reported. Hoisting both left the module's one
+    /// binding table holding the first, so the second body silently meant the
+    /// first body's type — `new Wrap(undefined)` with only one site reported.
+    #[test]
+    fn two_bodies_importing_the_same_leaf_are_both_reported() {
+        let f = Fixture::build(&[
+            (
+                "lib.rs",
+                "pub mod left;\n\
+                 pub mod right;\n\
+                 pub fn one() -> u32 { use crate::left::Wrap; let w = Wrap { a: 1 }; w.a }\n\
+                 pub fn two() -> u32 { use crate::right::Wrap; let w = Wrap { b: 2 }; w.b }\n",
+            ),
+            ("left.rs", "pub struct Wrap { pub a: u32 }\n"),
+            ("right.rs", "pub struct Wrap { pub b: u32 }\n"),
+        ]);
+        let reported = f.messages();
+        assert!(
+            reported.iter().any(|d| d.contains("two function bodies in this module write `use`")),
+            "the clash is reported: {:?}",
+            reported
+        );
+        // And neither is hoisted, so the module's table binds no `Wrap` at all.
+        assert!(
+            f.reg.module_type(f.module("lib.rs"), "Wrap").is_none(),
+            "a body use was hoisted anyway"
         );
     }
 }

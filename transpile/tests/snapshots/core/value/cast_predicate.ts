@@ -190,14 +190,13 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
     },
     ExprList: (v) => {
       const exprs = v._0;
-      let _moved3 = false;
       try {
         const _r4 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
         if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
         const castExprs = _r4.unwrap();
         return Result.Ok(new Expr('ExprList', { _0: castExprs }));
       } finally {
-        if (!_moved3) dropOwned(exprs);
+        dropOwned(exprs);
       }
     },
     Placeholder: () => Result.Ok(new Expr('Placeholder', {})),

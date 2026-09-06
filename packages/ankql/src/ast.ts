@@ -964,7 +964,7 @@ export class Predicate extends Enum<PredicateV> {
   }
 
   populate<I, V, E>(values: I): Result<Predicate, ParseError> {
-    let valuesIter = values.intoIter();
+    let valuesIter = [...values];
     const _r0 = this.populateRecursive(valuesIter);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     let _moved1 = false;

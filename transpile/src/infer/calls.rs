@@ -35,7 +35,23 @@ impl TypeContext<'_> {
         method: &str,
         turbofish: Option<&syn::AngleBracketedGenericArguments>,
     ) -> Result<MethodResolution, Diag> {
-        let receiver_ty = self.resolve_expr(receiver)?;
+        // `&x` as an EXPRESSION types as `x` — emission erases borrows, and
+        // every reader downstream is written against the value. As a RECEIVER
+        // it does not: Rust's probe starts at `&Vec<T>` and finds
+        // `impl IntoIterator for &'a Vec<T>`, whose `Item` is `&T`, where
+        // starting at `Vec<T>` finds the by-value impl and an owned `Item`.
+        // `(&v).into_iter()` therefore came out as a loop that released the
+        // caller's elements — a double drop where the block released them too
+        // (E11). The borrow is put back here and nowhere else, so only the
+        // probe sees it; the deref chain takes it straight off again, which is
+        // what Rust does when the method really is the by-value one.
+        let receiver_ty = match unparenthesise(receiver) {
+            syn::Expr::Reference(r) => Ty::Ref {
+                mutable: r.mutability.is_some(),
+                inner: Box::new(self.resolve_expr(&r.expr)?),
+            },
+            _ => self.resolve_expr(receiver)?,
+        };
         let probe = self.probe();
 
         let mut explicit = Vec::new();
@@ -528,4 +544,15 @@ impl TypeContext<'_> {
         found
     }
 
+}
+
+/// The expression a `(..)` or a `Group` was written around. Rust reads the
+/// expression, not its punctuation: `(&v).into_iter()` is a call on a borrow
+/// and `(0..n).contains(x)` is a call on a range, whatever the parentheses say.
+pub(crate) fn unparenthesise(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Paren(p) => unparenthesise(&p.expr),
+        syn::Expr::Group(g) => unparenthesise(&g.expr),
+        other => other,
+    }
 }

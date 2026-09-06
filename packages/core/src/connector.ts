@@ -1,39 +1,88 @@
 // MIRRORS: ankurah/core/src/connector.rs
-import type { EntityId, NodeMessage, Presence, Attested, EntityState } from '@ankurah/proto';
+import { Enum, Result } from '@ankurah/base';
+import { Attested, EntityState, EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
-// TODO redesign this such that:
-// - the sender and receiver are disconnected at the same time
-// - a connection id or dyn Ord/Eq/Hash is used to identify the connection for deregistration
-//   so that we can have multiple connections to the same node without things getting mixed up
+export type SendErrorV = {
+  ConnectionClosed: {};
+  Timeout: {};
+  Other: { _0: Error };
+  Unknown: {};
+};
 
-// ── PeerSender ───────────────────────────────────────────────────────────────
-// Rust: #[async_trait] pub trait PeerSender: Send + Sync
-// Divergence: No Send/Sync bounds — single-threaded JS [E8].
+export class SendError extends Enum<SendErrorV> {
+
+  debug(): string {
+    return this.match({
+      ConnectionClosed: () => 'ConnectionClosed',
+      Timeout: () => 'Timeout',
+      Other: (v) => `Other(${v._0})`,
+      Unknown: () => 'Unknown',
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      ConnectionClosed: () => 'Connection closed',
+      Timeout: () => 'Send timeout',
+      Other: (v) => `Other error: ${v._0}`,
+      Unknown: () => 'Unknown error',
+    });
+  }
+
+  /** The error this one wraps: Rust's `Error::source`. */
+  source(): unknown {
+    switch (this.type) {
+      case 'Other': return (this.value as any)._0;
+      default: return null;
+    }
+  }
+
+  static fromError(inner: Error): SendError {
+    return new SendError('Other', { _0: inner });
+  }
+}
 
 export interface PeerSender {
-  sendMessage(message: NodeMessage): void; // Divergence: Rust returns Result<(), SendError>; TS throws SendError [E3]
+  sendMessage(message: NodeMessage): Result<void, SendError>;
   recipientNodeId(): EntityId;
-  cloned(): PeerSender; // Divergence: Rust returns Box<dyn PeerSender>; TS uses interface [E7]
+  cloned(): PeerSender;
 }
-
-// ── SendError ────────────────────────────────────────────────────────────────
-// Defined in error.ts — re-export for consumers who expect it from connector.
-export { SendError } from './error.ts';
-
-// ── NodeComms ────────────────────────────────────────────────────────────────
-// Rust: #[async_trait] pub trait NodeComms: Send + Sync
-// Divergence: No Send/Sync bounds — single-threaded JS [E8].
 
 export interface NodeComms {
-  nodeId(): EntityId; // Divergence: Rust fn id(); TS uses nodeId() to avoid collision with id property [E4]
-  isDurable(): boolean; // Divergence: Rust fn durable(); TS uses isDurable() to avoid collision with durable property [E4]
-  systemRoot(): Attested<EntityState> | null; // Divergence: Option<T> → T | null [E3]
-  registerPeer(presence: Presence, sender: PeerSender): void; // Divergence: Rust takes Box<dyn PeerSender>; TS uses interface [E7]
+  id(): EntityId;
+  durable(): boolean;
+  systemRoot(): Attested<EntityState> | null;
+  registerPeer(presence: Presence, sender: PeerSender): void;
   deregisterPeer(nodeId: EntityId): void;
-  handleMessage(message: NodeMessage): Promise<void>; // Divergence: Rust returns anyhow::Result<()>; TS throws [E3]
-  cloned(): NodeComms; // Divergence: Rust returns Box<dyn NodeComms>; TS uses interface [E7]
+  handleMessage(message: NodeMessage): Promise<Result<void, Error>>;
+  cloned(): NodeComms;
 }
 
-// ── impl NodeComms for Node ──────────────────────────────────────────────────
-// Divergence: The Rust `impl NodeComms for Node<SE, PA>` block lives in this file,
-// but in TS the implementation belongs on the Node class in node.ts [E7].
+export function Node_id<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>): EntityId {
+  return self.deref().value.id;
+}
+
+export function Node_durable<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>): boolean {
+  return self.deref().value.durable;
+}
+
+export function Node_systemRoot<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>): Attested<EntityState> | null {
+  return self.deref().value.system.root();
+}
+
+export function Node_registerPeer<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>, presence: Presence, sender: PeerSender): void {
+  self.registerPeer(presence, sender);
+}
+
+export function Node_deregisterPeer<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>, nodeId: EntityId): void {
+  self.deregisterPeer(nodeId);
+}
+
+export async function Node_handleMessage<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>, message: NodeMessage): Promise<Result<void, Error>> {
+  return await self.handleMessage(message);
+}
+
+export function Node_cloned<SE extends StorageEngine, PA extends PolicyAgent>(self: Node<SE, PA>): NodeComms {
+  return self.clone();
+}
+

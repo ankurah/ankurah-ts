@@ -72,7 +72,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(Uint8Array.from([...bytes].map((b) => wrappingSub((255), b, 'u8'))));
       }
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('F64'))) {
@@ -81,7 +81,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(Uint8Array.from([...bytes].map((b) => wrappingSub((255), b, 'u8'))));
       }
     }
   } else if ((_v[0].is('Bool')) && (_v[1].is('Bool'))) {
@@ -96,7 +96,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes.slice());
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(Uint8Array.from([...bytes].map((b) => wrappingSub((255), b, 'u8'))));
       }
     }
   } else if (((_v[0].is('Object')) || (_v[0].is('Binary'))) && ((_v[1].is('Binary')) || (_v[1].is('Object')))) {

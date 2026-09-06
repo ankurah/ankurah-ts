@@ -6,7 +6,7 @@
 // rest handed back `undefined` where the declared type says `null`.
 
 import { expect, test } from 'bun:test';
-import { counted, ends, evensBackwards, firstDroppable, firstLabelOver, firstOver, narrowest, Reading, total, Watchers, widest } from './input.ts';
+import { counted, ends, evensBackwards, firstDroppable, firstLabelOver, firstOver, keyTrace, maxTrace, minTrace, narrowest, Reading, total, Watchers, widest } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 // J1's live case. `findIndex` answered -1 for a watcher that had already gone,
@@ -82,6 +82,25 @@ test('a range iterates its values, and rev walks them backwards', () => {
   expect(counted(0)).toEqual([]);
   expect(evensBackwards(6)).toEqual([4, 2, 0]);
   expect(evensBackwards(0)).toEqual([]);
+});
+
+// F2. `Iterator::max_by` is `fold1(|best, candidate| cmp::max_by(best,
+// candidate, compare))`, and `cmp::max_by` asks `compare(&best, &candidate)`.
+// The parent asked `cmp(candidate, best)`: over [1, 2, 3] it logged (2,1) then
+// (3,2) for max and (2,1) then (3,1) for min. The winner is the same under an
+// antisymmetric comparator and nothing else is.
+test('the comparator sees (best, candidate), in Rust’s order', () => {
+  expect(maxTrace([1, 2, 3])).toEqual([3, '(1,2)(2,3)']);
+  expect(minTrace([1, 2, 3])).toEqual([1, '(1,2)(1,3)']);
+  expect(maxTrace([])).toEqual([null, '']);
+});
+
+// Rust writes `max_by_key` as `self.map(|x| (f(&x), x)).max_by(..)`, which
+// calls the key closure ONCE per element in element order. The parent called it
+// inside the comparator: four calls over three elements, as (2)(1)(3)(2).
+test('the key closure runs once per element, in element order', () => {
+  expect(keyTrace([1, 2, 3])).toEqual([3, '(1)(2)(3)']);
+  expect(keyTrace([7])).toEqual([7, '(7)']);
 });
 
 test('nothing leaked', async () => {

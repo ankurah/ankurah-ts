@@ -113,7 +113,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
           if (!_moved1) dropOwned(directResults);
         }
       } finally {
-        if (!_moved0) dropOwned(rows);
+        dropOwned(rows);
       }
     } finally {
       scanner.drop();
@@ -683,7 +683,6 @@ function extractAllFields(entityObj: Object, entityState: EntityState): Result<v
       try {
         while (_at4 < _seq3.length) {
           const [fieldName, value] = _seq3[_at4++];
-          let _moved1 = false;
           try {
             if (!seenFields.insert(fieldName)) {
               continue;
@@ -700,7 +699,7 @@ function extractAllFields(entityObj: Object, entityState: EntityState): Result<v
             if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
             _r2.drop();
           } finally {
-            if (!_moved1) dropOwned(value);
+            dropOwned(value);
           }
         }
       } finally {

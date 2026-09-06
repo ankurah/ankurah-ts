@@ -41,3 +41,30 @@ pub fn take_both(pair: Pair) -> usize {
     let two = pair.two;
     consume(one) + consume(two)
 }
+
+impl Entity {
+    /// A method declared `self` takes its receiver with it.
+    pub fn into_name(self) -> String {
+        self.name
+    }
+
+    pub fn width(&self) -> usize {
+        self.name.len()
+    }
+}
+
+/// Calling a `self` method on a FIELD of a place is a partial move too: Rust
+/// takes the field out of the struct and leaves the rest where it was. Written
+/// as a plain property read the struct and the callee both owned it, so the
+/// struct's own drop released a value the callee had already taken —
+/// `BUG: Entity was used after being moved`. Six of ankql's seven
+/// `ast.test.ts` failures are this shape:
+/// `selection.predicate.populate(..)`.
+pub fn name_of_one(pair: Pair) -> String {
+    pair.one.into_name()
+}
+
+/// A method taking `&self` takes nothing, and the field is read where it is.
+pub fn width_of_one(pair: &Pair) -> usize {
+    pair.one.width()
+}

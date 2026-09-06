@@ -1,10 +1,12 @@
 //! Methods the body translator answers before the native-type dispatch.
 //!
 //! For: what a call is written as usually follows from the RECEIVER's type, and
-//! `native_types` is the table that says so. Three questions do not. A method
+//! `native_types` is the table that says so. Four questions do not. A method
 //! call's arguments are written for the type the CALLEE declares each of them
 //! to be. `collect()` builds whatever its target names, and only the position
-//! the call stands in says what that is. `unwrap_or` on a value the port writes
+//! the call stands in says what that is. A consuming iterator terminal called
+//! on a NAMED iterator is refused, because after it the port's array holds both
+//! what the walk took and what it left. `unwrap_or` on a value the port writes
 //! as a nullable is `??`, which is a fact about the port's spelling of `Option`
 //! and not about the receiver's class. Each is settled here, where the call
 //! expression and the position are both in hand, and never reaches the table.
@@ -12,6 +14,138 @@
 use super::BodyTranslator;
 
 impl<'a> BodyTranslator<'a> {
+    /// What this call is written as WITHOUT asking the receiver's type table,
+    /// or `None` where the table is what answers it.
+    pub(crate) fn answered_before_dispatch(
+        &self,
+        call: &syn::ExprMethodCall,
+        rust_method: &str,
+        receiver: &str,
+        args: &[String],
+    ) -> Option<String> {
+        if let Some(written) = self.collected_into(call, rust_method, receiver) {
+            return Some(written);
+        }
+        if let Some(written) = self.iteration_of_a_parameter(call, rust_method, receiver) {
+            return Some(written);
+        }
+        if let Some(written) = self.range_contains(call, args) {
+            return Some(written);
+        }
+        // F1: a consuming terminal on a NAMED iterator leaves part of the
+        // sequence behind, and the port's array cannot say which part.
+        self.named_iterator_refusal(call)
+            .map(|why| self.hole(syn::spanned::Spanned::span(call), why))
+    }
+
+    /// `(a..b).contains(&x)` from the BOUNDS, not from a sequence.
+    ///
+    /// `Range::contains` is a comparison against the two ends and is the one
+    /// method a range of a type the port cannot count still answers — a float
+    /// range is not an iterator in Rust either. Written through the
+    /// materialised sequence, `(0.0f64..1.0f64).contains(&0.5)` came out as
+    /// `range(0, 1).contains(0.5)`: `range(0, 1)` is `[0]`, and an array has no
+    /// `contains`, so the site was a `TypeError` that no diagnostic named
+    /// (F3). Rust's own definition is `start <= item && item < end`, with `<=`
+    /// at the far end for a `..=`.
+    fn range_contains(&self, call: &syn::ExprMethodCall, args: &[String]) -> Option<String> {
+        let range = self.range_of_contains(call)?;
+        let (Some(start), Some(end)) = (range.start.as_ref(), range.end.as_ref()) else {
+            return None;
+        };
+        let item = args.first()?;
+        let far = match range.limits {
+            syn::RangeLimits::Closed(_) => "<=",
+            syn::RangeLimits::HalfOpen(_) => "<",
+        };
+        Some(format!(
+            "({} <= {} && {} {} {})",
+            self.expr_value(start),
+            item,
+            item,
+            far,
+            self.expr_value(end)
+        ))
+    }
+
+    /// Is this `range.contains(&x)`, and on which range? Asked by the lowering
+    /// and by the receiver position, so the receiver is not materialised for a
+    /// call that never reads the sequence.
+    pub(crate) fn range_of_contains<'c>(
+        &self,
+        call: &'c syn::ExprMethodCall,
+    ) -> Option<&'c syn::ExprRange> {
+        if call.method != "contains" || call.args.len() != 1 {
+            return None;
+        }
+        match crate::infer::calls::unparenthesise(&call.receiver) {
+            syn::Expr::Range(range) => Some(range),
+            _ => None,
+        }
+    }
+
+    /// The same question, as the receiver position asks it.
+    pub(crate) fn contains_on_a_range(&self, call: &syn::ExprMethodCall) -> bool {
+        self.range_of_contains(call)
+            .is_some_and(|r| r.start.is_some() && r.end.is_some())
+    }
+
+    /// `IntoIterator::into_iter` on a type PARAMETER, as the spread it is on
+    /// every other receiver.
+    ///
+    /// The port materialises an iterator as a JavaScript array — that is what
+    /// makes `map`, `filter`, `rev` and `contains` array operations here — so
+    /// `into_iter` is the spread whatever the receiver is written as. The shape
+    /// table answers it for a `Vec`, a map, a set and a receiver the engine
+    /// could not name at all, and a bare type parameter fell between those:
+    /// `js_shape` says `Plain` for it, and the call came out as the camelCase
+    /// of its Rust name. `values.intoIter()` is `TypeError: values.intoIter is
+    /// not a function`, and it is why all seven of ankql's
+    /// `ast.test.ts` cases die — `Predicate::populate` takes an
+    /// `I: IntoIterator<Item = V>` (G1).
+    ///
+    /// The RESOLUTION is what says this is `IntoIterator` and not some crate
+    /// method of the same name; the parameter's own bound is what makes the
+    /// value iterable at run time.
+    fn iteration_of_a_parameter(
+        &self,
+        call: &syn::ExprMethodCall,
+        rust_method: &str,
+        receiver: &str,
+    ) -> Option<String> {
+        if rust_method != "into_iter" || !call.args.is_empty() {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let found = tc.resolve_method_call_with(&call.receiver, rust_method, call.turbofish.as_ref());
+        let receiver_ty = found.as_ref().ok().map(|f| f.receiver_type().clone());
+        tc.sink.rewind(mark);
+        let found = found.ok()?;
+        if !matches!(receiver_ty, Some(crate::ty::Ty::Param(_))) {
+            return None;
+        }
+        // The parameter's own DECLARED bound is what makes the value iterable at
+        // run time. A resolution that reached `IntoIterator` through the
+        // blanket `impl<I: Iterator> IntoIterator for I` rests on an undecided
+        // `T: Iterator`, and answering it here would both guess and silence the
+        // report — `storage/common/sorting.rs`'s `mem::take(..).into_iter()` is
+        // five of those, and they keep the diagnostic they had.
+        if !found.obligations.is_empty() {
+            return None;
+        }
+        let trait_id = tc.registry.method_trait(&found)?;
+        if tc.registry.system_type("std::iter::IntoIterator") != Some(trait_id) {
+            return None;
+        }
+        // The call resolved and this is the port's whole answer for it, so it
+        // is recorded before the answer is written — the way `collect` is.
+        drop(tc);
+        self.record_resolution(call, rust_method);
+        Some(format!("[...{}]", receiver))
+    }
+
     /// A method call's arguments, each translated for the type the callee
     /// declares it to be.
     ///
@@ -52,7 +186,10 @@ impl<'a> BodyTranslator<'a> {
             })
             .collect();
         self.own.argument_is_invoked.set(invoked);
-        args
+        // E10/J3: the statement's move flag stands after everything the call
+        // evaluates, whatever the call's shape.
+        let each = Self::each_argument(&call.args);
+        self.lifted_above_the_flag(&syn::Expr::MethodCall(call.clone()), &each, args)
     }
 
     /// `unwrap_or` and `unwrap_or_else` on a value the port writes as a
@@ -151,7 +288,13 @@ impl<'a> BodyTranslator<'a> {
         use crate::name_map::shape::{js_shape, JsShape};
         match js_shape(reg, &target) {
             // A `Vec`, an array or a slice IS the sequence.
-            JsShape::Array(_) | JsShape::Bytes => Some(receiver.to_string()),
+            JsShape::Array(_) => Some(receiver.to_string()),
+            // A `Vec<u8>` is not: the port writes it as a `Uint8Array`, and a
+            // chain hands back the array its adaptors built. Identity here put
+            // a `number[]` behind three `Result<Uint8Array, IndexError>`
+            // returns in `core/indexing/encoding.ts`, where every caller reads
+            // it as bytes.
+            JsShape::Bytes => Some(format!("Uint8Array.from({})", receiver)),
             JsShape::Set(_) => Some(format!("HashSet.from({})", receiver)),
             JsShape::Map(..) => Some(format!("HashMap.from({})", receiver)),
             JsShape::Str => Some(format!("{}.join('')", receiver)),
@@ -248,6 +391,42 @@ pub struct Item { pub id: u32, pub name: String }\n\
             "f",
         );
         assert!(!list.contains("unsupported("), "a Vec target is the sequence:\n{}", list);
+    }
+
+    /// A `Vec<u8>` target is a `Uint8Array`, and an array is not one.
+    ///
+    /// E1: the `Vec` arm answered the receiver for a byte target as well, so
+    /// `bytes.into_iter().map(..).collect()` behind a
+    /// `Result<Vec<u8>, IndexError>` handed back a `number[]` — three sites in
+    /// `core/indexing/encoding.ts`, each read as bytes by its caller. The
+    /// neighbouring `vec![..]` arm has always written `new Uint8Array([..])`.
+    #[test]
+    fn collect_into_a_byte_target_builds_a_uint8array() {
+        let bytes = body(
+            "pub fn f(bytes: Vec<u8>) -> Vec<u8> {              bytes.into_iter().map(|b| 0xFFu8.wrapping_sub(b)).collect() }",
+            "f",
+        );
+        assert!(bytes.contains("Uint8Array.from("), "a byte target builds bytes:\n{}", bytes);
+        assert!(!bytes.contains("unsupported("), "{}", bytes);
+
+        // Through the `let`'s annotation, and through a turbofish, alike.
+        let annotated = body(
+            "pub fn f(bytes: Vec<u8>) -> usize {              let out: Vec<u8> = bytes.into_iter().map(|b| b + 1).collect(); out.len() }",
+            "f",
+        );
+        assert!(annotated.contains("Uint8Array.from("), "{}", annotated);
+        let turbofish = body(
+            "pub fn f(bytes: Vec<u8>) -> usize {              bytes.into_iter().map(|b| b + 1).collect::<Vec<u8>>().len() }",
+            "f",
+        );
+        assert!(turbofish.contains("Uint8Array.from("), "{}", turbofish);
+
+        // A `Vec` of anything else is still the sequence itself, uncopied.
+        let list = body(
+            "pub fn f(ns: Vec<u32>) -> Vec<u32> { ns.into_iter().map(|n| n + 1).collect() }",
+            "f",
+        );
+        assert!(!list.contains("Uint8Array"), "a u32 vector is an array:\n{}", list);
     }
 
     /// A target the engine cannot name is a hole (R12), not the array that

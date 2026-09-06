@@ -151,7 +151,7 @@ pub(super) fn arm_statements(body: &str, produces: bool, value: bool) -> String 
 /// An arm's value: its declarations, then the body. A body that is already a
 /// sequence of statements keeps its own control flow; anything else is the
 /// value the arm produces.
-pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool, value: bool) -> String {
+pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool, value: bool, tuple: bool) -> String {
     // An arm whose body is nothing — `Self::Large(_) => { /* Vec drops itself */ }`
     // — still has to be a function. `Large: (v) => ,` is not one.
     if body.trim().is_empty() {
@@ -172,8 +172,11 @@ pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool, value: bo
     }
     // A tuple literal confuses TypeScript's inference across arms: `match`
     // takes its result type from the first arm it reads, and `[null, events]`
-    // makes every later arm an error against it.
-    let value = if body.starts_with('[') {
+    // makes every later arm an error against it. Whether the arm WROTE one is
+    // the arm's own question — asking the emitted text whether it starts with a
+    // bracket cast `[...exprs].every(p)`, a boolean, at
+    // `storage-sqlite/sql_builder.ts` (E16).
+    let value = if tuple {
         format!("{} as any", body)
     } else {
         body.to_string()
@@ -192,6 +195,34 @@ pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool, value: bo
         "{{\n{}  }}",
         indent(&indent(&format!("{}{}\n", bindings, tail)))
     )
+}
+
+#[cfg(test)]
+mod tuple_tests {
+    use super::is_a_tuple_literal;
+
+    fn expr(src: &str) -> syn::Expr { syn::parse_str(src).expect("parses") }
+
+    /// E16: whether an arm WROTE a tuple is the arm's own question. Asking the
+    /// emitted text whether it starts with a bracket cast
+    /// `[...exprs].every(p)` — a boolean — at
+    /// `storage-sqlite/sql_builder.ts`, and three more in `core/collation.ts`.
+    #[test]
+    fn only_an_arm_that_writes_a_tuple_is_cast() {
+        assert!(is_a_tuple_literal(&expr("(a, b)")));
+        // `Option<T>` is `T | null`, so `Some((a, b))` writes the array.
+        assert!(is_a_tuple_literal(&expr("Some((a, b))")));
+        assert!(is_a_tuple_literal(&expr("{ let x = 1; (x, true) }")));
+        assert!(is_a_tuple_literal(&expr("if p { (a, b) } else { (c, d) }")));
+        assert!(is_a_tuple_literal(&expr("match n { _ => (a, b) }")));
+
+        assert!(!is_a_tuple_literal(&expr("exprs.iter().all(f)")));
+        assert!(!is_a_tuple_literal(&expr("vec![b as u8]")));
+        assert!(!is_a_tuple_literal(&expr("()")));
+        // Every wrapper but `Some` is an object of its own here.
+        assert!(!is_a_tuple_literal(&expr("Ok((a, b))")));
+        assert!(!is_a_tuple_literal(&expr("Wrapper((a, b))")));
+    }
 }
 
 /// One arm of the runtime's own match: the key, and everything under it.
@@ -271,9 +302,47 @@ pub(super) fn translate_arm(
             value,
             is_async,
             release_rest,
+            tuple: is_a_tuple_literal(&arm.body),
         },
         t,
     )
+}
+
+/// Does this arm's body WRITE a tuple? `(a, b)` in Rust is the array literal
+/// the port emits, and a `match` whose first arm produces one makes every later
+/// arm an error against it unless the arm says `as any`.
+pub(super) fn is_a_tuple_literal(body: &syn::Expr) -> bool {
+    match body {
+        syn::Expr::Tuple(t) => !t.elems.is_empty(),
+        syn::Expr::Paren(p) => is_a_tuple_literal(&p.expr),
+        syn::Expr::Group(g) => is_a_tuple_literal(&g.expr),
+        // `Option<T>` is `T | null` here, so `Some(x)` IS `x` and a
+        // `Some((a, b))` arm writes the array. Every other wrapper the port
+        // builds — `Ok`, a variant, a struct — is an object of its own.
+        syn::Expr::Call(call) => {
+            let named_some = match call.func.as_ref() {
+                syn::Expr::Path(p) => {
+                    p.path.segments.last().is_some_and(|s| s.ident == "Some")
+                }
+                _ => false,
+            };
+            named_some && call.args.len() == 1 && is_a_tuple_literal(&call.args[0])
+        }
+        syn::Expr::Block(b) => match b.block.stmts.last() {
+            Some(syn::Stmt::Expr(e, None)) => is_a_tuple_literal(e),
+            _ => false,
+        },
+        // A branch is a union, and one branch writing a tuple is what the
+        // later arms are read against.
+        syn::Expr::If(i) => {
+            i.then_branch.stmts.last().is_some_and(|last| match last {
+                syn::Stmt::Expr(e, None) => is_a_tuple_literal(e),
+                _ => false,
+            }) || i.else_branch.as_ref().is_some_and(|(_, e)| is_a_tuple_literal(e))
+        }
+        syn::Expr::Match(m) => m.arms.iter().any(|a| is_a_tuple_literal(&a.body)),
+        _ => false,
+    }
 }
 
 /// One link of a chain: the same arm, written as the branch a test guards.
@@ -363,6 +432,7 @@ pub(super) fn translate_link(
             value,
             is_async,
             release_rest,
+            tuple: is_a_tuple_literal(&arm.body),
         },
         t,
     );

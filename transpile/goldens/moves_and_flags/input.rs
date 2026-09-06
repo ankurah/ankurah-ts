@@ -48,3 +48,45 @@ pub fn dropped_by_hand() -> usize {
     drop(entity);
     0
 }
+
+pub struct Sink;
+
+impl Sink {
+    pub fn swallow(&self, entity: Entity, n: usize) -> usize {
+        entity.name.len() + n
+    }
+}
+
+pub struct Held {
+    pub entity: Entity,
+    pub n: usize,
+}
+
+pub fn eat(entity: Entity, n: usize) -> usize {
+    entity.name.len() + n
+}
+
+/// E10: the flag stands after everything the statement evaluates, whatever
+/// SHAPE the call is. It was written before the whole statement for every call
+/// but `invoke(..)`, so an argument that throws left the flag set and the moved
+/// value released by nobody.
+pub fn plain_call(entity: Entity, n: Option<usize>, early: bool) -> usize {
+    if early {
+        return 0;
+    }
+    eat(entity, n.unwrap())
+}
+
+pub fn method_call(sink: &Sink, entity: Entity, n: Option<usize>, early: bool) -> usize {
+    if early {
+        return 0;
+    }
+    sink.swallow(entity, n.unwrap())
+}
+
+pub fn constructor(entity: Entity, n: Option<usize>, early: bool) -> Held {
+    if early {
+        return Held { entity: Entity { name: String::new() }, n: 0 };
+    }
+    Held { entity, n: n.unwrap() }
+}

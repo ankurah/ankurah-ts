@@ -1,79 +1,87 @@
-// MIRRORS: ankurah/core/src/property/value/json.rs #[cfg(test)] mod tests
+// MIRRORS: ankurah/core/src/property/value/json.rs (tests module)
+
 import { describe, test, expect } from 'bun:test';
-import { Json } from './json.ts';
-import { PropertyError } from '../traits.ts';
+import { Json } from './json';
+import { Value } from '../../value/index';
 
-describe('Json', () => {
-  // Rust: fn test_json_roundtrip()
-  test('json roundtrip', () => {
-    const original = Json.object([
-      ['name', 'test'],
-      ['count', 42],
-      ['nested', { inner: 'value' }],
-    ]);
-
-    // Convert to Value and back
-    const value = original.intoValue()!;
-    const recovered = Json.fromValue(value);
-
-    expect(recovered.inner).toEqual(original.inner);
+describe('json unit tests', () => {
+  test('test_json_roundtrip', () => {
+    const original = Json.object([['name', 'test'], ['count', 42], ['nested', undefined /* json!({ "inner" : "value" }) */]]);
+    try {
+      const value = (original.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      const recovered = Json.fromValue(value).unwrap();
+      try {
+        expect(original).toEqual(recovered);
+      } finally {
+        recovered.drop();
+      }
+    } finally {
+      original.drop();
+    }
   });
 
-  // Rust: fn test_json_get_path()
-  test('json get_path', () => {
-    const json = Json.new({
-      licensing: {
-        territory: 'US',
-        rights: {
-          holder: 'Label',
-        },
-      },
-    });
-
-    expect(json.getPath(['licensing', 'territory'])).toBe('US');
-    expect(json.getPath(['licensing', 'rights', 'holder'])).toBe('Label');
-    expect(json.getPath(['licensing', 'nonexistent'])).toBeUndefined();
-    expect(json.getPath(['nonexistent'])).toBeUndefined();
+  test('test_json_get_path', () => {
+    const json = Json.new(undefined /* json!({ "licensing" : { "territory" : "US" , "rights" : { "holder" : "Label" } } }) */);
+    try {
+      expect(json.getPath(['licensing', 'territory'])).toEqual('US');
+      expect(json.getPath(['licensing', 'rights', 'holder'])).toEqual('Label');
+      expect(json.getPath(['licensing', 'nonexistent'])).toEqual(null);
+      expect(json.getPath(['nonexistent'])).toEqual(null);
+    } finally {
+      json.drop();
+    }
   });
 
-  // Rust: fn test_json_null()
-  test('json null', () => {
+  test('test_json_null', () => {
     const json = Json.null();
-    expect(json.isNull()).toBe(true);
-
-    const value = json.intoValue()!;
-    const recovered = Json.fromValue(value);
-    expect(recovered.isNull()).toBe(true);
-  });
-
-  // Rust: fn test_json_missing()
-  test('json missing', () => {
-    expect(() => Json.fromValue(null)).toThrow();
     try {
-      Json.fromValue(null);
-    } catch (e) {
-      expect(e).toBeInstanceOf(PropertyError);
-      expect((e as PropertyError).kind).toBe('Missing');
+      if (!(json.isNull())) throw new Error('assertion failed');
+      const value = (json.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      const recovered = Json.fromValue(value).unwrap();
+      try {
+        if (!(recovered.isNull())) throw new Error('assertion failed');
+      } finally {
+        recovered.drop();
+      }
+    } finally {
+      json.drop();
     }
   });
 
-  // Rust: fn test_json_invalid_variant()
-  test('json invalid variant', () => {
-    expect(() => Json.fromValue({ type: 'String', value: 'not json bytes' })).toThrow();
+  test('test_json_missing', () => {
+    const result = Json.fromValue(null);
     try {
-      Json.fromValue({ type: 'String', value: 'not json bytes' });
-    } catch (e) {
-      expect(e).toBeInstanceOf(PropertyError);
-      expect((e as PropertyError).kind).toBe('InvalidVariant');
+      if (!(((result) => {
+        if (!(result.isErr())) return false;
+        const _v = result.unwrapErr();
+        return true;
+      })(result))) throw new Error('assertion failed');
+    } finally {
+      result.drop();
     }
   });
 
-  // Rust: fn test_json_deref()
-  test('json deref (object access)', () => {
-    const json = Json.new({ key: 'value' });
-
-    // Divergence: No Deref in TS — use isObject() and getPath() instead
-    expect(json.isObject()).toBe(true);
-    expect(json.getPath(['key'])).toBe('value');
+  test('test_json_invalid_variant', () => {
+    const result = Json.fromValue(new Value('String', { _0: 'not json bytes' }));
+    try {
+      if (!(((result) => {
+        if (!(result.isErr())) return false;
+        const _v = result.unwrapErr();
+        return true;
+      })(result))) throw new Error('assertion failed');
+    } finally {
+      result.drop();
+    }
   });
+
+  test('test_json_deref', () => {
+    const json = Json.new(undefined /* json!({ "key" : "value" }) */);
+    try {
+      if (!(json.isObject())) throw new Error('assertion failed');
+      expect(((json.deref() as Record<string, unknown>)?.['key'] ?? null)).toEqual('value');
+    } finally {
+      json.drop();
+    }
+  });
+
 });

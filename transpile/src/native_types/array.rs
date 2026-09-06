@@ -27,13 +27,28 @@ pub struct Element {
     /// Whether the port has a copy for it — either one it writes out, or the
     /// element's own `clone()`.
     pub has_clone: bool,
+    /// Whether the port writes the element as a JavaScript REFERENCE, so that
+    /// a loop variable bound to it and the array slot are the same object.
+    /// `iter_mut` turns on it: over a number or a string the loop variable is a
+    /// COPY and every write through it is lost.
+    pub by_reference: bool,
+    /// Whether the ELEMENT is itself an `Option`, which the port writes as
+    /// `T | null`. A reader answering `Option<Element>` then has one `null` for
+    /// two different answers.
+    pub nullable: bool,
 }
 
 impl Element {
     /// Nothing is known about the element: the untyped path, and `Uint8Array`'s
     /// fallback, which never reaches the copier.
     pub fn unknown() -> Element {
-        Element { written: String::new(), copy_of_e: "e".to_string(), has_clone: false }
+        Element {
+            written: String::new(),
+            copy_of_e: "e".to_string(),
+            has_clone: false,
+            by_reference: false,
+            nullable: false,
+        }
     }
 
     /// What the registry says this element is.
@@ -50,7 +65,12 @@ impl Element {
                 .is_some_and(|clone| {
                     crate::registry::Probe::new(reg, reg.crate_root()).implements(ty, clone)
                 });
-        Element { written, copy_of_e, has_clone }
+        let by_reference = crate::name_map::shape::writes_by_reference(reg, ty);
+        let nullable = matches!(
+            crate::name_map::shape::js_shape(reg, ty),
+            crate::name_map::shape::JsShape::Nullable(_)
+        );
+        Element { written, copy_of_e, has_clone, by_reference, nullable }
     }
 }
 
@@ -75,12 +95,47 @@ pub(crate) fn copy(receiver: &str, element: &Element, shallow: &str) -> Result<S
     Ok(format!("{}.map((e) => {})", receiver, each))
 }
 
+/// The readers whose answer is an `Option` of the ELEMENT, with the arity Rust
+/// declares. Each of them has one `null` for two different answers where the
+/// element is itself an `Option`.
+const ELEMENT_READERS: &[(&str, usize)] = &[
+    ("first", 0),
+    ("last", 0),
+    ("get", 1),
+    ("pop", 0),
+    ("find", 1),
+    ("reduce", 1),
+    ("max_by", 1),
+    ("min_by", 1),
+    ("max_by_key", 1),
+    ("min_by_key", 1),
+];
+
 pub fn translate(
     receiver: &str,
     method: &str,
     args: &[String],
     element: &Element,
+    elements: super::iterator::Elements,
 ) -> MethodTranslation {
+    // E13: `Option<T>` is `T | null` here, so a reader answering
+    // `Option<Element>` over a `Vec<Option<T>>` has ONE `null` for two
+    // different answers — "there is no element" and "the element is `None`".
+    // Rust tells them apart and every caller of `first`/`last`/`get` on such a
+    // vector is written expecting that, so the reader is refused rather than
+    // flattening the two.
+    if element.nullable && ELEMENT_READERS.iter().any(|(n, a)| *n == method && *a == args.len()) {
+        let message = format!(
+            "`{}` answers an `Option` of the element, and this element is itself an `Option`; \
+             the port writes both as `null`, so the answer cannot say whether there is no \
+             element or an element that is `None`",
+            method
+        );
+        return MethodTranslation::Refused {
+            fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+            message,
+        };
+    }
     let result = match method {
         // Properties (not methods in JS)
         "len" => format!("{}.length", receiver),
@@ -201,12 +256,46 @@ pub fn translate(
 
         "iter" | "into_iter" => format!("[...{}]", receiver),
         "values" => format!("[...{}]", receiver),
+        // F4/E12: `iter_mut` had no entry at all, so it fell through to the
+        // camelCase fallback and emitted `xs.iterMut()`, a method no array
+        // declares — `TypeError: v.iterMut is not a function`, live at
+        // `core/node.ts` and `core/property/backend/lww.ts`. Rust hands out
+        // `&mut T`; the port has no `&mut`, so the loop writes through only
+        // because the variable and the slot are the same OBJECT. Over a number,
+        // a string or a `bigint` the variable is a copy and the write is lost,
+        // so that shape is refused rather than emitted silently. The
+        // disposition is BORROWED either way: `iter_mut` takes `&mut self` and
+        // the elements stay the caller's.
+        "iter_mut" if args.is_empty() => {
+            if !element.by_reference {
+                let message = format!(
+                    "`iter_mut` hands out `&mut {}`, and the port writes that element as a \
+                     JavaScript value rather than an object: the loop would bind a COPY and \
+                     every write through it would be lost",
+                    match element.written.is_empty() {
+                        true => "the element".to_string(),
+                        false => element.written.clone(),
+                    }
+                );
+                return MethodTranslation::Refused {
+                    fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+                    message,
+                };
+            }
+            format!("[...{}]", receiver)
+        }
 
         // Everything else an iterator declares is an array operation, and the
         // table for those is shared with the untyped path rather than copied:
         // a `Cloned<Values<'_, K, V>>` is a JavaScript array, so `collect` and
         // `cloned` mean on it what they mean on any other one.
-        _ => match super::iterator::translate(receiver, method, args, super::iterator::Receiver::Sequence) {
+        _ => match super::iterator::translate(
+            receiver,
+            method,
+            args,
+            super::iterator::Receiver::Sequence,
+            elements,
+        ) {
             Some(result) => result,
             None => return MethodTranslation::Passthrough,
         },
@@ -217,6 +306,34 @@ pub fn translate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// E13: `Option<T>` is `T | null` here, so a reader answering
+    /// `Option<Element>` over a vector of `Option`s has ONE `null` for two
+    /// different answers, and the caller cannot tell "there is no element" from
+    /// "the element is `None`".
+    #[test]
+    fn a_reader_over_a_nullable_element_is_refused() {
+        let f = crate::testing::Fixture::build(&[("lib.rs", "pub struct Item { pub n: u32 }\n")]);
+        let nullable = Element::of(&f.reg, &f.ty("lib.rs", "Option<u32>"));
+        let plain = Element::of(&f.reg, &f.ty("lib.rs", "u32"));
+        assert!(nullable.nullable, "an Option element is nullable");
+        assert!(!plain.nullable, "a u32 element is not");
+        for (method, args) in [("first", 0usize), ("last", 0), ("get", 1), ("find", 1), ("pop", 0)] {
+            let args: Vec<String> = (0..args).map(|n| format!("a{n}")).collect();
+            let refused = translate("xs", method, &args, &nullable, super::super::iterator::Elements::Borrowed);
+            assert!(
+                matches!(refused, MethodTranslation::Refused { .. }),
+                "`{}` over a nullable element was written anyway",
+                method
+            );
+            let written = translate("xs", method, &args, &plain, super::super::iterator::Elements::Borrowed);
+            assert!(
+                !matches!(written, MethodTranslation::Refused { .. }),
+                "`{}` over a plain element must be unchanged",
+                method
+            );
+        }
+    }
 
     /// An element of a written Rust type, resolved the way a field of it would
     /// be — which is what `Element::of` is handed in a real run.
@@ -230,7 +347,7 @@ mod tests {
     }
 
     fn expr(receiver: &str, method: &str, element: &Element) -> String {
-        match translate(receiver, method, &[], element) {
+        match translate(receiver, method, &[], element, super::super::iterator::Elements::Borrowed) {
             MethodTranslation::Expr(ts) => ts,
             MethodTranslation::Refused { fallback, .. } => match *fallback {
                 MethodTranslation::Expr(ts) => ts,
@@ -270,7 +387,7 @@ mod tests {
     /// do.
     #[test]
     fn an_element_with_no_clone_is_reported() {
-        match translate("xs", "to_vec", &[], &holding("Opaque", false)) {
+        match translate("xs", "to_vec", &[], &holding("Opaque", false), super::super::iterator::Elements::Borrowed) {
             MethodTranslation::Refused { message, .. } => {
                 assert!(message.contains("has no `clone()`"), "{}", message)
             }

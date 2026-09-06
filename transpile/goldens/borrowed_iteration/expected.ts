@@ -21,7 +21,7 @@ export class Key extends Struct {
 }
 
 export class Cell extends Struct {
-  readonly value: number;
+  value: number;
 
   constructor(value: number) {
     super();
@@ -148,5 +148,29 @@ export function refWidthsBorrowed(keys: Key[]): number {
     total = checkedAdd(total, key.name.length, 'usize');
   }
   return total;
+}
+
+export function widthsViaCall(keys: Key[]): number {
+  try {
+    let total = 0;
+    for (const key of [...(keys)]) {
+      total = checkedAdd(total, key.name.length, 'usize');
+    }
+    return total;
+  } finally {
+    dropOwned(keys);
+  }
+}
+
+export function bumpCells(cells: Cell[]): void {
+  for (const cell of [...cells]) {
+    cell.value = checkedAdd(cell.value, 1, 'u32');
+  }
+}
+
+export function bumpMap(map: HashMap<Key, Cell>): void {
+  for (const [_key, cell] of [...map]) {
+    cell.value = checkedAdd(cell.value, 1, 'u32');
+  }
 }
 

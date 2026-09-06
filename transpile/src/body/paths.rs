@@ -313,16 +313,26 @@ impl BodyTranslator<'_> {
             );
         }
         let mut values: Vec<String> = Vec::new();
+        // The expression behind each written value, in the same order, so the
+        // move-flag placement can read it (E10). A field the literal does not
+        // name has none, and `undefined` is a place anyway.
+        let mut behind: Vec<Option<&syn::Expr>> = Vec::new();
         for (field, ty) in &declared {
             match s
                 .fields
                 .iter()
                 .find(|f| crate::infer::member_name(&f.member) == *field)
             {
-                Some(f) => values.push(written(f, ty.as_ref())),
+                Some(f) => {
+                    values.push(written(f, ty.as_ref()));
+                    behind.push(Some(&f.expr));
+                }
                 // Named by neither the literal nor anything else: only `..rest`
                 // can produce this, and the line above says so.
-                None => values.push("undefined".to_string()),
+                None => {
+                    values.push("undefined".to_string());
+                    behind.push(None);
+                }
             }
         }
         // A field the literal names and the declaration does not: the engine
@@ -341,6 +351,12 @@ impl BodyTranslator<'_> {
                 );
             }
         }
+        // E10/J3: a constructor is a call, and the statement's move flag stands
+        // after everything it evaluates. (The values are already in DECLARED
+        // order rather than the order the literal writes them, which is a
+        // reordering of its own and is not this rule's to fix.)
+        let whole = syn::Expr::Struct(s.clone());
+        let values = self.lifted_above_the_flag(&whole, &behind, values);
         format!("new {}({})", name, values.join(", "))
     }
 

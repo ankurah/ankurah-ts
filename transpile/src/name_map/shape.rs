@@ -55,6 +55,43 @@ pub enum JsShape {
     Plain,
 }
 
+/// Does the port write a value of this type as a JavaScript REFERENCE?
+///
+/// For: `iter_mut` hands out `&mut T`, and the port has no `&mut` — an emitted
+/// `for (const t of xs)` writes through only because `t` and `xs[i]` are the
+/// same object. Where the element is a number, a string, a boolean or a
+/// `bigint`, the loop variable is a COPY and every write through it is lost, so
+/// that shape is refused instead of written silently. A `char` is a
+/// one-character string here and is a value too; `Plain` covers a type
+/// parameter and a type the engine could not name, where nothing is known.
+pub fn writes_by_reference(reg: &TypeRegistry, ty: &Ty) -> bool {
+    match js_shape(reg, ty) {
+        JsShape::Bytes
+        | JsShape::Array(_)
+        | JsShape::Map(..)
+        | JsShape::Set(_)
+        | JsShape::Rc(_)
+        | JsShape::Result(_)
+        | JsShape::Tuple(_)
+        | JsShape::Fn { .. }
+        | JsShape::Future(_)
+        | JsShape::Trait(_) => true,
+        JsShape::SameAs(inner) => writes_by_reference(reg, &inner),
+        // A named type the port writes as a class is a reference; every other
+        // `Plain` — a type parameter, a `char`, a projection — is not known to
+        // be one, and a write through it would be lost without saying so.
+        JsShape::Plain => matches!(ty, Ty::Named { .. } | Ty::Dyn { .. }),
+        JsShape::Nullable(_)
+        | JsShape::Str
+        | JsShape::Number
+        | JsShape::BigInt
+        | JsShape::Boolean
+        | JsShape::Void
+        | JsShape::Never
+        | JsShape::Unknown => false,
+    }
+}
+
 pub fn js_shape(reg: &TypeRegistry, ty: &Ty) -> JsShape {
     match ty {
         Ty::Ref { inner, .. } => JsShape::SameAs((**inner).clone()),

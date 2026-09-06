@@ -95,3 +95,35 @@ pub fn ref_widths_borrowed(keys: &Vec<Key>) -> usize {
     }
     total
 }
+
+/// E11: `(&keys).into_iter()` written as a CALL selects the same
+/// `IntoIterator for &Vec<T>` the sugar selects, and hands out `&Key`. The `&`
+/// on a receiver was erased before the probe ran, so the by-value impl answered
+/// and the loop released every element the caller still owns — a double drop
+/// where the block released them too, and a release of somebody else's elements
+/// where it did not.
+pub fn widths_via_call(keys: Vec<Key>) -> usize {
+    let mut total = 0usize;
+    for key in (&keys).into_iter() {
+        total += key.name.len();
+    }
+    total
+}
+
+/// F4/E12: `iter_mut` had no lowering at all, so it came out as
+/// `cells.iterMut()` — a method no array declares, and a `TypeError` the first
+/// time the loop is reached. Live at `core/node.ts` and
+/// `core/property/backend/lww.ts`. It hands out `&mut Cell`, which the port
+/// writes as the element object itself, and the elements stay the caller's.
+pub fn bump_cells(cells: &mut Vec<Cell>) {
+    for cell in cells.iter_mut() {
+        cell.value += 1;
+    }
+}
+
+/// The same over a map, which hands out `(&K, &mut V)`.
+pub fn bump_map(map: &mut HashMap<Key, Cell>) {
+    for (_key, cell) in map.iter_mut() {
+        cell.value += 1;
+    }
+}

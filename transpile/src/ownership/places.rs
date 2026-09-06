@@ -125,6 +125,32 @@ impl<'a> BodyTranslator<'a> {
             .unwrap_or_else(|| self.expr_value(expr))
     }
 
+    /// A method call's RECEIVER, as the value the callee is handed.
+    ///
+    /// A method declared `self` takes its receiver with it, and where the
+    /// receiver is a FIELD of a place that is a partial move: Rust takes the
+    /// field out of the struct, leaves the rest where it was, and drops what is
+    /// left field by field. Written as a plain property read the struct and the
+    /// callee both owned it — `selection.predicate.populate(..)` handed the
+    /// predicate away and the emitted `selection.drop()` then raised
+    /// `BUG: Predicate was used after being moved`, which is six of ankql's
+    /// seven `ast.test.ts` failures. `takeField` is the same call a
+    /// `let x = s.field` already writes; only this position was not asking for
+    /// it.
+    pub(crate) fn receiver_value(&self, call: &syn::ExprMethodCall) -> String {
+        // A range that is the receiver of `contains` is never materialised: the
+        // comparison is written from its BOUNDS, and a range of a width the
+        // port cannot count still answers it. Translating the receiver here
+        // would file the sequence's refusal for a sequence nothing builds.
+        if self.contains_on_a_range(call) {
+            return String::new();
+        }
+        match ownership::moves::Consumes::consumes_receiver(self, call) {
+            true => self.moved_value(&call.receiver),
+            false => self.expr_value(&call.receiver),
+        }
+    }
+
     /// `s.field` in a value position, as `s.takeField('field')` — or nothing
     /// where the read is not a move.
     pub(crate) fn partial_move(&self, expr: &syn::Expr) -> Option<String> {

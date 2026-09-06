@@ -1,274 +1,453 @@
 // MIRRORS: ankurah/core/src/retrieval.rs
-//
-// Implements GetEvents for local and remote retrieval, allowing event retrieval
-// from local storage and (eventually) remote peers.
-// This lives alongside lineage because event retrieval is a lineage concern,
-// not a context/session concern.
+import { Struct, Result, Arc, Mutex, dropOwned, dropUnbound, HashMap, HashSet } from '@ankurah/base';
+import { Attested, Clock, EntityId, EntityState, Event, EventId, CollectionId, NodeRequestBody } from '@ankurah/proto';
+import { MutationError, RetrievalError } from './error';
+import { Node } from './node';
+import { StorageCollectionWrapper } from './storage';
+import { Get } from '@ankurah/signals';
 
-import type { Attested, Clock, EntityId, EntityState, Event, EventId } from '@ankurah/proto';
-import type { StorageCollection } from './storage.ts';
-import { RetrievalError } from './error.ts';
+export class LocalRetriever extends Struct implements GetEvents, Retrieve {
+  _0: Arc<LocalRetrieverInner>;
 
-// ---------------------------------------------------------------------------
-// TEvent — trait for events and event-like things that can be descended
-// ---------------------------------------------------------------------------
-
-/**
- * Interface for events and event-like things that can be descended.
- *
- * Rust: `pub trait TEvent: std::fmt::Display`
- * Divergence: Rust uses associated types (Id, Parent); TS uses concrete
- * types (EventId, TClock) since we only instantiate with proto::Event [E7].
- */
-export interface TEvent {
-  id(): EventId;
-  parent(): TClock;
-  toString(): string;
-}
-
-// ---------------------------------------------------------------------------
-// TClock — trait for clocks
-// ---------------------------------------------------------------------------
-
-/**
- * Interface wrapping proto Clock with convenience methods.
- *
- * Rust: `pub trait TClock { type Id; fn members(&self) -> &[Self::Id]; }`
- * Divergence: Rust uses associated type Id; TS uses concrete EventId [E7].
- */
-export interface TClock {
-  members(): readonly EventId[];
-}
-
-// ---------------------------------------------------------------------------
-// clockMembers — Clock implements TClock via adapter function
-// ---------------------------------------------------------------------------
-
-/**
- * Adapter: extract members from a proto Clock, satisfying TClock.
- *
- * Rust: `impl TClock for Clock { fn members(&self) -> &[EventId] { self.as_slice() } }`
- * Divergence: TS Clock class uses asSlice(); we wrap it rather than patching
- * the prototype [E7].
- */
-export function clockMembers(clock: Clock): readonly EventId[] {
-  return clock.asSlice();
-}
-
-// ---------------------------------------------------------------------------
-// eventAsTEvent — Event implements TEvent via adapter function
-// ---------------------------------------------------------------------------
-
-/**
- * Adapter: wrap a proto Event as a TEvent.
- *
- * Rust: `impl TEvent for Event { fn id() -> EventId; fn parent() -> &Clock; }`
- * Divergence: TS returns a lightweight wrapper object rather than impl on
- * the Event class directly [E7].
- */
-export function eventAsTEvent(event: Event): TEvent {
-  return {
-    id: () => event.id(),
-    parent: () => ({ members: () => event.parent.asSlice() }),
-    toString: () => event.toString(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// GetEvents — interface for retrieving events (from storage or network)
-// ---------------------------------------------------------------------------
-
-/**
- * Interface for retrieving events from storage or network.
- *
- * Rust: `#[async_trait] pub trait GetEvents`
- * Divergence: Rust uses associated types (Id, Event); TS uses concrete
- * types (EventId, Event) since the only instantiation is with proto types [E7].
- * Divergence: async Rust -> async/Promise in TS.
- */
-export interface GetEvents {
-  /**
-   * Estimate the budget cost for retrieving a batch of events.
-   * This allows different implementations to model their cost structure.
-   *
-   * Rust: `fn estimate_cost(&self, _batch_size: usize) -> usize`
-   * Default: 1 per batch.
-   */
-  estimateCost(batchSize: number): number;
-
-  /**
-   * Retrieve events by their IDs.
-   * Returns [cost, events] tuple.
-   *
-   * Rust: `async fn retrieve_event(&self, event_ids: Vec<Self::Id>) -> Result<(usize, Vec<Attested<Self::Event>>), RetrievalError>`
-   */
-  retrieveEvent(eventIds: EventId[]): Promise<[number, Attested<Event>[]]>;
-
-  /**
-   * Stage events for immediate retrieval without storage.
-   * Used when applying EventBridge deltas.
-   * Staged events are available for lineage comparison at zero budget cost
-   * before being persisted.
-   *
-   * Rust: `fn stage_events(&self, events: impl IntoIterator<Item = Attested<Self::Event>>)`
-   */
-  stageEvents(events: Iterable<Attested<Event>>): void;
-
-  /**
-   * Mark an event as used. Used when applying EventBridge deltas.
-   *
-   * Rust: `fn mark_event_used(&self, event_id: &Self::Id)`
-   */
-  markEventUsed(eventId: EventId): void;
-}
-
-// ---------------------------------------------------------------------------
-// Retrieve — extends GetEvents with state retrieval
-// ---------------------------------------------------------------------------
-
-/**
- * Main retrieval interface: extends GetEvents with state retrieval.
- * Each implementation determines whether to use local or remote storage.
- *
- * Rust: `#[async_trait] pub trait Retrieve: GetEvents`
- */
-export interface Retrieve extends GetEvents {
-  /**
-   * Get the state for an entity. Returns null if entity not found.
-   *
-   * Rust: `async fn get_state(&self, entity_id: EntityId) -> Result<Option<Attested<EntityState>>, RetrievalError>`
-   */
-  getState(entityId: EntityId): Promise<Attested<EntityState> | null>;
-}
-
-// ---------------------------------------------------------------------------
-// LocalRetriever — durable node retriever, reads from local storage
-// ---------------------------------------------------------------------------
-
-/**
- * Durable node retriever - retrieves everything locally from storage.
- *
- * Rust: `pub struct LocalRetriever(Arc<LocalRetrieverInner>)`
- * Divergence: No Arc/Mutex — single-threaded JS, plain fields [E8].
- * Divergence: StorageCollectionWrapper flattened to StorageCollection [E7].
- */
-export class LocalRetriever implements Retrieve {
-  private readonly collection: StorageCollection;
-  /** Map from EventId base64 -> [Attested<Event>, wasUsed]. Null means taken. */
-  private stagedEvents: Map<string, [Attested<Event>, boolean]> | null;
-
-  constructor(collection: StorageCollection) {
-    this.collection = collection;
-    this.stagedEvents = new Map();
+  constructor(_0: Arc<LocalRetrieverInner>) {
+    super();
+    this._0 = _0;
   }
 
-  /**
-   * Store all staged events that were marked as used into persistent storage.
-   *
-   * Rust: `pub async fn store_used_events(&mut self) -> Result<(), RetrievalError>`
-   */
-  async storeUsedEvents(): Promise<void> {
-    const staged = this.stagedEvents;
-    this.stagedEvents = null;
+  static new(collection: StorageCollectionWrapper): LocalRetriever {
+    return new LocalRetriever(Arc.new(new LocalRetrieverInner(collection, new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>()))));
+  }
 
-    if (staged !== null) {
-      for (const [_id, [event, used]] of staged) {
-        if (used) {
-          await this.collection.addEvent(event);
+  async storeUsedEvents(): Promise<Result<void, RetrievalError>> {
+    const _t0 = this._0.value.stagedEvents.lock();
+    try {
+      const staged = _t0.value.take();
+      _t0.drop();
+      {
+        const _v = staged;
+        if (_v != null) {
+          const staged = _v;
+          try {
+            for (const [_id, [event, used]] of [...staged]) {
+              if (used) {
+                const _r1 = await this._0.value.collection.deref().value.addEvent(event);
+                if (_r1.isErr()) return Result.Err(RetrievalError.fromMutationError(_r1.unwrapErr()));
+                _r1.drop();
+              }
+            }
+          } finally {
+            dropOwned(staged);
+          }
         }
       }
+      return Result.Ok([]);
+    } finally {
+      _t0.drop();
     }
   }
 
-  // ── GetEvents implementation ─────────────────────────────────────
-
-  estimateCost(_batchSize: number): number {
-    // Default: fixed cost of 1 per batch
-    return 1;
-  }
-
-  async retrieveEvent(eventIds: EventId[]): Promise<[number, Attested<Event>[]]> {
-    const events: Attested<Event>[] = [];
-    // Collect remaining IDs that weren't found in staged events
-    const remaining: EventId[] = [];
-
-    // First check staged events (zero cost)
-    if (this.stagedEvents !== null) {
-      for (const id of eventIds) {
-        const key = id.toBase64();
-        const entry = this.stagedEvents.get(key);
-        if (entry !== undefined) {
-          const [event] = entry;
-          events.push(event);
-          entry[1] = true; // mark used
-        } else {
-          remaining.push(id);
+  async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
+    let events = [];
+    let _moved0 = false;
+    let eventIds_1 = HashSet.from([...eventIds]);
+    try {
+      const _t1 = this._0.value.stagedEvents.lock();
+      try {
+        {
+          const _v1 = _t1.value;
+          if (_v1 != null) {
+            const staged = _v1;
+            eventIds_1.retain((id) => {
+              {
+                const _v = staged.get(id);
+                if (_v != null) {
+                  const [event, used] = _v;
+                  events.push(event.clone());
+                  used.value = true;
+                  return false;
+                } else {
+                return true;
+              }
+              }
+            });
+          }
         }
+      } finally {
+        _t1.drop();
       }
-    } else {
-      remaining.push(...eventIds);
+      if (eventIds_1.size === 0) {
+        return Result.Ok([0, events]);
+      }
+      _moved0 = true;
+      const _r2 = await this._0.value.collection.deref().value.getEvents([...eventIds_1]);
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      let _moved3 = false;
+      const storedEvents = _r2.unwrap();
+      try {
+        _moved3 = true;
+        events.extend(storedEvents);
+        return Result.Ok([1, events]);
+      } finally {
+        if (!_moved3) dropOwned(storedEvents);
+      }
+    } finally {
+      if (!_moved0) dropOwned(eventIds_1);
     }
-
-    if (remaining.length === 0) {
-      return [0, events];
-    }
-
-    // staged events are free
-    // cost for local retrieval is 1 per batch
-
-    // Then retrieve from storage if needed
-    const storedEvents = await this.collection.getEvents(remaining);
-    events.push(...storedEvents);
-
-    // TODO: push the consumption figure to the store, because its not necessarily the same for all stores
-    return [1, events];
   }
 
-  stageEvents(events: Iterable<Attested<Event>>): void {
-    if (this.stagedEvents === null) {
-      this.stagedEvents = new Map();
-    }
-
-    for (const event of events) {
-      const key = event.payload.id().toBase64();
-      this.stagedEvents.set(key, [event, false]);
+  stageEvents(events: Attested<Event>[]): void {
+    let staged = this._0.value.stagedEvents.lock();
+    try {
+      const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
+      for (const event of [...events]) {
+        staged_1.set(event.payload.id(), [event, false]);
+      }
+    } finally {
+      staged.drop();
     }
   }
 
   markEventUsed(eventId: EventId): void {
-    if (this.stagedEvents === null) {
-      this.stagedEvents = new Map();
-    }
-
-    const key = eventId.toBase64();
-    const entry = this.stagedEvents.get(key);
-    if (entry !== undefined) {
-      entry[1] = true;
+    let staged = this._0.value.stagedEvents.lock();
+    try {
+      const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
+      const _m0 = staged_1.get(eventId);
+      (_m0 != null ? (([, used]) => {
+        used.value = true;
+      })(_m0!) : null);
+    } finally {
+      staged.drop();
     }
   }
 
-  // ── Retrieve implementation ──────────────────────────────────────
-
-  async getState(entityId: EntityId): Promise<Attested<EntityState> | null> {
-    try {
-      const state = await this.collection.getState(entityId);
-      return state;
-    } catch (e: unknown) {
-      if (e instanceof RetrievalError && e.kind === 'EntityNotFound') {
-        return null;
+  async getState(entityId: EntityId): Promise<Result<Attested<EntityState> | null, RetrievalError>> {
+    const _v = await this._0.value.collection.deref().value.getState(entityId);
+    if (_v.isOk()) {
+      const state = _v.unwrap();
+      return Result.Ok(state);
+    } else {
+      const _v1 = _v.unwrapErr();
+      if (_v1.is('EntityNotFound')) {
+        const _v2 = _v1;
+        try {
+          return Result.Ok(null);
+        } finally {
+          _v2.drop();
+        }
       }
-      throw e;
+      {
+        const e = _v1;
+        return Result.Err(e);
+      }
+    }
+  }
+
+  clone(): LocalRetriever {
+    return new LocalRetriever(this._0.clone());
+  }
+}
+
+class LocalRetrieverInner extends Struct {
+  collection: StorageCollectionWrapper;
+  stagedEvents: Mutex<HashMap<EventId, [Attested<Event>, boolean]> | null>;
+
+  constructor(collection: StorageCollectionWrapper, stagedEvents: Mutex<HashMap<EventId, [Attested<Event>, boolean]> | null>) {
+    super();
+    this.collection = collection;
+    this.stagedEvents = stagedEvents;
+  }
+}
+
+export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyAgent, C extends Iterable<ContextData>> extends Struct implements GetEvents, Retrieve {
+  readonly collection: CollectionId;
+  readonly node: Node<SE, PA>;
+  readonly cdata: C;
+  stagedEvents: Mutex<HashMap<EventId, [Attested<Event>, boolean]> | null>;
+
+  constructor(collection: CollectionId, node: Node<SE, PA>, cdata: C, stagedEvents: Mutex<HashMap<EventId, [Attested<Event>, boolean]> | null>) {
+    super();
+    this.collection = collection;
+    this.node = node;
+    this.cdata = cdata;
+    this.stagedEvents = stagedEvents;
+  }
+
+  // A `&T` field is a borrow: dropping this releases the borrow and nothing
+  // else, so the cascade must not walk it.
+  protected override ownedFields(): unknown[] {
+    return [this.collection, this.stagedEvents];
+  }
+
+  static new<SE, PA, C>(collection: CollectionId, node: Node<SE, PA>, cdata: C): EphemeralNodeRetriever<SE, PA, C> {
+    return new EphemeralNodeRetriever(collection, node, cdata, new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>()));
+  }
+
+  async storeUsedEvents(): Promise<Result<void, MutationError>> {
+    const _t0 = this.stagedEvents.lock();
+    try {
+      const staged = _t0.value.take();
+      _t0.drop();
+      {
+        const _v = staged;
+        if (_v != null) {
+          const staged = _v;
+          try {
+            const _r1 = await this.node.deref().value.system.collection(this.collection);
+            if (_r1.isErr()) return Result.Err(MutationError.fromRetrievalError(_r1.unwrapErr()));
+            const collection = _r1.unwrap();
+            try {
+              for (const [_id, [event, used]] of [...staged]) {
+                if (used) {
+                  const _r2 = await collection.deref().value.addEvent(event);
+                  if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+                  _r2.drop();
+                }
+              }
+            } finally {
+              collection.drop();
+            }
+          } finally {
+            dropOwned(staged);
+          }
+        }
+      }
+      return Result.Ok([]);
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
+    let events = [];
+    let _moved0 = false;
+    let eventIds_1 = HashSet.from([...eventIds]);
+    try {
+      const _t1 = this.stagedEvents.lock();
+      try {
+        {
+          const _v1 = _t1.value;
+          if (_v1 != null) {
+            const staged = _v1;
+            eventIds_1.retain((id) => {
+              {
+                const _v = staged.get(id);
+                if (_v != null) {
+                  const [event, used] = _v;
+                  events.push(event.clone());
+                  used.value = true;
+                  return false;
+                } else {
+                return true;
+              }
+              }
+            });
+          }
+        }
+      } finally {
+        _t1.drop();
+      }
+      if (eventIds_1.size === 0) {
+        return Result.Ok([0, events]);
+      }
+      const _r2 = await this.node.deref().value.system.collection(this.collection);
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      const collection = _r2.unwrap();
+      try {
+        const _r3 = await collection.deref().value.getEvents([...[...eventIds_1]]);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        const _seq5 = _r3.unwrap();
+        let _at6 = 0;
+        try {
+          while (_at6 < _seq5.length) {
+            const event = _seq5[_at6++];
+            const _t4 = event.payload.id();
+            try {
+              eventIds_1.delete(_t4);
+            } finally {
+              _t4.drop();
+            }
+            events.push(event);
+          }
+        } finally {
+          dropOwned(_seq5.slice(_at6));
+        }
+        if (eventIds_1.size === 0) {
+          return Result.Ok([1, events]);
+        }
+        const _v2 = this.node.getDurablePeerRandom();
+        if (!(_v2 != null)) {
+          return Result.Ok([1, events]);
+        }
+        const peerId = _v2;
+        _moved0 = true;
+        const _r7 = await this.node.request(peerId, this.cdata, new NodeRequestBody('GetEvents', { collection: this.collection.clone(), eventIds: [...eventIds_1] }));
+        if (_r7.isErr()) return Result.Err(RetrievalError.fromRequestError(_r7.unwrapErr()));
+        const _m10 = await (_r7.unwrap().intoMatch<any>({
+          GetEvents: async (v) => {
+            const peerEvents = v._0;
+            let _moved8 = false;
+            try {
+              for (const event of [...peerEvents]) {
+                const _r9 = await collection.deref().value.addEvent(event);
+                if (_r9.isErr()) return { $jump: 'return', $value: Result.Err(RetrievalError.fromMutationError(_r9.unwrapErr())) };
+                _r9.drop();
+              }
+              _moved8 = true;
+              events.extend(peerEvents);
+            } finally {
+              if (!_moved8) dropOwned(peerEvents);
+            }
+          },
+          Error: async (v) => {
+            const e = v._0;
+            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: `Error from peer: ${e}` })) };
+          },
+          CommitComplete: (v) => {
+            try {
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+            } finally {
+              dropUnbound(v, []);
+            }
+          },
+          Fetch: (v) => {
+            try {
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+            } finally {
+              dropUnbound(v, []);
+            }
+          },
+          Get: (v) => {
+            try {
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+            } finally {
+              dropUnbound(v, []);
+            }
+          },
+          QuerySubscribed: (v) => {
+            try {
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+            } finally {
+              dropUnbound(v, []);
+            }
+          },
+          Success: () => {
+            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+          },
+        }));
+        if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
+        return Result.Ok([5, events]);
+      } finally {
+        collection.drop();
+      }
+    } finally {
+      if (!_moved0) dropOwned(eventIds_1);
+    }
+  }
+
+  stageEvents(events: Attested<Event>[]): void {
+    let staged = this.stagedEvents.lock();
+    try {
+      const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
+      for (const event of [...events]) {
+        staged_1.set(event.payload.id(), [event, false]);
+      }
+    } finally {
+      staged.drop();
+    }
+  }
+
+  markEventUsed(eventId: EventId): void {
+    let staged = this.stagedEvents.lock();
+    try {
+      const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
+      const _m0 = staged_1.get(eventId);
+      (_m0 != null ? (([, used]) => {
+        used.value = true;
+      })(_m0!) : null);
+    } finally {
+      staged.drop();
+    }
+  }
+
+  async getState(entityId: EntityId): Promise<Result<Attested<EntityState> | null, RetrievalError>> {
+    const _r0 = await this.node.deref().value.collections.get(this.collection);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const collection = _r0.unwrap();
+    try {
+      const _v = await collection.deref().value.getState(entityId);
+      if (_v.isOk()) {
+        const state = _v.unwrap();
+        return Result.Ok(state);
+      } else {
+        const _v1 = _v.unwrapErr();
+        if (_v1.is('EntityNotFound')) {
+          const _v2 = _v1;
+          try {
+            return Result.Ok(null);
+          } finally {
+            _v2.drop();
+          }
+        }
+        {
+          const e = _v1;
+          return Result.Err(e);
+        }
+      }
+    } finally {
+      collection.drop();
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// NOTE: EphemeralNodeRetriever is NOT ported here.
-//
-// Rust: `pub struct EphemeralNodeRetriever<'a, SE, PA, C>` (lines 173-325)
-// This type is heavily parameterized over SE (StorageEngine), PA (PolicyAgent),
-// and C (Iterable<PA::ContextData>) with lifetime 'a. It also depends on
-// Node<SE, PA> and proto::NodeRequestBody/NodeResponseBody for remote peer
-// fetching. It will be ported when the full Node generic infrastructure and
-// remote peer connectivity are available in the TS port.
-// ---------------------------------------------------------------------------
+export interface TEvent {
+  id(): Id;
+  parent(): Parent;
+}
+
+export interface TClock {
+  members(): Id[];
+}
+
+export abstract class GetEvents {
+  estimateCost(_batchSize: number): number {
+    return 1;
+  }
+  abstract retrieveEvent(eventIds: Id[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>>;
+  abstract stageEvents(events: Attested<Event>[]): void;
+  abstract markEventUsed(eventId: Id): void;
+}
+
+export interface Retrieve {
+  getState(entityId: EntityId): Promise<Result<Attested<EntityState> | null, RetrievalError>>;
+}
+
+export function Clock_members(self: Clock): EventId[] {
+  return self.asSlice();
+}
+
+export function Event_id(self: Event): EventId {
+  return self.id();
+}
+
+export function Event_parent(self: Event): Clock {
+  return self.parent;
+}
+
+export function TEvent_dispatch_id(self: unknown): Id {
+  if (self instanceof TestEvent) return (self as any).id();
+  if (self instanceof Event) return Event_id(self as any);
+  throw new Error(`BUG: no TEvent impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function TEvent_dispatch_parent(self: unknown): Parent {
+  if (self instanceof TestEvent) return (self as any).parent();
+  if (self instanceof Event) return Event_parent(self as any);
+  throw new Error(`BUG: no TEvent impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function TClock_dispatch_members(self: unknown): Id[] {
+  if (self instanceof TestClock) return (self as any).members();
+  if (self instanceof Clock) return Clock_members(self as any);
+  throw new Error(`BUG: no TClock impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+

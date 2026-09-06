@@ -104,35 +104,39 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     const _r0 = newSelection.tryInto().mapErr((e) => e);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const newSelection_1 = _r0.unwrap();
-    const newVersion = checkedAdd((() => { const _v = this._0.value.currentVersion; this._0.value.currentVersion = wrappingAdd(this._0.value.currentVersion, 1, 'u32'); return _v; })(), 1, 'u32');
-    this._0.value.resultset.setLoaded(false);
-    this._0.value.selection.set([newSelection_1.clone(), newVersion]);
-    const hasRelay = this._0.value.node.hasSubscriptionRelay();
-    if (hasRelay) {
-      const _r1 = this._0.value.node.updateRemoteQuery(this._0.value.queryId, newSelection_1.clone(), newVersion);
-      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
-      _r1.drop();
-    } else {
-      const me2 = this.clone();
-      try {
-        const queryId = this._0.value.queryId;
-        spawn((async () => {
-          {
-            const _v = await me2.activate(newVersion);
-            if (_v.isErr()) {
-              const e = _v.unwrapErr();
-              tracing.error(`LiveQuery update failed for predicate ${queryId}: ${e}`);
-              me2._0.value.error.set(e);
-            } else {
-            _v.drop();
-          }
-          }
-        })());
-      } finally {
-        me2.drop();
+    try {
+      const newVersion = checkedAdd((() => { const _v = this._0.value.currentVersion; this._0.value.currentVersion = wrappingAdd(this._0.value.currentVersion, 1, 'u32'); return _v; })(), 1, 'u32');
+      this._0.value.resultset.setLoaded(false);
+      this._0.value.selection.set([newSelection_1.clone(), newVersion]);
+      const hasRelay = this._0.value.node.hasSubscriptionRelay();
+      if (hasRelay) {
+        const _r1 = this._0.value.node.updateRemoteQuery(this._0.value.queryId, newSelection_1.clone(), newVersion);
+        if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
+        _r1.drop();
+      } else {
+        const me2 = this.clone();
+        try {
+          const queryId = this._0.value.queryId;
+          spawn((async () => {
+            {
+              const _v = await me2.activate(newVersion);
+              if (_v.isErr()) {
+                const e = _v.unwrapErr();
+                tracing.error(`LiveQuery update failed for predicate ${queryId}: ${e}`);
+                me2._0.value.error.set(e);
+              } else {
+              _v.drop();
+            }
+            }
+          })());
+        } finally {
+          me2.drop();
+        }
       }
+      return Result.Ok([]);
+    } finally {
+      newSelection_1.drop();
     }
-    return Result.Ok([]);
   }
 
   async updateSelectionWait(newSelection: TryInto): Promise<Result<void, RetrievalError>> {

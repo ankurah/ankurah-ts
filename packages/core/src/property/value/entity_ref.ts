@@ -1,136 +1,129 @@
 // MIRRORS: ankurah/core/src/property/value/entity_ref.rs
+import { Struct, Result, unsupported } from '@ankurah/base';
+import { EntityId, DecodeError } from '@ankurah/proto';
+import { BincodeReader, BincodeWriter } from './codec';
+import { Context } from '../../context';
+import { RetrievalError } from '../../error';
+import { Model, View } from '../../indexel';
+import { Value } from '../../value/index';
+import { Property } from '../index';
+import { PropertyError } from '../traits';
+import { Expr } from '@ankurah/ankql';
 
-import { EntityId } from '@ankurah/proto';
-import { Expr, Literal } from '@ankurah/ankql';
-
-import type { Value } from '../../value/index.ts';
-import { PropertyError } from '../traits.ts';
-import type { ViewInstance } from '../../model.ts';
-
-// Divergence: Context import is forward-declared to avoid circular dependency.
-// The get() method uses a loose type; callers pass a real Context. [E8]
-interface ContextLike {
-  get<V extends ViewInstance>(id: EntityId): Promise<V>;
-}
-
-// ---------------------------------------------------------------------------
-// Ref<T> — typed entity reference
-// ---------------------------------------------------------------------------
-
-/**
- * A typed reference to another entity.
- *
- * Stores an EntityId internally but carries compile-time type information
- * about the target model, enabling type-safe `.get()` calls.
- *
- * Rust: `pub struct Ref<T>`
- * Divergence: Rust uses PhantomData<T>; TS uses generic parameter (erased at runtime) [E4].
- * Divergence: Rust derives Serialize/Deserialize; TS uses intoValue()/fromValue() [E4].
- */
-export class Ref<_T = unknown> {
-  readonly id: EntityId;
+export class Ref<T extends Model> extends Struct implements Property {
+  id: EntityId;
 
   constructor(id: EntityId) {
+    super();
     this.id = id;
   }
 
-  // ── Factories ──
-
-  /** Create a new Ref from an EntityId. Mirrors Rust Ref::new(). */
-  static new<T = unknown>(id: EntityId): Ref<T> {
-    return new Ref<T>(id);
+  static new<T>(id: EntityId): Ref<T> {
+    return new Ref(id, undefined /* PhantomData */);
   }
 
-  /** Create a Ref from a base64-encoded EntityId string. Mirrors Rust Ref::from_base64(). */
-  static fromBase64<T = unknown>(s: string): Ref<T> {
-    return new Ref<T>(EntityId.fromBase64(s));
+  static fromBase64<T>(s: string): Result<Ref<T>, DecodeError> {
+    const _r0 = EntityId.fromBase64(s);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    return Result.Ok(new Ref(_r0.unwrap()));
   }
 
-  /** Create a Ref from an EntityId. Mirrors Rust From<EntityId> for Ref<T>. */
-  static fromEntityId<T = unknown>(id: EntityId): Ref<T> {
-    return new Ref<T>(id);
+  id(): EntityId {
+    return this.id.clone();
   }
 
-  /** Create a Ref from a View instance. Mirrors Rust From<&V> for Ref<V::Model>. */
-  static fromView<T = unknown>(view: ViewInstance): Ref<T> {
-    return new Ref<T>(view.id());
-  }
-
-  // ── Accessors ──
-
-  /** Get the underlying EntityId. Mirrors Rust Ref::id(). */
-  entityId(): EntityId {
+  idRef(): EntityId {
     return this.id;
   }
 
-  // ── Fetch ──
-
-  /**
-   * Fetch the referenced entity from the given context.
-   *
-   * Rust: `pub async fn get(&self, ctx: &Context) -> Result<T::View, RetrievalError>`
-   * Divergence: Throws RetrievalError instead of returning Result [A8].
-   */
-  async get<V extends ViewInstance>(ctx: ContextLike): Promise<V> {
-    return ctx.get<V>(this.id);
+  async get(ctx: Context): Promise<Result<View, RetrievalError>> {
+    return await ctx.get(this.id.clone());
   }
 
-  // ── Conversions ──
-
-  /** Convert to an EntityId. Mirrors Rust From<Ref<T>> for EntityId. */
-  toEntityId(): EntityId {
+  deref(): EntityId {
     return this.id;
   }
 
-  /** Convert to an ankql Expr for use in predicates. Mirrors Rust From<Ref<T>> for Expr. */
-  toExpr(): Expr {
-    return Expr.Literal(Literal.EntityId(this.id.toBytes()));
+  asRef(): EntityId {
+    return this.id;
   }
 
-  // ── Property ──
-
-  /**
-   * Convert to a Value. Mirrors Rust Property::into_value() for Ref<T>.
-   *
-   * Rust: `fn into_value(&self) -> Result<Option<Value>, PropertyError>`
-   */
-  intoValue(): Value {
-    return { type: 'EntityId', value: this.id };
+  borrow(): EntityId {
+    return this.id;
   }
 
-  /**
-   * Create a Ref from a Value. Mirrors Rust Property::from_value() for Ref<T>.
-   * Throws PropertyError on failure.
-   *
-   * Rust: `fn from_value(value: Option<Value>) -> Result<Self, PropertyError>`
-   */
-  static fromValue<T = unknown>(value: Value | null): Ref<T> {
-    if (value === null) {
-      throw PropertyError.missing();
-    }
-    if (value.type === 'EntityId') {
-      return Ref.new<T>(value.value);
-    }
-    // Backwards compatibility: accept string EntityIds (e.g., from older schema)
-    if (value.type === 'String') {
-      try {
-        return Ref.fromBase64<T>(value.value);
-      } catch (e) {
-        throw PropertyError.invalidValue(value.value, `Ref (${e instanceof Error ? e.message : String(e)})`);
-      }
-    }
-    throw PropertyError.invalidVariant(value, 'Ref');
+  static fromEntityId<T>(id: EntityId): Ref<T> {
+    return new Ref(id);
   }
 
-  // ── Display ──
+  static fromRefEntityId<T>(id: EntityId): Ref<T> {
+    return new Ref(id.clone());
+  }
 
-  /** Mirrors Rust Display for Ref<T>. */
+  static tryFrom<T>(s: string): Result<Ref<T>, DecodeError> {
+    return Ref.fromBase64(s);
+  }
+
   toString(): string {
-    return this.id.toBase64();
+    return `${this.id.toBase64()}`;
   }
 
-  /** Equality check. Mirrors Rust PartialEq for Ref<T>. */
-  equals(other: Ref<unknown>): boolean {
-    return this.id.equals(other.id);
+  static fromV<T, V>(view: V): Ref<Model> {
+    return new Ref(view.id());
+  }
+
+  intoValue(): Result<Value | null, PropertyError> {
+    return Result.Ok(new Value('EntityId', { _0: this.id.clone() }));
+  }
+
+  static fromValue<T>(value: Value | null): Result<Ref<T>, PropertyError> {
+    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  }
+
+  equals(other: Ref<T>): boolean {
+    if (!this.id.equals(other.id)) return false;
+    if (!this._phantom.equals(other._phantom)) return false;
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [this.id.hash(), this._phantom.hash()].map((p) => p.length + ':' + p).join('');
+  }
+
+  clone(): Ref<T> {
+    return new Ref(this.id.clone(), this._phantom.clone());
+  }
+
+  debug(): string {
+    return `Ref { id: ${this.id}, _phantom: ${this._phantom} }`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this.id.encode(writer);
+    this._phantom.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): Ref<T> {
+    const id = EntityId.decode(reader);
+    const _phantom = PhantomData.decode(reader);
+    return new Ref(id, _phantom);
   }
 }
+
+export function EntityId_fromRefT<T>(r: Ref<T>): EntityId {
+  return r.id;
+}
+
+export function EntityId_fromRefRefT<T>(r: Ref<T>): EntityId {
+  return r.id.clone();
+}
+
+export function Expr_fromRefT<T>(r: Ref<T>): Expr {
+  return Expr.fromEntityId(r.id);
+}
+
+export function Expr_fromRefRefT<T>(r: Ref<T>): Expr {
+  return Expr.fromEntityId((r.id));
+}
+

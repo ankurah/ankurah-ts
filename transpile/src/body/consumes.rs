@@ -31,10 +31,19 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
         if let (Some(tc), Some(mark)) = (&self.types, mark) {
             tc.borrow().sink.rewind(mark);
         }
-        answer == crate::body::places::EntryFinish::Hole
+        answer == crate::body::places::EntryFinish::Hole || self.refuses_named_iterator_terminal(call)
     }
 
     fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool {
+        // F1: a consuming iterator terminal takes the sequence's ELEMENTS, and
+        // the block that produced them owes them nothing afterwards. Rust's own
+        // signature says `find(&mut self)`, which reads as "the receiver is
+        // borrowed" — true of the ITERATOR, and false of the items it walks,
+        // which is what the port's array is. Asked in one place so the move
+        // scan and the lowering cannot disagree about who releases what.
+        if self.terminal_owns_the_sequence(call) {
+            return true;
+        }
         let Some(tc) = &self.types else { return false };
         let tc = tc.borrow();
         // Asking is not translating. The resolution files the questions it
@@ -116,5 +125,108 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
         let Some(ident) = path.path.get_ident() else { return false };
         let name = crate::name_map::escape_reserved(&crate::name_map::to_camel_case(&ident.to_string()));
         self.own.once_closure_locals.borrow().iter().any(|n| *n == name)
+    }
+}
+
+impl BodyTranslator<'_> {
+    /// Does this call's lowering TAKE the elements of the sequence it walks?
+    ///
+    /// F1: Rust's consuming terminals own what they walk — `into_iter().find(p)`
+    /// hands back the element it selected and drops every other one — and the
+    /// port writes the iterator as an array, so the array IS the items. Written
+    /// with the reading helper, such a chain released the element it had just
+    /// handed back, or leaked every element it had not.
+    ///
+    /// Three things have to hold, and none of them is the method's NAME:
+    ///
+    ///   - the name and arity are one of the terminals whose owned spelling
+    ///     exists (`iterator::is_owned_terminal`);
+    ///   - the resolution came through `Iterator` — `slice::last(&self)` and
+    ///     `Iterator::last(self)` are two methods of one name, and only the
+    ///     second consumes;
+    ///   - the sequence the expression produced owns its elements: a chain
+    ///     built with `iter()` holds borrows and owes nothing, and so does one
+    ///     over elements with no drop glue.
+    ///
+    /// A receiver that is a PLACE is left to the block that declared it: a
+    /// named iterator (`let it = v.into_iter(); it.find(..)`) is partly
+    /// consumed by the call and the port has no way to say which of the array's
+    /// elements are left, so that shape is refused where it is translated
+    /// rather than answered here.
+    pub(crate) fn terminal_owns_the_sequence(&self, call: &syn::ExprMethodCall) -> bool {
+        self.consuming_terminal(call) && !crate::body::is_place(&call.receiver)
+    }
+
+    /// The shape that is neither: a consuming terminal called on a NAMED
+    /// iterator over droppable elements.
+    ///
+    /// `let mut it = tokens.into_iter(); it.find(..)` consumes the elements the
+    /// walk passed and leaves the rest in `it`, which Rust drops when `it` goes
+    /// out of scope. The port writes `it` as the whole array, so after the call
+    /// the array still holds every element — the consumed ones, and the one the
+    /// call handed back. Neither release is writable: the block's `dropOwned(it)`
+    /// released the element the caller had just been given, and taking the
+    /// release away would leak the ones the walk never reached. So the call is
+    /// refused (R12) rather than answered wrongly, and the block keeps the
+    /// receiver, which is what a hole leaves it holding (J4).
+    pub(crate) fn refuses_named_iterator_terminal(&self, call: &syn::ExprMethodCall) -> bool {
+        self.consuming_terminal(call) && crate::body::is_place(&call.receiver)
+    }
+
+    /// The same question without the place clause: is this a terminal that
+    /// consumes droppable elements at all? The refusal reads it too.
+    pub(crate) fn consuming_terminal(&self, call: &syn::ExprMethodCall) -> bool {
+        let method = call.method.to_string();
+        if !crate::native_types::iterator::is_owned_terminal(&method, call.args.len()) {
+            return false;
+        }
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        // Asking is not translating: this is asked once per statement scan and
+        // again where the call is written, and the record is wound back so the
+        // deferred questions are filed once, by the translation.
+        let mark = tc.sink.mark();
+        let found = tc.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref());
+        let receiver_ty = found.as_ref().ok().map(|f| f.receiver_type().clone());
+        tc.sink.rewind(mark);
+        let Ok(found) = found else { return false };
+        let Some(trait_id) = tc.registry.method_trait(&found) else { return false };
+        let is_iterator = ["std::iter::Iterator", "std::iter::DoubleEndedIterator"]
+            .iter()
+            .any(|path| tc.registry.system_type(path) == Some(trait_id));
+        if !is_iterator {
+            return false;
+        }
+        let Some(ty) = receiver_ty else { return false };
+        crate::ownership::drops_of(&tc.probe(), &ty).is_droppable()
+    }
+}
+
+impl BodyTranslator<'_> {
+    /// Whether a call's lowering owns the elements of the sequence it walks —
+    /// the same question `terminal_owns_the_sequence` answers, in the shape the
+    /// lowering takes it.
+    pub(crate) fn element_ownership(
+        &self,
+        call: &syn::ExprMethodCall,
+    ) -> crate::native_types::iterator::Elements {
+        use crate::native_types::iterator::Elements;
+        match self.terminal_owns_the_sequence(call) {
+            true => Elements::Owned,
+            false => Elements::Borrowed,
+        }
+    }
+
+    /// The refusal a consuming terminal on a NAMED iterator gets, as the reason
+    /// the hole carries.
+    pub(crate) fn named_iterator_refusal(&self, call: &syn::ExprMethodCall) -> Option<String> {
+        self.refuses_named_iterator_terminal(call).then(|| {
+            format!(
+                "`{}` consumes the elements it walks and leaves the rest in the iterator this \
+                 receiver names; the port writes an iterator as the whole array, so after the \
+                 call it cannot say which of its elements are still the caller's",
+                call.method
+            )
+        })
     }
 }

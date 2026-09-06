@@ -187,25 +187,27 @@ export class NodeApplier extends Struct {
     let _moved1 = false;
     const state = _r0.unwrap();
     try {
+      const _b2 = entity.id();
+      const _b3 = entity.collection().clone();
       _moved1 = true;
-      let _moved2 = false;
-      const entityState = new EntityState(entity.id(), entity.collection().clone(), state);
+      let _moved4 = false;
+      const entityState = new EntityState(_b2, _b3, state);
       try {
-        let _moved3 = false;
+        let _moved5 = false;
         const attestation = node.deref().value.policyAgent.attestState(node, entityState);
         try {
-          _moved2 = true;
-          _moved3 = true;
+          _moved4 = true;
+          _moved5 = true;
           const attested = Attested.opt(entityState, attestation);
-          const _r4 = await collectionWrapper.deref().value.setState(attested);
-          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-          _r4.drop();
+          const _r6 = await collectionWrapper.deref().value.setState(attested);
+          if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+          _r6.drop();
           return Result.Ok([]);
         } finally {
-          if (!_moved3) dropOwned(attestation);
+          if (!_moved5) dropOwned(attestation);
         }
       } finally {
-        if (!_moved2) entityState.drop();
+        if (!_moved4) entityState.drop();
       }
     } finally {
       if (!_moved1) state.drop();
@@ -308,7 +310,7 @@ export class NodeApplier extends Struct {
                 const entity = _r8.unwrap();
                 try {
                   _moved7 = true;
-                  for (const event of [...attestedEvents].slice().reverse()) {
+                  for (const event of [...attestedEvents].reverse()) {
                     try {
                       const _r10 = await entity.applyEvent(retriever, event.payload);
                       if (_r10.isErr()) return Result.Err(_r10.unwrapErr());

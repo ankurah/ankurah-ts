@@ -63,7 +63,26 @@ export {
   iterMaxByKey,
   iterMinByKey,
   iterReduce,
+  stepBy,
 } from './std/iter.ts';
+// F7: `{:?}` for a value whose TYPE the emitter could not see — the payload of
+// a hand-written generic type, and the `char` and `str` escapings Rust writes.
+export { debugValue, debugString, debugChar } from './std/debug_value.ts';
+// F1: the same terminals over a sequence the expression OWNS. A consuming chain
+// takes its elements: the one the terminal selects is the caller's and every
+// other one is released where Rust releases it.
+export {
+  iterFindOwned,
+  iterFindMapOwned,
+  iterPositionOwned,
+  iterRpositionOwned,
+  iterLastOwned,
+  iterReduceOwned,
+  iterMaxByOwned,
+  iterMinByOwned,
+  iterMaxByKeyOwned,
+  iterMinByKeyOwned,
+} from './std/iter_owned.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
 export {
   boolAnd,

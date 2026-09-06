@@ -1,63 +1,97 @@
 // MIRRORS: ankurah/core/src/reactor/property_path.rs
+import { Struct, Result, keyHash } from '@ankurah/base';
+import { Json } from '../property/value/json';
+import { AbstractEntity } from '../reactor';
+import { Value } from '../value/index';
+import { PathExpr } from '@ankurah/ankql';
 
-import type { PathExpr } from '@ankurah/ankql';
-import type { Value } from '../value/index.ts';
-import { extractAtPath } from '../value/index.ts';
-import type { Entity } from '../entity.ts';
+export class PropertyPath extends Struct {
+  root: string;
+  subPath: string[];
 
-// Rust: pub struct PropertyPath { root: String, sub_path: Vec<String> }
-// Derives: Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash
-
-export class PropertyPath {
-  // Rust: root: String
-  readonly root: string;
-  // Rust: sub_path: Vec<String>
-  readonly subPath: string[];
-
-  constructor(root: string, subPath: string[] = []) {
+  constructor(root: string, subPath: string[]) {
+    super();
     this.root = root;
     this.subPath = subPath;
   }
 
-  // Rust: pub fn from_path(path: &ankql::ast::PathExpr) -> Self
   static fromPath(path: PathExpr): PropertyPath {
     const steps = path.steps;
-    return new PropertyPath(steps[0], steps.slice(1));
+    return new PropertyPath(steps[0], steps.slice(1).slice());
   }
 
-  // Rust: impl From<&str> for PropertyPath
-  static fromString(val: string): PropertyPath {
-    return new PropertyPath(val);
-  }
-
-  // Rust: pub fn root(&self) -> &str
-  getRoot(): string {
+  root(): string {
     return this.root;
   }
 
-  // Rust: pub fn is_simple(&self) -> bool
   isSimple(): boolean {
     return this.subPath.length === 0;
   }
 
-  // Rust: pub fn extract_value<E: super::AbstractEntity>(&self, entity: &E) -> Option<Value>
-  // Divergence: Concrete Entity instead of generic E: AbstractEntity [E8].
-  extractValue(entity: Entity): Value | null {
-    const rootValue = entity.getPropertyValue(this.root);
-    if (rootValue === null) {
-      return null;
-    }
+  extractValue<E extends AbstractEntity>(entity: E): Value | null {
+    const _r0 = E.value(entity, this.root);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const rootValue = _r0.unwrap();
     if (this.subPath.length === 0) {
       return rootValue;
+    } else {
+      return rootValue.match({
+        Json: (v) => {
+          const json = v._0;
+          let current = json;
+          for (const key of this.subPath) {
+            const _r1 = current.get(key);
+            if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+            current = _r1.unwrap();
+          }
+          return new Value('Json', { _0: current.clone() });
+        },
+        Binary: (v) => {
+          const bytes = v._0;
+          const _r2 = serdeJson.fromSlice(bytes).ok();
+          if (_r2 == null) return null;
+          const json = _r2;
+          let current = json;
+          for (const key of this.subPath) {
+            const _r3 = ((current as Record<string, unknown>)?.[key] ?? null);
+            if (_r3 == null) return null;
+            current = _r3;
+          }
+          return new Value('Json', { _0: structuredClone(current) });
+        },
+      });
     }
-    // Extract nested value from JSON/Binary, keeping it wrapped as Value::Json to match index keys
-    return extractAtPath(rootValue, this.subPath);
   }
 
-  toString(): string {
-    if (this.subPath.length === 0) {
-      return this.root;
-    }
-    return this.root + '.' + this.subPath.join('.');
+  static from(val: string): PropertyPath {
+    return new PropertyPath(val, []);
+  }
+
+  equals(other: PropertyPath): boolean {
+    if (this.root !== other.root) return false;
+    { if (this.subPath.length !== other.subPath.length) return false; for (let i = 0; i < this.subPath.length; i++) { if (this.subPath[i] !== other.subPath[i]) return false; } }
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [keyHash(this.root), keyHash(this.subPath)].map((p) => p.length + ':' + p).join('');
+  }
+
+  compareTo(other: PropertyPath): number {
+    let c = this.root < other.root ? -1 : this.root > other.root ? 1 : 0;
+    if (c !== 0) return c;
+    c = ((xs, ys) => { const n = Math.min(xs.length, ys.length); for (let i = 0; i < n; i++) { const a = xs[i], b = ys[i]; const d = a < b ? -1 : a > b ? 1 : 0; if (d !== 0) return d; } return Math.sign(xs.length - ys.length); })(this.subPath, other.subPath);
+    if (c !== 0) return c;
+    return 0;
+  }
+
+  clone(): PropertyPath {
+    return new PropertyPath(this.root, [...this.subPath]);
+  }
+
+  debug(): string {
+    return `PropertyPath { root: ${JSON.stringify(this.root)}, subPath: ${`[${Array.from(this.subPath).map((e) => JSON.stringify(e)).join(', ')}]`} }`;
   }
 }
+

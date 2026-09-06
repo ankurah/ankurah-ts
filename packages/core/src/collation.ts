@@ -1,400 +1,626 @@
 // MIRRORS: ankurah/core/src/collation.rs
+import { Enum, derivedEquals, derivedClone, checkedAdd, checkedSub, range } from '@ankurah/base';
+import { EntityId } from '@ankurah/proto';
+import { Json } from './property/value/json';
 
-import { Literal } from '@ankurah/ankql';
-import type { EntityId } from '@ankurah/proto';
+export type RangeBoundV<T> = {
+  Included: { _0: T };
+  Excluded: { _0: T };
+  Unbounded: {};
+};
 
-// ─── RangeBound ──────────────────────────────────────────────────────────────
+export class RangeBound<T> extends Enum<RangeBoundV<T>> {
 
-// Divergence: Rust enum RangeBound<T> → TS discriminated union [E8]
-export type RangeBound<T> =
-  | { type: 'Included'; value: T }
-  | { type: 'Excluded'; value: T }
-  | { type: 'Unbounded' };
-
-// ─── Collatable ──────────────────────────────────────────────────────────────
-
-// Divergence: Rust trait Collatable → TS interface [E8]
-export interface Collatable {
-  /// Convert the value to its binary representation for collation
-  toBytes(): Uint8Array;
-
-  /// Returns the immediate successor's binary representation if one exists
-  successorBytes(): Uint8Array | null;
-
-  /// Returns the immediate predecessor's binary representation if one exists
-  predecessorBytes(): Uint8Array | null;
-
-  /// Returns true if this value represents a minimum bound in its domain
-  isMinimum(): boolean;
-
-  /// Returns true if this value represents a maximum bound in its domain
-  isMaximum(): boolean;
-}
-
-/// Compare two byte arrays lexicographically
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    if (a[i] < b[i]) return -1;
-    if (a[i] > b[i]) return 1;
-  }
-  if (a.length < b.length) return -1;
-  if (a.length > b.length) return 1;
-  return 0;
-}
-
-/// Compare two Collatable values in the collation order
-export function collatableCompare(a: Collatable, b: Collatable): number {
-  return compareBytes(a.toBytes(), b.toBytes());
-}
-
-/// Check if a Collatable value is within a range
-export function isInRange<T extends Collatable>(
-  value: T,
-  lower: RangeBound<T>,
-  upper: RangeBound<T>,
-): boolean {
-  const cmpLower = (): number => {
-    if (lower.type === 'Unbounded') return 1; // always passes
-    return compareBytes(value.toBytes(), lower.value.toBytes());
-  };
-  const cmpUpper = (): number => {
-    if (upper.type === 'Unbounded') return -1; // always passes
-    return compareBytes(value.toBytes(), upper.value.toBytes());
-  };
-
-  switch (lower.type) {
-    case 'Included': {
-      const cl = cmpLower();
-      if (cl < 0) return false; // value < lower
-      break;
-    }
-    case 'Excluded': {
-      const cl = cmpLower();
-      if (cl <= 0) return false; // value <= lower
-      break;
-    }
-    case 'Unbounded':
-      break;
+  clone(): RangeBound<T> {
+    return this.match({
+      Included: (v) => new RangeBound<T>('Included', { _0: derivedClone(v._0) }),
+      Excluded: (v) => new RangeBound<T>('Excluded', { _0: derivedClone(v._0) }),
+      Unbounded: () => new RangeBound<T>('Unbounded', {}),
+    });
   }
 
-  switch (upper.type) {
-    case 'Included': {
-      const cu = cmpUpper();
-      if (cu > 0) return false; // value > upper
-      break;
-    }
-    case 'Excluded': {
-      const cu = cmpUpper();
-      if (cu >= 0) return false; // value >= upper
-      break;
-    }
-    case 'Unbounded':
-      break;
-  }
-
-  return true;
-}
-
-// ─── Byte encoding helpers ───────────────────────────────────────────────────
-
-function i16ToBeBytes(v: number): Uint8Array {
-  const buf = new ArrayBuffer(2);
-  new DataView(buf).setInt16(0, v, false);
-  return new Uint8Array(buf);
-}
-
-function i32ToBeBytes(v: number): Uint8Array {
-  const buf = new ArrayBuffer(4);
-  new DataView(buf).setInt32(0, v, false);
-  return new Uint8Array(buf);
-}
-
-function i64ToBeBytes(v: bigint): Uint8Array {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setBigInt64(0, v, false);
-  return new Uint8Array(buf);
-}
-
-function f64ToBeBytes(bits: bigint): Uint8Array {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setBigUint64(0, bits, false);
-  return new Uint8Array(buf);
-}
-
-function f64ToBits(v: number): bigint {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setFloat64(0, v, false);
-  return new DataView(buf).getBigUint64(0, false);
-}
-
-const I16_MAX = 32767;
-const I16_MIN = -32768;
-const I32_MAX = 2147483647;
-const I32_MIN = -2147483648;
-const I64_MAX = 9223372036854775807n;
-const I64_MIN = -9223372036854775808n;
-const U64_MAX = 0xFFFFFFFFFFFFFFFFn;
-const SIGN_BIT = 1n << 63n;
-
-// ─── impl Collatable for Literal ─────────────────────────────────────────────
-
-function f64CollateBits(v: number): bigint {
-  if (Number.isNaN(v)) {
-    return U64_MAX; // NaN sorts last
-  }
-  const bits = f64ToBits(v);
-  if (v >= 0) {
-    return bits ^ SIGN_BIT; // Flip sign bit for positive numbers
-  } else {
-    return ~bits & U64_MAX; // Flip all bits for negative numbers (mask to 64-bit)
-  }
-}
-
-/// Increment a byte array by 1 (returns null if all 0xFF)
-function incrementBytes(bytes: Uint8Array): Uint8Array | null {
-  const result = new Uint8Array(bytes);
-  for (let i = result.length - 1; i >= 0; i--) {
-    if (result[i] < 255) {
-      result[i] += 1;
-      for (let j = i + 1; j < result.length; j++) {
-        result[j] = 0;
+  equals(other: RangeBound<T>): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Included': {
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
+        break;
       }
-      return result;
-    }
-  }
-  return null;
-}
-
-/// Decrement a byte array by 1 (returns null if all 0x00)
-function decrementBytes(bytes: Uint8Array): Uint8Array | null {
-  const result = new Uint8Array(bytes);
-  for (let i = result.length - 1; i >= 0; i--) {
-    if (result[i] > 0) {
-      result[i] -= 1;
-      for (let j = i + 1; j < result.length; j++) {
-        result[j] = 255;
+      case 'Excluded': {
+        if (!derivedEquals((this.value as any)._0, (other.value as any)._0)) return false;
+        break;
       }
-      return result;
     }
+    return true;
   }
-  return null;
+
+  debug(): string {
+    return this.match({
+      Included: (v) => `Included(${v._0})`,
+      Excluded: (v) => `Excluded(${v._0})`,
+      Unbounded: () => 'Unbounded',
+    });
+  }
 }
 
-export function literalToBytes(lit: Literal): Uint8Array {
-  return lit.match({
-    String: (v) => new TextEncoder().encode(v.value),
-    I16: (v) => i16ToBeBytes(v.value),
-    I32: (v) => i32ToBeBytes(v.value),
-    I64: (v) => i64ToBeBytes(v.value),
-    F64: (v) => f64ToBeBytes(f64CollateBits(v.value)),
-    Bool: (v) => new Uint8Array([v.value ? 1 : 0]),
-    EntityId: (v) => new Uint8Array(v.value),
-    Object: (v) => new Uint8Array(v.value),
-    Binary: (v) => new Uint8Array(v.value),
+export abstract class Collatable {
+  abstract toBytes(): Uint8Array;
+  abstract successorBytes(): Uint8Array | null;
+  abstract predecessorBytes(): Uint8Array | null;
+  abstract isMinimum(): boolean;
+  abstract isMaximum(): boolean;
+  compare(other: Self): number {
+    return Collatable_dispatch_toBytes(this).compareTo(Collatable_dispatch_toBytes(other));
+  }
+  isInRange(lower: RangeBound<Self>, upper: RangeBound<Self>): boolean {
+    const _v = [lower, upper];
+    if ((_v[0].is('Included')) && (_v[1].is('Included'))) {
+      const { _0: l } = _v[0].value;
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, l) !== -1 && Collatable_dispatch_compare(this, u) !== 1;
+    } else if ((_v[0].is('Included')) && (_v[1].is('Excluded'))) {
+      const { _0: l } = _v[0].value;
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, l) !== -1 && Collatable_dispatch_compare(this, u) === -1;
+    } else if ((_v[0].is('Excluded')) && (_v[1].is('Included'))) {
+      const { _0: l } = _v[0].value;
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, l) === 1 && Collatable_dispatch_compare(this, u) !== 1;
+    } else if ((_v[0].is('Excluded')) && (_v[1].is('Excluded'))) {
+      const { _0: l } = _v[0].value;
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, l) === 1 && Collatable_dispatch_compare(this, u) === -1;
+    } else if ((_v[0].is('Unbounded')) && (_v[1].is('Included'))) {
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, u) !== 1;
+    } else if ((_v[0].is('Unbounded')) && (_v[1].is('Excluded'))) {
+      const { _0: u } = _v[1].value;
+      return Collatable_dispatch_compare(this, u) === -1;
+    } else if ((_v[0].is('Included')) && (_v[1].is('Unbounded'))) {
+      const { _0: l } = _v[0].value;
+      return Collatable_dispatch_compare(this, l) !== -1;
+    } else if ((_v[0].is('Excluded')) && (_v[1].is('Unbounded'))) {
+      const { _0: l } = _v[0].value;
+      return Collatable_dispatch_compare(this, l) === 1;
+    } else {
+      return true;
+    }
+  }
+}
+
+export function Literal_toBytes(self: Literal): Uint8Array {
+  return self.match({
+    String: (v) => {
+      const s = v._0;
+      return s.asBytes().slice();
+    },
+    I16: (v) => {
+      const i = v._0;
+      return i.toBeBytes().slice();
+    },
+    I32: (v) => {
+      const i = v._0;
+      return i.toBeBytes().slice();
+    },
+    I64: (v) => {
+      const i = v._0;
+      return i.toBeBytes().slice();
+    },
+    F64: (v) => {
+      const f = v._0;
+      const bits = (() => {
+        if (Number.isNaN(f)) {
+          return 18446744073709551615n;
+        } else {
+          const bits = f.toBits();
+          if (f >= 0.0) {
+            return bits ^ (BigInt.asUintN(64, (1n << 63n)));
+          } else {
+            return BigInt.asUintN(64, ~bits);
+          }
+        }
+      })();
+      return bits.toBeBytes().slice();
+    },
+    Bool: (v) => {
+      const b = v._0;
+      return [Number(b)];
+    },
+    EntityId: (v) => {
+      const ulid = v._0;
+      return ulid.toBytes().slice();
+    },
+    Object: (v) => {
+      const bytes = v._0;
+      return bytes.clone();
+    },
+    Binary: (v) => {
+      const bytes = v._0;
+      return bytes.clone();
+    },
     Json: (v) => {
-      try {
-        return new TextEncoder().encode(JSON.stringify(v.value));
-      } catch {
-        return new Uint8Array(0);
+      const json = v._0;
+      return serdeJson.toVec(json).unwrapOrDefault();
+    },
+  });
+}
+
+export function Literal_successorBytes(self: Literal): Uint8Array | null {
+  return self.match({
+    String: (v) => {
+      const s = v._0;
+      if (s.length === 0) {
+        let bytes = s.asBytes().slice();
+        bytes.push(0);
+        return bytes;
+      } else {
+        let bytes = s.asBytes().slice();
+        bytes.push(0);
+        return bytes;
       }
     },
-  });
-}
-
-export function literalSuccessorBytes(lit: Literal): Uint8Array | null {
-  return lit.match({
-    String: (v) => {
-      const bytes = new TextEncoder().encode(v.value);
-      // TODO - I think this is wrong. We shouldn't just push a byte. (mirrors Rust TODO)
-      const result = new Uint8Array(bytes.length + 1);
-      result.set(bytes);
-      result[bytes.length] = 0;
-      return result;
+    I16: (v) => {
+      const i = v._0;
+      if (i === 32767) {
+        return null;
+      } else {
+        return (checkedAdd(i, 1, 'i16')).toBeBytes().slice();
+      }
     },
-    I16: (v) => v.value === I16_MAX ? null : i16ToBeBytes(v.value + 1),
-    I32: (v) => v.value === I32_MAX ? null : i32ToBeBytes(v.value + 1),
-    I64: (v) => v.value === I64_MAX ? null : i64ToBeBytes(v.value + 1n),
+    I32: (v) => {
+      const i = v._0;
+      if (i === 2147483647) {
+        return null;
+      } else {
+        return (checkedAdd(i, 1, 'i32')).toBeBytes().slice();
+      }
+    },
+    I64: (v) => {
+      const i = v._0;
+      if (i === 9223372036854775807n) {
+        return null;
+      } else {
+        return (checkedAdd(i, 1n, 'i64')).toBeBytes().slice();
+      }
+    },
     F64: (v) => {
-      if (Number.isNaN(v.value) || (v.value === Infinity)) return null;
-      const bits = f64CollateBits(v.value);
-      return f64ToBeBytes(bits + 1n);
+      const f = v._0;
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f > 0.0)) {
+        return null;
+      } else {
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
+        const nextBits = checkedAdd(bits, 1n, 'u64');
+        return nextBits.toBeBytes().slice();
+      }
     },
-    // Divergence: Rust has `if !b { None } else { Some(vec![1]) }` which gives
-    // false->None, true->Some([1]). This is a Rust bug (true's successor is itself).
-    // TS uses the logically correct behavior: true->null (no successor), false->[1] (successor is true).
-    Bool: (v) => v.value ? null : new Uint8Array([1]),
-    EntityId: (v) => incrementBytes(v.value),
-    Object: (v) => {
-      const inc = incrementBytes(v.value);
-      if (inc !== null) return inc;
-      // All bytes are 255, append a zero byte
-      const result = new Uint8Array(v.value.length + 1);
-      result.set(v.value);
-      result[v.value.length] = 0;
-      return result;
+    Bool: (v) => {
+      const b = v._0;
+      if (!b) {
+        return null;
+      } else {
+        return new Uint8Array([1]);
+      }
     },
-    Binary: (v) => {
-      const inc = incrementBytes(v.value);
-      if (inc !== null) return inc;
-      // All bytes are 255, append a zero byte
-      const result = new Uint8Array(v.value.length + 1);
-      result.set(v.value);
-      result[v.value.length] = 0;
-      return result;
-    },
-    Json: () => null,
-  });
-}
-
-export function literalPredecessorBytes(lit: Literal): Uint8Array | null {
-  return lit.match({
-    String: (v) => {
-      if (v.value.length === 0) return null;
-      const bytes = new TextEncoder().encode(v.value);
-      return bytes.slice(0, bytes.length - 1);
-    },
-    I16: (v) => v.value === I16_MIN ? null : i16ToBeBytes(v.value - 1),
-    I32: (v) => v.value === I32_MIN ? null : i32ToBeBytes(v.value - 1),
-    I64: (v) => v.value === I64_MIN ? null : i64ToBeBytes(v.value - 1n),
-    F64: (v) => {
-      if (Number.isNaN(v.value) || (v.value === -Infinity)) return null;
-      const bits = f64CollateBits(v.value);
-      return f64ToBeBytes(bits - 1n);
-    },
-    Bool: (v) => v.value ? new Uint8Array([0]) : null,
-    EntityId: (v) => decrementBytes(v.value),
-    Object: (v) => {
-      if (v.value.length === 0) return null;
-      const dec = decrementBytes(v.value);
-      if (dec !== null) return dec;
-      // All bytes are 0, remove the last byte
-      if (v.value.length > 1) {
-        return v.value.slice(0, v.value.length - 1);
+    EntityId: (v) => {
+      const ulid = v._0;
+      let bytes = ulid.toBytes();
+      for (const i of (range(0, bytes.length)).reverse()) {
+        if (bytes[i] < 255) {
+          bytes[i] = checkedAdd(bytes[i], 1, 'u8');
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
+            bytes[j] = 0;
+          }
+          return bytes.slice();
+        }
       }
       return null;
     },
+    Object: (v) => {
+      const bytes = v._0;
+      let bytes_1 = bytes.clone();
+      for (const i of (range(0, bytes_1.length)).reverse()) {
+        if (bytes_1[i] < 255) {
+          bytes_1[i] = checkedAdd(bytes_1[i], 1, 'u8');
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
+            bytes_1[j] = 0;
+          }
+          return bytes_1;
+        }
+      }
+      bytes_1.push(0);
+      return bytes_1;
+    },
     Binary: (v) => {
-      if (v.value.length === 0) return null;
-      const dec = decrementBytes(v.value);
-      if (dec !== null) return dec;
-      // All bytes are 0, remove the last byte
-      if (v.value.length > 1) {
-        return v.value.slice(0, v.value.length - 1);
+      const bytes = v._0;
+      let bytes_1 = bytes.clone();
+      for (const i of (range(0, bytes_1.length)).reverse()) {
+        if (bytes_1[i] < 255) {
+          bytes_1[i] = checkedAdd(bytes_1[i], 1, 'u8');
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
+            bytes_1[j] = 0;
+          }
+          return bytes_1;
+        }
+      }
+      bytes_1.push(0);
+      return bytes_1;
+    },
+    Json: (v) => null,
+  });
+}
+
+export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
+  return self.match({
+    String: (v) => {
+      const s = v._0;
+      if (s.length === 0) {
+        return null;
+      } else {
+        const bytes = s.asBytes();
+        return bytes.slice(0, checkedSub(bytes.length, 1, 'usize')).slice();
+      }
+    },
+    I16: (v) => {
+      const i = v._0;
+      if (i === -32768) {
+        return null;
+      } else {
+        return (checkedSub(i, 1, 'i16')).toBeBytes().slice();
+      }
+    },
+    I32: (v) => {
+      const i = v._0;
+      if (i === -2147483648) {
+        return null;
+      } else {
+        return (checkedSub(i, 1, 'i32')).toBeBytes().slice();
+      }
+    },
+    I64: (v) => {
+      const i = v._0;
+      if (i === -9223372036854775808n) {
+        return null;
+      } else {
+        return (checkedSub(i, 1n, 'i64')).toBeBytes().slice();
+      }
+    },
+    F64: (v) => {
+      const f = v._0;
+      if (Number.isNaN(f) || ((!Number.isFinite(f) && !Number.isNaN(f)) && f < 0.0)) {
+        return null;
+      } else {
+        const bits = (f >= 0.0 ? f.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~f.toBits()));
+        const prevBits = checkedSub(bits, 1n, 'u64');
+        return prevBits.toBeBytes().slice();
+      }
+    },
+    Bool: (v) => {
+      const b = v._0;
+      if (b) {
+        return new Uint8Array([0]);
+      } else {
+        return null;
+      }
+    },
+    EntityId: (v) => {
+      const ulid = v._0;
+      let bytes = ulid.toBytes();
+      for (const i of (range(0, bytes.length)).reverse()) {
+        if (bytes[i] > 0) {
+          bytes[i] = checkedSub(bytes[i], 1, 'u8');
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
+            bytes[j] = 255;
+          }
+          return bytes.slice();
+        }
       }
       return null;
     },
-    Json: () => null,
+    Object: (v) => {
+      const bytes = v._0;
+      if (bytes.length === 0) {
+        return null;
+      } else {
+        let bytes_1 = bytes.clone();
+        for (const i of (range(0, bytes_1.length)).reverse()) {
+          if (bytes_1[i] > 0) {
+            bytes_1[i] = checkedSub(bytes_1[i], 1, 'u8');
+            for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
+              bytes_1[j] = 255;
+            }
+            return bytes_1;
+          }
+        }
+        if (bytes_1.length > 1) {
+          bytes_1.pop();
+          return bytes_1;
+        } else {
+          return null;
+        }
+      }
+    },
+    Binary: (v) => {
+      const bytes = v._0;
+      if (bytes.length === 0) {
+        return null;
+      } else {
+        let bytes_1 = bytes.clone();
+        for (const i of (range(0, bytes_1.length)).reverse()) {
+          if (bytes_1[i] > 0) {
+            bytes_1[i] = checkedSub(bytes_1[i], 1, 'u8');
+            for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
+              bytes_1[j] = 255;
+            }
+            return bytes_1;
+          }
+        }
+        if (bytes_1.length > 1) {
+          bytes_1.pop();
+          return bytes_1;
+        } else {
+          return null;
+        }
+      }
+    },
+    Json: (v) => null,
   });
 }
 
-export function literalIsMinimum(lit: Literal): boolean {
-  return lit.match({
-    String: (v) => v.value.length === 0,
-    I16: (v) => v.value === I16_MIN,
-    I32: (v) => v.value === I32_MIN,
-    I64: (v) => v.value === I64_MIN,
-    F64: (v) => v.value === -Infinity,
-    Bool: (v) => !v.value,
-    EntityId: (v) => v.value.every((b) => b === 0),
-    Object: (v) => v.value.length === 0,
-    Binary: (v) => v.value.length === 0,
-    Json: () => false,
+export function Literal_isMinimum(self: Literal): boolean {
+  return self.match({
+    String: (v) => {
+      const s = v._0;
+      return s.length === 0;
+    },
+    I16: (v) => {
+      const i = v._0;
+      return i === -32768;
+    },
+    I32: (v) => {
+      const i = v._0;
+      return i === -2147483648;
+    },
+    I64: (v) => {
+      const i = v._0;
+      return i === -9223372036854775808n;
+    },
+    F64: (v) => {
+      const f = v._0;
+      return f === -Infinity;
+    },
+    Bool: (v) => {
+      const b = v._0;
+      return !b;
+    },
+    EntityId: (v) => {
+      const ulid = v._0;
+      return [...ulid.toBytes()].every((b) => b === 0);
+    },
+    Object: (v) => {
+      const bytes = v._0;
+      return bytes.length === 0;
+    },
+    Binary: (v) => {
+      const bytes = v._0;
+      return bytes.length === 0;
+    },
+    Json: (v) => false,
   });
 }
 
-export function literalIsMaximum(lit: Literal): boolean {
-  return lit.match({
-    String: () => false, // Strings have no theoretical maximum
-    I16: (v) => v.value === I16_MAX,
-    I32: (v) => v.value === I32_MAX,
-    I64: (v) => v.value === I64_MAX,
-    F64: (v) => v.value === Infinity,
-    Bool: (v) => v.value,
-    EntityId: (v) => v.value.every((b) => b === 255),
-    Object: () => false, // No theoretical maximum
-    Binary: () => false, // No theoretical maximum
-    Json: () => false,
+export function Literal_isMaximum(self: Literal): boolean {
+  return self.match({
+    String: (v) => false,
+    I16: (v) => {
+      const i = v._0;
+      return i === 32767;
+    },
+    I32: (v) => {
+      const i = v._0;
+      return i === 2147483647;
+    },
+    I64: (v) => {
+      const i = v._0;
+      return i === 9223372036854775807n;
+    },
+    F64: (v) => {
+      const f = v._0;
+      return f === Infinity;
+    },
+    Bool: (v) => {
+      const b = v._0;
+      return b;
+    },
+    EntityId: (v) => {
+      const ulid = v._0;
+      return [...ulid.toBytes()].every((b) => b === 255);
+    },
+    Object: (v) => false,
+    Binary: (v) => false,
+    Json: (v) => false,
   });
 }
 
-/// Wrap a Literal as a Collatable
-export function literalCollatable(lit: Literal): Collatable {
-  return {
-    toBytes: () => literalToBytes(lit),
-    successorBytes: () => literalSuccessorBytes(lit),
-    predecessorBytes: () => literalPredecessorBytes(lit),
-    isMinimum: () => literalIsMinimum(lit),
-    isMaximum: () => literalIsMaximum(lit),
-  };
+export function Str_toBytes(self: string): Uint8Array {
+  return self.asBytes().slice();
 }
 
-// ─── impl Collatable for &str ────────────────────────────────────────────────
-
-export function strToBytes(s: string): Uint8Array {
-  return new TextEncoder().encode(s);
+export function Str_successorBytes(self: string): Uint8Array | null {
+  if (Str_isMaximum(self)) {
+    return null;
+  } else {
+    let bytes = self.asBytes().slice();
+    bytes.push(0);
+    return bytes;
+  }
 }
 
-export function strSuccessorBytes(s: string): Uint8Array | null {
-  // Rust: is_maximum() always returns false for strings, so successor always exists
-  const bytes = strToBytes(s);
-  const result = new Uint8Array(bytes.length + 1);
-  result.set(bytes);
-  result[bytes.length] = 0;
-  return result;
+export function Str_predecessorBytes(self: string): Uint8Array | null {
+  if (Str_isMinimum(self)) {
+    return null;
+  } else {
+    const bytes = self.asBytes();
+    if (bytes.length === 0) {
+      return null;
+    } else {
+      return bytes.slice(0, checkedSub(bytes.length, 1, 'usize')).slice();
+    }
+  }
 }
 
-export function strPredecessorBytes(s: string): Uint8Array | null {
-  if (s.length === 0) return null;
-  const bytes = strToBytes(s);
-  return bytes.slice(0, bytes.length - 1);
+export function Str_isMinimum(self: string): boolean {
+  return self.length === 0;
 }
 
-export function strIsMinimum(s: string): boolean { return s.length === 0; }
-export function strIsMaximum(_s: string): boolean { return false; }
-
-// ─── impl Collatable for i64 ─────────────────────────────────────────────────
-
-export function i64CollateToBytes(v: bigint): Uint8Array { return i64ToBeBytes(v); }
-export function i64SuccessorBytes(v: bigint): Uint8Array | null { return v === I64_MAX ? null : i64ToBeBytes(v + 1n); }
-export function i64PredecessorBytes(v: bigint): Uint8Array | null { return v === I64_MIN ? null : i64ToBeBytes(v - 1n); }
-export function i64IsMinimum(v: bigint): boolean { return v === I64_MIN; }
-export function i64IsMaximum(v: bigint): boolean { return v === I64_MAX; }
-
-// ─── impl Collatable for f64 ─────────────────────────────────────────────────
-
-export function f64CollateToBytes(v: number): Uint8Array { return f64ToBeBytes(f64CollateBits(v)); }
-
-export function f64SuccessorBytes(v: number): Uint8Array | null {
-  if (Number.isNaN(v) || (v === Infinity)) return null;
-  const bits = f64CollateBits(v);
-  return f64ToBeBytes(bits + 1n);
+export function Str_isMaximum(self: string): boolean {
+  return false;
 }
 
-export function f64PredecessorBytes(v: number): Uint8Array | null {
-  if (Number.isNaN(v) || (v === -Infinity)) return null;
-  const bits = f64CollateBits(v);
-  return f64ToBeBytes(bits - 1n);
+export function I64_toBytes(self: bigint): Uint8Array {
+  return self.toBeBytes().slice();
 }
 
-export function f64IsMinimum(v: number): boolean { return v === -Infinity; }
-export function f64IsMaximum(v: number): boolean { return v === Infinity; }
-
-// ─── impl Collatable for EntityId ────────────────────────────────────────────
-
-export function entityIdCollateToBytes(id: EntityId): Uint8Array { return id.toBytes(); }
-
-export function entityIdSuccessorBytes(id: EntityId): Uint8Array | null {
-  const bytes = id.toBytes();
-  if (bytes.every((b) => b === 255)) return null;
-  return incrementBytes(bytes);
+export function I64_successorBytes(self: bigint): Uint8Array | null {
+  if (self === 9223372036854775807n) {
+    return null;
+  } else {
+    return (checkedAdd(self, 1n, 'i64')).toBeBytes().slice();
+  }
 }
 
-export function entityIdPredecessorBytes(id: EntityId): Uint8Array | null {
-  const bytes = id.toBytes();
-  if (bytes.every((b) => b === 0)) return null;
-  return decrementBytes(bytes);
+export function I64_predecessorBytes(self: bigint): Uint8Array | null {
+  if (self === -9223372036854775808n) {
+    return null;
+  } else {
+    return (checkedSub(self, 1n, 'i64')).toBeBytes().slice();
+  }
 }
 
-export function entityIdIsMinimum(id: EntityId): boolean { return id.toBytes().every((b) => b === 0); }
-export function entityIdIsMaximum(id: EntityId): boolean { return id.toBytes().every((b) => b === 255); }
+export function I64_isMinimum(self: bigint): boolean {
+  return self === -9223372036854775808n;
+}
+
+export function I64_isMaximum(self: bigint): boolean {
+  return self === 9223372036854775807n;
+}
+
+export function F64_toBytes(self: number): Uint8Array {
+  const bits = (() => {
+    if (Number.isNaN(self)) {
+      return 18446744073709551615n;
+    } else {
+      const bits = self.toBits();
+      if (self >= 0.0) {
+        return bits ^ (BigInt.asUintN(64, (1n << 63n)));
+      } else {
+        return BigInt.asUintN(64, ~bits);
+      }
+    }
+  })();
+  return bits.toBeBytes().slice();
+}
+
+export function F64_successorBytes(self: number): Uint8Array | null {
+  if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self > 0.0)) {
+    return null;
+  } else {
+    const bits = (self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits()));
+    const nextBits = checkedAdd(bits, 1n, 'u64');
+    return nextBits.toBeBytes().slice();
+  }
+}
+
+export function F64_predecessorBytes(self: number): Uint8Array | null {
+  if (Number.isNaN(self) || ((!Number.isFinite(self) && !Number.isNaN(self)) && self < 0.0)) {
+    return null;
+  } else {
+    const bits = (self >= 0.0 ? self.toBits() ^ (BigInt.asUintN(64, (1n << 63n))) : BigInt.asUintN(64, ~self.toBits()));
+    const prevBits = checkedSub(bits, 1n, 'u64');
+    return prevBits.toBeBytes().slice();
+  }
+}
+
+export function F64_isMinimum(self: number): boolean {
+  return self === -Infinity;
+}
+
+export function F64_isMaximum(self: number): boolean {
+  return self === Infinity;
+}
+
+export function EntityId_toBytes(self: EntityId): Uint8Array {
+  return self.toBytes().slice();
+}
+
+export function EntityId_successorBytes(self: EntityId): Uint8Array | null {
+  if (EntityId_isMaximum(self)) {
+    return null;
+  } else {
+    let bytes = self.toBytes();
+    for (const i of (range(0, bytes.length)).reverse()) {
+      if (bytes[i] < 255) {
+        bytes[i] = checkedAdd(bytes[i], 1, 'u8');
+        for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
+          bytes[j] = 0;
+        }
+        return bytes.slice();
+      }
+    }
+    return null;
+  }
+}
+
+export function EntityId_predecessorBytes(self: EntityId): Uint8Array | null {
+  if (EntityId_isMinimum(self)) {
+    return null;
+  } else {
+    let bytes = self.toBytes();
+    for (const i of (range(0, bytes.length)).reverse()) {
+      if (bytes[i] > 0) {
+        bytes[i] = checkedSub(bytes[i], 1, 'u8');
+        for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
+          bytes[j] = 255;
+        }
+        return bytes.slice();
+      }
+    }
+    return null;
+  }
+}
+
+export function EntityId_isMinimum(self: EntityId): boolean {
+  return [...self.toBytes()].every((b) => b === 0);
+}
+
+export function EntityId_isMaximum(self: EntityId): boolean {
+  return [...self.toBytes()].every((b) => b === 255);
+}
+
+export function Collatable_dispatch_compare(self: unknown, other: Self): number {
+  if (self instanceof Literal) return Literal_compare(self as any, other);
+  if (self instanceof EntityId) return EntityId_compare(self as any, other);
+  if (self instanceof Value) return Value_compare(self as any, other);
+  throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function Collatable_dispatch_predecessorBytes(self: unknown): Uint8Array | null {
+  if (self instanceof Literal) return Literal_predecessorBytes(self as any);
+  if (self instanceof EntityId) return EntityId_predecessorBytes(self as any);
+  if (self instanceof Value) return Value_predecessorBytes(self as any);
+  throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function Collatable_dispatch_successorBytes(self: unknown): Uint8Array | null {
+  if (self instanceof Literal) return Literal_successorBytes(self as any);
+  if (self instanceof EntityId) return EntityId_successorBytes(self as any);
+  if (self instanceof Value) return Value_successorBytes(self as any);
+  throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function Collatable_dispatch_toBytes(self: unknown): Uint8Array {
+  if (self instanceof Literal) return Literal_toBytes(self as any);
+  if (self instanceof EntityId) return EntityId_toBytes(self as any);
+  if (self instanceof Value) return Value_toBytes(self as any);
+  throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+

@@ -748,7 +748,17 @@ addressed by the step that found it.
 - **A growable `Vec<u8>` has no runtime type.** `Uint8Array` is fixed-length, so
   the read-only half of `Vec<u8>` translates and every call that would grow or
   shrink one is reported. Choosing a byte-buffer type is a runtime decision
-  (`packages/base`), not a transpiler one.
+  (`packages/base`), not a transpiler one. **Building one all at once is not
+  growing one** (step 9a slice 5, item 2): `collect` into a `Vec<u8>` target
+  writes `Uint8Array.from(<the sequence>)`, the same buffer `vec![..]` has
+  always built, because `FromIterator` is decided by the TARGET and a byte
+  target is a byte buffer. The arm that answers `collect` used to hand the
+  adaptors' own array back for a byte target as well as for every other `Vec`,
+  which put a `number[]` behind three `Result<Vec<u8>, IndexError>` returns in
+  `core/indexing/encoding.ts`. What is still reported there is the growable
+  half in the same file — `Vec::with_capacity` followed by `push`, four
+  functions of it — and those returns are still arrays, behind their own
+  diagnostics.
 - **`core` and `alloc` are modelled as the modules they really have, not as
   aliases of the whole of `std`.** Every declaration is written under
   `std_surface/std/`, because that is where the stubs live; the other two roots
@@ -792,6 +802,39 @@ addressed by the step that found it.
 - **Ownership emission: what the model deliberately does not cover.** The
   releases the emitter writes are described in `port/ownership.md`; these are the
   places it knows it is not faithful, each reported at the site.
+  - **A move FLAG the body never sets is not written.** (Step 9a slice 5, item
+    12, E15.) The disposition analysis reads the SOURCE, and a move it finds may
+    be one the lowering did not write — an `if let Some(x) = value` binds a name
+    out of the option without the emitted arm assigning anything — which left a
+    `let _movedN = false;` nothing assigns beside an `if (!_movedN)` that is
+    always false. What the block really did is what the block really wrote, so
+    the flag and its declaration go and the release stands unguarded. Three
+    live sites: two in `storage-indexeddb/collection.ts` and one in
+    `core/value/cast_predicate.ts`.
+  - **A statement's move FLAG stands after everything the statement evaluates**,
+    for every call shape (step 9a slice 5, item 10, E10). The flag is written
+    before the statement, because after a `return` it would be dead code; that
+    is right for the move and wrong for an argument that can THROW on the way to
+    it, which left the flag set and the moved value released by nobody. The rule
+    reached `invoke(..)` alone until now, because it asked whether the CALLEE
+    was a path naming a flagged local; what decides it is whether THIS CALL
+    hands a flagged local away, which is the same question the flag assignment
+    asks. Three conditions keep it sound. §3.9: the arguments go above the flag
+    only where the LIST cannot contain the move, all or none, because lifting
+    some would also reorder what Rust evaluates. A place, a literal, a closure
+    and an emitted text that is a bare NAME stay where they are, because
+    evaluating one cannot throw. And the call must stand where the STATEMENT's
+    own expression stands: the lift is written above the whole statement, so an
+    argument of a call nested inside a branch, a closure or an IIFE the
+    statement writes could read a name that block declares — two live sites,
+    `storage-indexeddb/collection.ts` and `signals/signal/calculated.ts`, showed
+    it.
+  - **A method's RECEIVER that is a field of a place** is taken out of the
+    struct where the method is declared `self` (step 9a slice 5, item 6) — the
+    same `takeField` a `let x = s.field` writes. What is left is a field the
+    runtime writes as a plain value, an array or a `Map`: `takeField` is
+    `AkObject`'s and those are not objects of its, so the read hands the same
+    value to two owners and the site says so. Eleven sites in core.
   - **A `let` that takes a droppable value apart** — `let (a, b) = pair()` —
     releases neither part. Rust drops the parts separately, which needs a
     per-field release the emitter does not write. A `let x = s.field` on a
@@ -808,7 +851,10 @@ addressed by the step that found it.
     `.callOnce`), a parameter with a callable bound (R10's `invoke`/`invokeRef`),
     and — since 2026-09-05 — an argument to an `Option` combinator or to
     `retain`, which is named once, reached through the helper its bound calls
-    for, and released by the branch that does not call it.
+    for, and released by the branch that does not call it. A fourth since step
+    9a slice 5 (F9): the callback of an iterator terminal, which every helper in
+    `std/iter.ts` and `std/iter_owned.ts` reaches through `invokeRef` and
+    releases when the call ends — Rust's terminals take their `F` by value.
     (Rewritten 2026-09-05, Z14: this bullet used to say the callee that receives
     a closure "still writes `f(x)`", which the emitter has not done since R10.)
     What is left is a callee whose parameter the engine cannot read AS a
@@ -941,7 +987,56 @@ addressed by the step that found it.
   the value.** `T: Clone` and `T: Signal` dispatch through the trait's own
   declaration, and the emitted class implements the interface, so the runtime
   object has the method. Only where the impl the engine picked has no class of
-  its own does the call become a module-level function.
+  its own does the call become a module-level function — and only where the
+  trait is declared in THIS crate, because a trait declared elsewhere carries
+  its dispatcher there and this run writes none. Both call sites ask that now
+  (step 9a slice 5, item 5): the one that resolved to a blanket impl always did,
+  and the one that resolved to the trait's declaration wrote
+  `TryInto_dispatch_tryInto(..)` — a name nothing declares, five sites across
+  core and storage-indexeddb — until it did too.
+- **A bound the caller DECLARED beats a blanket impl that rests on an undecided
+  one.** (Step 9a slice 5, item 5, G1.) `impl<I: Iterator> IntoIterator for I`
+  matches every receiver and leaves `I: Iterator` open, and the rule that a
+  written impl is more precise than a declaration then discarded the caller's
+  own `fn f<I: IntoIterator>(values: I)` — which SAYS that `I` implements the
+  trait. So `values.into_iter()` resolved through the blanket, deferred an
+  obligation, and came out as `values.intoIter()`, a method nothing declares.
+  An impl whose own bounds HOLD still wins; one that only applies if something
+  nobody can decide holds does not. The change removed 34 deferred obligations
+  across seven crates, took signals' count of them to zero, and added six
+  reports where a wrong answer used to stand — five dispatchers named above and
+  one `next` on `<I as IntoIterator>::IntoIter`, which used to resolve through
+  `futures::StreamExt`.
+- **A `&` on a RECEIVER is not erased before the method probe.** (Step 9a slice
+  5, item 5, E11.) `&x` as an EXPRESSION types as `x` — emission erases borrows,
+  and every reader downstream is written against the value — and the same
+  erasure ran in front of the probe, so `(&v).into_iter()` started at `Vec<T>`
+  and found the by-value impl whose `Item` is owned. The loop then released
+  every element the caller still held: a double drop where the block released
+  them too. The borrow is put back for the probe alone, and the deref chain
+  takes it off again where the method really is the by-value one. A parenthesised
+  receiver is read through, because Rust's probe reads the expression and not
+  its punctuation.
+- **`iter_mut` is the sequence itself, and is refused over a value the port
+  copies.** (Step 9a slice 5, item 5, F4/E12.) It had no lowering at all and came
+  out as `xs.iterMut()`, a method no array and no map declares — a `TypeError`
+  the first time the loop is reached, live at `core/node.ts:838` and
+  `core/property/backend/lww.ts:142`. Rust hands out `&mut T`; the port has no
+  `&mut`, so a loop writes THROUGH only because the variable and the slot are
+  the same object. Over a number, a string, a `bigint` or a `char` the variable
+  is a copy and the write is lost, so `iter_mut` and a map's `values_mut` over
+  such an element are a hole (R12) rather than a silent no-op. The disposition
+  is BORROWED either way: `iter_mut` takes `&mut self` and the elements stay the
+  caller's.
+- **`IntoIterator::into_iter` on a type PARAMETER is the spread.** (Step 9a
+  slice 5, item 5, G1.) The port materialises an iterator as a JavaScript array,
+  which is what makes `map`, `filter`, `rev` and `contains` array operations
+  here, so `into_iter` is the spread on every receiver — a `Vec`, a map, a set
+  and a receiver the engine could not name at all. A bare type parameter fell
+  between those arms, because `js_shape` says `Plain` for one. The resolution is
+  what says this is `IntoIterator` and not a crate method of the same name, and
+  a resolution still carrying obligations is left alone: answering one would be
+  guessing AND would silence the report.
 - **An or-pattern whose alternatives take their names out of a form the
   translator cannot read back refuses in the BRANCH.**
   (Rewritten 2026-09-05: the gap this bullet used to record — an or-pattern whose
@@ -993,6 +1088,38 @@ addressed by the step that found it.
 - **A function whose body awaits is not always emitted `async`.** 45 sites in
   core say "'await' expressions are only allowed within async functions"; the
   `async` belongs on whatever function the emitter wrapped the body in.
+- **A `use` inside a body is hoisted only where the module does not already
+  claim the name.** (Step 9a slice 5, item 11, E8.) Rust scopes such a `use` to
+  its block and the engine's binding table is per module, so it is hoisted —
+  widening its scope — and that is only safe while nothing else in the module
+  claims the name. "Claims" means BINDS or DECLARES: the check read the module's
+  other `use` items alone, which is not what either doc comment said, so a
+  module declaring `pub struct Kind` whose body wrote `use crate::far::Kind;`
+  had the far one in its table. (Lookup already preferred the module's own
+  declaration, so no emitted line changed; what changed is that the table and
+  the doc now say the same thing, and cannot drift.) A name TWO bodies bring in
+  from two different places is claimed by neither and BOTH are reported (§3.6):
+  hoisting both left the module's one table holding the first, so the second
+  body silently meant the first body's type — `new Wrap(undefined)` with only
+  one of the two sites reported. The rationale is written once, in
+  `registry/uses.rs`, and `extract/uses.rs` cites it (E18).
+- **An arm is cast to `any` where the ARM writes a tuple, and nowhere else.**
+  (Step 9a slice 5, item 12, E16.) TypeScript takes a `match`'s result type from
+  the first arm it reads, and a tuple written in one arm makes every later arm
+  an error against it. Whether an arm wrote one is the arm's own question:
+  asking the emitted TEXT whether it starts with a bracket cast
+  `[...exprs].every(p)` — a boolean — at `storage-sqlite/sql_builder.ts`, a
+  `vec![b as u8]` at `core/value/collatable.ts`, and two `every` calls at
+  `core/collation.ts`. `Some((a, b))` still counts, because `Option<T>` is
+  `T | null` and the arm really does write the array; every other wrapper is an
+  object of its own.
+- **`rev` copies the sequence first, unless the port built it on the spot.**
+  (Step 9a slice 5, item 12, E17.) `Array.prototype.reverse` mutates, and Rust's
+  `rev` leaves its receiver alone — so a copy stands in front of it. An array
+  the emitter just wrote (`range(..)`, `rangeIncl(..)`, `stepBy(..)`,
+  `iterFilterMap(..)`, a spread) is held by nobody else and has nothing for
+  `reverse` to mutate out from under: eleven emitted sites copied a range the
+  line above had allocated.
 - **A same-leaf type in two modules of one crate is reported, not aliased.**
   The port flattens a crate's modules into one package surface, and a file's
   import list is keyed by the LEAF name — so a file naming `left::Wrap` and
@@ -1044,11 +1171,91 @@ addressed by the step that found it.
   shapes with a driver.
 - **A range is the sequence of its values, and an unbounded one is a hole.**
   The port has no `Range` type. `a..b` is materialised, which is what makes
-  `rev`, `map`, `filter` and `contains` work on it, because those are all array
+  `rev`, `map`, `filter` and `step_by` work on it, because those are all array
   operations here; the corpus's ranges are small (`0..16`, `0..MAX_RETRIES`,
   `0..bytes.length`). `..n`, `a..` and a range over a width the port holds in a
   `bigint` have no sequence to build and are refused. A `BTreeMap::range(a..)`
   — an ordered-map range query — is two of those refusals.
+  **Which widths are built is a whitelist now** (step 9a slice 5, item 8, F3):
+  the discrete integer widths `n++` steps — `u8`, `u16`, `u32`, `usize`, `i8`,
+  `i16`, `i32`, `isize`. The check used to name the one width it could NOT
+  count and let everything else through, so `('a'..='c')` came out as
+  `rangeIncl('a', 'c')`, which is `["a"]` because `'a' + 1` is the string
+  `"a1"`, and a float range came out as a one-element array. A `char` range is
+  the sequence of its code points and is refused; an endpoint the engine could
+  not TYPE is left alone, because that is the engine's own gap and refusing it
+  would take out `for attempt in 0..MAX_RETRIES` over a function-local `const`.
+  **`contains` is written from the BOUNDS**, not from the sequence: it is a
+  comparison against the two ends, it is the one method a range the port cannot
+  count still answers — a float range is not an iterator in Rust either — and
+  written through the sequence `(0.0..1.0).contains(&0.5)` was
+  `range(0, 1).contains(0.5)`, a `TypeError` no diagnostic named. **`step_by`
+  is `stepBy(xs, n)`** on the materialised sequence (E7); it had no lowering and
+  came out as `xs.stepBy(..)`, a method no array declares.
+  **A range is materialised even where only its LENGTH is read** — `(0..1_000_000).len()`
+  is `(range(0, 1000000)).length` (E9). Acceptable while the corpus's ranges are
+  small; recorded here rather than fixed.
+- **A hand-written GENERIC prints its payload from the value's own surface, and
+  a `char` instantiation is reported.** (Step 9a slice 5, item 9, F7.) Every
+  other Debug rendering is decided from the resolved `Ty`, which is what makes a
+  Rust `String` print quoted and a Rust enum print its variant name even though
+  both are a JavaScript string. `Attested<T>` has no `Ty` at the payload's
+  position — `T` is whatever the instantiation put there and the file is
+  hand-written — so the payload goes through `@ankurah/base`'s `debugValue`,
+  which reads the value: a string is a Rust `String` and prints QUOTED, a number
+  and a bigint print as themselves, `null` is `None`, a sequence prints
+  element-wise, a byte buffer as its bytes, an object declaring `debug()`
+  through it, and anything else is REFUSED by name rather than printed
+  `[object Object]`. The gap the ruling names is a `char`: the port writes one
+  as a one-character string, which is what a `String` is too, and Rust prints
+  those differently — so a provided generic instantiated with `char` is
+  reported at the Debug site instead. A float payload is the same erasure in
+  miniature: `1.0f64` prints `1` there where the emitter, which has the type,
+  writes `1.0`. No corpus site instantiates one with either.
+- **A derived `Debug` writes what rustc writes, with two shapes it did not.**
+  (Step 9a slice 5, item 9, F6, E6.) A ONE-tuple keeps the comma that tells it
+  from a parenthesised value — `(7u32,)` is `(7,)`. A `char` is quoted AND
+  escaped the way `char::escape_debug` escapes it — `'\''`, `'\\'`, `'\n'` —
+  through `debugChar`, where the port used to write the quotes and print what
+  was inside them raw. What is left is the ORDER a `BTreeMap` and a `BTreeSet`
+  render in: Rust's is key order, the port has no ordered container, and the
+  runtime's map iterates in insertion order. There is nothing at the rendering
+  to sort by — the `Ord` the keys are sorted with is not a value it holds — so
+  the gap stays reported where the container is CONSTRUCTED, which is where it
+  can be fixed (fixpass1's accepted choice). Live at `proto/data.ts` 326 and
+  633. The doc comment that used to claim the container iterated in key order,
+  "which is what the ordering note in the container says", said the opposite of
+  what that note says and is gone.
+- **A reader answering `Option<Element>` is refused where the ELEMENT is itself
+  an `Option`.** (Step 9a slice 5, item 8, E13.) `Option<T>` is `T | null`, so
+  `first`, `last`, `get`, `pop`, `find`, `reduce` and the `max_by`/`min_by`
+  families over a `Vec<Option<T>>` have ONE `null` for two different answers:
+  "there is no element" and "the element is `None`". Rust tells them apart and
+  every caller is written expecting that, so the call is a hole (R12) rather
+  than a flattening. The type spelling `Option<Option<T>>` was already reported;
+  the READER was not. No corpus site takes it.
+- **A consuming iterator terminal OWNS the elements it walks, and a named
+  iterator is refused.** (Step 9a slice 5, item 3, F1.) Rust's
+  `into_iter().find(p)` hands back the element it selected and drops every other
+  one; `max_by_key` drops both losers; `position` moves each element into the
+  closure. The port wrote all of them as the reading helpers of `std/iter.ts`,
+  which release nothing, so a consuming chain either released the element it had
+  just handed back — where the emitter had also hoisted the sequence and given
+  it a `dropOwned` — or leaked everything it had not. Which of the two depended
+  on whether Rust's signature says `self` or `&mut self` about the ITERATOR,
+  which says nothing about the items. Ownership is now part of the lowering:
+  `std/iter_owned.ts` is the same terminals over a sequence the expression owns,
+  and the emitter writes those names when the resolution came through
+  `Iterator` — `slice::last(&self)` is not `Iterator::last(self)`, and the two
+  are one word apart — the elements have drop glue, and the receiver is not a
+  place. `first` and `get` have no consuming form at all. The gap that remains
+  is the NAMED iterator (`let mut it = v.into_iter(); it.find(..)`), which the
+  call consumes only part of: the port writes an iterator as the whole array, so
+  afterwards it cannot say which elements are still the caller's, and the call
+  is a hole (R12) with the block keeping the receiver (J4). One question answers
+  both the move scan and the lowering (`terminal_owns_the_sequence`), so they
+  cannot disagree about who releases what. **No corpus site takes either path
+  today**; `goldens/owned_terminals` is the nine shapes with a driver.
 - **`#[derive(Serialize, Deserialize)]`'s JSON half is refused for a type whose
   provided parts do not declare it.** (Rewritten 2026-09-05: the bullet this
   replaces said the JSON half is not emitted at all. It is: `encode`/`decode`
@@ -1060,6 +1267,16 @@ addressed by the step that found it.
   which declares neither half has both of its own halves refused — the pair is
   refused as one, because a `toJSON` with no `fromJson` writes text nothing can
   read back. Seven proto types carry neither half for that reason.
+  **What "declares" means is the DECLARATION, not the text** (step 9a slice 5,
+  item 1): the claim is checked against a member written at the class body's own
+  top level, of the KIND the emission calls — a `static fromJson(..)` for
+  `Class.fromJson(v)`, an instance `toJSON(..)` for `value.toJSON()`, an
+  instance `debug()` taking nothing for `value.debug()`. The check used to ask
+  whether the class body CONTAINED the text `debug()`, which any `x.debug()`
+  inside any method satisfied and which a `static debug()` satisfied too; both
+  leave the call the emitter writes undefined. `tests/common/members.rs` is the
+  small member reader, and it does not model a method written as a field holding
+  an arrow function — such a file's claim FAILS, which is the safe direction.
 
 ## 8. Non-goals
 

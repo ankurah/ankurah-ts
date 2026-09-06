@@ -37,10 +37,9 @@
 import { DropGuard } from './drop.ts';
 import { dropContainer } from './guard.ts';
 import { dropOwned, isCopyLike } from '../object.ts';
-import { Table, cloned, type Entry } from './hash_key.ts';
+import { Table, cloned, valueEquals, type Entry } from './hash_key.ts';
 import { fatalSelfAssignment } from '../drop_registry.ts';
 export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, valueEquals, valueNotEquals, type Hashable } from './hash_key.ts';
-import { keysEqual } from './hash_key.ts';
 import { BorrowMut } from './borrow.ts';
 import { invoke, type Invocable } from '../closure.ts';
 
@@ -217,13 +216,6 @@ export class HashMap<K, V> {
   }
 
   /**
-   * `#[derive(Clone)]` on a type holding one: a NEW map with a clone of every
-   * key and every value, so the two maps own separate values.
-   *
-   * A shallow copy handed both maps one set of values, and the second drop of
-   * the pair released each of them twice.
-   */
-  /**
    * `impl PartialEq for HashMap`: the same size, and every key mapping to a
    * value the other's does too.
    *
@@ -232,6 +224,13 @@ export class HashMap<K, V> {
    * different orders still compare equal. `==` between two maps had been
    * `===`, which compares identity and was false for every pair of distinct
    * maps.
+   *
+   * The KEYS are matched by the table's own lookup, which is a `Map`'s rule: a
+   * key that answers no is an absent key. The VALUES go through `valueEquals`,
+   * which is Rust's rule and refuses a pair it cannot compare — `impl PartialEq
+   * for HashMap<K, V>` carries `V: PartialEq`, so a value declaring no
+   * `equals()` is one the bound excludes, and answering `false` for it turned
+   * that into a quiet "these maps differ".
    */
   equals(other: HashMap<K, V>): boolean {
     this.#guard.assertNotDropped();
@@ -240,11 +239,18 @@ export class HashMap<K, V> {
     for (const entry of this.#table.all()) {
       const found = other.#table.find(entry.key);
       if (found === null) return false;
-      if (!keysEqual(entry.value, (found.bucket[found.at] as Entry<K, V>).value)) return false;
+      if (!valueEquals(entry.value, (found.bucket[found.at] as Entry<K, V>).value)) return false;
     }
     return true;
   }
 
+  /**
+   * `#[derive(Clone)]` on a type holding one: a NEW map with a clone of every
+   * key and every value, so the two maps own separate values.
+   *
+   * A shallow copy handed both maps one set of values, and the second drop of
+   * the pair released each of them twice.
+   */
   clone(): HashMap<K, V> {
     this.#guard.assertNotDropped();
     // The destination used to be built first and filled as the walk went, so a
@@ -573,10 +579,11 @@ export class HashSet<T> {
     return this.#table.size;
   }
 
-  /** `#[derive(Clone)]`: a new set holding a clone of every value. */
   /**
    * `impl PartialEq for HashSet`: the same size, and every element of one in
-   * the other. Order is not part of it.
+   * the other. Order is not part of it, and membership is the table's own
+   * lookup — a set has no values beside its keys, so there is nothing here for
+   * the strict comparison to reach.
    */
   equals(other: HashSet<T>): boolean {
     this.#guard.assertNotDropped();
@@ -588,6 +595,7 @@ export class HashSet<T> {
     return true;
   }
 
+  /** `#[derive(Clone)]`: a new set holding a clone of every value. */
   clone(): HashSet<T> {
     this.#guard.assertNotDropped();
     // Exception-safe for the same reason `HashMap::clone` is.

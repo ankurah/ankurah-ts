@@ -1,437 +1,483 @@
 // MIRRORS: ankurah/core/src/system.rs
+import { Struct, Result, Arc, RwLock, AnyhowError, serde_json, dropOwned, tracing, HashMap, Notify, spawn } from '@ankurah/base';
+import { Attested, Clock, CollectionId, EntityState, Event, Item } from '@ankurah/proto';
+import { CollectionSet } from './collectionset';
+import { Entity, WeakEntitySet } from './entity';
+import { MutationError, RetrievalError } from './error';
+import { Property } from './property/index';
+import { PropertyError } from './property/traits';
+import { Reactor } from './reactor';
+import { LocalRetriever } from './retrieval';
+import { StorageCollectionWrapper } from './storage';
+import { spawn } from './task';
+import { Value } from './value/index';
+import { Predicate, Selection } from '@ankurah/ankql';
 
-import {
-  CollectionId,
-  Attested,
-  EntityState,
-  Clock,
-} from '@ankurah/proto';
-import { Item } from '@ankurah/proto'; // sys::Item
-import { Selection, Predicate } from '@ankurah/ankql';
+export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> extends Struct {
+  _0: Arc<Inner<SE, PA>>;
 
-import { CollectionSet } from './collectionset.ts';
-import { Entity, WeakEntitySet } from './entity.ts';
-import { MutationError } from './error.ts';
-import { PropertyError } from './property/traits.ts';
-import { LWWBackend } from './property/backend/lww.ts';
-import { Reactor } from './reactor/index.ts';
-import { LocalRetriever } from './retrieval.ts';
-import type { StorageCollection } from './storage.ts';
-import type { Value } from './value/index.ts';
-
-// ── Constants ─────────────────────────────────────────────────────────
-
-export const SYSTEM_COLLECTION_ID = '_ankurah_system';
-export const PROTECTED_COLLECTIONS: readonly string[] = [SYSTEM_COLLECTION_ID];
-
-// ── Deferred helper ───────────────────────────────────────────────────
-
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason: unknown) => void;
-}
-
-function createDeferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-// ── sys::Item <-> Value conversion ────────────────────────────────────
-// Replaces Rust's `impl Property for proto::sys::Item`
-// See Rust: ankurah/core/src/system.rs:300-316
-
-/**
- * Serialize a sys::Item to a Value for storage in an LWW backend.
- *
- * Uses Rust serde_json externally-tagged enum format:
- *   SysRoot -> "SysRoot"
- *   Collection { name } -> {"Collection":{"name":"..."}}
- *   Other -> "Other"
- */
-export function sysItemToValue(item: Item): Value | null {
-  // Convert Enum<ItemV> to Rust serde_json externally-tagged format
-  const serdeObj = item.match<unknown>({
-    SysRoot: () => 'SysRoot',
-    Collection: (v) => ({ Collection: { name: v.name } }),
-    Other: () => 'Other',
-  });
-  return { type: 'String', value: JSON.stringify(serdeObj) };
-}
-
-/**
- * Deserialize a sys::Item from a Value retrieved from an LWW backend.
- *
- * Parses Rust serde_json externally-tagged enum format back to TS discriminated union.
- */
-export function sysItemFromValue(value: Value | null): Item {
-  if (value !== null && value.type === 'String') {
-    const parsed = JSON.parse(value.value);
-    if (parsed === 'SysRoot') return new Item('SysRoot', {});
-    if (parsed === 'Other') return new Item('Other', {});
-    if (typeof parsed === 'object' && parsed !== null && 'Collection' in parsed) {
-      return new Item('Collection', { name: parsed.Collection.name });
-    }
-  }
-  throw PropertyError.invalidValue('', 'sys::Item');
-}
-
-// ── SystemManager ─────────────────────────────────────────────────────
-
-/**
- * System catalog manager for storing various metadata about the system:
- * - root clock
- * - valid collections (TODO)
- * - property definitions (TODO)
- *
- * Rust: `pub struct SystemManager<SE, PA>(Arc<Inner<SE, PA>>)`
- * Divergence: No Arc/Inner split -- single-threaded JS, plain class [E8].
- * Divergence: Not generic over SE/PA -- TS uses interfaces directly [E8].
- * Divergence: No RwLock on fields -- single-threaded JS [E8].
- * Divergence: No PhantomData<PA> -- not needed in TS [E8].
- */
-export class SystemManager {
-  // Divergence: Rust uses Arc<Inner> with separate Inner struct; TS folds all fields into the class [E8].
-  private readonly collectionset: CollectionSet;
-  private readonly entities: WeakEntitySet;
-  private readonly durable: boolean;
-  private readonly reactor: Reactor;
-
-  // Divergence: Rust uses RwLock<BTreeMap<CollectionId, Entity>>; TS uses plain Map [E8].
-  private readonly collectionMap: Map<string, Entity> = new Map();
-
-  // Divergence: Rust uses RwLock<Option<Attested<EntityState>>>; TS uses plain property [E8].
-  private _root: Attested<EntityState> | null = null;
-
-  // Divergence: Rust uses RwLock<Vec<Entity>>; TS uses plain array [E8].
-  private _items: Entity[] = [];
-
-  // Divergence: Rust uses OnceLock<()>; TS uses boolean flag [E8].
-  private loaded = false;
-
-  // Divergence: Rust uses tokio::sync::Notify; TS uses deferred Promise [E8].
-  private loadingDeferred: Deferred<void> = createDeferred<void>();
-
-  // Divergence: Rust uses RwLock<bool>; TS uses plain boolean [E8].
-  private systemReady = false;
-
-  // Divergence: Rust uses tokio::sync::Notify; TS uses deferred Promise (resettable) [E8].
-  private systemReadyDeferred: Deferred<void> = createDeferred<void>();
-
-  constructor(
-    collectionset: CollectionSet,
-    entities: WeakEntitySet,
-    reactor: Reactor,
-    durable: boolean,
-  ) {
-    this.collectionset = collectionset;
-    this.entities = entities;
-    this.reactor = reactor;
-    this.durable = durable;
-
-    // Divergence: Rust uses crate::task::spawn(async move { ... }); TS uses fire-and-forget promise [E8/A9].
-    this.loadSystemCatalog().catch((e) =>
-      console.error('Failed to load system catalog:', e),
-    );
+  constructor(_0: Arc<Inner<SE, PA>>) {
+    super();
+    this._0 = _0;
   }
 
-  // ── root() ────────────────────────────────────────────────────────
-
-  /**
-   * Get the root state, if set.
-   *
-   * Rust: `pub fn root(&self) -> Option<Attested<EntityState>>`
-   * Divergence: No clone needed -- JS reference semantics [E8].
-   */
-  root(): Attested<EntityState> | null {
-    return this._root;
-  }
-
-  // ── getItems() ────────────────────────────────────────────────────
-
-  /**
-   * Get a copy of the items list.
-   *
-   * Rust: `pub fn items(&self) -> Vec<Entity>`
-   * Divergence: Method named getItems() to avoid collision with field [A2].
-   */
-  getItems(): Entity[] {
-    return [...this._items];
-  }
-
-  // ── isLoaded() ────────────────────────────────────────────────────
-
-  /**
-   * Returns true if the local system catalog is loaded.
-   *
-   * Rust: `pub fn is_loaded(&self) -> bool`
-   */
-  isLoaded(): boolean {
-    return this.loaded;
-  }
-
-  // ── isSystemReady() ───────────────────────────────────────────────
-
-  /**
-   * Returns true if we've successfully initialized or joined a system.
-   *
-   * Rust: `pub fn is_system_ready(&self) -> bool`
-   */
-  isSystemReady(): boolean {
-    return this.systemReady;
-  }
-
-  // ── waitLoaded() ──────────────────────────────────────────────────
-
-  /**
-   * Waits for the local system catalog to be loaded.
-   *
-   * Rust: `pub async fn wait_loaded(&self)`
-   */
-  async waitLoaded(): Promise<void> {
-    if (this.loaded) return;
-    await this.loadingDeferred.promise;
-  }
-
-  // ── waitSystemReady() ─────────────────────────────────────────────
-
-  /**
-   * Waits until we've successfully initialized or joined a system.
-   *
-   * Rust: `pub async fn wait_system_ready(&self)`
-   */
-  async waitSystemReady(): Promise<void> {
-    if (this.systemReady) return;
-    await this.systemReadyDeferred.promise;
-  }
-
-  // ── collection() ──────────────────────────────────────────────────
-
-  /**
-   * Get an existing collection if it's defined in the system catalog,
-   * else insert a SysItem::Collection, then return the StorageCollection.
-   *
-   * Rust: `pub async fn collection(&self, id: &CollectionId) -> Result<StorageCollectionWrapper, RetrievalError>`
-   * Throws RetrievalError.
-   */
-  async collection(id: CollectionId): Promise<StorageCollection> {
-    await this.waitLoaded();
-    // TODO: update the system catalog to create an entity for this collection
-    return this.collectionset.get(id);
-  }
-
-  // ── create() ──────────────────────────────────────────────────────
-
-  /**
-   * Creates a new system root. This should only be called once per system by durable nodes.
-   * The rest of the nodes must "join" this system.
-   *
-   * Rust: `pub async fn create(&self) -> Result<()>`
-   * Throws Error (Rust uses anyhow::Error).
-   */
-  async create(): Promise<void> {
-    if (!this.durable) {
-      throw new Error('Only durable nodes can create a new system');
-    }
-
-    // Wait for local system catalog to be loaded
-    await this.waitLoaded();
-
-    if (this._items.length > 0) {
-      throw new Error('System root already exists');
-    }
-
-    // TODO - see if we can use the Model derive macro for a SysCatalogItem model rather than doing this manually
-    const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
-    const storage = await this.collectionset.get(collectionId);
-
-    const systemEntity = this.entities.create(collectionId);
-
-    const lwwBackend = systemEntity.getBackend(LWWBackend);
-    lwwBackend.set('item', sysItemToValue(new Item('SysRoot', {})));
-
-    const event = systemEntity.generateCommitEvent();
-    if (event === null) {
-      throw new Error('Expected event');
-    }
-    const rootClock: Clock = Clock.fromEventId(event.id());
-
-    // Add the event to storage first
-    // Rust: storage.add_event(&event.into()) -- .into() converts Event to Attested<Event> (unattested)
-    const attestedEvent = new Attested(event);
-    await storage.addEvent(attestedEvent);
-
-    // Update the entity's head clock
-    systemEntity.commitHead(rootClock);
-
-    // Now get the entity state after the head is updated
-    // Rust: system_entity.to_entity_state()?.into() -- .into() wraps as Attested<EntityState> (unattested)
-    const attestedState = new Attested(systemEntity.toEntityState());
-    await storage.setState(attestedState);
-
-    // Update our system state
-    this._items.push(systemEntity);
-    this._root = attestedState;
-
-    // Mark system as ready and notify waiters
-    this.systemReady = true;
-    this.systemReadyDeferred.resolve(undefined);
-  }
-
-  // ── joinSystem() ──────────────────────────────────────────────────
-
-  /**
-   * Joins an existing system. This should only be called by ephemeral nodes.
-   *
-   * Rust: `pub async fn join_system(&self, state: Attested<EntityState>) -> Result<(), MutationError>`
-   * Throws MutationError.
-   */
-  async joinSystem(state: Attested<EntityState>): Promise<void> {
-    // Wait for catalog to be loaded before proceeding
-    await this.waitLoaded();
-
-    // If node is durable, fail - durable nodes should not join an existing system
-    if (this.durable) {
-      console.warn('Durable node attempted to join system - this is not allowed');
-      throw MutationError.general(
-        new Error('Durable nodes cannot join an existing system'),
-      );
-    }
-
-    const rootState = this.root();
-
-    // If we have a matching root, we're already in sync - just mark ready and return
-    if (rootState !== null) {
-      if (rootState.payload.state.head.equals(state.payload.state.head)) {
-        console.info('Found matching root - Node is part of the same system');
-        this.systemReady = true;
-        this.systemReadyDeferred.resolve(undefined);
-        return;
-      }
-
-      console.warn(
-        'Mismatched root state during join: local=%s, remote=%s',
-        rootState.payload.state.head.toBase64Short(),
-        state.payload.state.head.toBase64Short(),
-      );
-
-      // Only reset storage if we have a root that needs to be replaced
-      console.info('Resetting storage to replace mismatched root');
-      // Clear root before reset
-      this._root = null;
-      try {
-        await this.hardReset();
-      } catch (e) {
-        throw MutationError.general(
-          e instanceof Error ? e : new Error(String(e)),
-        );
-      }
-    }
-
-    const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
-    const storage = await this.collectionset.get(collectionId);
-
-    // Set the state
-    await storage.setState(state);
-
-    // Set root and mark system as ready
-    this._root = state;
-    this.systemReady = true;
-    this.systemReadyDeferred.resolve(undefined);
-  }
-
-  // ── hardReset() ───────────────────────────────────────────────────
-
-  /**
-   * Resets all storage by deleting all collections, including the system collection.
-   * This is used when an ephemeral node needs to join a system with a different root.
-   * **This is a destructive operation and should be used with extreme caution.**
-   *
-   * Rust: `pub async fn hard_reset(&self) -> Result<()>`
-   * Throws Error.
-   */
-  async hardReset(): Promise<void> {
-    // Delete all collections from storage
-    // Divergence: TS CollectionSet.deleteAllCollections() is synchronous (only clears cache) [E7].
-    this.collectionset.deleteAllCollections();
-
-    // Reset our state
-    this._items = [];
-    this._root = null;
-    this.collectionMap.clear();
-    this.systemReady = false;
-
-    // Re-create the deferred so future waitSystemReady() calls block again
-    this.systemReadyDeferred = createDeferred<void>();
-
-    // Reset the reactor state to notify subscriptions
-    this.reactor.systemReset();
-  }
-
-  // ── loadSystemCatalog() (private) ─────────────────────────────────
-
-  /**
-   * Load the system catalog from storage on startup.
-   *
-   * Rust: `async fn load_system_catalog(&self) -> Result<()>`
-   */
-  private async loadSystemCatalog(): Promise<void> {
-    if (this.loaded) {
-      throw new Error('System catalog already loaded');
-    }
-
-    const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
-    const storage = await this.collectionset.get(collectionId);
-
-    const entities: Entity[] = [];
-    let rootState: Attested<EntityState> | null = null;
-
-    // Fetch all states with a "true" predicate
-    const selection = new Selection(Predicate.True());
-    const states = await storage.fetchStates(selection);
-
-    for (const state of states) {
-      // Divergence: Rust calls entities.with_state(&retriever, ...) taking a retriever param;
-      // TS WeakEntitySet.withState() does not take a retriever (simplified) [E7].
-      const [_entityChanged, entity] = this.entities.withState(
-        state.payload.entityId,
-        collectionId,
-        state.payload.state,
-      );
-
-      const lwwBackend = entity.getBackend(LWWBackend);
-      const value = lwwBackend.get('item');
-
-      if (value !== null) {
-        const item = sysItemFromValue(value);
-
-        if (item.type === 'SysRoot') {
-          rootState = state;
+  static new<SE, PA>(collections: CollectionSet<SE>, entities: WeakEntitySet, reactor: Reactor<Entity, Attested<Event>>, durable: boolean): SystemManager<SE, PA> {
+    const me = new SystemManager(Arc.new(new Inner(collections, new RwLock(new HashMap()), entities, durable, new RwLock(null), new RwLock([]), OnceLock.new(), Notify.new(), new RwLock(false), Notify.new(), reactor, undefined /* PhantomData */)));
+    ((me) => {
+      spawn((async () => {
+        {
+          const _v = await me.loadSystemCatalog();
+          if (_v.isErr()) {
+            const e = _v.unwrapErr();
+            tracing.error(`Failed to load system catalog: ${e}`);
+          }
         }
-        entities.push(entity);
+      })());
+    })(me.clone());
+    return me;
+  }
+
+  root(): Attested<EntityState> | null {
+    const _t0 = this._0.value.root.read();
+    try {
+      const _m1 = _t0.value;
+      return (_m1 != null ? ((r) => r.clone())(_m1!) : null);
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  items(): Entity[] {
+    const _t0 = this._0.value.items.read();
+    try {
+      return _t0.value.map((e) => e.clone());
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  async collection(id: CollectionId): Promise<Result<StorageCollectionWrapper, RetrievalError>> {
+    await this.waitLoaded();
+    return await this._0.value.collectionset.get(id);
+  }
+
+  isSystemReady(): boolean {
+    const _t0 = this._0.value.systemReady.read();
+    try {
+      return _t0.value;
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  async waitSystemReady(): Promise<void> {
+    if (!this.isSystemReady()) {
+      await this._0.value.systemReadyNotify.notified();
+    }
+  }
+
+  async create(): Promise<Result<void, Error>> {
+    if (!this._0.value.durable) {
+      return Result.Err(AnyhowError.msg('Only durable nodes can create a new system'));
+    }
+    await this.waitLoaded();
+    const _m0 = (() => {
+      {
+        const items = this._0.value.items.read();
+        try {
+          if (!(items.value.length === 0)) {
+            return { $jump: 'return', $value: Result.Err(AnyhowError.msg('System root already exists')) };
+          }
+        } finally {
+          items.drop();
+        }
       }
+    })();
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+    (_m0 as any);
+    const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
+    try {
+      const _r1 = await this._0.value.collectionset.get(collectionId);
+      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      const storage = _r1.unwrap();
+      try {
+        let _moved2 = false;
+        const systemEntity = this._0.value.entities.create(collectionId.clone());
+        try {
+          const lwwBackend = systemEntity.getBackend().expect('LWW Backend should exist');
+          try {
+            const _r3 = Item_intoValue(new Item('SysRoot', {}));
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            lwwBackend.value.set('item', _r3.unwrap());
+            const _r4 = systemEntity.generateCommitEvent();
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            const _m5 = _r4.unwrap();
+            const _m6 = AnyhowError.msg('Expected event');
+            const _r7 = (_m5 != null ? Result.Ok(_m5!) : Result.Err(_m6));
+            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+            let _moved8 = false;
+            const event = _r7.unwrap();
+            try {
+              const root = Clock.fromEventId(event.id());
+              try {
+                _moved8 = true;
+                const _r9 = await storage.deref().value.addEvent(event);
+                if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                _r9.drop();
+                systemEntity.commitHead(root.clone());
+                const _r10 = systemEntity.toEntityState();
+                if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+                let _moved11 = false;
+                const attestedState = Attested.fromEntityState(_r10.unwrap());
+                try {
+                  const _r12 = await storage.deref().value.setState(attestedState.clone());
+                  if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+                  _r12.drop();
+                  let items = this._0.value.items.write();
+                  try {
+                    _moved2 = true;
+                    items.value.push(systemEntity);
+                    _moved11 = true;
+                    const _t13 = this._0.value.root.write();
+                    try {
+                      _t13.value = attestedState;
+                    } finally {
+                      _t13.drop();
+                    }
+                    const _t14 = this._0.value.systemReady.write();
+                    try {
+                      _t14.value = true;
+                    } finally {
+                      _t14.drop();
+                    }
+                    this._0.value.systemReadyNotify.notifyWaiters();
+                    return Result.Ok([]);
+                  } finally {
+                    items.drop();
+                  }
+                } finally {
+                  if (!_moved11) attestedState.drop();
+                }
+              } finally {
+                root.drop();
+              }
+            } finally {
+              if (!_moved8) event.drop();
+            }
+          } finally {
+            lwwBackend.drop();
+          }
+        } finally {
+          if (!_moved2) systemEntity.drop();
+        }
+      } finally {
+        storage.drop();
+      }
+    } finally {
+      collectionId.drop();
     }
+  }
 
-    // Update our system state
-    this._items.push(...entities);
-
-    const hasRoot = rootState !== null;
-    this._root = rootState;
-
-    // Only mark ready if we're a durable node and found a root
-    // Ephemeral nodes must explicitly join via joinSystem()
-    if (hasRoot && this.durable) {
-      this.systemReady = true;
-      this.systemReadyDeferred.resolve(undefined);
+  async joinSystem(state: Attested<EntityState>): Promise<Result<void, MutationError>> {
+    let _moved0 = false;
+    try {
+      await this.waitLoaded();
+      if (this._0.value.durable) {
+        tracing.warn('Durable node attempted to join system - this is not allowed');
+        return Result.Err(new MutationError('General', { _0: io.Error.other('Durable nodes cannot join an existing system') }));
+      }
+      let _moved1 = false;
+      const rootState = this.root();
+      try {
+        _moved1 = true;
+        {
+          const _v = rootState;
+          if (_v != null) {
+            const root = _v;
+            try {
+              if (root.payload.state.head.equals(state.payload.state.head)) {
+                undefined /* notice_info!("Found matching root - Node is part of the same system") */;
+                const _t2 = this._0.value.systemReady.write();
+                try {
+                  _t2.value = true;
+                } finally {
+                  _t2.drop();
+                }
+                this._0.value.systemReadyNotify.notifyWaiters();
+                return Result.Ok([]);
+              }
+              tracing.warn(`Mismatched root state during join: local=${root}, remote=${state.payload.state.head}`);
+              tracing.info('Resetting storage to replace mismatched root');
+              (() => {
+                let root_1 = this._0.value.root.write();
+                try {
+                  root_1.value = null;
+                } finally {
+                  root_1.drop();
+                }
+              })();
+              const _r3 = (await this.hardReset()).mapErr((e) => new MutationError('General', { _0: io.Error.other(e.toString()) }));
+              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              _r3.drop();
+            } finally {
+              root.drop();
+            }
+          }
+        }
+        const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
+        try {
+          const _r4 = await this._0.value.collectionset.get(collectionId);
+          if (_r4.isErr()) return Result.Err(MutationError.fromRetrievalError(_r4.unwrapErr()));
+          const storage = _r4.unwrap();
+          try {
+            const _r5 = await storage.deref().value.setState(state.clone());
+            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+            _r5.drop();
+            (() => {
+              let root = this._0.value.root.write();
+              try {
+                _moved0 = true;
+                root.value = state;
+              } finally {
+                root.drop();
+              }
+            })();
+            const _t6 = this._0.value.systemReady.write();
+            try {
+              _t6.value = true;
+            } finally {
+              _t6.drop();
+            }
+            this._0.value.systemReadyNotify.notifyWaiters();
+            return Result.Ok([]);
+          } finally {
+            storage.drop();
+          }
+        } finally {
+          collectionId.drop();
+        }
+      } finally {
+        if (!_moved1) dropOwned(rootState);
+      }
+    } finally {
+      if (!_moved0) state.drop();
     }
+  }
 
-    // Set loaded state and notify waiters
-    this.loaded = true;
-    this.loadingDeferred.resolve(undefined);
+  async hardReset(): Promise<Result<void, Error>> {
+    const _r0 = await this._0.value.collectionset.deleteAllCollections();
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    _r0.drop();
+    (() => {
+      let items = this._0.value.items.write();
+      try {
+        items.value.length = 0;
+      } finally {
+        items.drop();
+      }
+    })();
+    (() => {
+      let root = this._0.value.root.write();
+      try {
+        root.value = null;
+      } finally {
+        root.drop();
+      }
+    })();
+    (() => {
+      let collectionMap = this._0.value.collectionMap.write();
+      try {
+        collectionMap.value.clear();
+      } finally {
+        collectionMap.drop();
+      }
+    })();
+    (() => {
+      let systemReady = this._0.value.systemReady.write();
+      try {
+        systemReady.value = false;
+      } finally {
+        systemReady.drop();
+      }
+    })();
+    this._0.value.reactor.systemReset();
+    return Result.Ok([]);
+  }
+
+  isLoaded(): boolean {
+    return (this._0.value.loaded.get() != null);
+  }
+
+  async waitLoaded(): Promise<void> {
+    if (!this.isLoaded()) {
+      await this._0.value.loading.notified();
+    }
+  }
+
+  async loadSystemCatalog(): Promise<Result<void, Error>> {
+    if (this.isLoaded()) {
+      return Result.Err(AnyhowError.msg('System catalog already loaded'));
+    }
+    const collectionId = CollectionId.fixedName(SYSTEM_COLLECTION_ID);
+    try {
+      const _r0 = await this._0.value.collectionset.get(collectionId);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      const storage = _r0.unwrap();
+      try {
+        let entities = [];
+        let rootState = null;
+        const retriever = LocalRetriever.new(storage.clone());
+        try {
+          const _t1 = new Selection(new Predicate('True', {}), null, null);
+          try {
+            const _r2 = await storage.deref().value.fetchStates(_t1);
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            const _seq5 = _r2.unwrap();
+            let _at6 = 0;
+            try {
+              while (_at6 < _seq5.length) {
+                const state = _seq5[_at6++];
+                let _moved3 = false;
+                try {
+                  const _r4 = await this._0.value.entities.withState(retriever, state.payload.entityId, collectionId.clone(), state.payload.state.clone());
+                  if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+                  const [_entityChanged, entity] = _r4.unwrap();
+                  const lwwBackend = entity.getBackend().expect('LWW Backend should exist');
+                  try {
+                    {
+                      const _v1 = lwwBackend.value.get('item');
+                      if (_v1 != null) {
+                        const value = _v1;
+                        const item = Item.fromValue(value).expect('Invalid sys item');
+                        try {
+                          {
+                            const _v = item;
+                            if (_v.is('SysRoot')) {
+                              _moved3 = true;
+                              rootState = state;
+                            }
+                          }
+                          entities.push(entity);
+                        } finally {
+                          item.drop();
+                        }
+                      }
+                    }
+                  } finally {
+                    lwwBackend.drop();
+                  }
+                } finally {
+                  if (!_moved3) state.drop();
+                }
+              }
+            } finally {
+              dropOwned(_seq5.slice(_at6));
+            }
+          } finally {
+            _t1.drop();
+          }
+          (() => {
+            let items = this._0.value.items.write();
+            try {
+              items.value.push(...entities);
+            } finally {
+              items.drop();
+            }
+          })();
+          const hasRoot = rootState != null;
+          (() => {
+            let root = this._0.value.root.write();
+            try {
+              root.value = rootState;
+            } finally {
+              root.drop();
+            }
+          })();
+          if (hasRoot && this._0.value.durable) {
+            const _t7 = this._0.value.systemReady.write();
+            try {
+              _t7.value = true;
+            } finally {
+              _t7.drop();
+            }
+            this._0.value.systemReadyNotify.notifyWaiters();
+          }
+          this._0.value.loaded.set([]).expect('Loading flag already set');
+          this._0.value.loading.notifyWaiters();
+          return Result.Ok([]);
+        } finally {
+          retriever.drop();
+        }
+      } finally {
+        storage.drop();
+      }
+    } finally {
+      collectionId.drop();
+    }
+  }
+
+  clone(): SystemManager<SE, PA> {
+    return new SystemManager(this._0.clone());
   }
 }
+
+class Inner<SE, PA> extends Struct {
+  collectionset: CollectionSet<SE>;
+  collectionMap: RwLock<HashMap<CollectionId, Entity>>;
+  entities: WeakEntitySet;
+  durable: boolean;
+  root: RwLock<Attested<EntityState> | null>;
+  items: RwLock<Entity[]>;
+  loaded: OnceLock<void>;
+  loading: Notify;
+  systemReady: RwLock<boolean>;
+  systemReadyNotify: Notify;
+  reactor: Reactor<Entity, Attested<Event>>;
+
+  constructor(collectionset: CollectionSet<SE>, collectionMap: RwLock<HashMap<CollectionId, Entity>>, entities: WeakEntitySet, durable: boolean, root: RwLock<Attested<EntityState> | null>, items: RwLock<Entity[]>, loaded: OnceLock<void>, loading: Notify, systemReady: RwLock<boolean>, systemReadyNotify: Notify, reactor: Reactor<Entity, Attested<Event>>) {
+    super();
+    this.collectionset = collectionset;
+    this.collectionMap = collectionMap;
+    this.entities = entities;
+    this.durable = durable;
+    this.root = root;
+    this.items = items;
+    this.loaded = loaded;
+    this.loading = loading;
+    this.systemReady = systemReady;
+    this.systemReadyNotify = systemReadyNotify;
+    this.reactor = reactor;
+  }
+}
+
+export const SYSTEM_COLLECTION_ID: string = '_ankurah_system';
+
+export const PROTECTED_COLLECTIONS: string[] = [SYSTEM_COLLECTION_ID];
+
+export function Item_intoValue(self: Item): Result<Value | null, PropertyError> {
+  const _r0 = serde_json.stringify((self).toJSON()).mapErr((_) => new PropertyError('InvalidValue', { value: '', ty: 'sys::Item' }));
+  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+  return Result.Ok(new Value('String', { _0: _r0.unwrap() }));
+}
+
+export function Item_fromValue(value: Value | null): Result<Item, PropertyError> {
+  {
+    const _v = value;
+    if (_v != null && (_v.is('String'))) {
+      const { _0: string } = _v.value;
+      const _r0 = serde_json.parse(string).mapErr((_) => new PropertyError('InvalidValue', { value: '', ty: 'sys::Item' }));
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      let _moved1 = false;
+      const item = _r0.unwrap();
+      try {
+        _moved1 = true;
+        return Result.Ok(item);
+      } finally {
+        if (!_moved1) item.drop();
+      }
+    } else {
+    return Result.Err(new PropertyError('InvalidValue', { value: '', ty: 'sys::Item' }));
+  }
+  }
+}
+

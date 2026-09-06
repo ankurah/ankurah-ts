@@ -10,6 +10,9 @@
 //! Nothing here guesses. A step with two answers and a chain with none are both
 //! reported, naming what was tried.
 
+/// The method a BOUND declares, as a candidate in its own right.
+mod declared;
+
 use super::impls::{head_of, Bound, Head, ImplId};
 use super::{ModuleId, TypeRegistry};
 use crate::ty::subst::Subst;
@@ -471,19 +474,31 @@ impl<'a> Probe<'a> {
         // dispatch through the trait's own declaration. A written
         // `impl Trait for dyn Trait` says the same thing more precisely, so
         // where both are present the impl is the answer rather than a clash.
+        //
+        // Unless the impl only applies IF something nobody can decide holds.
+        // `impl<I: Iterator> IntoIterator for I` matches every receiver and
+        // leaves `I: Iterator` deferred; a caller that wrote
+        // `fn f<I: IntoIterator>(values: I)` has SAID that `I` implements the
+        // trait, and that is the more precise answer, not the blanket resting
+        // on a bound the engine cannot close. Written the other way,
+        // `values.into_iter()` resolved through the blanket and came out as
+        // `values.intoIter()` — a method nothing declares (G1).
         for declared in self.declared_picks(candidate, &adjusted, name, explicit) {
-            let already = extension.iter().any(|p| {
+            let same_trait = |p: &Pick| {
                 p.callee
                     .impl_id()
                     .and_then(|id| self.reg.impl_def(id).trait_ref.as_ref().map(|t| t.id))
                     == match &declared.callee {
-                        Callee::TraitObject(id, _) => Some(*id),
+                        Callee::TraitObject(id, _) => Some(id.clone()),
                         _ => None,
                     }
-            });
-            if !already {
-                extension.push(declared);
+            };
+            let settled = extension.iter().any(|p| same_trait(p) && p.obligations.is_empty());
+            if settled {
+                continue;
             }
+            extension.retain(|p| !same_trait(p));
+            extension.push(declared);
         }
         self.exactly_one(candidate, self.nameable(extension, in_scope_only))
     }
@@ -548,65 +563,6 @@ impl<'a> Probe<'a> {
         }
     }
 
-
-    /// Methods declared by a trait the candidate is known to implement because
-    /// it *is* that trait: `dyn Trait`, or a parameter carrying the bound.
-    fn declared_picks(
-        &self,
-        candidate: &Ty,
-        adjusted: &Ty,
-        name: &str,
-        explicit: &[Ty],
-    ) -> Vec<Pick> {
-        let bounds: Vec<TraitRef> = match candidate {
-            Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => traits.clone(),
-            Ty::Param(param) => self
-                .param_bounds
-                .iter()
-                .filter(|(p, _)| p == param)
-                .map(|(_, t)| t.clone())
-                .collect(),
-            _ => return Vec::new(),
-        };
-
-        let mut picks = Vec::new();
-        for bound in &bounds {
-            // The trait the declaration sits on, with the arguments the bound
-            // gave it: `T: Sub<u8>` reaches `Super<u8>::get`, not `Super<A>`'s.
-            let Some((owner, method)) = self.reg.trait_method_of(bound, name) else {
-                continue;
-            };
-            // The trait's own declaration writes its receiver in terms of
-            // `Self`, which here is the object or the bounded parameter.
-            let Some(receiver) = &method.sig.receiver else {
-                continue;
-            };
-            let mut self_subst = Subst::new();
-            self_subst.insert("Self".to_string(), candidate.clone());
-            if &receiver.substitute(&self_subst) != adjusted {
-                continue;
-            }
-            let Some(trait_def) = self.reg.trait_def(owner.id) else {
-                continue;
-            };
-            let mut subst = bind_params(&trait_def.generics, &owner.args);
-            subst.insert("Self".to_string(), candidate.clone());
-            for (assoc, ty) in &owner.bindings {
-                subst.insert(assoc.clone(), ty.clone());
-            }
-            // A turbofish says what the method's own parameters are, and a call
-            // dispatched through a bound has them too: `i.collect::<Vec<_>>()`
-            // on an `I: Iterator` said nothing about `Vec` without this.
-            self.bind_explicit(&method.sig, explicit, &mut subst);
-            picks.push(Pick {
-                callee: Callee::TraitObject(owner.id, name.to_string()),
-                ret: method.sig.ret.substitute(&subst),
-                subst,
-                obligations: Vec::new(),
-            });
-        }
-        picks
-    }
 
     fn impl_picks(
         &self,
@@ -761,7 +717,7 @@ impl<'a> Probe<'a> {
     /// `B: FromIterator<Self::Item>` with `B = Vec<_>` picks
     /// `impl<T> FromIterator<T> for Vec<T>` and reads `T` off the item type. A
     /// hole no bound can fill stays `Infer`, which is the truth about it.
-    fn bind_explicit(&self, sig: &super::MethodSig, explicit: &[Ty], subst: &mut Subst) {
+    pub(super) fn bind_explicit(&self, sig: &super::MethodSig, explicit: &[Ty], subst: &mut Subst) {
         for (param, written) in sig.type_params.iter().zip(explicit) {
             let written = self.normalize(&written.substitute(subst));
             let filled = if written.contains_infer() {
@@ -838,10 +794,10 @@ fn candidate_heads(candidate: &Ty) -> Vec<Head> {
 
 #[derive(Debug, Clone)]
 pub(super) struct Pick {
-    callee: Callee,
-    ret: Ty,
-    subst: Subst,
-    obligations: Vec<Obligation>,
+    pub(super) callee: Callee,
+    pub(super) ret: Ty,
+    pub(super) subst: Subst,
+    pub(super) obligations: Vec<Obligation>,
 }
 
 pub(super) enum Holds {

@@ -25,9 +25,12 @@ pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<Str
         // Rust quotes and escapes a string under Debug, which is what JSON's
         // own string form does.
         Ty::Str => Ok(format!("JSON.stringify({})", expr)),
-        // Rust prints a `char` between single quotes, and the port writes a
-        // `char` as a one-character string — so the quotes are the rendering.
-        Ty::Prim(Prim::Char) => Ok(format!("`'${{{}}}'`", expr)),
+        // Rust prints a `char` between single quotes and ESCAPES what it holds
+        // — `'\''`, `'\\'`, `'\n'`. The port writes a `char` as a
+        // one-character string, and writing the quotes alone printed the
+        // character raw: `'''` for a quote, and a literal line break for a
+        // newline (F6).
+        Ty::Prim(Prim::Char) => Ok(format!("debugChar({})", expr)),
         // A float keeps its decimal point: Rust's Debug for `1.0f64` is `1.0`
         // and JavaScript's `String(1.0)` is `1`, so a `Value::F64(1.0)` printed
         // `F64(1)` where Rust prints `F64(1.0)`. And `-0.0` prints with its
@@ -47,7 +50,10 @@ pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<Str
                 .collect();
             let parts = parts?;
             let rendered: Vec<String> = parts.iter().map(|p| format!("${{{}}}", p)).collect();
-            Ok(format!("(($t) => `({})`)({})", rendered.join(", "), expr))
+            // Rust writes a ONE-tuple with the comma that tells it from a
+            // parenthesised value: `(7u32,)` is `(7,)`, not `(7)` (F6).
+            let comma = if rendered.len() == 1 { "," } else { "" };
+            Ok(format!("(($t) => `({}{})`)({})", rendered.join(", "), comma, expr))
         }
         Ty::Named { id, args } => named(reg, *id, args, expr),
         other => Err(format!("`{}` has no Debug rendering in the port", describe(other))),
@@ -108,9 +114,17 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
             return sequence(reg, inner, expr);
         }
         // Rust prints a set as `{a, b}` and a map as `{k: v, w: x}`, each part
-        // through its own Debug. The port holds both in a runtime container
-        // that iterates its contents, and a `BTreeMap` iterates in key order —
-        // which is what the ordering note in the container says.
+        // through its own Debug, in the order the container iterates.
+        //
+        // For a `HashMap` and a `HashSet` that order is Rust's own hashing
+        // order and nothing observes it. For a `BTreeMap` and a `BTreeSet` it
+        // is KEY order, and the port has no ordered container: the runtime's
+        // map iterates in insertion order, so a rendered `BTreeMap` prints its
+        // pairs in the order they were inserted (E6). That gap is reported
+        // where the container is CONSTRUCTED — every `BTreeMap::new` carries
+        // the diagnostic — which is where it can be fixed; there is nothing
+        // here to sort by, because the `Ord` the keys are sorted with is not a
+        // value this rendering holds. Live at `proto/data.ts` 326 and 633.
         "HashSet" | "BTreeSet" => {
             let Some(inner) = args.first() else {
                 return Err("a set with no element type".to_string());
@@ -154,6 +168,20 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
         // the declaration the field printed through `toString`, which for a
         // class is `[object Object]`.
         if reg.declares_debug(id) {
+            // F7: a hand-written generic prints its payload from the VALUE's
+            // own surface, because there is no `Ty` at that position for the
+            // emitter to read. An erased JavaScript string is a Rust `String`
+            // and a Rust `char` alike, and their Debug syntax differs — `"a"`
+            // against `'a'` — so a `char` instantiation is the one thing the
+            // runtime cannot get right, and it is reported here rather than
+            // rendered as a guess.
+            if let Some(at) = args.iter().position(|a| matches!(a.peel_refs(), Ty::Prim(Prim::Char))) {
+                return Err(format!(
+                    "`{}` is written by hand and prints its type argument from the value's own                      surface, and argument {} is a `char`: the port writes one as a                      one-character string, which is what a `String` is too, and Rust prints                      those differently",
+                    path,
+                    at + 1
+                ));
+            }
             return Ok(format!("{}.debug()", expr));
         }
         return Err(format!(
@@ -279,13 +307,57 @@ mod tests {
         assert!(written.contains("'inf'"), "{}", written);
     }
 
-    /// A `char` prints between single quotes, and the port writes one as a
-    /// one-character string — so the quotes are the whole rendering.
+    /// A `char` prints between single quotes, and Rust ESCAPES what is inside
+    /// them.
+    ///
+    /// F6: the port writes a `char` as a one-character string, and writing the
+    /// quotes alone printed the character raw — `'''` for a quote, `'\'` for a
+    /// backslash, and a literal line break for a newline, where Rust writes
+    /// `'\''`, `'\\'` and `'\n'`.
     #[test]
-    fn a_char_prints_between_quotes() {
+    fn a_char_prints_between_quotes_and_escaped() {
         let f = built("pub struct S { pub c: char }");
         let ty = f.field("lib.rs", "S", "c");
-        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.c").unwrap(), "`'${this.c}'`");
+        assert_eq!(debug_expr(&f.reg, Some(&ty), "this.c").unwrap(), "debugChar(this.c)");
+    }
+
+    /// F6: Rust writes a ONE-tuple with the comma that tells it from a
+    /// parenthesised value — `(7u32,)` is `(7,)`.
+    #[test]
+    fn a_one_tuple_keeps_the_comma_that_makes_it_a_tuple() {
+        let f = built("pub struct S { pub one: (u32,), pub two: (u32, u32) }");
+        let one = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "one")), "this.one").unwrap();
+        assert!(one.ends_with("`)(this.one)"), "{}", one);
+        assert!(one.contains("},)`"), "the singleton comma:\n{}", one);
+        let two = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "two")), "this.two").unwrap();
+        assert!(!two.contains(",)`"), "a two-tuple has no trailing comma:\n{}", two);
+    }
+
+    /// F7: a hand-written generic prints its payload from the VALUE's own
+    /// surface, and an erased JavaScript string is a Rust `String` and a Rust
+    /// `char` alike — `"a"` against `'a'`. A `char` instantiation is the one
+    /// thing that surface cannot get right, so it is reported rather than
+    /// rendered as a guess.
+    #[test]
+    fn a_provided_generic_instantiated_with_a_char_is_reported() {
+        let mut f = built(
+            "pub struct Held<T> { pub payload: T }\n\
+             pub struct S { pub c: Held<char>, pub s: Held<String> }",
+        );
+        let held = f.reg.module_type(f.module("lib.rs"), "Held").expect("Held is declared");
+        f.reg.mark_members_hand_written(held);
+        f.reg.mark_declares_debug(held);
+
+        let with_char = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "c")), "this.c");
+        assert!(with_char.is_err(), "a char payload was rendered: {:?}", with_char);
+        assert!(
+            with_char.unwrap_err().contains("argument 1 is a `char`"),
+            "the reason names the argument"
+        );
+
+        // Every other instantiation prints through the hand-written `debug()`.
+        let with_string = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "s")), "this.s").unwrap();
+        assert_eq!(with_string, "this.s.debug()");
     }
 
     /// An `Rc` and an `Arc` print their payload, and the port holds that

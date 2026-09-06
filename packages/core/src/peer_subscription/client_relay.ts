@@ -1,481 +1,747 @@
 // MIRRORS: ankurah/core/src/peer_subscription/client_relay.rs
+import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFilterMap, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
+import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
+import { SendError } from '../connector';
+import { ApplyError, MutationError, RequestError, RetrievalError, StateError } from '../error';
+import { ContextData } from '../node';
+import { NodeApplier } from '../node_applier';
+import { AccessDenied } from '../policy';
+import { PropertyError } from '../property/traits';
+import { EphemeralNodeRetriever, GetEvents } from '../retrieval';
+import { spawn } from '../task';
+import { SafeSet } from '../util/safeset';
+import { ParseError, Selection } from '@ankurah/ankql';
+import { Get } from '@ankurah/signals';
 
-// TODO: Rename this module from client_relay to remote_subscription for clarity
-
-import type { CollectionId, EntityId, QueryId } from '@ankurah/proto';
-import type { Selection } from '@ankurah/ankql';
-
-import { RequestError, RetrievalError } from '../error.ts';
-import { spawn } from '../task.ts';
-
-// ── RemoteQuerySubscriber ───────────────────────────────────────────────────
-// Rust: pub trait RemoteQuerySubscriber: Clone + Send + Sync + 'static
-
-/// Trait for query initialization that can be driven by SubscriptionRelay
-/// Abstracts the relay's interaction with LiveQuery
-export interface RemoteQuerySubscriber {
-  /// Called after remote subscription deltas have been applied
-  /// Dispatches to initialize (version 1) or update_selection_init (version >1) internally
-  /// Handles marking initialization as complete and setting last_error on failure
-  subscriptionEstablished(version: number): Promise<void>;
-
-  /// Set the last error for this subscription
-  setLastError(error: RetrievalError): void;
-}
-
-// ── Status ──────────────────────────────────────────────────────────────────
-// Rust: pub enum Status { PendingRemote, Requested(EntityId, u32), Established(EntityId, u32), PendingUpdate(EntityId, u32), Failed }
-
-export type Status =
-  | { type: 'PendingRemote' }
-  | { type: 'Requested'; peerId: EntityId; version: number }
-  | { type: 'Established'; peerId: EntityId; version: number }
-  | { type: 'PendingUpdate'; peerId: EntityId; version: number }
-  | { type: 'Failed' }; // Non-retryable
-
-// Divergence: Rust uses enum variants with positional fields; TS uses discriminated union [E8]
-
-// ── Content ─────────────────────────────────────────────────────────────────
-// Rust: pub struct Content<CD: ContextData>
-
-export interface Content<CD> {
+export class Content<CD extends ContextData> extends Struct {
   readonly queryId: QueryId;
   readonly collectionId: CollectionId;
   readonly selection: Selection;
   readonly contextData: CD;
   readonly version: number;
+
+  constructor(queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: CD, version: number) {
+    super();
+    this.queryId = queryId;
+    this.collectionId = collectionId;
+    this.selection = selection;
+    this.contextData = contextData;
+    this.version = version;
+  }
+
+  debug(): string {
+    return `Content { queryId: ${this.queryId}, collectionId: ${this.collectionId.debug()}, selection: ${this.selection.debug()}, contextData: ${this.contextData}, version: ${String(this.version)} }`;
+  }
 }
 
-// ── RemoteQueryState ────────────────────────────────────────────────────────
-// Rust: pub struct RemoteQueryState<CD: ContextData, Q: RemoteQuerySubscriber>
-
-export interface RemoteQueryState<CD, Q extends RemoteQuerySubscriber> {
-  content: Content<CD>;
+export class RemoteQueryState<CD extends ContextData, Q extends RemoteQuerySubscriber> extends Struct {
+  content: Arc<Content<CD>>;
   status: Status;
-  livequery: Q;
-}
+  readonly livequery: Q;
 
-// ── TNode ───────────────────────────────────────────────────────────────────
-// Rust: pub trait TNode<CD: ContextData>: Send + Sync
-
-/// Trait for communicating with remote peers (abstraction over WeakNode for testing)
-export interface TNode<CD> {
-  /// Send a predicate registration request to a remote peer, fetch known matches,
-  /// apply received deltas, and store used events.
-  /// Returns Ok(()) if subscription was established and deltas applied successfully.
-  remoteSubscribe(
-    peerId: EntityId,
-    queryId: QueryId,
-    collectionId: CollectionId,
-    selection: Selection,
-    contextData: CD,
-    version: number,
-  ): Promise<void>;
-
-  /// Send a predicate unregistration message to a remote peer
-  /// This is a one-way message, no response expected
-  peerUnsubscribe(peerId: EntityId, queryId: QueryId): Promise<void>;
-}
-
-// ── SubscriptionRelay ───────────────────────────────────────────────────────
-// Rust: pub struct SubscriptionRelay<CD: ContextData, Q: RemoteQuerySubscriber>
-//
-// Manages predicate registration on remote peer reactor subscriptions.
-//
-// The SubscriptionRelay provides a resilient, event-driven approach to managing which predicates
-// are registered with remote durable peers. It automatically handles:
-// - Registering predicates on peer reactor subscriptions when peers connect
-// - Re-registering predicates when peers disconnect and reconnect
-// - Retrying failed predicate registration attempts
-// - Clean teardown when predicates are removed
-// - Storing ContextData for each predicate to enable proper authorization
-//
-// This design separates predicate management concerns from the main Node implementation,
-// making it easier to test and reason about predicate lifecycle management.
-//
-// # Public API (for Node integration)
-//
-// - `subscribeQuery()` - Call when local subscriptions are created (parallel to reactor.subscribe)
-// - `unsubscribePredicate()` - Call when local subscriptions are removed (parallel to reactor.unsubscribe)
-// - `notifyPeerConnected()` - Call when durable peers connect (triggers automatic predicate registration)
-// - `notifyPeerDisconnected()` - Call when durable peers disconnect (orphans predicate registrations)
-// - `getStatus()` - Query current state of a predicate registration
-//
-// # Internal/Testing API
-//
-// - `setupRemoteSubscriptions()` - Internal method for triggering predicate registration with specific peers
-//   (called automatically by notifyPeerConnected, but exposed for testing)
-
-export class SubscriptionRelay<CD, Q extends RemoteQuerySubscriber> {
-  // Divergence: Rust uses Arc<SubscriptionRelayInner> for shared ownership;
-  // TS is single-threaded, so fields are directly on the class [E8].
-
-  // All subscription information in one place
-  // Divergence: Rust uses Mutex<HashMap>; TS uses plain Map (single-threaded) [E8]
-  private readonly subscriptions: Map<string, RemoteQueryState<CD, Q>> = new Map();
-
-  // Track connected durable peers
-  // Divergence: Rust uses SafeSet<EntityId>; TS uses Set with string keys for lookup [E8]
-  private readonly connectedPeers: Set<string> = new Set();
-  private readonly connectedPeerIds: Map<string, EntityId> = new Map();
-
-  // Node for communicating with remote peers
-  // Divergence: Rust uses OnceLock<Arc<dyn TNode<CD>>>; TS uses nullable field [E8]
-  private node: TNode<CD> | null = null;
-
-  // Shutdown signal for retry task
-  // Divergence: Rust uses tokio::sync::mpsc::Sender; TS uses clearInterval [E8]
-  private retryIntervalId: ReturnType<typeof setInterval> | null = null;
-
-  // impl Default
-  // Rust: fn default() -> Self { Self::new() }
-
-  constructor() {
-    this.startRetryTask();
+  constructor(content: Arc<Content<CD>>, status: Status, livequery: Q) {
+    super();
+    this.content = content;
+    this.status = status;
+    this.livequery = livequery;
   }
+}
 
-  /// Inject the node (typically a WeakNode for production)
-  ///
-  /// This should be called once during initialization. Returns an error if
-  /// the node has already been set.
-  setNode(node: TNode<CD>): void {
-    if (this.node !== null) {
-      throw new Error('Node has already been set');
-    }
+class SubscriptionRelayInner<CD extends ContextData, Q extends RemoteQuerySubscriber> extends Struct {
+  subscriptions: Mutex<HashMap<QueryId, RemoteQueryState<CD, Q>>>;
+  connectedPeers: SafeSet<EntityId>;
+  node: OnceLock<Arc<TNode>>;
+  _shutdownTx: Sender<void>;
+
+  constructor(subscriptions: Mutex<HashMap<QueryId, RemoteQueryState<CD, Q>>>, connectedPeers: SafeSet<EntityId>, node: OnceLock<Arc<TNode>>, _shutdownTx: Sender<void>) {
+    super();
+    this.subscriptions = subscriptions;
+    this.connectedPeers = connectedPeers;
     this.node = node;
+    this._shutdownTx = _shutdownTx;
+  }
+}
+
+export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubscriber> extends Struct {
+  inner: Arc<SubscriptionRelayInner<CD, Q>>;
+
+  constructor(inner: Arc<SubscriptionRelayInner<CD, Q>>) {
+    super();
+    this.inner = inner;
   }
 
-  /// Notify the relay that a new predicate needs to be registered on remote peer subscriptions
-  ///
-  /// This should be called whenever a local subscription is established. The relay will
-  /// track this predicate and automatically attempt to register it with available durable peers.
-  subscribeQuery(
-    queryId: QueryId,
-    collectionId: CollectionId,
-    selection: Selection,
-    contextData: CD,
-    version: number,
-    livequery: Q,
-  ): void {
-    console.debug(`SubscriptionRelay.subscribePredicate() - New predicate ${queryId} needs remote registration`);
-
-    const key = queryId.toUlidString();
-    this.subscriptions.set(key, {
-      content: { collectionId, selection, contextData, queryId, version },
-      status: { type: 'PendingRemote' },
-      livequery,
-    });
-
-    // Immediately attempt setup with available peers
-    if (this.connectedPeers.size > 0) {
-      this.setupRemoteSubscriptions();
-    }
+  static new<CD, Q>(): SubscriptionRelay<CD, Q> {
+    const [shutdownTx, shutdownRx] = tokio.sync.mpsc.channel(1);
+    const relay = new SubscriptionRelay(Arc.new(new SubscriptionRelayInner(new Mutex(new HashMap()), SafeSet.new(), OnceLock.new(), shutdownTx)));
+    relay.startRetryTask(shutdownRx);
+    return relay;
   }
 
-  updateQuery(queryId: QueryId, selection: Selection, version: number): void {
-    console.debug(`SubscriptionRelay.updateQuery() - New query ${queryId} needs remote registration`);
-
-    const key = queryId.toUlidString();
-    const state = this.subscriptions.get(key);
-    if (state === undefined) {
-      throw new Error(`Predicate ${queryId} not found`);
-    }
-
-    // Update the content with new predicate and version
-    const oldContent = state.content;
-    state.content = {
-      collectionId: oldContent.collectionId,
-      selection,
-      contextData: oldContent.contextData,
-      queryId: oldContent.queryId,
-      version,
-    };
-
-    if (state.status.type === 'Established') {
-      const peerId = state.status.peerId;
-      // Update to new version, mark as requested for this peer
-      state.status = { type: 'Requested', peerId, version };
-      this.updateQueryOnPeer(peerId, queryId, state.content.collectionId, selection, version, state.content.contextData);
-    } else {
-      // Not established yet, just update to PendingRemote and setup
-      state.status = { type: 'PendingRemote' };
-      this.setupRemoteSubscriptions();
-    }
+  setNode(node: Arc<TNode>): Result<void, void> {
+    return this.inner.value.node.set(node).mapErr((_) => []);
   }
 
-  private updateQueryOnPeer(
-    peerId: EntityId,
-    queryId: QueryId,
-    collectionId: CollectionId,
-    selection: Selection,
-    version: number,
-    contextData: CD,
-  ): void {
-    spawn((async () => {
-      if (this.node === null) return;
-
-      const key = queryId.toUlidString();
-      // Get the livequery for error handling
-      const livequery = this.subscriptions.get(key)?.livequery ?? null;
-
+  subscribeQuery(queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: CD, version: number, livequery: Q): void {
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
       try {
-        // Send the updated predicate to the peer
-        await this.node.remoteSubscribe(peerId, queryId, collectionId, selection, contextData, version);
-
-        // Deltas applied successfully, now activate the livequery
-        if (livequery !== null) {
-          await livequery.subscriptionEstablished(version);
+        tracing.debug(`SubscriptionRelay.subscribe_predicate() - New predicate ${queryId} needs remote registration`);
+        (() => {
+          _moved0 = true;
+          _moved1 = true;
+          const _t2 = this.inner.value.subscriptions.lock();
+          try {
+            _t2.value.set(queryId, new RemoteQueryState(Arc.new(new Content(queryId, collectionId, selection, contextData, version)), new Status('PendingRemote', {}), livequery));
+          } finally {
+            _t2.drop();
+          }
+        })();
+        if (!this.inner.value.connectedPeers.isEmpty()) {
+          this.setupRemoteSubscriptions();
         }
-
-        // Mark as established - subscription succeeded even if livequery activation had issues
-        const info = this.subscriptions.get(key);
-        if (info !== undefined) {
-          info.status = { type: 'Established', peerId, version };
-        }
-        console.debug(`Successfully updated predicate ${queryId} on peer ${peerId} subscription`);
-      } catch (e) {
-        // Handle error with retry logic
-        await this.handleError(queryId, peerId, e as RetrievalError, livequery);
+      } finally {
+        if (!_moved1) selection.drop();
       }
-    })());
+    } finally {
+      if (!_moved0) collectionId.drop();
+    }
   }
 
-  /// Notify the relay that a predicate should be removed from remote peer subscriptions
-  ///
-  /// This will clean up all tracking state and send unsubscribe requests to any
-  /// remote peers that have this predicate registered.
-  unsubscribePredicate(queryId: QueryId): void {
-    console.debug(`Unregistering predicate ${queryId}`);
+  updateQuery(queryId: QueryId, selection: Selection, version: number): Result<void, AnyhowError> {
+    let _moved0 = false;
+    try {
+      tracing.debug(`SubscriptionRelay.update_query() - New query ${queryId} needs remote registration`);
+      const _m5 = (() => {
+        {
+          let subscriptions = this.inner.value.subscriptions.lock();
+          try {
+            const _v = subscriptions.value.get(queryId);
+            if (_v != null) {
+              const state = _v;
+              {
+                const oldContent = state.content;
+                try {
+                  const _a1 = Arc.new(new Content(oldContent.value.queryId, oldContent.value.collectionId.clone(), selection.clone(), oldContent.value.contextData.clone(), version));
+                  state.content.drop();
+                  state.content = _a1;
+                  const _m3 = () => {
+                    const _a2 = new Status('PendingRemote', {});
+                    state.status.drop();
+                    state.status = _a2;
+                    return null;
+                  };
+                  return state.status.match<any>({
+                    Established: (v) => {
+                      const peerId = v._0;
+                      const _oldVersion = v._1;
+                      const _a4 = new Status('Requested', { _0: peerId, _1: version });
+                      state.status.drop();
+                      state.status = _a4;
+                      return [peerId, state.content.value.collectionId.clone(), state.content.value.contextData.clone()];
+                    },
+                    PendingRemote: () => {
+                      return _m3();
+                    },
+                    Requested: () => {
+                      return _m3();
+                    },
+                    PendingUpdate: () => {
+                      return _m3();
+                    },
+                    Failed: () => {
+                      return _m3();
+                    },
+                  });
+                } finally {
+                  oldContent.drop();
+                }
+              }
+            } else {
+              return { $jump: 'return', $value: Result.Err(AnyhowError.msg(`Predicate ${queryId} not found`)) };
+            }
+          } finally {
+            subscriptions.drop();
+          }
+        }
+      })();
+      if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
+      const update = (_m5 as any);
+      if (update != null) {
+        const [peerId, collectionId, contextData] = update;
+        _moved0 = true;
+        this.updateQueryOnPeer(peerId, queryId, collectionId, selection, version, contextData);
+      } else {
+        this.setupRemoteSubscriptions();
+      };
+      return Result.Ok([]);
+    } finally {
+      if (!_moved0) selection.drop();
+    }
+  }
 
-    const key = queryId.toUlidString();
-    const info = this.subscriptions.get(key);
-    if (info !== undefined) {
-      this.subscriptions.delete(key);
-
-      if (info.status.type === 'Established') {
-        const peerId = info.status.peerId;
-        if (this.node !== null) {
-          const node = this.node;
+  updateQueryOnPeer(peerId: EntityId, queryId: QueryId, collectionId: CollectionId, selection: Selection, version: number, contextData: CD): void {
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        const me = this.clone();
+        try {
           spawn((async () => {
-            try {
-              await node.peerUnsubscribe(peerId, queryId);
-              console.debug(`Successfully sent unsubscribe message for ${queryId}`);
-            } catch (e) {
-              console.warn(`Failed to send unsubscribe message for ${queryId}: ${e}`);
+            {
+              const _v4 = me.inner.value.node.get();
+              if (_v4 != null) {
+                const node = _v4;
+                const _t2 = me.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+                try {
+                  const _m3 = _t2.value.get(queryId);
+                  const livequery = (_m3 != null ? ((state) => state.livequery.clone())(_m3!) : null);
+                  _t2.drop();
+                  _moved0 = true;
+                  _moved1 = true;
+                  const _v = await TNode_dispatch_remoteSubscribe(node.value, peerId, queryId, collectionId, selection, contextData, version);
+                  if (_v.isOk()) {
+                    const _v1 = _v.unwrap();
+                    {
+                      {
+                        const _v2 = livequery;
+                        if (_v2 != null) {
+                          const lq = _v2;
+                          await lq.subscriptionEstablished(version);
+                        }
+                      }
+                      let subscriptions = me.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+                      try {
+                        {
+                          const _v3 = subscriptions.value.get(queryId);
+                          if (_v3 != null) {
+                            const info = _v3;
+                            const _a4 = new Status('Established', { _0: peerId, _1: version });
+                            info.status.drop();
+                            info.status = _a4;
+                          }
+                        }
+                        tracing.debug(`Successfully updated predicate ${queryId} on peer ${peerId} subscription`);
+                      } finally {
+                        subscriptions.drop();
+                      }
+                    }
+                  } else {
+                    const e = _v.unwrapErr();
+                    let _moved5 = false;
+                    try {
+                      {
+                        _moved5 = true;
+                        await me.handleError(queryId, peerId, e, livequery);
+                      }
+                    } finally {
+                      if (!_moved5) e.drop();
+                    }
+                  }
+                } finally {
+                  _t2.drop();
+                }
+              }
             }
           })());
+        } finally {
+          me.drop();
         }
+      } finally {
+        if (!_moved1) selection.drop();
+      }
+    } finally {
+      if (!_moved0) collectionId.drop();
+    }
+  }
+
+  unsubscribePredicate(queryId: QueryId): void {
+    tracing.debug(`Unregistering predicate ${queryId}`);
+    {
+      let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+      try {
+        {
+          const _v3 = subscriptions.value.remove(queryId);
+          if (_v3 != null) {
+            const info = _v3;
+            try {
+              {
+                const _v2 = info.status;
+                if (_v2.is('Established')) {
+                  const { _0: peerId, _1: _version } = _v2.value;
+                  const node = this.inner.value.node.get();
+                  {
+                    const _v1 = node;
+                    if (_v1 != null) {
+                      const node = _v1;
+                      const node_1 = node.clone();
+                      try {
+                        const peerId_1 = peerId;
+                        spawn((async () => {
+                          {
+                            const _v = await TNode_dispatch_peerUnsubscribe(node_1.value, peerId_1, queryId);
+                            if (_v.isErr()) {
+                              const e = _v.unwrapErr();
+                              tracing.warn(`Failed to send unsubscribe message for ${queryId}: ${e}`);
+                            } else {
+                            tracing.debug(`Successfully sent unsubscribe message for ${queryId}`);
+                          }
+                          }
+                        })());
+                      } finally {
+                        node_1.drop();
+                      }
+                    }
+                  }
+                }
+              }
+            } finally {
+              info.drop();
+            }
+          }
+        }
+      } finally {
+        subscriptions.drop();
       }
     }
   }
 
-  /// Handle peer disconnection - mark all predicates for that peer as needing re-registration
-  ///
-  /// This should be called when a durable peer disconnects. All predicates registered
-  /// with that peer will be marked as pending and will be automatically re-registered
-  /// when the peer reconnects or another suitable peer becomes available.
   notifyPeerDisconnected(peerId: EntityId): void {
-    console.debug(`Peer ${peerId} disconnected, orphaning predicate registrations`);
-
-    const peerKey = peerId.toBase64();
-    // Remove from connected peers
-    this.connectedPeers.delete(peerKey);
-    this.connectedPeerIds.delete(peerKey);
-
-    for (const info of this.subscriptions.values()) {
-      if (
-        (info.status.type === 'Established' || info.status.type === 'Requested') &&
-        info.status.peerId.equals(peerId)
-      ) {
-        // Update state to pending
-        info.status = { type: 'PendingRemote' };
-        console.warn(`Predicate ${info.content.queryId} orphaned due to peer ${peerId} disconnect`);
-      }
-    }
-
-    // Resubscribe any orphaned subscriptions
-    this.setupRemoteSubscriptions();
-  }
-
-  /// Handle peer connection - trigger predicate registration on the new peer subscription
-  ///
-  /// This should be called when a new durable peer connects. The relay will automatically
-  /// attempt to register any pending predicates on the newly connected peer's subscription.
-  notifyPeerConnected(peerId: EntityId): void {
-    console.debug(`SubscriptionRelay.notifyPeerConnected() - Peer ${peerId} connected, registering predicates on peer subscription`);
-
-    const peerKey = peerId.toBase64();
-    // Add to connected peers
-    this.connectedPeers.add(peerKey);
-    this.connectedPeerIds.set(peerKey, peerId);
-
-    // Trigger setup with all connected peers
-    this.setupRemoteSubscriptions();
-  }
-
-  /// Get the current state of a predicate registration
-  getStatus(queryId: QueryId): Status | null {
-    const key = queryId.toUlidString();
-    const info = this.subscriptions.get(key);
-    return info?.status ?? null;
-  }
-
-  /// Get all unique contexts for predicates established or requested with a specific peer
-  /// TODO: update the data structure to do this via a direct lookup rather than having to scan the entire map
-  getContextsForPeer(peerId: EntityId): Set<CD> {
-    const contexts = new Set<CD>();
-    for (const state of this.subscriptions.values()) {
-      if (
-        (state.status.type === 'Established' || state.status.type === 'Requested') &&
-        state.status.peerId.equals(peerId)
-      ) {
-        contexts.add(state.content.contextData);
-      }
-    }
-    return contexts;
-  }
-
-  /// Register predicates on available durable peer subscriptions
-  // Divergence: Rust marks this as private (not pub); exposed here for testing like Rust does [E8]
-  setupRemoteSubscriptions(): void {
-    if (this.node === null) {
-      console.warn('No node configured for remote subscription setup');
-      return;
-    }
-
-    // For now, use the first available peer (could be made smarter)
-    if (this.connectedPeers.size === 0) {
-      console.warn('No durable peers available for remote subscription setup');
-      return;
-    }
-
-    const firstPeerKey = this.connectedPeers.values().next().value!;
-    const targetPeer = this.connectedPeerIds.get(firstPeerKey)!;
-
-    // Atomically get pending subscriptions and mark them as requested
-    const pending: Content<CD>[] = [];
-    for (const info of this.subscriptions.values()) {
-      if (info.status.type === 'PendingRemote') {
-        info.status = { type: 'Requested', peerId: targetPeer, version: info.content.version };
-        pending.push(info.content);
-      }
-    }
-
-    if (pending.length === 0) {
-      return;
-    }
-
-    console.debug(`Registering ${pending.length} predicates on ${this.connectedPeers.size} peer subscriptions`);
-
-    const node = this.node;
-    for (const content of pending) {
-      spawn(this.attemptSubscribe(node, targetPeer, content));
-    }
-  }
-
-  private async attemptSubscribe(node: TNode<CD>, targetPeer: EntityId, content: Content<CD>): Promise<void> {
-    const queryId = content.queryId;
-    const selection = content.selection;
-    const contextData = content.contextData;
-    const version = content.version;
-
-    const key = queryId.toUlidString();
-    // Get the livequery for error handling
-    const livequery = this.subscriptions.get(key)?.livequery ?? null;
-
+    tracing.debug(`Peer ${peerId} disconnected, orphaning predicate registrations`);
+    this.inner.value.connectedPeers.remove(peerId);
+    const _t0 = this.inner.value.subscriptions.lock();
     try {
-      // Call remote_subscribe which fetches known matches, subscribes, applies deltas, and stores events
-      await node.remoteSubscribe(targetPeer, queryId, content.collectionId, selection, contextData, version);
-
-      // Deltas applied successfully, now activate the livequery
-      // The livequery handles its own errors internally
-      if (livequery !== null) {
-        await livequery.subscriptionEstablished(version);
-      }
-
-      // Mark as established - subscription succeeded even if livequery activation had issues
-      const info = this.subscriptions.get(key);
-      if (info !== undefined) {
-        info.status = { type: 'Established', peerId: targetPeer, version };
-      }
-      console.debug(`Successfully registered predicate ${queryId} on peer ${targetPeer} subscription`);
-    } catch (e) {
-      // Handle error with retry logic
-      await this.handleError(queryId, targetPeer, e as RetrievalError, livequery);
-    }
-  }
-
-  /// Start background task that periodically retries pending subscriptions
-  // Divergence: Rust uses tokio::select! with mpsc shutdown; TS uses setInterval + clearInterval [E8]
-  private startRetryTask(): void {
-    this.retryIntervalId = setInterval(() => {
-      // Attempt to setup any pending subscriptions
-      this.setupRemoteSubscriptions();
-    }, 5000);
-  }
-
-  /// Stop the background retry task
-  // Divergence: Rust relies on dropping _shutdown_tx; TS explicitly clears the interval [E8]
-  destroy(): void {
-    if (this.retryIntervalId !== null) {
-      clearInterval(this.retryIntervalId);
-      this.retryIntervalId = null;
-    }
-  }
-
-  /// Handle errors with retry logic
-  private async handleError(
-    queryId: QueryId,
-    targetPeer: EntityId,
-    error: RetrievalError,
-    livequery: Q | null,
-  ): Promise<void> {
-    const errorMsg = String(error);
-
-    // Evaluate retriability at failure time
-    let isRetryable = false;
-    if (error instanceof RetrievalError && error.kind === 'RequestError') {
-      const reqErr = error.detail;
-      if (reqErr instanceof RequestError) {
-        switch (reqErr.kind) {
-          case 'PeerNotConnected':
-          case 'ConnectionLost':
-          case 'SendError':
-          case 'InternalChannelClosed':
-            isRetryable = true;
-            break;
-          case 'ServerError':
-          case 'UnexpectedResponse':
-          case 'AccessDenied':
-            isRetryable = false;
-            break;
+      for (const info of _t0.value.values()) {
+        {
+          const _v = info.status;
+          if ((_v.is('Established')) || (_v.is('Requested'))) {
+            const { _0: establishedPeerId } = _v.value;
+            if (establishedPeerId.equals(peerId)) {
+              const _a1 = new Status('PendingRemote', {});
+              info.status.drop();
+              info.status = _a1;
+              tracing.warn(`Predicate ${info.content.value.queryId} orphaned due to peer ${peerId} disconnect`);
+            }
+          }
         }
       }
+    } finally {
+      _t0.drop();
     }
-    // Other retrieval errors are not retryable
+    this.setupRemoteSubscriptions();
+  }
 
-    // Update state based on retriability
-    const key = queryId.toUlidString();
-    const info = this.subscriptions.get(key);
-    if (info !== undefined) {
-      if (isRetryable) {
-        // Retryable errors go back to pending for retry by background task
-        info.status = { type: 'PendingRemote' };
-        console.warn(`Retryable failure for predicate ${queryId} with peer ${targetPeer}: ${errorMsg} - will retry`);
+  notifyPeerConnected(peerId: EntityId): void {
+    tracing.debug(`SubscriptionRelay.notify_peer_connected() - Peer ${peerId} connected, registering predicates on peer subscription`);
+    this.inner.value.connectedPeers.insert(peerId);
+    this.setupRemoteSubscriptions();
+  }
+
+  getStatus(queryId: QueryId): Status | null {
+    const subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+    try {
+      const _m0 = subscriptions.value.get(queryId);
+      return (_m0 != null ? ((info) => info.status.clone())(_m0!) : null);
+    } finally {
+      subscriptions.drop();
+    }
+  }
+
+  getContextsForPeer(peerId: EntityId): HashSet<CD> {
+    const subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+    try {
+      let contexts = new HashSet();
+      for (const [, state] of [...subscriptions.value]) {
+        if ((state.status.is('Established')) || (state.status.is('Requested'))) {
+          const { _0: establishedPeer } = state.status.value;
+          if (establishedPeer.equals(peerId)) {
+            contexts.insert(state.content.value.contextData.clone());
+          }
+        } else {
+
+        }
+      }
+      return contexts;
+    } finally {
+      subscriptions.drop();
+    }
+  }
+
+  setupRemoteSubscriptions(): void {
+    const _m0 = (() => {
+      const _v = this.inner.value.node.get();
+      if (_v != null) {
+        const node = _v;
+        return node;
       } else {
-        // Non-retryable errors are permanently failed
-        info.status = { type: 'Failed' };
-        console.error(`Permanent failure for predicate ${queryId} with peer ${targetPeer}: ${errorMsg} - no retry`);
-
-        // Set error on livequery
-        if (livequery !== null) {
-          livequery.setLastError(error);
+        {
+          tracing.warn('No node configured for remote subscription setup');
+          return { $jump: 'return', $value: undefined };
         }
       }
+    })();
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+    const node = (_m0 as any);
+    const connectedPeers = this.inner.value.connectedPeers.toVec();
+    if (connectedPeers.length === 0) {
+      tracing.warn('No durable peers available for remote subscription setup');
+      return;
     }
+    const targetPeer = connectedPeers[0];
+    const _t1 = this.inner.value.subscriptions.lock();
+    try {
+      const pending = iterFilterMap(_t1.value.values(), (info) => {
+        {
+          const _v1 = info.status;
+          if (_v1.is('PendingRemote')) {
+            const _a2 = new Status('Requested', { _0: targetPeer, _1: info.content.value.version });
+            info.status.drop();
+            info.status = _a2;
+            return info.content.clone();
+          } else {
+          return null;
+        }
+        }
+      });
+      _t1.drop();
+      if (pending.length === 0) {
+        return;
+      }
+      tracing.debug(`Registering ${pending.length} predicates on ${this.inner.value.connectedPeers.len()} peer subscriptions`);
+      for (const content of pending) {
+        spawn(this.clone().attemptSubscribe(node.clone(), targetPeer, content));
+      }
+    } finally {
+      _t1.drop();
+    }
+  }
+
+  async attemptSubscribe(node: Arc<TNode>, targetPeer: EntityId, content: Arc<Content<CD>>): Promise<void> {
+    try {
+      try {
+        try {
+          const queryId = content.value.queryId;
+          const predicate = content.value.selection.clone();
+          const contextData = content.value.contextData.clone();
+          const version = content.value.version;
+          const _t0 = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+          try {
+            const _m1 = _t0.value.get(queryId);
+            const livequery = (_m1 != null ? ((state) => state.livequery.clone())(_m1!) : null);
+            _t0.drop();
+            const _v = await TNode_dispatch_remoteSubscribe(node.value, targetPeer, queryId, content.value.collectionId.clone(), predicate, contextData, version);
+            if (_v.isOk()) {
+              const _v1 = _v.unwrap();
+              {
+                {
+                  const _v2 = livequery;
+                  if (_v2 != null) {
+                    const lq = _v2;
+                    await lq.subscriptionEstablished(version);
+                  }
+                }
+                let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+                try {
+                  {
+                    const _v3 = subscriptions.value.get(queryId);
+                    if (_v3 != null) {
+                      const info = _v3;
+                      const _a2 = new Status('Established', { _0: targetPeer, _1: version });
+                      info.status.drop();
+                      info.status = _a2;
+                    }
+                  }
+                  tracing.debug(`Successfully registered predicate ${queryId} on peer ${targetPeer} subscription`);
+                } finally {
+                  subscriptions.drop();
+                }
+              }
+            } else {
+              const e = _v.unwrapErr();
+              let _moved3 = false;
+              try {
+                {
+                  _moved3 = true;
+                  await this.handleError(queryId, targetPeer, e, livequery);
+                }
+              } finally {
+                if (!_moved3) e.drop();
+              }
+            }
+          } finally {
+            _t0.drop();
+          }
+        } finally {
+          content.drop();
+        }
+      } finally {
+        node.drop();
+      }
+    } finally {
+      this.drop();
+    }
+  }
+
+  startRetryTask(shutdownRx: Receiver<void>): void {
+    try {
+      const me = this.clone();
+      try {
+        spawn((async () => {
+          while (true) {
+            const delay = futuresTimer.Delay.new(time.Duration.fromSecs(5n));
+            const _v = [
+              { tag: '_0', promise: delay },
+              { tag: '_1', promise: shutdownRx.recv() },
+            ];
+            try {
+              const _v1 = await select(_v);
+              if (_v1.tag === '_0') {
+                me.setupRemoteSubscriptions();
+              } else if (_v1.tag === '_1') {
+                tracing.debug('Retry task shutting down - SubscriptionRelay dropped');
+                break;
+              }
+            } finally {
+              for (const _v2 of _v) dropOwned(_v2.promise);
+            }
+          }
+        })());
+      } finally {
+        me.drop();
+      }
+    } finally {
+      shutdownRx.drop();
+    }
+  }
+
+  async handleError(queryId: QueryId, targetPeer: EntityId, error: RetrievalError, livequery: Q | null): Promise<void> {
+    let _moved0 = false;
+    try {
+      const errorMsg = error.toString();
+      const isRetryable = error.match({
+        RequestError: (v) => {
+          const reqErr = v._0;
+          return reqErr.match({
+            PeerNotConnected: () => true,
+            ConnectionLost: () => true,
+            SendError: (v) => true,
+            InternalChannelClosed: () => true,
+            ServerError: (v) => false,
+            UnexpectedResponse: (v) => false,
+            AccessDenied: (v) => false,
+          });
+        },
+        AccessDenied: () => false,
+        ParseError: () => false,
+        EntityNotFound: () => false,
+        EventNotFound: () => false,
+        StorageError: () => false,
+        CollectionNotFound: () => false,
+        FailedUpdate: () => false,
+        DeserializationError: () => false,
+        NoDurablePeers: () => false,
+        Other: () => false,
+        InvalidBucketName: () => false,
+        AnkqlFilter: () => false,
+        FutureJoin: () => false,
+        Anyhow: () => false,
+        DecodeError: () => false,
+        StateError: () => false,
+        MutationError: () => false,
+        PropertyError: () => false,
+        ApplyError: () => false,
+      });
+      let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+      try {
+        {
+          const _v1 = subscriptions.value.get(queryId);
+          if (_v1 != null) {
+            const info = _v1;
+            if (isRetryable) {
+              const _a1 = new Status('PendingRemote', {});
+              info.status.drop();
+              info.status = _a1;
+              tracing.warn(`Retryable failure for predicate ${queryId} with peer ${targetPeer}: ${errorMsg} - will retry`);
+            } else {
+              const _a2 = new Status('Failed', {});
+              info.status.drop();
+              info.status = _a2;
+              tracing.error(`Permanent failure for predicate ${queryId} with peer ${targetPeer}: ${errorMsg} - no retry`);
+              {
+                const _v = livequery;
+                if (_v != null) {
+                  const lq = _v;
+                  _moved0 = true;
+                  lq.setLastError(error);
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        subscriptions.drop();
+      }
+    } finally {
+      if (!_moved0) error.drop();
+    }
+  }
+
+  static default<CD, Q>(): SubscriptionRelay<CD, Q> {
+    return SubscriptionRelay.new();
+  }
+
+  clone(): SubscriptionRelay<CD, Q> {
+    return new SubscriptionRelay(this.inner.clone());
   }
 }
 
-// Divergence: WeakNode impl of TNode omitted — production implementation depends on
-// Node internals (request, fetch_entities_from_local, EphemeralNodeRetriever, NodeApplier)
-// that are not yet ported (Layer 7). Will be added when those dependencies are available [E8].
+export type StatusV = {
+  PendingRemote: {};
+  Requested: { _0: EntityId; _1: number };
+  Established: { _0: EntityId; _1: number };
+  PendingUpdate: { _0: EntityId; _1: number };
+  Failed: {};
+};
+
+export class Status extends Enum<StatusV> {
+
+  clone(): Status {
+    return this.match({
+      PendingRemote: () => new Status('PendingRemote', {}),
+      Requested: (v) => new Status('Requested', { _0: v._0.clone(), _1: v._1 }),
+      Established: (v) => new Status('Established', { _0: v._0.clone(), _1: v._1 }),
+      PendingUpdate: (v) => new Status('PendingUpdate', { _0: v._0.clone(), _1: v._1 }),
+      Failed: () => new Status('Failed', {}),
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      PendingRemote: () => 'PendingRemote',
+      Requested: (v) => `Requested(${v._0}, ${String(v._1)})`,
+      Established: (v) => `Established(${v._0}, ${String(v._1)})`,
+      PendingUpdate: (v) => `PendingUpdate(${v._0}, ${String(v._1)})`,
+      Failed: () => 'Failed',
+    });
+  }
+}
+
+export interface RemoteQuerySubscriber {
+  subscriptionEstablished(version: number): Promise<void>;
+  setLastError(error: RetrievalError): void;
+}
+
+export interface TNode<CD extends ContextData> {
+  remoteSubscribe(peerId: EntityId, queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: CD, version: number): Promise<Result<void, RetrievalError>>;
+  peerUnsubscribe(peerId: EntityId, queryId: QueryId): Promise<Result<void, Error>>;
+}
+
+export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA extends PolicyAgent>(self: WeakNode<SE, PA>, peerId: EntityId, queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: ContextData, version: number): Promise<Result<void, RetrievalError>> {
+  let _moved0 = false;
+  try {
+    try {
+      const _m1 = self.upgrade();
+      const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => new RetrievalError('Other', { _0: 'Node has been dropped' }))()));
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      const node = _r2.unwrap();
+      try {
+        const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        let _moved4 = false;
+        const knownMatches = [..._r3.unwrap()].map((entity) => new KnownEntity(entity.id(), entity.head()));
+        try {
+          _moved4 = true;
+          const _r5 = (await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches }))).mapErr((e) => new RetrievalError('RequestError', { _0: e }));
+          if (_r5.isErr()) return { $jump: 'return', $value: Result.Err(_r5.unwrapErr()) };
+          const _m6 = await (async () => {
+            return _r5.unwrap().intoMatch<any>({
+              QuerySubscribed: (v) => {
+                const _responseQueryId = v.queryId;
+                const deltas = v.deltas;
+                return deltas;
+              },
+              Error: (v) => {
+                const e = v._0;
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('ServerError', { _0: e }) })) };
+              },
+              CommitComplete: (v) => {
+                const other = new NodeResponseBody('CommitComplete', v);
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+              },
+              Fetch: (v) => {
+                const other = new NodeResponseBody('Fetch', v);
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+              },
+              Get: (v) => {
+                const other = new NodeResponseBody('Get', v);
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+              },
+              GetEvents: (v) => {
+                const other = new NodeResponseBody('GetEvents', v);
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+              },
+              Success: (v) => {
+                const other = new NodeResponseBody('Success', v);
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+              },
+            });
+          })();
+          if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
+          const deltas = (_m6 as any);
+          tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
+          _moved0 = true;
+          const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
+          const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
+          try {
+            const eventStoreResult = await retriever.storeUsedEvents();
+            const _r7 = applyResult;
+            if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
+            _r7.drop();
+            const _r8 = eventStoreResult;
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            _r8.drop();
+            return Result.Ok([]);
+          } finally {
+            applyResult.drop();
+          }
+        } finally {
+          if (!_moved4) dropOwned(knownMatches);
+        }
+      } finally {
+        node.drop();
+      }
+    } finally {
+      selection.drop();
+    }
+  } finally {
+    if (!_moved0) collectionId.drop();
+  }
+}
+
+export async function WeakNode_peerUnsubscribe<SE extends StorageEngine, PA extends PolicyAgent>(self: WeakNode<SE, PA>, peerId: EntityId, queryId: QueryId): Promise<Result<void, AnyhowError>> {
+  const _m0 = self.upgrade();
+  const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => AnyhowError.msg('Node has been dropped'))()));
+  if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+  const node = _r1.unwrap();
+  try {
+    const _r2 = await node.deref().value.requestRemoteUnsubscribe(queryId, [peerId]);
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    _r2.drop();
+    return Result.Ok([]);
+  } finally {
+    node.drop();
+  }
+}
+
+export function TNode_dispatch_peerUnsubscribe<CD>(self: unknown, peerId: EntityId, queryId: QueryId): Result<void, AnyhowError> {
+  if (self instanceof WeakNode) return WeakNode_peerUnsubscribe(self as any, peerId, queryId);
+  if (self instanceof MockMessageSender) return (self as any).peerUnsubscribe(peerId, queryId);
+  throw new Error(`BUG: no TNode impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+
+export function TNode_dispatch_remoteSubscribe<CD>(self: unknown, peerId: EntityId, queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: CD, version: number): Result<void, RetrievalError> {
+  if (self instanceof WeakNode) return WeakNode_remoteSubscribe(self as any, peerId, queryId, collectionId, selection, contextData, version);
+  if (self instanceof MockMessageSender) return (self as any).remoteSubscribe(peerId, queryId, collectionId, selection, contextData, version);
+  throw new Error(`BUG: no TNode impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+

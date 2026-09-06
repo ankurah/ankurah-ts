@@ -1,543 +1,363 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
+import { Struct, Enum, Arc, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Predicate } from '@ankurah/ankql';
+import { Comparison } from '../lineage';
+import { AbstractEntity } from '../reactor';
+import { CandidateChanges } from './candidate_changes';
+import { ComparisonIndex } from './comparison_index';
+import { PropertyPath } from './property_path';
+import { ReactorSubscriptionId } from './subscription';
+import { Subscription } from './subscription_state';
+import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 
-import type { CollectionId, EntityId, QueryId } from '@ankurah/proto';
-import { generateUlidBytes, ulidBytesToString } from '@ankurah/proto';
-import type { Predicate, ComparisonOperator, Literal, PathExpr } from '@ankurah/ankql';
-import { ComparisonIndex } from './comparison_index.ts';
-import { PropertyPath } from './property_path.ts';
-import { CandidateChanges } from './candidate_changes.ts';
-import type { Entity } from '../entity.ts';
-import type { Value } from '../value/index.ts';
+export class WatcherSet extends Struct {
+  indexWatchers: HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>;
+  wildcardWatchers: HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>;
+  entityWatchers: HashMap<EntityId, HashSet<EntityWatcherId>>;
 
-// ── ReactorSubscriptionId ───────────────────────────────────────────
-// Divergence: Defined in reactor/mod.rs in Rust; colocated here in TS
-// because TS lacks Rust's module-level type re-exports [E8].
-
-/**
- * Unique identifier for a reactor subscription, local to a single reactor/node.
- * Cannot be transported across nodes. Mirrors Rust ReactorSubscriptionId(Ulid).
- *
- * Divergence: Rust derives Copy/Clone/Hash/Eq automatically; TS needs explicit toKey() for Map usage [E8].
- */
-export class ReactorSubscriptionId {
-  private readonly ulid: string; // 26-char Crockford Base32 ULID string
-
-  private constructor(ulid: string) {
-    this.ulid = ulid;
+  constructor(indexWatchers: HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>, wildcardWatchers: HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>, entityWatchers: HashMap<EntityId, HashSet<EntityWatcherId>>) {
+    super();
+    this.indexWatchers = indexWatchers;
+    this.wildcardWatchers = wildcardWatchers;
+    this.entityWatchers = entityWatchers;
   }
 
-  static new(): ReactorSubscriptionId {
-    return new ReactorSubscriptionId(ulidBytesToString(generateUlidBytes()));
+  static new(): WatcherSet {
+    return new WatcherSet(new HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>(), new HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>(), new HashMap<EntityId, HashSet<EntityWatcherId>>());
   }
 
-  /** String key for use in Maps. */
-  toKey(): string {
-    return this.ulid;
-  }
-
-  toString(): string {
-    return `RS-${this.ulid}`;
-  }
-
-  equals(other: ReactorSubscriptionId): boolean {
-    return this.ulid === other.ulid;
-  }
-}
-
-// ── Composite key helper ────────────────────────────────────────────
-
-/**
- * Build a composite map key from collection ID + property path.
- * Divergence: Rust uses (CollectionId, PropertyPath) tuple as HashMap key;
- * JS needs a string key because Maps use reference equality [E8].
- */
-function indexWatcherKey(collectionId: CollectionId, propertyPath: PropertyPath): string {
-  return `${collectionId.toString()}::${propertyPath.toString()}`;
-}
-
-// ── WatcherIdPair ───────────────────────────────────────────────────
-
-/**
- * The subscriber identity stored inside ComparisonIndex and wildcard sets.
- * Mirrors Rust tuple `(ReactorSubscriptionId, proto::QueryId)`.
- *
- * Divergence: Rust uses a tuple with derived Hash+Eq; TS uses an interface
- * with explicit key serialization for Map/Set usage [E8].
- */
-export interface WatcherIdPair {
-  subscriptionId: ReactorSubscriptionId;
-  queryId: QueryId;
-}
-
-/**
- * Produce a stable string key for a WatcherIdPair, for use with Map<string, ...>.
- */
-export function watcherIdPairKey(pair: WatcherIdPair): string {
-  return `${pair.subscriptionId.toKey()}:${pair.queryId.toUlidString()}`;
-}
-
-// ── IndexWatcherEntry ───────────────────────────────────────────────
-
-/**
- * Stored alongside each ComparisonIndex to avoid re-parsing the composite key.
- * Divergence: Rust stores (CollectionId, PropertyPath) as the HashMap key; TS stores
- * them alongside the index to avoid reparsing string keys on every lookup [E8].
- */
-interface IndexWatcherEntry {
-  collectionId: CollectionId;
-  propertyPath: PropertyPath;
-  index: ComparisonIndex<string>;
-}
-
-// ── WatcherSet ──────────────────────────────────────────────────────
-
-/**
- * Central routing table that maps entity changes to interested subscriptions.
- * Maintains three registries: index watchers, wildcard watchers, and entity watchers.
- *
- * Rust: `pub struct WatcherSet`
- *
- * Divergence: Rust wraps WatcherSet in Arc<Mutex<WatcherSet>> for thread safety;
- * JS is single-threaded so WatcherSet is a plain object with no locking [E8].
- */
-export class WatcherSet {
-  /**
-   * Per (collection, property-path) comparison indexes.
-   * Rust: `index_watchers: HashMap<(CollectionId, PropertyPath), ComparisonIndex<(ReactorSubscriptionId, QueryId)>>`
-   * Divergence: HashMap with tuple key → Map with string key, ComparisonIndex<tuple> → ComparisonIndex<string> [E8].
-   */
-  private indexWatchers: Map<string, IndexWatcherEntry> = new Map();
-
-  /**
-   * Reverse lookup: watcherIdPairKey string → WatcherIdPair.
-   * Divergence: Rust doesn't need this because ComparisonIndex stores actual tuples;
-   * TS stores string keys and needs reverse lookup [E8].
-   */
-  private watcherIdLookup: Map<string, WatcherIdPair> = new Map();
-
-  /**
-   * Per-collection sets of watchers that match ANY entity change.
-   * Rust: `wildcard_watchers: HashMap<CollectionId, HashSet<(ReactorSubscriptionId, QueryId)>>`
-   * Divergence: HashSet<tuple> → Map<string, WatcherIdPair> for value equality [E8].
-   */
-  private wildcardWatchers: Map<string, Map<string, WatcherIdPair>> = new Map();
-
-  /**
-   * Per-entity watcher registrations.
-   * Rust: `entity_watchers: HashMap<EntityId, HashSet<EntityWatcherId>>`
-   * Divergence: HashSet<EntityWatcherId> → Map<string, EntityWatcherId> for value equality [E8].
-   */
-  private entityWatchers: Map<string, Map<string, EntityWatcherId>> = new Map();
-
-  // ── impl WatcherSet ──
-
-  // constructor(): all maps initialized to empty in field declarations (Rust: new())
-
-  /**
-   * Accumulate interested watchers for an entity change into CandidateChanges.
-   *
-   * Rust: `pub fn accumulate_interested_watchers<E: AbstractEntity, C>(...)`
-   * Divergence: Arc<Vec<C>> → readonly C[] (JS reference semantics) [E8].
-   * Divergence: E: AbstractEntity → Entity (concrete type) [E7].
-   */
-  accumulateInterestedWatchers<C>(
-    entity: Entity,
-    offset: number,
-    changes: readonly C[],
-    candidatesBySub: Map<string, { subscriptionId: ReactorSubscriptionId; candidates: CandidateChanges<C> }>,
-  ): void {
-    const entityId = entity.entityId;
-    const entityCollectionStr = entity.collectionId.toString();
-
-    // Find subscriptions interested based on index watchers
-    for (const [_key, { collectionId, propertyPath, index }] of this.indexWatchers) {
-      if (collectionId.toString() !== entityCollectionStr) continue;
-
-      // Extract value at the property path (handles both simple fields and JSON paths)
-      const value: Value | null = propertyPath.extractValue(entity);
-      if (value === null) continue;
-
-      const matchingKeys: string[] = index.findMatching(value);
-      for (const watcherKey of matchingKeys) {
-        const pair = this.watcherIdLookup.get(watcherKey)!;
-        const subKey = pair.subscriptionId.toKey();
-        let entry = candidatesBySub.get(subKey);
-        if (!entry) {
-          entry = { subscriptionId: pair.subscriptionId, candidates: new CandidateChanges(changes) };
-          candidatesBySub.set(subKey, entry);
-        }
-        entry.candidates.addQuery(pair.queryId, offset);
-      }
-    }
-
-    // Check wildcard watchers for this collection
-    const wildcards = this.wildcardWatchers.get(entityCollectionStr);
-    if (wildcards) {
-      for (const [_key, pair] of wildcards) {
-        const subKey = pair.subscriptionId.toKey();
-        let entry = candidatesBySub.get(subKey);
-        if (!entry) {
-          entry = { subscriptionId: pair.subscriptionId, candidates: new CandidateChanges(changes) };
-          candidatesBySub.set(subKey, entry);
-        }
-        entry.candidates.addQuery(pair.queryId, offset);
-      }
-    }
-
-    // Check entity watchers
-    const entityKey = entityId.toBase64();
-    const entityWatcherSet = this.entityWatchers.get(entityKey);
-    if (entityWatcherSet) {
-      for (const [_key, watcherId] of entityWatcherSet) {
-        const subKey = watcherId.subscriptionId.toKey();
-        let entry = candidatesBySub.get(subKey);
-        if (!entry) {
-          entry = {
-            subscriptionId: watcherId.subscriptionId,
-            candidates: new CandidateChanges(changes),
-          };
-          candidatesBySub.set(subKey, entry);
-        }
-
-        if (watcherId.type === 'Predicate') {
-          entry.candidates.addQuery(watcherId.queryId, offset);
-        } else {
-          // Subscription -- entity-level, not tied to a query
-          entry.candidates.addEntity(offset);
-        }
-      }
-    }
-  }
-
-  /**
-   * Apply a watcher change.
-   *
-   * Rust: `pub fn apply_watcher_change(&mut self, change: WatcherChange)`
-   */
-  applyWatcherChange(change: WatcherChange): void {
-    switch (change.type) {
-      case 'Add': {
-        const entityKey = change.entityId.toBase64();
-        let watchers = this.entityWatchers.get(entityKey);
-        if (!watchers) {
-          watchers = new Map();
-          this.entityWatchers.set(entityKey, watchers);
-        }
-        const ew: EntityWatcherId = {
-          type: 'Predicate',
-          subscriptionId: change.subscriptionId,
-          queryId: change.queryId,
-        };
-        watchers.set(entityWatcherIdKey(ew), ew);
-        break;
-      }
-      case 'Remove': {
-        const entityKey = change.entityId.toBase64();
-        const watchers = this.entityWatchers.get(entityKey);
-        if (watchers) {
-          const ew: EntityWatcherId = {
-            type: 'Predicate',
-            subscriptionId: change.subscriptionId,
-            queryId: change.queryId,
-          };
-          watchers.delete(entityWatcherIdKey(ew));
-          if (watchers.size === 0) {
-            this.entityWatchers.delete(entityKey);
+  accumulateInterestedWatchers<E extends AbstractEntity, C>(entity: E, offset: number, changesArc: Arc<C[]>, candidatesBySub: HashMap<ReactorSubscriptionId, CandidateChanges<C>>): void {
+    const entityId = AbstractEntity.id(entity);
+    for (const [[collectionId, propertyPath], indexRef] of this.indexWatchers) {
+      if (valueEquals(collectionId, AbstractEntity.collection(entity))) {
+        {
+          const _v = propertyPath.extractValue(entity);
+          if (_v != null) {
+            const value = _v;
+            for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
+            }
           }
         }
-        break;
+      }
+    }
+    {
+      const _v1 = this.wildcardWatchers.get(AbstractEntity.collection(entity));
+      if (_v1 != null) {
+        const watchers = _v1;
+        for (const [subscriptionId, queryId] of [...watchers]) {
+          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
+        }
+      }
+    }
+    {
+      const _v2 = this.entityWatchers.get(entityId);
+      if (_v2 != null) {
+        const subscriptionIds = _v2;
+        for (const subId of [...subscriptionIds]) {
+          subId.match({
+            Predicate: (v) => {
+              const subscriptionId = v._0;
+              const queryId = v._1;
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
+            },
+            Subscription: (v) => {
+              const subscriptionId = v._0;
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addEntity(offset);
+            },
+          });
+        }
       }
     }
   }
 
-  /**
-   * Add entity subscription watcher for a subscription.
-   *
-   * Rust: `pub fn add_entity_subscription(&mut self, subscription_id: ReactorSubscriptionId, entity_id: EntityId)`
-   */
+  applyWatcherChange(change: WatcherChange): void {
+    try {
+      return change.match({
+        Add: (v) => {
+          const entityId = v.entityId;
+          const subscriptionId = v.subscriptionId;
+          const queryId = v.queryId;
+          this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
+        },
+        Remove: (v) => {
+          const entityId = v.entityId;
+          const subscriptionId = v.subscriptionId;
+          const queryId = v.queryId;
+          {
+            const _v = this.entityWatchers.get(entityId);
+            if (_v != null) {
+              const watchers = _v;
+              const _t0 = new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId });
+              try {
+                watchers.delete(_t0);
+              } finally {
+                _t0.drop();
+              }
+              if (watchers.size === 0) {
+                this.entityWatchers.delete(entityId);
+              }
+            }
+          }
+        },
+      });
+    } finally {
+      change.drop();
+    }
+  }
+
   addEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
-    const entityKey = entityId.toBase64();
-    let watchers = this.entityWatchers.get(entityKey);
-    if (!watchers) {
-      watchers = new Map();
-      this.entityWatchers.set(entityKey, watchers);
-    }
-    const ew: EntityWatcherId = { type: 'Subscription', subscriptionId };
-    watchers.set(entityWatcherIdKey(ew), ew);
+    this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Subscription', { _0: subscriptionId }));
   }
 
-  /**
-   * Remove entity subscription watcher for a subscription.
-   *
-   * Rust: `pub fn remove_entity_subscription(&mut self, subscription_id: ReactorSubscriptionId, entity_id: EntityId)`
-   */
   removeEntitySubscription(subscriptionId: ReactorSubscriptionId, entityId: EntityId): void {
-    const entityKey = entityId.toBase64();
-    const watchers = this.entityWatchers.get(entityKey);
-    if (watchers) {
-      const ew: EntityWatcherId = { type: 'Subscription', subscriptionId };
-      watchers.delete(entityWatcherIdKey(ew));
-      if (watchers.size === 0) {
-        this.entityWatchers.delete(entityKey);
+    {
+      const _v = this.entityWatchers.get(entityId);
+      if (_v != null) {
+        const watchers = _v;
+        const _t0 = new EntityWatcherId('Subscription', { _0: subscriptionId });
+        try {
+          watchers.delete(_t0);
+        } finally {
+          _t0.drop();
+        }
+        if (watchers.size === 0) {
+          this.entityWatchers.delete(entityId);
+        }
       }
     }
   }
 
-  /**
-   * Remove all entity subscription watchers for multiple entities.
-   *
-   * Rust: `pub fn remove_entity_subscriptions(&mut self, subscription_id, entity_ids: impl IntoIterator<Item = EntityId>)`
-   * Divergence: impl IntoIterator → Iterable [E7].
-   */
-  removeEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: Iterable<EntityId>): void {
+  removeEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: EntityId[]): void {
     for (const entityId of entityIds) {
       this.removeEntitySubscription(subscriptionId, entityId);
     }
   }
 
-  /**
-   * Clear all entity watchers.
-   *
-   * Rust: `pub fn clear_entity_watchers(&mut self)`
-   */
   clearEntityWatchers(): void {
     this.entityWatchers.clear();
   }
 
-  /**
-   * Get references to internal data for debugging.
-   *
-   * Rust: `pub fn debug_data(&self) -> (...)`
-   * Divergence: Returns the internal maps directly (JS has no borrow checker concern) [E8].
-   */
-  debugData(): {
-    indexWatchers: Map<string, IndexWatcherEntry>;
-    wildcardWatchers: Map<string, Map<string, WatcherIdPair>>;
-    entityWatchers: Map<string, Map<string, EntityWatcherId>>;
-  } {
-    return {
-      indexWatchers: this.indexWatchers,
-      wildcardWatchers: this.wildcardWatchers,
-      entityWatchers: this.entityWatchers,
-    };
+  debugData(): [HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>, HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>, HashMap<EntityId, HashSet<EntityWatcherId>>] {
+    return [this.indexWatchers, this.wildcardWatchers, this.entityWatchers];
   }
 
-  /**
-   * Add predicate entity watcher for multiple entities.
-   *
-   * Rust: `pub fn add_predicate_entity_watchers(&mut self, subscription_id, query_id, entity_ids: impl IntoIterator<Item = EntityId>)`
-   * Divergence: impl IntoIterator → Iterable [E7].
-   */
-  addPredicateEntityWatchers(
-    subscriptionId: ReactorSubscriptionId,
-    queryId: QueryId,
-    entityIds: Iterable<EntityId>,
-  ): void {
+  addPredicateEntityWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, entityIds: EntityId[]): void {
     for (const entityId of entityIds) {
-      const entityKey = entityId.toBase64();
-      let watchers = this.entityWatchers.get(entityKey);
-      if (!watchers) {
-        watchers = new Map();
-        this.entityWatchers.set(entityKey, watchers);
-      }
-      const ew: EntityWatcherId = {
-        type: 'Predicate',
-        subscriptionId,
-        queryId,
-      };
-      watchers.set(entityWatcherIdKey(ew), ew);
+      this.entityWatchers.entry(entityId).orDefault(() => new HashSet()).value.add(new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId }));
     }
   }
 
-  /**
-   * Remove predicate entity watchers for entities that no longer match.
-   *
-   * Rust: `pub fn cleanup_removed_predicate_watchers(&mut self, subscription_id, query_id, removed_entities: &[EntityId])`
-   */
-  cleanupRemovedPredicateWatchers(
-    subscriptionId: ReactorSubscriptionId,
-    queryId: QueryId,
-    removedEntities: readonly EntityId[],
-  ): void {
+  cleanupRemovedPredicateWatchers(subscriptionId: ReactorSubscriptionId, queryId: QueryId, removedEntities: EntityId[]): void {
     for (const entityId of removedEntities) {
-      const entityKey = entityId.toBase64();
-      const watchers = this.entityWatchers.get(entityKey);
-      if (watchers) {
-        const ew: EntityWatcherId = {
-          type: 'Predicate',
-          subscriptionId,
-          queryId,
-        };
-        watchers.delete(entityWatcherIdKey(ew));
-        // Divergence: TS cleans up empty entries to avoid memory leaks;
-        // Rust does not (GC difference)
-        if (watchers.size === 0) {
-          this.entityWatchers.delete(entityKey);
+      {
+        const _v = this.entityWatchers.get(entityId);
+        if (_v != null) {
+          const entityWatcher = _v;
+          const _t0 = new EntityWatcherId('Predicate', { _0: subscriptionId, _1: queryId });
+          try {
+            entityWatcher.delete(_t0);
+          } finally {
+            _t0.drop();
+          }
         }
       }
     }
   }
 
-  /**
-   * Recursively walk a predicate AST and register/unregister index watchers
-   * and wildcard watchers for the given watcher ID pair.
-   *
-   * Rust: `pub fn recurse_predicate_watchers(&mut self, collection_id, predicate, watcher_id, op)`
-   */
-  recursePredicateWatchers(
-    collectionId: CollectionId,
-    predicate: Predicate,
-    watcherId: WatcherIdPair,
-    op: WatcherOp,
-  ): void {
-    const pairKey = watcherIdPairKey(watcherId);
-
-    predicate.match({
-      Comparison: ({ left, operator, right }) => {
-        // Extract path and literal from left/right (in either order)
-        let path: PathExpr | null = null;
-        let literal: Literal | null = null;
-
-        if (left.is('Path') && right.is('Literal')) {
-          path = left.value.path;
-          literal = right.value.literal;
-        } else if (left.is('Literal') && right.is('Path')) {
-          path = right.value.path;
-          literal = left.value.literal;
-        }
-
-        if (path && literal) {
-          const propertyPath = PropertyPath.fromPath(path);
-          const compositeKey = indexWatcherKey(collectionId, propertyPath);
-          let entry = this.indexWatchers.get(compositeKey);
-          if (!entry) {
-            entry = { collectionId, propertyPath, index: new ComparisonIndex<string>() };
-            this.indexWatchers.set(compositeKey, entry);
-          }
-
-          if (op === 'Add') {
-            entry.index.add(literal, operator, pairKey);
-            this.watcherIdLookup.set(pairKey, watcherId);
+  recursePredicateWatchers(collectionId: CollectionId, predicate: Predicate, watcherId: [ReactorSubscriptionId, QueryId], op: WatcherOp): void {
+    return predicate.match({
+      Comparison: (v) => {
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        {
+          const _v = [left, right];
+          if (((_v[0].is('Path')) && (_v[1].is('Literal'))) || ((_v[0].is('Literal')) && (_v[1].is('Path')))) {
+            const path = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[0].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[1].value._0 : undefined;
+            const literal = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[1].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[0].value._0 : undefined;
+            const propertyPath = PropertyPath.fromPath(path);
+            const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
+            return op.match({
+              Add: () => {
+                index.value.add((literal).clone(), operator.clone(), watcherId);
+              },
+              Remove: () => {
+                index.value.remove((literal).clone(), operator.clone(), watcherId);
+              },
+            });
           } else {
-            entry.index.remove(literal, operator, pairKey);
-          }
         }
-        // else: unsupported comparison shape, silently skip (mirrors Rust behavior)
+        }
       },
-
-      And: ({ left: l, right: r }) => {
-        this.recursePredicateWatchers(collectionId, l, watcherId, op);
-        this.recursePredicateWatchers(collectionId, r, watcherId, op);
+      And: (v) => {
+        const left = v._0;
+        const right = v._1;
+        this.recursePredicateWatchers(collectionId, left, watcherId, op);
+        this.recursePredicateWatchers(collectionId, right, watcherId, op);
       },
-
-      Or: ({ left: l, right: r }) => {
-        this.recursePredicateWatchers(collectionId, l, watcherId, op);
-        this.recursePredicateWatchers(collectionId, r, watcherId, op);
+      Or: (v) => {
+        const left = v._0;
+        const right = v._1;
+        this.recursePredicateWatchers(collectionId, left, watcherId, op);
+        this.recursePredicateWatchers(collectionId, right, watcherId, op);
       },
-
-      Not: ({ predicate: inner }) => {
-        this.recursePredicateWatchers(collectionId, inner, watcherId, op);
+      Not: (v) => {
+        const pred = v._0;
+        this.recursePredicateWatchers(collectionId, pred, watcherId, op);
       },
-
+      IsNull: (v) => {
+        throw new Error('unimplemented');
+      },
       True: () => {
-        const collectionKey = collectionId.toString();
-        let set = this.wildcardWatchers.get(collectionKey);
-        if (!set) {
-          set = new Map();
-          this.wildcardWatchers.set(collectionKey, set);
-        }
-
-        if (op === 'Add') {
-          set.set(pairKey, watcherId);
-        } else {
-          set.delete(pairKey);
-        }
+        const set = this.wildcardWatchers.entry(collectionId.clone()).orDefault(() => new HashSet());
+        return op.match({
+          Add: () => {
+            set.value.add(watcherId);
+          },
+          Remove: () => {
+            set.value.delete(watcherId);
+          },
+        });
       },
-
-      IsNull: () => {
-        throw new Error('Predicate::IsNull not implemented in WatcherSet');
-      },
-
       False: () => {
-        throw new Error('Predicate::False not implemented in WatcherSet');
+        throw new Error('unimplemented');
       },
-
       Placeholder: () => {
-        throw new Error('Placeholder should be transformed before reactor processing');
+        throw new Error('unimplemented');
       },
     });
   }
 }
 
-// ── EntityWatcherId ─────────────────────────────────────────────────
+type EntityWatcherIdV = {
+  Predicate: { _0: ReactorSubscriptionId; _1: QueryId };
+  Subscription: { _0: ReactorSubscriptionId };
+};
 
-/**
- * Identifies how an entity is being watched.
- *
- * Rust: `pub(crate) enum EntityWatcherId { Predicate(ReactorSubscriptionId, QueryId), Subscription(ReactorSubscriptionId) }`
- * Divergence: Rust derives Hash/Eq/Ord; TS needs explicit string key for Map usage [E8].
- */
-export type EntityWatcherId =
-  | { type: 'Predicate'; subscriptionId: ReactorSubscriptionId; queryId: QueryId }
-  | { type: 'Subscription'; subscriptionId: ReactorSubscriptionId };
+class EntityWatcherId extends Enum<EntityWatcherIdV> {
 
-// ── impl EntityWatcherId ──
-
-/** Extract the subscription ID from either variant. */
-export function entityWatcherSubscriptionId(ew: EntityWatcherId): ReactorSubscriptionId {
-  return ew.subscriptionId;
-}
-
-/**
- * Produce a stable string key for an EntityWatcherId, suitable for use
- * as a key in a Map<string, ...>.
- *
- * Divergence: Rust gets this for free via Hash+Eq derive; JS needs explicit serialization [E8].
- */
-export function entityWatcherIdKey(ew: EntityWatcherId): string {
-  if (ew.type === 'Predicate') {
-    return `P:${ew.subscriptionId.toKey()}:${ew.queryId.toUlidString()}`;
+  subscriptionId(): ReactorSubscriptionId {
+    return this.match({
+      Predicate: (v) => {
+        const subId = v._0;
+        return subId;
+      },
+      Subscription: (v) => {
+        const subId = v._0;
+        return subId;
+      },
+    });
   }
-  return `S:${ew.subscriptionId.toKey()}`;
+
+  clone(): EntityWatcherId {
+    return this.match({
+      Predicate: (v) => new EntityWatcherId('Predicate', { _0: v._0.clone(), _1: v._1.clone() }),
+      Subscription: (v) => new EntityWatcherId('Subscription', { _0: v._0.clone() }),
+    });
+  }
+
+  equals(other: EntityWatcherId): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Predicate': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        if (!(this.value as any)._1.equals((other.value as any)._1)) return false;
+        break;
+      }
+      case 'Subscription': {
+        if (!(this.value as any)._0.equals((other.value as any)._0)) return false;
+        break;
+      }
+    }
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    switch (this.type) {
+      case 'Predicate': return ['Predicate', (this.value as any)._0.hash(), (this.value as any)._1.hash()].map((p) => p.length + ':' + p).join('');
+      case 'Subscription': return ['Subscription', (this.value as any)._0.hash()].map((p) => p.length + ':' + p).join('');
+    }
+    return String(this.type);
+  }
+
+  compareTo(other: EntityWatcherId): number {
+    const order = ['Predicate', 'Subscription'];
+    const a = order.indexOf(this.type);
+    const b = order.indexOf(other.type);
+    if (a !== b) return a < b ? -1 : 1;
+    switch (this.type) {
+      case 'Predicate': {
+        let c = (this.value as any)._0.compareTo((other.value as any)._0);
+        if (c !== 0) return c;
+        c = (this.value as any)._1.compareTo((other.value as any)._1);
+        if (c !== 0) return c;
+        return 0;
+      }
+      case 'Subscription': {
+        let c = (this.value as any)._0.compareTo((other.value as any)._0);
+        if (c !== 0) return c;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  debug(): string {
+    return this.match({
+      Predicate: (v) => `Predicate(${v._0.debug()}, ${v._1})`,
+      Subscription: (v) => `Subscription(${v._0.debug()})`,
+    });
+  }
 }
 
-// ── WatcherOp ───────────────────────────────────────────────────────
+export type WatcherOpV = {
+  Add: {};
+  Remove: {};
+};
 
-/**
- * Whether a watcher is being added or removed.
- *
- * Rust: `pub enum WatcherOp { Add, Remove }`
- * Divergence: Unit-only enum → string union [E8]
- */
-export type WatcherOp = 'Add' | 'Remove';
+export class WatcherOp extends Enum<WatcherOpV> {
 
-// ── WatcherChange ───────────────────────────────────────────────────
+  clone(): WatcherOp {
+    return new WatcherOp(this.type, { ...this.value });
+  }
 
-/**
- * Represents a change to entity watchers that needs to be applied to the WatcherSet.
- *
- * Rust: `pub enum WatcherChange { Add { ... }, Remove { ... } }`
- */
-export type WatcherChange =
-  | { type: 'Add'; entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId }
-  | { type: 'Remove'; entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId };
-
-// ── impl WatcherChange ──
-
-/** Create a watcher change for adding an entity watcher. */
-export function watcherChangeAdd(
-  entityId: EntityId,
-  subscriptionId: ReactorSubscriptionId,
-  queryId: QueryId,
-): WatcherChange {
-  return { type: 'Add', entityId, subscriptionId, queryId };
+  debug(): string {
+    return this.match({
+      Add: () => 'Add',
+      Remove: () => 'Remove',
+    });
+  }
 }
 
-/** Create a watcher change for removing an entity watcher. */
-export function watcherChangeRemove(
-  entityId: EntityId,
-  subscriptionId: ReactorSubscriptionId,
-  queryId: QueryId,
-): WatcherChange {
-  return { type: 'Remove', entityId, subscriptionId, queryId };
+export type WatcherChangeV = {
+  Add: { entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId };
+  Remove: { entityId: EntityId; subscriptionId: ReactorSubscriptionId; queryId: QueryId };
+};
+
+export class WatcherChange extends Enum<WatcherChangeV> {
+
+  static add(entityId: EntityId, subscriptionId: ReactorSubscriptionId, queryId: QueryId): WatcherChange {
+    return new WatcherChange('Add', { entityId: entityId, subscriptionId: subscriptionId, queryId: queryId });
+  }
+
+  static remove(entityId: EntityId, subscriptionId: ReactorSubscriptionId, queryId: QueryId): WatcherChange {
+    return new WatcherChange('Remove', { entityId: entityId, subscriptionId: subscriptionId, queryId: queryId });
+  }
+
+  clone(): WatcherChange {
+    return this.match({
+      Add: (v) => new WatcherChange('Add', { entityId: v.entityId.clone(), subscriptionId: v.subscriptionId.clone(), queryId: v.queryId.clone() }),
+      Remove: (v) => new WatcherChange('Remove', { entityId: v.entityId.clone(), subscriptionId: v.subscriptionId.clone(), queryId: v.queryId.clone() }),
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Add: (v) => `Add { entityId: ${v.entityId}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId} }`,
+      Remove: (v) => `Remove { entityId: ${v.entityId}, subscriptionId: ${v.subscriptionId.debug()}, queryId: ${v.queryId} }`,
+    });
+  }
 }
+

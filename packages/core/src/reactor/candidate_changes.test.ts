@@ -1,52 +1,44 @@
-// MIRRORS: ankurah/core/src/reactor/candidate_changes.rs #[cfg(test)] mod tests
+// MIRRORS: ankurah/core/src/reactor/candidate_changes.rs (tests module)
+
 import { describe, test, expect } from 'bun:test';
+import { CandidateChanges } from './candidate_changes';
+import { Arc, HashMap } from '@ankurah/base';
 import { QueryId } from '@ankurah/proto';
-import { CandidateChanges } from './candidate_changes.ts';
 
-// ── Tests ──
-
-describe('candidate_changes', () => {
-  // Rust: fn test_candidate_changes_empty()
-  test('candidate changes empty', () => {
-    const changes: number[] = [];
-    const candidates = new CandidateChanges(changes);
-    expect(candidates.isEmpty()).toBe(true);
-    expect(candidates.queryCount()).toBe(0);
+describe('candidate_changes unit tests', () => {
+  test('test_candidate_changes_empty', () => {
+    const changes = Arc.from([]);
+    const candidates = CandidateChanges.new(changes);
+    if (!(candidates.length === 0)) throw new Error('assertion failed');
+    expect(candidates.queryCount()).toEqual(0);
   });
 
-  // Rust: fn test_candidate_changes_add_query()
-  test('candidate changes add query', () => {
-    const changes = [10, 20, 30, 40, 50];
-    const candidates = new CandidateChanges(changes);
-
+  test('test_candidate_changes_add_query', () => {
+    const changes = Arc.new([10, 20, 30, 40, 50]);
+    let candidates = CandidateChanges.new(changes);
     const q1 = QueryId.new();
     const q2 = QueryId.new();
-
-    candidates.addQuery(q1, 1); // 20
-    candidates.addQuery(q1, 3); // 40
-    candidates.addQuery(q2, 0); // 10
-
-    expect(candidates.queryCount()).toBe(2);
-    expect(candidates.isEmpty()).toBe(false);
-
-    const queryMap = new Map<string, number[]>();
+    candidates.addQuery(q1, 1);
+    candidates.addQuery(q1, 3);
+    candidates.addQuery(q2, 0);
+    expect(candidates.queryCount()).toEqual(2);
+    if (!(!(candidates.length === 0))) throw new Error('assertion failed');
+    let queryMap = new HashMap<QueryId, number[]>();
     for (const qc of candidates.queryIter()) {
-      queryMap.set(qc.queryId.toUlidString(), qc.iter());
+      const values = [...qc].copied();
+      queryMap.set(qc.queryId, values);
     }
-
-    expect(queryMap.get(q1.toUlidString())).toEqual([20, 40]);
-    expect(queryMap.get(q2.toUlidString())).toEqual([10]);
+    expect(queryMap[q1]).toEqual([20, 40]);
+    expect(queryMap[q2]).toEqual([10]);
   });
 
-  // Rust: fn test_candidate_changes_entity_level()
-  test('candidate changes entity level', () => {
-    const changes = [10, 20, 30];
-    const candidates = new CandidateChanges(changes);
-
+  test('test_candidate_changes_entity_level', () => {
+    const changes = Arc.new([10, 20, 30]);
+    let candidates = CandidateChanges.new(changes);
     candidates.addEntity(0);
     candidates.addEntity(2);
-
-    const entities = candidates.entityIter();
+    const entities = candidates.entityIter().copied();
     expect(entities).toEqual([10, 30]);
   });
+
 });

@@ -14,6 +14,10 @@ import {
   movedIntoACall,
   movedIntoALiteral,
   movedOnOnePath,
+  Sink,
+  constructor as build,
+  methodCall,
+  plainCall,
 } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
@@ -55,6 +59,34 @@ test('movedOnOnePath releases the Entity only on the path that kept it', () => {
 
 test('droppedByHand releases where the source says and the block does not repeat it', () => {
   expect(droppedByHand()).toBe(0);
+});
+
+// E10: the move flag stands after everything the statement evaluates, whatever
+// SHAPE the call is. At the parent it was written before the whole statement
+// for every call but `invoke(..)`, so an argument that throws left the flag set
+// and the moved value released by nobody — the leak check below catches it.
+test('an argument that throws leaves the moved value releasable', () => {
+  const sink = new Sink();
+  for (const call of [
+    () => plainCall(new Entity('a'), null, false),
+    () => methodCall(sink, new Entity('a'), null, false),
+    () => build(new Entity('a'), null, false),
+  ]) {
+    expect(call).toThrow('called `Option::unwrap()` on a `None` value');
+  }
+  sink.drop();
+});
+
+// And the call that does not throw still hands the value over, so the block
+// releases nothing.
+test('a call that completes still moves what it was given', () => {
+  const sink = new Sink();
+  expect(plainCall(new Entity('ab'), 1, false)).toBe(3);
+  expect(methodCall(sink, new Entity('ab'), 1, false)).toBe(3);
+  const held = build(new Entity('ab'), 1, false);
+  expect(held.n).toBe(1);
+  held.drop();
+  sink.drop();
 });
 
 test('nothing leaked and nothing was reported', async () => {

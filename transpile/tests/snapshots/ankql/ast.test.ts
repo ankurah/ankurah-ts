@@ -45,7 +45,7 @@ describe('ast unit tests', () => {
   test('test_populate_single_placeholder', () => {
     const selection = parseSelection('name = ?').unwrap();
     try {
-      const populated = selection.predicate.populate(['Alice']).unwrap();
+      const populated = selection.takeField('predicate').populate(['Alice']).unwrap();
       try {
         const expected = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Alice' }) }) });
         try {
@@ -65,7 +65,7 @@ describe('ast unit tests', () => {
     const selection = parseSelection('age > ? AND name = ?').unwrap();
     try {
       const values = [(25n), 'Bob'];
-      const populated = selection.predicate.populate(values).unwrap();
+      const populated = selection.takeField('predicate').populate(values).unwrap();
       try {
         const expected = new Predicate('And', { _0: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('age') }), operator: new ComparisonOperator('GreaterThan', {}), right: new Expr('Literal', { _0: new Literal('I64', { _0: 25n }) }) }), _1: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Bob' }) }) }) });
         try {
@@ -84,7 +84,7 @@ describe('ast unit tests', () => {
   test('test_populate_in_clause', () => {
     const selection = parseSelection('status IN (?, ?, ?)').unwrap();
     try {
-      const populated = selection.predicate.populate(['active', 'pending', 'review']).unwrap();
+      const populated = selection.takeField('predicate').populate(['active', 'pending', 'review']).unwrap();
       try {
         const expected = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('status') }), operator: new ComparisonOperator('In', {}), right: new Expr('ExprList', { _0: [new Expr('Literal', { _0: new Literal('String', { _0: 'active' }) }), new Expr('Literal', { _0: new Literal('String', { _0: 'pending' }) }), new Expr('Literal', { _0: new Literal('String', { _0: 'review' }) })] }) });
         try {
@@ -104,7 +104,7 @@ describe('ast unit tests', () => {
     const selection = parseSelection('active = ? AND score > ? AND name = ?').unwrap();
     try {
       const values = [true, (95.5), 'Charlie'];
-      const populated = selection.predicate.populate(values).unwrap();
+      const populated = selection.takeField('predicate').populate(values).unwrap();
       {
         const _v4 = populated;
         if (_v4.is('And')) {
@@ -199,7 +199,7 @@ describe('ast unit tests', () => {
   test('test_populate_too_few_values', () => {
     const selection = parseSelection('name = ? AND age = ?').unwrap();
     try {
-      const result = selection.predicate.populate(['Alice']);
+      const result = selection.takeField('predicate').populate(['Alice']);
       if (!(result.isErr())) throw new Error('assertion failed');
       const _t0 = result.unwrapErr();
       try {
@@ -215,7 +215,7 @@ describe('ast unit tests', () => {
   test('test_populate_too_many_values', () => {
     const selection = parseSelection('name = ?').unwrap();
     try {
-      const result = selection.predicate.populate(['Alice', 'Bob']);
+      const result = selection.takeField('predicate').populate(['Alice', 'Bob']);
       if (!(result.isErr())) throw new Error('assertion failed');
       const _t0 = result.unwrapErr();
       try {

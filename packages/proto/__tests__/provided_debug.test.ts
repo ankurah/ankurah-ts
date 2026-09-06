@@ -67,8 +67,39 @@ test('Clock prints its sequence, each event through its own Debug', () => {
   empty.drop();
 });
 
-test('Attested prints its named fields, and a payload with no debug() by its value', () => {
-  const attested = new Attested(7, new AttestationSet([new Attestation(new Uint8Array([1]))]));
-  expect(attested.debug()).toBe('Attested { payload: 7, attestations: AttestationSet([Attestation([1])]) }');
-  attested.drop();
+// F7: the payload's `T` is whatever the instantiation put there, and the port
+// has no resolved type at that position — so the payload goes through the
+// runtime's `debugValue`, which decides from the value's own surface. The old
+// fallback was `String(payload)`: an `Attested<String>` printed
+// `payload: secret` where Rust prints `payload: "secret"`, and anything that
+// declared no `debug()` printed `[object Object]`.
+test('Attested prints its named fields, and its payload the way Rust prints it', () => {
+  const set = () => new AttestationSet([new Attestation(new Uint8Array([1]))]);
+  const tail = 'attestations: AttestationSet([Attestation([1])]) }';
+
+  const n = new Attested(7, set());
+  expect(n.debug()).toBe(`Attested { payload: 7, ${tail}`);
+  n.drop();
+
+  // The defective answer: `payload: secret`.
+  const s = new Attested('secret', set());
+  expect(s.debug()).toBe(`Attested { payload: "secret", ${tail}`);
+  s.drop();
+
+  // A `Vec<u8>` payload is its bytes, not `[object Uint8Array]`.
+  const bytes = new Attested(new Uint8Array([0, 255]), set());
+  expect(bytes.debug()).toBe(`Attested { payload: [0, 255], ${tail}`);
+  bytes.drop();
+
+  // A generated class prints through its own `debug()`.
+  const id = EventId.fromBytes(new Uint8Array(32));
+  const inner = new Attested(id, set());
+  expect(inner.debug()).toBe(`Attested { payload: ${id.debug()}, ${tail}`);
+  inner.drop();
+
+  // And a payload that declares none is refused by name rather than printed
+  // `[object Object]`.
+  const opaque = new Attested({ n: 1 }, set());
+  expect(() => opaque.debug()).toThrow(/declares no debug\(\)/);
+  opaque.drop();
 });

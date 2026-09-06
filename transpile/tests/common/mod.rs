@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What a hand-written class DECLARES, for the checks that keep a
+/// `[provided_impls]` claim honest.
+pub mod members;
+
 /// The transpiler's own package directory. `transpile.toml` is read relative to
 /// the current directory, so every `batch` run below starts here — the same
 /// place a person stands when they run `cargo run -- batch ...` by hand.

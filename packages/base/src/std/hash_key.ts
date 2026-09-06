@@ -148,9 +148,23 @@ export function keysEqual(a: unknown, b: unknown): boolean {
     }
     return true;
   }
-  const own = (a as Partial<Hashable>).equals;
-  if (typeof own === 'function') return own.call(a, b as never) === true;
-  return false;
+  // Either operand's `equals` answers, and the LEFT one first. Consulting only
+  // the left made the comparison depend on which side of the `==` a value was
+  // written on: `a == b` found an `equals` and `b == a` did not, and answered
+  // `false` for two values one of them called equal.
+  return compareDeclared(a, b) ?? false;
+}
+
+/**
+ * `a.equals(b)`, or `b.equals(a)` where only the right operand declares one, or
+ * `null` where neither does.
+ */
+function compareDeclared(a: object, b: object): boolean | null {
+  const mine = (a as Partial<Hashable>).equals;
+  if (typeof mine === 'function') return mine.call(a, b as never) === true;
+  const theirs = (b as Partial<Hashable>).equals;
+  if (typeof theirs === 'function') return theirs.call(b, a as never) === true;
+  return null;
 }
 
 /**
@@ -235,16 +249,23 @@ export class Table<K, V> {
  * `resultset`, and `diff == Update::EMPTY_V2` in the yjs backend — and each of
  * them was a branch that could never be taken.
  *
- * The walk is `keysEqual`: `===` for a primitive, element by element for a
+ * The walk is `equalByValue`: `===` for a primitive, element by element for a
  * sequence (bytes included), and the value's own `equals()` for anything that
  * declares one. What this adds is the REFUSAL. Rust's `==` needs a `PartialEq`
  * impl and will not compile without one, so an object standing here that
  * declares no `equals()` is a shape the port could not write; answering `false`
  * for it would turn that into a quiet "not equal" that no test can see.
+ *
+ * The refusal reaches every PAIR the walk compares, not only the two operands
+ * it started from: `valueEquals({}, {})` raised and `valueEquals([{}], [{}])`
+ * answered `false`, because the element-wise step went through the lookup walk
+ * instead. And it fires where only ONE side can be compared, in either order:
+ * `valueEquals(new Opaque(1), new Tag(1))` and its reverse both answered
+ * `false` and neither raised, which is exactly the shape this refusal exists to
+ * catch.
  */
 export function valueEquals(left: unknown, right: unknown): boolean {
-  refuseOperandWithout(left, right);
-  return keysEqual(left, right);
+  return equalByValue(left, right);
 }
 
 /** The same, for `a != b`. Written out so the emitted text reads as Rust does. */
@@ -253,14 +274,56 @@ export function valueNotEquals(left: unknown, right: unknown): boolean {
 }
 
 /**
- * `==` between two objects, neither of which can be compared by value.
+ * The one strict comparison: every pair it reaches is compared BY CONTENTS or
+ * refused.
  *
- * Only raised where BOTH sides are objects with no `equals()`: `x == null` and
- * `x == y` where one side is a primitive are answered by `keysEqual` without
- * ever reaching a member, and Rust's own `PartialEq<Option<T>>` is that shape.
+ * `keysEqual` is the other walk, and the two are not the same question. A map
+ * LOOKUP asks "is this the key I stored", and a key that answers no is an
+ * absent key rather than a defect — a `Map`'s own rule, which is what the
+ * bucket table needs. `==` asks Rust's question, which does not compile without
+ * a `PartialEq` impl.
+ */
+function equalByValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left !== left && right !== right) return true; // NaN
+  // A comparison that never reaches the contents cannot be refused: `x == null`
+  // and `x == 5` are answered by identity, and Rust's own
+  // `PartialEq<Option<T>>` is that shape.
+  if (!isComparableObject(left) || !isComparableObject(right)) return false;
+  if (isSequence(left) && isSequence(right)) {
+    if (left.length !== right.length) return false;
+    for (let at = 0; at < left.length; at++) {
+      if (!equalByValue(left[at], right[at])) return false;
+    }
+    return true;
+  }
+  // BOTH sides, and the LEFT one's impl. Rust's `a == b` is
+  // `impl PartialEq<B> for A`, so it is the left operand's method that answers
+  // and the right operand's says nothing about this pair: consulting the right
+  // one here made `Opaque == Tag` answer `true` through `Tag`'s own equality.
+  // Requiring both is what makes the refusal order-independent, which is the
+  // whole of E5.
+  const mine = (left as Partial<Hashable>).equals;
+  const theirs = (right as Partial<Hashable>).equals;
+  if (typeof mine !== 'function' || typeof theirs !== 'function') {
+    refuseOperandWithout(left, right);
+  }
+  return (mine as (o: never) => boolean).call(left, right as never) === true;
+}
+
+/** Is this an object at all — the only thing a content comparison can reach? */
+function isComparableObject(v: unknown): v is object {
+  return v !== null && typeof v === 'object';
+}
+
+/**
+ * `==` between two objects, at least one of which cannot be compared by value.
+ *
+ * Raised where the walk really reached the contents: both sides are objects and
+ * at least one declares no `equals()`. A sequence is compared element by
+ * element and never arrives here as a pair.
  */
 function refuseOperandWithout(left: unknown, right: unknown): void {
-  if (comparable(left) || comparable(right)) return;
   const name = (v: unknown) =>
     v === null ? 'null' : typeof v === 'object' ? ((v as object).constructor?.name ?? '(anonymous)') : typeof v;
   throw new Error(
@@ -268,13 +331,6 @@ function refuseOperandWithout(left: unknown, right: unknown): void {
     `neither\ndeclares an equals(). Rust's == needs a PartialEq impl, so this is a ` +
     `comparison\nthe port wrote where Rust would not have compiled one.`,
   );
-}
-
-/** Can this value be compared by contents at all? */
-function comparable(v: unknown): boolean {
-  if (v === null || typeof v !== 'object') return true; // a primitive, or absence
-  if (isSequence(v)) return true;
-  return typeof (v as Partial<Hashable>).equals === 'function';
 }
 
 /**
@@ -291,7 +347,7 @@ function comparable(v: unknown): boolean {
  */
 export function derivedEquals(left: unknown, right: unknown): boolean {
   refuseWithout(left, 'equals', 'PartialEq');
-  return keysEqual(left, right);
+  return equalByValue(left, right);
 }
 
 /**

@@ -827,7 +827,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
       try {
         tracing.debug(`${this} commiting transaction ${id} with ${events.length} events`);
         let changes = [];
-        for (const event of events.iterMut()) {
+        for (const event of [...events]) {
           const _r0 = await this.deref().value.collections.get(event.payload.collection);
           if (_r0.isErr()) return Result.Err(MutationError.fromRetrievalError(_r0.unwrapErr()));
           const collection = _r0.unwrap();
@@ -894,30 +894,32 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   let _moved11 = false;
                   const state = _r10.unwrap();
                   try {
+                    const _b12 = entity.id();
+                    const _b13 = entity.collection().clone();
                     _moved11 = true;
-                    let _moved12 = false;
-                    const entityState = new EntityState(entity.id(), entity.collection().clone(), state);
+                    let _moved14 = false;
+                    const entityState = new EntityState(_b12, _b13, state);
                     try {
-                      let _moved13 = false;
+                      let _moved15 = false;
                       const attestation = this.deref().value.policyAgent.attestState(this, entityState);
                       try {
-                        _moved12 = true;
-                        _moved13 = true;
+                        _moved14 = true;
+                        _moved15 = true;
                         const attested = Attested.opt(entityState, attestation);
-                        const _r14 = await collection.deref().value.addEvent(event);
-                        if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
-                        _r14.drop();
-                        const _r15 = await collection.deref().value.setState(attested);
-                        if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
-                        _r15.drop();
-                        const _r16 = EntityChange.new(entity.clone(), [event.clone()]);
+                        const _r16 = await collection.deref().value.addEvent(event);
                         if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-                        changes.push(_r16.unwrap());
+                        _r16.drop();
+                        const _r17 = await collection.deref().value.setState(attested);
+                        if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+                        _r17.drop();
+                        const _r18 = EntityChange.new(entity.clone(), [event.clone()]);
+                        if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
+                        changes.push(_r18.unwrap());
                       } finally {
-                        if (!_moved13) dropOwned(attestation);
+                        if (!_moved15) dropOwned(attestation);
                       }
                     } finally {
-                      if (!_moved12) entityState.drop();
+                      if (!_moved14) entityState.drop();
                     }
                   } finally {
                     if (!_moved11) state.drop();

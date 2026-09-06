@@ -167,8 +167,12 @@ impl<'a> BodyTranslator<'a> {
     pub fn wrap_bindings(&self, owned: &[ownership::Owned], text: String) -> String {
         let mut declarations = String::new();
         for value in owned {
+            // E15: a flag the arm never sets is dead; `ownership::wrap` has
+            // already left it out of the release.
             if let Some(flag) = &value.flag {
-                declarations.push_str(&format!("let {} = false;\n", flag));
+                if ownership::sets_the_flag(&text, flag) {
+                    declarations.push_str(&format!("let {} = false;\n", flag));
+                }
             }
         }
         let mut out = text;

@@ -1,78 +1,69 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
+import { Result, Ref, dropOwned, unsupported } from '@ankurah/base';
+import { Value } from '../value/index';
+import { PropertyError } from './traits';
+export * from './backend';
+export * from './traits';
+export * from './value';
 
-// ── Modules (matching Rust `pub mod` declarations) ──
-
-export * from './backend/index.ts';
-export * from './traits.ts';
-export * from './value/lww.ts';
-export * from './value/yrs_string.ts';
-
-// Rust: pub use value::{Json, Ref, YrsString};
-export { Json } from './value/json.ts';
-export { Ref } from './value/entity_ref.ts';
-// YrsString already re-exported via ./value/yrs_string.ts above
-
-import type { Value } from '../value/index.ts';
-
-// ---------------------------------------------------------------------------
-// PropertyName
-// ---------------------------------------------------------------------------
-
-/**
- * Type alias for property names (field names within an entity).
- *
- * Rust: `pub type PropertyName = String;`
- */
-export type PropertyName = string;
-
-// ---------------------------------------------------------------------------
-// Property interface
-// ---------------------------------------------------------------------------
-
-/**
- * Trait for types that can be serialized to/from a Value for storage in a PropertyBackend.
- *
- * Rust: `pub trait Property: Sized { fn into_value(&self) -> Result<Option<Value>, PropertyError>; fn from_value(value: Option<Value>) -> Result<Self, PropertyError>; }`
- * TS: Interface. Throws PropertyError on failure [A8].
- *
- * Note: The Rust crate provides blanket impls via a macro (`into!`) for primitive types
- * (String, i16, i32, i64, f64, bool, EntityId, Vec<u8>) and for Option<T: Property>.
- * Those impls will be ported when the Value module is ported, as standalone functions
- * or as part of the Value type itself.
- */
-export interface Property<T = unknown> {
-  /**
-   * Serialize this value into a Value for storage.
-   * Returns null for "no value" (e.g., Option::None).
-   * Throws PropertyError on failure.
-   *
-   * Rust: `fn into_value(&self) -> Result<Option<Value>, PropertyError>`
-   */
-  intoValue(): Value | null;
-
-  /**
-   * Deserialize from a Value (or null for missing).
-   * Throws PropertyError on failure.
-   *
-   * Rust: `fn from_value(value: Option<Value>) -> Result<Self, PropertyError>`
-   * Note: This is a static method in Rust. In TS it is modeled as a standalone function
-   * type since interfaces cannot have static methods.
-   */
-  // fromValue is a static factory in Rust; see PropertyFromValue below
+export interface Property {
+  intoValue(): Result<Value | null, PropertyError>;
+  fromValue(value: Value | null): Result<Self, PropertyError>;
 }
 
-/**
- * Factory function type for the static `from_value` method of the Property trait.
- * Throws PropertyError on failure.
- *
- * Rust: `fn from_value(value: Option<Value>) -> Result<Self, PropertyError>`
- */
-export type PropertyFromValue<T> = (value: Value | null) => T;
+export type PropertyName = string;
 
-/**
- * Factory function type for the `into_value` direction.
- * Throws PropertyError on failure.
- *
- * Rust: `fn into_value(&self) -> Result<Option<Value>, PropertyError>`
- */
-export type PropertyIntoValue<T> = (value: T) => Value | null;
+export function Option_intoValue<T extends Property>(self: T | null): Result<Value | null, PropertyError> {
+  if (self != null) {
+    const value = self;
+    const _r0 = Property.intoValue(value);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    return Result.Ok(_r0.unwrap());
+  } else {
+    return Result.Ok(null);
+  }
+}
+
+export function Option_fromValue<T extends Property>(value: Value | null): Result<T | null, PropertyError> {
+  const _v = T.fromValue(value);
+  if (_v.isOk()) {
+    const value = _v.unwrap();
+    return Result.Ok(value);
+  } else {
+    const _v1 = _v.unwrapErr();
+    if (_v1.is('Missing')) {
+      const _v2 = _v1;
+      try {
+        return Result.Ok(null);
+      } finally {
+        dropOwned(_v2);
+      }
+    }
+    {
+      const err = _v1;
+      return Result.Err(err);
+    }
+  }
+}
+
+export function Cow_Str_intoValue(self: Cow<string>): Result<Value | null, PropertyError> {
+  return Result.Ok(new Value('String', { _0: self }));
+}
+
+export function Cow_Str_fromValue(value: Value | null): Result<Cow<string>, PropertyError> {
+  unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+}
+
+export function Value_from(value: string): Value {
+  return new Value('String', { _0: value });
+}
+
+export function Property_dispatch_intoValue(self: unknown): Result<Value | null, PropertyError> {
+  if (self instanceof Option) return Option_intoValue(self as any);
+  if (self instanceof Cow) return Cow_Str_intoValue(self as any);
+  if (self instanceof Ref) return (self as any).intoValue();
+  if (self instanceof Json) return (self as any).intoValue();
+  if (self instanceof Item) return Item_intoValue(self as any);
+  throw new Error(`BUG: no Property impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+}
+

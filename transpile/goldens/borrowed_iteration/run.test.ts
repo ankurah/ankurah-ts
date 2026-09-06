@@ -9,7 +9,7 @@
 
 import { expect, test } from 'bun:test';
 import { HashMap } from '@ankurah/base';
-import { Cell, Key, Ordering, firstWidth, orderingWidth, refWidths, refWidthsBorrowed, sumAmp, sumBorrowed, sumConsuming, widths } from './input.ts';
+import { bumpCells, bumpMap, Cell, Key, Ordering, firstWidth, orderingWidth, refWidths, refWidthsBorrowed, sumAmp, sumBorrowed, sumConsuming, widths, widthsViaCall } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 function filled(): HashMap<Key, Cell> {
@@ -69,6 +69,34 @@ test('and over a reference it releases nothing, because it owns nothing', () => 
   // The caller still holds them, so a second read answers the same.
   expect(refWidthsBorrowed(keys)).toBe(3);
   for (const key of keys) key.drop();
+});
+
+// E11: `(&keys).into_iter()` is `IntoIterator for &Vec<T>`, whose Item is a
+// BORROW. The parent engine erased the `&` before the probe ran, picked the
+// by-value impl, and released every element the caller still owns — so the
+// `k.drop()` below was the second drop and aborted the run.
+test('a borrow written as a call still owns nothing', () => {
+  // The vector is the function's, and the LOOP borrows it: the block releases
+  // each element once, at the end. At the parent the loop released them too,
+  // so `dropOwned(keys)` was the second drop and aborted the run.
+  expect(widthsViaCall([new Key('a'), new Key('bb')])).toBe(3);
+});
+
+// F4/E12: `iter_mut` had no lowering and emitted `cells.iterMut()`, a method no
+// array declares. It writes THROUGH to the caller's elements, and releases
+// none of them.
+test('iter_mut writes through and releases nothing', () => {
+  const cells = [new Cell(1), new Cell(2)];
+  bumpCells(cells);
+  expect(cells.map((c) => c.value)).toEqual([2, 3]);
+  bumpCells(cells);
+  expect(cells.map((c) => c.value)).toEqual([3, 4]);
+  for (const c of cells) c.drop();
+
+  const map = filled();
+  bumpMap(map);
+  expect([...map].map(([, c]) => c.value).sort((a, b) => a - b)).toEqual([3, 41]);
+  map.drop();
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

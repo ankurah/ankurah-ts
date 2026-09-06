@@ -1,94 +1,230 @@
 // MIRRORS: ankurah/core/src/value/cast_predicate.rs
+import { Result, dropOwned, unsupported } from '@ankurah/base';
+import { Expr, Literal, Predicate } from '@ankurah/ankql';
+import { RetrievalError } from '../error';
+import { Comparison } from '../lineage';
+import { CollectionSchema } from '../schema';
+import { Value_castTo } from './cast';
+import { Value, ValueType } from './index';
 
-import { Expr, Literal, Predicate, PathExpr, ComparisonOperator } from '@ankurah/ankql';
-import type { Value } from './index';
-import { ValueType, valueFromLiteral, valueToLiteral } from './index';
-import { castTo, CastErrorException } from './cast';
-import { RetrievalError } from '../error.ts';
-export type { CollectionSchema } from '../schema.ts';
-import type { CollectionSchema } from '../schema.ts';
-
-// ── castPredicateTypes ───────────────────────────────────────────────
-
-/** Cast all literals in a predicate based on field names using a CollectionSchema.
- *  Mirrors Rust cast_predicate_types(). */
-export function castPredicateTypes(predicate: Predicate, schema: CollectionSchema): Predicate {
-  return predicate.match({
+export function castPredicateTypes<S extends CollectionSchema>(predicate: Predicate, schema: S): Result<Predicate, RetrievalError> {
+  return predicate.intoMatch({
     Comparison: (v) => {
-      const { left, operator, right } = v;
-
-      // Handle both cases: field = literal AND literal = field
-      if (left.is('Path') && right.is('Literal')) {
-        // Case 1: field = literal (cast literal to field type)
-        const path = (left.value as { path: PathExpr }).path;
-        const literal = (right.value as { literal: Literal }).literal;
-        const targetType = schema.fieldType(path);
-        const castLit = castLiteralToType(literal, targetType);
-        return Predicate.Comparison(left, operator, castLit);
+      const left = v.left;
+      const operator = v.operator;
+      const right = v.right;
+      let _moved0 = false;
+      let _moved1 = false;
+      let _moved2 = false;
+      try {
+        try {
+          try {
+            const _v = [left.asRef(), right.asRef()];
+            if ((_v[0].is('Path')) && (_v[1].is('Literal'))) {
+              const { _0: path } = _v[0].value;
+              const { _0: literal } = _v[1].value;
+              {
+                const _r3 = schema.fieldType(path);
+                if (_r3.isErr()) return Result.Err(RetrievalError.fromPropertyError(_r3.unwrapErr()));
+                const targetType = _r3.unwrap();
+                const _r4 = castLiteralToType(literal.clone(), targetType);
+                if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+                let _moved5 = false;
+                const castLiteral = _r4.unwrap();
+                try {
+                  _moved0 = true;
+                  _moved1 = true;
+                  _moved5 = true;
+                  return Result.Ok(new Predicate('Comparison', { left: left, operator: operator, right: castLiteral }));
+                } finally {
+                  if (!_moved5) castLiteral.drop();
+                }
+              }
+            } else if ((_v[0].is('Literal')) && (_v[1].is('Path'))) {
+              const { _0: literal } = _v[0].value;
+              const { _0: path } = _v[1].value;
+              {
+                const _r6 = schema.fieldType(path);
+                if (_r6.isErr()) return Result.Err(RetrievalError.fromPropertyError(_r6.unwrapErr()));
+                const targetType = _r6.unwrap();
+                const _r7 = castLiteralToType(literal.clone(), targetType);
+                if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+                let _moved8 = false;
+                const castLiteral = _r7.unwrap();
+                try {
+                  _moved1 = true;
+                  _moved2 = true;
+                  _moved8 = true;
+                  return Result.Ok(new Predicate('Comparison', { left: castLiteral, operator: operator, right: right }));
+                } finally {
+                  if (!_moved8) castLiteral.drop();
+                }
+              }
+            } else {
+              {
+                const _r9 = castExprTypes(left, schema);
+                if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                let _moved10 = false;
+                const castLeft = _r9.unwrap();
+                try {
+                  const _r11 = castExprTypes(right, schema);
+                  if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+                  let _moved12 = false;
+                  const castRight = _r11.unwrap();
+                  try {
+                    _moved1 = true;
+                    _moved10 = true;
+                    _moved12 = true;
+                    return Result.Ok(new Predicate('Comparison', { left: castLeft, operator: operator, right: castRight }));
+                  } finally {
+                    if (!_moved12) castRight.drop();
+                  }
+                } finally {
+                  if (!_moved10) castLeft.drop();
+                }
+              }
+            }
+          } finally {
+            if (!_moved2) dropOwned(right);
+          }
+        } finally {
+          if (!_moved1) operator.drop();
+        }
+      } finally {
+        if (!_moved0) dropOwned(left);
       }
-      if (left.is('Literal') && right.is('Path')) {
-        // Case 2: literal = field (cast literal to field type)
-        const literal = (left.value as { literal: Literal }).literal;
-        const path = (right.value as { path: PathExpr }).path;
-        const targetType = schema.fieldType(path);
-        const castLit = castLiteralToType(literal, targetType);
-        return Predicate.Comparison(castLit, operator, right);
-      }
-
-      // For all other cases, recursively cast both sides
-      const castLeft = castExprTypes(left, schema);
-      const castRight = castExprTypes(right, schema);
-      return Predicate.Comparison(castLeft, operator, castRight);
     },
-    IsNull: (v) => Predicate.IsNull(castExprTypes(v.expr, schema)),
-    And: (v) => Predicate.And(
-      castPredicateTypes(v.left, schema),
-      castPredicateTypes(v.right, schema),
-    ),
-    Or: (v) => Predicate.Or(
-      castPredicateTypes(v.left, schema),
-      castPredicateTypes(v.right, schema),
-    ),
-    Not: (v) => Predicate.Not(castPredicateTypes(v.predicate, schema)),
-    True: () => predicate,
-    False: () => predicate,
-    Placeholder: () => predicate,
+    IsNull: (v) => {
+      const expr = v._0;
+      try {
+        const _r13 = castExprTypes(expr, schema);
+        if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+        return Result.Ok(new Predicate('IsNull', { _0: _r13.unwrap() }));
+      } finally {
+        dropOwned(expr);
+      }
+    },
+    And: (v) => {
+      const left = v._0;
+      const right = v._1;
+      try {
+        try {
+          const _r14 = castPredicateTypes(left, schema);
+          if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+          const _r15 = castPredicateTypes(right, schema);
+          if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
+          return Result.Ok(new Predicate('And', { _0: _r14.unwrap(), _1: _r15.unwrap() }));
+        } finally {
+          dropOwned(right);
+        }
+      } finally {
+        dropOwned(left);
+      }
+    },
+    Or: (v) => {
+      const left = v._0;
+      const right = v._1;
+      try {
+        try {
+          const _r16 = castPredicateTypes(left, schema);
+          if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
+          const _r17 = castPredicateTypes(right, schema);
+          if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+          return Result.Ok(new Predicate('Or', { _0: _r16.unwrap(), _1: _r17.unwrap() }));
+        } finally {
+          dropOwned(right);
+        }
+      } finally {
+        dropOwned(left);
+      }
+    },
+    Not: (v) => {
+      const pred = v._0;
+      try {
+        const _r18 = castPredicateTypes(pred, schema);
+        if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
+        return Result.Ok(new Predicate('Not', { _0: _r18.unwrap() }));
+      } finally {
+        dropOwned(pred);
+      }
+    },
+    True: () => Result.Ok(predicate),
+    False: () => Result.Ok(predicate),
+    Placeholder: () => Result.Ok(predicate),
   });
 }
 
-// ── castExprTypes (private) ──────────────────────────────────────────
-
-/** Cast all literals in an expression based on field names. Mirrors Rust cast_expr_types(). */
-function castExprTypes(expr: Expr, schema: CollectionSchema): Expr {
-  return expr.match({
-    Literal: () => expr, // Literals are cast in context
-    Path: () => expr,
-    Predicate: (v) => Expr.Predicate(castPredicateTypes(v.predicate, schema)),
-    InfixExpr: (v) => Expr.InfixExpr(
-      castExprTypes(v.left, schema),
-      v.operator,
-      castExprTypes(v.right, schema),
-    ),
-    ExprList: (v) => Expr.ExprList(v.exprs.map((e) => castExprTypes(e, schema))),
-    Placeholder: () => expr,
+function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Result<Expr, RetrievalError> {
+  return expr.intoMatch({
+    Literal: (v) => {
+      const literal = v._0;
+      return Result.Ok(new Expr('Literal', { _0: literal }));
+    },
+    Path: (v) => {
+      const path = v._0;
+      return Result.Ok(new Expr('Path', { _0: path }));
+    },
+    Predicate: (v) => {
+      const predicate = v._0;
+      const _r0 = castPredicateTypes(predicate, schema);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      return Result.Ok(new Expr('Predicate', { _0: _r0.unwrap() }));
+    },
+    InfixExpr: (v) => {
+      const left = v.left;
+      const operator = v.operator;
+      const right = v.right;
+      try {
+        try {
+          const _r1 = castExprTypes(left, schema);
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          const _r2 = castExprTypes(right, schema);
+          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          return Result.Ok(new Expr('InfixExpr', { left: _r1.unwrap(), operator: operator, right: _r2.unwrap() }));
+        } finally {
+          dropOwned(right);
+        }
+      } finally {
+        dropOwned(left);
+      }
+    },
+    ExprList: (v) => {
+      const exprs = v._0;
+      try {
+        const _r4 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+        const castExprs = _r4.unwrap();
+        return Result.Ok(new Expr('ExprList', { _0: castExprs }));
+      } finally {
+        dropOwned(exprs);
+      }
+    },
+    Placeholder: () => Result.Ok(new Expr('Placeholder', {})),
   });
 }
 
-// ── castLiteralToType (private) ──────────────────────────────────────
-
-/** Cast a literal to a specific type using the Value casting system.
- *  Mirrors Rust cast_literal_to_type(). */
-function castLiteralToType(literal: Literal, targetType: ValueType): Expr {
-  // Convert Literal -> Value -> cast -> Literal -> Expr
-  const value: Value = valueFromLiteral(literal);
+function castLiteralToType(literal: Literal, targetType: ValueType): Result<Expr, RetrievalError> {
+  const value = Value.fromAstLiteral(literal);
   try {
-    const castValue = castTo(value, targetType);
-    const castLiteral = valueToLiteral(castValue);
-    return Expr.Literal(castLiteral);
-  } catch (e) {
-    if (e instanceof CastErrorException) {
-      throw RetrievalError.storageError(new Error(`Type casting error: ${e.message}`));
+    const _r0 = Value_castTo(value, targetType).mapErr((e) => new RetrievalError('StorageError', { _0: `Type casting error: ${e}` }));
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
+    const castValue = _r0.unwrap();
+    try {
+      _moved1 = true;
+      let _moved2 = false;
+      const castLiteral = Literal.fromValue(castValue);
+      try {
+        _moved2 = true;
+        return Result.Ok(new Expr('Literal', { _0: castLiteral }));
+      } finally {
+        if (!_moved2) castLiteral.drop();
+      }
+    } finally {
+      if (!_moved1) castValue.drop();
     }
-    throw e;
+  } finally {
+    value.drop();
   }
 }
+

@@ -887,7 +887,28 @@ round: with nothing stating it, `#[derive(Debug)]` on a type holding an
 
 `tests/declared_members.rs` checks both claims against the file each entry
 names, so an entry beside a file that lost the member fails the harness rather
-than the run.
+than the run — and it checks a DECLARATION of the kind the emission calls: an
+instance `debug()` taking nothing, a `static fromJson(..)`, an instance
+`toJSON(..)`. Reading the class body as text, any `x.debug()` inside any method
+satisfied the claim, and so did a `static debug()` the emission never reaches.
+
+**A hand-written GENERIC prints its payload from the value's own surface.**
+`Attested<T>` is the port's only one, and there is no resolved type at the
+payload's position — `T` is whatever the instantiation put there. So the payload
+goes through `@ankurah/base`'s `debugValue`: a string is a Rust `String` and
+prints QUOTED, a number and a bigint print as themselves, `null` is `None`, an
+array prints element-wise and a typed array as its bytes, an object declaring
+`debug()` prints through it, and anything else is REFUSED by name rather than
+printed `[object Object]`. The fallback used to be `String(payload)`, so
+`Attested<String>` printed `payload: secret` where Rust prints
+`payload: "secret"`.
+
+The one shape that surface cannot get right is a `char`: the port writes one as
+a one-character string, which is what a `String` is too, and Rust prints those
+differently — `'a'` against `"a"`. A provided generic instantiated with `char`
+is therefore REPORTED at the Debug site rather than rendered as a guess. A float
+payload is the same erasure in miniature: `1.0f64` prints `1` there, where the
+emitter — which has the type — writes `1.0`.
 
 ## A range is the sequence of its values, and owns nothing
 
@@ -904,8 +925,26 @@ so it owns nothing and no release is written for it.
 
 An UNBOUNDED range — `..n`, `a..`, `..` — has no sequence to build, and in the
 one position where Rust means a SLICE by it the index lowering has already
-answered. It is a hole (R12). So is a range over a width the port holds in a
-`bigint`: `n++` on a `bigint` is a `TypeError`, and no corpus range is one.
+answered. It is a hole (R12).
+
+Which ranges are built at all is a WHITELIST: the discrete integer widths `n++`
+steps — `u8`, `u16`, `u32`, `usize`, `i8`, `i16`, `i32`, `isize`. A `u64` or
+`i64` is a `bigint` here and `n++` on one is a `TypeError`; a `char` range is
+the sequence of its code points, and the port writes a `char` as a
+one-character string, so `rangeIncl('a', 'c')` answered `["a"]` — `'a' + 1` is
+the string `"a1"`; and a float range is not an iterator in Rust either. Each of
+those is a hole naming its own reason. An endpoint the engine could not TYPE is
+left alone: that is the engine's own gap and is reported where the name is.
+
+`contains` is the exception, and it is written from the BOUNDS —
+`(a <= x && x < b)`, with `<=` at the far end for `a..=b`. It is a comparison
+against the two ends rather than a search of a sequence, and it is the one
+method a range the port cannot count still answers. Written through the
+sequence, `(0.0f64..1.0f64).contains(&0.5)` was `range(0, 1).contains(0.5)`:
+`range(0, 1)` is `[0]`, and an array has no `contains`.
+
+`step_by(n)` is `stepBy(xs, n)` over the materialised sequence — every nth
+value, starting with the first, and a step of zero raises as Rust panics.
 
 ## A call the engine refuses takes nothing
 
@@ -945,11 +984,25 @@ So the runtime performs it: `valueEquals(a, b)`, and `valueNotEquals(a, b)` for
 `HashMap` and `HashSet` declare one — the same size and the same contents, in
 any order, as Rust's own impls answer.
 
-Two objects that BOTH declare no `equals()` raise. Rust's `==` needs a
-`PartialEq` impl and will not compile without one, so a pair standing there is a
-shape the port wrote and Rust would not have; answering false would turn that
-into a quiet "not equal" no test can see. A comparison with one primitive or
-`null` side never reaches a member and never raises.
+A pair of objects where EITHER declares no `equals()` raises. Rust's `a == b` is
+`impl PartialEq<B> for A`, so it needs an impl and will not compile without one:
+a pair standing there is a shape the port wrote and Rust would not have, and
+answering false would turn that into a quiet "not equal" no test can see. It is
+the LEFT operand's method that answers, because that is the impl; requiring both
+to declare one is what makes the refusal read the same in either order —
+`Opaque == Tag` and `Tag == Opaque` both used to answer `false` without raising,
+because one comparable side skipped the check. A comparison with one primitive
+or `null` side never reaches a member and never raises.
+
+**The refusal reaches every pair the walk compares**, not only the two operands
+it started from. `valueEquals({}, {})` raised and `valueEquals([{}], [{}])`
+answered `false`, because the element-wise step went through the map's LOOKUP
+walk instead. Those are two different questions and the port keeps both:
+`keysEqual` asks "is this the key I stored", where a key that answers no is an
+absent key rather than a defect — a `Map`'s own rule, and what the bucket table
+needs — while `valueEquals` asks Rust's. A `HashMap`'s own `equals` uses the
+table's lookup for its KEYS and `valueEquals` for its VALUES, because
+`impl PartialEq for HashMap<K, V>` carries `V: PartialEq`.
 
 Neither helper participates in ownership: they read what they are handed and
 answer a boolean.
@@ -1012,6 +1065,76 @@ those names — `ankql`'s `PathExpr::first()` answers a `&str`, and
 them on a receiver the engine could not name would call the wrong function. On
 an untyped receiver the call keeps its own spelling and the crate's diagnostic
 already says the receiver was dispatched by name.
+
+`max_by` and `min_by` fold the way Rust folds. `Iterator::max_by` is
+`fold1(|best, candidate| cmp::max_by(best, candidate, compare))`, and
+`cmp::max_by` asks `compare(&best, &candidate)` — so the comparator sees the
+accumulator FIRST and the next element second. The port asked
+`cmp(candidate, best)`, which an antisymmetric comparator hides in the winner
+and nothing else does: over `[1, 2, 3]` Rust logs `(1,2)` then `(2,3)` and the
+port logged `(2,1)` then `(3,2)`, so a comparator with a side effect saw the
+pairs reversed and one whose two arguments mean different things answered about
+the wrong one. `Less` or `Equal` takes the candidate, which is what makes the
+LAST of several equal elements the maximum; `min_by` takes it only on `Greater`,
+keeping the FIRST. `max_by_key` and `min_by_key` are
+`self.map(|x| (f(&x), x)).max_by(..)`, which is lazy: the key closure is called
+exactly ONCE per element, in element order. Called inside the comparator instead
+it ran twice per comparison and in the reverse order — four calls over three
+elements.
+
+Every callback reaches its helper through `invokeRef`, and every helper that
+takes one RELEASES it when the call ends however it ends. Rust's terminals take
+their `F` by value and drop it there, and R10 says a closure the emitter wrapped
+in an `OwnedClosure` is never called as a bare function; a plain arrow passes
+through both unchanged.
+
+## A consuming terminal owns what it walks
+
+`std/iter_owned.ts` is the other half of the same table, and the emitter writes
+it where the chain CONSUMES. Rust's `into_iter().find(p)` hands back the element
+it selected and drops every other one — the ones the walk passed, and the ones
+it never reached; `max_by_key` drops both losers; `position` moves each element
+into the closure, which is then the only thing that can drop it. Written with
+the reading helper instead, such a chain got one of two wrong answers, and which
+one depended on whether Rust's signature happens to say `self` or `&mut self`
+about the ITERATOR — a distinction that says nothing about the items:
+
+- `find`, `position`, `find_map` and `rposition` are `&mut self`, so the emitter
+  hoisted the sequence and released it whole. `find` therefore handed back an
+  element of a sequence the same `finally` released, and a `position` closure
+  that dropped its own element — which Rust permits, because `position` takes
+  the element by value — hit `OwnershipFatal` on the second drop.
+- `last`, `reduce`, `max_by`, `min_by`, `max_by_key` and `min_by_key` are
+  `self`, so nothing was hoisted and every element the terminal did not answer
+  simply leaked.
+
+`iter_mut` is the sequence itself and stays in the reading family: Rust hands
+out `&mut T`, the port has no `&mut`, and a loop writes THROUGH only because the
+variable and the array slot are the same object. Over a number, a string, a
+`bigint` or a `char` the variable is a COPY and the write is lost, so `iter_mut`
+and a map's `values_mut` over such an element are refused rather than written as
+a silent no-op.
+
+Which family is written is decided by the RESOLUTION, never by the name:
+`slice::last(&self)` borrows and `Iterator::last(self)` does not, and the two
+are one word apart in the source. The owned family is written when the terminal
+came through `Iterator`, the elements have drop glue, and the receiver is not a
+place. A receiver that IS a place names an iterator the call only partly
+consumes — `let mut it = v.into_iter(); it.find(..)` — and the port writes an
+iterator as the whole array, so after the call it cannot say which elements are
+still the caller's: that shape is refused (R12), and the block keeps the
+receiver, which is what a hole leaves it holding.
+
+| Rust | TypeScript |
+|---|---|
+| `v.iter().find(p)` | `iterFind(v, p)` — reads; the sequence is the caller's |
+| `v.into_iter().find(p)` | `iterFindOwned([...v], p)` — the answer is the caller's, the rest are dropped |
+| `v.into_iter().max_by_key(k)` | `iterMaxByKeyOwned([...v], k)` — every loser dropped |
+
+Each owned helper keeps one cursor meaning "the elements from here on are still
+the iterator's", advances it as it disposes of them, and releases whatever is
+left in a `finally`. That is what Rust's own unwind does: a closure handed an
+element by value drops it, and the iterator drops what it had not yet produced.
 
 ## The arithmetic helpers own nothing, and the two that can refuse say so
 

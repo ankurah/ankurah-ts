@@ -40,6 +40,8 @@ mod guard_tests;
 mod tests;
 #[cfg(test)]
 mod refusal_tests;
+#[cfg(test)]
+mod terminal_tests;
 
 pub use glue::{drops_of, fresh_at_each_use, Drops};
 pub use lowering::Lowering;
@@ -90,6 +92,29 @@ impl Owned {
     }
 }
 
+/// The body without the `let <flag> = false;` a dead flag left in it.
+///
+/// A `let`'s own claim writes the declaration into the statement stream before
+/// the body is finished, so dropping the flag from the release has to take the
+/// declaration with it.
+fn without_declaration(body: &str, flag: &str) -> String {
+    let dead = format!("let {} = false;", flag);
+    let kept: Vec<&str> = body.lines().filter(|line| line.trim() != dead).collect();
+    match body.ends_with('\n') {
+        true if !kept.is_empty() => format!("{}\n", kept.join("\n")),
+        _ => kept.join("\n"),
+    }
+}
+
+/// Does this body ever set the flag — `_movedN = true` — anywhere inside it,
+/// a nested closure or arm included?
+///
+/// The flag names the emitter writes (`_moved0`, `_moved1`, ...) appear in no
+/// string literal and in no comment it emits, so the text is the whole answer.
+pub fn sets_the_flag(body: &str, flag: &str) -> bool {
+    body.contains(&format!("{} = true", flag))
+}
+
 /// A declaration lifted out of the statement that needed it.
 ///
 /// A guard produced inside an expression, and the `Result` a `?` tests, are
@@ -129,6 +154,22 @@ pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
 /// is not in scope in the `finally`, and hoisting it would cost the type
 /// annotation and the `const`.
 pub fn wrap(body: &str, owned: &Owned) -> String {
+    // E15: a flag says "somebody else owns this now", and a body that never
+    // sets it never hands the value away — so the flag is a `let` nothing
+    // assigns and a test that is always false. The disposition analysis reads
+    // the SOURCE, and a move it finds may be one the lowering did not write
+    // (an `if let Some(x) = value` binds a name out of the option without the
+    // emitted arm setting anything). What the block really did is what the
+    // block really wrote, so the flag is dropped where the body does not set
+    // it and the release stands unguarded. Live at
+    // `storage-indexeddb/collection.ts:686` and `core/value/cast_predicate.ts`.
+    let (owned, body) = match &owned.flag {
+        Some(flag) if !sets_the_flag(body, flag) => {
+            (Owned { flag: None, ..owned.clone() }, without_declaration(body, flag))
+        }
+        _ => (owned.clone(), body.to_string()),
+    };
+    let (owned, body) = (&owned, body.as_str());
     let release = owned.release();
     if release.is_empty() {
         return body.to_string();
@@ -147,4 +188,41 @@ pub fn wrap(body: &str, owned: &Owned) -> String {
         crate::body::indent(body),
         crate::body::indent(&release)
     )
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::{wrap, Drops, Owned};
+
+    fn held(flag: Option<&str>) -> Owned {
+        Owned {
+            name: "value".to_string(),
+            source: None,
+            drops: Drops::Cascade,
+            flag: flag.map(str::to_string),
+            statement_scoped: false,
+        }
+    }
+
+    /// E15: a flag says "somebody else owns this now", and a body that never
+    /// SETS it never hands the value away. The disposition analysis reads the
+    /// source and may find a move the lowering did not write, which left a
+    /// `let` nothing assigns beside a test that is always false — live at
+    /// `storage-indexeddb/collection.ts` and `core/value/cast_predicate.ts`.
+    #[test]
+    fn a_flag_the_body_never_sets_is_dropped_with_its_declaration() {
+        let body = "let _moved1 = false;\nread(value);\n";
+        let out = wrap(body, &held(Some("_moved1")));
+        assert!(!out.contains("_moved1"), "the dead flag is gone:\n{}", out);
+        assert!(out.contains("dropOwned(value);"), "and the release stands:\n{}", out);
+    }
+
+    /// A flag the body DOES set keeps both.
+    #[test]
+    fn a_flag_the_body_sets_keeps_its_guard() {
+        let body = "let _moved1 = false;\n_moved1 = true;\nhand(value);\n";
+        let out = wrap(body, &held(Some("_moved1")));
+        assert!(out.contains("let _moved1 = false;"), "{}", out);
+        assert!(out.contains("if (!_moved1) dropOwned(value);"), "{}", out);
+    }
 }

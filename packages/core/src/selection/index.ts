@@ -1,4 +1,3 @@
 // MIRRORS: ankurah/core/src/selection/mod.rs
+export * from './filter';
 
-// pub mod filter
-export * from './filter.ts';

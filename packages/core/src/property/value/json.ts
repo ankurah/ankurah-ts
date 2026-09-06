@@ -1,150 +1,141 @@
 // MIRRORS: ankurah/core/src/property/value/json.rs
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, unsupported } from '@ankurah/base';
+import { BincodeReader, BincodeWriter } from './codec';
+import { Value } from '../../value/index';
+import { Property } from '../index';
+import { PropertyError } from '../traits';
 
-import type { Value } from '../../value/index.ts';
-import type { Property } from '../index.ts';
-import { PropertyError } from '../traits.ts';
+export class Json extends Struct implements Property {
+  readonly _0: unknown;
 
-// ---------------------------------------------------------------------------
-// Json
-// ---------------------------------------------------------------------------
-
-/**
- * A JSON property type for storing structured/nested data.
- *
- * Stores data as serialized JSON bytes using LWW (last-writer-wins) semantics.
- * The inner value can represent any JSON structure: objects, arrays,
- * strings, numbers, booleans, or null.
- *
- * Rust: `pub struct Json(pub serde_json::Value)`
- * Divergence: Rust wraps serde_json::Value; TS wraps `unknown` (any JSON-compatible value) [E8].
- */
-export class Json implements Property {
-  readonly inner: unknown;
-
-  constructor(value: unknown) {
-    this.inner = value;
+  constructor(_0: unknown) {
+    super();
+    this._0 = _0;
   }
 
-  // ── Static constructors ──
-
-  /** Create a new Json from a value. Rust: `pub fn new(value: serde_json::Value) -> Self` */
   static new(value: unknown): Json {
     return new Json(value);
   }
 
-  /** Create a Json null value. Rust: `pub fn null() -> Self` */
   static null(): Json {
-    return new Json(null);
+    return new Json(serdeJson.Value.Null);
   }
 
-  /** Create a Json object from key-value pairs. Rust: `pub fn object(pairs: impl IntoIterator<Item = (impl Into<String>, Value)>) -> Self` */
-  static object(pairs: Iterable<[string, unknown]>): Json {
-    const obj: Record<string, unknown> = {};
-    for (const [k, v] of pairs) {
-      obj[k] = v;
-    }
-    return new Json(obj);
+  static object(pairs: [string, unknown][]): Json {
+    const map = unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for');
+    return new Json(serdeJson.Value.Object(map));
   }
 
-  /** Create a Json array. Rust: `pub fn array(items: impl IntoIterator<Item = Value>) -> Self` */
-  static array(items: Iterable<unknown>): Json {
-    return new Json(Array.from(items));
+  static array(items: unknown[]): Json {
+    return new Json(serdeJson.Value.Array([...items]));
   }
 
-  // ── Accessors ──
+  inner(): unknown {
+    return this._0;
+  }
 
-  /** Get the inner value. Rust: `pub fn inner(&self) -> &serde_json::Value` */
-  // Note: `inner` is a public readonly field in TS (see above).
+  innerMut(): unknown {
+    return this._0;
+  }
 
-  /** Consume self and return the inner value. Rust: `pub fn into_inner(self) -> serde_json::Value` */
   intoInner(): unknown {
-    return this.inner;
+    try {
+      return this._0;
+    } finally {
+      this.drop();
+    }
   }
 
-  /**
-   * Get a nested value by path (e.g., ["licensing", "territory"]).
-   * Returns undefined if the path doesn't exist or any intermediate value is not an object.
-   *
-   * Rust: `pub fn get_path(&self, path: &[&str]) -> Option<&serde_json::Value>`
-   */
-  getPath(path: string[]): unknown | undefined {
-    let current: unknown = this.inner;
+  getPath(path: string[]): unknown | null {
+    let current = this._0;
     for (const step of path) {
-      if (current === null || current === undefined || typeof current !== 'object') {
-        return undefined;
-      }
-      current = (current as Record<string, unknown>)[step];
-      if (current === undefined) {
-        return undefined;
-      }
+      const _r0 = ((current as Record<string, unknown>)?.[step] ?? null);
+      if (_r0 == null) return null;
+      current = _r0;
     }
     return current;
   }
 
-  /** Check if this Json is null. Rust: `pub fn is_null(&self) -> bool` */
   isNull(): boolean {
-    return this.inner === null;
+    return (this._0 === null);
   }
 
-  /** Check if this Json is an object. Rust: `pub fn is_object(&self) -> bool` */
   isObject(): boolean {
-    return this.inner !== null && typeof this.inner === 'object' && !Array.isArray(this.inner);
+    return (this._0 !== null && typeof this._0 === 'object' && !Array.isArray(this._0));
   }
 
-  /** Check if this Json is an array. Rust: `pub fn is_array(&self) -> bool` */
   isArray(): boolean {
-    return Array.isArray(this.inner);
+    return Array.isArray(this._0);
   }
 
-  // ── Default ──
-
-  /** Rust: `impl Default for Json { fn default() -> Self { Json::null() } }` */
   static default(): Json {
     return Json.null();
   }
 
-  // ── From conversions ──
-  // Rust: impl From<serde_json::Value> for Json — use constructor directly
-  // Rust: impl From<Json> for serde_json::Value — use intoInner()
-  // Rust: impl Deref/DerefMut — no TS equivalent
-
-  // ── WASM / UniFFI bindings — omitted (TS-only runtime) ──
-
-  // ── Property impl ──
-
-  /**
-   * Serialize this value into a Value for storage.
-   *
-   * Rust: `impl Property for Json { fn into_value(&self) -> Result<Option<Value>, PropertyError> }`
-   */
-  intoValue(): Value | null {
-    return { type: 'Json', value: structuredClone(this.inner) };
+  static fromValue(value: unknown): Json {
+    return new Json(value);
   }
 
-  /**
-   * Deserialize from a Value (or null for missing).
-   *
-   * Rust: `fn from_value(value: Option<Value>) -> Result<Self, PropertyError>`
-   */
-  static fromValue(value: Value | null): Json {
-    if (value === null) {
-      throw PropertyError.missing();
+  deref(): unknown {
+    return this._0;
+  }
+
+  derefMut(): unknown {
+    return this._0;
+  }
+
+  intoValue(): Result<Value | null, PropertyError> {
+    return Result.Ok(new Value('Json', { _0: structuredClone(this._0) }));
+  }
+
+  static Property_fromValue(value: Value | null): Result<Json, PropertyError> {
+    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  }
+
+  equals(other: Json): boolean {
+    if (!this._0.equals(other._0)) return false;
+    return true;
+  }
+
+  clone(): Json {
+    return new Json(this._0.clone());
+  }
+
+  debug(): string {
+    return `Json(${this._0})`;
+  }
+
+  encode(writer: BincodeWriter): void {
+    this._0.encode(writer);
+  }
+
+  static decode(reader: BincodeReader): Json {
+    const _0 = unknown.decode(reader);
+    return new Json(_0);
+  }
+
+  toJSON(): unknown {
+    return this._0;
+  }
+
+  static fromJson(value: unknown): Result<Json, JsonError> {
+    try {
+      const _r_0 = ((v: unknown) => Result.Ok(v))(value);
+      if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+      const _0 = _r_0.unwrap();
+      return Result.Ok(new Json(_0));
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
     }
-    if (value.type === 'Json') {
-      return new Json(value.value);
-    }
-    if (value.type === 'Binary') {
-      // Accept Binary for backwards compatibility
-      try {
-        const jsonStr = new TextDecoder().decode(value.value);
-        const parsed = JSON.parse(jsonStr);
-        return new Json(parsed);
-      } catch (e) {
-        throw PropertyError.deserializeError(e instanceof Error ? e : new Error(String(e)));
-      }
-    }
-    throw PropertyError.invalidVariant(value, 'Json');
   }
 }
 
-// Rust: json! macro — omitted. TS has JSON literals natively.
+export function Value_fromJson(json: Json): unknown {
+  try {
+    return json._0;
+  } finally {
+    json.drop();
+  }
+}
+

@@ -40,7 +40,7 @@ export class Object extends Struct {
     const _r0 = value.tryInto().mapErr((e) => new MutationError('General', { _0: e }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const jsValue = _r0.unwrap();
-    return jsSys.Reflect.set(this.obj, jsKey, jsValue).mapErr((_e) => new MutationError('FailedToSetProperty', { _0: 'field', _1: jsValue.asString().unwrapOrDefault() }));
+    return jsSys.Reflect.set(this.obj, jsKey, jsValue).mapErr((_e) => new MutationError('FailedToSetProperty', { _0: 'field', _1: (typeof jsValue === 'string' ? jsValue : null).unwrapOrDefault() }));
   }
 
   deref(): unknown {

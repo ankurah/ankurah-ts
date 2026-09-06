@@ -40,7 +40,7 @@ export function Value_toBytes(self: Value): Uint8Array {
     },
     Bool: (v) => {
       const b = v._0;
-      return [Number(b)] as any;
+      return [Number(b)];
     },
     EntityId: (v) => {
       const entityId = v._0;
@@ -114,7 +114,7 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
     EntityId: (v) => {
       const entityId = v._0;
       let bytes = entityId.toBytes();
-      for (const i of (range(0, 16)).slice().reverse()) {
+      for (const i of (range(0, 16)).reverse()) {
         if (bytes[i] === 255) {
           bytes[i] = 0;
         } else {
@@ -189,7 +189,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
       if (valueEquals(bytes, Array(16).fill(0))) {
         return null;
       } else {
-        for (const i of (range(0, 16)).slice().reverse()) {
+        for (const i of (range(0, 16)).reverse()) {
           if (bytes[i] === 0) {
             bytes[i] = 255;
           } else {

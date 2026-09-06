@@ -1,194 +1,128 @@
 // MIRRORS: ankurah/core/src/reactor/subscription.rs
+import { Struct, Drop, Result, Arc, OwnedClosure } from '@ankurah/base';
+import { Broadcast, BroadcastListener, ListenerGuard, Signal, Subscribe, SubscriptionGuard, BroadcastId } from '@ankurah/signals';
+import { SubscriptionError } from '../error';
+import { Reactor } from '../reactor';
+import { ReactorUpdate } from './update';
+import { EntityId, QueryId } from '@ankurah/proto';
 
-import type { EntityId, QueryId } from '@ankurah/proto';
-import {
-  Broadcast,
-  type BroadcastId,
-  type BroadcastListener,
-  type Signal,
-  type Listener,
-  ListenerGuard,
-  type Subscribe,
-  SubscriptionGuard,
-} from '@ankurah/signals';
-import { Drop } from '@ankurah/base';
-import { ReactorSubscriptionId } from './watcherset.ts';
-import type { ReactorUpdate } from './update.ts';
+export class ReactorSubscriptionId extends Struct {
+  _0: Ulid;
 
-// ---------------------------------------------------------------------------
-// ReactorActions — callback interface to avoid circular Reactor import
-// ---------------------------------------------------------------------------
-
-/**
- * Callback interface for reactor operations needed by ReactorSubscription.
- *
- * Divergence: Rust stores a direct `Reactor` reference in ReactorSubInner;
- * TS uses a callback interface to avoid circular module dependencies [E8].
- */
-export interface ReactorActions {
-  unsubscribe(id: ReactorSubscriptionId): void;
-  removeQuery(subscriptionId: ReactorSubscriptionId, queryId: QueryId): void;
-  addEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: Iterable<EntityId>): void;
-  removeEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: Iterable<EntityId>): void;
-}
-
-// ---------------------------------------------------------------------------
-// ReactorSubInner
-// ---------------------------------------------------------------------------
-
-/**
- * Inner state for ReactorSubscription.
- *
- * Rust: `pub(super) struct ReactorSubInner<E, Ev>`
- *
- * Divergence: Rust stores an `Arc<ReactorSubInner>` and uses Drop to
- * call reactor.unsubscribe(). TS stores a ReactorActions callback interface
- * instead of a direct Reactor reference to avoid circular dependencies [E8].
- */
-class ReactorSubInner {
-  readonly subscriptionId: ReactorSubscriptionId;
-  readonly broadcast: Broadcast<ReactorUpdate>;
-  readonly actions: ReactorActions;
-  private disposed = false;
-
-  constructor(
-    subscriptionId: ReactorSubscriptionId,
-    broadcast: Broadcast<ReactorUpdate>,
-    actions: ReactorActions,
-  ) {
-    this.subscriptionId = subscriptionId;
-    this.broadcast = broadcast;
-    this.actions = actions;
+  constructor(_0: Ulid) {
+    super();
+    this._0 = _0;
   }
 
-  /**
-   * Mirrors Rust Drop for ReactorSubInner -- automatically unsubscribe from the reactor.
-   * Divergence: JS has no Drop; callers must invoke drop() explicitly or via Symbol.dispose [E11].
-   */
-  drop(): void {
-    if (!this.disposed) {
-      this.disposed = true;
-      this.actions.unsubscribe(this.subscriptionId);
+  static new(): ReactorSubscriptionId {
+    return new ReactorSubscriptionId(Ulid.new());
+  }
+
+  static default(): ReactorSubscriptionId {
+    return ReactorSubscriptionId.new();
+  }
+
+  toString(): string {
+    return `RS-${this._0}`;
+  }
+
+  equals(other: ReactorSubscriptionId): boolean {
+    if (!this._0.equals(other._0)) return false;
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [this._0.hash()].map((p) => p.length + ':' + p).join('');
+  }
+
+  compareTo(other: ReactorSubscriptionId): number {
+    let c = this._0.compareTo(other._0);
+    if (c !== 0) return c;
+    return 0;
+  }
+
+  clone(): ReactorSubscriptionId {
+    return new ReactorSubscriptionId(this._0.clone());
+  }
+
+  debug(): string {
+    return `ReactorSubscriptionId(${this._0})`;
+  }
+}
+
+class ReactorSubInner<E extends AbstractEntity & Filterable, Ev extends Clone> extends Drop {
+  subscriptionId: ReactorSubscriptionId;
+  reactor: Reactor<E, Ev>;
+  broadcast: Broadcast<ReactorUpdate<E, Ev>>;
+
+  constructor(subscriptionId: ReactorSubscriptionId, reactor: Reactor<E, Ev>, broadcast: Broadcast<ReactorUpdate<E, Ev>>) {
+    super();
+    this.subscriptionId = subscriptionId;
+    this.reactor = reactor;
+    this.broadcast = broadcast;
+  }
+
+  protected override onDrop(): void {
+    const _ = this.reactor.unsubscribe(this.subscriptionId);
+  }
+}
+
+export class ReactorSubscription<E extends AbstractEntity & Filterable = Entity, Ev extends Clone = Attested<Event>> extends Struct implements Subscribe<ReactorUpdate<E, Ev>>, Signal {
+  _0: Arc<ReactorSubInner<E, Ev>>;
+
+  constructor(_0: Arc<ReactorSubInner<E, Ev>>) {
+    super();
+    this._0 = _0;
+  }
+
+  id(): ReactorSubscriptionId {
+    return this._0.value.subscriptionId;
+  }
+
+  removePredicate(queryId: QueryId): Result<void, SubscriptionError> {
+    const _r0 = this._0.value.reactor.removeQuery(this._0.value.subscriptionId, queryId);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    _r0.drop();
+    return Result.Ok([]);
+  }
+
+  addEntitySubscriptions(entityIds: EntityId[]): void {
+    const entityIds_1 = [...entityIds];
+    this._0.value.reactor.addEntitySubscriptions(this._0.value.subscriptionId, entityIds_1);
+  }
+
+  removeEntitySubscriptions(entityIds: EntityId[]): void {
+    const entityIds_1 = [...entityIds];
+    this._0.value.reactor.removeEntitySubscriptions(this._0.value.subscriptionId, entityIds_1);
+  }
+
+  clone(): ReactorSubscription<E, Ev> {
+    return new ReactorSubscription(this._0.clone());
+  }
+
+  subscribe<F>(listener: F): SubscriptionGuard {
+    const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
+    const _t0 = this._0.value.broadcast.reference();
+    try {
+      const guard = _t0.listen(listener_1);
+      return SubscriptionGuard.new(guard);
+    } finally {
+      _t0.drop();
     }
   }
-}
 
-// ---------------------------------------------------------------------------
-// ReactorSubscription
-// ---------------------------------------------------------------------------
-
-/**
- * A handle to a reactor subscription that automatically cleans up on drop.
- *
- * Rust: `pub struct ReactorSubscription<E, Ev>(Arc<ReactorSubInner<E, Ev>>)`
- *
- * Implements Signal (notify-only observation) and Subscribe<ReactorUpdate>
- * (payload observation), mirroring the Rust impl blocks.
- *
- * Divergence: Rust uses Arc for shared ownership; TS uses a simple reference
- * (single-threaded, no need for Arc). Clone is not needed since JS objects are
- * reference-counted by the GC [E8].
- *
- * Divergence: Rust generics E/Ev exist only for testing; TS uses concrete types [E7].
- */
-export class ReactorSubscription extends Drop implements Signal, Subscribe<ReactorUpdate> {
-  /** @internal */
-  private readonly inner: ReactorSubInner;
-
-  constructor(
-    subscriptionId: ReactorSubscriptionId,
-    broadcast: Broadcast<ReactorUpdate>,
-    actions: ReactorActions,
-  ) {
-    super();
-    this.inner = new ReactorSubInner(subscriptionId, broadcast, actions);
-  }
-
-  // ── Accessors ──────────────────────────────────────────────────────
-
-  /** Get the subscription ID. Rust: `pub fn id(&self)` */
-  id(): ReactorSubscriptionId {
-    return this.inner.subscriptionId;
-  }
-
-  // ── Reactor delegation ─────────────────────────────────────────────
-
-  /**
-   * Remove a predicate from this subscription.
-   *
-   * Rust: `pub fn remove_predicate(&self, query_id) -> Result<(), SubscriptionError>`
-   */
-  removePredicate(queryId: QueryId): void {
-    this.inner.actions.removeQuery(this.inner.subscriptionId, queryId);
-  }
-
-  /**
-   * Add entity subscriptions.
-   *
-   * Rust: `pub fn add_entity_subscriptions(&self, entity_ids: impl IntoIterator<Item = EntityId>)`
-   */
-  addEntitySubscriptions(entityIds: Iterable<EntityId>): void {
-    this.inner.actions.addEntitySubscriptions(this.inner.subscriptionId, entityIds);
-  }
-
-  /**
-   * Remove entity subscriptions.
-   *
-   * Rust: `pub fn remove_entity_subscriptions(&self, entity_ids: impl IntoIterator<Item = EntityId>)`
-   */
-  removeEntitySubscriptions(entityIds: Iterable<EntityId>): void {
-    this.inner.actions.removeEntitySubscriptions(this.inner.subscriptionId, entityIds);
-  }
-
-  // ── Subscribe<ReactorUpdate> implementation ────────────────────────
-
-  /**
-   * Subscribe to ReactorUpdate notifications with a listener that receives the update payload.
-   *
-   * Rust: `impl Subscribe<ReactorUpdate<E, Ev>> for ReactorSubscription<E, Ev>`
-   */
-  subscribe(listener: (value: ReactorUpdate) => void): SubscriptionGuard {
-    const broadcastListener: BroadcastListener<ReactorUpdate> = {
-      type: 'Payload',
-      callback: listener,
-    };
-    const guard = this.inner.broadcast.reference().listen(broadcastListener);
-    return new SubscriptionGuard(new ListenerGuard(guard));
-  }
-
-  // ── Signal implementation ──────────────────────────────────────────
-
-  /**
-   * Listen to changes (notify-only, no payload).
-   * This allows ReactorSubscription to be tracked by React observers
-   * without cloning ReactorUpdate.
-   *
-   * Rust: `impl Signal for ReactorSubscription<E, Ev>`
-   */
   listen(listener: Listener): ListenerGuard {
-    const broadcastListener: BroadcastListener<ReactorUpdate> = {
-      type: 'NotifyOnly',
-      callback: () => listener(),
-    };
-    const guard = this.inner.broadcast.reference().listen(broadcastListener);
-    return new ListenerGuard(guard);
+    const _t0 = this._0.value.broadcast.reference();
+    try {
+      return _t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => listener([]))) }));
+    } finally {
+      _t0.drop();
+    }
   }
 
-  /**
-   * Get the broadcast identifier for this signal.
-   *
-   * Rust: `fn broadcast_id(&self) -> BroadcastId`
-   */
   broadcastId(): BroadcastId {
-    return this.inner.broadcast.id();
-  }
-
-  // ── Cleanup (mirrors Rust Drop) ────────────────────────────────────
-
-  /**
-   * Mirrors Rust's Drop impl on ReactorSubInner [E11].
-   */
-  drop(): void {
-    this.inner.drop();
+    return this._0.value.broadcast.id();
   }
 }
+

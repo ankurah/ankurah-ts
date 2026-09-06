@@ -1,114 +1,73 @@
 // MIRRORS: ankurah/core/src/type_resolver.rs
-//
-// Type resolution for query AST preparation.
-//
-// The TypeResolver determines the ValueType for paths in queries, enabling proper
-// literal conversion before execution. This is a temporary heuristic-based solution
-// until Phase 3 schema metadata is implemented.
-//
-// Current heuristics:
-// - Multi-step paths (e.g., `data.number`) → ValueType::Json (nested JSON traversal)
-// - `id` field → ValueType::EntityId
-// - Simple paths → infer from the literal being compared
-//
-// ## AST Mutation (Temporary)
-//
-// Until we have a proper MIR (Mid-level IR) tree, we temporarily mutate the AST
-// in place via `prepare_predicate`. This converts literals to `Literal::Json`
-// when comparing against JSON paths, ensuring type-aware comparison semantics
-// match across Postgres, Sled, and in-memory filtering.
+import { Struct, dropOwned, dropUnbound } from '@ankurah/base';
+import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
+import { Comparison } from './lineage';
+import { Json } from './property/value/json';
+import { Value_castTo } from './value/cast';
+import { Value, ValueType } from './value/index';
+import { EntityId } from '@ankurah/proto';
 
-import { Expr, Literal, PathExpr, Predicate, Selection, ComparisonOperator } from '@ankurah/ankql';
-import { ValueType } from './value/index.ts';
-import { tryCastTo, valueFromLiteral, valueToLiteral } from './value/index.ts';
-import type { Value } from './value/index.ts';
+export class TypeResolver extends Struct {
 
-// ── TypeResolver ──────────────────────────────────────────────────────
-// Rust: pub struct TypeResolver;
-// derive(Debug, Clone, Default)
+  static new(): TypeResolver {
+    return TypeResolver;
+  }
 
-/**
- * Determines ValueType for paths in queries.
- *
- * TODO(Phase 3): Replace heuristics with proper schema lookup from System tables.
- */
-export class TypeResolver {
-  constructor() {}
-
-  static new(): TypeResolver { return new TypeResolver(); }
-
-  /**
-   * Resolve the ValueType for a path expression.
-   *
-   * Returns:
-   * - `ValueType.Json` for multi-step paths (nested JSON traversal)
-   * - `ValueType.EntityId` for the "id" field
-   * - `null` for simple paths (caller should use literal's inherent type)
-   *
-   * Rust: pub fn resolve_path(&self, path: &PathExpr) -> Option<ValueType>
-   */
   resolvePath(path: PathExpr): ValueType | null {
-    // Multi-step paths are JSON subfield traversals
     if (!path.isSimple()) {
-      return ValueType.Json;
+      return new ValueType('Json', {});
     }
-
-    // The "id" field is always EntityId
     if (path.first() === 'id') {
-      return ValueType.EntityId;
+      return new ValueType('EntityId', {});
     }
-
-    // For simple paths, return null to indicate the literal's type should be used
     return null;
   }
 
-  /**
-   * Get the ValueType for a literal.
-   *
-   * Rust: pub fn literal_type(literal: &Literal) -> ValueType
-   */
   static literalType(literal: Literal): ValueType {
-    switch (literal.type) {
-      case 'I16': return ValueType.I16;
-      case 'I32': return ValueType.I32;
-      case 'I64': return ValueType.I64;
-      case 'F64': return ValueType.F64;
-      case 'Bool': return ValueType.Bool;
-      case 'String': return ValueType.String;
-      case 'EntityId': return ValueType.EntityId;
-      case 'Object': return ValueType.Object;
-      case 'Binary': return ValueType.Binary;
-      case 'Json': return ValueType.Json;
-    }
+    return literal.match({
+      I16: (v) => new ValueType('I16', {}),
+      I32: (v) => new ValueType('I32', {}),
+      I64: (v) => new ValueType('I64', {}),
+      F64: (v) => new ValueType('F64', {}),
+      Bool: (v) => new ValueType('Bool', {}),
+      String: (v) => new ValueType('String', {}),
+      EntityId: (v) => new ValueType('EntityId', {}),
+      Object: (v) => new ValueType('Object', {}),
+      Binary: (v) => new ValueType('Binary', {}),
+      Json: (v) => new ValueType('Json', {}),
+    });
   }
 
-  /**
-   * Convert a Literal to a Json Literal if the comparison requires JSON semantics.
-   *
-   * Round-trips through Value.castTo for consistent behavior with the rest
-   * of the casting system. This is temporary until we have a proper MIR tree.
-   *
-   * Rust: pub fn literal_to_json(literal: &Literal) -> Literal
-   */
   static literalToJson(literal: Literal): Literal {
-    const value: Value = valueFromLiteral(literal);
-    const jsonValue = tryCastTo(value, ValueType.Json);
-    if (jsonValue !== null) {
-      return valueToLiteral(jsonValue);
+    const value = Value.fromRefAstLiteral(literal);
+    try {
+      const _v = Value_castTo(value, new ValueType('Json', {}));
+      if (_v.isOk()) {
+        const jsonValue = _v.unwrap();
+        return Literal.fromValue(jsonValue);
+      } else {
+        const _v1 = _v.unwrapErr();
+        try {
+          return literal.clone();
+        } finally {
+          _v1.drop();
+        }
+      }
+    } finally {
+      value.drop();
     }
-    // Fallback if cast fails (e.g., EntityId)
-    return literal;
   }
 
-  /**
-   * Resolve the type for an expression (path or literal).
-   *
-   * Rust: fn resolve_expr_type(&self, expr: &Expr) -> Option<ValueType>
-   */
-  private resolveExprType(expr: Expr): ValueType | null {
+  resolveExprType(expr: Expr): ValueType | null {
     return expr.match({
-      Path: (v) => this.resolvePath(v.path),
-      Literal: (v) => TypeResolver.literalType(v.literal),
+      Path: (v) => {
+        const path = v._0;
+        return this.resolvePath(path);
+      },
+      Literal: (v) => {
+        const lit = v._0;
+        return TypeResolver.literalType(lit);
+      },
       Predicate: () => null,
       InfixExpr: () => null,
       ExprList: () => null,
@@ -116,76 +75,127 @@ export class TypeResolver {
     });
   }
 
-  /**
-   * Convert an expression's literal to the target type if needed.
-   * Round-trips through Value.castTo for consistent casting behavior.
-   *
-   * Rust: fn convert_expr(&self, expr: Expr, target_type: Option<ValueType>) -> Expr
-   */
-  private convertExpr(expr: Expr, targetType: ValueType | null): Expr {
-    if (targetType === null) return expr;
-
-    return expr.match({
-      Literal: (v) => {
-        const value: Value = valueFromLiteral(v.literal);
-        const casted = tryCastTo(value, targetType);
-        if (casted !== null) {
-          return Expr.Literal(valueToLiteral(casted));
+  convertExpr(expr: Expr, targetType: ValueType | null): Expr {
+    const _v = [expr, targetType];
+    if ((_v[0].is('Literal')) && (_v[1] != null)) {
+      const { _0: lit } = _v[0].value;
+      const target = _v[1];
+      {
+        const value = Value.fromAstLiteral((lit));
+        try {
+          const _v1 = Value_castTo(value, target);
+          if (_v1.isOk()) {
+            const casted = _v1.unwrap();
+            return new Expr('Literal', { _0: Literal.fromValue(casted) });
+          } else {
+            const _v2 = _v1.unwrapErr();
+            try {
+              return new Expr('Literal', { _0: lit });
+            } finally {
+              _v2.drop();
+            }
+          }
+        } finally {
+          value.drop();
         }
-        // Fallback if cast fails
-        return Expr.Literal(v.literal);
-      },
-      Path: () => expr,
-      Predicate: () => expr,
-      InfixExpr: () => expr,
-      ExprList: () => expr,
-      Placeholder: () => expr,
-    });
+      }
+    } else {
+      const other = _v[0];
+      return other;
+    }
   }
 
-  /**
-   * Resolve types in a selection, returning a new selection with converted literals.
-   * Eventually this will return a TAST (Typed AST).
-   *
-   * Rust: pub fn resolve_selection_types(&self, selection: Selection) -> Selection
-   */
   resolveSelectionTypes(selection: Selection): Selection {
-    return new Selection(
-      this.resolveTypes(selection.predicate),
-      selection.orderBy,
-      selection.limit,
-    );
+    try {
+      return new Selection(this.resolveTypes(selection.takeField('predicate')), selection.orderBy, selection.limit);
+    } finally {
+      selection.drop();
+    }
   }
 
-  /**
-   * Resolve types in a predicate, returning a new predicate with converted literals.
-   *
-   * Uses `resolvePath` to determine field types, then converts literals on the
-   * other side of comparisons to match. Eventually this will return a TAST.
-   *
-   * Rust: pub fn resolve_types(&self, predicate: Predicate) -> Predicate
-   */
   resolveTypes(predicate: Predicate): Predicate {
-    return predicate.match({
+    return predicate.intoMatch({
       Comparison: (v) => {
-        // Look up types from paths
-        const leftType = this.resolveExprType(v.left);
-        const rightType = this.resolveExprType(v.right);
-
-        // Convert literals based on the type from the other side
-        const newLeft = this.convertExpr(v.left, rightType);
-        const newRight = this.convertExpr(v.right, leftType);
-
-        return Predicate.Comparison(newLeft, v.operator, newRight);
+        const left = v.left;
+        const operator = v.operator;
+        const right = v.right;
+        let _moved0 = false;
+        try {
+          try {
+            try {
+              const leftType = this.resolveExprType(left);
+              const rightType = this.resolveExprType(right);
+              const newLeft = this.convertExpr(left, rightType);
+              const newRight = this.convertExpr(right, leftType);
+              _moved0 = true;
+              return new Predicate('Comparison', { left: newLeft, operator: operator, right: newRight });
+            } finally {
+              dropOwned(right);
+            }
+          } finally {
+            if (!_moved0) operator.drop();
+          }
+        } finally {
+          dropOwned(left);
+        }
       },
-      And: (v) => Predicate.And(this.resolveTypes(v.left), this.resolveTypes(v.right)),
-      Or: (v) => Predicate.Or(this.resolveTypes(v.left), this.resolveTypes(v.right)),
-      Not: (v) => Predicate.Not(this.resolveTypes(v.predicate)),
-      // These don't need type resolution
-      IsNull: () => predicate,
+      And: (v) => {
+        const left = v._0;
+        const right = v._1;
+        try {
+          try {
+            return new Predicate('And', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
+          } finally {
+            dropOwned(right);
+          }
+        } finally {
+          dropOwned(left);
+        }
+      },
+      Or: (v) => {
+        const left = v._0;
+        const right = v._1;
+        try {
+          try {
+            return new Predicate('Or', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
+          } finally {
+            dropOwned(right);
+          }
+        } finally {
+          dropOwned(left);
+        }
+      },
+      Not: (v) => {
+        const inner = v._0;
+        try {
+          return new Predicate('Not', { _0: this.resolveTypes(inner) });
+        } finally {
+          dropOwned(inner);
+        }
+      },
+      IsNull: (v) => {
+        try {
+          return predicate;
+        } finally {
+          dropUnbound(v, []);
+        }
+      },
       True: () => predicate,
       False: () => predicate,
       Placeholder: () => predicate,
     });
   }
+
+  clone(): TypeResolver {
+    return new TypeResolver();
+  }
+
+  static default(): TypeResolver {
+    return new TypeResolver();
+  }
+
+  debug(): string {
+    return 'TypeResolver';
+  }
 }
+

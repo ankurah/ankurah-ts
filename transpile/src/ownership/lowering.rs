@@ -45,6 +45,13 @@ pub struct Lowering {
     /// consumes), and moving the flag below that would double-drop on the error
     /// path.
     pub before_flags: std::cell::RefCell<Vec<String>>,
+    /// Where the statement now being translated writes its OWN outermost
+    /// expression, as a span key. A call standing there is evaluated
+    /// unconditionally on the way to the flag, so its arguments can be lifted
+    /// above it; one nested inside a branch, a closure or an IIFE the statement
+    /// writes cannot, because `before_flags` stands above the whole statement
+    /// and the argument may read a name that nested block declares.
+    pub statement_tail: std::cell::Cell<Option<(usize, usize, usize, usize)>>,
     /// What the block now being translated decided about each of its locals,
     /// for the statement now being translated.
     pub stmt_dispositions:

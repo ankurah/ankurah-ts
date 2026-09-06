@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use super::method::{Callee, MethodResolution};
 use super::{MethodSig, TypeRegistry};
 use crate::ty::{TraitRef, TypeId};
 
@@ -116,5 +117,22 @@ impl TypeRegistry {
             }
         }
         None
+    }
+}
+
+impl TypeRegistry {
+    /// The trait a resolved call came THROUGH, where it came through one.
+    ///
+    /// `slice::last(&self)` and `Iterator::last(self)` are two methods of one
+    /// name, and only the second consumes what it walks. Asking the name says
+    /// nothing about which; asking the resolution says which was found.
+    pub fn method_trait(&self, found: &MethodResolution) -> Option<TypeId> {
+        match &found.callee {
+            Callee::Inherent(..) => None,
+            Callee::TraitObject(id, _) => Some(*id),
+            Callee::TraitImpl(id, _) | Callee::Blanket(id, _) => {
+                self.impl_def(*id).trait_ref.as_ref().map(|tr| tr.id)
+            }
+        }
     }
 }

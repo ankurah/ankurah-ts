@@ -1,809 +1,769 @@
 // MIRRORS: ankurah/core/src/reactor/subscription_state.rs
-
-import type { CollectionId, EntityId, QueryId, Attested, Event } from '@ankurah/proto';
-import type { Selection, Predicate, OrderByItem } from '@ankurah/ankql';
+import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, derivedClone, valueNotEquals, tracing, checkedSub, iterFilterMap, HashMap, HashSet, spawn } from '@ankurah/base';
+import { Entity } from '../entity';
+import { ContextData, Node } from '../node';
+import { AbstractEntity, ChangeNotification } from '../reactor';
+import { EntityResultSet } from '../resultset';
+import { evaluatePredicate } from '../selection/filter';
+import { spawn } from '../task';
+import { CandidateChanges } from './candidate_changes';
+import { GapFetcher, QueryGapFetcher } from './fetch_gap';
+import { ReactorSubscriptionId } from './subscription';
+import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './update';
+import { WatcherChange, WatcherOp, WatcherSet } from './watcherset';
+import { Predicate, Selection } from '@ankurah/ankql';
+import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 import { Broadcast } from '@ankurah/signals';
 
-import { Entity } from '../entity.ts';
-import { EntityResultSet } from '../resultset.ts';
-import { evaluatePredicate, type Filterable } from '../selection/filter.ts';
-import type { Value } from '../value/index.ts';
-import { ValueType, valueType } from '../value/index.ts';
-import { IndexDirection, NullsOrder, type IndexKeyPart, type KeySpec } from '../indexing/index.ts';
-import type { GapFetcher } from './fetch_gap.ts';
-import { CandidateChanges } from './candidate_changes.ts';
-import type { WatcherChange } from './watcherset.ts';
-import {
-  ReactorSubscriptionId,
-  WatcherSet,
-  watcherChangeAdd,
-  watcherChangeRemove,
-  type WatcherIdPair,
-} from './watcherset.ts';
-import type { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './update.ts';
-
-// ── ChangeNotification interface ──────────────────────────────────────
-// Mirrors Rust trait ChangeNotification in reactor.rs.
-// The Rust version is generic (Entity = E, Event = Ev); TS uses concrete types [E8].
-
-/**
- * Trait for types that can be used in notify_change.
- *
- * Rust: `pub trait ChangeNotification { type Entity; type Event; ... }`
- * Divergence: TS uses concrete Entity and Attested<Event> types [E8].
- */
-export interface ChangeNotification {
-  entity(): Entity;
-  events(): ReadonlyArray<Attested<Event>>;
-}
-
-// ── Entity → Filterable adapter ───────────────────────────────────────
-// Entity does not directly implement Filterable (collection() returns CollectionId, not string;
-// method is getPropertyValue, not value). This adapter bridges the gap.
-
-function entityAsFilterable(entity: Entity): Filterable {
-  return {
-    collection(): string {
-      return entity.collectionId.toString();
-    },
-    value(name: string): Value | null {
-      return entity.getPropertyValue(name);
-    },
-  };
-}
-
-// ── UpdateItemAccumulator ─────────────────────────────────────────────
-// Mirrors Rust trait UpdateItemAccumulator<E, Ev>
-// Allows for both collecting items (array) and discarding them (no-op).
-
-/**
- * Accumulates ReactorUpdateItems during update_query.
- * Rust: `pub trait UpdateItemAccumulator<E, Ev>`
- */
-export interface UpdateItemAccumulator {
-  pushInitial(entity: Entity, queryId: QueryId): void;
-  pushRemove(entity: Entity, queryId: QueryId): void;
-}
-
-/** Vec accumulator -- collects all items. Rust: `impl UpdateItemAccumulator for Vec<ReactorUpdateItem>` */
-export class VecAccumulator implements UpdateItemAccumulator {
-  readonly items: ReactorUpdateItem[] = [];
-
-  pushInitial(entity: Entity, queryId: QueryId): void {
-    this.items.push({
-      entity,
-      events: [],
-      predicateRelevance: [[queryId, 'Initial']],
-    });
-  }
-
-  pushRemove(entity: Entity, queryId: QueryId): void {
-    this.items.push({
-      entity,
-      events: [],
-      predicateRelevance: [[queryId, 'Remove']],
-    });
-  }
-}
-
-/** No-op accumulator -- discards everything. Rust: `impl UpdateItemAccumulator for ()` */
-export class NoopAccumulator implements UpdateItemAccumulator {
-  pushInitial(_entity: Entity, _queryId: QueryId): void {}
-  pushRemove(_entity: Entity, _queryId: QueryId): void {}
-}
-
-// ── GapFillData ───────────────────────────────────────────────────────
-// Mirrors Rust type alias GapFillData<E>
-
-interface GapFillData {
-  queryId: QueryId;
-  gapFetcher: GapFetcher;
+export class QueryState<E extends AbstractEntity & Filterable> extends Struct {
   collectionId: CollectionId;
-  selection: Selection;
-  resultset: EntityResultSet;
-  lastEntity: Entity | null;
-  gapSize: number;
-}
-
-// ── QueryState ────────────────────────────────────────────────────────
-// Mirrors Rust struct QueryState<E: AbstractEntity + Filterable>
-
-/**
- * Per-query state within a subscription.
- *
- * Rust: `pub struct QueryState<E: AbstractEntity + Filterable>`
- * Divergence: No generic E -- uses concrete Entity [E8].
- */
-export interface QueryState {
-  /**
-   * The query's own ID. Stored here because JS Map keys are strings (queryId.toUlidString()),
-   * so we need the actual QueryId object for watcher management and gap filling.
-   * Divergence: Rust stores QueryId as the HashMap key and accesses it during iteration;
-   *   TS stores it inside the value [E8].
-   */
-  queryId: QueryId;
-  collectionId: CollectionId;
-  /** Selection is null until first update_query call (after register_query). */
   selection: Selection | null;
-  gapFetcher: GapFetcher;
-  /** When true, skip notifications (used during initialization and updates). */
+  gapFetcher: Arc<GapFetcher>;
   paused: boolean;
-  resultset: EntityResultSet;
+  resultset: EntityResultSet<E>;
   version: number;
+
+  constructor(collectionId: CollectionId, selection: Selection | null, gapFetcher: Arc<GapFetcher>, paused: boolean, resultset: EntityResultSet<E>, version: number) {
+    super();
+    this.collectionId = collectionId;
+    this.selection = selection;
+    this.gapFetcher = gapFetcher;
+    this.paused = paused;
+    this.resultset = resultset;
+    this.version = version;
+  }
 }
 
-// ── Subscription ──────────────────────────────────────────────────────
-// Mirrors Rust struct Subscription<E, Ev> which wraps Arc<Inner<E, Ev>>.
-// Divergence: No Arc -- plain class instance (single-threaded JS) [E8].
-// Divergence: No generic E, Ev -- uses concrete Entity and Attested<Event> [E8].
-// Divergence: No Mutex on state -- single-threaded JS [E8].
+class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> extends Struct {
+  _0: Arc<Inner<E, Ev>>;
 
-/**
- * State container for a single reactor subscription.
- * Manages queries, entity subscriptions, entity cache, and broadcasts.
- *
- * Rust: `pub(super) struct Subscription<E, Ev>`
- * Divergence: No Arc/Mutex -- single-threaded JS [E8].
- * Divergence: No generic parameters -- concrete types [E8].
- */
-export class Subscription {
-  readonly _id: ReactorSubscriptionId;
-  private _queries: Map<string, QueryState> = new Map();
-  private _entitySubscriptions: Set<string> = new Set();
-  private _entities: Map<string, Entity> = new Map();
-  private _broadcast: Broadcast<ReactorUpdate>;
-  private _watcherSet: WatcherSet;
-
-  constructor(
-    broadcast: Broadcast<ReactorUpdate>,
-    watcherSet: WatcherSet,
-  ) {
-    this._id = ReactorSubscriptionId.new();
-    this._broadcast = broadcast;
-    this._watcherSet = watcherSet;
+  constructor(_0: Arc<Inner<E, Ev>>) {
+    super();
+    this._0 = _0;
   }
 
-  /** Get the subscription ID. Rust: `pub fn id(&self) -> ReactorSubscriptionId` */
   id(): ReactorSubscriptionId {
-    return this._id;
+    return this._0.value.id;
   }
 
-  // ── Entity subscription management ──────────────────────────────────
+  static new<E, Ev>(broadcast: Broadcast<ReactorUpdate<E, Ev>>, watcherSet: Arc<Mutex<WatcherSet>>): Subscription<E, Ev> {
+    return new Subscription(Arc.new(new Inner(ReactorSubscriptionId.new(), new Mutex(new State(new HashMap(), new HashSet(), new HashMap(), broadcast)), watcherSet)));
+  }
 
-  /** Add entity subscription. Rust: `pub fn add_entity_subscription(&self, entity_id)` */
   addEntitySubscription(entityId: EntityId): void {
-    this._entitySubscriptions.add(entityId.toBase64());
+    let state = this.deref().state.lock();
+    try {
+      state.value.entitySubscriptions.add(entityId);
+    } finally {
+      state.drop();
+    }
   }
 
-  /** Remove entity subscription. Rust: `pub fn remove_entity_subscription(&self, entity_id)` */
   removeEntitySubscription(entityId: EntityId): void {
-    this._entitySubscriptions.delete(entityId.toBase64());
+    let state = this.deref().state.lock();
+    try {
+      state.value.entitySubscriptions.delete(entityId);
+    } finally {
+      state.drop();
+    }
   }
 
-  /** Check if any queries match this entity. Rust: `pub fn any_query_matches(&self, entity_id)` */
   anyQueryMatches(entityId: EntityId): boolean {
-    for (const q of this._queries.values()) {
-      if (q.resultset.containsKey(entityId)) {
-        return true;
-      }
+    const state = this.deref().state.lock();
+    try {
+      return state.value.queries.values().some((q) => q.resultset.containsKey(entityId));
+    } finally {
+      state.drop();
     }
-    return false;
   }
 
-  // ── System reset ────────────────────────────────────────────────────
-
-  /** System reset -- clear all matching entities and notify. Rust: `pub fn system_reset(&self)` */
   systemReset(): void {
-    const updateItems: ReactorUpdateItem[] = [];
-
-    for (const [_queryIdStr, queryState] of this._queries) {
-      // For each entity that was matching this query
-      for (const entityId of queryState.resultset.keys()) {
-        const entityKey = entityId.toBase64();
-        const entity = this._entities.get(entityKey);
-        if (entity) {
-          updateItems.push({
-            entity,
-            events: [],
-            predicateRelevance: [[queryState.queryId, 'Remove']],
-          });
+    const _t0 = this.deref().state.lock();
+    try {
+      const _t1 = _t0.value;
+      try {
+        const state = _t1;
+        _t0.drop();
+        try {
+          let _moved2 = false;
+          let updateItems = [];
+          try {
+            for (const [queryId, queryState] of state.queries) {
+              for (const entityId of queryState.resultset.keys()) {
+                {
+                  const _v = state.entities.get(entityId);
+                  if (_v != null) {
+                    const entity = _v;
+                    updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
+                  }
+                }
+              }
+              queryState.resultset.clear();
+              queryState.resultset.setLoaded(false);
+            }
+            state.entitySubscriptions.clear();
+            state.entities.clear();
+            if (!(updateItems.length === 0)) {
+              _moved2 = true;
+              const reactorUpdate = new ReactorUpdate(updateItems);
+              state.broadcast.send(reactorUpdate);
+            }
+          } finally {
+            if (!_moved2) dropOwned(updateItems);
+          }
+        } finally {
+          state.drop();
         }
+      } finally {
+        _t1.drop();
       }
-
-      // Clear the matching entities for this query
-      queryState.resultset.clear();
-      queryState.resultset.setLoaded(false);
-    }
-
-    // Clear entity subscriptions and cached entities
-    this._entitySubscriptions.clear();
-    this._entities.clear();
-
-    // Send the notification if there were any updates
-    if (updateItems.length > 0) {
-      this._broadcast.send({ items: updateItems });
+    } finally {
+      _t0.drop();
     }
   }
 
-  /** Get the number of queries for debugging. Rust: `pub fn queries_len(&self)` */
   queriesLen(): number {
-    return this._queries.size;
+    const state = this.deref().state.lock();
+    try {
+      return state.value.queries.size;
+    } finally {
+      state.drop();
+    }
   }
 
-  // ── Query lifecycle ─────────────────────────────────────────────────
-
-  /**
-   * Register a new query with empty resultset.
-   * Rust: `pub fn register_query(&self, query_id, collection_id, resultset, gap_fetcher)`
-   */
-  registerQuery(
-    queryId: QueryId,
-    collectionId: CollectionId,
-    resultset: EntityResultSet,
-    gapFetcher: GapFetcher,
-  ): void {
-    const key = queryId.toUlidString();
-    if (this._queries.has(key)) {
-      throw new Error(`Query ${queryId} already exists`);
-    }
-    this._queries.set(key, {
-      queryId,
-      collectionId,
-      selection: null,
-      gapFetcher,
-      paused: false,
-      resultset,
-      version: 0,
-    });
-  }
-
-  /**
-   * Update predicate watchers for a query (index/wildcard watchers).
-   * Rust: `pub fn update_predicate_watchers(&self, query_id, collection_id, old_predicate, new_predicate)`
-   */
-  updatePredicateWatchers(
-    queryId: QueryId,
-    collectionId: CollectionId,
-    oldPredicate: Predicate | null,
-    newPredicate: Predicate,
-  ): void {
-    const watcherId: WatcherIdPair = { subscriptionId: this._id, queryId };
-
-    if (oldPredicate !== null) {
-      this._watcherSet.recursePredicateWatchers(collectionId, oldPredicate, watcherId, 'Remove');
-    }
-    this._watcherSet.recursePredicateWatchers(collectionId, newPredicate, watcherId, 'Add');
-  }
-
-  /**
-   * Add entity watchers for entities in a query's resultset.
-   * Rust: `pub fn add_entity_watchers(&self, query_id, entity_ids)`
-   */
-  addEntityWatchers(queryId: QueryId, entityIds: Iterable<EntityId>): void {
-    this._watcherSet.addPredicateEntityWatchers(this._id, queryId, entityIds);
-  }
-
-  /**
-   * Update an existing query.
-   * Handles watcher management internally (both predicate and entity watchers).
-   * Returns newly_added_entities for server delta generation.
-   *
-   * Rust: `pub fn update_query<A: UpdateItemAccumulator>(&self, ...)`
-   */
-  updateQuery(
-    queryId: QueryId,
-    collectionId: CollectionId,
-    selection: Selection,
-    includedEntities: Entity[],
-    version: number,
-    reactorUpdates: UpdateItemAccumulator,
-  ): Entity[] {
-    const queryKey = queryId.toUlidString();
-    const queryState = this._queries.get(queryKey);
-    if (!queryState) {
-      throw new Error('Query not found for update');
-    }
-
-    // Check if this is the first update (selection is null)
-    const isFirstUpdate = queryState.selection === null;
-
-    // Save old selection for comparison
-    const oldSelection = queryState.selection;
-    queryState.selection = selection;
-
-    // Update resultset configuration
-    if (selection.orderBy !== null) {
-      const keySpec = buildKeySpecFromSelection(selection.orderBy, queryState.resultset);
-      queryState.resultset.orderBy(keySpec);
-    } else {
-      queryState.resultset.orderBy(null);
-    }
-
-    // Set limit if this is first update OR if limit changed
-    if (isFirstUpdate || (oldSelection !== null && oldSelection.limit !== selection.limit)) {
-      queryState.resultset.setLimit(selection.limit);
-    }
-
-    // Create write guard for atomic updates
-    const newlyAdded: Entity[] = [];
-    const removedEntities: EntityId[] = [];
-    {
-      using rwResultset = queryState.resultset.write();
-
-      // Mark all entities dirty for re-evaluation
-      rwResultset.markAllDirty();
-
-      // Process included entities (only truly new ones from remote)
-      for (const entity of includedEntities) {
-        if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
-          const entityId = entity.id();
-
-          // Check if this is truly new to the resultset
-          if (!rwResultset.contains(entityId)) {
-            rwResultset.add(entity);
-            this._entities.set(entityId.toBase64(), entity);
-            this._entitySubscriptions.add(entityId.toBase64());
-            reactorUpdates.pushInitial(entity, queryId);
-            newlyAdded.push(entity);
+  registerQuery(queryId: QueryId, collectionId: CollectionId, resultset: EntityResultSet<E>, gapFetcher: Arc<GapFetcher>): Result<void, AnyhowError> {
+    let _moved0 = false;
+    let _moved1 = false;
+    let _moved2 = false;
+    try {
+      try {
+        try {
+          let state = this.deref().state.lock();
+          try {
+            return state.value.queries.entry(queryId).match({
+              Vacant: (_v) => {
+                const v = _v._0;
+                _moved0 = true;
+                _moved2 = true;
+                _moved1 = true;
+                v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset, 0));
+                return Result.Ok([]);
+              },
+              Occupied: (v) => Result.Err(AnyhowError.msg(`Query ${queryId} already exists`)),
+            });
+          } finally {
+            state.drop();
           }
+        } finally {
+          if (!_moved2) gapFetcher.drop();
+        }
+      } finally {
+        if (!_moved1) resultset.drop();
+      }
+    } finally {
+      if (!_moved0) collectionId.drop();
+    }
+  }
+
+  updatePredicateWatchers(queryId: QueryId, collectionId: CollectionId, oldPredicate: Predicate | null, newPredicate: Predicate): void {
+    let watcherSet = this.deref().watcherSet.value.lock();
+    try {
+      const watcherId = [this.deref().id, queryId];
+      {
+        const _v = oldPredicate;
+        if (_v != null) {
+          const oldPred = _v;
+          watcherSet.value.recursePredicateWatchers(collectionId, oldPred, watcherId, new WatcherOp('Remove', {}));
         }
       }
-
-      // Remove entities that no longer match the new predicate
-      rwResultset.retainDirty((entity: Entity) => {
-        if (evaluatePredicate(entityAsFilterable(entity), selection.predicate)) {
-          return true;
-        }
-        const entityId = entity.id();
-        removedEntities.push(entityId);
-        reactorUpdates.pushRemove(entity, queryId);
-        return false;
-      });
-
-      // Unpause now that update is complete
-      queryState.paused = false;
-      queryState.version = version;
-
-      // Set loaded as part of the write transaction
-      rwResultset.setLoaded(true);
-    } // rwResultset disposed here -> broadcasts if changed
-
-    // Update predicate watchers (setup on first update, or update if predicate changed)
-    let shouldUpdateWatchers = false;
-    if (isFirstUpdate) {
-      shouldUpdateWatchers = true;
-    } else if (oldSelection !== null) {
-      // Compare predicates -- simple reference check first, then structural
-      shouldUpdateWatchers = oldSelection.predicate !== selection.predicate;
+      watcherSet.value.recursePredicateWatchers(collectionId, newPredicate, watcherId, new WatcherOp('Add', {}));
+    } finally {
+      watcherSet.drop();
     }
-
-    if (shouldUpdateWatchers) {
-      const oldPred = oldSelection !== null ? oldSelection.predicate : null;
-      this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
-    }
-
-    // Add entity watchers for newly added entities
-    if (newlyAdded.length > 0) {
-      this.addEntityWatchers(queryId, newlyAdded.map((e) => e.id()));
-    }
-
-    // Remove entity watchers for removed entities
-    if (removedEntities.length > 0) {
-      this._watcherSet.cleanupRemovedPredicateWatchers(this._id, queryId, removedEntities);
-    }
-
-    return newlyAdded;
   }
 
-  /** Send ReactorUpdate with the given items. Rust: `pub fn send_update(&self, items)` */
-  sendUpdate(items: ReactorUpdateItem[]): void {
-    this._broadcast.send({ items });
-  }
-
-  /** Remove a query and return its state for cleanup. Rust: `pub fn remove_query(&self, query_id)` */
-  removeQuery(queryId: QueryId): QueryState | undefined {
-    const key = queryId.toUlidString();
-    const state = this._queries.get(key);
-    if (state) {
-      this._queries.delete(key);
+  addEntityWatchers(queryId: QueryId, entityIds: EntityId[]): void {
+    let watcherSet = this.deref().watcherSet.value.lock();
+    try {
+      watcherSet.value.addPredicateEntityWatchers(this.deref().id, queryId, entityIds);
+    } finally {
+      watcherSet.drop();
     }
-    return state;
   }
 
-  /** Get all queries for cleanup (used by unsubscribe). Rust: `pub fn take_all_queries(&self)` */
-  takeAllQueries(): Map<string, QueryState> {
-    const queries = this._queries;
-    this._queries = new Map();
-    return queries;
-  }
-
-  // ── evaluate_changes ────────────────────────────────────────────────
-
-  /**
-   * Evaluate candidate changes for this subscription and spawn gap filling/notification.
-   * Returns watcher changes that need to be applied to the global WatcherSet.
-   *
-   * Rust: `pub async fn evaluate_changes<C: ChangeNotification>(...)`
-   * Divergence: Not truly async in single-threaded JS for the evaluation phase,
-   *   but gap filling returns a Promise [E8].
-   */
-  async evaluateChanges(
-    candidates: CandidateChanges<ChangeNotification>,
-  ): Promise<WatcherChange[]> {
-    const watcherChanges: WatcherChange[] = [];
-    // Use Map<string, ReactorUpdateItem> to preserve insertion order and dedup by entity ID
-    const items = new Map<string, ReactorUpdateItem>();
-
-    // Process query-specific candidates using direct lookup
-    for (const queryCandidate of candidates.queryIter()) {
-      const queryId = queryCandidate.queryId;
-      const queryKey = queryId.toUlidString();
-
-      // Direct lookup -- skip if query doesn't exist or is paused
-      const queryState = this._queries.get(queryKey);
-      if (!queryState || queryState.paused) continue;
-
-      const selection = queryState.selection;
-      if (!selection) {
-        throw new Error('evaluate_changes called before update_query');
-      }
-
-      // Process all candidate changes for this query
-      for (const change of queryCandidate.iter()) {
-        const entity = change.entity();
-        const entityId = entity.id();
-        const entityKey = entityId.toBase64();
-
-        const matches = evaluatePredicate(entityAsFilterable(entity), selection.predicate);
-        const didMatch = queryState.resultset.containsKey(entityId);
-
-        // Process membership change in one match
-        let membershipChange: MembershipChange | null = null;
-
-        if (!didMatch && matches) {
-          // Entity now matches -- add to matching set
-          { using rw = queryState.resultset.write(); rw.add(entity); }
-          this._entities.set(entityKey, entity);
-          watcherChanges.push(watcherChangeAdd(entityId, this._id, queryId));
-          membershipChange = 'Add';
-        } else if (didMatch && !matches) {
-          // Entity no longer matches -- remove from matching set
-          { using rw = queryState.resultset.write(); rw.remove(entityId); }
-          watcherChanges.push(watcherChangeRemove(entityId, this._id, queryId));
-          membershipChange = 'Remove';
-        } else {
-          // No membership change -- just track watcher state
-          if (matches) {
-            watcherChanges.push(watcherChangeAdd(entityId, this._id, queryId));
-          } else {
-            watcherChanges.push(watcherChangeRemove(entityId, this._id, queryId));
+  updateQuery<A extends UpdateItemAccumulator>(queryId: QueryId, collectionId: CollectionId, selection: Selection, includedEntities: E[], version: number, reactorUpdates: A): Result<E[], Error> {
+    try {
+      try {
+        let _moved0 = false;
+        let stateGuard = this.deref().state.lock();
+        try {
+          const state = stateGuard.value;
+          try {
+            const _m1 = state.queries.get(queryId);
+            const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg('Query not found for update'))()));
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            const queryState = _r2.unwrap();
+            const isFirstUpdate = (queryState.selection == null);
+            const oldSelection = queryState.selection.replace(selection.clone());
+            try {
+              const _r3 = (selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null).transpose();
+              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              queryState.resultset.orderBy(_r3.unwrap());
+              if (isFirstUpdate || valueNotEquals((oldSelection != null ? ((s) => s.limit)(oldSelection!) : null), selection.limit)) {
+                queryState.resultset.limit((selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null));
+              }
+              let _moved4 = false;
+              let rwResultset = queryState.resultset.write();
+              try {
+                let newlyAdded = [];
+                rwResultset.markAllDirty();
+                for (const entity of includedEntities) {
+                  if (evaluatePredicate(entity, selection.predicate).unwrapOr(false)) {
+                    const entityId = AbstractEntity.id(entity);
+                    if (!rwResultset.contains(entityId)) {
+                      rwResultset.add(entity.clone());
+                      state.entities.set(entityId, entity.clone());
+                      state.entitySubscriptions.add(entityId);
+                      reactorUpdates.pushInitial(entity, queryId);
+                      newlyAdded.push(entity);
+                    }
+                  }
+                }
+                let removedEntities = [];
+                rwResultset.retainDirty((entity) => {
+                  {
+                    const _v = evaluatePredicate(entity, selection.predicate);
+                    if (_v.isOk()) {
+                      const _v1 = _v.unwrap();
+                      return true;
+                    }
+                  };
+                  const entityId = entity.id();
+                  tracing.debug(`Entity ${entityId} no longer matches predicate`);
+                  removedEntities.push(entityId);
+                  reactorUpdates.pushRemove(entity, queryId);
+                  return false;
+                });
+                queryState.paused = false;
+                queryState.version = version;
+                rwResultset.setLoaded(true);
+                _moved4 = true;
+                rwResultset.drop();
+                _moved0 = true;
+                stateGuard.drop();
+                const shouldUpdateWatchers = (() => {
+                  if (isFirstUpdate) {
+                    return true;
+                  } else {
+                    const _v2 = oldSelection;
+                    if (_v2 != null) {
+                      const oldSel = _v2;
+                      return !oldSel.predicate.equals(selection.predicate);
+                    } else {
+                    return false;
+                  }
+                  }
+                })();
+                if (shouldUpdateWatchers) {
+                  const oldPred = (oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null);
+                  this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
+                }
+                if (!(newlyAdded.length === 0)) {
+                  this.addEntityWatchers(queryId, [...newlyAdded].map((e) => AbstractEntity.id(e)));
+                }
+                if (!(removedEntities.length === 0)) {
+                  let watcherSet = this.deref().watcherSet.value.lock();
+                  try {
+                    watcherSet.value.cleanupRemovedPredicateWatchers(this.deref().id, queryId, removedEntities);
+                  } finally {
+                    watcherSet.drop();
+                  }
+                }
+                return Result.Ok(newlyAdded);
+              } finally {
+                if (!_moved4) rwResultset.drop();
+              }
+            } finally {
+              dropOwned(oldSelection);
+            }
+          } finally {
+            state.drop();
           }
+        } finally {
+          if (!_moved0) stateGuard.drop();
         }
+      } finally {
+        selection.drop();
+      }
+    } finally {
+      collectionId.drop();
+    }
+  }
 
-        // Emit if matches, matched before, or explicitly subscribed
-        const entitySubscribed = this._entitySubscriptions.has(entityKey);
-        if (matches || didMatch || entitySubscribed) {
-          let item = items.get(entityKey);
-          if (!item) {
-            item = {
-              entity,
-              events: [...change.events()],
-              predicateRelevance: [],
-            };
-            items.set(entityKey, item);
+  sendUpdate(items: ReactorUpdateItem<E, Ev>[]): void {
+    const state = this.deref().state.lock();
+    try {
+      state.value.broadcast.send(new ReactorUpdate(items));
+    } finally {
+      state.drop();
+    }
+  }
+
+  removeQuery(queryId: QueryId): QueryState<E> | null {
+    let state = this.deref().state.lock();
+    try {
+      return state.value.queries.remove(queryId);
+    } finally {
+      state.drop();
+    }
+  }
+
+  takeAllQueries(): HashMap<QueryId, QueryState<E>> {
+    let state = this.deref().state.lock();
+    try {
+      return mem.take(state.value.queries);
+    } finally {
+      state.drop();
+    }
+  }
+
+  async evaluateChanges<C extends ChangeNotification & Clone>(candidates: CandidateChanges<C>): Promise<WatcherChange[]> {
+    try {
+      try {
+        let watcherChanges = [];
+        let items = IndexMap.new();
+        let stateGuard = this.deref().state.lock();
+        const state = stateGuard.value;
+        try {
+          for (const queryCandidate of candidates.queryIter()) {
+            try {
+              const queryId = queryCandidate.queryId;
+              const _m1 = (() => {
+                const _v1 = state.queries.get(queryId);
+                if (_v1 != null) {
+                  const qs = _v1;
+                  if (!qs.paused) {
+                    return qs;
+                  }
+                }
+                {
+                  return { $jump: 'continue' };
+                }
+              })();
+              if ((_m1 as any)?.$jump === 'continue') continue;
+              const queryState = (_m1 as any);
+              const selection = queryState.selection.asRef();
+              tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
+              for (const change of queryCandidate.iter()) {
+                const entity = change.entity();
+                const entityId = AbstractEntity.id(entity);
+                tracing.debug(`Subscription ${this.id()} evaluating entity ${entityId} for query ${queryId}`);
+                const matches = evaluatePredicate(entity, selection.predicate).unwrapOr(false);
+                const didMatch = queryState.resultset.containsKey(entityId);
+                const membershipChange = (() => {
+                  const _v3 = [didMatch, matches];
+                  if ((_v3[0] === false) && (_v3[1] === true)) {
+                    {
+                      const entityClone = entity.clone();
+                      queryState.resultset.write().add(entityClone.clone());
+                      state.entities.set(entityId, entityClone);
+                      watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
+                      return new MembershipChange('Add', {});
+                    }
+                  } else if ((_v3[0] === true) && (_v3[1] === false)) {
+                    {
+                      queryState.resultset.write().remove(entityId);
+                      watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
+                      return new MembershipChange('Remove', {});
+                    }
+                  } else {
+                    {
+                      watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
+                      return null;
+                    }
+                  }
+                })();
+                const entitySubscribed = state.entitySubscriptions.has(entityId);
+                if (matches || didMatch || entitySubscribed) {
+                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                  {
+                    const _v4 = membershipChange;
+                    if (_v4 != null) {
+                      const mc = _v4;
+                      item.predicateRelevance.push([queryId, mc]);
+                    }
+                  }
+                }
+              }
+            } finally {
+              queryCandidate.drop();
+            }
           }
-
-          if (membershipChange !== null) {
-            item.predicateRelevance.push([queryId, membershipChange]);
+          for (const change of candidates.entityIter()) {
+            const entity = change.entity();
+            const entityId = AbstractEntity.id(entity);
+            if (state.entitySubscriptions.has(entityId)) {
+              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+            }
           }
+          let _moved2 = false;
+          const gapsToFill = this.collectGapsToFillInternal(state);
+          try {
+            let _moved3 = false;
+            const broadcast = state.broadcast.clone();
+            try {
+              stateGuard.drop();
+              let _moved4 = false;
+              const updateItems = items.intoValues();
+              try {
+                if (!(gapsToFill.length === 0)) {
+                  _moved4 = true;
+                  _moved2 = true;
+                  _moved3 = true;
+                  spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
+                } else if (!(updateItems.length === 0)) {
+                  _moved4 = true;
+                  broadcast.send(new ReactorUpdate(updateItems));
+                }
+                return watcherChanges;
+              } finally {
+                if (!_moved4) dropOwned(updateItems);
+              }
+            } finally {
+              if (!_moved3) broadcast.drop();
+            }
+          } finally {
+            if (!_moved2) dropOwned(gapsToFill);
+          }
+        } finally {
+          state.drop();
         }
+      } finally {
+        candidates.drop();
       }
+    } finally {
+      this.drop();
     }
-
-    // Process entity-level subscriptions not covered by query processing
-    for (const change of candidates.entityIter()) {
-      const entity = change.entity();
-      const entityId = entity.id();
-      const entityKey = entityId.toBase64();
-
-      if (this._entitySubscriptions.has(entityKey)) {
-        if (!items.has(entityKey)) {
-          items.set(entityKey, {
-            entity,
-            events: [...change.events()],
-            predicateRelevance: [],
-          });
-        }
-      }
-    }
-
-    // Collect gap fill data
-    const gapsToFill = this.collectGapsToFillInternal();
-
-    // Collect update items
-    const updateItems: ReactorUpdateItem[] = Array.from(items.values());
-
-    if (gapsToFill.length > 0) {
-      // Spawn gap filling and notification as an async task
-      // Divergence: No crate::task::spawn -- just kick off the async work [E8].
-      this.fillGapsAndNotify(updateItems, gapsToFill);
-    } else if (updateItems.length > 0) {
-      this._broadcast.send({ items: updateItems });
-    }
-
-    return watcherChanges;
   }
 
-  // ── Gap filling ─────────────────────────────────────────────────────
+  collectGapsToFillInternal(state: State<E, Ev>): GapFillData<E>[] {
+    return iterFilterMap([...state.queries], ([queryId, queryState]) => this.extractGapData(queryId, queryState));
+  }
 
-  /**
-   * Collect gaps to fill (internal version).
-   * Rust: `fn collect_gaps_to_fill_internal(&self, state)`
-   */
-  private collectGapsToFillInternal(): GapFillData[] {
-    const result: GapFillData[] = [];
-    for (const [_queryKey, queryState] of this._queries) {
-      const gapData = this.extractGapData(queryState);
-      if (gapData !== null) {
-        result.push(gapData);
+  async fillGapsForQueryEntities(queryId: QueryId, entities: E[]): Promise<void> {
+    const gapData = (() => {
+      const state = this.deref().state.lock();
+      try {
+        const _m0 = state.value.queries.get(queryId);
+        return (_m0 != null ? ((queryState) => this.extractGapData(queryId, queryState))(_m0!) : null);
+      } finally {
+        state.drop();
       }
+    })();
+    const _v = gapData;
+    if (!(_v != null)) {
+      return;
     }
-    return result;
-  }
-
-  /**
-   * Extract gap data for a single query.
-   * Rust: `fn extract_gap_data(&self, query_id, query_state)`
-   * Divergence: queryId is stored inside QueryState rather than being the map key [E8].
-   */
-  private extractGapData(queryState: QueryState): GapFillData | null {
-    const resultset = queryState.resultset;
-
-    if (!resultset.isGapDirty()) {
-      return null;
-    }
-
-    const limit = resultset.getLimit();
-    if (limit === null) {
-      return null;
-    }
-
-    const currentLen = resultset.len();
-    if (currentLen >= limit) {
-      return null;
-    }
-
-    const gapSize = limit - currentLen;
-    const lastEntity = resultset.lastEntity();
-
-    const selection = queryState.selection;
-    if (selection === null) {
-      throw new Error('extract_gap_data called before update_query');
-    }
-
-    return {
-      queryId: queryState.queryId,
-      gapFetcher: queryState.gapFetcher,
-      collectionId: queryState.collectionId,
-      selection,
-      resultset,
-      lastEntity,
-      gapSize,
-    };
-  }
-
-  /**
-   * Fill gaps for a specific query and append entities to the provided array.
-   * Also registers entity watchers for gap-filled entities.
-   *
-   * Rust: `pub async fn fill_gaps_for_query_entities(&self, query_id, entities)`
-   */
-  async fillGapsForQueryEntities(queryId: QueryId, entities: Entity[]): Promise<void> {
-    const queryKey = queryId.toUlidString();
-    const queryState = this._queries.get(queryKey);
-    if (!queryState) return;
-
-    const gapData = this.extractGapData(queryState);
-    if (gapData === null) return;
-
-    // Clear gap_dirty flag immediately
-    gapData.resultset.clearGapDirty();
-
-    // Process gap fill
-    const gapFilledEntities = await Subscription.processGapFillEntities(gapData);
-
-    // Register entity watchers and append entities
-    if (gapFilledEntities.length > 0) {
-      this.addEntityWatchers(queryId, gapFilledEntities.map((e) => e.id()));
+    const [queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize] = _v;
+    resultset.clearGapDirty();
+    const gapFilledEntities = await Subscription.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+    if (!(gapFilledEntities.length === 0)) {
+      this.addEntityWatchers(queryId_1, [...gapFilledEntities].map((e) => AbstractEntity.id(e)));
       entities.push(...gapFilledEntities);
     }
   }
 
-  /**
-   * Fill gaps for a specific query and push ReactorUpdateItems to the accumulator.
-   * Also registers entity watchers for gap-filled entities.
-   *
-   * Rust: `pub async fn fill_gaps_for_query<A: UpdateItemAccumulator>(&self, query_id, reactor_updates)`
-   */
-  async fillGapsForQuery(queryId: QueryId, reactorUpdates: UpdateItemAccumulator): Promise<void> {
-    const queryKey = queryId.toUlidString();
-    const queryState = this._queries.get(queryKey);
-    if (!queryState) return;
-
-    const gapData = this.extractGapData(queryState);
-    if (gapData === null) return;
-
-    // Clear gap_dirty flag immediately
-    gapData.resultset.clearGapDirty();
-
-    // Process gap fill
-    const gapFilledEntities = await Subscription.processGapFillEntities(gapData);
-
-    // Register entity watchers and push items for gap-filled entities
-    if (gapFilledEntities.length > 0) {
-      this.addEntityWatchers(queryId, gapFilledEntities.map((e) => e.id()));
-
+  async fillGapsForQuery<A extends UpdateItemAccumulator>(queryId: QueryId, reactorUpdates: A): Promise<void> {
+    const gapData = (() => {
+      const state = this.deref().state.lock();
+      try {
+        const _m0 = state.value.queries.get(queryId);
+        return (_m0 != null ? ((queryState) => this.extractGapData(queryId, queryState))(_m0!) : null);
+      } finally {
+        state.drop();
+      }
+    })();
+    const _v = gapData;
+    if (!(_v != null)) {
+      return;
+    }
+    const [queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize] = _v;
+    resultset.clearGapDirty();
+    const gapFilledEntities = await Subscription.processGapFillEntities(queryId_1, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+    if (!(gapFilledEntities.length === 0)) {
+      this.addEntityWatchers(queryId_1, [...gapFilledEntities].map((e) => AbstractEntity.id(e)));
       for (const entity of gapFilledEntities) {
-        reactorUpdates.pushInitial(entity, queryId);
+        reactorUpdates.pushInitial(entity, queryId_1);
       }
     }
   }
 
-  /**
-   * Process gap fill entities (static async helper).
-   * Rust: `async fn process_gap_fill_entities(...)`
-   */
-  private static async processGapFillEntities(gap: GapFillData): Promise<Entity[]> {
+  static async processGapFillEntities<E, Ev>(queryId: QueryId, gapFetcher: Arc<GapFetcher>, collectionId: CollectionId, selection: Selection, resultset: EntityResultSet<E>, lastEntity: E | null, gapSize: number): Promise<E[]> {
     try {
-      const gapEntities = await gap.gapFetcher.fetchGap(
-        gap.collectionId,
-        gap.selection,
-        gap.lastEntity,
-        gap.gapSize,
-      );
-
-      if (gapEntities.length > 0) {
-        const addedEntities: Entity[] = [];
-        {
-          using rw = gap.resultset.write();
-          for (const entity of gapEntities) {
-            if (rw.add(entity)) {
-              addedEntities.push(entity);
+      try {
+        try {
+          try {
+            tracing.debug(`Gap filling for query ${queryId} - need ${gapSize} entities`);
+            const _v = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity, gapSize);
+            if (_v.isOk()) {
+              const gapEntities = _v.unwrap();
+              if (!(gapEntities.length === 0)) {
+                tracing.debug(`Gap filling fetched ${gapEntities.length} entities for query ${queryId}`);
+                let write = resultset.write();
+                try {
+                  let addedEntities = [];
+                  for (const entity of gapEntities) {
+                    if (write.add(entity.clone())) {
+                      addedEntities.push(entity);
+                    }
+                  }
+                  return addedEntities;
+                } finally {
+                  write.drop();
+                }
+              } else {
+                tracing.debug(`Gap filling found no entities for query ${queryId}`);
+                return [];
+              }
+            } else {
+              const e = _v.unwrapErr();
+              try {
+                {
+                  tracing.warn(`Gap filling failed for query ${queryId}: ${e}`);
+                  return [];
+                }
+              } finally {
+                e.drop();
+              }
             }
+          } finally {
+            resultset.drop();
           }
+        } finally {
+          selection.drop();
         }
-        return addedEntities;
+      } finally {
+        collectionId.drop();
       }
-
-      return [];
-    } catch (e) {
-      console.warn(`Gap filling failed for query ${gap.queryId}: ${e}`);
-      return [];
+    } finally {
+      gapFetcher.drop();
     }
   }
 
-  /**
-   * Fill gaps and send notification.
-   * Combined method to handle gap filling and notification in a single task.
-   *
-   * Rust: `async fn fill_gaps_and_notify(self, items, gaps_to_fill, broadcast)`
-   * Divergence: fire-and-forget async (no task::spawn in JS) [E8].
-   */
-  private async fillGapsAndNotify(
-    items: ReactorUpdateItem[],
-    gapsToFill: GapFillData[],
-  ): Promise<void> {
-    // Clear gap_dirty flags immediately for all queries
-    for (const gap of gapsToFill) {
-      gap.resultset.clearGapDirty();
-    }
-
-    // Process all gap fills concurrently
-    const gapFillPromises = gapsToFill.map((gap) =>
-      Subscription.processGapFill(gap),
-    );
-
-    const gapResults = await Promise.all(gapFillPromises);
-
-    // Collect all the new items from gap filling and register entity watchers
-    for (const { queryId, gapItems } of gapResults) {
-      if (gapItems.length > 0) {
-        // Register entity watchers for gap-filled entities
-        const entityIds = gapItems.map((item) => item.entity.id());
-        this.addEntityWatchers(queryId, entityIds);
-
-        items.push(...gapItems);
-      }
-    }
-
-    // Send the consolidated update
-    if (items.length > 0) {
-      this._broadcast.send({ items });
-    }
-  }
-
-  /**
-   * Process a single gap fill (static async helper).
-   * Rust: `async fn process_gap_fill(...)`
-   */
-  private static async processGapFill(
-    gap: GapFillData,
-  ): Promise<{ queryId: QueryId; gapItems: ReactorUpdateItem[] }> {
+  async fillGapsAndNotify(items: ReactorUpdateItem<E, Ev>[], gapsToFill: GapFillData<E>[], broadcast: Broadcast<ReactorUpdate<E, Ev>>): Promise<void> {
+    let _moved0 = false;
     try {
-      const gapEntities = await gap.gapFetcher.fetchGap(
-        gap.collectionId,
-        gap.selection,
-        gap.lastEntity,
-        gap.gapSize,
-      );
-
-      if (gapEntities.length > 0) {
-        const gapItems: ReactorUpdateItem[] = [];
-        {
-          using rw = gap.resultset.write();
-          for (const entity of gapEntities) {
-            if (rw.add(entity)) {
-              gapItems.push({
-                entity,
-                events: [],
-                predicateRelevance: [[gap.queryId, 'Add']],
-              });
-            }
+      try {
+        try {
+          for (const [, , , , resultset, , ] of gapsToFill) {
+            resultset.clearGapDirty();
           }
+          const gapFillFutures = [...gapsToFill].map(([queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize]) => {
+            return Subscription.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+          });
+          const gapResults = await future.joinAll(gapFillFutures);
+          const _seq2 = gapResults;
+          let _at3 = 0;
+          try {
+            while (_at3 < _seq2.length) {
+              const [queryId, gapItems] = _seq2[_at3++];
+              let _moved1 = false;
+              try {
+                if (!(gapItems.length === 0)) {
+                  const entityIds = [...gapItems].map((item) => AbstractEntity.id(item.entity));
+                  this.addEntityWatchers(queryId, [...entityIds]);
+                  _moved1 = true;
+                  items.push(...gapItems);
+                }
+              } finally {
+                if (!_moved1) dropOwned(gapItems);
+              }
+            }
+          } finally {
+            dropOwned(_seq2.slice(_at3));
+          }
+          if (!(items.length === 0)) {
+            _moved0 = true;
+            broadcast.send(new ReactorUpdate(items));
+          }
+        } finally {
+          broadcast.drop();
         }
-        return { queryId: gap.queryId, gapItems };
+      } finally {
+        if (!_moved0) dropOwned(items);
       }
-
-      return { queryId: gap.queryId, gapItems: [] };
-    } catch (e) {
-      console.warn(`Gap filling failed for query ${gap.queryId}: ${e}`);
-      return { queryId: gap.queryId, gapItems: [] };
+    } finally {
+      this.drop();
     }
+  }
+
+  extractGapData(queryId: QueryId, queryState: QueryState<E>): GapFillData<E> | null {
+    const resultset = queryState.resultset;
+    try {
+      if (!resultset.isGapDirty()) {
+        return null;
+      }
+      const _r0 = resultset.getLimit();
+      if (_r0 == null) return null;
+      const limit = _r0;
+      const currentLen = resultset.len();
+      if (currentLen >= limit) {
+        return null;
+      }
+      const gapSize = checkedSub(limit, currentLen, 'usize');
+      const lastEntity = resultset.lastEntity();
+      let _moved1 = false;
+      const selection = (queryState.selection.clone() ?? (() => { throw new Error('extract_gap_data called before update_query'); })());
+      try {
+        _moved1 = true;
+        return [queryId, queryState.gapFetcher.clone(), queryState.collectionId.clone(), selection, resultset.clone(), lastEntity, gapSize];
+      } finally {
+        if (!_moved1) selection.drop();
+      }
+    } finally {
+      resultset.drop();
+    }
+  }
+
+  static async processGapFill<E, Ev>(queryId: QueryId, gapFetcher: Arc<GapFetcher>, collectionId: CollectionId, selection: Selection, resultset: EntityResultSet<E>, lastEntity: E | null, gapSize: number): Promise<[QueryId, ReactorUpdateItem<E, Ev>[]]> {
+    try {
+      try {
+        try {
+          try {
+            tracing.debug(`Gap filling for query ${queryId} - need ${gapSize} entities`);
+            const gapItems = await (async () => {
+              const _v1 = await gapFetcher.value.fetchGap(collectionId, selection, lastEntity, gapSize);
+              if (_v1.isOk()) {
+                const gapEntities = _v1.unwrap();
+                if (!(gapEntities.length === 0)) {
+                  tracing.debug(`Gap filling fetched ${gapEntities.length} entities for query ${queryId}`);
+                  let write = resultset.write();
+                  try {
+                    let gapItems = [];
+                    for (const entity of gapEntities) {
+                      if (write.add(entity.clone())) {
+                        gapItems.push(new ReactorUpdateItem(entity, [], [[queryId, new MembershipChange('Add', {})]]));
+                      }
+                    }
+                    return gapItems;
+                  } finally {
+                    write.drop();
+                  }
+                } else {
+                  tracing.debug(`Gap filling found no entities for query ${queryId}`);
+                  return [];
+                }
+              } else {
+                const e = _v1.unwrapErr();
+                try {
+                  {
+                    tracing.warn(`Gap filling failed for query ${queryId}: ${e}`);
+                    return [];
+                  }
+                } finally {
+                  e.drop();
+                }
+              }
+            })();
+            return [queryId, gapItems];
+          } finally {
+            resultset.drop();
+          }
+        } finally {
+          selection.drop();
+        }
+      } finally {
+        collectionId.drop();
+      }
+    } finally {
+      gapFetcher.drop();
+    }
+  }
+
+  upsertQuery<SE, PA>(queryId: QueryId, collectionId: CollectionId, node: Node<SE, PA>, cdata: ContextData): EntityResultSet<Entity> {
+    let _moved0 = false;
+    try {
+      let state = this.deref().state.lock();
+      try {
+        return state.value.queries.entry(queryId).match({
+          Vacant: (_v) => {
+            const v = _v._0;
+            const resultset = EntityResultSet.empty();
+            const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+            _moved0 = true;
+            v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset.clone(), 0));
+            return resultset;
+          },
+          Occupied: (v) => {
+            const o = v._0;
+            return o.get().resultset.clone();
+          },
+        });
+      } finally {
+        state.drop();
+      }
+    } finally {
+      if (!_moved0) collectionId.drop();
+    }
+  }
+
+  clone(): Subscription<E, Ev> {
+    return new Subscription(this._0.clone());
+  }
+
+  deref(): Inner<E, Ev> {
+    return this._0;
   }
 }
 
-// ── buildKeySpecFromSelection ─────────────────────────────────────────
-// Mirrors Rust pub(crate) fn build_key_spec_from_selection<E: AbstractEntity>(...)
+class Inner<E extends AbstractEntity & Filterable, Ev> extends Struct {
+  id: ReactorSubscriptionId;
+  state: Mutex<State<E, Ev>>;
+  watcherSet: Arc<Mutex<WatcherSet>>;
 
-/**
- * Build KeySpec from Selection's ORDER BY clause with type inference from sample entities.
- *
- * Rust: `pub(crate) fn build_key_spec_from_selection(order_by, resultset) -> Result<KeySpec>`
- * Divergence: Returns KeySpec directly (throws on error) [E7].
- */
-export function buildKeySpecFromSelection(
-  orderBy: OrderByItem[],
-  resultset: EntityResultSet,
-): KeySpec {
-  const keyparts: IndexKeyPart[] = [];
-
-  const read = resultset.read();
-  for (const item of orderBy) {
-    // Use the property name from the path
-    const column = item.path.property();
-
-    // Infer type from first non-null value in resultset entities
-    let inferredType = ValueType.String; // default
-    for (const [, entity] of read.iterEntities()) {
-      const val = entity.getPropertyValue(column);
-      if (val !== null) {
-        inferredType = valueType(val);
-        break;
-      }
-    }
-
-    const direction: IndexDirection =
-      item.direction.is('Asc') ? IndexDirection.Asc : IndexDirection.Desc;
-
-    keyparts.push({
-      column,
-      subPath: null,
-      direction,
-      valueType: inferredType,
-      nulls: NullsOrder.Last,
-      collation: null,
-    });
+  constructor(id: ReactorSubscriptionId, state: Mutex<State<E, Ev>>, watcherSet: Arc<Mutex<WatcherSet>>) {
+    super();
+    this.id = id;
+    this.state = state;
+    this.watcherSet = watcherSet;
   }
-
-  return { keyparts };
 }
+
+class State<E extends AbstractEntity & Filterable, Ev> extends Struct {
+  queries: HashMap<QueryId, QueryState<E>>;
+  entitySubscriptions: HashSet<EntityId>;
+  entities: HashMap<EntityId, E>;
+  broadcast: Broadcast<ReactorUpdate<E, Ev>>;
+
+  constructor(queries: HashMap<QueryId, QueryState<E>>, entitySubscriptions: HashSet<EntityId>, entities: HashMap<EntityId, E>, broadcast: Broadcast<ReactorUpdate<E, Ev>>) {
+    super();
+    this.queries = queries;
+    this.entitySubscriptions = entitySubscriptions;
+    this.entities = entities;
+    this.broadcast = broadcast;
+  }
+}
+
+export interface UpdateItemAccumulator<E, Ev> {
+  pushInitial(entity: E, queryId: QueryId): void;
+  pushRemove(entity: E, queryId: QueryId): void;
+}
+
+type GapFillData = [QueryId, Arc<GapFetcher>, CollectionId, Selection, EntityResultSet<E>, E | null, number];
+
+export function Vec_ReactorUpdateItem_pushInitial<E extends Clone, Ev>(self: ReactorUpdateItem<E, Ev>[], entity: E, queryId: QueryId): void {
+  Vec.push(self, new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Initial', {})]]));
+}
+
+export function Vec_ReactorUpdateItem_pushRemove<E extends Clone, Ev>(self: ReactorUpdateItem<E, Ev>[], entity: E, queryId: QueryId): void {
+  Vec.push(self, new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
+}
+
+export function Unit_pushInitial<E, Ev>(self: void, _entity: E, _queryId: QueryId): void {
+
+}
+
+export function Unit_pushRemove<E, Ev>(self: void, _entity: E, _queryId: QueryId): void {
+
+}
+

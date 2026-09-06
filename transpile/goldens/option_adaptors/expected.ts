@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_adaptors/src/input.rs
-import { Struct, checkedAdd, checkedRem, iterPosition, iterRposition, iterFind, iterFindMap, iterLast, iterFirst, iterMaxByKey, iterMinByKey, iterReduce, iterFilterMap, range } from '@ankurah/base';
+import { Struct, checkedAdd, checkedRem, iterPosition, iterRposition, iterFind, iterFindMap, iterLast, iterFirst, iterMaxBy, iterMinBy, iterMaxByKey, iterMinByKey, iterReduce, iterFilterMap, range } from '@ankurah/base';
 
 export class Watchers extends Struct {
   readonly ids: number[];
@@ -65,6 +65,33 @@ export function narrowest(labels: string[]): string | null {
   return iterMinByKey([...labels], (l) => l.length);
 }
 
+export function maxTrace(ns: number[]): [number | null, string] {
+  let seen = '';
+  const best = iterMaxBy([...[...ns]], (a, b) => {
+    seen += `(${a},${b})`;
+    return (($a, $b) => $a < $b ? -1 : $a > $b ? 1 : 0)(a, b);
+  });
+  return [best, seen];
+}
+
+export function minTrace(ns: number[]): [number | null, string] {
+  let seen = '';
+  const best = iterMinBy([...[...ns]], (a, b) => {
+    seen += `(${a},${b})`;
+    return (($a, $b) => $a < $b ? -1 : $a > $b ? 1 : 0)(a, b);
+  });
+  return [best, seen];
+}
+
+export function keyTrace(ns: number[]): [number | null, string] {
+  let seen = '';
+  const best = iterMaxByKey([...[...ns]], (n) => {
+    seen += `(${n})`;
+    return n;
+  });
+  return [best, seen];
+}
+
 export function firstDroppable(readings: Reading[], prefix: string): boolean {
   return (iterFind([...readings], (r) => r.label.startsWith(prefix)) != null);
 }
@@ -78,6 +105,6 @@ export function counted(to: number): number[] {
 }
 
 export function evensBackwards(to: number): number[] {
-  return iterFilterMap((range(0, to)).slice().reverse(), (n) => (checkedRem(n, 2, 'usize') === 0 ? n : null));
+  return iterFilterMap((range(0, to)).reverse(), (n) => (checkedRem(n, 2, 'usize') === 0 ? n : null));
 }
 

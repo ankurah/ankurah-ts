@@ -8,6 +8,18 @@ export class Entity extends Struct {
     super();
     this.name = name;
   }
+
+  intoName(): string {
+    try {
+      return this.name;
+    } finally {
+      this.drop();
+    }
+  }
+
+  width(): number {
+    return this.name.length;
+  }
 }
 
 export class Pair extends Struct {
@@ -68,5 +80,17 @@ export function takeBoth(pair: Pair): number {
   } finally {
     pair.drop();
   }
+}
+
+export function nameOfOne(pair: Pair): string {
+  try {
+    return pair.takeField('one').intoName();
+  } finally {
+    pair.drop();
+  }
+}
+
+export function widthOfOne(pair: Pair): number {
+  return pair.one.width();
 }
 

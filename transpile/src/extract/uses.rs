@@ -31,25 +31,11 @@ pub struct UseBindingInfo {
     pub path: Vec<String>,
 }
 
-/// A `use` written INSIDE a function body, hoisted to the module's binding
-/// table.
-///
-/// Rust scopes it to the block it stands in, and the engine has one binding
-/// table per module — so a body `use` bound nothing at all, and every name it
-/// introduced resolved to whatever the module already had, or to nothing.
-/// `core/selection/filter.rs`'s `compare_values_with_cast` writes
-/// `use crate::value::ValueType;` in its body: `ValueType::of(l) ==
-/// ValueType::of(r)` therefore had no type on either side, the equality was
-/// left as `===` between two fresh objects — always false — and no diagnostic
-/// was filed, because an operand the engine could not name reports where the
-/// name was BOUND and nothing bound this one. A body `use` under an alias was
-/// worse: `use crate::value::VT as Inner;` emitted `Inner.of(l)`, a name
-/// nothing declares.
-///
-/// Hoisting widens the name's scope from the block to the module, which is only
-/// safe while nothing else in the module claims it. A collision — the module
-/// binds or declares the same name — is left alone and reported, because
-/// choosing between two meanings of one name is not the extractor's to make.
+/// A `use` written INSIDE a function body, recorded here and HOISTED by
+/// `registry::uses::module_use_bindings`, which is where the rule for it and
+/// the reason for the rule are written down. The extractor's whole part is to
+/// keep the flag: a body `use` that arrived indistinguishable from a
+/// module-level one would be hoisted unconditionally.
 struct BodyUses<'f> {
     uses: &'f mut Vec<UseInfo>,
 }

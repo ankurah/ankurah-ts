@@ -7,7 +7,7 @@
 // matches Rust end to end depends on AttestationSet, a generated newtype that serde sees
 // through and JSON.stringify does not; that belongs to the emitter, not to this file.
 
-import { Struct } from '@ankurah/base';
+import { Struct, debugValue } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attestation, AttestationSet } from './auth';
 
@@ -34,12 +34,18 @@ export class Attested<T> extends Struct {
 
   // #[derive(Debug)] on a named-field struct — rustc prints
   // `Attested { payload: .., attestations: .. }`, each field through its own
-  // Debug. `T` is whatever the instantiation put there, so the payload is
-  // asked for its `debug()` and falls back to `String(..)` where it has none,
-  // which is what a primitive payload wants.
+  // Debug. `T` is whatever the instantiation put there, so the payload goes
+  // through the runtime's `debugValue`, which decides from the value's own
+  // surface: a string is a Rust `String` and prints QUOTED, a number prints as
+  // itself, `null` is `None`, a sequence prints element-wise, and an object
+  // declaring `debug()` prints through it. `String(payload)` printed
+  // `payload: secret` where Rust prints `payload: "secret"`, and
+  // `[object Object]` for anything the fallback reached (F7). The one shape it
+  // cannot get right is a `char` payload, which is a one-character string here
+  // and prints `"a"` where Rust prints `'a'`; the emitter reports a provided
+  // generic type instantiated with `char` at the type position instead.
   debug(): string {
-    const payload = (this.payload as { debug?: () => string })?.debug?.() ?? String(this.payload);
-    return `Attested { payload: ${payload}, attestations: ${this.attestations.debug()} }`;
+    return `Attested { payload: ${debugValue(this.payload)}, attestations: ${this.attestations.debug()} }`;
   }
 
   equals(other: Attested<T>): boolean {

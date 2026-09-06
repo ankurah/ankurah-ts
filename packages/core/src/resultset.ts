@@ -1,704 +1,828 @@
 // MIRRORS: ankurah/core/src/resultset.rs
+import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, valueEquals, checkedAdd, iterLast, range, HashMap } from '@ankurah/base';
+import { Broadcast, BroadcastId, CurrentObserver, Get, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { Entity } from './entity';
+import { View } from './indexel';
+import { encodeTupleValuesWithKeySpec } from './indexing/encoding';
+import { KeySpec } from './indexing/key_spec';
+import { AbstractEntity } from './reactor';
+import { EntityId } from '@ankurah/proto';
 
-import type { EntityId } from '@ankurah/proto';
-import {
-  Broadcast,
-  type BroadcastId,
-  type Listener,
-  ListenerGuard,
-  type Signal,
-} from '@ankurah/signals';
+export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct implements Signal {
+  _0: Arc<Inner<E>>;
 
-import { Drop } from '@ankurah/base';
-import { Entity } from './entity.ts';
-import type { Value } from './value/index.ts';
-import { extractAtPath } from './value/index.ts';
-import { encodeTupleValuesWithKeySpec, type KeySpec, keySpecEquals } from './indexing/index.ts';
+  constructor(_0: Arc<Inner<E>>) {
+    super();
+    this._0 = _0;
+  }
 
-// ── IVec ─────────────────────────────────────────────────────────────
-// Rust: `enum IVec { Small([u8; 16]), Large(Vec<u8>) }`
-// Divergence: No small/large optimization needed in JS — plain Uint8Array [E8].
+  static fromVec<E>(entities: E[], loaded: boolean): EntityResultSet<E> {
+    let index = new HashMap();
+    let order = [];
+    for (const [i, entity] of [...entities].entries()) {
+      index.insert(entity.id(), i);
+      order.push(new EntityEntry(entity, null, false));
+    }
+    const state = new State(order, index, null, null, false);
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), loaded, Broadcast.new())));
+  }
 
-// ── EntityEntry ──────────────────────────────────────────────────────
-// Rust: `struct EntityEntry<E: AbstractEntity> { entity: E, sort_key: Option<IVec>, dirty: bool }`
-// Divergence: Specialized to Entity (no AbstractEntity generic needed) [E8].
+  static empty<E>(): EntityResultSet<E> {
+    const state = new State([], new HashMap(), null, null, false);
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
+  }
 
-interface EntityEntry {
-  entity: Entity;
-  sortKey: Uint8Array | null;
-  dirty: boolean;
+  static single<E>(entity: E): EntityResultSet<E> {
+    const entry = new EntityEntry(entity.clone(), null, false);
+    let state = new State([entry], new HashMap(), null, null, false);
+    state.index.insert(entity.id(), 0);
+    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
+  }
+
+  write(): ResultSetWrite<E> {
+    const guard = this._0.value.state.lock();
+    return new ResultSetWrite(this, false, guard);
+  }
+
+  read(): ResultSetRead<E> {
+    const guard = this._0.value.state.lock();
+    return new ResultSetRead(guard);
+  }
+
+  setLoaded(loaded: boolean): void {
+    this._0.value.loaded = loaded;
+    this._0.value.broadcast.send([]);
+  }
+
+  isLoaded(): boolean {
+    CurrentObserver.track(this);
+    return this._0.value.loaded;
+  }
+
+  clear(): void {
+    let st = this._0.value.state.lock();
+    st.value.order.length = 0;
+    st.value.index.clear();
+    st.drop();
+    this._0.value.broadcast.send([]);
+  }
+
+  keys(): EntityResultSetKeyIterator {
+    CurrentObserver.track(this);
+    const st = this._0.value.state.lock();
+    try {
+      const keys = [...st.value.order].map((e) => e.entity.id());
+      return EntityResultSetKeyIterator.new(keys);
+    } finally {
+      st.drop();
+    }
+  }
+
+  containsKey(id: EntityId): boolean {
+    CurrentObserver.track(this);
+    const st = this._0.value.state.lock();
+    try {
+      return st.value.index.has(id);
+    } finally {
+      st.drop();
+    }
+  }
+
+  byId(id: EntityId): E | null {
+    CurrentObserver.track(this);
+    const st = this._0.value.state.lock();
+    try {
+      const _m0 = st.value.index.get(id);
+      return (_m0 != null ? ((i) => st.value.order[i].entity.clone())(_m0!) : null);
+    } finally {
+      st.drop();
+    }
+  }
+
+  len(): number {
+    CurrentObserver.track(this);
+    const st = this._0.value.state.lock();
+    try {
+      return st.value.order.length;
+    } finally {
+      st.drop();
+    }
+  }
+
+  isGapDirty(): boolean {
+    const st = this._0.value.state.lock();
+    try {
+      return st.value.gapDirty;
+    } finally {
+      st.drop();
+    }
+  }
+
+  clearGapDirty(): void {
+    let st = this._0.value.state.lock();
+    try {
+      st.value.gapDirty = false;
+    } finally {
+      st.drop();
+    }
+  }
+
+  getLimit(): number | null {
+    const st = this._0.value.state.lock();
+    try {
+      return st.value.limit;
+    } finally {
+      st.drop();
+    }
+  }
+
+  lastEntity(): E | null {
+    const st = this._0.value.state.lock();
+    try {
+      const _m0 = iterLast(st.value.order);
+      return (_m0 != null ? ((entry) => entry.entity.clone())(_m0!) : null);
+    } finally {
+      st.drop();
+    }
+  }
+
+  orderBy(keySpec: KeySpec | null): void {
+    try {
+      let _moved0 = false;
+      let st = this._0.value.state.lock();
+      try {
+        if (valueEquals(st.value.keySpec, keySpec)) {
+          return;
+        }
+        const _a1 = keySpec.clone();
+        dropOwned(st.value.keySpec);
+        st.value.keySpec = _a1;
+        for (const entry of st.value.order) {
+          const _a2 = (() => {
+            {
+              const _v = keySpec;
+              if (_v != null) {
+                const ks = _v;
+                return ResultSetWrite.computeSortKey(entry.entity, ks);
+              } else {
+              return null;
+            }
+            }
+          })();
+          dropOwned(entry.sortKey);
+          entry.sortKey = _a2;
+        }
+        st.value.order.sort((a, b) => {
+          const _v1 = [a.sortKey, b.sortKey];
+          if ((_v1[0] != null) && (_v1[1] != null)) {
+            const keyA = _v1[0];
+            const keyB = _v1[1];
+            const _v2 = keyA.compareTo(keyB);
+            if (_v2 === 0) {
+              return a.entity.id().compareTo(b.entity.id());
+            } else {
+              const other = _v2;
+              return other;
+            }
+          } else if ((_v1[0] != null) && (_v1[1] == null)) {
+            return 1;
+          } else if ((_v1[0] == null) && (_v1[1] != null)) {
+            return -1;
+          } else {
+            return a.entity.id().compareTo(b.entity.id());
+          }
+        });
+        st.value.index.clear();
+        const indexUpdates = [...st.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
+        for (const [id, i] of indexUpdates) {
+          st.value.index.set(id, i);
+        }
+        _moved0 = true;
+        st.drop();
+        this._0.value.broadcast.send([]);
+      } finally {
+        if (!_moved0) st.drop();
+      }
+    } finally {
+      dropOwned(keySpec);
+    }
+  }
+
+  limit(limit: number | null): void {
+    let _moved0 = false;
+    let st = this._0.value.state.lock();
+    try {
+      if (valueEquals(st.value.limit, limit)) {
+        return;
+      }
+      st.value.limit = limit;
+      let entitiesRemoved = false;
+      {
+        const _v = limit;
+        if (_v != null) {
+          const limit = _v;
+          if (st.value.order.length > limit) {
+            st.value.order.length = limit;
+            entitiesRemoved = true;
+            st.value.index.clear();
+            const indexUpdates = [...st.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
+            for (const [id, i] of indexUpdates) {
+              st.value.index.set(id, i);
+            }
+          }
+        }
+      }
+      _moved0 = true;
+      st.drop();
+      if (entitiesRemoved) {
+        this._0.value.broadcast.send([]);
+      }
+    } finally {
+      if (!_moved0) st.drop();
+    }
+  }
+
+  wrap<R extends View>(): ResultSet<R> {
+    return new ResultSet(this.clone(), undefined /* PhantomData */);
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    const _t0 = this._0.value.broadcast.reference();
+    try {
+      return ListenerGuard.new(_t0.listen(listener));
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  broadcastId(): BroadcastId {
+    return this._0.value.broadcast.id();
+  }
+
+  clone(): EntityResultSet<E> {
+    return new EntityResultSet(this._0.clone());
+  }
+
+  debug(): string {
+    return `EntityResultSet(${this._0.value.debug()})`;
+  }
 }
 
-// ── ResultSetState ───────────────────────────────────────────────────
-// Rust: `struct State<E: AbstractEntity> { order, index, key_spec, limit, gap_dirty }`
-// Divergence: No Mutex needed — single-threaded JS [E8].
-// Divergence: index uses Map<string, number> with EntityId.toBase64() keys [E8].
+export class ResultSet<R extends View> extends Struct implements Signal, Get<E[]>, Peek<E[]>, Subscribe<E[]> {
+  _0: EntityResultSet<Entity>;
 
-interface ResultSetState {
-  order: EntityEntry[];
-  index: Map<string, number>;
+  constructor(_0: EntityResultSet<Entity>) {
+    super();
+    this._0 = _0;
+  }
+
+  byId(id: EntityId): R | null {
+    const _m0 = this._0.byId(id);
+    return (_m0 != null ? ((e) => R.fromEntity(e))(_m0!) : null);
+  }
+
+  iter(): ResultSetIter<E> {
+    return ResultSetIter.new(this.clone());
+  }
+
+  deref(): EntityResultSet<Entity> {
+    return this._0;
+  }
+
+  clone<E>(): ResultSet<E> {
+    return new ResultSet(this._0.clone(), undefined /* PhantomData */);
+  }
+
+  static default<R, E>(): ResultSet<E> {
+    const entityResultset = EntityResultSet.empty();
+    return new ResultSet(entityResultset, undefined /* PhantomData */);
+  }
+
+  listen(listener: Listener): ListenerGuard {
+    const _t0 = this._0._0.value.broadcast.reference();
+    try {
+      return ListenerGuard.new(_t0.listen(listener));
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  broadcastId(): BroadcastId {
+    return this._0._0.value.broadcast.id();
+  }
+
+  get<E>(): E[] {
+    CurrentObserver.track(this);
+    const _t0 = this._0._0.value.state.lock();
+    try {
+      return [..._t0.value.order].map((e) => E.fromEntity(e.entity.clone()));
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  peek<E>(): E[] {
+    const _t0 = this._0._0.value.state.lock();
+    try {
+      return [..._t0.value.order].map((e) => E.fromEntity(e.entity.clone()));
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  subscribe<F>(listener: F): SubscriptionGuard {
+    const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
+    const me = this.clone();
+    const _t0 = this._0._0.value.broadcast.reference();
+    try {
+      const guard = _t0.listen(new OwnedClosure([me, listener_1], (_) => {
+        const _t1 = me._0._0.value.state.lock();
+        try {
+          const entities = [..._t1.value.order].map((e) => E.fromEntity(e.entity.clone()));
+          _t1.drop();
+          listener_1(entities);
+        } finally {
+          _t1.drop();
+        }
+      }));
+      return SubscriptionGuard.new(ListenerGuard.new(guard));
+    } finally {
+      _t0.drop();
+    }
+  }
+
+  debug(): string {
+    return `ResultSet(${this._0.debug()}, ${this._1})`;
+  }
+}
+
+class Inner<E extends AbstractEntity> extends Struct {
+  state: Mutex<State<E>>;
+  loaded: boolean;
+  broadcast: Broadcast<void>;
+
+  constructor(state: Mutex<State<E>>, loaded: boolean, broadcast: Broadcast<void>) {
+    super();
+    this.state = state;
+    this.loaded = loaded;
+    this.broadcast = broadcast;
+  }
+
+  debug(): string {
+    return `Inner { state: ${this.state}, loaded: ${this.loaded}, broadcast: ${this.broadcast.debug()} }`;
+  }
+}
+
+class State<E extends AbstractEntity> extends Struct {
+  order: EntityEntry<E>[];
+  index: HashMap<EntityId, number>;
   keySpec: KeySpec | null;
   limit: number | null;
   gapDirty: boolean;
-}
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/** Lexicographic comparison of two Uint8Arrays. Returns -1, 0, or 1. */
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    if (a[i] < b[i]) return -1;
-    if (a[i] > b[i]) return 1;
+  constructor(order: EntityEntry<E>[], index: HashMap<EntityId, number>, keySpec: KeySpec | null, limit: number | null, gapDirty: boolean) {
+    super();
+    this.order = order;
+    this.index = index;
+    this.keySpec = keySpec;
+    this.limit = limit;
+    this.gapDirty = gapDirty;
   }
-  if (a.length < b.length) return -1;
-  if (a.length > b.length) return 1;
-  return 0;
-}
 
-/** Convert EntityId to a stable string key for Map lookups. */
-function entityIdKey(id: EntityId): string {
-  return id.toBase64();
-}
-
-/** Compare two EntityIds by their byte representation. */
-function compareEntityIds(a: EntityId, b: EntityId): number {
-  return compareBytes(a.toBytes(), b.toBytes());
-}
-
-/**
- * Compare two EntityEntry values for sorting.
- * Sorts by sortKey first, then by entityId for tie-breaking.
- * Rust: inline closure in binary_search_by and sort_by.
- */
-function compareEntries(a: EntityEntry, b: EntityEntry): number {
-  if (a.sortKey !== null && b.sortKey !== null) {
-    const keyCmp = compareBytes(a.sortKey, b.sortKey);
-    if (keyCmp !== 0) return keyCmp;
-    return compareEntityIds(a.entity.id(), b.entity.id());
-  }
-  if (a.sortKey !== null && b.sortKey === null) {
-    return -1; // Keyed entries sort before unkeyed
-  }
-  if (a.sortKey === null && b.sortKey !== null) {
-    return 1; // Unkeyed entries sort after keyed
-  }
-  // Both unkeyed - sort by entity ID
-  return compareEntityIds(a.entity.id(), b.entity.id());
-}
-
-/**
- * Rebuild index from a given position.
- * Rust: `fn fix_from<E: AbstractEntity>(st: &mut State<E>, start: usize)`
- */
-function fixFrom(state: ResultSetState, start: number): void {
-  for (let i = start; i < state.order.length; i++) {
-    const id = entityIdKey(state.order[i].entity.id());
-    state.index.set(id, i);
+  debug(): string {
+    return `State { order: ${`[${Array.from(this.order).map((e) => e.debug()).join(', ')}]`}, index: ${this.index}, keySpec: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.keySpec)}, limit: ${(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.limit)}, gapDirty: ${String(this.gapDirty)} }`;
   }
 }
 
-/**
- * Compute sort key for an entity using the given key spec.
- * Rust: `fn compute_sort_key(entity: &E, key_spec: &KeySpec) -> IVec`
- */
-function computeSortKey(entity: Entity, keySpec: KeySpec): Uint8Array {
-  const values: Value[] = [];
+class EntityEntry<E extends AbstractEntity> extends Struct {
+  entity: E;
+  sortKey: IVec | null;
+  dirty: boolean;
 
-  // Extract values for each key part
-  for (const keypart of keySpec.keyparts) {
-    const rawValue = entity.getPropertyValue(keypart.column);
-    if (rawValue === null) {
-      // Skip this entity for now if any field is NULL
-      return new Uint8Array(0); // Empty key sorts first
-    }
-    // Handle sub_path extraction
-    let value: Value | null;
-    if (keypart.subPath !== null) {
-      value = extractAtPath(rawValue, keypart.subPath);
-    } else {
-      value = rawValue;
-    }
-    if (value === null) {
-      return new Uint8Array(0); // Empty key sorts first
-    }
-    values.push(value);
+  constructor(entity: E, sortKey: IVec | null, dirty: boolean) {
+    super();
+    this.entity = entity;
+    this.sortKey = sortKey;
+    this.dirty = dirty;
   }
 
-  // Encode the tuple
-  return encodeTupleValuesWithKeySpec(values, keySpec);
-}
-
-/**
- * Binary search for the correct insertion position in a sorted array.
- * Returns the index where the entry should be inserted.
- */
-function binarySearchInsertPos(order: EntityEntry[], entry: EntityEntry): number {
-  let lo = 0;
-  let hi = order.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    const cmp = compareEntries(order[mid], entry);
-    if (cmp < 0) {
-      lo = mid + 1;
-    } else if (cmp > 0) {
-      hi = mid;
-    } else {
-      // Found exact match (same sort key and entity ID) — insert here
-      return mid;
-    }
+  clone(): EntityEntry<E> {
+    return new EntityEntry(derivedClone(this.entity), this.sortKey?.clone() ?? null, this.dirty);
   }
-  return lo;
+
+  debug(): string {
+    return `EntityEntry { entity: ${this.entity}, sortKey: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.sortKey)}, dirty: ${String(this.dirty)} }`;
+  }
 }
 
-// ── ResultSetWrite ───────────────────────────────────────────────────
-// Rust: `pub struct ResultSetWrite<'a, E: AbstractEntity = Entity>`
-// Divergence: No lifetime parameter — JS has no lifetimes [E8].
-// Divergence: No MutexGuard — single-threaded JS [E8].
-// Divergence: impl Drop -> extends Drop [E11].
+export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
+  resultset: EntityResultSet<E>;
+  changed: boolean;
+  guard: MutexGuard<State<E>> | null;
 
-export class ResultSetWrite extends Drop {
-  private resultset: EntityResultSet;
-  private changed: boolean;
-  private state: ResultSetState;
-
-  /** @internal */
-  constructor(resultset: EntityResultSet, state: ResultSetState) {
+  constructor(resultset: EntityResultSet<E>, changed: boolean, guard: MutexGuard<State<E>> | null) {
     super();
     this.resultset = resultset;
-    this.changed = false;
-    this.state = state;
+    this.changed = changed;
+    this.guard = guard;
   }
 
-  /**
-   * Add an entity to the result set.
-   * Rust: `pub fn add(&mut self, entity: E) -> bool`
-   */
-  add(entity: Entity): boolean {
-    const id = entityIdKey(entity.id());
-    if (this.state.index.has(id)) {
-      return false; // Already present
+  // A `&T` field is a borrow: dropping this releases the borrow and nothing
+  // else, so the cascade must not walk it.
+  protected override ownedFields(): unknown[] {
+    return [this.changed, this.guard];
+  }
+
+  add(entity: E): boolean {
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+    const id = entity.id();
+    if (guard.value.index.has(id)) {
+      return false;
     }
-
-    // Compute sort key if ordering is configured
-    const sortKey = this.state.keySpec !== null
-      ? computeSortKey(entity, this.state.keySpec)
-      : null;
-
-    const entry: EntityEntry = { entity, sortKey, dirty: false };
-
-    // Insert in correct position (always sort by entity ID, with optional key spec first)
-    const pos = binarySearchInsertPos(this.state.order, entry);
-
-    this.state.order.splice(pos, 0, entry);
-    this.state.index.set(id, pos);
-
-    // Fix indices for all entries after the insertion point
-    for (let i = pos + 1; i < this.state.order.length; i++) {
-      const entryId = entityIdKey(this.state.order[i].entity.id());
-      this.state.index.set(entryId, i);
+    const sortKey = (guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null);
+    const entry = new EntityEntry(entity, sortKey, false);
+    const pos = guard.value.order.binarySearchBy((existing) => {
+      const _v = [existing.sortKey, entry.sortKey];
+      if ((_v[0] != null) && (_v[1] != null)) {
+        const existingKey = _v[0];
+        const entryKey = _v[1];
+        return existingKey.compareTo(entryKey).thenWith(() => existing.entity.id().compareTo(entry.entity.id()));
+      } else if ((_v[0] != null) && (_v[1] == null)) {
+        return -1;
+      } else if ((_v[0] == null) && (_v[1] != null)) {
+        return 1;
+      } else {
+        return existing.entity.id().compareTo(entry.entity.id());
+      }
+    }).unwrapOrElse((pos) => pos);
+    guard.value.order.splice(pos, 0, entry);
+    guard.value.index.set(id, pos);
+    for (const i of range((checkedAdd(pos, 1, 'usize')), guard.value.order.length)) {
+      const entryId = guard.value.order[i].entity.id();
+      guard.value.index.set(entryId, i);
     }
-
-    // Apply limit if configured
-    if (this.state.limit !== null) {
-      if (this.state.order.length > this.state.limit) {
-        // Remove the last entry (beyond limit)
-        const removedEntry = this.state.order.pop();
-        if (removedEntry) {
-          const removedId = entityIdKey(removedEntry.entity.id());
-          this.state.index.delete(removedId);
+    {
+      const _v2 = guard.value.limit;
+      if (_v2 != null) {
+        const limit = _v2;
+        if (guard.value.order.length > limit) {
+          {
+            const _v1 = guard.value.order.pop();
+            if (_v1 != null) {
+              const removedEntry = _v1;
+              try {
+                const removedId = removedEntry.entity.id();
+                guard.value.index.delete(removedId);
+              } finally {
+                removedEntry.drop();
+              }
+            }
+          }
         }
       }
     }
-
     this.changed = true;
     return true;
   }
 
-  /**
-   * Remove an entity from the result set.
-   * Rust: `pub fn remove(&mut self, id: proto::EntityId) -> bool`
-   */
   remove(id: EntityId): boolean {
-    const key = entityIdKey(id);
-    const idx = this.state.index.get(key);
-    if (idx === undefined) {
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+    {
+      const _v = guard.value.index.remove(id);
+      if (_v != null) {
+        const idx = _v;
+        if ((guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!))) {
+          guard.value.gapDirty = true;
+        }
+        guard.value.order.splice(idx, 1)[0];
+        if (idx < guard.value.order.length) {
+          fixFrom(guard, idx);
+        }
+        this.changed = true;
+        return true;
+      } else {
       return false;
     }
-
-    // Check if we were at limit before removal
-    if (this.state.limit !== null && this.state.order.length === this.state.limit) {
-      this.state.gapDirty = true;
     }
-
-    this.state.index.delete(key);
-    this.state.order.splice(idx, 1);
-    if (idx < this.state.order.length) {
-      fixFrom(this.state, idx);
-    }
-
-    this.changed = true;
-    return true;
   }
 
-  /**
-   * Check if an entity exists.
-   * Rust: `pub fn contains(&self, id: &proto::EntityId) -> bool`
-   */
   contains(id: EntityId): boolean {
-    return this.state.index.has(entityIdKey(id));
+    return (this.guard ?? (() => { throw new Error('write guard already dropped'); })()).value.index.has(id);
   }
 
-  /**
-   * Iterate over all entities.
-   * Returns an array of [entityId, entity] pairs.
-   * Rust: `pub fn iter_entities(&self) -> impl Iterator<Item = (proto::EntityId, &E)>`
-   * Divergence: Returns array instead of iterator [E8].
-   */
-  iterEntities(): Array<[EntityId, Entity]> {
-    return this.state.order.map((entry) => [entry.entity.id(), entry.entity]);
+  iterEntities(): [EntityId, E][] {
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+    return [...guard.value.order].map((entry) => [entry.entity.id(), entry.entity]);
   }
 
-  /**
-   * Mark all entities as dirty for re-evaluation.
-   * Rust: `pub fn mark_all_dirty(&mut self)`
-   */
   markAllDirty(): void {
-    for (const entry of this.state.order) {
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+    for (const entry of guard.value.order) {
       entry.dirty = true;
     }
     this.changed = true;
   }
 
-  /**
-   * Retain only dirty entities that pass the closure, removing those that don't.
-   * Rust: `pub fn retain_dirty<F>(&mut self, should_retain: F) -> Vec<proto::EntityId>`
-   */
-  retainDirty(shouldRetain: (entity: Entity) => boolean): EntityId[] {
-    const removedIds: EntityId[] = [];
-    let i = 0;
-
-    // Check if we were at limit before any removals
-    const wasAtLimit = this.state.limit !== null && this.state.order.length === this.state.limit;
-
-    while (i < this.state.order.length) {
-      if (this.state.order[i].dirty) {
-        const shouldKeep = shouldRetain(this.state.order[i].entity);
-        if (shouldKeep) {
-          // Entity should be retained - recompute sort key and mark clean
-          if (this.state.keySpec !== null) {
-            this.state.order[i].sortKey = computeSortKey(this.state.order[i].entity, this.state.keySpec);
+  retainDirty(shouldRetain: Invocable<[E], boolean>): EntityId[] {
+    try {
+      const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+      let removedIds = [];
+      let i = 0;
+      const wasAtLimit = (guard.value.limit != null && ((limit) => guard.value.order.length === limit)(guard.value.limit!));
+      while (i < guard.value.order.length) {
+        if (guard.value.order[i].dirty) {
+          const shouldKeep = invokeRef(shouldRetain, guard.value.order[i].entity);
+          if (shouldKeep) {
+            const keySpec = guard.value.keySpec.clone();
+            {
+              const _v = keySpec;
+              if (_v != null) {
+                const keySpec = _v;
+                try {
+                  guard.value.order[i].sortKey = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
+                } finally {
+                  keySpec.drop();
+                }
+              } else {
+              dropOwned(_v);
+            }
+            }
+            guard.value.order[i].dirty = false;
+            i = checkedAdd(i, 1, 'i32');
+          } else {
+            const removedEntry = guard.value.order.splice(i, 1)[0];
+            try {
+              const removedId = removedEntry.entity.id();
+              guard.value.index.delete(removedId);
+              removedIds.push(removedId);
+            } finally {
+              removedEntry.drop();
+            }
           }
-          this.state.order[i].dirty = false;
-          i++;
         } else {
-          // Entity should be removed
-          const removedEntry = this.state.order.splice(i, 1)[0];
-          const removedId = removedEntry.entity.id();
-          this.state.index.delete(entityIdKey(removedId));
-          removedIds.push(removedId);
-          // Don't increment i since we removed an element
+          i = checkedAdd(i, 1, 'i32');
         }
-      } else {
-        i++;
       }
-    }
-
-    // Fix indices after removals (no re-sorting needed)
-    this.state.index.clear();
-    for (let j = 0; j < this.state.order.length; j++) {
-      this.state.index.set(entityIdKey(this.state.order[j].entity.id()), j);
-    }
-
-    if (removedIds.length > 0) {
-      this.changed = true;
-
-      // Set gapDirty if we went from LIMIT to < LIMIT
-      if (!this.state.gapDirty && wasAtLimit && this.state.limit !== null && this.state.order.length < this.state.limit) {
-        this.state.gapDirty = true;
+      guard.value.index.clear();
+      const indexUpdates = [...guard.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
+      for (const [id, i] of indexUpdates) {
+        guard.value.index.set(id, i);
       }
+      if (!(removedIds.length === 0)) {
+        this.changed = true;
+        if ((!guard.value.gapDirty) && wasAtLimit && (guard.value.limit != null && ((limit) => guard.value.order.length < limit)(guard.value.limit!))) {
+          guard.value.gapDirty = true;
+        }
+      }
+      return removedIds;
+    } finally {
+      dropOwned(shouldRetain);
     }
-
-    return removedIds;
   }
 
-  /**
-   * Replace all entities in the result set with proper sorting.
-   * Rust: `pub fn replace_all(&mut self, entities: Vec<E>)`
-   */
-  replaceAll(entities: Entity[]): void {
-    // Clear existing data
-    this.state.order.length = 0;
-    this.state.index.clear();
-
-    // Add all entities with proper sorting
+  replaceAll(entities: E[]): void {
+    const guard = (this.guard ?? (() => { throw new Error('write guard already dropped'); })());
+    guard.value.order.length = 0;
+    guard.value.index.clear();
     for (const entity of entities) {
-      // Compute sort key if ordering is configured
-      const sortKey = this.state.keySpec !== null
-        ? computeSortKey(entity, this.state.keySpec)
-        : null;
-
-      const entry: EntityEntry = { entity, sortKey, dirty: false };
-      this.state.order.push(entry);
+      const sortKey = (guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null);
+      const entry = new EntityEntry(entity, sortKey, false);
+      guard.value.order.push(entry);
     }
-
-    // Sort all entries
-    if (this.state.keySpec !== null) {
-      this.state.order.sort(compareEntries);
+    if ((guard.value.keySpec != null)) {
+      guard.value.order.sort((a, b) => {
+        const _v = [a.sortKey, b.sortKey];
+        if ((_v[0] != null) && (_v[1] != null)) {
+          const keyA = _v[0];
+          const keyB = _v[1];
+          return (($c) => $c !== 0 ? $c : (() => a.entity.id().compareTo(b.entity.id()))())(keyA.compareTo(keyB));
+        } else if ((_v[0] != null) && (_v[1] == null)) {
+          return -1;
+        } else if ((_v[0] == null) && (_v[1] != null)) {
+          return 1;
+        } else {
+          return a.entity.id().compareTo(b.entity.id());
+        }
+      });
     } else {
-      // Sort by entity ID only if no key spec
-      this.state.order.sort((a, b) => compareEntityIds(a.entity.id(), b.entity.id()));
+      guard.value.order.sort((a, b) => a.entity.id().compareTo(b.entity.id()));
     }
-
-    // Apply limit if configured
-    if (this.state.limit !== null) {
-      if (this.state.order.length > this.state.limit) {
-        this.state.order.length = this.state.limit;
+    {
+      const _v1 = guard.value.limit;
+      if (_v1 != null) {
+        const limit = _v1;
+        if (guard.value.order.length > limit) {
+          guard.value.order.length = limit;
+        }
       }
     }
-
-    // Rebuild index
-    for (let i = 0; i < this.state.order.length; i++) {
-      this.state.index.set(entityIdKey(this.state.order[i].entity.id()), i);
+    const indexUpdates = [...guard.value.order].entries().map(([i, entry]) => [entry.entity.id(), i]);
+    for (const [id, i] of indexUpdates) {
+      guard.value.index.set(id, i);
     }
-
     this.changed = true;
   }
 
-  /**
-   * Set the loaded flag as part of this write transaction.
-   * Rust: `pub fn set_loaded(&mut self, loaded: bool)`
-   */
-  setLoaded(loaded: boolean): void {
-    this.resultset._setLoadedDirect(loaded);
-    this.changed = true; // Ensure we broadcast on done()
+  static computeSortKey<E>(entity: E, keySpec: KeySpec): IVec {
+    let values = [];
+    for (const keypart of keySpec.keyparts) {
+      const value = AbstractEntity.value(entity, keypart.column);
+      {
+        const _v = value;
+        if (_v != null) {
+          const v = _v;
+          values.push(v);
+        } else {
+        return IVec.fromSlice([]);
+      }
+      }
+    }
+    const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOrDefault();
+    return IVec.from(encoded);
   }
 
-  /**
-   * Finish the write operation — broadcasts if changed.
-   * Mirrors Rust Drop impl for ResultSetWrite [E11].
-   * Called once by drop().
-   */
-  drop(): void {
+  setLoaded(loaded: boolean): void {
+    this.resultset._0.value.loaded = loaded;
+    this.changed = true;
+  }
+
+  protected override onDrop(): void {
     if (this.changed) {
-      this.resultset._broadcast();
+      dropOwned(this.guard.take());
+      this.resultset._0.value.broadcast.send([]);
     }
-  }
-
-  /**
-   * Compatibility alias — prefer `using` or explicit `drop()`.
-   * @deprecated Use `drop()` or `using` instead.
-   */
-  done(): void {
-    this.drop();
   }
 }
 
-// ── ResultSetRead ────────────────────────────────────────────────────
-// Rust: `pub struct ResultSetRead<'a, E: AbstractEntity = Entity>`
-// Divergence: No lifetime parameter or MutexGuard — single-threaded JS [E8].
+export class ResultSetRead<E extends AbstractEntity = Entity> extends Struct {
+  guard: MutexGuard<State<E>>;
 
-export class ResultSetRead {
-  private state: ResultSetState;
-
-  /** @internal */
-  constructor(state: ResultSetState) {
-    this.state = state;
+  constructor(guard: MutexGuard<State<E>>) {
+    super();
+    this.guard = guard;
   }
 
-  /**
-   * Check if an entity exists.
-   * Rust: `pub fn contains(&self, id: &proto::EntityId) -> bool`
-   */
   contains(id: EntityId): boolean {
-    return this.state.index.has(entityIdKey(id));
+    return this.guard.value.index.has(id);
   }
 
-  /**
-   * Iterate over all entities.
-   * Returns an array of [entityId, entity] pairs.
-   * Rust: `pub fn iter_entities(&self) -> impl Iterator<Item = (proto::EntityId, &E)>`
-   * Divergence: Returns array instead of iterator [E8].
-   */
-  iterEntities(): Array<[EntityId, Entity]> {
-    return this.state.order.map((entry) => [entry.entity.id(), entry.entity]);
+  iterEntities(): [EntityId, E][] {
+    return [...this.guard.value.order].map((entity) => [entity.entity.id(), entity.entity]);
   }
 
-  /**
-   * Get the number of entities.
-   * Rust: `pub fn len(&self) -> usize`
-   */
   len(): number {
-    return this.state.order.length;
+    return this.guard.value.order.length;
   }
 
-  /**
-   * Check if the result set is empty.
-   * Rust: `pub fn is_empty(&self) -> bool`
-   */
   isEmpty(): boolean {
-    return this.state.order.length === 0;
+    return this.guard.value.order.length === 0;
   }
 }
 
-// ── EntityResultSet ──────────────────────────────────────────────────
-// Rust: `pub struct EntityResultSet<E: AbstractEntity = Entity>(Arc<Inner<E>>)`
-// Divergence: No Arc — plain class instance (JS single-threaded, GC handles memory) [E8].
-// Divergence: No Mutex on state — single-threaded JS [E8].
-// Divergence: No AtomicBool — plain boolean [E8].
-// Divergence: Specialized to Entity (no AbstractEntity generic needed) [E8].
+export class ResultSetIter<E extends View & Clone> extends Struct {
+  resultset: ResultSet<E>;
+  index: number;
 
-export class EntityResultSet implements Signal {
-  private state: ResultSetState;
-  private loaded: boolean;
-  private _broadcastInner: Broadcast;
-
-  private constructor(state: ResultSetState, loaded: boolean) {
-    this.state = state;
-    this.loaded = loaded;
-    this._broadcastInner = new Broadcast();
+  constructor(resultset: ResultSet<E>, index: number) {
+    super();
+    this.resultset = resultset;
+    this.index = index;
   }
 
-  // ── Static constructors ─────────────────────────────────────────
-
-  /** Rust: `pub fn from_vec(entities: Vec<E>, loaded: bool) -> Self` */
-  static fromVec(entities: Entity[], loaded: boolean): EntityResultSet {
-    const index = new Map<string, number>();
-    const order: EntityEntry[] = [];
-
-    for (let i = 0; i < entities.length; i++) {
-      const entity = entities[i];
-      index.set(entityIdKey(entity.id()), i);
-      order.push({ entity, sortKey: null, dirty: false });
-    }
-
-    const state: ResultSetState = { order, index, keySpec: null, limit: null, gapDirty: false };
-    return new EntityResultSet(state, loaded);
+  static new<E>(resultset: ResultSet<E>): ResultSetIter<E> {
+    return new ResultSetIter(resultset, 0);
   }
 
-  /** Rust: `pub fn empty() -> Self` */
-  static empty(): EntityResultSet {
-    const state: ResultSetState = { order: [], index: new Map(), keySpec: null, limit: null, gapDirty: false };
-    return new EntityResultSet(state, false);
-  }
-
-  /** Rust: `pub fn single(entity: E) -> Self` */
-  static single(entity: Entity): EntityResultSet {
-    const entry: EntityEntry = { entity, sortKey: null, dirty: false };
-    const index = new Map<string, number>();
-    index.set(entityIdKey(entity.id()), 0);
-    const state: ResultSetState = { order: [entry], index, keySpec: null, limit: null, gapDirty: false };
-    return new EntityResultSet(state, false);
-  }
-
-  // ── Guards ──────────────────────────────────────────────────────
-
-  /**
-   * Begin a write operation for atomic changes to the resultset.
-   * All mutations happen through the returned write guard.
-   * A single notification is sent when done() is called (if changes were made).
-   * Rust: `pub fn write(&self) -> ResultSetWrite<'_, E>`
-   * Divergence: No MutexGuard — single-threaded JS [E8].
-   */
-  write(): ResultSetWrite {
-    return new ResultSetWrite(this, this.state);
-  }
-
-  /**
-   * Get a read guard for consistent read-only access to the resultset.
-   * Rust: `pub fn read(&self) -> ResultSetRead<'_, E>`
-   * Divergence: No MutexGuard — single-threaded JS [E8].
-   */
-  read(): ResultSetRead {
-    return new ResultSetRead(this.state);
-  }
-
-  // ── Direct methods ─────────────────────────────────────────────
-
-  /** Rust: `pub fn set_loaded(&self, loaded: bool)` */
-  setLoaded(loaded: boolean): void {
-    this.loaded = loaded;
-    this._broadcastInner.send();
-  }
-
-  /** Rust: `pub fn is_loaded(&self) -> bool` */
-  isLoaded(): boolean {
-    // TODO: CurrentObserver::track() when observer system is ported
-    return this.loaded;
-  }
-
-  /** Rust: `pub fn clear(&self)` */
-  clear(): void {
-    this.state.order.length = 0;
-    this.state.index.clear();
-    this._broadcastInner.send();
-  }
-
-  /**
-   * Get an array of entity IDs.
-   * Rust: `pub fn keys(&self) -> EntityResultSetKeyIterator`
-   * Divergence: Returns array instead of custom iterator [E8].
-   */
-  keys(): EntityId[] {
-    // TODO: CurrentObserver::track() when observer system is ported
-    return this.state.order.map((e) => e.entity.id());
-  }
-
-  /**
-   * Check if an entity with the given ID exists.
-   * Rust: `pub fn contains_key(&self, id: &proto::EntityId) -> bool`
-   */
-  containsKey(id: EntityId): boolean {
-    // TODO: CurrentObserver::track() when observer system is ported
-    return this.state.index.has(entityIdKey(id));
-  }
-
-  /**
-   * Get an entity by ID.
-   * Rust: `pub fn by_id(&self, id: &proto::EntityId) -> Option<E>`
-   */
-  byId(id: EntityId): Entity | null {
-    // TODO: CurrentObserver::track() when observer system is ported
-    const idx = this.state.index.get(entityIdKey(id));
-    if (idx === undefined) return null;
-    return this.state.order[idx].entity;
-  }
-
-  /**
-   * Get the number of entities.
-   * Rust: `pub fn len(&self) -> usize`
-   */
-  len(): number {
-    // TODO: CurrentObserver::track() when observer system is ported
-    return this.state.order.length;
-  }
-
-  // ── Internal methods ───────────────────────────────────────────
-
-  /**
-   * Check if this result set needs gap filling.
-   * Rust: `pub(crate) fn is_gap_dirty(&self) -> bool`
-   */
-  isGapDirty(): boolean {
-    return this.state.gapDirty;
-  }
-
-  /**
-   * Clear the gap_dirty flag (called after gap filling is complete).
-   * Rust: `pub(crate) fn clear_gap_dirty(&self)`
-   */
-  clearGapDirty(): void {
-    this.state.gapDirty = false;
-  }
-
-  /**
-   * Get the current limit for this result set.
-   * Rust: `pub fn get_limit(&self) -> Option<usize>`
-   */
-  getLimit(): number | null {
-    return this.state.limit;
-  }
-
-  /**
-   * Get the last entity for gap filling continuation.
-   * Rust: `pub(crate) fn last_entity(&self) -> Option<E>`
-   */
-  lastEntity(): Entity | null {
-    if (this.state.order.length === 0) return null;
-    return this.state.order[this.state.order.length - 1].entity;
-  }
-
-  // ── Config ─────────────────────────────────────────────────────
-
-  /**
-   * Configure ordering for this result set.
-   * Rust: `pub(crate) fn order_by(&self, key_spec: Option<KeySpec>)`
-   */
-  orderBy(keySpec: KeySpec | null): void {
-    // Check if the key spec actually changed
-    if (this.state.keySpec === null && keySpec === null) return;
-    if (this.state.keySpec !== null && keySpec !== null && keySpecEquals(this.state.keySpec, keySpec)) return;
-
-    this.state.keySpec = keySpec;
-
-    // Recompute sort keys for all entries
-    for (const entry of this.state.order) {
-      if (keySpec !== null) {
-        entry.sortKey = computeSortKey(entry.entity, keySpec);
-      } else {
-        entry.sortKey = null; // No ORDER BY, sort by entity ID only
-      }
-    }
-
-    // Sort by the new keys
-    if (keySpec !== null) {
-      this.state.order.sort(compareEntries);
-    } else {
-      this.state.order.sort((a, b) => compareEntityIds(a.entity.id(), b.entity.id()));
-    }
-
-    // Rebuild index after sorting
-    this.state.index.clear();
-    for (let i = 0; i < this.state.order.length; i++) {
-      this.state.index.set(entityIdKey(this.state.order[i].entity.id()), i);
-    }
-
-    this._broadcastInner.send();
-  }
-
-  /**
-   * Set the limit for this result set.
-   * Rust: `pub(crate) fn limit(&self, limit: Option<usize>)`
-   */
-  setLimit(limit: number | null): void {
-    // Check if the limit actually changed
-    if (this.state.limit === limit) return;
-
-    this.state.limit = limit;
-
-    // Apply the new limit by truncating if necessary
-    let entitiesRemoved = false;
-    if (limit !== null) {
-      if (this.state.order.length > limit) {
-        // Remove entries beyond the limit from the index
-        for (let i = limit; i < this.state.order.length; i++) {
-          this.state.index.delete(entityIdKey(this.state.order[i].entity.id()));
+  next(): E | null {
+    CurrentObserver.track(this.resultset);
+    const state = this.resultset._0._0.value.state.lock();
+    try {
+      if (this.index < state.value.order.length) {
+        const entity = state.value.order[this.index].entity;
+        try {
+          const view = E.fromEntity(entity.clone());
+          this.index = checkedAdd(this.index, 1, 'usize');
+          return view;
+        } finally {
+          entity.drop();
         }
-        this.state.order.length = limit;
-        entitiesRemoved = true;
+      } else {
+        return null;
       }
-    }
-
-    // Only broadcast if entities were actually removed
-    if (entitiesRemoved) {
-      this._broadcastInner.send();
+    } finally {
+      state.drop();
     }
   }
 
-  // ── Signal impl ────────────────────────────────────────────────
-  // Rust: `impl<E: AbstractEntity> Signal for EntityResultSet<E>`
-
-  /** Rust: `fn listen(&self, listener: Listener) -> ListenerGuard` */
-  listen(listener: Listener): ListenerGuard {
-    return new ListenerGuard(
-      this._broadcastInner.reference().listen({ type: 'NotifyOnly', callback: listener }),
-    );
-  }
-
-  /** Rust: `fn broadcast_id(&self) -> BroadcastId` */
-  broadcastId(): BroadcastId {
-    return this._broadcastInner.id();
-  }
-
-  // ── Internal helpers (used by ResultSetWrite) ──────────────────
-
-  /** @internal — Set loaded flag without broadcasting. Used by ResultSetWrite.setLoaded(). */
-  _setLoadedDirect(loaded: boolean): void {
-    this.loaded = loaded;
-  }
-
-  /** @internal — Send broadcast. Used by ResultSetWrite.done(). */
-  _broadcast(): void {
-    this._broadcastInner.send();
+  debug(): string {
+    return `ResultSetIter { resultset: ${this.resultset.debug()}, index: ${String(this.index)} }`;
   }
 }
+
+export class EntityResultSetKeyIterator extends Struct {
+  keys: EntityId[];
+  index: number;
+
+  constructor(keys: EntityId[], index: number) {
+    super();
+    this.keys = keys;
+    this.index = index;
+  }
+
+  static new(keys: EntityId[]): EntityResultSetKeyIterator {
+    return new EntityResultSetKeyIterator(keys, 0);
+  }
+
+  next(): EntityId | null {
+    if (this.index < this.keys.length) {
+      const key = this.keys[this.index];
+      this.index = checkedAdd(this.index, 1, 'usize');
+      return key;
+    } else {
+      return null;
+    }
+  }
+
+  debug(): string {
+    return `EntityResultSetKeyIterator { keys: ${this.keys}, index: ${String(this.index)} }`;
+  }
+}
+
+type IVecV = {
+  Small: { _0: Uint8Array };
+  Large: { _0: Uint8Array };
+};
+
+class IVec extends Enum<IVecV> {
+
+  static fromSlice(bytes: Uint8Array): IVec {
+    if (bytes.length <= 16) {
+      let data = Array(16).fill(0);
+      data.slice(0, bytes.length).copyFromSlice(bytes);
+      return IVec.Small(data);
+    } else {
+      return IVec.Large(bytes.slice());
+    }
+  }
+
+  static from(vec: Uint8Array): IVec {
+    return IVec.fromSlice(vec);
+  }
+
+  clone(): IVec {
+    return this.match({
+      Small: (v) => new IVec('Small', { _0: new Uint8Array(v._0) }),
+      Large: (v) => new IVec('Large', { _0: new Uint8Array(v._0) }),
+    });
+  }
+
+  equals(other: IVec): boolean {
+    if (this.type !== other.type) return false;
+    switch (this.type) {
+      case 'Small': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+      case 'Large': {
+        { if ((this.value as any)._0.length !== (other.value as any)._0.length) return false; for (let i = 0; i < (this.value as any)._0.length; i++) { if ((this.value as any)._0[i] !== (other.value as any)._0[i]) return false; } }
+        break;
+      }
+    }
+    return true;
+  }
+
+  compareTo(other: IVec): number {
+    const order = ['Small', 'Large'];
+    const a = order.indexOf(this.type);
+    const b = order.indexOf(other.type);
+    if (a !== b) return a < b ? -1 : 1;
+    switch (this.type) {
+      case 'Small': {
+        let c = ((xs, ys) => { const n = Math.min(xs.length, ys.length); for (let i = 0; i < n; i++) { const a = xs[i], b = ys[i]; const d = a < b ? -1 : a > b ? 1 : 0; if (d !== 0) return d; } return Math.sign(xs.length - ys.length); })((this.value as any)._0, (other.value as any)._0);
+        if (c !== 0) return c;
+        return 0;
+      }
+      case 'Large': {
+        let c = ((xs, ys) => { const n = Math.min(xs.length, ys.length); for (let i = 0; i < n; i++) { const a = xs[i], b = ys[i]; const d = a < b ? -1 : a > b ? 1 : 0; if (d !== 0) return d; } return Math.sign(xs.length - ys.length); })((this.value as any)._0, (other.value as any)._0);
+        if (c !== 0) return c;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  debug(): string {
+    return this.match({
+      Small: (v) => `Small(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
+      Large: (v) => `Large(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
+    });
+  }
+}
+
+function fixFrom<E extends AbstractEntity>(st: State<E>, start: number): void {
+  for (const i of range(start, st.order.length)) {
+    const id = st.order[i].entity.id();
+    st.index.set(id, i);
+  }
+}
+

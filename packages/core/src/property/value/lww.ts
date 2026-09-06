@@ -1,139 +1,103 @@
 // MIRRORS: ankurah/core/src/property/value/lww.rs
+import { Struct, Result, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
+import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { Entity } from '../../entity';
+import { Value } from '../../value/index';
+import { LWWBackend } from '../backend/lww';
+import { Property_dispatch_intoValue } from '../index';
+import { FromActiveType, FromEntity, InitializeWith, PropertyError } from '../traits';
 
-import type { BroadcastId, Listener, Signal, Subscribe } from '@ankurah/signals';
-import { ListenerGuard, SubscriptionGuard } from '@ankurah/signals';
-
-import type { LWWBackend } from '../backend/lww.ts';
-import type { PropertyName, PropertyFromValue, PropertyIntoValue } from '../index.ts';
-import { PropertyError } from '../traits.ts';
-import type { Value } from '../../value/index.ts';
-
-import type { Entity } from '../../entity.ts';
-
-// ---------------------------------------------------------------------------
-// LWW<T> — active type wrapper for LWW property values
-// ---------------------------------------------------------------------------
-
-/**
- * Active type wrapper for Last-Writer-Wins property values.
- *
- * Provides typed get/set access to a single property managed by an LWWBackend.
- * The type parameter T represents the projected (user-facing) type.
- *
- * Rust: `pub struct LWW<T: Property>`
- * Divergence: Rust uses PhantomData<T> for the type parameter; TS uses conversion functions [E4].
- * Divergence: Rust uses Arc<LWWBackend>; TS uses plain reference [E8].
- */
-export class LWW<T> implements Signal, Subscribe<T> {
+export class LWW<T extends Property & Clone> extends Struct implements FromEntity, InitializeWith<T>, Signal, Subscribe<T> {
   readonly propertyName: PropertyName;
-  readonly backend: LWWBackend;
+  readonly backend: Arc<LWWBackend>;
   readonly entity: Entity;
 
-  /**
-   * Conversion function: T -> Value | null.
-   * Mirrors Rust Property::into_value().
-   */
-  private readonly intoValue: PropertyIntoValue<T>;
-
-  /**
-   * Conversion function: Value | null -> T.
-   * Mirrors Rust Property::from_value().
-   */
-  private readonly fromValue: PropertyFromValue<T>;
-
-  constructor(
-    propertyName: PropertyName,
-    backend: LWWBackend,
-    entity: Entity,
-    intoValue: PropertyIntoValue<T>,
-    fromValue: PropertyFromValue<T>,
-  ) {
+  constructor(propertyName: PropertyName, backend: Arc<LWWBackend>, entity: Entity) {
+    super();
     this.propertyName = propertyName;
     this.backend = backend;
     this.entity = entity;
-    this.intoValue = intoValue;
-    this.fromValue = fromValue;
   }
 
-  // ── Typed access ──
-
-  /**
-   * Set the property value.
-   * Throws PropertyError if the entity is not writable (transaction closed).
-   *
-   * Rust: `pub fn set(&self, value: &T) -> Result<(), PropertyError>`
-   */
-  set(value: T): void {
+  set(value: T): Result<void, PropertyError> {
     if (!this.entity.isWritable()) {
-      throw PropertyError.transactionClosed();
+      return Result.Err(new PropertyError('TransactionClosed', {}));
     }
-    const converted = this.intoValue(value);
-    this.backend.set(this.propertyName, converted);
+    const _r0 = Property_dispatch_intoValue(value);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
+    const value_1 = _r0.unwrap();
+    try {
+      const _b2 = this.propertyName;
+      _moved1 = true;
+      this.backend.value.set(_b2, value_1);
+      return Result.Ok([]);
+    } finally {
+      if (!_moved1) dropOwned(value_1);
+    }
   }
 
-  /**
-   * Get the property value as the projected type T.
-   * Throws PropertyError on conversion failure.
-   *
-   * Rust: `pub fn get(&self) -> Result<T, PropertyError>`
-   */
-  get(): T {
+  get(): Result<T, PropertyError> {
     const value = this.getValue();
-    return this.fromValue(value);
+    return T.fromValue(value);
   }
 
-  /**
-   * Get the raw Value from the backend.
-   *
-   * Rust: `pub fn get_value(&self) -> Option<Value>`
-   */
   getValue(): Value | null {
-    return this.backend.get(this.propertyName);
+    return this.backend.value.get(this.propertyName);
   }
 
-  // ── Signal interface ──
+  toString(): Result {
+    return f.debugStruct('LWW').field('property_name', this.propertyName).finish();
+  }
 
-  /**
-   * Listen to changes for this property.
-   *
-   * Rust: `impl<T: Property> Signal for LWW<T>`
-   */
+  static fromEntity<T>(propertyName: PropertyName, entity: Entity): LWW<T> {
+    const backend = entity.getBackend().expect('LWW Backend should exist');
+    return new LWW(propertyName, backend, entity.clone(), undefined /* PhantomData */);
+  }
+
+  static initializeWith<T>(entity: Entity, propertyName: PropertyName, value: T): LWW<T> {
+    const new_ = LWW.fromEntity(propertyName, entity);
+    try {
+      new_.set(value).unwrap();
+      return new_;
+    } finally {
+      new_.drop();
+    }
+  }
+
   listen(listener: Listener): ListenerGuard {
-    return this.backend.listenField(this.propertyName, listener);
+    return this.backend.value.listenField(this.propertyName, listener);
   }
 
-  /**
-   * Get the broadcast identifier for this property.
-   *
-   * Rust: `fn broadcast_id(&self) -> BroadcastId`
-   */
   broadcastId(): BroadcastId {
-    return this.backend.fieldBroadcastId(this.propertyName);
+    return this.backend.value.fieldBroadcastId(this.propertyName);
   }
 
-  // ── Subscribe interface ──
-
-  /**
-   * Subscribe to changes with a listener that receives the new value.
-   *
-   * Rust: `impl<T: Property> Subscribe<T> for LWW<T>`
-   */
-  subscribe(listener: (value: T) => void): SubscriptionGuard {
-    const guard = this.listen(() => {
-      // Get current value when the broadcast fires
-      try {
-        const currentValue = this.get();
-        listener(currentValue);
-      } catch {
-        // Mirrors Rust: if let Ok(current_value) = lww.get() — silently ignore errors
+  subscribe<F>(listener: F): SubscriptionGuard {
+    const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
+    const lww = this.clone();
+    const subscription = this.listen(Arc.new(new OwnedClosure([lww, listener_1], (_) => {
+      {
+        const _v = lww.get();
+        if (_v.isOk()) {
+          const currentValue = _v.unwrap();
+          listener_1(currentValue);
+        }
       }
-    });
-    return new SubscriptionGuard(guard);
+    }, undefined, true)));
+    return SubscriptionGuard.new(subscription);
   }
 
-  // ── Debug ──
-
-  toString(): string {
-    return `LWW { propertyName: ${this.propertyName} }`;
+  clone(): LWW<T> {
+    return new LWW(this.propertyName, this.backend.clone(), this.entity.clone(), this.phantom.clone());
   }
 }
+
+export function fromActive<T extends Property>(active: LWW<T>): Result<T, PropertyError> {
+  try {
+    return active.get();
+  } finally {
+    active.drop();
+  }
+}
+

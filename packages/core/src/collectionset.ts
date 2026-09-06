@@ -1,87 +1,100 @@
 // MIRRORS: ankurah/core/src/collectionset.rs
+import { Struct, Result, Arc, RwLock, dropOwned, HashMap, AsyncRwLock } from '@ankurah/base';
+import { CollectionId } from '@ankurah/proto';
+import { MutationError, RetrievalError } from './error';
+import { StorageCollectionWrapper } from './storage';
 
-import type { CollectionId } from '@ankurah/proto';
-import type { StorageEngine, StorageCollection } from './storage.ts';
+export class CollectionSet<SE extends StorageEngine> extends Struct {
+  _0: Arc<Inner<SE>>;
 
-// ---------------------------------------------------------------------------
-// CollectionSet — lazy-init cache for StorageCollection handles
-// ---------------------------------------------------------------------------
+  constructor(_0: Arc<Inner<SE>>) {
+    super();
+    this._0 = _0;
+  }
 
-/**
- * Lazy-initialising cache for StorageCollection handles.
- * Provides deduplication so the same collection ID always yields the same handle.
- *
- * Rust: `pub struct CollectionSet<SE>(Arc<Inner<SE>>)`
- * Divergence: No Arc/Inner split — single-threaded JS, plain class [E8].
- * Divergence: No RwLock on collections map — single-threaded JS [E8].
- * Divergence: Not generic over SE — TS uses the StorageEngine interface directly [E7].
- */
-export class CollectionSet {
-  private readonly storageEngine: StorageEngine;
-  private readonly collections: Map<string, StorageCollection> = new Map();
+  static new<SE>(storageEngine: Arc<SE>): CollectionSet<SE> {
+    return new CollectionSet(Arc.new(new Inner(storageEngine, new RwLock(new HashMap()))));
+  }
 
-  constructor(storageEngine: StorageEngine) {
+  async get(id: CollectionId): Promise<Result<StorageCollectionWrapper, RetrievalError>> {
+    let _moved0 = false;
+    const collections = await this._0.value.collections.read();
+    try {
+      {
+        const _v = collections.value.get(id);
+        if (_v != null) {
+          const store = _v;
+          return Result.Ok(store.clone());
+        }
+      }
+      _moved0 = true;
+      collections.drop();
+      const _r1 = await this._0.value.storageEngine.value.collection(id);
+      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+      let _moved2 = false;
+      const collection = StorageCollectionWrapper.new(_r1.unwrap());
+      try {
+        let _moved3 = false;
+        let collections_1 = await this._0.value.collections.write();
+        try {
+          {
+            const _v1 = collections_1.value.entry(id.clone());
+            if (_v1.is('Vacant')) {
+              const { _0: entry } = _v1.value;
+              entry.insert(collection.clone());
+            } else {
+            dropOwned(_v1);
+          }
+          }
+          _moved3 = true;
+          collections_1.drop();
+          _moved2 = true;
+          return Result.Ok(collection);
+        } finally {
+          if (!_moved3) collections_1.drop();
+        }
+      } finally {
+        if (!_moved2) collection.drop();
+      }
+    } finally {
+      if (!_moved0) collections.drop();
+    }
+  }
+
+  async listCollections(): Promise<Result<CollectionId[], RetrievalError>> {
+    const memoryCollections = await this._0.value.collections.read();
+    try {
+      return Result.Ok([...memoryCollections.value.keys()]);
+    } finally {
+      memoryCollections.drop();
+    }
+  }
+
+  async deleteAllCollections(): Promise<Result<boolean, MutationError>> {
+    await (async () => {
+      let collections = await this._0.value.collections.write();
+      try {
+        collections.value.clear();
+      } finally {
+        collections.drop();
+      }
+    })();
+    return await this._0.value.storageEngine.value.deleteAllCollections();
+  }
+
+  clone(): CollectionSet<SE> {
+    return new CollectionSet(this._0.clone());
+  }
+}
+
+export class Inner<SE> extends Struct {
+  storageEngine: Arc<SE>;
+  collections: AsyncRwLock<HashMap<CollectionId, StorageCollectionWrapper>>;
+
+  constructor(storageEngine: Arc<SE>, collections: AsyncRwLock<HashMap<CollectionId, StorageCollectionWrapper>>) {
+    super();
     this.storageEngine = storageEngine;
-  }
-
-  /**
-   * Get or lazily create a StorageCollection for the given collection ID.
-   *
-   * Rust: `pub async fn get(&self, id: &CollectionId) -> Result<StorageCollectionWrapper, RetrievalError>`
-   * Divergence: Returns StorageCollection directly instead of StorageCollectionWrapper [E7].
-   *
-   * Note: Concurrent calls for the same collection ID may race, but the Map
-   * ensures only one handle is retained (last-write-wins is fine since all
-   * handles point to the same underlying storage).
-   */
-  async get(id: CollectionId): Promise<StorageCollection> {
-    const key = collectionIdKey(id);
-    const existing = this.collections.get(key);
-    if (existing) {
-      return existing;
-    }
-
-    const collection = await this.storageEngine.collection(id);
-    // Another caller may have raced us; keep the first one if present
-    // Divergence: No Entry API — use has() check instead [E7].
-    if (!this.collections.has(key)) {
-      this.collections.set(key, collection);
-    }
-
-    return this.collections.get(key)!;
-  }
-
-  /**
-   * List all collection IDs currently cached in memory.
-   *
-   * Rust: `pub async fn list_collections(&self) -> Result<Vec<CollectionId>, RetrievalError>`
-   * Divergence: Returns string keys rather than CollectionId values,
-   *   because we store by string key. Callers should reconstruct CollectionId if needed [E7].
-   * Divergence: Synchronous — no RwLock in single-threaded JS [E8].
-   */
-  listCollections(): string[] {
-    return Array.from(this.collections.keys());
-  }
-
-  /**
-   * Delete all collections from the cache and storage.
-   *
-   * Rust: `pub async fn delete_all_collections(&self) -> Result<bool, MutationError>`
-   */
-  async deleteAllCollections(): Promise<boolean> {
-    // Clear in-memory collections first
-    this.collections.clear();
-
-    // Then delete all collections from storage
-    return this.storageEngine.deleteAllCollections();
+    this.collections = collections;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Convert CollectionId to a stable string key for Map lookups. */
-function collectionIdKey(id: CollectionId): string {
-  return id.toString();
-}

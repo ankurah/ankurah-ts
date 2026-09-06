@@ -1,160 +1,78 @@
 // MIRRORS: ankurah/core/src/property/traits.rs
+import { Enum, Result } from '@ankurah/base';
+import { RetrievalError } from '../error';
+import { CastError } from '../value/cast';
+import { Value } from '../value/index';
 
-import type { Entity } from '../entity.ts';
-import type { Value } from '../value/index.ts';
-import type { CastErrorException } from '../value/cast.ts';
-import { RetrievalError } from '../error.ts';
+export type PropertyErrorV = {
+  Missing: {};
+  SerializeError: { _0: Error };
+  DeserializeError: { _0: Error };
+  RetrievalError: { _0: RetrievalError };
+  InvalidVariant: { given: Value; ty: string };
+  InvalidValue: { value: string; ty: string };
+  TransactionClosed: {};
+  CastError: { _0: CastError };
+};
 
-// Use CastErrorException (Error subclass) in PropertyError, not the CastError union type
-type CastError = CastErrorException;
+export class PropertyError extends Enum<PropertyErrorV> {
 
-import type { PropertyName } from './index.ts';
-
-// ---------------------------------------------------------------------------
-// InitializeWith<T>
-// ---------------------------------------------------------------------------
-
-/**
- * Trait for types that can be initialized with a value on an entity.
- *
- * Rust: `trait InitializeWith<T> { fn initialize_with(entity: &Entity, property_name: PropertyName, value: &T) -> Self; }`
- */
-export interface InitializeWith<T> {
-  // Note: In Rust this is a static method on the trait. In TS, interfaces cannot have
-  // static methods. Implementors should provide a static `initializeWith` factory or
-  // a constructor that accepts these arguments.
-}
-
-/**
- * Factory function type for InitializeWith. Implementors provide a function matching
- * this signature rather than implementing an interface with a static method.
- */
-export type InitializeWithFactory<T, R> = (
-  entity: Entity,
-  propertyName: PropertyName,
-  value: T,
-) => R;
-
-// ---------------------------------------------------------------------------
-// PropertyError
-// ---------------------------------------------------------------------------
-
-/**
- * Error enum for property operations.
- *
- * Rust: `enum PropertyError { Missing, SerializeError, DeserializeError, ... }`
- * TS: Error subclass with a `kind` discriminant [A8].
- */
-export type PropertyErrorKind =
-  | 'Missing'
-  | 'SerializeError'
-  | 'DeserializeError'
-  | 'RetrievalError'
-  | 'InvalidVariant'
-  | 'InvalidValue'
-  | 'TransactionClosed'
-  | 'CastError';
-
-export class PropertyError extends Error {
-  readonly kind: PropertyErrorKind;
-  readonly detail?: unknown;
-
-  constructor(kind: PropertyErrorKind, message: string, detail?: unknown) {
-    super(message);
-    this.name = 'PropertyError';
-    this.kind = kind;
-    this.detail = detail;
-  }
-
-  /** Check if this is a Missing error */
-  isMissing(): boolean {
-    return this.kind === 'Missing';
-  }
-
-  /** String equality comparison, matching Rust PartialEq impl */
   equals(other: PropertyError): boolean {
-    return this.message === other.message;
+    return this.toString() === other.toString();
   }
 
-  // ── Static factory helpers ──
-
-  static missing(): PropertyError {
-    return new PropertyError('Missing', 'property is missing');
+  static fromRetrievalError(retrieval: RetrievalError): PropertyError {
+    return new PropertyError('RetrievalError', { _0: retrieval });
   }
 
-  static serializeError(err: Error): PropertyError {
-    return new PropertyError('SerializeError', `serialization error: ${err.message}`, err);
+  static fromError(e: Error): PropertyError {
+    return new PropertyError('SerializeError', { _0: e });
   }
 
-  static deserializeError(err: Error): PropertyError {
-    return new PropertyError('DeserializeError', `deserialization error: ${err.message}`, err);
+  debug(): string {
+    return this.match({
+      Missing: () => 'Missing',
+      SerializeError: (v) => `SerializeError(${v._0})`,
+      DeserializeError: (v) => `DeserializeError(${v._0})`,
+      RetrievalError: (v) => `RetrievalError(${v._0.debug()})`,
+      InvalidVariant: (v) => `InvalidVariant { given: ${v.given.debug()}, ty: ${JSON.stringify(v.ty)} }`,
+      InvalidValue: (v) => `InvalidValue { value: ${JSON.stringify(v.value)}, ty: ${JSON.stringify(v.ty)} }`,
+      TransactionClosed: () => 'TransactionClosed',
+      CastError: (v) => `CastError(${v._0.debug()})`,
+    });
   }
 
-  static retrievalError(err: RetrievalError): PropertyError {
-    return new PropertyError('RetrievalError', `retrieval error: ${err.message}`, err);
-  }
-
-  static invalidVariant(given: Value, ty: string): PropertyError {
-    return new PropertyError('InvalidVariant', `invalid variant \`${String(given)}\` for \`${ty}\``, { given, ty });
-  }
-
-  static invalidValue(value: string, ty: string): PropertyError {
-    return new PropertyError('InvalidValue', `invalid value \`${value}\` for \`${ty}\``, { value, ty });
-  }
-
-  static transactionClosed(): PropertyError {
-    return new PropertyError('TransactionClosed', 'transaction is no longer alive');
-  }
-
-  static castError(err: CastError): PropertyError {
-    return new PropertyError('CastError', `cast error: ${err.message}`, err);
-  }
-
-  /** Convert from RetrievalError, matching Rust From<RetrievalError> for PropertyError */
-  static fromRetrievalError(err: RetrievalError): PropertyError {
-    return PropertyError.retrievalError(err);
+  override toString(): string {
+    return this.match({
+      Missing: () => 'property is missing',
+      SerializeError: (v) => `serialization error: ${v._0}`,
+      DeserializeError: (v) => `deserialization error: ${v._0}`,
+      RetrievalError: (v) => `retrieval error: ${v._0}`,
+      InvalidVariant: (v) => `invalid variant \`${v.given}\` for \`${v.ty}\``,
+      InvalidValue: (v) => `invalid value \`${v.value}\` for \`${v.ty}\``,
+      TransactionClosed: () => 'transaction is no longer alive',
+      CastError: (v) => `cast error: ${v._0}`,
+    });
   }
 }
 
-// ---------------------------------------------------------------------------
-// FromEntity
-// ---------------------------------------------------------------------------
+export interface InitializeWith<T> {
+  initializeWith(entity: Entity, propertyName: PropertyName, value: T): Self;
+}
 
-/**
- * Trait for types that can be constructed from an Entity and a property name.
- *
- * Rust: `trait FromEntity { fn from_entity(property_name: PropertyName, entity: &Entity) -> Self; }`
- */
 export interface FromEntity {
-  // Note: In Rust this is a static method on the trait. In TS, interfaces cannot have
-  // static methods. Implementors should provide a static `fromEntity` factory.
+  fromEntity(propertyName: PropertyName, entity: Entity): Self;
 }
 
-/**
- * Factory function type for FromEntity.
- */
-export type FromEntityFactory<R> = (
-  propertyName: PropertyName,
-  entity: Entity,
-) => R;
-
-// ---------------------------------------------------------------------------
-// FromActiveType<A>
-// ---------------------------------------------------------------------------
-
-/**
- * Trait for types that can be projected from an active (mutable) type.
- *
- * Rust: `trait FromActiveType<A> { fn from_active(active: A) -> Result<Self, PropertyError>; }`
- * TS: Throws PropertyError on failure [A8].
- */
 export interface FromActiveType<A> {
-  // Note: In Rust this is a static method on the trait. In TS, interfaces cannot have
-  // static methods. Implementors should provide a static `fromActive` factory.
+  fromActive(active: A): Result<Self, PropertyError>;
 }
 
-/**
- * Factory function type for FromActiveType.
- * Throws PropertyError on failure.
- */
-export type FromActiveTypeFactory<A, R> = (active: A) => R;
+export function Error_fromPropertyError(arg: PropertyError): Error {
+  try {
+    return Error;
+  } finally {
+    arg.drop();
+  }
+}
+

@@ -37,18 +37,29 @@ pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
 /// source uses the answer, the emitted call has to be the one that gives it —
 /// `insert`/`remove` on the runtime's map. Where the source discards it, the
 /// container releases it, which is `set`/`delete`.
-pub fn translate_using_result(receiver: &str, method: &str, args: &[String], used: bool) -> MethodTranslation {
+pub fn translate_using_result(
+    receiver: &str,
+    method: &str,
+    args: &[String],
+    used: bool,
+    value_by_reference: bool,
+) -> MethodTranslation {
     let result = match (method, used) {
         ("insert", true) if args.len() == 2 => format!("{}.insert({}, {})", receiver, args[0], args[1]),
         ("insert", false) if args.len() == 2 => format!("{}.set({}, {})", receiver, args[0], args[1]),
         ("remove", true) if args.len() == 1 => format!("{}.remove({})", receiver, args[0]),
         ("remove", false) if args.len() == 1 => format!("{}.delete({})", receiver, args[0]),
-        _ => return translate(receiver, method, args),
+        _ => return translate(receiver, method, args, value_by_reference),
     };
     MethodTranslation::Expr(result)
 }
 
-pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTranslation {
+pub fn translate(
+    receiver: &str,
+    method: &str,
+    args: &[String],
+    value_by_reference: bool,
+) -> MethodTranslation {
     let result = match method {
         // Properties
         "len" => format!("{}.size", receiver),
@@ -64,8 +75,32 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "get" | "clear" | "keys" | "values" | "entries"
             => return MethodTranslation::Passthrough,
 
-        // Mutable iterator variants → same as immutable in JS
-        "values_mut" => format!("{}.values()", receiver),
+        // Mutable iterator variants → same as immutable in JS, but only where
+        // the VALUE is an object: Rust hands out `&mut V`, the port has no
+        // `&mut`, and a write through a loop variable reaches the map only
+        // because the variable and the entry are the same object. Over a
+        // number, a string or a `bigint` the variable is a copy and the write
+        // is lost, so those are refused (F4/E12). `iter_mut` had no entry at
+        // all and emitted `m.iterMut()`, a method the runtime's map does not
+        // declare — live at `core/property/backend/lww.ts`.
+        "iter_mut" | "values_mut" if args.is_empty() => {
+            if !value_by_reference {
+                let message = format!(
+                    "`{}` hands out `&mut V`, and the port writes this map's value as a \
+                     JavaScript value rather than an object: the loop would bind a COPY and \
+                     every write through it would be lost",
+                    method
+                );
+                return MethodTranslation::Refused {
+                    fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+                    message,
+                };
+            }
+            match method {
+                "values_mut" => format!("{}.values()", receiver),
+                _ => format!("[...{}]", receiver),
+            }
+        }
         "get_mut" if args.len() == 1 => format!("{}.get({})", receiver, args[0]),
 
         // `retain(|k, v| p)` is a delete loop, written as an IIFE over

@@ -6,7 +6,7 @@
 //! means adding a runtime helper is a one-line edit to a list, not a line added
 //! to a file that is already long.
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 102] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 116] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -56,8 +56,17 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 102] = [
     "iterPosition", "iterRposition", "iterFind", "iterFindMap", "iterLast", "iterFirst",
     "iterGet", "iterMaxBy", "iterMinBy", "iterMaxByKey", "iterMinByKey", "iterReduce",
     "iterFilterMap",
-    // A bounded range, as the sequence of its values: the port has no `Range`.
-    "range", "rangeIncl",
+    // F1: the same terminals over a sequence the expression OWNS, which release
+    // every element they do not hand back.
+    "iterPositionOwned", "iterRpositionOwned", "iterFindOwned", "iterFindMapOwned",
+    "iterLastOwned", "iterMaxByOwned", "iterMinByOwned", "iterMaxByKeyOwned",
+    "iterMinByKeyOwned", "iterReduceOwned",
+    // A bounded range, as the sequence of its values: the port has no `Range`,
+    // and `step_by` over one is every nth element of the sequence it built.
+    "range", "rangeIncl", "stepBy",
+    // F7: `{:?}` for a value whose type the emitter could not see, and the
+    // `char` escaping Rust writes.
+    "debugValue", "debugChar", "debugString",
     // The keyed containers a `HashMap`/`HashSet` becomes, and the hash a
     // derived key writes itself with.
     "HashMap", "HashSet", "keyHash",

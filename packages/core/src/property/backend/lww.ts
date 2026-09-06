@@ -1,392 +1,292 @@
 // MIRRORS: ankurah/core/src/property/backend/lww.rs
+import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, HashMap } from '@ankurah/base';
+import { Operation } from '@ankurah/proto';
+import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
+import { BincodeReader, BincodeWriter } from './codec';
+import { MutationError, RetrievalError, StateError } from '../../error';
+import { Value } from '../../value/index';
+import { PropertyBackend } from './index';
 
-import {
-  BincodeWriter,
-  BincodeReader,
-  Operation,
-  EntityId,
-} from '@ankurah/proto';
-import {
-  Broadcast,
-  BroadcastId,
-  type Listener,
-  ListenerGuard,
-} from '@ankurah/signals';
-
-import type { PropertyBackend } from './index.ts';
-import type { PropertyName } from '../index.ts';
-import type { Value } from '../../value/index.ts';
-import { MutationError, RetrievalError, StateError } from '../../error.ts';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const LWW_DIFF_VERSION: number = 1;
-
-// ---------------------------------------------------------------------------
-// ValueEntry — internal per-property state
-// ---------------------------------------------------------------------------
-
-interface ValueEntry {
+class ValueEntry extends Struct {
   value: Value | null;
   committed: boolean;
-}
 
-/** Deep-clone a ValueEntry (clone the value within). */
-function cloneValueEntry(entry: ValueEntry): ValueEntry {
-  return {
-    value: entry.value !== null ? cloneValue(entry.value) : null,
-    committed: entry.committed,
-  };
-}
+  constructor(value: Value | null, committed: boolean) {
+    super();
+    this.value = value;
+    this.committed = committed;
+  }
 
-// ---------------------------------------------------------------------------
-// Value bincode serialization helpers
-// ---------------------------------------------------------------------------
+  clone(): ValueEntry {
+    return new ValueEntry(this.value?.clone() ?? null, this.committed);
+  }
 
-// Variant indices match Rust serde derive order:
-// 0=I16, 1=I32, 2=I64, 3=F64, 4=Bool, 5=String, 6=EntityId, 7=Object, 8=Binary, 9=Json
-
-const enc = new TextEncoder();
-// A Rust `String` is UTF-8 by construction, so a byte run that is not valid
-// UTF-8 could not have come from one: `serde`'s own decoder errors there. A
-// non-fatal `TextDecoder` answers U+FFFD instead, which is a different string
-// that then flows on as though it had been read — a silent corruption where
-// Rust reports. Fatal, and the exception is turned into this codec's own error.
-const dec = new TextDecoder('utf-8', { fatal: true });
-
-function writeValue(writer: BincodeWriter, value: Value): void {
-  switch (value.type) {
-    case 'I16':
-      writer.writeVariant(0);
-      writer.writeI16(value.value);
-      break;
-    case 'I32':
-      writer.writeVariant(1);
-      writer.writeI32(value.value);
-      break;
-    case 'I64':
-      writer.writeVariant(2);
-      // Rust i64 — serialized as i64 in bincode
-      writer.writeI64(BigInt(value.value));
-      break;
-    case 'F64':
-      writer.writeVariant(3);
-      writer.writeF64(value.value);
-      break;
-    case 'Bool':
-      writer.writeVariant(4);
-      writer.writeBool(value.value);
-      break;
-    case 'String':
-      writer.writeVariant(5);
-      writer.writeString(value.value);
-      break;
-    case 'EntityId':
-      writer.writeVariant(6);
-      // EntityId custom serde: raw 16 bytes
-      value.value.encode(writer);
-      break;
-    case 'Object':
-      writer.writeVariant(7);
-      writer.writeByteVec(value.value);
-      break;
-    case 'Binary':
-      writer.writeVariant(8);
-      writer.writeByteVec(value.value);
-      break;
-    case 'Json':
-      // Json uses json_as_bytes: JSON string -> serde_json::to_vec() -> bincode Vec<u8>
-      writer.writeVariant(9);
-      const jsonBytes = enc.encode(JSON.stringify(value.value));
-      writer.writeByteVec(jsonBytes);
-      break;
+  debug(): string {
+    return `ValueEntry { value: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.value)}, committed: ${String(this.committed)} }`;
   }
 }
 
-function readValue(reader: BincodeReader): Value {
-  const variant = reader.readVariant();
-  switch (variant) {
-    case 0: // I16
-      return { type: 'I16', value: reader.readI16() };
-    case 1: // I32
-      return { type: 'I32', value: reader.readI32() };
-    case 2: // I64
-      return { type: 'I64', value: Number(reader.readI64()) };
-    case 3: // F64
-      return { type: 'F64', value: reader.readF64() };
-    case 4: // Bool
-      return { type: 'Bool', value: reader.readBool() };
-    case 5: // String
-      return { type: 'String', value: reader.readString() };
-    case 6: // EntityId — custom serde: raw 16 bytes
-      return { type: 'EntityId', value: EntityId.decode(reader) };
-    case 7: // Object
-      return { type: 'Object', value: reader.readByteVec() };
-    case 8: // Binary
-      return { type: 'Binary', value: reader.readByteVec() };
-    case 9: { // Json — json_as_bytes: bincode Vec<u8> -> serde_json::from_slice
-      const jsonBytes = reader.readByteVec();
-      let jsonStr: string;
-      try {
-        jsonStr = dec.decode(jsonBytes);
-      } catch {
-        throw new Error('LWW Json value: the bytes are not valid UTF-8');
-      }
-      return { type: 'Json', value: JSON.parse(jsonStr) };
-    }
-    default:
-      throw new Error(`Unknown Value variant index: ${variant}`);
-  }
-}
+export class LWWBackend extends Struct implements PropertyBackend {
+  values: RwLock<HashMap<PropertyName, ValueEntry>>;
+  fieldBroadcasts: Mutex<HashMap<PropertyName, Broadcast>>;
 
-/** Write Option<Value>: 0x00=None, 0x01+Value */
-function writeOptionValue(writer: BincodeWriter, value: Value | null): void {
-  if (value === null) {
-    writer.writeU8(0);
-  } else {
-    writer.writeU8(1);
-    writeValue(writer, value);
-  }
-}
-
-/** Read Option<Value> */
-function readOptionValue(reader: BincodeReader): Value | null {
-  const tag = reader.readU8();
-  if (tag === 0) return null;
-  if (tag === 1) return readValue(reader);
-  throw new Error(`Invalid Option tag: 0x${tag.toString(16)}`);
-}
-
-/** Serialize BTreeMap<PropertyName, Option<Value>> to bincode bytes */
-function serializePropertyMap(map: Map<PropertyName, Value | null>): Uint8Array {
-  const writer = new BincodeWriter();
-  writer.writeStringMap(map, (w, v) => writeOptionValue(w, v));
-  return writer.finish();
-}
-
-/** Deserialize BTreeMap<PropertyName, Option<Value>> from bincode bytes */
-function deserializePropertyMap(data: Uint8Array): Map<PropertyName, Value | null> {
-  const reader = new BincodeReader(data);
-  return reader.readStringMap((r) => readOptionValue(r));
-}
-
-/** Deep-clone a Value */
-function cloneValue(v: Value): Value {
-  switch (v.type) {
-    case 'I16':
-    case 'I32':
-    case 'I64':
-    case 'F64':
-    case 'Bool':
-    case 'String':
-      return { ...v };
-    case 'EntityId':
-      return { type: 'EntityId', value: EntityId.fromBytes(v.value.toBytes()) };
-    case 'Object':
-      return { type: 'Object', value: new Uint8Array(v.value) };
-    case 'Binary':
-      return { type: 'Binary', value: new Uint8Array(v.value) };
-    case 'Json':
-      // Structured clone via JSON round-trip
-      return { type: 'Json', value: JSON.parse(JSON.stringify(v.value)) };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// LWWBackend
-// ---------------------------------------------------------------------------
-
-/**
- * Last-Writer-Wins property backend.
- *
- * Each property stores a single value. Conflicts are resolved by last-write-wins
- * semantics (the most recent write replaces the previous value).
- *
- * Rust: `pub struct LWWBackend`
- * Divergence: Rust uses RwLock<BTreeMap> and Mutex<BTreeMap>; TS uses plain Map [E8].
- */
-export class LWWBackend implements PropertyBackend {
-  // Divergence: Rust uses RwLock<BTreeMap<PropertyName, ValueEntry>>; TS uses plain Map [E8].
-  private values: Map<PropertyName, ValueEntry>;
-  // Divergence: Rust uses Mutex<BTreeMap<PropertyName, Broadcast>>; TS uses plain Map [E8].
-  private fieldBroadcasts: Map<PropertyName, Broadcast<void>>;
-
-  constructor() {
-    this.values = new Map();
-    this.fieldBroadcasts = new Map();
+  constructor(values: RwLock<HashMap<PropertyName, ValueEntry>>, fieldBroadcasts: Mutex<HashMap<PropertyName, Broadcast>>) {
+    super();
+    this.values = values;
+    this.fieldBroadcasts = fieldBroadcasts;
   }
 
-  // ── LWWBackend-specific methods ──
+  static new(): LWWBackend {
+    return new LWWBackend(new RwLock(new HashMap<string, ValueEntry>()), new Mutex(new HashMap<string, Broadcast<void>>()));
+  }
 
-  /** Set a property value (marks as uncommitted). */
   set(propertyName: PropertyName, value: Value | null): void {
-    this.values.set(propertyName, { value, committed: false });
-  }
-
-  /** Get a property value, returning null if missing or explicitly null. */
-  get(propertyName: PropertyName): Value | null {
-    const entry = this.values.get(propertyName);
-    return entry?.value ?? null;
-  }
-
-  /** Get the broadcast ID for a specific field, creating the broadcast if necessary. */
-  fieldBroadcastId(fieldName: PropertyName): BroadcastId {
-    let broadcast = this.fieldBroadcasts.get(fieldName);
-    if (!broadcast) {
-      broadcast = new Broadcast<void>();
-      this.fieldBroadcasts.set(fieldName, broadcast);
-    }
-    return broadcast.id();
-  }
-
-  // ── PropertyBackend interface ──
-
-  // Static methods (PropertyBackendStatic interface)
-  static propertyBackendName(): string {
-    return 'lww';
-  }
-
-  static fromStateBuffer(stateBuffer: Uint8Array): LWWBackend {
+    let values = this.values.write();
     try {
-      const rawMap = deserializePropertyMap(stateBuffer);
-      const backend = new LWWBackend();
-      for (const [key, value] of rawMap) {
-        backend.values.set(key, { value, committed: true });
-      }
-      return backend;
-    } catch (e) {
-      throw RetrievalError.deserializationError(
-        e instanceof Error ? e : new Error(String(e)),
-      );
+      values.value.set(propertyName, new ValueEntry(value, false));
+    } finally {
+      values.drop();
     }
   }
 
-  fork(): PropertyBackend {
-    const forked = new LWWBackend();
-    for (const [key, entry] of this.values) {
-      forked.values.set(key, cloneValueEntry(entry));
+  get(propertyName: PropertyName): Value | null {
+    const values = this.values.read();
+    try {
+      const _m0 = values.value.get(propertyName);
+      return (_m0 != null ? ((entry) => entry.value.clone())(_m0!) : null);
+    } finally {
+      values.drop();
     }
-    // Create fresh broadcasts (don't clone the existing ones for transaction isolation)
-    return forked;
+  }
+
+  fieldBroadcastId(fieldName: PropertyName): BroadcastId {
+    let fieldBroadcasts = this.fieldBroadcasts.lock();
+    try {
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+      return broadcast.value.id();
+    } finally {
+      fieldBroadcasts.drop();
+    }
+  }
+
+  static default(): LWWBackend {
+    return LWWBackend.new();
+  }
+
+  asArcDynAny(): Arc<Any> {
+    return this;
+  }
+
+  asDebug(): Debug {
+    return this;
+  }
+
+  fork(): Arc<PropertyBackend> {
+    const values = this.values.read();
+    const cloned = (values.value).clone();
+    values.drop();
+    return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
   }
 
   properties(): PropertyName[] {
-    const keys = Array.from(this.values.keys());
-    keys.sort();
-    return keys;
+    const values = this.values.read();
+    try {
+      return [...values.value.keys()];
+    } finally {
+      values.drop();
+    }
   }
 
   propertyValue(propertyName: PropertyName): Value | null {
     return this.get(propertyName);
   }
 
-  propertyValues(): Map<PropertyName, Value | null> {
-    const result = new Map<PropertyName, Value | null>();
-    for (const [key, entry] of this.values) {
-      result.set(key, entry.value);
-    }
-    return result;
-  }
-
-  toStateBuffer(): Uint8Array {
+  propertyValues(): HashMap<PropertyName, Value | null> {
+    const values = this.values.read();
     try {
-      const propertyValues = this.propertyValues();
-      return serializePropertyMap(propertyValues);
-    } catch (e) {
-      throw StateError.serializationError(
-        e instanceof Error ? e : new Error(String(e)),
-      );
+      return HashMap.from([...values.value].map(([k, v]) => [k, v.value.clone()]));
+    } finally {
+      values.drop();
     }
   }
 
-  toOperations(): Operation[] | null {
-    const changedValues = new Map<PropertyName, Value | null>();
+  static propertyBackendName(): string {
+    return 'lww';
+  }
 
-    for (const [name, entry] of this.values) {
-      if (!entry.committed) {
-        changedValues.set(name, entry.value);
-        entry.committed = true;
-      }
-    }
-
-    if (changedValues.size === 0) {
-      return null;
-    }
-
+  toStateBuffer(): Result<Uint8Array, StateError> {
+    const propertyValues = this.propertyValues();
     try {
-      // Double-wrapped bincode: LWWDiff { version: u8, data: Vec<u8> }
-      // where data = bincode_serialize(BTreeMap<PropertyName, Option<Value>>)
-      const data = serializePropertyMap(changedValues);
-      const outerWriter = new BincodeWriter();
-      outerWriter.writeU8(LWW_DIFF_VERSION);
-      outerWriter.writeByteVec(data);
-      const diff = outerWriter.finish();
-
-      return [new Operation(diff)];
-    } catch (e) {
-      throw MutationError.general(
-        e instanceof Error ? e : new Error(String(e)),
-      );
+      const _r0 = (() => { const _w = new BincodeWriter(); propertyValues.encode(_w); return _w.finish(); })();
+      if (_r0.isErr()) return Result.Err(StateError.fromError(_r0.unwrapErr()));
+      const stateBuffer = _r0.unwrap();
+      return Result.Ok(stateBuffer);
+    } finally {
+      dropOwned(propertyValues);
     }
   }
 
-  applyOperations(operations: Operation[]): void {
-    const changedFields: PropertyName[] = [];
+  static fromStateBuffer(stateBuffer: Uint8Array): Result<LWWBackend, RetrievalError> {
+    const _r0 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<PropertyName, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(PropertyName.decode(_r), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
+    if (_r0.isErr()) return Result.Err(RetrievalError.fromBincodeError(_r0.unwrapErr()));
+    const rawMap = _r0.unwrap();
+    const map = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+    return Result.Ok(new LWWBackend(new RwLock(map), new Mutex(new HashMap<string, Broadcast<void>>())));
+  }
 
+  toOperations(): Result<Operation[] | null, MutationError> {
+    let values = this.values.write();
     try {
-      for (const operation of operations) {
-        const outerReader = new BincodeReader(operation.diff);
-        const version = outerReader.readU8();
-
-        switch (version) {
-          case 1: {
-            const data = outerReader.readByteVec();
-            const changes = deserializePropertyMap(data);
-
-            for (const [propertyName, newValue] of changes) {
-              // Insert as committed entry since this came from an operation
-              this.values.set(propertyName, { value: newValue, committed: true });
-              changedFields.push(propertyName);
-            }
-            break;
-          }
-          default:
-            throw MutationError.updateFailed(
-              new Error(`Unknown LWW operation version: ${version}`),
-            );
+      let changedValues = new HashMap();
+      for (const [name, entry] of [...values.value]) {
+        if (!entry.committed) {
+          changedValues.insert(name, entry.value.clone());
+          entry.committed = true;
         }
       }
-    } catch (e) {
-      if (e instanceof MutationError) throw e;
-      throw MutationError.general(
-        e instanceof Error ? e : new Error(String(e)),
-      );
-    }
-
-    // Notify field subscribers for changed fields only
-    for (const fieldName of changedFields) {
-      const broadcast = this.fieldBroadcasts.get(fieldName);
-      if (broadcast) {
-        broadcast.send();
+      if (changedValues.length === 0) {
+        return Result.Ok(null);
       }
+      const _r0 = (() => { const _w = new BincodeWriter(); changedValues.encode(_w); return _w.finish(); })();
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
+      const _t1 = new LWWDiff(LWW_DIFF_VERSION, _r0.unwrap());
+      try {
+        const _r2 = (() => { const _w = new BincodeWriter(); _t1.encode(_w); return _w.finish(); })();
+        if (_r2.isErr()) return Result.Err(MutationError.fromBincodeError(_r2.unwrapErr()));
+        return Result.Ok([new Operation(_r2.unwrap())]);
+      } finally {
+        _t1.drop();
+      }
+    } finally {
+      values.drop();
+    }
+  }
+
+  applyOperations(operations: Operation[]): Result<void, MutationError> {
+    let changedFields = [];
+    for (const operation of operations) {
+      const _r0 = (() => { const _r = new BincodeReader(operation.diff); return _r; })();
+      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
+      const { version, data } = _r0.unwrap();
+      const _v = version;
+      if (_v === 1) {
+        const _r1 = (() => { const _r = new BincodeReader(data); return (() => { const _m = new HashMap<string, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(_r.readString(), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
+        if (_r1.isErr()) return Result.Err(MutationError.fromBincodeError(_r1.unwrapErr()));
+        let _moved2 = false;
+        const changes = _r1.unwrap();
+        try {
+          let values = this.values.write();
+          try {
+            _moved2 = true;
+            const _seq3 = changes.intoEntries();
+            let _at4 = 0;
+            try {
+              while (_at4 < _seq3.length) {
+                const [propertyName, newValue] = _seq3[_at4++];
+                values.value.set(propertyName, new ValueEntry(newValue, true));
+                changedFields.push(propertyName);
+              }
+            } finally {
+              dropOwned(_seq3.slice(_at4));
+            }
+          } finally {
+            values.drop();
+          }
+        } finally {
+          if (!_moved2) dropOwned(changes);
+        }
+      } else {
+        const version = _v;
+        return Result.Err(new MutationError('UpdateFailed', { _0: AnyhowError.msg(`Unknown LWW operation version: ${version}`) }))
+      }
+    }
+    const fieldBroadcasts = this.fieldBroadcasts.lock();
+    try {
+      for (const fieldName of changedFields) {
+        {
+          const _v1 = fieldBroadcasts.value.get(fieldName);
+          if (_v1 != null) {
+            const broadcast = _v1;
+            broadcast.send([]);
+          }
+        }
+      }
+      return Result.Ok([]);
+    } finally {
+      fieldBroadcasts.drop();
     }
   }
 
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard {
-    // Get or create the broadcast for this field
-    let broadcast = this.fieldBroadcasts.get(fieldName);
-    if (!broadcast) {
-      broadcast = new Broadcast<void>();
-      this.fieldBroadcasts.set(fieldName, broadcast);
+    let fieldBroadcasts = this.fieldBroadcasts.lock();
+    try {
+      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+      const _t0 = broadcast.value.reference();
+      try {
+        return ListenerGuard.from(_t0.listen(listener));
+      } finally {
+        _t0.drop();
+      }
+    } finally {
+      fieldBroadcasts.drop();
     }
+  }
 
-    // Subscribe to the broadcast and return the guard
-    const broadcastGuard = broadcast.reference().listen({
-      type: 'NotifyOnly',
-      callback: listener,
-    });
-    return new ListenerGuard(broadcastGuard);
+  debug(): string {
+    return `LWWBackend { values: ${this.values}, fieldBroadcasts: ${this.fieldBroadcasts} }`;
   }
 }
+
+export class LWWDiff extends Struct {
+  version: number;
+  data: Uint8Array;
+
+  constructor(version: number, data: Uint8Array) {
+    super();
+    this.version = version;
+    this.data = data;
+  }
+
+  encode(writer: BincodeWriter): void {
+    writer.writeU8(this.version);
+    writer.writeByteVec(this.data);
+  }
+
+  static decode(reader: BincodeReader): LWWDiff {
+    const version = reader.readU8();
+    const data = reader.readByteVec();
+    return new LWWDiff(version, data);
+  }
+
+  toJSON(): unknown {
+    return { 'version': this.version, 'data': Array.from(this.data) };
+  }
+
+  static fromJson(value: unknown): Result<LWWDiff, JsonError> {
+    try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `LWWDiff`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('version' in _o)) {
+        return Result.Err(JsonError.custom('missing field `version`'));
+      }
+      const _rversion = ((v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255 ? Result.Ok(v as number) : Result.Err(JsonError.custom('expected a u8'))))(_o['version']);
+      if (_rversion.isErr()) return Result.Err(_rversion.unwrapErr());
+      const version = _rversion.unwrap();
+      if (!('data' in _o)) {
+        return Result.Err(JsonError.custom('missing field `data`'));
+      }
+      const _rdata = ((v: unknown) => (Array.isArray(v) && v.every((b) => typeof b === 'number' && Number.isInteger(b) && b >= 0 && b <= 255) ? Result.Ok(new Uint8Array(v as number[])) : Result.Err(JsonError.custom('expected an array of bytes'))))(_o['data']);
+      if (_rdata.isErr()) return Result.Err(_rdata.unwrapErr());
+      const data = _rdata.unwrap();
+      return Result.Ok(new LWWDiff(version, data));
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
+    }
+  }
+}
+
+const LWW_DIFF_VERSION: number = 1;
+

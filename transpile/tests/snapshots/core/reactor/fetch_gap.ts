@@ -33,7 +33,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
       _moved2 = true;
       const node = new Node(nodeInner);
       const nodeContext = new NodeAndContext(node, this.cdata.clone());
-      const _m6 = (() => {
+      const _m8 = (() => {
         {
           const _v1 = lastEntity;
           if (_v1 != null) {
@@ -55,8 +55,10 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
             let _moved5 = false;
             const gapPredicate = (_m4 as any);
             try {
+              const _b6 = selection.orderBy.clone();
+              const _b7 = BigInt(gapSize);
               _moved5 = true;
-              return new Selection(gapPredicate, selection.orderBy.clone(), BigInt(gapSize));
+              return new Selection(gapPredicate, _b6, _b7);
             } finally {
               if (!_moved5) gapPredicate.drop();
             }
@@ -65,21 +67,21 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
         }
         }
       })();
-      if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
-      let _moved7 = false;
-      const gapSelection = (_m6 as any);
+      if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
+      let _moved9 = false;
+      const gapSelection = (_m8 as any);
       try {
-        _moved7 = true;
-        let _moved8 = false;
+        _moved9 = true;
+        let _moved10 = false;
         const matchArgs = new MatchArgs(gapSelection, false);
         try {
-          _moved8 = true;
+          _moved10 = true;
           return await nodeContext.fetchEntities(collectionId, matchArgs);
         } finally {
-          if (!_moved8) matchArgs.drop();
+          if (!_moved10) matchArgs.drop();
         }
       } finally {
-        if (!_moved7) gapSelection.drop();
+        if (!_moved9) gapSelection.drop();
       }
     } finally {
       if (!_moved2) nodeInner.drop();

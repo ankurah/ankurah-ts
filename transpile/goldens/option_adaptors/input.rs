@@ -74,6 +74,46 @@ pub fn narrowest(labels: &Vec<String>) -> Option<String> {
     labels.iter().min_by_key(|l| l.len()).cloned()
 }
 
+/// F2: the ORDER `max_by` hands its two values to the comparator, traced.
+/// `Iterator::max_by` is `fold1(|best, candidate| cmp::max_by(best, candidate,
+/// compare))`, and `cmp::max_by` asks `compare(&best, &candidate)`. Over
+/// `[1, 2, 3]` Rust logs `(1,2)` then `(2,3)`; the port logged `(2,1)` then
+/// `(3,2)`. An antisymmetric comparator hides that in the winner and nothing
+/// else does.
+pub fn max_trace(ns: &Vec<u32>) -> (Option<u32>, String) {
+    let mut seen = String::new();
+    let best = ns.iter().copied().max_by(|a, b| {
+        seen.push_str(&format!("({},{})", a, b));
+        a.cmp(b)
+    });
+    (best, seen)
+}
+
+/// The same for `min_by`, which Rust folds the same way and tie-breaks the
+/// other: over `[1, 2, 3]` it logs `(1,2)` then `(1,3)`.
+pub fn min_trace(ns: &Vec<u32>) -> (Option<u32>, String) {
+    let mut seen = String::new();
+    let best = ns.iter().copied().min_by(|a, b| {
+        seen.push_str(&format!("({},{})", a, b));
+        a.cmp(b)
+    });
+    (best, seen)
+}
+
+/// F2's other half: Rust writes `max_by_key` as
+/// `self.map(|x| (f(&x), x)).max_by(..)`, which calls the key closure exactly
+/// ONCE per element, in element order. Called inside the comparator instead it
+/// ran twice per comparison and in the reverse order — four calls over three
+/// elements instead of three.
+pub fn key_trace(ns: &Vec<u32>) -> (Option<u32>, String) {
+    let mut seen = String::new();
+    let best = ns.iter().copied().max_by_key(|n| {
+        seen.push_str(&format!("({})", n));
+        *n
+    });
+    (best, seen)
+}
+
 pub struct Reading {
     pub label: String,
 }

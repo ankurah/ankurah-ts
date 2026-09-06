@@ -1,723 +1,584 @@
 // MIRRORS: ankurah/core/src/error.rs
-
+import { Struct, Enum, AnyhowError, checkedAdd, HashSet, JoinError } from '@ankurah/base';
 import { CollectionId, DecodeError, EntityId, EventId, NodeResponseBody } from '@ankurah/proto';
+import { SendError } from './connector';
+import { AccessDenied } from './policy';
+import { PropertyError } from './property/traits';
+import { Error } from './selection/filter';
 import { ParseError } from '@ankurah/ankql';
 
-// Forward-reference types that will be ported in their own files.
-// These use string/Error placeholders to avoid circular import issues
-// until the full modules are ported.
-
-// ─── AccessDenied ───────────────────────────────────────────────────────────
-// Mirrors: ankurah/core/src/policy.rs — AccessDenied enum
-
-export type AccessDeniedKind =
-  | 'ByPolicy'
-  | 'CollectionDenied'
-  | 'PropertyError'
-  | 'ParseError'
-  | 'InsufficientAttestation';
-
-export class AccessDenied extends Error {
-  readonly kind: AccessDeniedKind;
-  readonly detail?: unknown;
-
-  constructor(kind: AccessDeniedKind, message: string, detail?: unknown) {
-    super(message);
-    this.name = 'AccessDenied';
-    this.kind = kind;
-    this.detail = detail;
-  }
-
-  static byPolicy(reason: string): AccessDenied {
-    return new AccessDenied('ByPolicy', `Access denied by policy: ${reason}`, reason);
-  }
-
-  static collectionDenied(collection: CollectionId): AccessDenied {
-    return new AccessDenied('CollectionDenied', `Access denied by collection: ${collection}`, collection);
-  }
-
-  static propertyError(err: Error): AccessDenied {
-    return new AccessDenied('PropertyError', `Access denied by property error: ${err.message}`, err);
-  }
-
-  static parseError(err: ParseError): AccessDenied {
-    return new AccessDenied('ParseError', `Access denied by parse error: ${err.message}`, err);
-  }
-
-  static insufficientAttestation(): AccessDenied {
-    return new AccessDenied('InsufficientAttestation', 'Insufficient attestation');
-  }
-}
-
-// ─── SendError ──────────────────────────────────────────────────────────────
-// Mirrors: ankurah/core/src/connector.rs — SendError enum
-
-export type SendErrorKind =
-  | 'ConnectionClosed'
-  | 'Timeout'
-  | 'Other'
-  | 'Unknown';
-
-export class SendError extends Error {
-  readonly kind: SendErrorKind;
-
-  constructor(kind: SendErrorKind, message?: string) {
-    super(message ?? sendErrorMessage(kind));
-    this.name = 'SendError';
-    this.kind = kind;
-  }
-
-  static connectionClosed(): SendError {
-    return new SendError('ConnectionClosed');
-  }
-
-  static timeout(): SendError {
-    return new SendError('Timeout');
-  }
-
-  static other(message: string): SendError {
-    return new SendError('Other', `Other error: ${message}`);
-  }
-
-  static unknown(): SendError {
-    return new SendError('Unknown');
-  }
-}
-
-function sendErrorMessage(kind: SendErrorKind): string {
-  switch (kind) {
-    case 'ConnectionClosed': return 'Connection closed';
-    case 'Timeout': return 'Send timeout';
-    case 'Other': return 'Other error';
-    case 'Unknown': return 'Unknown error';
-  }
-}
-
-// ─── FilterError ────────────────────────────────────────────────────────────
-// Mirrors: ankurah/core/src/selection/filter.rs — Error enum
-
-export type FilterErrorKind =
-  | 'CollectionMismatch'
-  | 'PropertyNotFound'
-  | 'UnsupportedExpression'
-  | 'UnsupportedOperator';
-
-export class FilterError extends Error {
-  readonly kind: FilterErrorKind;
-
-  constructor(kind: FilterErrorKind, message: string) {
-    super(message);
-    this.name = 'FilterError';
-    this.kind = kind;
-  }
-
-  static collectionMismatch(expected: string, actual: string): FilterError {
-    return new FilterError('CollectionMismatch', `collection mismatch: expected ${expected}, got ${actual}`);
-  }
-
-  static propertyNotFound(name: string): FilterError {
-    return new FilterError('PropertyNotFound', `property not found: ${name}`);
-  }
-
-  static unsupportedExpression(detail: string): FilterError {
-    return new FilterError('UnsupportedExpression', `Unsupported expression: ${detail}`);
-  }
-
-  static unsupportedOperator(detail: string): FilterError {
-    return new FilterError('UnsupportedOperator', `Unsupported operator: ${detail}`);
-  }
-}
-
-// ─── StateError ─────────────────────────────────────────────────────────────
-
-export type StateErrorKind =
-  | 'SerializationError'
-  | 'DDLError'
-  | 'DMLError';
-
-export class StateError extends Error {
-  readonly kind: StateErrorKind;
-  readonly cause?: Error;
-
-  constructor(kind: StateErrorKind, message: string, cause?: Error) {
-    super(message);
-    this.name = 'StateError';
-    this.kind = kind;
-    this.cause = cause;
-  }
-
-  static serializationError(err: Error): StateError {
-    return new StateError('SerializationError', `serialization error: ${err.message}`, err);
-  }
-
-  static ddlError(err: Error): StateError {
-    return new StateError('DDLError', `DDL error: ${err.message}`, err);
-  }
-
-  static dmlError(err: Error): StateError {
-    return new StateError('DMLError', `DMLError: ${err.message}`, err);
-  }
-}
-
-// ─── SubscriptionError ──────────────────────────────────────────────────────
-
-export type SubscriptionErrorKind =
-  | 'PredicateNotFound'
-  | 'PredicateAlreadySubscribed'
-  | 'SubscriptionNotFound';
-
-export class SubscriptionError extends Error {
-  readonly kind: SubscriptionErrorKind;
-
-  constructor(kind: SubscriptionErrorKind, message?: string) {
-    super(message ?? subscriptionErrorMessage(kind));
-    this.name = 'SubscriptionError';
-    this.kind = kind;
-  }
-
-  static predicateNotFound(): SubscriptionError {
-    return new SubscriptionError('PredicateNotFound');
-  }
-
-  static predicateAlreadySubscribed(): SubscriptionError {
-    return new SubscriptionError('PredicateAlreadySubscribed');
-  }
-
-  static subscriptionNotFound(): SubscriptionError {
-    return new SubscriptionError('SubscriptionNotFound');
-  }
-}
-
-function subscriptionErrorMessage(kind: SubscriptionErrorKind): string {
-  switch (kind) {
-    case 'PredicateNotFound': return 'predicate not found';
-    case 'PredicateAlreadySubscribed': return 'already subscribed to predicate';
-    case 'SubscriptionNotFound': return 'subscription not found';
-  }
-}
-
-// ─── ValidationError ────────────────────────────────────────────────────────
-
-export type ValidationErrorKind =
-  | 'Deserialization'
-  | 'ValidationFailed'
-  | 'Serialization'
-  | 'Rejected';
-
-export class ValidationError extends Error {
-  readonly kind: ValidationErrorKind;
-
-  constructor(kind: ValidationErrorKind, message: string) {
-    super(message);
-    this.name = 'ValidationError';
-    this.kind = kind;
-  }
-
-  static deserialization(err: Error): ValidationError {
-    return new ValidationError('Deserialization', `Deserialization error: ${err.message}`);
-  }
-
-  static validationFailed(reason: string): ValidationError {
-    return new ValidationError('ValidationFailed', `Validation failed: ${reason}`);
-  }
-
-  static serialization(reason: string): ValidationError {
-    return new ValidationError('Serialization', `Serialization error: ${reason}`);
-  }
-
-  static rejected(reason: string): ValidationError {
-    return new ValidationError('Rejected', `Rejected: ${reason}`);
-  }
-}
-
-// ─── LineageError ───────────────────────────────────────────────────────────
-
-export type LineageErrorKind =
-  | 'Incomparable'
-  | 'PartiallyDescends'
-  | 'BudgetExceeded';
-
-export class LineageError extends Error {
-  readonly kind: LineageErrorKind;
-  /** Present when kind is 'PartiallyDescends' */
-  readonly meet?: EventId[];
-  /** Present when kind is 'BudgetExceeded' */
-  readonly originalBudget?: number;
-  readonly subjectFrontier?: Set<EventId>;
-  readonly otherFrontier?: Set<EventId>;
-
-  private constructor(
-    kind: LineageErrorKind,
-    message: string,
-    fields?: {
-      meet?: EventId[];
-      originalBudget?: number;
-      subjectFrontier?: Set<EventId>;
-      otherFrontier?: Set<EventId>;
-    },
-  ) {
-    super(message);
-    this.name = 'LineageError';
-    this.kind = kind;
-    this.meet = fields?.meet;
-    this.originalBudget = fields?.originalBudget;
-    this.subjectFrontier = fields?.subjectFrontier;
-    this.otherFrontier = fields?.otherFrontier;
-  }
-
-  static incomparable(): LineageError {
-    return new LineageError('Incomparable', 'incomparable');
-  }
-
-  static partiallyDescends(meet: EventId[]): LineageError {
-    const meetStrs = meet.map((id) => id.toBase64Short());
-    return new LineageError(
-      'PartiallyDescends',
-      `partially descends: [${meetStrs.join(', ')}]`,
-      { meet },
-    );
-  }
-
-  static budgetExceeded(
-    originalBudget: number,
-    subjectFrontier: Set<EventId>,
-    otherFrontier: Set<EventId>,
-  ): LineageError {
-    const subjectStrs = Array.from(subjectFrontier).map((id) => id.toBase64Short());
-    const otherStrs = Array.from(otherFrontier).map((id) => id.toBase64Short());
-    return new LineageError(
-      'BudgetExceeded',
-      `budget exceeded (${originalBudget}): subject[${subjectStrs.join(', ')}] other[${otherStrs.join(', ')}]`,
-      { originalBudget, subjectFrontier, otherFrontier },
-    );
-  }
-}
-
-// ─── RequestError ───────────────────────────────────────────────────────────
-
-export type RequestErrorKind =
-  | 'PeerNotConnected'
-  | 'ConnectionLost'
-  | 'ServerError'
-  | 'SendError'
-  | 'InternalChannelClosed'
-  | 'UnexpectedResponse'
-  | 'AccessDenied';
-
-export class RequestError extends Error {
-  readonly kind: RequestErrorKind;
-  readonly detail?: unknown;
-
-  constructor(kind: RequestErrorKind, message: string, detail?: unknown) {
-    super(message);
-    this.name = 'RequestError';
-    this.kind = kind;
-    this.detail = detail;
-  }
-
-  static peerNotConnected(): RequestError {
-    return new RequestError('PeerNotConnected', 'Peer not connected');
-  }
-
-  static connectionLost(): RequestError {
-    return new RequestError('ConnectionLost', 'Connection lost');
-  }
-
-  static serverError(message: string): RequestError {
-    return new RequestError('ServerError', `Server error: ${message}`, message);
-  }
-
-  static sendError(err: SendError): RequestError {
-    return new RequestError('SendError', `Send error: ${err.message}`, err);
-  }
-
-  static internalChannelClosed(): RequestError {
-    return new RequestError('InternalChannelClosed', 'Internal channel closed');
-  }
-
-  static unexpectedResponse(body: NodeResponseBody): RequestError {
-    return new RequestError('UnexpectedResponse', `Unexpected response: ${JSON.stringify(body)}`, body);
-  }
-
-  static accessDenied(err: AccessDenied): RequestError {
-    return new RequestError('AccessDenied', `Access denied: ${err.message}`, err);
-  }
-
-  static fromAccessDenied(err: AccessDenied): RequestError {
-    return RequestError.accessDenied(err);
-  }
-
-  static fromSendError(err: SendError): RequestError {
-    return RequestError.sendError(err);
-  }
-}
-
-// ─── ApplyErrorItem ─────────────────────────────────────────────────────────
-
-/** Error applying a specific delta */
-export class ApplyErrorItem {
+export class ApplyErrorItem extends Struct {
   readonly entityId: EntityId;
   readonly collection: CollectionId;
   readonly cause: MutationError;
 
   constructor(entityId: EntityId, collection: CollectionId, cause: MutationError) {
+    super();
     this.entityId = entityId;
     this.collection = collection;
     this.cause = cause;
   }
 
   toString(): string {
-    return `Failed to apply delta for entity ${this.entityId.toBase64Short()} in collection ${this.collection}: ${this.cause.message}`;
+    return `Failed to apply delta for entity ${this.entityId.toBase64Short()} in collection ${this.collection}: ${this.cause}`;
+  }
+
+  debug(): string {
+    return `ApplyErrorItem { entityId: ${this.entityId}, collection: ${this.collection.debug()}, cause: ${this.cause.debug()} }`;
   }
 }
 
-// ─── ApplyError ─────────────────────────────────────────────────────────────
+export type RetrievalErrorV = {
+  AccessDenied: { _0: AccessDenied };
+  ParseError: { _0: ParseError };
+  EntityNotFound: { _0: EntityId };
+  EventNotFound: { _0: EventId };
+  StorageError: { _0: Error };
+  CollectionNotFound: { _0: CollectionId };
+  FailedUpdate: { _0: Error };
+  DeserializationError: { _0: Error };
+  NoDurablePeers: {};
+  Other: { _0: string };
+  InvalidBucketName: {};
+  AnkqlFilter: { _0: Error };
+  FutureJoin: { _0: JoinError };
+  Anyhow: { _0: Error };
+  DecodeError: { _0: DecodeError };
+  StateError: { _0: StateError };
+  MutationError: { _0: MutationError };
+  PropertyError: { _0: PropertyError };
+  RequestError: { _0: RequestError };
+  ApplyError: { _0: ApplyError };
+};
 
-/** Error type for NodeApplier operations (applying remote deltas) */
-export type ApplyErrorKind =
-  | 'Items'
-  | 'CollectionNotFound'
-  | 'RetrievalError'
-  | 'MutationError';
+export class RetrievalError extends Enum<RetrievalErrorV> {
 
-export class ApplyError extends Error {
-  readonly kind: ApplyErrorKind;
-  /** Present when kind is 'Items' */
-  readonly items?: ApplyErrorItem[];
-  /** Present when kind is 'CollectionNotFound' */
-  readonly collectionId?: CollectionId;
-  /** Present when kind is 'RetrievalError' */
-  readonly retrievalError?: RetrievalError;
-  /** Present when kind is 'MutationError' */
-  readonly mutationError?: MutationError;
-
-  private constructor(kind: ApplyErrorKind, message: string, detail?: {
-    items?: ApplyErrorItem[];
-    collectionId?: CollectionId;
-    retrievalError?: RetrievalError;
-    mutationError?: MutationError;
-  }) {
-    super(message);
-    this.name = 'ApplyError';
-    this.kind = kind;
-    this.items = detail?.items;
-    this.collectionId = detail?.collectionId;
-    this.retrievalError = detail?.retrievalError;
-    this.mutationError = detail?.mutationError;
+  static storage(err: Error): RetrievalError {
+    return new RetrievalError('StorageError', { _0: err });
   }
 
-  static fromItems(items: ApplyErrorItem[]): ApplyError {
-    let message = `Failed to apply ${items.length} delta(s)`;
-    items.forEach((item, i) => {
-      message += `\n  [${i + 1}] ${item}`;
+  static fromRequestError(err: RequestError): RetrievalError {
+    return new RetrievalError('RequestError', { _0: err });
+  }
+
+  static fromPropertyError(err: PropertyError): RetrievalError {
+    return new RetrievalError('PropertyError', { _0: err });
+  }
+
+  static fromJoinError(err: JoinError): RetrievalError {
+    return new RetrievalError('FutureJoin', { _0: err });
+  }
+
+  static fromMutationError(err: MutationError): RetrievalError {
+    return new RetrievalError('MutationError', { _0: err });
+  }
+
+  static fromBincodeError(e: Error): RetrievalError {
+    return new RetrievalError('DeserializationError', { _0: e });
+  }
+
+  static fromFilterError(err: Error): RetrievalError {
+    return new RetrievalError('AnkqlFilter', { _0: err });
+  }
+
+  static fromAnyhowError(err: AnyhowError): RetrievalError {
+    return new RetrievalError('Anyhow', { _0: err });
+  }
+
+  static fromDecodeError(err: DecodeError): RetrievalError {
+    return new RetrievalError('DecodeError', { _0: err });
+  }
+
+  static fromAccessDenied(err: AccessDenied): RetrievalError {
+    return new RetrievalError('AccessDenied', { _0: err });
+  }
+
+  static fromSubscriptionError(err: SubscriptionError): RetrievalError {
+    try {
+      return new RetrievalError('Anyhow', { _0: AnyhowError.msg(`Subscription error: ${err.debug()}`) });
+    } finally {
+      err.drop();
+    }
+  }
+
+  static fromStateError(err: StateError): RetrievalError {
+    return new RetrievalError('StateError', { _0: err });
+  }
+
+  static fromApplyError(err: ApplyError): RetrievalError {
+    return new RetrievalError('ApplyError', { _0: err });
+  }
+
+  debug(): string {
+    return this.match({
+      AccessDenied: (v) => `AccessDenied(${v._0.debug()})`,
+      ParseError: (v) => `ParseError(${v._0.debug()})`,
+      EntityNotFound: (v) => `EntityNotFound(${v._0})`,
+      EventNotFound: (v) => `EventNotFound(${v._0})`,
+      StorageError: (v) => `StorageError(${v._0})`,
+      CollectionNotFound: (v) => `CollectionNotFound(${v._0.debug()})`,
+      FailedUpdate: (v) => `FailedUpdate(${v._0})`,
+      DeserializationError: (v) => `DeserializationError(${v._0})`,
+      NoDurablePeers: () => 'NoDurablePeers',
+      Other: (v) => `Other(${JSON.stringify(v._0)})`,
+      InvalidBucketName: () => 'InvalidBucketName',
+      AnkqlFilter: (v) => `AnkqlFilter(${v._0.debug()})`,
+      FutureJoin: (v) => `FutureJoin(${v._0})`,
+      Anyhow: (v) => `Anyhow(${v._0})`,
+      DecodeError: (v) => `DecodeError(${v._0})`,
+      StateError: (v) => `StateError(${v._0.debug()})`,
+      MutationError: (v) => `MutationError(${v._0.debug()})`,
+      PropertyError: (v) => `PropertyError(${v._0.debug()})`,
+      RequestError: (v) => `RequestError(${v._0.debug()})`,
+      ApplyError: (v) => `ApplyError(${v._0.debug()})`,
     });
-    return new ApplyError('Items', message, { items });
   }
 
-  static collectionNotFound(id: CollectionId): ApplyError {
-    return new ApplyError('CollectionNotFound', `Collection not found: ${id}`, { collectionId: id });
+  override toString(): string {
+    return this.match({
+      AccessDenied: () => 'access denied',
+      ParseError: (v) => `Parse error: ${v._0}`,
+      EntityNotFound: (v) => `Entity not found: ${v._0}`,
+      EventNotFound: (v) => `Event not found: ${v._0}`,
+      StorageError: (v) => `Storage error: ${v._0}`,
+      CollectionNotFound: (v) => `Collection not found: ${v._0}`,
+      FailedUpdate: (v) => `Update failed: ${v._0}`,
+      DeserializationError: (v) => `Deserialization error: ${v._0}`,
+      NoDurablePeers: () => 'No durable peers available for fetch operation',
+      Other: (v) => `Other error: ${v._0}`,
+      InvalidBucketName: () => 'bucket name must only contain valid characters',
+      AnkqlFilter: (v) => `ankql filter: ${v._0}`,
+      FutureJoin: (v) => `Future join: ${v._0}`,
+      Anyhow: (v) => `${v._0}`,
+      DecodeError: (v) => `Decode error: ${v._0}`,
+      StateError: (v) => `State error: ${v._0}`,
+      MutationError: (v) => `Mutation error: ${v._0}`,
+      PropertyError: (v) => `Property error: ${v._0}`,
+      RequestError: (v) => `Request error: ${v._0}`,
+      ApplyError: (v) => `Apply error: ${v._0}`,
+    });
+  }
+}
+
+export type RequestErrorV = {
+  PeerNotConnected: {};
+  ConnectionLost: {};
+  ServerError: { _0: string };
+  SendError: { _0: SendError };
+  InternalChannelClosed: {};
+  UnexpectedResponse: { _0: NodeResponseBody };
+  AccessDenied: { _0: AccessDenied };
+};
+
+export class RequestError extends Enum<RequestErrorV> {
+
+  static fromAccessDenied(err: AccessDenied): RequestError {
+    return new RequestError('AccessDenied', { _0: err });
+  }
+
+  static fromSendError(err: SendError): RequestError {
+    return new RequestError('SendError', { _0: err });
+  }
+
+  debug(): string {
+    return this.match({
+      PeerNotConnected: () => 'PeerNotConnected',
+      ConnectionLost: () => 'ConnectionLost',
+      ServerError: (v) => `ServerError(${JSON.stringify(v._0)})`,
+      SendError: (v) => `SendError(${v._0.debug()})`,
+      InternalChannelClosed: () => 'InternalChannelClosed',
+      UnexpectedResponse: (v) => `UnexpectedResponse(${v._0.debug()})`,
+      AccessDenied: (v) => `AccessDenied(${v._0.debug()})`,
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      PeerNotConnected: () => 'Peer not connected',
+      ConnectionLost: () => 'Connection lost',
+      ServerError: (v) => `Server error: ${v._0}`,
+      SendError: (v) => `Send error: ${v._0}`,
+      InternalChannelClosed: () => 'Internal channel closed',
+      UnexpectedResponse: (v) => `Unexpected response: ${v._0.debug()}`,
+      AccessDenied: (v) => `Access denied: ${v._0}`,
+    });
+  }
+}
+
+export type SubscriptionErrorV = {
+  PredicateNotFound: {};
+  PredicateAlreadySubscribed: {};
+  SubscriptionNotFound: {};
+};
+
+export class SubscriptionError extends Enum<SubscriptionErrorV> {
+
+  debug(): string {
+    return this.match({
+      PredicateNotFound: () => 'PredicateNotFound',
+      PredicateAlreadySubscribed: () => 'PredicateAlreadySubscribed',
+      SubscriptionNotFound: () => 'SubscriptionNotFound',
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      PredicateNotFound: () => 'predicate not found',
+      PredicateAlreadySubscribed: () => 'already subscribed to predicate',
+      SubscriptionNotFound: () => 'subscription not found',
+    });
+  }
+}
+
+export type MutationErrorV = {
+  AccessDenied: { _0: AccessDenied };
+  AlreadyExists: {};
+  RetrievalError: { _0: RetrievalError };
+  StateError: { _0: StateError };
+  UpdateFailed: { _0: Error };
+  FailedStep: { _0: string; _1: string };
+  FailedToSetProperty: { _0: string; _1: string };
+  General: { _0: Error };
+  NoDurablePeers: {};
+  DecodeError: { _0: DecodeError };
+  LineageError: { _0: LineageError };
+  PeerRejected: {};
+  InvalidEvent: {};
+  InvalidUpdate: { _0: string };
+  PropertyError: { _0: PropertyError };
+  FutureJoin: { _0: JoinError };
+  Anyhow: { _0: Error };
+  TOCTOUAttemptsExhausted: {};
+};
+
+export class MutationError extends Enum<MutationErrorV> {
+
+  static fromJoinError(err: JoinError): MutationError {
+    return new MutationError('FutureJoin', { _0: err });
+  }
+
+  static fromAnyhowError(err: AnyhowError): MutationError {
+    return new MutationError('Anyhow', { _0: err });
+  }
+
+  static fromLineageError(err: LineageError): MutationError {
+    return new MutationError('LineageError', { _0: err });
+  }
+
+  static fromDecodeError(err: DecodeError): MutationError {
+    return new MutationError('DecodeError', { _0: err });
+  }
+
+  static fromAccessDenied(err: AccessDenied): MutationError {
+    return new MutationError('AccessDenied', { _0: err });
+  }
+
+  static fromBincodeError(e: Error): MutationError {
+    return new MutationError('StateError', { _0: new StateError('SerializationError', { _0: e }) });
+  }
+
+  static fromRetrievalError(err: RetrievalError): MutationError {
+    return err.intoMatch({
+      AccessDenied: (v) => {
+        const a = v._0;
+        return new MutationError('AccessDenied', { _0: a });
+      },
+      ParseError: (v) => {
+        const err = new RetrievalError('ParseError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      EntityNotFound: (v) => {
+        const err = new RetrievalError('EntityNotFound', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      EventNotFound: (v) => {
+        const err = new RetrievalError('EventNotFound', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      StorageError: (v) => {
+        const err = new RetrievalError('StorageError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      CollectionNotFound: (v) => {
+        const err = new RetrievalError('CollectionNotFound', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      FailedUpdate: (v) => {
+        const err = new RetrievalError('FailedUpdate', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      DeserializationError: (v) => {
+        const err = new RetrievalError('DeserializationError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      NoDurablePeers: (v) => {
+        const err = new RetrievalError('NoDurablePeers', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      Other: (v) => {
+        const err = new RetrievalError('Other', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      InvalidBucketName: (v) => {
+        const err = new RetrievalError('InvalidBucketName', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      AnkqlFilter: (v) => {
+        const err = new RetrievalError('AnkqlFilter', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      FutureJoin: (v) => {
+        const err = new RetrievalError('FutureJoin', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      Anyhow: (v) => {
+        const err = new RetrievalError('Anyhow', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      DecodeError: (v) => {
+        const err = new RetrievalError('DecodeError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      StateError: (v) => {
+        const err = new RetrievalError('StateError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      MutationError: (v) => {
+        const err = new RetrievalError('MutationError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      PropertyError: (v) => {
+        const err = new RetrievalError('PropertyError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      RequestError: (v) => {
+        const err = new RetrievalError('RequestError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+      ApplyError: (v) => {
+        const err = new RetrievalError('ApplyError', v);
+        return new MutationError('RetrievalError', { _0: err });
+      },
+    });
+  }
+
+  static fromStateError(err: StateError): MutationError {
+    return new MutationError('StateError', { _0: err });
+  }
+
+  static fromPropertyError(err: PropertyError): MutationError {
+    return new MutationError('PropertyError', { _0: err });
+  }
+
+  debug(): string {
+    return this.match({
+      AccessDenied: (v) => `AccessDenied(${v._0.debug()})`,
+      AlreadyExists: () => 'AlreadyExists',
+      RetrievalError: (v) => `RetrievalError(${v._0.debug()})`,
+      StateError: (v) => `StateError(${v._0.debug()})`,
+      UpdateFailed: (v) => `UpdateFailed(${v._0})`,
+      FailedStep: (v) => `FailedStep(${JSON.stringify(v._0)}, ${JSON.stringify(v._1)})`,
+      FailedToSetProperty: (v) => `FailedToSetProperty(${JSON.stringify(v._0)}, ${JSON.stringify(v._1)})`,
+      General: (v) => `General(${v._0})`,
+      NoDurablePeers: () => 'NoDurablePeers',
+      DecodeError: (v) => `DecodeError(${v._0})`,
+      LineageError: (v) => `LineageError(${v._0.debug()})`,
+      PeerRejected: () => 'PeerRejected',
+      InvalidEvent: () => 'InvalidEvent',
+      InvalidUpdate: (v) => `InvalidUpdate(${JSON.stringify(v._0)})`,
+      PropertyError: (v) => `PropertyError(${v._0.debug()})`,
+      FutureJoin: (v) => `FutureJoin(${v._0})`,
+      Anyhow: (v) => `Anyhow(${v._0})`,
+      TOCTOUAttemptsExhausted: () => 'TOCTOUAttemptsExhausted',
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      AccessDenied: () => 'access denied',
+      AlreadyExists: () => 'already exists',
+      RetrievalError: (v) => `retrieval error: ${v._0}`,
+      StateError: (v) => `state error: ${v._0}`,
+      UpdateFailed: (v) => `failed update: ${v._0}`,
+      FailedStep: (v) => `failed step: ${v._0}: ${v._1}`,
+      FailedToSetProperty: (v) => `failed to set property: ${v._0}: ${v._1}`,
+      General: (v) => `general error: ${v._0}`,
+      NoDurablePeers: () => 'no durable peers available',
+      DecodeError: (v) => `decode error: ${v._0}`,
+      LineageError: (v) => `lineage error: ${v._0}`,
+      PeerRejected: () => 'peer rejected transaction',
+      InvalidEvent: () => 'invalid event',
+      InvalidUpdate: () => 'invalid update',
+      PropertyError: (v) => `property error: ${v._0}`,
+      FutureJoin: (v) => `future join: ${v._0}`,
+      Anyhow: (v) => `anyhow error: ${v._0}`,
+      TOCTOUAttemptsExhausted: () => 'TOCTOU attempts exhausted',
+    });
+  }
+}
+
+export type LineageErrorV = {
+  Incomparable: {};
+  PartiallyDescends: { meet: EventId[] };
+  BudgetExceeded: { originalBudget: number; subjectFrontier: HashSet<EventId>; otherFrontier: HashSet<EventId> };
+};
+
+export class LineageError extends Enum<LineageErrorV> {
+
+  toString(): string {
+    let _result = '';
+    return this.match({
+      Incomparable: () => 'incomparable',
+      PartiallyDescends: (v) => {
+        const meet = v.meet;
+        _result += 'partially descends: [';
+        const meets = [...meet].map((id) => id.toBase64Short());
+        _result += `${meets.join(', ')}]`;
+        return _result;
+      },
+      BudgetExceeded: (v) => {
+        const originalBudget = v.originalBudget;
+        const subjectFrontier = v.subjectFrontier;
+        const otherFrontier = v.otherFrontier;
+        const subject = [...subjectFrontier].map((id) => id.toBase64Short());
+        const other = [...otherFrontier].map((id) => id.toBase64Short());
+        _result += `budget exceeded (${originalBudget}): subject[${subject.join(', ')}] other[${other.join(', ')}]`;
+        return _result;
+      },
+    });
+  }
+
+  debug(): string {
+    return this.match({
+      Incomparable: () => 'Incomparable',
+      PartiallyDescends: (v) => `PartiallyDescends { meet: ${v.meet} }`,
+      BudgetExceeded: (v) => `BudgetExceeded { originalBudget: ${String(v.originalBudget)}, subjectFrontier: ${v.subjectFrontier}, otherFrontier: ${v.otherFrontier} }`,
+    });
+  }
+}
+
+export type StateErrorV = {
+  SerializationError: { _0: Error };
+  DDLError: { _0: Error };
+  DMLError: { _0: Error };
+};
+
+export class StateError extends Enum<StateErrorV> {
+
+  static fromError(e: Error): StateError {
+    return new StateError('SerializationError', { _0: e });
+  }
+
+  debug(): string {
+    return this.match({
+      SerializationError: (v) => `SerializationError(${v._0})`,
+      DDLError: (v) => `DDLError(${v._0})`,
+      DMLError: (v) => `DMLError(${v._0})`,
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      SerializationError: (v) => `serialization error: ${v._0}`,
+      DDLError: (v) => `DDL error: ${v._0}`,
+      DMLError: (v) => `DMLError: ${v._0}`,
+    });
+  }
+}
+
+export type ValidationErrorV = {
+  Deserialization: { _0: Error };
+  ValidationFailed: { _0: string };
+  Serialization: { _0: string };
+  Rejected: { _0: string };
+};
+
+export class ValidationError extends Enum<ValidationErrorV> {
+
+  debug(): string {
+    return this.match({
+      Deserialization: (v) => `Deserialization(${v._0})`,
+      ValidationFailed: (v) => `ValidationFailed(${JSON.stringify(v._0)})`,
+      Serialization: (v) => `Serialization(${JSON.stringify(v._0)})`,
+      Rejected: (v) => `Rejected(${JSON.stringify(v._0)})`,
+    });
+  }
+
+  override toString(): string {
+    return this.match({
+      Deserialization: (v) => `Deserialization error: ${v._0}`,
+      ValidationFailed: (v) => `Validation failed: ${v._0}`,
+      Serialization: (v) => `Serialization error: ${v._0}`,
+      Rejected: (v) => `Rejected: ${v._0}`,
+    });
+  }
+}
+
+export type ApplyErrorV = {
+  Items: { _0: ApplyErrorItem[] };
+  CollectionNotFound: { _0: CollectionId };
+  RetrievalError: { _0: RetrievalError };
+  MutationError: { _0: MutationError };
+};
+
+export class ApplyError extends Enum<ApplyErrorV> {
+
+  toString(): string {
+    let _result = '';
+    return this.match({
+      Items: (v) => {
+        const errors = v._0;
+        _result += `Failed to apply ${errors.length} delta(s)`;
+        for (const [i, err] of [...errors].entries()) {
+          _result += `\n  [${checkedAdd(i, 1, 'usize')}] ${err}`;
+        }
+        return _result;
+      },
+      CollectionNotFound: (v) => {
+        const id = v._0;
+        return `Collection not found: ${id}`;
+      },
+      RetrievalError: (v) => {
+        const e = v._0;
+        return `Retrieval error: ${e}`;
+      },
+      MutationError: (v) => {
+        const e = v._0;
+        return `Mutation error: ${e}`;
+      },
+    });
+  }
+
+  source(): Error | null {
+    return this.match({
+      RetrievalError: (v) => {
+        const e = v._0;
+        return e;
+      },
+      MutationError: (v) => {
+        const e = v._0;
+        return e;
+      },
+      Items: () => null,
+      CollectionNotFound: () => null,
+    });
   }
 
   static fromRetrievalError(err: RetrievalError): ApplyError {
-    return new ApplyError('RetrievalError', `Retrieval error: ${err.message}`, { retrievalError: err });
+    return new ApplyError('RetrievalError', { _0: err });
   }
 
   static fromMutationError(err: MutationError): ApplyError {
-    return new ApplyError('MutationError', `Mutation error: ${err.message}`, { mutationError: err });
+    return new ApplyError('MutationError', { _0: err });
+  }
+
+  debug(): string {
+    return this.match({
+      Items: (v) => `Items(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      CollectionNotFound: (v) => `CollectionNotFound(${v._0.debug()})`,
+      RetrievalError: (v) => `RetrievalError(${v._0.debug()})`,
+      MutationError: (v) => `MutationError(${v._0.debug()})`,
+    });
   }
 }
 
-// ─── MutationError ──────────────────────────────────────────────────────────
-
-export type MutationErrorKind =
-  | 'AccessDenied'
-  | 'AlreadyExists'
-  | 'RetrievalError'
-  | 'StateError'
-  | 'UpdateFailed'
-  | 'FailedStep'
-  | 'FailedToSetProperty'
-  | 'General'
-  | 'NoDurablePeers'
-  | 'DecodeError'
-  | 'LineageError'
-  | 'PeerRejected'
-  | 'InvalidEvent'
-  | 'InvalidUpdate'
-  | 'PropertyError'
-  | 'FutureJoin'
-  | 'Anyhow'
-  | 'TOCTOUAttemptsExhausted';
-
-export class MutationError extends Error {
-  readonly kind: MutationErrorKind;
-  readonly detail?: unknown;
-
-  constructor(kind: MutationErrorKind, message: string, detail?: unknown) {
-    super(message);
-    this.name = 'MutationError';
-    this.kind = kind;
-    this.detail = detail;
-  }
-
-  static accessDenied(err: AccessDenied): MutationError {
-    return new MutationError('AccessDenied', `access denied`, err);
-  }
-
-  static alreadyExists(): MutationError {
-    return new MutationError('AlreadyExists', 'already exists');
-  }
-
-  static retrievalError(err: RetrievalError): MutationError {
-    return new MutationError('RetrievalError', `retrieval error: ${err.message}`, err);
-  }
-
-  static stateError(err: StateError): MutationError {
-    return new MutationError('StateError', `state error: ${err.message}`, err);
-  }
-
-  static updateFailed(err: Error): MutationError {
-    return new MutationError('UpdateFailed', `failed update: ${err.message}`, err);
-  }
-
-  static failedStep(step: string, detail: string): MutationError {
-    return new MutationError('FailedStep', `failed step: ${step}: ${detail}`, { step, detail });
-  }
-
-  static failedToSetProperty(property: string, detail: string): MutationError {
-    return new MutationError('FailedToSetProperty', `failed to set property: ${property}: ${detail}`, { property, detail });
-  }
-
-  static general(err: Error): MutationError {
-    return new MutationError('General', `general error: ${err.message}`, err);
-  }
-
-  static noDurablePeers(): MutationError {
-    return new MutationError('NoDurablePeers', 'no durable peers available');
-  }
-
-  static decodeError(err: DecodeError): MutationError {
-    return new MutationError('DecodeError', `decode error: ${err.message}`, err);
-  }
-
-  static lineageError(err: LineageError): MutationError {
-    return new MutationError('LineageError', `lineage error: ${err.message}`, err);
-  }
-
-  static peerRejected(): MutationError {
-    return new MutationError('PeerRejected', 'peer rejected transaction');
-  }
-
-  static invalidEvent(): MutationError {
-    return new MutationError('InvalidEvent', 'invalid event');
-  }
-
-  static invalidUpdate(reason: string): MutationError {
-    return new MutationError('InvalidUpdate', `invalid update`, reason);
-  }
-
-  static propertyError(err: Error): MutationError {
-    return new MutationError('PropertyError', `property error: ${err.message}`, err);
-  }
-
-  static futureJoin(err: Error): MutationError {
-    return new MutationError('FutureJoin', `future join: ${err.message}`, err);
-  }
-
-  static anyhow(err: Error): MutationError {
-    return new MutationError('Anyhow', `anyhow error: ${err.message}`, err);
-  }
-
-  static toctouAttemptsExhausted(): MutationError {
-    return new MutationError('TOCTOUAttemptsExhausted', 'TOCTOU attempts exhausted');
-  }
-
-  /** Convert from RetrievalError, matching Rust From<RetrievalError> for MutationError */
-  static fromRetrievalError(err: RetrievalError): MutationError {
-    if (err.kind === 'AccessDenied' && err.detail instanceof AccessDenied) {
-      return MutationError.accessDenied(err.detail);
-    }
-    return MutationError.retrievalError(err);
-  }
-
-  /** Convert from StateError, matching Rust From<StateError> for MutationError */
-  static fromStateError(err: StateError): MutationError {
-    return MutationError.stateError(err);
-  }
-
-  /** Convert from DecodeError, matching Rust From<DecodeError> for MutationError */
-  static fromDecodeError(err: DecodeError): MutationError {
-    return MutationError.decodeError(err);
-  }
-
-  /** Convert from LineageError, matching Rust From<LineageError> for MutationError */
-  static fromLineageError(err: LineageError): MutationError {
-    return MutationError.lineageError(err);
-  }
-
-  /** Convert from AccessDenied, matching Rust From<AccessDenied> for MutationError */
-  static fromAccessDenied(err: AccessDenied): MutationError {
-    return MutationError.accessDenied(err);
-  }
-}
-
-// ─── RetrievalError ─────────────────────────────────────────────────────────
-
-export type RetrievalErrorKind =
-  | 'AccessDenied'
-  | 'ParseError'
-  | 'EntityNotFound'
-  | 'EventNotFound'
-  | 'StorageError'
-  | 'CollectionNotFound'
-  | 'FailedUpdate'
-  | 'DeserializationError'
-  | 'NoDurablePeers'
-  | 'Other'
-  | 'InvalidBucketName'
-  | 'AnkqlFilter'
-  | 'FutureJoin'
-  | 'Anyhow'
-  | 'DecodeError'
-  | 'StateError'
-  | 'MutationError'
-  | 'PropertyError'
-  | 'RequestError'
-  | 'ApplyError';
-
-export class RetrievalError extends Error {
-  readonly kind: RetrievalErrorKind;
-  readonly detail?: unknown;
-
-  constructor(kind: RetrievalErrorKind, message: string, detail?: unknown) {
-    super(message);
-    this.name = 'RetrievalError';
-    this.kind = kind;
-    this.detail = detail;
-  }
-
-  static accessDenied(err: AccessDenied): RetrievalError {
-    return new RetrievalError('AccessDenied', 'access denied', err);
-  }
-
-  static parseError(err: ParseError): RetrievalError {
-    return new RetrievalError('ParseError', `Parse error: ${err.message}`, err);
-  }
-
-  static entityNotFound(id: EntityId): RetrievalError {
-    return new RetrievalError('EntityNotFound', `Entity not found: ${id}`, id);
-  }
-
-  static eventNotFound(id: EventId): RetrievalError {
-    return new RetrievalError('EventNotFound', `Event not found: ${id}`, id);
-  }
-
-  static storageError(err: Error): RetrievalError {
-    return new RetrievalError('StorageError', `Storage error: ${err.message}`, err);
-  }
-
-  static collectionNotFound(id: CollectionId): RetrievalError {
-    return new RetrievalError('CollectionNotFound', `Collection not found: ${id}`, id);
-  }
-
-  static failedUpdate(err: Error): RetrievalError {
-    return new RetrievalError('FailedUpdate', `Update failed: ${err.message}`, err);
-  }
-
-  static deserializationError(err: Error): RetrievalError {
-    return new RetrievalError('DeserializationError', `Deserialization error: ${err.message}`, err);
-  }
-
-  static noDurablePeers(): RetrievalError {
-    return new RetrievalError('NoDurablePeers', 'No durable peers available for fetch operation');
-  }
-
-  static other(message: string): RetrievalError {
-    return new RetrievalError('Other', `Other error: ${message}`, message);
-  }
-
-  static invalidBucketName(): RetrievalError {
-    return new RetrievalError('InvalidBucketName', 'bucket name must only contain valid characters');
-  }
-
-  static ankqlFilter(err: FilterError): RetrievalError {
-    return new RetrievalError('AnkqlFilter', `ankql filter: ${err.message}`, err);
-  }
-
-  static futureJoin(err: Error): RetrievalError {
-    return new RetrievalError('FutureJoin', `Future join: ${err.message}`, err);
-  }
-
-  static anyhow(err: Error): RetrievalError {
-    return new RetrievalError('Anyhow', err.message, err);
-  }
-
-  static decodeError(err: DecodeError): RetrievalError {
-    return new RetrievalError('DecodeError', `Decode error: ${err.message}`, err);
-  }
-
-  static stateError(err: StateError): RetrievalError {
-    return new RetrievalError('StateError', `State error: ${err.message}`, err);
-  }
-
-  static mutationError(err: MutationError): RetrievalError {
-    return new RetrievalError('MutationError', `Mutation error: ${err.message}`, err);
-  }
-
-  static propertyError(err: Error): RetrievalError {
-    return new RetrievalError('PropertyError', `Property error: ${err.message}`, err);
-  }
-
-  static requestError(err: RequestError): RetrievalError {
-    return new RetrievalError('RequestError', `Request error: ${err.message}`, err);
-  }
-
-  static applyError(err: ApplyError): RetrievalError {
-    return new RetrievalError('ApplyError', `Apply error: ${err.message}`, err);
-  }
-
-  /** Convenience factory matching Rust RetrievalError::storage() */
-  static storage(err: Error): RetrievalError {
-    return RetrievalError.storageError(err);
-  }
-
-  /** Convert from AccessDenied, matching Rust From<AccessDenied> for RetrievalError */
-  static fromAccessDenied(err: AccessDenied): RetrievalError {
-    return RetrievalError.accessDenied(err);
-  }
-
-  /** Convert from DecodeError, matching Rust From<DecodeError> for RetrievalError */
-  static fromDecodeError(err: DecodeError): RetrievalError {
-    return RetrievalError.decodeError(err);
-  }
-
-  /** Convert from FilterError, matching Rust From<filter::Error> for RetrievalError */
-  static fromFilterError(err: FilterError): RetrievalError {
-    return RetrievalError.ankqlFilter(err);
-  }
-
-  /** Convert from StateError, matching Rust From<StateError> for RetrievalError */
-  static fromStateError(err: StateError): RetrievalError {
-    return RetrievalError.stateError(err);
-  }
-
-  /** Convert from MutationError, matching Rust From<MutationError> for RetrievalError */
-  static fromMutationError(err: MutationError): RetrievalError {
-    return RetrievalError.mutationError(err);
-  }
-
-  /** Convert from RequestError, matching Rust From<RequestError> for RetrievalError */
-  static fromRequestError(err: RequestError): RetrievalError {
-    return RetrievalError.requestError(err);
-  }
-
-  /** Convert from SubscriptionError, matching Rust From<SubscriptionError> for RetrievalError */
-  static fromSubscriptionError(err: SubscriptionError): RetrievalError {
-    return RetrievalError.anyhow(new Error(`Subscription error: ${err.message}`));
-  }
-
-  /** Convert from ApplyError, matching Rust From<ApplyError> for RetrievalError */
-  static fromApplyError(err: ApplyError): RetrievalError {
-    return RetrievalError.applyError(err);
-  }
-}

@@ -1,199 +1,204 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
+import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, iterFilterMap, HashMap } from '@ankurah/base';
+import { Attested, CollectionId, EntityId, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
+import { SubscriptionGuard } from '@ankurah/signals';
+import { Entity } from '../entity';
+import { SubscriptionError } from '../error';
+import { ContextData, Node } from '../node';
+import { ReactorSubscription, ReactorSubscriptionId } from '../reactor/subscription';
+import { ReactorUpdate, ReactorUpdateItem } from '../reactor/update';
+import { expandStates } from '../util/expand_states';
+import { Selection } from '@ankurah/ankql';
 
-import type { EntityId, QueryId, CollectionId, EntityState, KnownEntity, EntityIdRange } from '@ankurah/proto';
-import {
-  Attested,
-  AttestationSet,
-  NodeResponseBody,
-  NodeUpdateBody,
-  UpdateContent,
-  MembershipChange as ProtoMembershipChange,
-  SubscriptionUpdateItem,
-  StateFragment,
-  EventFragment,
-} from '@ankurah/proto';
-import type { Selection } from '@ankurah/ankql';
-import type { SubscriptionGuard } from '@ankurah/signals';
+export class SubscriptionHandler extends Struct {
+  _peerId: EntityId;
+  subscription: ReactorSubscription<Entity, Attested<Event>>;
+  _guard: SubscriptionGuard;
 
-import type { Node } from '../node.ts';
-import type { ReactorSubscription } from '../reactor/subscription.ts';
-import type { ReactorSubscriptionId } from '../reactor/watcherset.ts';
-import type { ReactorUpdate, ReactorUpdateItem, MembershipChange } from '../reactor/update.ts';
+  constructor(_peerId: EntityId, subscription: ReactorSubscription<Entity, Attested<Event>>, _guard: SubscriptionGuard) {
+    super();
+    this._peerId = _peerId;
+    this.subscription = subscription;
+    this._guard = _guard;
+  }
 
-// ---------------------------------------------------------------------------
-// SubscriptionHandler
-// ---------------------------------------------------------------------------
-
-/**
- * Manages a peer's subscription to this node's reactor.
- *
- * This handler owns both the ReactorSubscription and the SubscriptionGuard
- * for listening to changes on that subscription.
- *
- * Rust: `pub struct SubscriptionHandler`
- */
-export class SubscriptionHandler {
-  private readonly _peerId: EntityId;
-  private readonly _subscription: ReactorSubscription;
-  private readonly _guard: SubscriptionGuard;
-
-  constructor(peerId: EntityId, node: Node) {
-    this._peerId = peerId;
-    this._subscription = node.reactor.subscribe();
-
-    // Subscribe to changes on this subscription
-    // Rust: subscription.subscribe(move |update: ReactorUpdate| { ... })
-    this._guard = this._subscription.subscribe((update: ReactorUpdate) => {
-      console.info(
-        `SubscriptionHandler[${peerId}] received reactor update with ${update.items.length} items`,
-      );
-
-      // Deferred: node.sendUpdate(peerId, ...) — requires Node.sendUpdate (Layer 7)
-      // Rust: node.send_update(peer_id, NodeUpdateBody::SubscriptionUpdate { items: ... })
-      const items = update.items
-        .map((item) => convertItem(node, peerId, item))
-        .filter((x): x is SubscriptionUpdateItem => x !== null);
-
-      if (items.length > 0) {
-        node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items }));
+  static new<SE, PA>(peerId: EntityId, node: Node<SE, PA>): SubscriptionHandler {
+    const subscription = node.deref().value.reactor.subscribe();
+    const weakNode = node.weak();
+    const guard = subscription.subscribe(new OwnedClosure([weakNode], (update: ReactorUpdate<Entity, Attested<Event>>) => {
+      tracing.info(`SubscriptionHandler[${peerId}] received reactor update with ${update.items.length} items`);
+      {
+        const _v = weakNode.upgrade();
+        if (_v != null) {
+          const node = _v;
+          try {
+            tracing.debug(`SubscriptionHandler[${peerId}] sending update to peer ${peerId}`);
+            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: iterFilterMap([...update.items], (item) => convertItem(node, peerId, item)) }));
+          } finally {
+            node.drop();
+          }
+        }
       }
-    });
+    }, undefined, true));
+    return new SubscriptionHandler(peerId, subscription, guard);
   }
 
-  /** Get the subscription ID for this peer. */
   subscriptionId(): ReactorSubscriptionId {
-    return this._subscription.id();
+    return this.subscription.id();
   }
 
-  /** Get a reference to the subscription for adding/removing predicates. */
-  subscription(): ReactorSubscription {
-    return this._subscription;
+  subscription(): ReactorSubscription<Entity, Attested<Event>> {
+    return this.subscription;
   }
 
-  /** Remove a predicate from this peer's subscription. */
-  removePredicate(queryId: QueryId): void {
-    this._subscription.removePredicate(queryId);
+  removePredicate(queryId: QueryId): Result<void, SubscriptionError> {
+    const _r0 = this.subscription.removePredicate(queryId);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    _r0.drop();
+    return Result.Ok([]);
   }
 
-  /** Remove entity subscriptions from this peer's subscription. */
-  removeEntities(entityIds: Iterable<EntityId>): void {
-    this._subscription.removeEntitySubscriptions(entityIds);
-  }
-
-  /**
-   * Remove entity subscriptions from this peer's subscription using inclusive ranges.
-   *
-   * Rust: `pub fn remove_entity_ranges(&self, ranges: &[EntityIdRange])`
-   * Deferred: removeEntitySubscriptionRanges not yet on ReactorSubscription
-   */
-  removeEntityRanges(_ranges: EntityIdRange[]): void {
-    // TODO: this._subscription.removeEntitySubscriptionRanges(ranges);
-    console.warn('removeEntityRanges: not yet implemented');
-  }
-
-  /**
-   * Handle an entity subscription request for this peer.
-   *
-   * Rust: `pub async fn subscribe_entities<SE, PA>(...) -> anyhow::Result<NodeResponseBody>`
-   * Deferred: Requires Node.generateEntityDelta, policy.checkRead (Layer 7)
-   */
-  async subscribeEntities(
-    _node: Node,
-    _collectionId: CollectionId,
-    _ids: EntityId[],
-    _knownEntities: KnownEntity[],
-  ): Promise<NodeResponseBody> {
-    // TODO: Full implementation requires:
-    //   - node.policyAgent.canAccessCollection(cdata, collectionId)
-    //   - storage_collection.getStates(ids)
-    //   - node.policyAgent.checkRead(cdata, entityId, collectionId, state)
-    //   - subscription.addEntitySubscriptions(subscribedIds)
-    //   - node.generateEntityDelta(knownMap, state, storageCollection)
-    throw new Error('subscribeEntities: not yet implemented (Layer 7)');
-  }
-
-  /**
-   * Handle a subscription request for this peer.
-   *
-   * Rust: `pub async fn subscribe_query<SE, PA>(...) -> anyhow::Result<NodeResponseBody>`
-   * Deferred: Requires Reactor.upsertQuery, Node.generateEntityDelta (Layer 7)
-   */
-  async subscribeQuery(
-    _node: Node,
-    _queryId: QueryId,
-    _collectionId: CollectionId,
-    _selection: Selection,
-    _version: number,
-    _knownMatches: KnownEntity[],
-  ): Promise<NodeResponseBody> {
-    // TODO: Full implementation requires:
-    //   - version validation
-    //   - node.policyAgent.canAccessCollection(cdata, collectionId)
-    //   - node.policyAgent.filterPredicate(cdata, collectionId, predicate)
-    //   - node.reactor.upsertQuery(subscriptionId, queryId, collectionId, selection, node, cdata, version)
-    //   - node.policyAgent.attestState(node, entityState)
-    //   - expandStates(initialStates, knownMatchIds, storageCollection)
-    //   - node.generateEntityDelta(knownMap, state, storageCollection)
-    throw new Error('subscribeQuery: not yet implemented (Layer 7)');
+  async subscribeQuery<SE, PA>(node: Node<SE, PA>, queryId: QueryId, collectionId: CollectionId, selection: Selection, cdata: ContextData, version: number, knownMatches: KnownEntity[]): Promise<Result<NodeResponseBody, Error>> {
+    let _moved0 = false;
+    try {
+      try {
+        try {
+          if (version === 0) {
+            return Result.Err(AnyhowError.msg('Invalid version 0 for subscription'));
+          }
+          const _r1 = node.deref().value.policyAgent.canAccessCollection(cdata, collectionId);
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          _r1.drop();
+          const _r3 = node.deref().value.policyAgent.filterPredicate(cdata, collectionId, selection.takeField('predicate'));
+          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+          const _a2 = _r3.unwrap();
+          selection.predicate.drop();
+          selection.predicate = _a2;
+          const _r4 = await node.deref().value.collections.get(collectionId);
+          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+          const storageCollection = _r4.unwrap();
+          try {
+            const _r5 = await node.deref().value.reactor.upsertQuery(this.subscription.id(), queryId, collectionId.clone(), selection.clone(), node, cdata, version);
+            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+            let _moved6 = false;
+            const matchingEntities = _r5.unwrap();
+            try {
+              _moved6 = true;
+              const initialStates = iterFilterMap([...matchingEntities], (e) => {
+                const _r7 = e.toEntityState().ok();
+                if (_r7 == null) return null;
+                let _moved8 = false;
+                const entityState = _r7;
+                try {
+                  let _moved9 = false;
+                  const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+                  try {
+                    _moved8 = true;
+                    _moved9 = true;
+                    return Attested.opt(entityState, attestation);
+                  } finally {
+                    if (!_moved9) dropOwned(attestation);
+                  }
+                } finally {
+                  if (!_moved8) entityState.drop();
+                }
+              });
+              const _r10 = await expandStates(initialStates, [...knownMatches].map((k) => k.entityId), storageCollection);
+              if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+              let _moved11 = false;
+              const expandedStates = _r10.unwrap();
+              try {
+                _moved0 = true;
+                const knownMap = HashMap.from([...knownMatches].map((k) => [k.entityId, k.takeField('head')]));
+                let deltas = [];
+                _moved11 = true;
+                const _seq13 = expandedStates;
+                let _at14 = 0;
+                try {
+                  while (_at14 < _seq13.length) {
+                    const state = _seq13[_at14++];
+                    const _r12 = await node.generateEntityDelta(knownMap, state, storageCollection);
+                    if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+                    {
+                      const _v = _r12.unwrap();
+                      if (_v != null) {
+                        const delta = _v;
+                        deltas.push(delta);
+                      }
+                    }
+                  }
+                } finally {
+                  dropOwned(_seq13.slice(_at14));
+                }
+                return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas }));
+              } finally {
+                if (!_moved11) dropOwned(expandedStates);
+              }
+            } finally {
+              if (!_moved6) dropOwned(matchingEntities);
+            }
+          } finally {
+            storageCollection.drop();
+          }
+        } finally {
+          if (!_moved0) dropOwned(knownMatches);
+        }
+      } finally {
+        selection.drop();
+      }
+    } finally {
+      collectionId.drop();
+    }
   }
 }
 
-// ---------------------------------------------------------------------------
-// convertItem (module-private)
-// ---------------------------------------------------------------------------
-
-/**
- * Convert a single ReactorUpdateItem to a SubscriptionUpdateItem.
- *
- * Rust: `fn convert_item<SE, PA>(node, peer_id, item) -> Option<SubscriptionUpdateItem>`
- */
-function convertItem(
-  node: Node,
-  peerId: EntityId,
-  item: ReactorUpdateItem,
-): SubscriptionUpdateItem | null {
-  // Convert entity to EntityState and attest it
-  let entityState: EntityState;
+function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: ReactorUpdateItem<Entity, Attested<Event>>): SubscriptionUpdateItem | null {
   try {
-    entityState = item.entity.toEntityState();
-  } catch (e) {
-    console.warn(
-      `Failed to convert entity ${item.entity.id()} to EntityState for peer ${peerId}: ${e}`,
-    );
-    return null;
+    const _m0 = (() => {
+      const _v = item.entity.toEntityState();
+      if (_v.isOk()) {
+        const entityState = _v.unwrap();
+        return entityState;
+      } else {
+        const e = _v.unwrapErr();
+        try {
+          {
+            tracing.warn(`Failed to convert entity ${item.entity.id()} to EntityState for peer ${peerId}: ${e}`);
+            return { $jump: 'return', $value: null };
+          }
+        } finally {
+          e.drop();
+        }
+      }
+    })();
+    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+    const entityState = (_m0 as any);
+    let _moved1 = false;
+    const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+    try {
+      _moved1 = true;
+      const attestedState = Attested.opt(entityState, attestation);
+      let _moved2 = false;
+      const attestedEvents = item.events;
+      try {
+        _moved2 = true;
+        let _moved3 = false;
+        const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
+        try {
+          const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+          _moved3 = true;
+          return new SubscriptionUpdateItem(item.entity.id(), item.entity.collection().clone(), content, predicateRelevance);
+        } finally {
+          if (!_moved3) content.drop();
+        }
+      } finally {
+        if (!_moved2) dropOwned(attestedEvents);
+      }
+    } finally {
+      if (!_moved1) dropOwned(attestation);
+    }
+  } finally {
+    item.drop();
   }
-
-  const attestation = node.policyAgent.attestState(entityState);
-  // Rust: Attested::opt(entity_state, attestation)
-  const attestations = attestation !== null
-    ? new AttestationSet([attestation])
-    : AttestationSet.default();
-  const attestedState = new Attested(entityState, attestations);
-  const stateFragment = StateFragment.fromAttestedEntityState(attestedState);
-
-  // Events should already be attested — convert to EventFragment
-  const eventFragments = item.events.map((e) => EventFragment.fromAttestedEvent(e));
-
-  // Determine content based on whether we have events
-  const content = new UpdateContent('StateAndEvent', {
-    state: stateFragment,
-    events: eventFragments,
-  });
-
-  // Convert predicate relevance from reactor types to proto types
-  // MembershipChange is a string union in TS reactor, ProtoMembershipChange is Enum<V> in proto
-  const predicateRelevance = item.predicateRelevance.map(
-    ([predId, membership]) => {
-      const protoMembership = new ProtoMembershipChange(membership, {});
-      return [predId, protoMembership] as [typeof predId, ProtoMembershipChange];
-    },
-  );
-
-  // Create subscription update item
-  return new SubscriptionUpdateItem(
-    item.entity.id(),
-    item.entity.collection(),
-    content,
-    predicateRelevance,
-  );
 }
+

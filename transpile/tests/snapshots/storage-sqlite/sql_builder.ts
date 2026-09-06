@@ -481,7 +481,7 @@ function canPushdownExpr(expr: Expr): boolean {
     },
     ExprList: (v) => {
       const exprs = v._0;
-      return [...exprs].every(canPushdownExpr) as any;
+      return [...exprs].every(canPushdownExpr);
     },
     Predicate: (v) => false,
     InfixExpr: () => false,

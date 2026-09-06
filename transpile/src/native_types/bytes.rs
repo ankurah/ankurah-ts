@@ -24,7 +24,13 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             // What the array translations would have written. It does not run,
             // and the diagnostic above says so; keeping it means the shape of
             // the output does not change until a growable byte type is chosen.
-            fallback: Box::new(super::array::translate(receiver, method, args, &super::array::Element::unknown())),
+            fallback: Box::new(super::array::translate(
+                receiver,
+                method,
+                args,
+                &super::array::Element::unknown(),
+                super::iterator::Elements::Borrowed,
+            )),
         };
     }
 
@@ -36,6 +42,18 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "to_vec" | "to_owned" => format!("{}.slice()", receiver),
         "as_slice" | "as_bytes" | "as_ref" | "as_mut_slice" => receiver.to_string(),
         "iter" | "into_iter" => format!("[...{}]", receiver),
+        // A byte is a number here, so a loop variable bound to one is a copy
+        // and `*b = ..` through it writes nothing (F4/E12).
+        "iter_mut" if args.is_empty() => {
+            let message = "`iter_mut` on a byte buffer hands out `&mut u8`, and a byte is a \
+                           JavaScript number: the loop would bind a COPY and every write \
+                           through it would be lost"
+                .to_string();
+            return MethodTranslation::Refused {
+                fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+                message,
+            };
+        }
 
         // Reading one byte, or a run of them.
         // J1: `first`, `last` and `get` answer an `Option`, whose JavaScript
@@ -55,7 +73,13 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
 
         // Everything else a byte slice shares with any other sequence — the
         // Option-returning readers among them — is written by the shared table.
-        _ => match super::iterator::translate(receiver, method, args, super::iterator::Receiver::Sequence) {
+        _ => match super::iterator::translate(
+            receiver,
+            method,
+            args,
+            super::iterator::Receiver::Sequence,
+            super::iterator::Elements::Borrowed,
+        ) {
             Some(written) => written,
             None => return MethodTranslation::Passthrough,
         },

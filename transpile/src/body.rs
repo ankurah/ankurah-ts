@@ -304,7 +304,7 @@ impl<'a> BodyTranslator<'a> {
                 // .len()` written through `expr` put an `if` statement in front
                 // of the `.`, which does not parse.
                 let receiver = self.expecting(&call.receiver, through.as_ref(), || {
-                    self.expr_value(&call.receiver)
+                    self.receiver_value(call)
                 });
                 let receiver = self.hoist_receiver(call, receiver);
                 let receiver = parenthesise_receiver(&call.receiver, receiver);
@@ -314,8 +314,8 @@ impl<'a> BodyTranslator<'a> {
 
                 let args = self.method_arguments(call, &rust_method);
 
-                if let Some(written) = self.collected_into(call, &rust_method, &receiver) {
-                    return written;
+                if let Some(w) = self.answered_before_dispatch(call, &rust_method, &receiver, &args) {
+                    return w;
                 }
 
                 // ── unwrap/expect: single decision point ──
@@ -440,10 +440,7 @@ impl<'a> BodyTranslator<'a> {
                             &recv,
                             &rust_method,
                             &args,
-                            native_types::Position {
-                                used: !self.discards(call),
-                                reads_as_value: !self.is_written_through(call),
-                            },
+                            self.position_of(call),
                             &once,
                         );
                         // R9: `Ord::cmp` owns `compareTo`, and a written-out
@@ -540,6 +537,8 @@ impl<'a> BodyTranslator<'a> {
                         })
                     })
                     .collect();
+                // E10/J3: the flag stands after everything the call evaluates.
+                let args = self.lifted_above_the_flag(expr, &Self::each_argument(&call.args), args);
                 // An `OwnedClosure` is deliberately not a bare callable, so a
                 // call that reached the body without a liveness check would be
                 // exactly the bug it exists to catch.
@@ -559,15 +558,6 @@ impl<'a> BodyTranslator<'a> {
                 // the callee cannot see which. `invoke` is the one place that
                 // tells them apart.
                 if let Some(helper) = self.bound_closure_helper(&call.func) {
-                    // J3: the statement's move flag says the callee was handed
-                    // over, and it is written before everything the statement
-                    // evaluates. An argument that THROWS before the call starts
-                    // therefore left the flag set and nothing releasing the
-                    // closure — `signals`' `Memo::with_cached` passes
-                    // `guard.value ?? throw`, which is exactly that shape. Each
-                    // argument that is not a place is given a name above the
-                    // flag, so the flag stands after everything that can throw.
-                    let args = self.lifted_above_the_flag(&call.func, &call.args, args);
                     let mut through = vec![func.clone()];
                     through.extend(args.iter().cloned());
                     return format!("{}({})", helper, through.join(", "));
@@ -1308,11 +1298,11 @@ mod paths;
 /// The small pieces of TypeScript the translator writes by hand.
 mod writing;
 pub(crate) use writing::*;
-/// What a pattern asks of a value, and what it takes out of it.
 /// A name in a pattern that resolves to a `const`.
 mod const_patterns;
 
 pub(crate) mod pat_shape;
+/// What a pattern asks of a value, and what it takes out of it.
 mod patterns;
 pub(crate) mod unreadable_alternatives;
 #[cfg(test)]

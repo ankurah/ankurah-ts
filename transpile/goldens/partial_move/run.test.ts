@@ -9,7 +9,7 @@
 // it would record a fatal that the ownership check at the end then reports.
 
 import { expect, test } from 'bun:test';
-import { Entity, Pair, Single, borrow, consume, split, takeBoth, takeOne } from './input.ts';
+import { Entity, Pair, Single, borrow, consume, nameOfOne, split, takeBoth, takeOne, widthOfOne } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('consume takes an Entity by value and releases it', () => {
@@ -48,6 +48,24 @@ test('a Single built here owns its Entity the same way', () => {
   const single = new Single(new Entity('only'));
   expect(single.only.name).toBe('only');
   single.drop();
+});
+
+// A method declared `self` takes its receiver with it, and a receiver that is a
+// FIELD of a place is a partial move. Written as a plain property read, `pair`
+// still owned what `intoName` had taken: the `pair.drop()` the emitted body
+// writes was then a second drop of the same Entity, and the strict registry
+// aborts with `BUG: Entity was used after being moved`. Six of ankql's seven
+// `ast.test.ts` failures are exactly this shape.
+test('a self method on a field takes the field out of the struct', () => {
+  expect(nameOfOne(new Pair(new Entity('a'), new Entity('bb')))).toBe('a');
+});
+
+// A `&self` method takes nothing, and the field is read where it is.
+test('a borrowing method on a field takes nothing', () => {
+  const pair = new Pair(new Entity('a'), new Entity('bb'));
+  expect(widthOfOne(pair)).toBe(1);
+  expect(widthOfOne(pair)).toBe(1);
+  pair.drop();
 });
 
 test('nothing leaked and nothing was reported', async () => {

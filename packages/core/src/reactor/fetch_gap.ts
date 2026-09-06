@@ -1,185 +1,190 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
+import { Struct, Result, Weak, derivedClone } from '@ankurah/base';
+import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
+import { NodeAndContext } from '../context';
+import { Entity } from '../entity';
+import { RetrievalError } from '../error';
+import { ContextData, MatchArgs, Node, NodeInner } from '../node';
+import { AbstractEntity } from '../reactor';
+import { ValueType } from '../value/index';
+import { CollectionId } from '@ankurah/proto';
 
-import {
-  Predicate,
-  type Selection,
-  Selection as SelectionClass,
-  type OrderByItem,
-  ComparisonOperator,
-  Expr,
-  Literal,
-  PathExpr,
-} from '@ankurah/ankql';
-import type { CollectionId } from '@ankurah/proto';
-import type { Entity } from '../entity.ts';
-import { ValueType, valueType, valueToLiteral } from '../value/index.ts';
+export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> extends Struct implements GapFetcher<Entity> {
+  weakNode: Weak<NodeInner<SE, PA>>;
+  cdata: ContextData;
 
-// ── GapFetcher ────────────────────────────────────────────────────────
-// Rust: pub trait GapFetcher<E: AbstractEntity>: Send + Sync + 'static
-// Divergence: No generic E — uses concrete Entity [E8].
-
-export interface GapFetcher {
-  fetchGap(
-    collectionId: CollectionId,
-    selection: Selection,
-    lastEntity: Entity | null,
-    gapSize: number,
-  ): Promise<Entity[]>;
-}
-
-// ── NodeLike ──────────────────────────────────────────────────────────
-// Rust: Uses NodeAndContext::fetch_entities() directly.
-// Divergence: Placeholder interface to break circular import [E8].
-
-export interface NodeLike {
-  fetchEntities(
-    collectionId: CollectionId,
-    selection: Selection,
-  ): Promise<Entity[]>;
-}
-
-// ── QueryGapFetcher ───────────────────────────────────────────────────
-// Rust: pub struct QueryGapFetcher<SE, PA> { weak_node: Weak<NodeInner<SE, PA>>, cdata: PA::ContextData }
-// Divergence: No SE/PA type params [E8].
-// Divergence: WeakRef instead of Weak<NodeInner> [E8].
-// Divergence: No cdata — node context handles this internally [E8].
-
-export class QueryGapFetcher implements GapFetcher {
-  // Rust: weak_node: Weak<NodeInner<SE, PA>>
-  private nodeRef: WeakRef<NodeLike>;
-
-  // Rust: pub fn new(node: &Node<SE, PA>, cdata: PA::ContextData) -> Self
-  constructor(node: NodeLike) {
-    this.nodeRef = new WeakRef(node);
+  constructor(weakNode: Weak<NodeInner<SE, PA>>, cdata: ContextData) {
+    super();
+    this.weakNode = weakNode;
+    this.cdata = cdata;
   }
 
-  // Rust: async fn fetch_gap(&self, collection_id, selection, last_entity, gap_size)
-  async fetchGap(
-    collectionId: CollectionId,
-    selection: Selection,
-    lastEntity: Entity | null,
-    gapSize: number,
-  ): Promise<Entity[]> {
-    // Upgrade weak reference — mirrors Rust self.weak_node.upgrade()
-    const node = this.nodeRef.deref();
-    if (!node) {
-      throw new Error('Node has been dropped, cannot fill gap');
-    }
+  static new<SE, PA>(node: Node<SE, PA>, cdata: ContextData): QueryGapFetcher<SE, PA> {
+    return new QueryGapFetcher(node._0.downgrade(), cdata);
+  }
 
-    // Build gap selection with continuation predicate
-    let gapSelection: Selection;
-    if (lastEntity !== null) {
-      let gapPredicate: Predicate;
-      if (selection.orderBy !== null) {
-        gapPredicate = buildContinuationPredicate(
-          selection.predicate,
-          selection.orderBy,
-          lastEntity,
-        );
-      } else {
-        gapPredicate = selection.predicate;
+  async fetchGap(collectionId: CollectionId, selection: Selection, lastEntity: Entity | null, gapSize: number): Promise<Result<Entity[], RetrievalError>> {
+    const _m0 = this.weakNode.upgrade();
+    const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => RetrievalError.storage(io.Error.other('Node has been dropped, cannot fill gap')))()));
+    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+    let _moved2 = false;
+    const nodeInner = _r1.unwrap();
+    try {
+      _moved2 = true;
+      const node = new Node(nodeInner);
+      const nodeContext = new NodeAndContext(node, this.cdata.clone());
+      const _m8 = (() => {
+        {
+          const _v1 = lastEntity;
+          if (_v1 != null) {
+            const last = _v1;
+            const _m4 = (() => {
+              {
+                const _v = selection.orderBy;
+                if (_v != null) {
+                  const orderBy = _v;
+                  const _r3 = buildContinuationPredicate(selection.predicate, orderBy, last).mapErr((e) => RetrievalError.storage(io.Error.other(e)));
+                  if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
+                  return _r3.unwrap();
+                } else {
+                return selection.predicate.clone();
+              }
+              }
+            })();
+            if ((_m4 as any)?.$jump === 'return') return _m4;
+            let _moved5 = false;
+            const gapPredicate = (_m4 as any);
+            try {
+              const _b6 = selection.orderBy.clone();
+              const _b7 = BigInt(gapSize);
+              _moved5 = true;
+              return new Selection(gapPredicate, _b6, _b7);
+            } finally {
+              if (!_moved5) gapPredicate.drop();
+            }
+          } else {
+          return new Selection(selection.predicate.clone(), selection.orderBy.clone(), BigInt(gapSize));
+        }
+        }
+      })();
+      if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
+      let _moved9 = false;
+      const gapSelection = (_m8 as any);
+      try {
+        _moved9 = true;
+        let _moved10 = false;
+        const matchArgs = new MatchArgs(gapSelection, false);
+        try {
+          _moved10 = true;
+          return await nodeContext.fetchEntities(collectionId, matchArgs);
+        } finally {
+          if (!_moved10) matchArgs.drop();
+        }
+      } finally {
+        if (!_moved9) gapSelection.drop();
       }
-      gapSelection = new SelectionClass(
-        gapPredicate,
-        selection.orderBy,
-        gapSize,
-      );
-    } else {
-      // No last entity — use original selection with gap_size limit
-      gapSelection = new SelectionClass(
-        selection.predicate,
-        selection.orderBy,
-        gapSize,
-      );
+    } finally {
+      if (!_moved2) nodeInner.drop();
     }
+  }
 
-    return node.fetchEntities(collectionId, gapSelection);
+  clone(): QueryGapFetcher<SE, PA> {
+    return new QueryGapFetcher(this.weakNode.clone(), derivedClone(this.cdata));
   }
 }
 
-// ── buildContinuationPredicate ────────────────────────────────────────
-// Rust: pub fn build_continuation_predicate<E: AbstractEntity>(...)
-// For ORDER BY a ASC, b DESC with last entity having a=5, b=10:
-// Returns: originalPredicate AND a >= 5 AND b <= 10 AND id != lastEntity.id
-// Divergence: No generic E — uses concrete Entity [E8].
-// Divergence: Throws instead of Result [E7].
+export interface GapFetcher<E extends AbstractEntity> {
+  fetchGap(collectionId: CollectionId, selection: Selection, lastEntity: E | null, gapSize: number): Promise<Result<E[], RetrievalError>>;
+}
 
-/** Value types skipped for ORDER BY continuation (not orderable in AnkQL). */
-const SKIP_VALUE_TYPES = new Set<string>(['Object', 'Binary', 'Json']);
-
-export function buildContinuationPredicate(
-  originalPredicate: Predicate,
-  orderBy: OrderByItem[],
-  lastEntity: Entity,
-): Predicate {
-  const gapConditions: Predicate[] = [];
-
-  // 1. Add original predicate
-  gapConditions.push(originalPredicate);
-
-  // 2. Add ORDER BY continuation conditions
+export function buildContinuationPredicate<E extends AbstractEntity>(originalPredicate: Predicate, orderBy: OrderByItem[], lastEntity: E): Result<Predicate, string> {
+  let gapConditions = [];
+  gapConditions.push(originalPredicate.clone());
   for (const orderItem of orderBy) {
     const fieldName = orderItem.path.property();
-
-    // Get the field value from the last entity
-    const fieldValue = lastEntity.getPropertyValue(fieldName);
-    if (fieldValue === null) {
-      continue;
+    {
+      const _v = lastEntity.value(fieldName);
+      if (_v != null) {
+        const fieldValue = _v;
+        try {
+          const _m0 = (() => {
+            if (fieldValue.is('String')) {
+              const { _0: s } = fieldValue.value;
+              return new Literal('String', { _0: s });
+            } else if (fieldValue.is('I16')) {
+              const { _0: i } = fieldValue.value;
+              return new Literal('I16', { _0: i });
+            } else if (fieldValue.is('I32')) {
+              const { _0: i } = fieldValue.value;
+              return new Literal('I32', { _0: i });
+            } else if (fieldValue.is('I64')) {
+              const { _0: i } = fieldValue.value;
+              return new Literal('I64', { _0: i });
+            } else if (fieldValue.is('F64')) {
+              const { _0: f } = fieldValue.value;
+              return new Literal('F64', { _0: f });
+            } else if (fieldValue.is('Bool')) {
+              const { _0: b } = fieldValue.value;
+              return new Literal('Bool', { _0: b });
+            } else if (fieldValue.is('EntityId')) {
+              const { _0: id } = fieldValue.value;
+              return new Literal('EntityId', { _0: Ulid_fromEntityId(id) });
+            } else {
+              return { $jump: 'continue' };
+            }
+          })();
+          if ((_m0 as any)?.$jump === 'continue') continue;
+          let _moved1 = false;
+          const literal = (_m0 as any);
+          try {
+            let _moved2 = false;
+            const operator = orderItem.direction.match({
+              Asc: () => new ComparisonOperator('GreaterThanOrEqual', {}),
+              Desc: () => new ComparisonOperator('LessThanOrEqual', {}),
+            });
+            try {
+              _moved2 = true;
+              _moved1 = true;
+              let _moved3 = false;
+              const condition = new Predicate('Comparison', { left: new Expr('Path', { _0: orderItem.path.clone() }), operator: operator, right: new Expr('Literal', { _0: literal }) });
+              try {
+                _moved3 = true;
+                gapConditions.push(condition);
+              } finally {
+                if (!_moved3) condition.drop();
+              }
+            } finally {
+              if (!_moved2) operator.drop();
+            }
+          } finally {
+            if (!_moved1) literal.drop();
+          }
+        } finally {
+          fieldValue.drop();
+        }
+      }
     }
-
-    // Skip Object, Binary, Json — not commonly used in ORDER BY (mirrors Rust continue arm)
-    if (SKIP_VALUE_TYPES.has(fieldValue.type)) {
-      continue;
-    }
-
-    const literal = valueToLiteral(fieldValue);
-
-    const operator: ComparisonOperator =
-      orderItem.direction.is('Asc')
-        ? ComparisonOperator.GreaterThanOrEqual()
-        : ComparisonOperator.LessThanOrEqual();
-
-    const condition: Predicate = Predicate.Comparison(
-      Expr.Path(orderItem.path),
-      operator,
-      Expr.Literal(literal),
-    );
-
-    gapConditions.push(condition);
   }
-
-  // 3. Add entity ID exclusion to avoid fetching the last entity again
-  const idExclusion: Predicate = Predicate.Comparison(
-    Expr.Path(PathExpr.simple('id')),
-    ComparisonOperator.NotEqual(),
-    Expr.Literal(Literal.EntityId(lastEntity.id().toBytes())),
-  );
+  const idExclusion = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('id') }), operator: new ComparisonOperator('NotEqual', {}), right: new Expr('Literal', { _0: new Literal('EntityId', { _0: Ulid_fromEntityId((lastEntity.id())) }) }) });
   gapConditions.push(idExclusion);
-
-  // 4. Combine all conditions with AND
-  if (gapConditions.length === 0) {
-    return Predicate.True();
-  }
-
-  return gapConditions.reduce((acc: Predicate, condition: Predicate): Predicate =>
-    Predicate.And(acc, condition),
-  );
+  const result = [...gapConditions].reduce((acc, condition) => new Predicate('And', { _0: acc, _1: condition })).unwrapOr(new Predicate('True', {}));
+  return Result.Ok(result);
 }
 
-// ── inferValueTypeForField ────────────────────────────────────────────
-// Rust: pub fn infer_value_type_for_field<E: AbstractEntity>(entities: &[E], field_name: &str) -> ValueType
-// Divergence: No generic E — uses concrete Entity [E8].
-
-export function inferValueTypeForField(
-  entities: Entity[],
-  fieldName: string,
-): ValueType {
+export function inferValueTypeForField<E extends AbstractEntity>(entities: E[], fieldName: string): ValueType {
   for (const entity of entities) {
-    const value = entity.getPropertyValue(fieldName);
-    if (value !== null) {
-      return valueType(value);
+    {
+      const _v = entity.value(fieldName);
+      if (_v != null) {
+        const value = _v;
+        try {
+          return ValueType.of(value);
+        } finally {
+          value.drop();
+        }
+      }
     }
   }
-  // TODO: Get type from system catalog instead of defaulting to String
-  return ValueType.String;
+  return new ValueType('String', {});
 }
+
