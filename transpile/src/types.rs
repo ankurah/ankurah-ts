@@ -329,6 +329,12 @@ pub struct ImplInfo {
     /// `type Target = T;` — what this impl supplies for the trait's associated
     /// types.
     pub assoc_types: Vec<(String, syn::Type)>,
+    /// `const LIMIT: u32 = 5;` written INSIDE the impl, by name and span.
+    ///
+    /// G5: the port emits nothing for one, and `Self::LIMIT` then reads a
+    /// member no class declares — `undefined`, silently, wherever it is used.
+    /// Recorded here so the module that owns the file can say so.
+    pub const_items: Vec<(String, proc_macro2::Span)>,
     pub methods: Vec<FnInfo>,
 }
 

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/pn_counter.rs
-import { Struct, Result, Arc, Weak } from '@ankurah/base';
+import { Struct, Result, Arc, Weak, debugString } from '@ankurah/base';
 import { Entity } from '../../entity';
 import { PNBackend } from '../backend/pn_counter';
 import { FromActiveType, FromEntity, InitializeWith, PropertyError } from '../traits';
@@ -61,7 +61,7 @@ export class PNCounter<I extends Into<PNValue> & From<PNValue> & Copy & Clone> e
   }
 
   debug(): string {
-    return `PNCounter { propertyName: ${JSON.stringify(this.propertyName)}, backend: ${this.backend}, phantom: ${this.phantom} }`;
+    return `PNCounter { propertyName: ${debugString(this.propertyName)}, backend: ${this.backend}, phantom: ${this.phantom} }`;
   }
 }
 

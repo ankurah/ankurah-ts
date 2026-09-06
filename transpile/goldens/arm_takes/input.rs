@@ -55,8 +55,13 @@ pub fn user_some(o: Outer) -> u32 {
 
 pub enum Holder { Pair((Token, Token)), Nothing }
 
-/// The partial tuple again, as a variant's member. Here the port does not carry
-/// the member's element types, so it refuses rather than guessing.
+/// The partial tuple again, as a variant's MEMBER. `dropUnbound` takes a
+/// payload minus whole members and has no spelling for a member minus some of
+/// its elements — but the port writes a tuple as an array, so each position it
+/// did not name has a place of its own and `dropOwned` asks nothing of its
+/// type (H12). This used to be refused, on the ground that the payload walk
+/// does not carry the member's element types; releasing by POSITION needs
+/// none of them.
 pub fn member(h: Holder) -> u32 {
     match h {
         Holder::Pair((a, _)) => { let n = a.n; drop(a); n }

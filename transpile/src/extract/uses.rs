@@ -22,6 +22,10 @@ pub struct UseInfo {
     /// claim the name, since widening a name's scope must not change what
     /// another body in the same module means by it.
     pub from_body: bool,
+    /// Where the `use` was written. A report about a `use` — a glob a body
+    /// wrote, a name two bodies contest — carries this, because a diagnostic at
+    /// `Span::call_site()` reaches the reader with no file and no line (N20).
+    pub span: proc_macro2::Span,
 }
 
 /// One name a `use` brings into scope. `local` is `None` for `use path::*`.
@@ -58,7 +62,13 @@ pub(super) fn body_uses(block: &syn::Block, into: &mut Vec<UseInfo>) {
 pub(super) fn extract_use(u: &syn::ItemUse) -> UseInfo {
     let mut bindings = Vec::new();
     collect_use_bindings(&u.tree, &mut Vec::new(), &mut bindings);
-    UseInfo { path: use_tree_to_string(&u.tree), vis: visibility(&u.vis), bindings, from_body: false }
+    UseInfo {
+        path: use_tree_to_string(&u.tree),
+        vis: visibility(&u.vis),
+        bindings,
+        from_body: false,
+        span: syn::spanned::Spanned::span(u),
+    }
 }
 
 /// Flatten a `use` tree into the names it binds. `use a::{b, c as d}` binds `b`

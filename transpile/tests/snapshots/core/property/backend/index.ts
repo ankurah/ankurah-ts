@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/mod.rs
-import { Result, Arc, dropOwned, HashMap } from '@ankurah/base';
+import { Result, Arc, dropOwned, debugString, HashMap } from '@ankurah/base';
 import { Operation } from '@ankurah/proto';
 import { RetrievalError } from '../../error';
 import { LWWBackend } from './lww';
@@ -73,7 +73,7 @@ export function backendFromString(name: string, buffer: Uint8Array | null): Resu
       if (!_moved5) backend.drop();
     }
   } else {
-    throw new Error(`unknown backend: ${JSON.stringify(name)}`);
+    throw new Error(`unknown backend: ${debugString(name)}`);
   }
 }
 

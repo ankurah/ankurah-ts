@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/cast.rs
-import { Enum, Result, serde_json } from '@ankurah/base';
+import { Enum, Result, debugString } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { PropertyError } from '../property/traits';
 import { Error } from '../selection/filter';
@@ -66,8 +66,8 @@ export class CastError extends Enum<CastErrorV> {
   debug(): string {
     return this.match({
       IncompatibleTypes: (v) => `IncompatibleTypes { from: ${v.from.debug()}, to: ${v.to.debug()} }`,
-      InvalidFormat: (v) => `InvalidFormat { value: ${JSON.stringify(v.value)}, targetType: ${v.targetType.debug()} }`,
-      NumericOverflow: (v) => `NumericOverflow { value: ${JSON.stringify(v.value)}, targetType: ${v.targetType.debug()} }`,
+      InvalidFormat: (v) => `InvalidFormat { value: ${debugString(v.value)}, targetType: ${v.targetType.debug()} }`,
+      NumericOverflow: (v) => `NumericOverflow { value: ${debugString(v.value)}, targetType: ${v.targetType.debug()} }`,
     });
   }
 }
@@ -250,7 +250,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Bool', { _0: f !== 0.0 }));
   } else if ((_v[0].is('String')) && (_v[1].is('Json'))) {
     const { _0: s } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: new serde_json.Value('String', { _0: s }) }));
+    return Result.Ok(new Value('Json', { _0: s }));
   } else if ((_v[0].is('I64')) && (_v[1].is('Json'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('Json', { _0: n }));
@@ -265,7 +265,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Json', { _0: n }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('Json'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: new serde_json.Value('Bool', { _0: b }) }));
+    return Result.Ok(new Value('Json', { _0: b }));
   } else if ((_v[0].is('Json')) && (_v[1].is('String'))) {
     const { _0: json } = _v[0].value;
     return json.match({

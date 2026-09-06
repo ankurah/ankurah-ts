@@ -11,6 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@ankurah/base": "workspace:*",
     "@ankurah/ankql": "workspace:*",
     "@ankurah/core": "workspace:*",
     "@ankurah/proto": "workspace:*",

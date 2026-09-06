@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/value.rs
-import { Enum } from '@ankurah/base';
+import { Enum, debugString } from '@ankurah/base';
 import { Value } from '@ankurah/core';
 
 export type SqliteValueV = {
@@ -161,7 +161,7 @@ export class SqliteValue extends Enum<SqliteValueV> {
 
   debug(): string {
     return this.match({
-      Text: (v) => `Text(${JSON.stringify(v._0)})`,
+      Text: (v) => `Text(${debugString(v._0)})`,
       Integer: (v) => `Integer(${String(v._0)})`,
       Real: (v) => `Real(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Blob: (v) => `Blob(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,

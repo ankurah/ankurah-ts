@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { FilterIterator, FilterResult } from './filter';
-import { Struct, dropOwned } from '@ankurah/base';
+import { Struct, debugString, dropOwned } from '@ankurah/base';
 import { parseSelection } from '@ankurah/ankql';
 
 class TestItem extends Struct implements Filterable {
@@ -44,7 +44,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   debug(): string {
-    return `TestItem { name: ${JSON.stringify(this.name)}, age: ${JSON.stringify(this.age)} }`;
+    return `TestItem { name: ${debugString(this.name)}, age: ${debugString(this.age)} }`;
   }
 }
 

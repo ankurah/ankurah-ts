@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/types.rs
-import { Struct, Enum } from '@ankurah/base';
+import { Struct, Enum, debugString } from '@ankurah/base';
 import { KeySpec, Value, ValueType } from '@ankurah/core';
 import { OrderByItem, Predicate } from '@ankurah/ankql';
 
@@ -68,7 +68,7 @@ export class KeyBoundComponent extends Struct {
   }
 
   debug(): string {
-    return `KeyBoundComponent { column: ${JSON.stringify(this.column)}, low: ${this.low.debug()}, high: ${this.high.debug()} }`;
+    return `KeyBoundComponent { column: ${debugString(this.column)}, low: ${this.low.debug()}, high: ${this.high.debug()} }`;
   }
 }
 

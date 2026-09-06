@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/idb_value.rs
-import { Struct, Result, serde_json, tracing, unsupported } from '@ankurah/base';
+import { Struct, Result, tracing, unsupported } from '@ankurah/base';
 import { Value } from '@ankurah/core';
 
 export class IdbValue extends Struct {
@@ -53,15 +53,15 @@ function convertJsonBoolsToNumbers(json: unknown): unknown {
   return json.match({
     Bool: (v) => {
       const b = v._0;
-      return new serde_json.Value('Number', { _0: (b ? (1) : (0)) });
+      return (b ? (1) : (0));
     },
     Array: (v) => {
       const arr = v._0;
-      return new serde_json.Value('Array', { _0: [...arr].map(convertJsonBoolsToNumbers) });
+      return [...arr].map(convertJsonBoolsToNumbers);
     },
     Object: (v) => {
       const obj = v._0;
-      return new serde_json.Value('Object', { _0: unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for') });
+      return unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for');
     },
     Null: () => {
       const other = json;

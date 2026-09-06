@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/request.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { RequestId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -931,7 +931,7 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
       GetEvents: (v) => `GetEvents(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
       QuerySubscribed: (v) => `QuerySubscribed { queryId: ${v.queryId.debug()}, deltas: ${`[${Array.from(v.deltas).map((e) => e.debug()).join(', ')}]`} }`,
       Success: () => 'Success',
-      Error: (v) => `Error(${JSON.stringify(v._0)})`,
+      Error: (v) => `Error(${debugString(v._0)})`,
     });
   }
 

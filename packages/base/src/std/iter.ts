@@ -71,6 +71,26 @@ export function range(from: number, to: number): number[] {
 }
 
 /**
+ * How a terminal took its callback, which decides whether it releases it.
+ *
+ * Rust's terminals take their `F` BY VALUE and drop it where the call ends, so
+ * `xs.into_iter().find(p)` consumes `p`. `find(&mut p)` type-checks through the
+ * `impl FnMut for &mut F` blanket: what the terminal takes by value is then the
+ * REFERENCE, dropping a reference does nothing, and `p` is still the caller's
+ * to call again. The port has no `&mut`, so the closure object itself is handed
+ * over and the terminal has to be told which of the two happened — the call's
+ * own text cannot say, and a terminal that released a borrowed callback left
+ * the next call reading captures that were gone and the caller's own release
+ * dropping it a second time.
+ */
+export type CallbackMode = 'own' | 'borrow';
+
+/** Release a callback the terminal took by value; leave a borrowed one alone. */
+export function releaseCallback(f: unknown, mode: CallbackMode): void {
+  if (mode === 'own') dropOwned(f);
+}
+
+/**
  * Rust's `iter.step_by(n)`: every `n`th element, starting with the first.
  *
  * The port materialises an iterator as an array, and no array declares
@@ -87,6 +107,35 @@ export function stepBy<T>(xs: Seq<T>, step: number): T[] {
   return out;
 }
 
+/**
+ * Rust's `range.contains(&item)`, from the range's BOUNDS.
+ *
+ * `Range::contains` is a comparison against the two ends, and it is what a
+ * range of a type the port cannot count still answers — a float range is not an
+ * iterator in Rust either, and neither is an unbounded one. Written inline as
+ * `start <= item && item < end` the port evaluated the ITEM twice, so
+ * `(0u32..n).contains(&side())` called `side()` twice, and it evaluated the end
+ * only when the first comparison held, where Rust builds the whole range before
+ * it looks at the item at all (O7). The arguments here stand in Rust's own
+ * order: start, then end, then the item.
+ *
+ * `null` for a bound is Rust's `Unbounded`: `(a..)`, `(..b)`, `(..=b)` and
+ * `(..)` are all this, and each of them used to fall to the materialisation
+ * hole even though their answers are `a <= x`, `x < b`, `x <= b` and `true`
+ * (O8).
+ */
+export function rangeContains<T>(
+  start: T | null,
+  end: T | null,
+  inclusive: boolean,
+  item: T,
+): boolean {
+  if (start != null && compareKeys(start, item) > 0) return false;
+  if (end == null) return true;
+  const at = compareKeys(item, end);
+  return inclusive ? at <= 0 : at < 0;
+}
+
 /** Rust's `a..=b`, which includes the last value. */
 export function rangeIncl(from: number, to: number): number[] {
   const out: number[] = [];
@@ -101,7 +150,7 @@ export function rangeIncl(from: number, to: number): number[] {
  * `null`. Written as the camelCase of its Rust name it was `xs.filterMap(..)`,
  * a method no array declares — twelve emitted sites.
  */
-export function iterFilterMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>): U[] {
+export function iterFilterMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>, mode: CallbackMode = 'own'): U[] {
   const out: U[] = [];
   try {
     for (let i = 0; i < xs.length; i++) {
@@ -109,44 +158,44 @@ export function iterFilterMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>): U[
       if (got != null) out.push(got);
     }
   } finally {
-    dropOwned(f);
+    releaseCallback(f, mode);
   }
   return out;
 }
 
 /** Rust's `iter.position(p)`: the index of the first match, or `None`. */
-export function iterPosition<T>(xs: Seq<T>, p: Invocable<[T], boolean>): number | null {
+export function iterPosition<T>(xs: Seq<T>, p: Invocable<[T], boolean>, mode: CallbackMode = 'own'): number | null {
   try {
     for (let i = 0; i < xs.length; i++) {
       if (invokeRef(p, xs[i]!)) return i;
     }
     return null;
   } finally {
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
 /** Rust's `iter.rposition(p)`: the index of the LAST match, or `None`. */
-export function iterRposition<T>(xs: Seq<T>, p: Invocable<[T], boolean>): number | null {
+export function iterRposition<T>(xs: Seq<T>, p: Invocable<[T], boolean>, mode: CallbackMode = 'own'): number | null {
   try {
     for (let i = xs.length - 1; i >= 0; i--) {
       if (invokeRef(p, xs[i]!)) return i;
     }
     return null;
   } finally {
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
 /** Rust's `iter.find(p)`: the first matching element, or `None`. */
-export function iterFind<T>(xs: Seq<T>, p: Invocable<[T], boolean>): T | null {
+export function iterFind<T>(xs: Seq<T>, p: Invocable<[T], boolean>, mode: CallbackMode = 'own'): T | null {
   try {
     for (let i = 0; i < xs.length; i++) {
       if (invokeRef(p, xs[i]!)) return xs[i]!;
     }
     return null;
   } finally {
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
@@ -156,7 +205,7 @@ export function iterFind<T>(xs: Seq<T>, p: Invocable<[T], boolean>): T | null {
  * The closure's own `Option<U>` is `U | null` here, so "the first `Some`" is
  * "the first result that is not `null`".
  */
-export function iterFindMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>): U | null {
+export function iterFindMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>, mode: CallbackMode = 'own'): U | null {
   try {
     for (let i = 0; i < xs.length; i++) {
       const got = invokeRef(f, xs[i]!);
@@ -164,7 +213,7 @@ export function iterFindMap<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>): U | 
     }
     return null;
   } finally {
-    dropOwned(f);
+    releaseCallback(f, mode);
   }
 }
 
@@ -205,13 +254,21 @@ export function iterGet<T>(xs: Seq<T>, i: number): T | null {
  * keeping the FIRST. That asymmetry is deliberate in `std` and is observable
  * whenever the elements carry anything the comparison does not read.
  */
-export function iterMaxBy<T>(xs: Seq<T>, cmp: Invocable<[T, T], number>): T | null {
-  return foldBest(xs, cmp, (ordering) => ordering <= 0);
+export function iterMaxBy<T>(
+  xs: Seq<T>,
+  cmp: Invocable<[T, T], number>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldBest(xs, cmp, (ordering) => ordering <= 0, mode);
 }
 
 /** Rust's `iter.min_by(cmp)`: the minimum, or `None`. The first of a tie wins. */
-export function iterMinBy<T>(xs: Seq<T>, cmp: Invocable<[T, T], number>): T | null {
-  return foldBest(xs, cmp, (ordering) => ordering > 0);
+export function iterMinBy<T>(
+  xs: Seq<T>,
+  cmp: Invocable<[T, T], number>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldBest(xs, cmp, (ordering) => ordering > 0, mode);
 }
 
 /** The one fold both comparator readers are: `cmp(best, candidate)`, in order. */
@@ -219,9 +276,10 @@ function foldBest<T>(
   xs: Seq<T>,
   cmp: Invocable<[T, T], number>,
   takeCandidate: (ordering: number) => boolean,
+  mode: CallbackMode,
 ): T | null {
   if (xs.length === 0) {
-    dropOwned(cmp);
+    releaseCallback(cmp, mode);
     return null;
   }
   try {
@@ -231,7 +289,7 @@ function foldBest<T>(
     }
     return best;
   } finally {
-    dropOwned(cmp);
+    releaseCallback(cmp, mode);
   }
 }
 
@@ -245,37 +303,99 @@ function foldBest<T>(
  * instead called it twice per comparison and in the reverse order, which an
  * `FnMut` key with a side effect — a counter, a cache, a log — can see.
  */
-export function iterMaxByKey<T, K>(xs: Seq<T>, f: Invocable<[T], K>): T | null {
-  return foldBestByKey(xs, f, (ordering) => ordering <= 0);
+export function iterMaxByKey<T, K>(
+  xs: Seq<T>,
+  f: Invocable<[T], K>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldByKey(xs, f, (ordering) => ordering <= 0, mode, 'borrow');
 }
 
 /** Rust's `iter.min_by_key(f)`: the minimum by key, or `None`. The first of a tie wins. */
-export function iterMinByKey<T, K>(xs: Seq<T>, f: Invocable<[T], K>): T | null {
-  return foldBestByKey(xs, f, (ordering) => ordering > 0);
+export function iterMinByKey<T, K>(
+  xs: Seq<T>,
+  f: Invocable<[T], K>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldByKey(xs, f, (ordering) => ordering > 0, mode, 'borrow');
 }
 
-function foldBestByKey<T, K>(
+/**
+ * Who owns the elements a fold or an adaptor walks.
+ *
+ * A chain built with `iter()` holds borrows and the sequence is somebody
+ * else's; one built with `into_iter()` owns every element it walks, and what it
+ * discards it drops.
+ */
+export type ElementMode = 'own' | 'borrow';
+
+/**
+ * The one fold `max_by_key` and `min_by_key` are, in both ownership modes.
+ *
+ * Rust writes both as `self.map(|x| (f(&x), x)).max_by(|a, b| a.0.cmp(&b.0))`,
+ * which settles three things at once. The key closure is called exactly ONCE
+ * per element, in element order, interleaved with the comparisons — called
+ * inside the comparator instead it runs twice per comparison and in the reverse
+ * order, which an `FnMut` key with a side effect can see. The loser's PAIR is
+ * dropped, so its key goes with it. And the winner's pair is destructured: the
+ * element comes out and its key is dropped there.
+ *
+ * The keys are the borrowed fold's business too — `f` builds them out of
+ * whatever it was given, and Rust drops them for `iter()` exactly as it does
+ * for `into_iter()`. The reading fold released none of them, which is the only
+ * thing `elements` does NOT decide: what that flag settles is whether the
+ * ELEMENTS the fold passes over are its to release.
+ */
+export function foldByKey<T, K>(
   xs: Seq<T>,
   f: Invocable<[T], K>,
   takeCandidate: (ordering: number) => boolean,
+  mode: CallbackMode,
+  elements: ElementMode,
 ): T | null {
+  const owns = elements === 'own';
   if (xs.length === 0) {
-    dropOwned(f);
+    releaseCallback(f, mode);
     return null;
   }
+  let at = 0;
+  let have = false;
+  let best!: T;
+  let bestKey!: K;
   try {
-    let best = xs[0]!;
-    let bestKey = invokeRef(f, best);
-    for (let i = 1; i < xs.length; i++) {
-      const key = invokeRef(f, xs[i]!);
-      if (takeCandidate(compareKeys(bestKey, key))) {
-        best = xs[i]!;
+    for (let i = 0; i < xs.length; i++) {
+      const candidate = xs[i] as T;
+      const key = invokeRef(f, candidate);
+      if (!have) {
+        best = candidate;
         bestKey = key;
+        have = true;
+      } else if (takeCandidate(compareKeys(bestKey, key))) {
+        dropOwned(bestKey);
+        if (owns) dropOwned(best);
+        best = candidate;
+        bestKey = key;
+      } else {
+        dropOwned(key);
+        if (owns) dropOwned(candidate);
       }
+      at = i + 1;
     }
+    // The winner's key goes with the pair Rust destructures; only the element
+    // reaches the caller.
+    dropOwned(bestKey);
     return best;
+  } catch (thrown) {
+    // The accumulator and its key are nobody else's, and the element the key
+    // closure was reading is still in `xs[at..]`.
+    if (have) {
+      dropOwned(bestKey);
+      if (owns) dropOwned(best);
+    }
+    throw thrown;
   } finally {
-    dropOwned(f);
+    if (owns) for (let i = at; i < xs.length; i++) dropOwned(xs[i]);
+    releaseCallback(f, mode);
   }
 }
 
@@ -286,9 +406,13 @@ function foldBestByKey<T, K>(
  * `Array.prototype.reduce` with no initial value THROWS on an empty array
  * rather than answering absence, so it cannot stand in for this one.
  */
-export function iterReduce<T>(xs: Seq<T>, f: Invocable<[T, T], T>): T | null {
+export function iterReduce<T>(
+  xs: Seq<T>,
+  f: Invocable<[T, T], T>,
+  mode: CallbackMode = 'own',
+): T | null {
   if (xs.length === 0) {
-    dropOwned(f);
+    releaseCallback(f, mode);
     return null;
   }
   try {
@@ -299,7 +423,7 @@ export function iterReduce<T>(xs: Seq<T>, f: Invocable<[T, T], T>): T | null {
     for (let i = 1; i < xs.length; i++) acc = invokeRef(f, acc, xs[i] as T);
     return acc;
   } finally {
-    dropOwned(f);
+    releaseCallback(f, mode);
   }
 }
 

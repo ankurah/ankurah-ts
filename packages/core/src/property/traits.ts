@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/traits.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum, Result, debugString } from '@ankurah/base';
 import { RetrievalError } from '../error';
 import { CastError } from '../value/cast';
 import { Value } from '../value/index';
@@ -35,8 +35,8 @@ export class PropertyError extends Enum<PropertyErrorV> {
       SerializeError: (v) => `SerializeError(${v._0})`,
       DeserializeError: (v) => `DeserializeError(${v._0})`,
       RetrievalError: (v) => `RetrievalError(${v._0.debug()})`,
-      InvalidVariant: (v) => `InvalidVariant { given: ${v.given.debug()}, ty: ${JSON.stringify(v.ty)} }`,
-      InvalidValue: (v) => `InvalidValue { value: ${JSON.stringify(v.value)}, ty: ${JSON.stringify(v.ty)} }`,
+      InvalidVariant: (v) => `InvalidVariant { given: ${v.given.debug()}, ty: ${debugString(v.ty)} }`,
+      InvalidValue: (v) => `InvalidValue { value: ${debugString(v.value)}, ty: ${debugString(v.ty)} }`,
       TransactionClosed: () => 'TransactionClosed',
       CastError: (v) => `CastError(${v._0.debug()})`,
     });

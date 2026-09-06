@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { EntityResultSet, IVec } from './resultset';
-import { HashMap, Struct, range, unsupported, valueEquals } from '@ankurah/base';
+import { HashMap, Struct, debugString, range, unsupported, valueEquals } from '@ankurah/base';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
 import { Value, ValueType } from './value/index';
 
@@ -45,7 +45,7 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   debug(): string {
-    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, properties: ${`{${Array.from(this.properties).map(($p) => `${JSON.stringify($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
+    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, properties: ${`{${Array.from(this.properties).map(($p) => `${debugString($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
   }
 }
 

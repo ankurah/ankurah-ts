@@ -255,6 +255,21 @@ impl BodyTranslator<'_> {
             return format!("{}.{}({})", self.self_type, method, args.join(", "));
         }
 
+        // The port's `serde_json` reads and writes plain JavaScript values, so a
+        // `Value::X(payload)` is the identity on its payload rather than an
+        // enum construction: `@ankurah/base` exports no `Value` at all.
+        {
+            let segments: Vec<String> = func.split('.').map(str::to_string).collect();
+            if let Some(written) =
+                crate::native_types::js_value::json_value_construction(&segments, args)
+            {
+                return written;
+            }
+            if let Some(why) = crate::native_types::js_value::json_from_value_refusal(&segments) {
+                return self.hole(span, why);
+            }
+        }
+
         // 8. Enum variant constructor: Type.Variant(args) → new Type('Variant', {...})
         if let Some(dot) = func.rfind('.') {
             let type_name = &func[..dot];

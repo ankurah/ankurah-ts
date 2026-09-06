@@ -33,6 +33,7 @@ pub(crate) fn hoist_a_try(
         owned: None,
         temp: lowered.temp.clone(),
         refused: crate::body::holes_written() > holes_before,
+        released_if_unreached: false,
     });
     lowered.value
 }

@@ -191,20 +191,59 @@ mod tests {
     /// materialised sequence, `(0.0..1.0).contains(&0.5)` was
     /// `range(0, 1).contains(0.5)` — an array has no `contains`, and nothing
     /// said so.
+    ///
+    /// O7: it is ONE helper now, with the arguments in Rust's order. Written
+    /// inline as `start <= item && item < end` it evaluated the item twice and
+    /// the end only where the first comparison held, where Rust builds the
+    /// whole range before it looks at the item at all.
     #[test]
     fn contains_is_written_from_the_bounds() {
         let float = body(
             "pub fn within(x: f64) -> bool { (0.0f64..1.0f64).contains(&x) }",
             "within",
         );
-        assert_eq!(float.lines().find(|l| l.contains("return")).unwrap().trim(), "return (0.0 <= x && x < 1.0);");
+        assert_eq!(
+            float.lines().find(|l| l.contains("return")).unwrap().trim(),
+            "return rangeContains(0.0, 1.0, false, x);"
+        );
         assert!(!float.contains("unsupported("), "the sequence is never built:\n{}", float);
 
         let closed = body(
             "pub fn upto(x: u32) -> bool { (0u32..=16u32).contains(&x) }",
             "upto",
         );
-        assert!(closed.contains("(0 <= x && x <= 16)"), "{}", closed);
+        assert!(closed.contains("rangeContains(0, 16, true, x)"), "{}", closed);
+    }
+
+    /// O7: the item is written ONCE. `(0u32..n).contains(&side())` called
+    /// `side()` twice, because the inline form names the item in both halves of
+    /// its `&&`.
+    #[test]
+    fn the_item_is_evaluated_once() {
+        let ts = body(
+            "pub fn side() -> u32 { 3 }\n\
+             pub fn within(n: u32) -> bool { (0u32..n).contains(&side()) }",
+            "within",
+        );
+        assert_eq!(ts.matches("side()").count(), 1, "{}", ts);
+    }
+
+    /// O8: every UNBOUNDED form is written from the bounds too. `a..`, `..b`,
+    /// `..=b` and `..` each fell to the materialisation hole though their
+    /// answers are `a <= x`, `x < b`, `x <= b` and `true`; a missing bound is
+    /// `null`, which is Rust's `Unbounded`.
+    #[test]
+    fn an_unbounded_range_answers_contains_too() {
+        for (rust, want) in [
+            ("pub fn f(x: u32) -> bool { (5u32..).contains(&x) }", "rangeContains(5, null, false, x)"),
+            ("pub fn f(x: u32) -> bool { (..5u32).contains(&x) }", "rangeContains(null, 5, false, x)"),
+            ("pub fn f(x: u32) -> bool { (..=5u32).contains(&x) }", "rangeContains(null, 5, true, x)"),
+            ("pub fn f(x: u32) -> bool { (..).contains(&x) }", "rangeContains(null, null, false, x)"),
+        ] {
+            let ts = body(rust, "f");
+            assert!(ts.contains(want), "`{}` for `{}`:\n{}", want, rust, ts);
+            assert!(!ts.contains("unsupported("), "no sequence is built:\n{}", ts);
+        }
     }
 
     /// E7: `step_by` had no lowering and came out as `(range(0, 10)).stepBy(2)`,

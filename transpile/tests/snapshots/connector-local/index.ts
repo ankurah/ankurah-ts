@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/connectors/local-process/src/lib.rs
-import { Struct, Drop, Result, JoinHandle, tokio, mpsc, Sender, Receiver } from '@ankurah/base';
+import { Struct, Drop, Result, dropOwned, JoinHandle, tokio, mpsc, Sender, Receiver } from '@ankurah/base';
 import { Node, PeerSender, PolicyAgent, SendError, StorageEngine, WeakNode } from '@ankurah/core';
 import { EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
@@ -14,7 +14,13 @@ export class LocalProcessSender extends Struct implements PeerSender {
   }
 
   sendMessage(message: NodeMessage): Result<void, SendError> {
-    const _r0 = this.sender.trySend(message).mapErr((_) => new SendError('ConnectionClosed', {}));
+    const _r0 = this.sender.trySend(message).mapErr((_) => {
+      try {
+        return new SendError('ConnectionClosed', {});
+      } finally {
+        dropOwned(_);
+      }
+    });
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     _r0.drop();
     return Result.Ok([]);

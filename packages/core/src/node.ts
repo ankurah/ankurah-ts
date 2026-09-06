@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/node.rs
-import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, HashMap, oneshot, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, unsupported, debugString, HashMap, oneshot, spawn } from '@ankurah/base';
 import { Attested, CollectionId, EntityState, Clock, DeltaContent, EntityDelta, EntityId, Event, NodeMessage, NodeRequest, NodeRequestBody, NodeResponse, NodeResponseBody, NodeUpdate, NodeUpdateAck, NodeUpdateAckBody, NodeUpdateBody, Presence, QueryId, RequestId, StateFragment, TransactionId, UpdateId } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { CollectionSet } from './collectionset';
@@ -295,7 +295,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           tracing.debug(`Node(${this.deref().value.id}) received update ${update}`);
           const _m1 = this.deref().value.peerConnections.get(update.from);
           {
-            const _v4 = (_m1 != null ? ((c) => c.value.sender.cloned())(_m1!) : null);
+            const _v4 = (_m1 != null ? ((c) => {
+            try {
+              return c.value.sender.cloned();
+            } finally {
+              c.drop();
+            }
+          })(_m1!) : null);
             if (_v4 != null) {
               const sender = _v4;
               const _from = update.from;
@@ -360,7 +366,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
             tracing.debug(`Node(${this.deref().value.id}) received request ${request}`);
             const _m6 = this.deref().value.peerConnections.get(request.from);
             {
-              const _v9 = (_m6 != null ? ((c) => c.value.sender.cloned())(_m6!) : null);
+              const _v9 = (_m6 != null ? ((c) => {
+              try {
+                return c.value.sender.cloned();
+              } finally {
+                c.drop();
+              }
+            })(_m6!) : null);
               if (_v9 != null) {
                 const sender = _v9;
                 const from = request.from;
@@ -427,7 +439,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               const _v10 = connection.value.pendingRequests.remove(response.requestId);
               if (_v10 != null) {
                 const tx = _v10;
-                const _r12 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => AnyhowError.msg(`Failed to send response: ${e}`));
+                const _r12 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => {
+                  try {
+                    return AnyhowError.msg(`Failed to send response: ${e}`);
+                  } finally {
+                    e.drop();
+                  }
+                });
                 if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
                 _r12.drop();
               }
@@ -474,8 +492,9 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               const _r2 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for CommitTransaction'));
               if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
               const cdata_1 = _r2.unwrap();
+              const _b3 = id.clone();
               _moved1 = true;
-              const _v = await this.commitRemoteTransaction(cdata_1, id.clone(), events);
+              const _v = await this.commitRemoteTransaction(cdata_1, _b3, events);
               if (_v.isOk()) {
                 const _v1 = _v.unwrap();
                 _moved0 = true;
@@ -499,76 +518,82 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           const collection = v.collection;
           const selection = v.selection;
           const knownMatches = v.knownMatches;
-          let _moved3 = false;
+          let _moved4 = false;
           try {
             try {
               try {
-                const _r4 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
-                if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-                _r4.drop();
-                const _r5 = await this.deref().value.collections.get(collection);
+                const _r5 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
                 if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-                const storageCollection = _r5.unwrap();
+                _r5.drop();
+                const _r6 = await this.deref().value.collections.get(collection);
+                if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+                const storageCollection = _r6.unwrap();
                 try {
-                  const _r7 = this.deref().value.policyAgent.filterPredicate(cdata, collection, selection.takeField('predicate'));
-                  if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-                  const _a6 = _r7.unwrap();
-                  selection.predicate.drop();
-                  selection.predicate = _a6;
-                  const _r8 = await storageCollection.deref().value.fetchStates(selection);
+                  const _r8 = this.deref().value.policyAgent.filterPredicate(cdata, collection, selection.takeField('predicate'));
                   if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-                  const _r9 = await expandStates(_r8.unwrap(), [...knownMatches].map((k) => k.entityId), storageCollection);
+                  const _a7 = _r8.unwrap();
+                  selection.predicate.drop();
+                  selection.predicate = _a7;
+                  const _r9 = await storageCollection.deref().value.fetchStates(selection);
                   if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-                  let _moved10 = false;
-                  const expandedStates = _r9.unwrap();
+                  const _r10 = await expandStates(_r9.unwrap(), [...knownMatches].map((k) => k.entityId), storageCollection);
+                  if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+                  let _moved11 = false;
+                  const expandedStates = _r10.unwrap();
                   try {
-                    _moved3 = true;
-                    const knownMap = HashMap.from([...knownMatches].map((k) => [k.entityId, k.takeField('head')]));
+                    _moved4 = true;
+                    const knownMap = HashMap.from([...knownMatches].map((k) => {
+                      try {
+                        return [k.entityId, k.takeField('head')];
+                      } finally {
+                        k.drop();
+                      }
+                    }));
                     let deltas = [];
-                    _moved10 = true;
-                    const _seq15 = expandedStates;
-                    let _at16 = 0;
+                    _moved11 = true;
+                    const _seq16 = expandedStates;
+                    let _at17 = 0;
                     try {
-                      while (_at16 < _seq15.length) {
-                        const state = _seq15[_at16++];
-                        let _moved11 = false;
+                      while (_at17 < _seq16.length) {
+                        const state = _seq16[_at17++];
+                        let _moved12 = false;
                         try {
-                          let _c13;
-                          const _t12 = this.deref().value.policyAgent.checkRead(cdata, state.payload.entityId, collection, state.payload.state);
+                          let _c14;
+                          const _t13 = this.deref().value.policyAgent.checkRead(cdata, state.payload.entityId, collection, state.payload.state);
                           try {
-                            _c13 = _t12.isErr();
+                            _c14 = _t13.isErr();
                           } finally {
-                            _t12.drop();
+                            _t13.drop();
                           }
-                          if (_c13) {
+                          if (_c14) {
                             continue;
                           }
-                          _moved11 = true;
-                          const _r14 = await this.generateEntityDelta(knownMap, state, storageCollection);
-                          if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+                          _moved12 = true;
+                          const _r15 = await this.generateEntityDelta(knownMap, state, storageCollection);
+                          if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
                           {
-                            const _v2 = _r14.unwrap();
+                            const _v2 = _r15.unwrap();
                             if (_v2 != null) {
                               const delta = _v2;
                               deltas.push(delta);
                             }
                           }
                         } finally {
-                          if (!_moved11) state.drop();
+                          if (!_moved12) state.drop();
                         }
                       }
                     } finally {
-                      dropOwned(_seq15.slice(_at16));
+                      dropOwned(_seq16.slice(_at17));
                     }
                     return Result.Ok(new NodeResponseBody('Fetch', { _0: deltas }));
                   } finally {
-                    if (!_moved10) dropOwned(expandedStates);
+                    if (!_moved11) dropOwned(expandedStates);
                   }
                 } finally {
                   storageCollection.drop();
                 }
               } finally {
-                if (!_moved3) dropOwned(knownMatches);
+                if (!_moved4) dropOwned(knownMatches);
               }
             } finally {
               selection.drop();
@@ -581,35 +606,35 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           const collection = v.collection;
           const ids = v.ids;
           try {
-            const _r17 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
-            if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
-            _r17.drop();
-            const _r18 = await this.deref().value.collections.get(collection);
+            const _r18 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
             if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
-            const storageCollection = _r18.unwrap();
+            _r18.drop();
+            const _r19 = await this.deref().value.collections.get(collection);
+            if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
+            const storageCollection = _r19.unwrap();
             try {
               let states = [];
-              const _r19 = await storageCollection.deref().value.getStates(ids);
-              if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
-              const _seq22 = _r19.unwrap();
-              let _at23 = 0;
+              const _r20 = await storageCollection.deref().value.getStates(ids);
+              if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
+              const _seq23 = _r20.unwrap();
+              let _at24 = 0;
               try {
-                while (_at23 < _seq22.length) {
-                  const state = _seq22[_at23++];
-                  let _moved20 = false;
+                while (_at24 < _seq23.length) {
+                  const state = _seq23[_at24++];
+                  let _moved21 = false;
                   try {
                     const _v3 = this.deref().value.policyAgent.checkRead(cdata, state.payload.entityId, collection, state.payload.state);
                     if (_v3.isOk()) {
                       const _v4 = _v3.unwrap();
-                      _moved20 = true;
+                      _moved21 = true;
                       states.push(state)
                     } else {
                       const _v5 = _v3.unwrapErr();
-                      _arm21: {
+                      _arm22: {
                         if (_v5.is('ByPolicy')) {
                           const _v6 = _v5;
                           _v6.drop();
-                          break _arm21;
+                          break _arm22;
                         }
                         {
                           const e = _v5;
@@ -622,11 +647,11 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                       }
                     }
                   } finally {
-                    if (!_moved20) state.drop();
+                    if (!_moved21) state.drop();
                   }
                 }
               } finally {
-                dropOwned(_seq22.slice(_at23));
+                dropOwned(_seq23.slice(_at24));
               }
               return Result.Ok(new NodeResponseBody('Get', { _0: states }));
             } finally {
@@ -639,39 +664,39 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         GetEvents: async (v) => {
           const collection = v.collection;
           const eventIds = v.eventIds;
-          let _moved24 = false;
+          let _moved25 = false;
           try {
             try {
-              const _r25 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
-              if (_r25.isErr()) return Result.Err(_r25.unwrapErr());
-              _r25.drop();
-              const _r26 = await this.deref().value.collections.get(collection);
+              const _r26 = this.deref().value.policyAgent.canAccessCollection(cdata, collection);
               if (_r26.isErr()) return Result.Err(_r26.unwrapErr());
-              const storageCollection = _r26.unwrap();
+              _r26.drop();
+              const _r27 = await this.deref().value.collections.get(collection);
+              if (_r27.isErr()) return Result.Err(_r27.unwrapErr());
+              const storageCollection = _r27.unwrap();
               try {
                 let events = [];
-                _moved24 = true;
-                const _r27 = await storageCollection.deref().value.getEvents(eventIds);
-                if (_r27.isErr()) return Result.Err(_r27.unwrapErr());
-                const _seq30 = _r27.unwrap();
-                let _at31 = 0;
+                _moved25 = true;
+                const _r28 = await storageCollection.deref().value.getEvents(eventIds);
+                if (_r28.isErr()) return Result.Err(_r28.unwrapErr());
+                const _seq31 = _r28.unwrap();
+                let _at32 = 0;
                 try {
-                  while (_at31 < _seq30.length) {
-                    const event = _seq30[_at31++];
-                    let _moved28 = false;
+                  while (_at32 < _seq31.length) {
+                    const event = _seq31[_at32++];
+                    let _moved29 = false;
                     try {
                       const _v7 = this.deref().value.policyAgent.checkReadEvent(cdata, event);
                       if (_v7.isOk()) {
                         const _v8 = _v7.unwrap();
-                        _moved28 = true;
+                        _moved29 = true;
                         events.push(event)
                       } else {
                         const _v9 = _v7.unwrapErr();
-                        _arm29: {
+                        _arm30: {
                           if (_v9.is('ByPolicy')) {
                             const _v10 = _v9;
                             _v10.drop();
-                            break _arm29;
+                            break _arm30;
                           }
                           {
                             const e = _v9;
@@ -684,18 +709,18 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                         }
                       }
                     } finally {
-                      if (!_moved28) event.drop();
+                      if (!_moved29) event.drop();
                     }
                   }
                 } finally {
-                  dropOwned(_seq30.slice(_at31));
+                  dropOwned(_seq31.slice(_at32));
                 }
                 return Result.Ok(new NodeResponseBody('GetEvents', { _0: events }));
               } finally {
                 storageCollection.drop();
               }
             } finally {
-              if (!_moved24) dropOwned(eventIds);
+              if (!_moved25) dropOwned(eventIds);
             }
           } finally {
             collection.drop();
@@ -707,35 +732,35 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           const selection = v.selection;
           const version = v.version;
           const knownMatches = v.knownMatches;
-          let _moved32 = false;
           let _moved33 = false;
           let _moved34 = false;
+          let _moved35 = false;
           try {
             try {
               try {
-                const _m35 = this.deref().value.peerConnections.get(request.from);
-                const _r36 = (_m35 != null ? Result.Ok(_m35!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))()));
-                if (_r36.isErr()) return Result.Err(_r36.unwrapErr());
-                const peerState = _r36.unwrap();
+                const _m36 = this.deref().value.peerConnections.get(request.from);
+                const _r37 = (_m36 != null ? Result.Ok(_m36!) : Result.Err((() => AnyhowError.msg(`Peer ${request.from} not connected`))()));
+                if (_r37.isErr()) return Result.Err(_r37.unwrapErr());
+                const peerState = _r37.unwrap();
                 try {
-                  const _r37 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
-                  if (_r37.isErr()) return Result.Err(_r37.unwrapErr());
-                  const cdata_1 = _r37.unwrap();
-                  _moved32 = true;
+                  const _r38 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
+                  if (_r38.isErr()) return Result.Err(_r38.unwrapErr());
+                  const cdata_1 = _r38.unwrap();
                   _moved33 = true;
                   _moved34 = true;
+                  _moved35 = true;
                   return await peerState.value.subscriptionHandler.subscribeQuery(this, queryId, collection, selection, cdata_1, version, knownMatches);
                 } finally {
                   peerState.drop();
                 }
               } finally {
-                if (!_moved34) dropOwned(knownMatches);
+                if (!_moved35) dropOwned(knownMatches);
               }
             } finally {
-              if (!_moved33) selection.drop();
+              if (!_moved34) selection.drop();
             }
           } finally {
-            if (!_moved32) collection.drop();
+            if (!_moved33) collection.drop();
           }
         },
       }));
@@ -1031,7 +1056,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
 
         }
       }
-      return Result.Ok(comparison.takeAccumulatedEvents().unwrapOrDefault());
+      return Result.Ok(unsupported('`unwrap_or_default` answers the value or the type\'s `Default`, and the engine could not type this receiver, so it cannot say which default that is'));
     } finally {
       retriever.drop();
     }
@@ -1059,7 +1084,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
     const _r2 = (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
     if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
     const peerId = _r2.unwrap();
-    const _r3 = (await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids }))).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+    const _r3 = (await this.request(peerId, cdata, new NodeRequestBody('Get', { collection: collectionId.clone(), ids: ids }))).mapErr((e) => {
+      try {
+        return new RetrievalError('Other', { _0: `${e.debug()}` });
+      } finally {
+        e.drop();
+      }
+    });
     if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
     return await (_r3.unwrap().intoMatch({
       Get: async (v) => {
@@ -1082,7 +1113,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   if (_r7.isErr()) return Result.Err(RetrievalError.fromAccessDenied(_r7.unwrapErr()));
                   _r7.drop();
                   _moved6 = true;
-                  const _r8 = (await collection.deref().value.setState(state)).mapErr((e) => new RetrievalError('Other', { _0: `${e.debug()}` }));
+                  const _r8 = (await collection.deref().value.setState(state)).mapErr((e) => {
+                    try {
+                      return new RetrievalError('Other', { _0: `${e.debug()}` });
+                    } finally {
+                      e.drop();
+                    }
+                  });
                   if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
                   _r8.drop();
                 } finally {
@@ -1103,7 +1140,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
       Error: async (v) => {
         const e = v._0;
         tracing.debug(`Error from peer fetch: ${e}`);
-        return Result.Err(new RetrievalError('Other', { _0: `${JSON.stringify(e)}` }));
+        return Result.Err(new RetrievalError('Other', { _0: `${debugString(e)}` }));
       },
       CommitComplete: (v) => {
         try {

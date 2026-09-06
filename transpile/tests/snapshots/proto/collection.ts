@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, debugString, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {
@@ -55,7 +55,7 @@ export class CollectionId extends Struct {
   }
 
   debug(): string {
-    return `CollectionId(${JSON.stringify(this._0)})`;
+    return `CollectionId(${debugString(this._0)})`;
   }
 
   encode(writer: BincodeWriter): void {

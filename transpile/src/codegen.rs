@@ -373,11 +373,10 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         }
     }
 
-    // Collect local type names (including provided — keeps import resolution correct)
-    let mut local_types: HashSet<String> = HashSet::new();
-    for s in &file.structs { local_types.insert(s.name.clone()); }
-    for e in &file.enums { local_types.insert(e.name.clone()); }
-    for t in &file.traits { local_types.insert(t.name.clone()); }
+    // What this file declares under its own name, provided types included:
+    // keeps import resolution correct, and keeps a base helper out of the
+    // import list where the file has a name of its own for it.
+    let local_types: HashSet<String> = written::names_the_file_declares(file);
 
     // Base imports (@ankurah/base) — only for non-provided types
     let mut base_imports: Vec<&str> = Vec::new();

@@ -191,13 +191,19 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
             const includedEntities = _r4.unwrap();
             _moved0 = true;
-            const _r5 = subscription.registerQuery(queryId, collectionId.clone(), resultset.clone(), gapFetcher);
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            _r5.drop();
+            const _b5 = collectionId.clone();
+            try {
+              const _b6 = resultset.clone();
+              const _r7 = subscription.registerQuery(queryId, _b5, _b6, gapFetcher);
+              if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+              _r7.drop();
+            } finally {
+              if (_b5 != null && !(_b5 as any).isMoved && !(_b5 as any).isDropped) dropOwned(_b5);
+            }
             let reactorUpdateItems = [];
-            const _r6 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, 1, reactorUpdateItems);
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-            const _newlyAdded = _r6.unwrap();
+            const _r8 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, 1, reactorUpdateItems);
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            const _newlyAdded = _r8.unwrap();
             await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
             resultset.setLoaded(true);
             preNotifyHook.preNotify(1);
@@ -359,12 +365,23 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         try {
           const resultset = subscription.upsertQuery(queryId, collectionId.clone(), node, cdata);
           _moved4 = true;
-          const _r5 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, []);
-          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-          let allEntities = _r5.unwrap();
-          await subscription.fillGapsForQueryEntities(queryId, allEntities);
-          resultset.setLoaded(true);
-          return Result.Ok(allEntities);
+          const _b5 = collectionId.clone();
+          try {
+            const _b6 = selection.clone();
+            try {
+              const _b7 = [];
+              const _r8 = subscription.updateQuery(queryId, _b5, _b6, includedEntities, version, _b7);
+              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+              let allEntities = _r8.unwrap();
+              await subscription.fillGapsForQueryEntities(queryId, allEntities);
+              resultset.setLoaded(true);
+              return Result.Ok(allEntities);
+            } finally {
+              if (_b6 != null && !(_b6 as any).isMoved && !(_b6 as any).isDropped) dropOwned(_b6);
+            }
+          } finally {
+            if (_b5 != null && !(_b5 as any).isMoved && !(_b5 as any).isDropped) dropOwned(_b5);
+          }
         } finally {
           if (!_moved4) dropOwned(includedEntities);
         }
@@ -439,7 +456,13 @@ function buildKeySpecFromSelection<E extends AbstractEntity>(orderBy: OrderByIte
       const column = item.path.property();
       const valueType = iterFindMap(read.iterEntities(), ([, e]) => {
         const _m0 = e.value(column);
-        return (_m0 != null ? ((v) => ValueType.of(v))(_m0!) : null);
+        return (_m0 != null ? ((v) => {
+          try {
+            return ValueType.of(v);
+          } finally {
+            v.drop();
+          }
+        })(_m0!) : null);
       }) ?? new ValueType('String', {});
       const direction = item.direction.match({
         Asc: () => new IndexDirection('Asc', {}),

@@ -127,6 +127,7 @@ impl<'a> BodyTranslator<'a> {
         // wrapper was written in an immediately-called position — which was
         // itself the `TypeError` R10 exists to stop. So a wrapped closure
         // writes the parameter types the engine already resolved.
+        let param_names = params.clone();
         let params = match captures.is_empty() {
             true => params.join(", "),
             false => self.annotated_params(closure, expected, &params, &ignored_names),
@@ -144,6 +145,12 @@ impl<'a> BodyTranslator<'a> {
         // the `let` came out reading the binding it was declaring.
         self.push_closure_scope(Vec::new());
         self.bind_closure_params(closure, expected);
+        // O1: what the closure was handed BY VALUE is its body's, exactly as a
+        // function's parameters are its body's, and is released on every exit
+        // out of an invocation unless the body hands it on. Claimed before the
+        // body is written, so a branch that hands one away finds its flag.
+        let taken = self.claim_closure_params(closure, expected, &param_names);
+        let reads_before = self.own.partial_moves_written_as_reads.borrow().len();
         // A block body carries its own braces; an expression body is the
         // closure's value, and a guard lifted out of it belongs inside the
         // arrow function, because its declaration names the closure's own
@@ -159,17 +166,25 @@ impl<'a> BodyTranslator<'a> {
         let (statements, arrow) = match &*closure.body {
             syn::Expr::Block(block) => {
                 let body = self.inside_its_own_function(|| self.translate_block(&block.block));
+                let body = self.releasing_what_it_took(closure, body, &taken, reads_before);
                 (
                     body.clone(),
                     format!("{}({}) => {{\n{}}}", arrow_head, params, indent(&body)),
                 )
             }
             _ => {
+                // A closure's expression body is its VALUE, so a field read
+                // here hands the field to the caller and leaves the rest of the
+                // struct where it was: `|h| h.item` is a partial move, exactly
+                // as a block's last expression is. Written as a plain read, the
+                // release this claim now writes for `h` cascaded into a field
+                // the caller had already been given.
                 let (body, lifted) = self.with_own_hoists(|| {
-                    self.inside_its_own_function(|| self.expr_value(&closure.body))
+                    self.inside_its_own_function(|| self.moved_value(&closure.body))
                 });
                 let inner = Self::arrow_body(&body, &lifted);
-                let arrow = if !lifted.is_empty() {
+                let inner = self.releasing_what_it_took(closure, inner, &taken, reads_before);
+                let arrow = if !lifted.is_empty() || !taken.is_empty() {
                     format!("{}({}) => {{\n{}}}", arrow_head, params, indent(&inner))
                 } else if body.starts_with("if ")
                     || body.starts_with("for ")
@@ -184,6 +199,12 @@ impl<'a> BodyTranslator<'a> {
             }
         };
         self.pop_scope();
+        for param in &taken {
+            if let Some(source) = &param.source {
+                self.own.flags.borrow_mut().remove(source);
+            }
+        }
+        self.own.partial_moves_written_as_reads.borrow_mut().truncate(reads_before);
         if captures.is_empty() {
             return arrow;
         }
@@ -214,6 +235,131 @@ impl<'a> BodyTranslator<'a> {
                 ownership::closures::owned(&names, &arrow, consumes)
             }
         }
+    }
+
+    /// What the closure was handed BY VALUE and still owns when an invocation
+    /// ends.
+    ///
+    /// Rust drops a by-value closure parameter at the end of every call, on the
+    /// normal return and while an unwind passes through alike: it is a local of
+    /// the body, and the only thing that sets it apart from a function's
+    /// parameter is where the call came from. The port released none of them,
+    /// so a generated callback handed an element by value — `position`'s,
+    /// `find_map`'s, `reduce`'s two — stored it nowhere and dropped nothing,
+    /// and every element the callback was given leaked. The TERMINAL cannot
+    /// make that good: a legal callback may transfer the element somewhere
+    /// else, and the terminal cannot see which.
+    ///
+    /// The claim is per NAME the parameter binds, not per parameter: `|(id,
+    /// entry)|` over a map's `into_iter()` takes the pair apart on the way in,
+    /// and each half is a local of the body exactly as `id` alone would be. The
+    /// type comes from the same signature the body is bound against, so a
+    /// parameter written `&T` is somebody else's and is not here; the emitted
+    /// spelling of an IGNORED parameter comes from the caller, which numbers
+    /// them `_`, `__`, … rather than writing what Rust wrote.
+    fn claim_closure_params(
+        &self,
+        closure: &syn::ExprClosure,
+        expected: Option<&crate::ty::Ty>,
+        emitted: &[String],
+    ) -> Vec<ownership::Owned> {
+        let Some(tc) = &self.types else { return Vec::new() };
+        let sig = tc.borrow().closure_signature(closure, expected);
+        let mut params: Vec<(String, crate::ty::Ty)> = Vec::new();
+        for (index, pat) in closure.inputs.iter().enumerate() {
+            let Some((_, Some(ty))) = sig.params.get(index) else { continue };
+            // A parameter written `&T` is somebody else's, and Rust's match
+            // ergonomics make every name a pattern binds UNDER one a borrow
+            // too: `equalities.iter().map(|(f, _)| ..)` hands the closure a
+            // `&(String, Value)` and moves neither half. Asked of the peeled
+            // tuple instead, the port claimed both and released a value the
+            // caller still owns.
+            if matches!(ty, crate::ty::Ty::Ref { .. }) {
+                continue;
+            }
+            // A pattern that binds nothing still holds the value for the length
+            // of the call, under the name the emitter gave it.
+            let bound = match Self::binds_nothing(pat) {
+                true => match emitted.get(index) {
+                    Some(name) => vec![(name.clone(), Some(ty.clone()))],
+                    None => continue,
+                },
+                false => crate::infer::closures::names_bound(pat, Some(ty)),
+            };
+            for (name, ty) in bound {
+                let Some(ty) = ty else { continue };
+                if self.by_value_owes_a_release(&ty) {
+                    params.push((name, ty));
+                }
+            }
+        }
+        if params.is_empty() {
+            return Vec::new();
+        }
+        // A parameter of the ENCLOSING function under the same name is already
+        // on these lists and stays on them; the closure's own goes off again
+        // when its scope does, so a refusal further down the function does not
+        // owe a release for a name that has gone out of scope.
+        let already: Vec<String> = params
+            .iter()
+            .filter(|(name, _)| self.own.by_value_params.borrow().contains(name))
+            .map(|(name, _)| name.clone())
+            .collect();
+        let block = match &*closure.body {
+            syn::Expr::Block(block) => block.block.clone(),
+            other => syn::Block {
+                brace_token: Default::default(),
+                stmts: vec![syn::Stmt::Expr(other.clone(), None)],
+            },
+        };
+        let owned = self.claim_params(&block, &params);
+        for (name, _) in &params {
+            if already.contains(name) {
+                continue;
+            }
+            self.own.by_value_params.borrow_mut().remove(name);
+            self.own.claimed_params.borrow_mut().remove(name);
+        }
+        owned
+    }
+
+    /// `body`, with everything the invocation was handed by value released
+    /// however that invocation is left.
+    ///
+    /// Everything except what the body took a FIELD out of and the port wrote
+    /// as a plain read: there the struct's cascade still reaches the field the
+    /// caller was given, so releasing the struct here would release that field
+    /// a second time. The claim is withdrawn and the site says so. Its drop
+    /// flag stays declared, because the body may still assign it.
+    fn releasing_what_it_took(
+        &self,
+        closure: &syn::ExprClosure,
+        body: String,
+        taken: &[ownership::Owned],
+        from: usize,
+    ) -> String {
+        if taken.is_empty() {
+            return body;
+        }
+        let read: Vec<String> = self.own.partial_moves_written_as_reads.borrow()[from..].to_vec();
+        let mut out = body;
+        for param in taken.iter().rev() {
+            if read.contains(&param.name) {
+                self.fallback(
+                    syn::spanned::Spanned::span(closure),
+                    format!(
+                        "this closure was handed `{}` by value and moved a field out of it \
+                         that the port writes as a plain read, so releasing `{}` here would \
+                         release that field a second time; what is left of it is released by \
+                         nothing",
+                        param.name, param.name
+                    ),
+                );
+                continue;
+            }
+            out = ownership::wrap(&out, param);
+        }
+        format!("{}{}", self.block_declarations(taken, &out), out)
     }
 
     /// A wrapped closure's parameter list, with each parameter's type written.

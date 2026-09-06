@@ -129,3 +129,32 @@ describe('the runtime containers compare by contents', () => {
     m.drop();
   });
 });
+
+describe('NaN under `==` is Rust’s, not the map’s', () => {
+  // P2/O12: `keysEqual` is SameValueZero, because a map LOOKUP asks "is this
+  // the key I stored" and a `Map` finds a key it stored under `NaN`. `==` asks
+  // Rust's `PartialEq`, and `f64::NAN == f64::NAN` is false. The branch was
+  // carried over from the lookup walk when the two were one function, so
+  // `vec![f64::NAN] == vec![f64::NAN]` answered `true` where Rust answers
+  // `false`.
+  test('NaN is not equal to NaN', () => {
+    expect(valueEquals(Number.NaN, Number.NaN)).toBe(false);
+    expect(valueNotEquals(Number.NaN, Number.NaN)).toBe(true);
+  });
+
+  test('and neither is a sequence holding one', () => {
+    expect(valueEquals([Number.NaN], [Number.NaN])).toBe(false);
+    expect(valueEquals([1, Number.NaN, 3], [1, Number.NaN, 3])).toBe(false);
+    // Everything else in the same sequence still compares by contents.
+    expect(valueEquals([1, 2, 3], [1, 2, 3])).toBe(true);
+  });
+
+  test('the map-lookup walk keeps SameValueZero, which is what a Map needs', () => {
+    expect(keysEqual(Number.NaN, Number.NaN)).toBe(true);
+    // A Rust `f64` is neither `Hash` nor `Eq`, so no map the port writes is
+    // keyed by one: this branch is reached only by a key Rust could not have
+    // used.
+    const held = new Map([[Number.NaN, 'kept']]);
+    expect(held.get(Number.NaN)).toBe('kept');
+  });
+});

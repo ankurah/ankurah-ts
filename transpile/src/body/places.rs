@@ -174,6 +174,7 @@ impl BodyTranslator<'_> {
             reads_as_value: !self.is_written_through(call),
             elements: self.element_ownership(call),
             fresh_receiver: self.builds_its_own_sequence(&call.receiver),
+            callback: self.callback_ownership(call),
         }
     }
 
@@ -362,9 +363,25 @@ impl BodyTranslator<'_> {
         call: &syn::ExprMethodCall,
         expected: Option<&crate::ty::Ty>,
     ) -> Option<crate::ty::Ty> {
-        const OPENS_A_WRAPPER: [&str; 4] = ["unwrap", "expect", "unwrap_or_default", "ok"];
+        // G3: the adaptors whose RESULT TYPE fixes their operand's payload, and
+        // nothing else. Each of them is transparent to an expectation, and the
+        // list is closed: a form not here stops the expectation, which is what
+        // the "one level and stop" rule said of every form. `into` and
+        // `try_into` are not adaptors — their TARGET is the expectation.
+        //
+        // Two kinds. One OPENS the wrapper, so what the position wants of the
+        // whole is what it wants of the payload; the other keeps a wrapper of
+        // the same payload, so the expectation's own payload is what passes
+        // through. `o.ok_or(e)` is the second read backwards: the whole is a
+        // `Result<T, E>` and the receiver an `Option<T>`, and taking the
+        // expectation whole would have asked the `Option` for a `Result`.
+        const OPENS: [&str; 6] =
+            ["unwrap", "expect", "unwrap_or_default", "ok", "unwrap_or", "unwrap_or_else"];
+        const KEEPS: [&str; 5] = ["map_err", "ok_or", "ok_or_else", "context", "with_context"];
         let want = expected?;
-        if !OPENS_A_WRAPPER.contains(&call.method.to_string().as_str()) {
+        let method = call.method.to_string();
+        let opens = OPENS.contains(&method.as_str());
+        if !opens && !KEEPS.contains(&method.as_str()) {
             return None;
         }
         let tc = self.types.as_ref()?;
@@ -374,16 +391,31 @@ impl BodyTranslator<'_> {
         let crate::ty::Ty::Named { id, args } = receiver.peel_refs() else {
             return None;
         };
+        let payload = match opens {
+            true => want.clone(),
+            false => self.wrapped_payload(want)?,
+        };
         let tc = tc.borrow();
         if !tc.is_result(&receiver) && !tc.is_option(&receiver) {
             return None;
         }
         Some(crate::ty::Ty::Named {
             id: *id,
-            args: std::iter::once(want.clone())
-                .chain(args.iter().skip(1).cloned())
-                .collect(),
+            args: std::iter::once(payload).chain(args.iter().skip(1).cloned()).collect(),
         })
+    }
+
+    /// The `T` of a `Result<T, E>` or an `Option<T>` an expectation names.
+    pub(crate) fn wrapped_payload(&self, ty: &crate::ty::Ty) -> Option<crate::ty::Ty> {
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        if !tc.is_result(ty) && !tc.is_option(ty) {
+            return None;
+        }
+        match ty.peel_refs() {
+            crate::ty::Ty::Named { args, .. } => args.first().cloned(),
+            _ => None,
+        }
     }
 
     /// A list literal, written as the runtime type the position wants.

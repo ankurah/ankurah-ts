@@ -19,6 +19,12 @@ impl<'a> BodyTranslator<'a> {
     /// Whether this `match` hands the subject's payload to an arm, which is
     /// what tells the consuming form from the borrowing one.
     pub fn match_takes(&self, m: &syn::ExprMatch) -> ownership::scrutinee::Takes {
+        // Q3: a match the `Option` rewriting made hands the payload over by
+        // construction — that is what the rewriting is for — and the subject
+        // expression still resolves to the `Option` around it.
+        if self.matches_a_payload(&m.expr) {
+            return ownership::scrutinee::Takes::Payload;
+        }
         let patterns: Vec<&syn::Pat> = m.arms.iter().map(|arm| &arm.pat).collect();
         self.pattern_takes(&m.expr, &patterns)
     }

@@ -123,7 +123,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
     },
     Bool: (v) => {
       const b = v._0;
-      return [Number(b)];
+      return new Uint8Array([Number(b)]);
     },
     EntityId: (v) => {
       const ulid = v._0;
@@ -139,7 +139,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
     },
     Json: (v) => {
       const json = v._0;
-      return serde_json.toVec(json).unwrapOrDefault();
+      return serde_json.toVec(json).unwrapOr(new Uint8Array());
     },
   });
 }

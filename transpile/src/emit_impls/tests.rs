@@ -193,3 +193,28 @@ fn a_dropped_method_carrying_a_hole_is_written_under_its_trait() {
         f.messages()
     );
 }
+
+/// G5: `impl Kind { const LIMIT: u32 = 5; }` puts a member on the type in
+/// Rust, and the emitter writes nothing for one — so `Kind::LIMIT` reads
+/// `undefined` and whatever is computed from it answers `NaN`, silently. The
+/// const is reported at its own span, whether the impl is emitted as methods
+/// on a class here or as module-level functions.
+#[test]
+fn a_const_declared_inside_an_impl_is_reported() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Kind { pub n: u32 }\n\
+         impl Kind {\n\
+           pub const LIMIT: u32 = 5;\n\
+           pub fn under(&self) -> bool { self.n < Self::LIMIT }\n\
+         }",
+    )]);
+    let _ = f.emitted("lib.rs");
+    let said: Vec<String> = f.messages().into_iter().filter(|m| m.contains("LIMIT")).collect();
+    assert!(
+        said.iter().any(|m| m.contains("is a const declared inside this impl")
+            && m.contains("`Kind::LIMIT` names a member no class declares")),
+        "the const is not reported: {said:?}"
+    );
+    assert_eq!(said.len(), 1, "reported more than once: {said:?}");
+}

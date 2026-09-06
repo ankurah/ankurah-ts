@@ -47,31 +47,47 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
             let _moved5 = false;
             const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
             try {
-              _moved4 = true;
-              _moved5 = true;
-              const me = new EntityLiveQuery(Arc.new(new Inner(queryId, node.clone(), subscription, resultset.clone(), Mut.new(null), tokio.sync.Notify.new(), 0, 1, Mut.new([args.selection.clone(), 1]), collectionId.clone(), gapFetcher)));
-              const hasRelay = (node.deref().value.subscriptionRelay != null);
-              if (args.cached || !hasRelay) {
-                const me2 = me.clone();
-                tracing.debug(`LiveQuery::new() spawning initialization task for durable node predicate ${queryId}`);
-                spawn((async () => {
-                  tracing.debug(`LiveQuery initialization task starting for predicate ${queryId}`);
-                  {
-                    const _v = await me2.activate(1);
-                    if (_v.isErr()) {
-                      const e = _v.unwrapErr();
-                      tracing.debug(`LiveQuery initialization failed for predicate ${queryId}: ${e}`);
-                      me2._0.error.set(e);
-                    } else {
-                    tracing.debug(`LiveQuery initialization completed for predicate ${queryId}`);
+              const _b6 = node.clone();
+              const _b7 = resultset.clone();
+              try {
+                const _b8 = Mut.new(null);
+                const _b9 = tokio.sync.Notify.new();
+                try {
+                  const _b10 = 0;
+                  const _b11 = 1;
+                  const _b12 = Mut.new([args.selection.clone(), 1]);
+                  const _b13 = collectionId.clone();
+                  _moved4 = true;
+                  _moved5 = true;
+                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b8, _b9, _b10, _b11, _b12, _b13, gapFetcher)));
+                  const hasRelay = (node.deref().value.subscriptionRelay != null);
+                  if (args.cached || !hasRelay) {
+                    const me2 = me.clone();
+                    tracing.debug(`LiveQuery::new() spawning initialization task for durable node predicate ${queryId}`);
+                    spawn((async () => {
+                      tracing.debug(`LiveQuery initialization task starting for predicate ${queryId}`);
+                      {
+                        const _v = await me2.activate(1);
+                        if (_v.isErr()) {
+                          const e = _v.unwrapErr();
+                          tracing.debug(`LiveQuery initialization failed for predicate ${queryId}: ${e}`);
+                          me2._0.error.set(e);
+                        } else {
+                        tracing.debug(`LiveQuery initialization completed for predicate ${queryId}`);
+                      }
+                      }
+                    })());
                   }
+                  if (hasRelay) {
+                    node.subscribeRemoteQuery(queryId, collectionId.clone(), args.selection.clone(), cdata.clone(), 1, me.weak());
                   }
-                })());
+                  return Result.Ok(me);
+                } finally {
+                  if (_b9 != null && !(_b9 as any).isMoved && !(_b9 as any).isDropped) dropOwned(_b9);
+                }
+              } finally {
+                if (_b7 != null && !(_b7 as any).isMoved && !(_b7 as any).isDropped) dropOwned(_b7);
               }
-              if (hasRelay) {
-                node.subscribeRemoteQuery(queryId, collectionId.clone(), args.selection.clone(), cdata.clone(), 1, me.weak());
-              }
-              return Result.Ok(me);
             } finally {
               if (!_moved5) gapFetcher.drop();
             }

@@ -44,6 +44,8 @@ mod tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
+mod taken_tests;
+#[cfg(test)]
 mod terminal_tests;
 
 pub use glue::{drops_of, fresh_at_each_use, Drops};
@@ -100,7 +102,15 @@ impl Owned {
 /// A `let`'s own claim writes the declaration into the statement stream before
 /// the body is finished, so dropping the flag from the release has to take the
 /// declaration with it.
-fn without_declaration(body: &str, flag: &str) -> String {
+///
+/// N4: which stream that is depends on WHO claimed the value. A parameter's
+/// declaration and its release are written around one body and this finds it
+/// there; a `let`'s declaration goes into the statement that declared it while
+/// the release wraps the REST of the block, and this — handed only the rest —
+/// found nothing to take out. `storage-indexeddb/collection.ts` declared a
+/// `let _moved0 = false;` whose guard had been dropped seventy lines below it.
+/// The caller that holds both halves does the removal there.
+pub fn without_declaration(body: &str, flag: &str) -> String {
     let dead = format!("let {} = false;", flag);
     let kept: Vec<&str> = body.lines().filter(|line| line.trim() != dead).collect();
     match body.ends_with('\n') {
@@ -139,6 +149,15 @@ pub struct Hoist {
     /// lifted before it ran; its declaration is where the throw stands, so
     /// nothing after it is reached.
     pub refused: bool,
+    /// Is this a value Rust had NOT yet built where the lift stands?
+    ///
+    /// N3: an argument lifted above a move flag is evaluated earlier than Rust
+    /// evaluates it — the whole point, so that the flag can stand below every
+    /// operand that can throw. Rust's own unwind drops such a temporary; here
+    /// nobody owns it at all if a later operand throws before the call is
+    /// reached. So it is released however the expression is left, asked of the
+    /// runtime first, because the call it was lifted for may have consumed it.
+    pub released_if_unreached: bool,
 }
 
 /// `body`, with everything lifted out of it declared before it and released
@@ -214,9 +233,10 @@ pub fn guarded_release(name: &str) -> String {
 pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
     let mut inner = body.to_string();
     for hoist in hoists.iter().rev() {
-        let wrapped = match &hoist.owned {
-            Some(owned) => wrap(&inner, owned),
-            None => inner,
+        let wrapped = match (&hoist.owned, &hoist.temp) {
+            (Some(owned), _) => wrap(&inner, owned),
+            (None, Some(temp)) if hoist.released_if_unreached => wrap_guarded(&inner, temp),
+            (None, _) => inner,
         };
         inner = format!("{}{}", hoist.declaration, wrapped);
     }

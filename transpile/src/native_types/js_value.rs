@@ -264,3 +264,96 @@ mod tests {
         assert_eq!(written(&js, "clone"), "value");
     }
 }
+
+/// `serde_json::Value::Null` and `serde_json::Value::X(payload)`, as the plain
+/// JavaScript value each of them IS.
+///
+/// The port's `serde_json` reads and writes ordinary JavaScript values: `parse`
+/// answers one, `stringify` and `to_vec` take one, and `Value` is the name Rust
+/// gives that value rather than a type of its own. So a variant CONSTRUCTION is
+/// the identity on its payload — `serde_json::Value::String(s)` is `s` — and
+/// `Null` is `null`. Written as an enum construction it came out `new
+/// serde_json.Value('String', { _0: s })`, and `@ankurah/base` exports no
+/// `Value` at all: nine emitted sites, every one a `TypeError`, and each of
+/// them would have handed `stringify` an object serde_json never wrote.
+///
+/// `Number` is the one variant whose Rust payload is not the value itself —
+/// `serde_json::Number` wraps it — but the port writes that wrapper as the
+/// number, so the identity holds here too.
+pub fn json_value_construction(segments: &[String], args: &[String]) -> Option<String> {
+    let variant = match segments {
+        [.., qualifier, owner, variant] if qualifier == "serde_json" && owner == "Value" => variant,
+        _ => return None,
+    };
+    match (variant.as_str(), args) {
+        ("Null", []) => Some("null".to_string()),
+        ("Bool" | "Number" | "String" | "Array" | "Object", [payload]) => Some(payload.clone()),
+        _ => None,
+    }
+}
+
+/// Why `serde_json::from_value` has no lowering.
+///
+/// It answers a `T` the CALLER names — `let x: Sched = serde_json::from_value(
+/// v)?` — and the port reads a JSON value back through `T.fromJson(v)`, which
+/// needs that `T` written out. A free function has no way to be told which one,
+/// so the site is a hole rather than a call that hands the JSON value back
+/// unchanged. `to_value` has no such problem and is in `@ankurah/base`.
+pub fn json_from_value_refusal(segments: &[String]) -> Option<String> {
+    // The path reaches here already spelled the way the port writes it, so both
+    // spellings are matched: the Rust one where the caller had not camel-cased
+    // it yet, and `fromValue` where it had.
+    let is_it = matches!(
+        segments,
+        [.., qualifier, name]
+            if qualifier == "serde_json" && (name == "from_value" || name == "fromValue")
+    );
+    is_it.then(|| {
+        "`serde_json::from_value` answers the type the caller names, and the port reads a JSON \
+         value back through that type's own `fromJson`; a free function has no way to be told \
+         which type this one is"
+            .to_string()
+    })
+}
+
+#[cfg(test)]
+mod json_value_tests {
+    use super::*;
+
+    fn seg(path: &str) -> Vec<String> {
+        path.split('.').map(str::to_string).collect()
+    }
+
+    /// L2: the port's `serde_json` reads and writes plain JavaScript values, so
+    /// a `Value` variant construction is the identity on its payload and `Null`
+    /// is `null`. Written as an enum construction it named a `Value`
+    /// `@ankurah/base` does not export at all — nine emitted sites, and each
+    /// would have handed `stringify` an object serde_json never wrote.
+    #[test]
+    fn a_value_variant_is_the_plain_value() {
+        assert_eq!(json_value_construction(&seg("serde_json.Value.Null"), &[]).as_deref(), Some("null"));
+        assert_eq!(
+            json_value_construction(&seg("serde_json.Value.String"), &["s".to_string()]).as_deref(),
+            Some("s")
+        );
+        assert_eq!(
+            json_value_construction(&seg("serde_json.Value.Object"), &["map".to_string()]).as_deref(),
+            Some("map")
+        );
+        // A crate's own type called `Value` is not this one.
+        assert_eq!(json_value_construction(&seg("Value.Null"), &[]), None);
+        assert_eq!(json_value_construction(&seg("ankql.Value.String"), &["s".to_string()]), None);
+        // And a variant with the wrong arity is not written either.
+        assert_eq!(json_value_construction(&seg("serde_json.Value.Null"), &["x".to_string()]), None);
+    }
+
+    /// `from_value` answers the type the CALLER names, and a free function has
+    /// no way to be told which. `to_value` has no such problem.
+    #[test]
+    fn from_value_is_refused_and_to_value_is_not() {
+        assert!(json_from_value_refusal(&seg("serde_json.from_value")).is_some());
+        assert!(json_from_value_refusal(&seg("serde_json.fromValue")).is_some());
+        assert!(json_from_value_refusal(&seg("serde_json.toValue")).is_none());
+        assert!(json_from_value_refusal(&seg("mine.fromValue")).is_none());
+    }
+}

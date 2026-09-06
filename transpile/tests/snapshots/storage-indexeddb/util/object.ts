@@ -15,21 +15,21 @@ export class Object extends Struct {
   }
 
   get<T extends TryFrom>(key: unknown): Result<T, RetrievalError> {
-    const _r0 = jsSys.Reflect.get(this.obj, key).mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to get ${(typeof key === 'string' ? key : null).unwrapOrDefault()}`) }));
+    const _r0 = jsSys.Reflect.get(this.obj, key).mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to get ${((typeof key === 'string' ? key : null) ?? '')}`) }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const v = _r0.unwrap();
-    return v.tryInto().mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to convert ${(typeof key === 'string' ? key : null).unwrapOrDefault()}`) }));
+    return v.tryInto().mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to convert ${((typeof key === 'string' ? key : null) ?? '')}`) }));
   }
 
   getOpt<T extends TryFrom>(key: unknown): Result<T | null, RetrievalError> {
-    const _r0 = jsSys.Reflect.get(this.obj, key).mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to get ${(typeof key === 'string' ? key : null).unwrapOrDefault()}`) }));
+    const _r0 = jsSys.Reflect.get(this.obj, key).mapErr((_e) => new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to get ${((typeof key === 'string' ? key : null) ?? '')}`) }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const v = _r0.unwrap();
     if ((v === null) || (v === undefined)) {
       return Result.Ok(null);
     }
     const _r1 = v.tryInto().mapErr((_e) => {
-      return new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to convert ${(typeof key === 'string' ? key : null).unwrapOrDefault()}`) });
+      return new RetrievalError('StorageError', { _0: AnyhowError.msg(`Failed to convert ${((typeof key === 'string' ? key : null) ?? '')}`) });
     });
     if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
     return Result.Ok(_r1.unwrap());
@@ -40,7 +40,7 @@ export class Object extends Struct {
     const _r0 = value.tryInto().mapErr((e) => new MutationError('General', { _0: e }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const jsValue = _r0.unwrap();
-    return jsSys.Reflect.set(this.obj, jsKey, jsValue).mapErr((_e) => new MutationError('FailedToSetProperty', { _0: 'field', _1: (typeof jsValue === 'string' ? jsValue : null).unwrapOrDefault() }));
+    return jsSys.Reflect.set(this.obj, jsKey, jsValue).mapErr((_e) => new MutationError('FailedToSetProperty', { _0: 'field', _1: ((typeof jsValue === 'string' ? jsValue : null) ?? '') }));
   }
 
   deref(): unknown {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/entity_ref.rs
-import { Struct, Result, unsupported } from '@ankurah/base';
+import { Struct, Result } from '@ankurah/base';
 import { EntityId, DecodeError } from '@ankurah/proto';
 import { BincodeReader, BincodeWriter } from '../../codec';
 import { Context } from '../../context';
@@ -77,7 +77,59 @@ export class Ref<T extends Model> extends Struct implements Property {
   }
 
   static fromValue<T>(value: Value | null): Result<Ref<T>, PropertyError> {
-    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+    if (value != null) {
+      return value.intoMatch({
+        EntityId: (v) => {
+          const id = v._0;
+          return Result.Ok(new Ref(id));
+        },
+        String: (v) => {
+          const s = v._0;
+          return EntityId.fromBase64(s).map(Ref.new).mapErr((e) => {
+            try {
+              return new PropertyError('InvalidValue', { value: s, ty: `Ref (${e})` });
+            } finally {
+              e.drop();
+            }
+          });
+        },
+        I16: (v) => {
+          const other = new Value('I16', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        I32: (v) => {
+          const other = new Value('I32', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        I64: (v) => {
+          const other = new Value('I64', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        F64: (v) => {
+          const other = new Value('F64', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        Bool: (v) => {
+          const other = new Value('Bool', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        Object: (v) => {
+          const other = new Value('Object', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        Binary: (v) => {
+          const other = new Value('Binary', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+        Json: (v) => {
+          const other = new Value('Json', v);
+          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+        },
+      });
+    } else {
+      return Result.Err(new PropertyError('Missing', {}));
+    }
+
   }
 
   equals(other: Ref<T>): boolean {

@@ -15,7 +15,13 @@ describe('ast unit tests', () => {
     try {
       const result = selection.predicate.assumeNull([...nullColumns].map((s) => s));
       try {
-        return generateSelectionSql(result, null).mapErr((_) => new ParseError('InvalidPredicate', { _0: 'SQL generation failed' }));
+        return generateSelectionSql(result, null).mapErr((_) => {
+          try {
+            return new ParseError('InvalidPredicate', { _0: 'SQL generation failed' });
+          } finally {
+            _.drop();
+          }
+        });
       } finally {
         result.drop();
       }

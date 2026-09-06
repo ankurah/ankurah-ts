@@ -277,15 +277,9 @@ pub(crate) fn branch(block: &syn::Block, t: &BodyTranslator, position: Position)
                         translate_expr_in_return_position(expr, t)
                     })
                 });
-                // J3: what the branch lifted ABOVE its flag — an argument that
-                // can throw before the call starts — stands ahead of it.
-                let before = std::mem::take(&mut *t.own.before_flags.borrow_mut()).join("");
-                return format!(
-                    "{}{}{}",
-                    before,
-                    flags,
-                    crate::ownership::hoisted(&format!("{}\n", body), &lifted)
-                );
+                // O6: and the flag stands IMMEDIATELY BEFORE the transfer,
+                // which is below everything the branch lifted out of itself.
+                return crate::ownership::hoisted(&format!("{}{}\n", flags, body), &lifted);
             }
             t.translate_block(block)
         }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/struct_bincode/src/input.rs
-import { Struct, Result, JsonError, jsonAll, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Envelope extends Struct {
@@ -30,7 +30,7 @@ export class Envelope extends Struct {
   }
 
   debug(): string {
-    return `Envelope { id: ${String(this.id)}, label: ${JSON.stringify(this.label)}, payload: ${`[${Array.from(this.payload).map((e) => String(e)).join(', ')}]`} }`;
+    return `Envelope { id: ${String(this.id)}, label: ${debugString(this.label)}, payload: ${`[${Array.from(this.payload).map((e) => String(e)).join(', ')}]`} }`;
   }
 
   encode(writer: BincodeWriter): void {

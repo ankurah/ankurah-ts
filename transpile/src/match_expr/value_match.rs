@@ -53,6 +53,7 @@ pub(super) fn translate_value_match(
                 t,
                 position,
                 consumes.then(|| unowned_elements(&arm.pat, scrutinee_ty.as_ref(), t)).unwrap_or_default(),
+                consumes,
             )
         })
         .collect();
@@ -137,6 +138,7 @@ fn written_arm(
     t: &BodyTranslator,
     position: Position,
     unowned: Vec<usize>,
+    consumes: bool,
 ) -> Arm {
     let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
     let (test, bind) = t.pattern_test(subject, &arm.pat);
@@ -147,13 +149,24 @@ fn written_arm(
     // guard that fails hands the subject to the arm below.
     let takes_subject = crate::ownership::scrutinee::binds_whole_subject(&arm.pat);
     let subject_flag = if takes_subject { t.flag_set_for_subject(subject_expr) } else { String::new() };
-    let owned = if subject_flag.is_empty() {
+    // L3: a name an arm binds by value is a local of that arm, whatever the
+    // SUBJECT's shape — Rust drops it where the arm ends and while an unwind
+    // passes through it. The claim used to be made only where the pattern bound
+    // the whole subject, so `(Some(a), Some(b), Asc)` over a tuple of owned
+    // `Option`s bound both operands and no path released either
+    // (`storage-common/sorting.ts`'s two comparators, six arms).
+    let owned = if subject_flag.is_empty() && !consumes {
         Vec::new()
     } else {
-        t.claim_bindings(
-            &crate::body::pattern_names(&arm.pat),
-            std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
-        )
+        // An arm whose body is a BLOCK is scanned as that block's own
+        // statements: wrapped in one `Stmt::Expr` instead, every move inside it
+        // read as a move under a branch, so a binding the arm plainly hands
+        // away came out behind a drop flag that is always set.
+        let stmts: Vec<syn::Stmt> = match arm.body.as_ref() {
+            syn::Expr::Block(block) => block.block.stmts.clone(),
+            other => vec![syn::Stmt::Expr(other.clone(), None)],
+        };
+        t.claim_bindings(&crate::body::pattern_names(&arm.pat), &stmts)
     };
     // A guard is its own temporary scope: Rust releases what the guard took to
     // make its test before the arm's body runs and before the next arm is

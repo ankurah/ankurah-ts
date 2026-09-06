@@ -85,22 +85,26 @@ export class SubscriptionHandler extends Struct {
             try {
               _moved6 = true;
               const initialStates = iterFilterMap([...matchingEntities], (e) => {
-                const _r7 = e.toEntityState().ok();
-                if (_r7 == null) return null;
-                let _moved8 = false;
-                const entityState = _r7;
                 try {
-                  let _moved9 = false;
-                  const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+                  const _r7 = e.toEntityState().ok();
+                  if (_r7 == null) return null;
+                  let _moved8 = false;
+                  const entityState = _r7;
                   try {
-                    _moved8 = true;
-                    _moved9 = true;
-                    return Attested.opt(entityState, attestation);
+                    let _moved9 = false;
+                    const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+                    try {
+                      _moved8 = true;
+                      _moved9 = true;
+                      return Attested.opt(entityState, attestation);
+                    } finally {
+                      if (!_moved9) dropOwned(attestation);
+                    }
                   } finally {
-                    if (!_moved9) dropOwned(attestation);
+                    if (!_moved8) entityState.drop();
                   }
                 } finally {
-                  if (!_moved8) entityState.drop();
+                  e.drop();
                 }
               });
               const _r10 = await expandStates(initialStates, [...knownMatches].map((k) => k.entityId), storageCollection);
@@ -109,7 +113,13 @@ export class SubscriptionHandler extends Struct {
               const expandedStates = _r10.unwrap();
               try {
                 _moved0 = true;
-                const knownMap = HashMap.from([...knownMatches].map((k) => [k.entityId, k.takeField('head')]));
+                const knownMap = HashMap.from([...knownMatches].map((k) => {
+                  try {
+                    return [k.entityId, k.takeField('head')];
+                  } finally {
+                    k.drop();
+                  }
+                }));
                 let deltas = [];
                 _moved11 = true;
                 const _seq13 = expandedStates;
@@ -186,8 +196,10 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
         const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
         try {
           const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+          const _b4 = item.entity.id();
+          const _b5 = item.entity.collection().clone();
           _moved3 = true;
-          return new SubscriptionUpdateItem(item.entity.id(), item.entity.collection().clone(), content, predicateRelevance);
+          return new SubscriptionUpdateItem(_b4, _b5, content, predicateRelevance);
         } finally {
           if (!_moved3) content.drop();
         }

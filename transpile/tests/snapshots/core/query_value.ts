@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/query_value.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum, Result, debugString } from '@ankurah/base';
 import { Expr, Literal, ParseError } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 
@@ -43,11 +43,11 @@ export class QueryValue extends Enum<QueryValueV> {
 
   debug(): string {
     return this.match({
-      String: (v) => `String(${JSON.stringify(v._0)})`,
+      String: (v) => `String(${debugString(v._0)})`,
       Int: (v) => `Int(${String(v._0)})`,
       Float: (v) => `Float(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Bool: (v) => `Bool(${String(v._0)})`,
-      EntityId: (v) => `EntityId(${JSON.stringify(v._0)})`,
+      EntityId: (v) => `EntityId(${debugString(v._0)})`,
     });
   }
 }
@@ -74,7 +74,13 @@ export function Expr_tryFromQueryValue(value: QueryValue): Result<Expr, ParseErr
         },
         EntityId: (v) => {
           const s = v._0;
-          const _r0 = EntityId.fromBase64(s).mapErr((e) => new ParseError('InvalidPredicate', { _0: `Invalid EntityId: ${e}` }));
+          const _r0 = EntityId.fromBase64(s).mapErr((e) => {
+            try {
+              return new ParseError('InvalidPredicate', { _0: `Invalid EntityId: ${e}` });
+            } finally {
+              e.drop();
+            }
+          });
           if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
           const id = _r0.unwrap();
           return new Expr('Literal', { _0: new Literal('EntityId', { _0: id.toUlid() }) });

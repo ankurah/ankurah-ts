@@ -6,7 +6,7 @@
 //! means adding a runtime helper is a one-line edit to a list, not a line added
 //! to a file that is already long.
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 117] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 123] = [
     // Rust's two byte-to-text answers: the fatal decode every reader goes
     // through, and the lossy one `String::from_utf8_lossy` asks for.
     "decodeUtf8Lossy",
@@ -63,10 +63,16 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 117] = [
     // every element they do not hand back.
     "iterPositionOwned", "iterRpositionOwned", "iterFindOwned", "iterFindMapOwned",
     "iterLastOwned", "iterMaxByOwned", "iterMinByOwned", "iterMaxByKeyOwned",
-    "iterMinByKeyOwned", "iterReduceOwned",
+    "iterMinByKeyOwned", "iterReduceOwned", "iterFirstOwned",
+    // O3/O4: the eager adaptors that DISCARD elements, over a sequence the
+    // expression owns. Rust drops what `Filter` rejected, what `Skip` walked
+    // past, what `Take` cut off and what `StepBy` stepped over; written as
+    // array operations they lost them, and the terminal below could not
+    // release what the adaptor had already erased.
+    "filterOwned", "skipOwned", "takeOwned", "stepByOwned",
     // A bounded range, as the sequence of its values: the port has no `Range`,
     // and `step_by` over one is every nth element of the sequence it built.
-    "range", "rangeIncl", "stepBy",
+    "range", "rangeIncl", "rangeContains", "stepBy",
     // F7: `{:?}` for a value whose type the emitter could not see, and the
     // `char` escaping Rust writes.
     "debugValue", "debugChar", "debugString",

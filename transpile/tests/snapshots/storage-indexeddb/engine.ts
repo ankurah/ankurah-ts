@@ -23,8 +23,9 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
     let _moved1 = false;
     const db = _r0.unwrap();
     try {
+      const _b2 = Arc.new(false);
       _moved1 = true;
-      return Result.Ok(new IndexedDBStorageEngine(db, Arc.new(false)));
+      return Result.Ok(new IndexedDBStorageEngine(db, _b2));
     } finally {
       if (!_moved1) db.drop();
     }

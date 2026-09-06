@@ -14,9 +14,12 @@ import {
   iterReduce,
   iterRposition,
   range,
+  rangeContains,
   rangeIncl,
   stepBy,
 } from '../src/std/iter.ts';
+import { Drop } from '../src/std/drop.ts';
+import { OwnedClosure } from '../src/closure.ts';
 
 describe('the Option-returning iterator adaptors answer null, not a sentinel', () => {
   // J1's live case, in the shape the reactor's `remove` had it: the watcher had
@@ -201,5 +204,100 @@ describe('a range is the sequence of its values', () => {
   test('filter_map keeps what the closure answers Some for', () => {
     expect(iterFilterMap([1, 2, 3, 4], (n) => (n % 2 === 0 ? n * 10 : null))).toEqual([20, 40]);
     expect(iterFilterMap([1, 3], (n) => (n % 2 === 0 ? n : null))).toEqual([]);
+  });
+});
+
+describe('a borrowed callback survives the reading terminals too', () => {
+  // O2: the reading family releases its callback for the same reason the
+  // consuming one does — Rust's terminals take their `F` by value. `find(&p)`
+  // hands over a reference instead, and the port has no reference to hand, so
+  // the emitter says which of the two happened. Released regardless, a closure
+  // used by two calls in a row read captures that were gone on the second.
+  class Held extends Drop {
+    static released = 0;
+    protected override onDrop(): void {
+      Held.released += 1;
+    }
+  }
+
+  test('a callback marked borrow is called by two terminals in a row', () => {
+    Held.released = 0;
+    const captured = new Held();
+    const p = new OwnedClosure([captured], (n: number) => n === 2);
+    expect(iterFind([1, 2, 3], p, 'borrow')).toBe(2);
+    expect(iterPosition([1, 2, 3], p, 'borrow')).toBe(1);
+    expect(iterRposition([1, 2, 3], p, 'borrow')).toBe(1);
+    expect(p.isDropped).toBe(false);
+    expect(Held.released).toBe(0);
+    p.drop();
+    expect(Held.released).toBe(1);
+  });
+
+  test('and the same for the ones that fold or map', () => {
+    Held.released = 0;
+    const captured = new Held();
+    const key = new OwnedClosure([captured], (n: number) => n);
+    expect(iterMaxByKey([1, 3, 2], key, 'borrow')).toBe(3);
+    expect(iterMinByKey([1, 3, 2], key, 'borrow')).toBe(1);
+    expect(key.isDropped).toBe(false);
+    key.drop();
+
+    Held.released = 0;
+    const cmp = new OwnedClosure([new Held()], (a: number, b: number) => a - b);
+    expect(iterMaxBy([1, 3, 2], cmp, 'borrow')).toBe(3);
+    expect(iterMinBy([1, 3, 2], cmp, 'borrow')).toBe(1);
+    expect(iterReduce([1, 3, 2], cmp as unknown as OwnedClosure<[number, number], number>, 'borrow')).toBe(-4);
+    expect(cmp.isDropped).toBe(false);
+    cmp.drop();
+    expect(Held.released).toBe(1);
+
+    Held.released = 0;
+    const f = new OwnedClosure([new Held()], (n: number) => (n % 2 === 0 ? n : null));
+    expect(iterFilterMap([1, 2, 3, 4], f, 'borrow')).toEqual([2, 4]);
+    expect(iterFindMap([1, 2, 3], f, 'borrow')).toBe(2);
+    expect(f.isDropped).toBe(false);
+    f.drop();
+    expect(Held.released).toBe(1);
+  });
+
+  test('and with nothing said, the terminal releases it, as Rust does', () => {
+    Held.released = 0;
+    const p = new OwnedClosure([new Held()], (n: number) => n === 2);
+    expect(iterFind([1, 2, 3], p)).toBe(2);
+    expect(p.isDropped).toBe(true);
+    expect(Held.released).toBe(1);
+  });
+});
+
+describe('rangeContains answers from the bounds', () => {
+  // O7/O8: the item is evaluated ONCE, the ends in Rust's order, and every
+  // bound shape is answered — `a..`, `..b`, `..=b` and `..` each used to fall
+  // to the materialisation hole though Rust answers `a <= x`, `x < b`,
+  // `x <= b` and `true`.
+  test('a half-open range excludes its end and a closed one includes it', () => {
+    expect(rangeContains(0, 16, false, 15)).toBe(true);
+    expect(rangeContains(0, 16, false, 16)).toBe(false);
+    expect(rangeContains(0, 16, true, 16)).toBe(true);
+    expect(rangeContains(0, 16, false, -1)).toBe(false);
+  });
+
+  test('an empty or reversed range contains nothing, as Rust’s does', () => {
+    expect(rangeContains(5, 5, false, 5)).toBe(false);
+    expect(rangeContains(9, 1, false, 5)).toBe(false);
+  });
+
+  test('an unbounded end is Rust’s Unbounded', () => {
+    expect([rangeContains(5, null, false, 5), rangeContains(5, null, false, 4)]).toEqual([true, false]);
+    expect([rangeContains(null, 5, false, 4), rangeContains(null, 5, false, 5)]).toEqual([true, false]);
+    expect([rangeContains(null, 5, true, 5), rangeContains(null, 5, true, 6)]).toEqual([true, false]);
+    expect(rangeContains(null, null, false, 999)).toBe(true);
+  });
+
+  test('and the comparison is the value’s own, not the number line’s', () => {
+    expect(rangeContains('a', 'c', false, 'b')).toBe(true);
+    expect(rangeContains(1n, 9n, false, 5n)).toBe(true);
+    const ordered = (n: number) => ({ n, compareTo: (o: { n: number }) => n - o.n });
+    expect(rangeContains(ordered(1), ordered(9), false, ordered(5))).toBe(true);
+    expect(rangeContains(ordered(1), ordered(9), false, ordered(9))).toBe(false);
   });
 });

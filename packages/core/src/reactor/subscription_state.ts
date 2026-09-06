@@ -206,7 +206,13 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             const isFirstUpdate = (queryState.selection == null);
             const oldSelection = queryState.selection.replace(selection.clone());
             try {
-              const _r3 = (selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null).transpose();
+              const _r3 = (selection.orderBy != null ? ((ob) => {
+                try {
+                  return buildKeySpecFromSelection(ob.asSlice(), queryState.resultset);
+                } finally {
+                  dropOwned(ob);
+                }
+              })(selection.orderBy!) : null).transpose();
               if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
               queryState.resultset.orderBy(_r3.unwrap());
               if (isFirstUpdate || valueNotEquals((oldSelection != null ? ((s) => s.limit)(oldSelection!) : null), selection.limit)) {
@@ -690,8 +696,9 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             const v = _v._0;
             const resultset = EntityResultSet.empty();
             const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+            const _b1 = resultset.clone();
             _moved0 = true;
-            v.insert(new QueryState(collectionId, null, gapFetcher, false, resultset.clone(), 0));
+            v.insert(new QueryState(collectionId, null, gapFetcher, false, _b1, 0));
             return resultset;
           },
           Occupied: (v) => {

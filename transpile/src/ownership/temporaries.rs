@@ -112,7 +112,25 @@ impl<'a> BodyTranslator<'a> {
         if <Self as ownership::moves::Consumes>::consumes_receiver(self, call) {
             return written;
         }
+        // `Iterator::next` is declared `&mut self`, so the impl table says the
+        // receiver survives the call — and for Rust it does, with the tail
+        // still in it. The port has no cursor: on a receiver nobody else holds
+        // it hands back the head and releases the rest, so the whole sequence
+        // goes INTO the call and a second release here would drop that tail
+        // twice (Q1).
+        if self.lowering_takes_the_whole_sequence(call) {
+            return written;
+        }
         self.hoist_produced(&call.receiver, written)
+    }
+
+    /// Does this call's lowering take the sequence its receiver produced, so
+    /// that the statement owes it nothing?
+    fn lowering_takes_the_whole_sequence(&self, call: &syn::ExprMethodCall) -> bool {
+        call.method == "next"
+            && call.args.is_empty()
+            && self.builds_its_own_sequence(&call.receiver)
+            && self.adaptor_owns_its_elements(call)
     }
 
     /// The same, for any expression the statement produced and nothing binds.
@@ -155,6 +173,7 @@ impl<'a> BodyTranslator<'a> {
             owned: None,
             temp: None,
             refused: false,
+            released_if_unreached: false,
         });
         name
     }
@@ -175,6 +194,7 @@ impl<'a> BodyTranslator<'a> {
             }),
             temp: None,
             refused: false,
+            released_if_unreached: false,
         });
         name
     }

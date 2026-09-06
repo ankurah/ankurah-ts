@@ -24,6 +24,9 @@ impl<'a> BodyTranslator<'a> {
     /// vector the field still holds — both double drops the strict registry
     /// aborts on.
     pub fn borrowed_scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
+        if let Some(payload) = self.payload_type_of(expr) {
+            return Some(payload);
+        }
         match expr {
             syn::Expr::Reference(r) => Some(crate::ty::Ty::Ref {
                 mutable: r.mutability.is_some(),
@@ -172,4 +175,35 @@ impl<'a> BodyTranslator<'a> {
         takes == crate::ownership::scrutinee::Takes::Payload
     }
 
+}
+
+impl crate::body::BodyTranslator<'_> {
+    /// One expression's extent, as a comparable key: two clones of an
+    /// expression carry the same span, which is what lets a lowering ask "is
+    /// this the expression I set this for" without holding a borrow of it.
+    pub(crate) fn extent(expr: &syn::Expr) -> (usize, usize, usize, usize) {
+        let span = syn::spanned::Spanned::span(expr);
+        let (start, end) = (span.start(), span.end());
+        (start.line, start.column, end.line, end.column)
+    }
+
+    /// Q3: the type this subject's arms are really matching, where the
+    /// expression's own type is not it.
+    ///
+    /// `Option<T>` is `T | null`, so an `Option` match whose arms test inside
+    /// the payload is a null test around an enum match ON the payload — same
+    /// subject text, same subject expression, and a type one level in. Set by
+    /// that rewriting for the one match it makes, and keyed by the subject's
+    /// extent so nothing nested inside an arm reads it.
+    pub(crate) fn payload_type_of(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
+        let held = self.own.payload_subject.borrow();
+        let (at, ty) = held.as_ref()?;
+        (*at == Self::extent(expr)).then(|| ty.clone())
+    }
+
+    /// The same, as the ownership answer: a payload the arms take apart is one
+    /// the match hands over.
+    pub(crate) fn matches_a_payload(&self, expr: &syn::Expr) -> bool {
+        self.payload_type_of(expr).is_some()
+    }
 }

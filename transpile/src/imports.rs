@@ -147,7 +147,8 @@ pub fn is_primitive_or_base_type(ty: &str) -> bool {
         | "RwLock" | "RwLockReadGuard" | "RwLockWriteGuard"
         | "RefCell" | "Ref" | "RefMut"
         | "Borrow" | "BorrowMut" | "BincodeReader" | "BincodeWriter"
-        | "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Result"
+        | "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Iterable"
+        | "Result"
     )
 }
 

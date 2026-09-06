@@ -998,6 +998,32 @@ addressed by the step that found it.
   would have chosen the blanket; the item type is erased and no test can see it.
   And two impls the run time cannot tell apart mean no dispatcher is written at
   all, and the site says which they are.
+- **Expectations propagate one level, and THROUGH a closed list of transparent
+  forms** (step 9a slice 7, item 12; G3). An adaptor whose result type fixes its
+  operand's payload says exactly as much about that operand as the position says
+  about the whole, so an expectation that stops at it is a fact thrown away:
+  `let bytes: [u8; 32] = id_bytes.try_into().map_err(..)?;` is the only thing
+  that says which `TryFrom` impl `try_into` picks, and Rust picks it by the
+  TARGET type. The list is closed and is this one — `?`, `unwrap`, `expect`,
+  `ok`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `map_err`, `ok_or`,
+  `ok_or_else`, and anyhow's `context` and `with_context` — and a form not on it
+  stops the expectation as every form used to. `into` and `try_into` are not on
+  it because they are not adaptors: their TARGET is the expectation.
+
+  Two kinds, and the difference is observable. One OPENS the wrapper, so what
+  the position wants of the whole is what it wants of the payload; the other
+  keeps a wrapper of the same payload, so the expectation's own payload is what
+  passes through. `o.ok_or(e)` is the second read backwards — the whole is a
+  `Result<T, E>` and the receiver an `Option<T>` — and taking the expectation
+  whole would ask the `Option` for a `Result`. The wrapper the operand is asked
+  for is built from the RECEIVER's own type rather than guessed at.
+
+  This is the bounded-inference principle extended, not repealed: the list is
+  finite, written down, and each entry is a form whose Rust signature makes the
+  propagation exact. Inference across a chain — `strings.into_iter().map(|s|
+  s.try_into()).collect::<Result<Vec<_>, _>>()`, where a turbofish two calls
+  downstream settles the closure's `U` — is still refused.
+
 - **Expectations propagate one level and stop.** A `let` annotation, a return
   position, a call argument, a struct-literal field, the other operand of an
   equality assertion and an `unwrap` receiver each hand the expression under
@@ -1317,6 +1343,60 @@ addressed by the step that found it.
   leave the call the emitter writes undefined. `tests/common/members.rs` is the
   small member reader, and it does not model a method written as a field holding
   an arrow function — such a file's claim FAILS, which is the safe direction.
+
+- **An iterator is the whole array, and no cursor stands in it** (step 9a slice
+  7, item 3). Rust's iterators are lazy and hold a position; the port
+  materialises the sequence eagerly, so every adaptor is an array operation over
+  the whole of it. That answers most shapes and refuses two.
+
+  What it answers: an adaptor that DISCARDS elements owns what it discards, and
+  the port drops it where Rust does — `filterOwned`, `skipOwned`, `takeOwned`
+  and `stepByOwned` over a chain whose elements the chain owns, and the plain
+  array operations over a borrowed one. `map` and `flat_map` are not among them,
+  because they hand each element to a closure BY VALUE and a closure's by-value
+  parameters are locals of its body, so the closure is what releases them.
+
+  What it refuses: a PARTIAL walk that leaves a tail behind. `it.find(..)` and
+  `(&mut it).find(..)` on a named iterator, and `it.next()`, consume some
+  elements and leave the rest in `it` — and after the call the port cannot say
+  which of the array's elements are still the caller's, so neither release is
+  writable and the call is a hole. `it.by_ref().find(..)` is the same shape
+  under another spelling and gets the same refusal. The one partial walk that IS
+  written is `next` on a receiver the expression just built: nobody else holds
+  that sequence, so the call answers the head and the rest goes with the
+  iterator at the end of the statement.
+
+  **The durable answer is a cursor representation** — a sequence paired with an
+  index, where an adaptor advances the index and the pair keeps the unwalked
+  tail until the chain itself is dropped. That would turn every refusal above
+  into a lowering, and it is the direction to take when a corpus site makes one
+  of them matter. It is not free: every helper in `std/iter.ts` and
+  `std/iter_owned.ts` takes the pair instead of an array, and every emitted call
+  that hands a sequence to a hand-written callee has to say which of the two it
+  is handing over.
+
+- **The binding table is per MODULE, and Rust's `use` is per block** (step 9a
+  slice 7, item 11). A `use` written inside a function body is hoisted to the
+  module, because that is the only table there is — but only where the module
+  does not already claim the name, since widening a name's scope must not change
+  what another body means by it. Three shapes fall out of that, and each is
+  LOUD rather than guessed at:
+
+  - a body `use` whose name the module already DECLARES is not hoisted, and the
+    declaration wins. That is valid Rust the port does not model — Rust scopes
+    the body's `use` to its block and the two names coexist — and the body's own
+    uses of the name are reported where they resolve to the declaration
+    (O15). No corpus site.
+  - two bodies bringing in different types under one name are both reported and
+    neither is hoisted, because one table cannot hold both.
+  - a GLOB a body wrote is never hoisted, because widening a glob widens every
+    name it could ever bring — and it is reported, so the names it would have
+    brought do not draw false reports of their own ("no field `v` on `Other`")
+    (N20).
+
+  Each of those reports carries the `use`'s own span. Written at
+  `Span::call_site()`, a report about a `use` reached the reader with no file
+  and no line at all.
 
 ## 8. Non-goals
 

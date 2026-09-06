@@ -80,6 +80,7 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             super::iterator::Receiver::Sequence,
             super::iterator::Elements::Borrowed,
             false,
+            super::iterator::Callback::Owned,
         ) {
             Some(written) => written,
             None => return MethodTranslation::Passthrough,

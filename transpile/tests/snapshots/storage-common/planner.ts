@@ -466,7 +466,6 @@ export class Planner extends Struct {
       let _moved2 = false;
       const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
       try {
-        _moved2 = true;
         const _m4 = (() => {
           const _v = bounds;
           if (_v != null) {
@@ -488,6 +487,7 @@ export class Planner extends Struct {
           }
         })();
         if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+        _moved2 = true;
         let _moved5 = false;
         const bounds_1 = (_m4 as any);
         try {
@@ -624,9 +624,9 @@ export class Planner extends Struct {
                   const candidate = Endpoint.excl(value.clone());
                   try {
                     if (this.isMoreRestrictiveLower(candidate, low)) {
-                      _moved1 = true;
                       const _a2 = candidate;
                       low.drop();
+                      _moved1 = true;
                       low = _a2;
                     }
                   } finally {
@@ -638,9 +638,9 @@ export class Planner extends Struct {
                   const candidate = Endpoint.incl(value.clone());
                   try {
                     if (this.isMoreRestrictiveLower(candidate, low)) {
-                      _moved3 = true;
                       const _a4 = candidate;
                       low.drop();
+                      _moved3 = true;
                       low = _a4;
                     }
                   } finally {
@@ -652,9 +652,9 @@ export class Planner extends Struct {
                   const candidate = Endpoint.excl(value.clone());
                   try {
                     if (this.isMoreRestrictiveUpper(candidate, high)) {
-                      _moved5 = true;
                       const _a6 = candidate;
                       high.drop();
+                      _moved5 = true;
                       high = _a6;
                     }
                   } finally {
@@ -666,9 +666,9 @@ export class Planner extends Struct {
                   const candidate = Endpoint.incl(value.clone());
                   try {
                     if (this.isMoreRestrictiveUpper(candidate, high)) {
-                      _moved7 = true;
                       const _a8 = candidate;
                       high.drop();
+                      _moved7 = true;
                       high = _a8;
                     }
                   } finally {

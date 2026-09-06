@@ -74,7 +74,13 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
   }
 
   setNode(node: Arc<TNode>): Result<void, void> {
-    return this.inner.value.node.set(node).mapErr((_) => []);
+    return this.inner.value.node.set(node).mapErr((_) => {
+      try {
+        return [];
+      } finally {
+        _.drop();
+      }
+    });
   }
 
   subscribeQuery(queryId: QueryId, collectionId: CollectionId, selection: Selection, contextData: CD, version: number, livequery: Q): void {
@@ -84,10 +90,10 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
       try {
         tracing.debug(`SubscriptionRelay.subscribe_predicate() - New predicate ${queryId} needs remote registration`);
         (() => {
-          _moved0 = true;
-          _moved1 = true;
           const _t2 = this.inner.value.subscriptions.lock();
           try {
+            _moved0 = true;
+            _moved1 = true;
             _t2.value.set(queryId, new RemoteQueryState(Arc.new(new Content(queryId, collectionId, selection, contextData, version)), new Status('PendingRemote', {}), livequery));
           } finally {
             _t2.drop();
@@ -646,7 +652,13 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
         const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
         if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
         let _moved4 = false;
-        const knownMatches = [..._r3.unwrap()].map((entity) => new KnownEntity(entity.id(), entity.head()));
+        const knownMatches = [..._r3.unwrap()].map((entity) => {
+          try {
+            return new KnownEntity(entity.id(), entity.head());
+          } finally {
+            entity.drop();
+          }
+        });
         try {
           _moved4 = true;
           const _r5 = (await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches }))).mapErr((e) => new RetrievalError('RequestError', { _0: e }));

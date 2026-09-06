@@ -147,14 +147,9 @@ impl BodyTranslator<'_> {
         // read before it is translated because `local()` acts on it.
         self.set_stmt_dispositions(stmt, dispositions, ordinals);
 
-        // A move written directly by this statement sets its flag first: after
-        // it would be dead code behind a `return`, and the flag only ever
-        // decides what the `finally` releases. What the statement lifted ABOVE
-        // the flag (J3) — an argument that can throw before the call starts —
-        // is collected while it is translated and stands ahead of it.
-        let flags = self.flag_sets(stmt);
-        self.own.statement_tail.set(Self::statement_tail_key(stmt));
-        let previous_before = std::mem::take(&mut *self.own.before_flags.borrow_mut());
+        // O6: a flag stands immediately above the TRANSFER, and `?` is the
+        // one shape whose transfer is in a hoist. `flag_sets_split` says which.
+        let (flags_above, flags) = self.flag_sets_split(stmt);
         let mut out = String::new();
 
         let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
@@ -209,10 +204,11 @@ impl BodyTranslator<'_> {
         // value back under the block's `finally`; a local marked moved outright
         // has no `finally`, so its release is written above the throw.
         let refused = crate::body::holes_written() > holes_before;
-        let flags = if refused { String::new() } else { flags };
-        let before_flags =
-            std::mem::replace(&mut *self.own.before_flags.borrow_mut(), previous_before).join("");
-        out.push_str(&before_flags);
+        let (flags_above, flags) = match refused {
+            true => (String::new(), String::new()),
+            false => (flags_above, flags),
+        };
+        out.push_str(&flags_above);
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         // I4: where the refusal is in a HOIST, part of the statement RAN before
         // it — a `?` operand standing to its left is evaluated, and its
@@ -225,7 +221,6 @@ impl BodyTranslator<'_> {
         if refused && !refused_in_a_hoist {
             out.push_str(&self.released_by_a_refusal(stmt, dispositions, ordinals));
         }
-        out.push_str(&flags);
         let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);
 
         let rest = self.emit_from_at(stmts, i + 1, dispositions, ordinals, tail_is_value);
@@ -253,7 +248,9 @@ impl BodyTranslator<'_> {
             ));
             return out;
         }
-        let mut inner = text;
+        // Below the prelude: written above it, `eat(c, maybe().n)` marked `c`
+        // moved and then called `maybe()`, and nothing released it there.
+        let mut inner = format!("{}{}", flags, text);
         if declares {
             // Releasing a guard at the end of its statement is what keeps the
             // lock from outliving the line that took it. Where the statement
@@ -266,6 +263,9 @@ impl BodyTranslator<'_> {
                     }
                 }
             }
+            // N4: the flag's two halves are in two streams, and both are here.
+            let mut owned = owned;
+            self.drop_dead_flags(&mut inner, &rest, &mut owned);
             let mut tail = rest;
             for local in owned.iter().rev() {
                 tail = ownership::wrap(&tail, local);

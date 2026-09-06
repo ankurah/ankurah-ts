@@ -204,7 +204,13 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
 function castLiteralToType(literal: Literal, targetType: ValueType): Result<Expr, RetrievalError> {
   const value = Value.fromAstLiteral(literal);
   try {
-    const _r0 = Value_castTo(value, targetType).mapErr((e) => new RetrievalError('StorageError', { _0: `Type casting error: ${e}` }));
+    const _r0 = Value_castTo(value, targetType).mapErr((e) => {
+      try {
+        return new RetrievalError('StorageError', { _0: `Type casting error: ${e}` });
+      } finally {
+        e.drop();
+      }
+    });
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     let _moved1 = false;
     const castValue = _r0.unwrap();

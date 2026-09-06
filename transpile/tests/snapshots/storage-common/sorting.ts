@@ -120,9 +120,9 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
               _match7: {
                 if (this_.currentPartitionKey == null) {
                   {
-                    _moved4 = true;
                     const _a5 = itemKey;
                     dropOwned(this_.currentPartitionKey);
+                    _moved4 = true;
                     this_.currentPartitionKey = _a5;
                     this_.currentPartition.push(item);
                   }
@@ -142,9 +142,9 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
                     let partition = mem.take(this_.currentPartition);
                     sortItemsByOrder(partition, this_.orderBy.spill);
                     this_.sortedPartition = partition.intoIter();
-                    _moved4 = true;
                     const _a6 = itemKey;
                     dropOwned(this_.currentPartitionKey);
+                    _moved4 = true;
                     this_.currentPartitionKey = _a6;
                     this_.currentPartition.push(item);
                   }
@@ -263,11 +263,27 @@ class HeapItem<T extends Filterable> extends Struct {
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const s = _v1[0];
           const o = _v1[1];
-          return s.partialCompareTo(o) ?? 0;
+          try {
+            try {
+              return s.partialCompareTo(o) ?? 0;
+            } finally {
+              o.drop();
+            }
+          } finally {
+            s.drop();
+          }
         } else {
           const s = _v1[0];
           const o = _v1[1];
-          return o.partialCompareTo(s) ?? 0;
+          try {
+            try {
+              return o.partialCompareTo(s) ?? 0;
+            } finally {
+              o.drop();
+            }
+          } finally {
+            s.drop();
+          }
         }
       })();
       if (cmp !== 0) {
@@ -362,7 +378,9 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
               } else {
                 this_.inner = null;
                 _moved0 = true;
-                let topK = heap.intoIter().map((h) => h.item);
+                let topK = heap.intoIter().map((h) => {
+                  return h.item;
+                });
                 sortItemsByOrder(topK, this_.orderBy.spill);
                 this_.sortedPartition = [...topK];
                 const _m2 = new Poll('Ready', { _0: null });
@@ -435,9 +453,9 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
               _match8: {
                 if (this_.currentPartitionKey == null) {
                   {
-                    _moved5 = true;
                     const _a6 = itemKey;
                     dropOwned(this_.currentPartitionKey);
+                    _moved5 = true;
                     this_.currentPartitionKey = _a6;
                     this_.currentPartition.push(item);
                   }
@@ -457,9 +475,9 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     let partition = mem.take(this_.currentPartition);
                     sortItemsByOrder(partition, this_.orderBy.spill);
                     this_.sortedPartition = partition.intoIter();
-                    _moved5 = true;
                     const _a7 = itemKey;
                     dropOwned(this_.currentPartitionKey);
+                    _moved5 = true;
                     this_.currentPartitionKey = _a7;
                     this_.currentPartition.push(item);
                   }
@@ -512,11 +530,27 @@ function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const a = _v1[0];
           const b = _v1[1];
-          return a.partialCompareTo(b) ?? 0;
+          try {
+            try {
+              return a.partialCompareTo(b) ?? 0;
+            } finally {
+              b.drop();
+            }
+          } finally {
+            a.drop();
+          }
         } else {
           const a = _v1[0];
           const b = _v1[1];
-          return b.partialCompareTo(a) ?? 0;
+          try {
+            try {
+              return b.partialCompareTo(a) ?? 0;
+            } finally {
+              b.drop();
+            }
+          } finally {
+            a.drop();
+          }
         }
       })();
       if (cmp !== 0) {

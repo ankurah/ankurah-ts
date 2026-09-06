@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { LimitedStream, SortedStream, TopKStream } from './sorting';
-import { HashMap, Struct, unsupported } from '@ankurah/base';
+import { HashMap, Struct, debugString, unsupported } from '@ankurah/base';
 import { OrderByComponents } from './types';
 import { OrderByItem, OrderDirection, PathExpr } from '@ankurah/ankql';
 import { Json } from '@ankurah/core';
@@ -80,7 +80,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   debug(): string {
-    return `TestItem { values: ${`{${Array.from(this.values).map(($p) => `${JSON.stringify($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
+    return `TestItem { values: ${`{${Array.from(this.values).map(($p) => `${debugString($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
   }
 }
 

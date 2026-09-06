@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
-import { Struct, Result, Weak, derivedClone } from '@ankurah/base';
+import { Struct, Result, Weak, dropOwned, derivedClone } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
 import { NodeAndContext } from '../context';
 import { Entity } from '../entity';
@@ -56,9 +56,13 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
             const gapPredicate = (_m4 as any);
             try {
               const _b6 = selection.orderBy.clone();
-              const _b7 = BigInt(gapSize);
-              _moved5 = true;
-              return new Selection(gapPredicate, _b6, _b7);
+              try {
+                const _b7 = BigInt(gapSize);
+                _moved5 = true;
+                return new Selection(gapPredicate, _b6, _b7);
+              } finally {
+                if (_b6 != null && !(_b6 as any).isMoved && !(_b6 as any).isDropped) dropOwned(_b6);
+              }
             } finally {
               if (!_moved5) gapPredicate.drop();
             }

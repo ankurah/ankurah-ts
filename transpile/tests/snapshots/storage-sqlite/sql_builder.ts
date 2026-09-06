@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum, Result, debugString } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
 import { EntityId, Value } from '@ankurah/core';
 import { SqliteError } from './error';
@@ -361,8 +361,8 @@ export class SqlGenerationError extends Enum<SqlGenerationErrorV> {
   debug(): string {
     return this.match({
       PlaceholderFound: () => 'PlaceholderFound',
-      UnsupportedExpression: (v) => `UnsupportedExpression(${JSON.stringify(v._0)})`,
-      UnsupportedOperator: (v) => `UnsupportedOperator(${JSON.stringify(v._0)})`,
+      UnsupportedExpression: (v) => `UnsupportedExpression(${debugString(v._0)})`,
+      UnsupportedOperator: (v) => `UnsupportedOperator(${debugString(v._0)})`,
     });
   }
 

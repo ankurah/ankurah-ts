@@ -203,6 +203,44 @@ export function fromSlice(bytes: Uint8Array): ResultValue<unknown, JsonError> {
 }
 
 /**
+ * `serde_json::to_value` — a serialisable value as the JSON value it writes to.
+ *
+ * The port's serialisable form of a type IS its `toJSON()`, which is the half
+ * the schema module emits beside `fromJson`; a value with no `toJSON` is
+ * already a JSON value — a number, a string, an array, a plain object — and is
+ * its own answer. serde_json's own `to_value` can fail only where the
+ * serialiser does, and the port's cannot, so the `Result` here is always `Ok`
+ * and stands for the shape the caller writes `?` against.
+ *
+ * `from_value` is NOT here: it answers a `T` the caller names, and a free
+ * function in the port has no way to be told which `T` — the emitter has to
+ * write `T.fromJson(..)`, and until it does the site is a hole rather than a
+ * function that answers the JSON value unchanged.
+ */
+export function toValue(value: unknown): ResultValue<unknown, JsonError> {
+  const written = value as { toJSON?: () => unknown } | null;
+  if (written != null && typeof written.toJSON === 'function') {
+    return ResultValue.Ok(written.toJSON());
+  }
+  return ResultValue.Ok(value);
+}
+
+/**
+ * `serde_json::to_vec` — the document as UTF-8 BYTES.
+ *
+ * The same text `to_string` writes, encoded. serde_json has no other answer:
+ * `to_vec` is defined as `to_string(...).into_bytes()`, and JSON text is UTF-8
+ * by definition, so the encoding cannot fail where the writing did not.
+ *
+ * Named by four emitted sites — `collation.ts`, `value/collatable.ts` and
+ * `ankql/ast.ts`'s codec — and exported by nothing until now, so every one of
+ * them was `serde_json.toVec is not a function`.
+ */
+export function toVec(value: unknown): ResultValue<Uint8Array, JsonError> {
+  return stringify(value).map((text) => new TextEncoder().encode(text));
+}
+
+/**
  * `serde_json::to_string` for the port: `JSON.stringify` with a `bigint`
  * written as the bare integer token Rust writes, rather than throwing.
  *

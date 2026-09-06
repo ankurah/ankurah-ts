@@ -39,6 +39,14 @@ pub(super) struct Payload {
     /// out of a member and left the rest (K4). The TEST still stands, so a
     /// value this pattern does not match reaches the arms below it.
     pub refused: Option<String>,
+    /// The places inside the payload that no name took, where the port can name
+    /// them: the positions of a TUPLE member the pattern only partly names
+    /// (H12). `intoMatch` releases nothing of its own, and `dropUnbound` takes
+    /// a payload minus whole MEMBERS — it has no spelling for a member minus
+    /// some of its elements. The port writes a tuple as an array, so each of
+    /// those positions has a place of its own and `dropOwned` needs no type to
+    /// release it.
+    pub unowned: Vec<String>,
 }
 
 /// Nothing comes back for a pattern the translator cannot read back —
@@ -75,6 +83,7 @@ pub(super) fn payload_walk(
         bound_keys: Vec::new(),
         names: Vec::new(),
         refused: None,
+        unowned: Vec::new(),
     };
     if rest_out_of_place {
         let what = "a `..` written before the last element of this pattern stands for the \
@@ -158,19 +167,41 @@ pub(super) fn payload_walk(
                 // that names every element does take the member whole.
                 if let Some(sub) = subpats.get(i) {
                     if super::taking::taken(sub, t) == super::taking::Takes::Part {
-                        let what = format!(
-                            "this arm takes only SOME of the elements of `{}` and leaves a \
-                             droppable one unnamed, and the port cannot release a tuple minus \
-                             the elements a name has taken",
-                            accessor
-                        );
-                        t.fallback(syn::spanned::Spanned::span(*sub), what.clone());
-                        out.refused = Some(what);
+                        // H12: a TUPLE member the pattern only partly names is
+                        // one the port CAN release, position by position — it
+                        // writes a tuple as an array, so `v._0[1]` is a place
+                        // and `dropOwned` asks nothing of its type. Anything
+                        // else — a struct member, a variant — has no such
+                        // spelling and keeps the refusal.
+                        match positions_no_name_took(sub) {
+                            Some(at) => out
+                                .unowned
+                                .extend(at.into_iter().map(|n| format!("{}[{}]", place, n))),
+                            None => {
+                                let what = format!(
+                                    "this arm takes only SOME of the elements of `{}` and leaves \
+                                     a droppable one unnamed, and the port cannot release a \
+                                     tuple minus the elements a name has taken",
+                                    accessor
+                                );
+                                t.fallback(syn::spanned::Spanned::span(*sub), what.clone());
+                                out.refused = Some(what);
+                            }
+                        }
                     }
                 }
                 out.text.push_str(&format!("const {} = {};\n", local, place));
                 out.bound_keys.push(accessor.clone());
-                out.names.push(local.clone());
+                // A destructuring sub-pattern's emitted text is not a NAME:
+                // `Holder::Pair((a, _))` writes `const [a, ] = v._0;`, and
+                // `[a, ]` is the shape of the declaration, not something the
+                // arm can release. Its names are what the arm bound (H12).
+                match subpats.get(i) {
+                    Some(sub) if matches!(sub, syn::Pat::Tuple(_) | syn::Pat::Slice(_)) => {
+                        out.names.extend(crate::body::pattern_names(sub))
+                    }
+                    _ => out.names.push(local.clone()),
+                }
             }
         }
     }
@@ -183,4 +214,69 @@ pub(super) fn payload_walk(
         _ => Some(found.iter().map(|test| format!("({})", test)).collect::<Vec<_>>().join(" && ")),
     };
     Some(out)
+}
+
+/// The positions of a tuple or slice pattern that no name took, where the
+/// pattern is one the port can count.
+///
+/// `unowned_positions` answers `None` for a `..`, which stands for however many
+/// elements the type has — a number the pattern does not say — and for anything
+/// that is not a positional pattern at all.
+fn positions_no_name_took(pat: &syn::Pat) -> Option<Vec<usize>> {
+    let len = match pat {
+        syn::Pat::Tuple(tuple) => tuple.elems.len(),
+        syn::Pat::Slice(slice) => slice.elems.len(),
+        _ => return None,
+    };
+    crate::ownership::arm_takes::unowned_positions(pat, len)
+}
+
+#[cfg(test)]
+mod h12_tests {
+    use crate::testing::Fixture;
+
+    const HOLDER: &str = "pub struct Token(pub u32);\n\
+                          impl Drop for Token { fn drop(&mut self) { } }\n\
+                          pub enum Holder { Pair((Token, Token)), Named { a: Token }, Nothing }\n";
+
+    /// H12: a TUPLE member the pattern only partly names is one the port CAN
+    /// release, position by position — it writes a tuple as an array, so
+    /// `v._0[1]` is a place and `dropOwned` asks nothing of its type. It used
+    /// to be refused on the ground that the payload walk does not carry the
+    /// member's element types; releasing by position needs none of them.
+    #[test]
+    fn a_partly_named_tuple_member_releases_the_positions_no_name_took() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "{}pub fn first_of(h: Holder) -> u32 {{\n\
+                   match h {{ Holder::Pair((a, _)) => a.0, _ => 0 }}\n\
+                 }}",
+                HOLDER
+            ),
+        )]);
+        let ts = f.translated_method("lib.rs", "first_of");
+        assert!(!ts.contains("unsupported("), "{}", ts);
+        assert!(ts.contains("dropOwned(v._0[1])"), "the position nothing named:\n{}", ts);
+        assert!(ts.contains("a.drop();"), "and the one a name took:\n{}", ts);
+    }
+
+    /// A member that is not a positional pattern has no such spelling, and
+    /// keeps the refusal: the port cannot release a struct minus a field.
+    #[test]
+    fn a_member_that_is_not_a_tuple_keeps_the_refusal() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "{}pub enum Inner {{ Both {{ x: Token, y: Token }} }}\n\
+                 pub enum Wrap {{ In(Inner), Out }}\n\
+                 pub fn first_of(w: Wrap) -> u32 {{\n\
+                   match w {{ Wrap::In(Inner::Both {{ x, .. }}) => x.0, _ => 0 }}\n\
+                 }}",
+                HOLDER
+            ),
+        )]);
+        let ts = f.translated_method("lib.rs", "first_of");
+        assert!(ts.contains("unsupported("), "{}", ts);
+    }
 }

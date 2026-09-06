@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, UnsupportedShape, debugString, HashMap, keyHash } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';
@@ -323,7 +323,7 @@ export class OperationSet extends Struct {
   }
 
   debug(): string {
-    return `OperationSet(${`{${Array.from(this._0).map(($p) => `${JSON.stringify($p[0])}: ${`[${Array.from($p[1]).map((e) => e.debug()).join(', ')}]`}`).join(', ')}}`})`;
+    return `OperationSet(${`{${Array.from(this._0).map(($p) => `${debugString($p[0])}: ${`[${Array.from($p[1]).map((e) => e.debug()).join(', ')}]`}`).join(', ')}}`})`;
   }
 
   get size(): number {
@@ -630,7 +630,7 @@ export class StateBuffers extends Struct {
   }
 
   debug(): string {
-    return `StateBuffers(${`{${Array.from(this._0).map(($p) => `${JSON.stringify($p[0])}: ${`[${Array.from($p[1]).map((e) => String(e)).join(', ')}]`}`).join(', ')}}`})`;
+    return `StateBuffers(${`{${Array.from(this._0).map(($p) => `${debugString($p[0])}: ${`[${Array.from($p[1]).map((e) => String(e)).join(', ')}]`}`).join(', ')}}`})`;
   }
 
   get size(): number {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
-import { Struct, Enum, Result, invokeRef, dropOwned, derivedEquals, derivedClone } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, dropOwned, derivedEquals, derivedClone, debugString } from '@ankurah/base';
 import { Expr, Predicate } from '@ankurah/ankql';
 import { Value_castTo } from '../value/cast';
 import { Value, ValueType } from '../value/index';
@@ -73,10 +73,10 @@ export class Error extends Enum<ErrorV> {
 
   debug(): string {
     return this.match({
-      CollectionMismatch: (v) => `CollectionMismatch { expected: ${JSON.stringify(v.expected)}, actual: ${JSON.stringify(v.actual)} }`,
-      PropertyNotFound: (v) => `PropertyNotFound(${JSON.stringify(v._0)})`,
-      UnsupportedExpression: (v) => `UnsupportedExpression(${JSON.stringify(v._0)})`,
-      UnsupportedOperator: (v) => `UnsupportedOperator(${JSON.stringify(v._0)})`,
+      CollectionMismatch: (v) => `CollectionMismatch { expected: ${debugString(v.expected)}, actual: ${debugString(v.actual)} }`,
+      PropertyNotFound: (v) => `PropertyNotFound(${debugString(v._0)})`,
+      UnsupportedExpression: (v) => `UnsupportedExpression(${debugString(v._0)})`,
+      UnsupportedOperator: (v) => `UnsupportedOperator(${debugString(v._0)})`,
     });
   }
 
@@ -203,7 +203,7 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
     Placeholder: () => Result.Err(new Error('PropertyNotFound', { _0: 'Placeholder values must be replaced before filtering' })),
     Literal: (v) => {
       const lit = v._0;
-      return Result.Ok(new ExprOutput('Value', { _0: lit.clone() }));
+      return Result.Ok(new ExprOutput('Value', { _0: Value.fromAstLiteral(lit.clone()) }));
     },
     Path: (v) => {
       const path = v._0;

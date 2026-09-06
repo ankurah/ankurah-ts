@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
-import { Enum, decodeUtf8Lossy, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals } from '@ankurah/base';
+import { Enum, decodeUtf8Lossy, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals, unsupported, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from '../codec';
 import { PropertyError } from '../property/traits';
 import { Literal } from '@ankurah/ankql';
@@ -32,9 +32,8 @@ export class Value extends Enum<ValueV> {
     return this.match({
       Json: (v) => {
         const json = v._0;
-        const _r0 = serde_json.fromValue(structuredClone(json));
-        if (_r0.isErr()) return Result.Err(PropertyError.fromError(_r0.unwrapErr()));
-        return Result.Ok(_r0.unwrap());
+        const _r0 = unsupported('`serde_json::from_value` answers the type the caller names, and the port reads a JSON value back through that type\'s own `fromJson`; a free function has no way to be told which type this one is');
+        return Result.Ok(_r0);
       },
       Object: (v) => {
         const bytes = v._0;
@@ -270,7 +269,7 @@ export class Value extends Enum<ValueV> {
       },
       String: (v) => {
         const string = v._0;
-        return `${JSON.stringify(string)}`;
+        return `${debugString(string)}`;
       },
       EntityId: (v) => {
         const entityId = v._0;
@@ -454,7 +453,7 @@ export class Value extends Enum<ValueV> {
       I64: (v) => `I64(${String(v._0)})`,
       F64: (v) => `F64(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Bool: (v) => `Bool(${String(v._0)})`,
-      String: (v) => `String(${JSON.stringify(v._0)})`,
+      String: (v) => `String(${debugString(v._0)})`,
       EntityId: (v) => `EntityId(${v._0})`,
       Object: (v) => `Object(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
       Binary: (v) => `Binary(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
@@ -731,7 +730,7 @@ export class ValueType extends Enum<ValueTypeV> {
 
 function jsonValueToValue(json: unknown): Value {
   return json.match({
-    Null: () => new Value('Json', { _0: serde_json.Value.Null }),
+    Null: () => new Value('Json', { _0: null }),
     Bool: (v) => {
       const b = v._0;
       return new Value('Bool', { _0: b });

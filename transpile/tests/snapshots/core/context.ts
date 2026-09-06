@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/context.rs
-import { Struct, Result, Arc, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, unsupported } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, unsupported, iterFirst, debugString } from '@ankurah/base';
 import { Attested, Clock, CollectionId, EntityState, EntityId, NodeRequestBody } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
@@ -87,7 +87,7 @@ export class Context extends Struct {
     const _r0 = await this.fetch(args);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const views = _r0.unwrap();
-    return Result.Ok(unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance'));
+    return Result.Ok(iterFirst([...views]));
   }
 
   query<R>(args: TryInto): Result<LiveQuery<R>, RetrievalError> {
@@ -97,9 +97,10 @@ export class Context extends Struct {
     const args_1 = _r0.unwrap();
     try {
       _moved1 = true;
-      const _r2 = this._0.value.query(R.Model.collection(), args_1);
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-      return Result.Ok(_r2.unwrap().map());
+      const _b2 = R.Model.collection();
+      const _r3 = this._0.value.query(_b2, args_1);
+      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      return Result.Ok(_r3.unwrap().map());
     } finally {
       if (!_moved1) args_1.drop();
     }
@@ -467,7 +468,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
             Error: async (v) => {
               const e = v._0;
               tracing.debug(`Error from peer fetch: ${e}`);
-              return Result.Err(new RetrievalError('Other', { _0: `${JSON.stringify(e)}` }));
+              return Result.Err(new RetrievalError('Other', { _0: `${debugString(e)}` }));
             },
             CommitComplete: (v) => {
               try {

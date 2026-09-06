@@ -517,6 +517,11 @@ impl BodyTranslator<'_> {
         }
         let segments: Vec<String> =
             path.segments.iter().map(|s| s.ident.to_string()).collect();
+        // `serde_json::Value::Null` IS `null`; see `js_value`.
+        let json = crate::native_types::js_value::json_value_construction(&segments, &[]);
+        if json.is_some() {
+            return json;
+        }
         let tc = self.types.as_ref()?;
         let (owner, variant) = tc.borrow().unit_variant_of_emitted_enum(&segments)?;
         Some(format!("new {}('{}', {{}})", owner, variant))

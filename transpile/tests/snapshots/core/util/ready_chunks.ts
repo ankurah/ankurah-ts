@@ -11,7 +11,7 @@ export class ReadyChunks<F extends Future> extends Struct {
     this.inner = inner;
   }
 
-  static new<F, I>(futures: I): ReadyChunks<F> {
+  static new<F, I extends Iterable<F>>(futures: I): ReadyChunks<F> {
     const inner = unsupported('`collect` into `FuturesUnordered<unknown>` is a `FromIterator` the port has no construction for');
     return new ReadyChunks(inner);
   }

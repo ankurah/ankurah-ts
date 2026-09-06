@@ -18,14 +18,43 @@
 //! field); a member added to the prototype from outside the class; a decorator
 //! before a member. A file that needs one of those has to say so, and the gate
 //! saying "no such declaration" is the safe direction to be wrong in.
+//!
+//! An ACCESSOR is modelled, and it is not a method (O9/N9). `get` and `set`
+//! stand where a modifier stands, and reading them as modifiers made
+//! `get debug(): string`, `get toJSON()` and `static get fromJson()` satisfy
+//! the three claims while the emission calls the name — `value.debug()` on a
+//! getter calls whatever the getter answered, and a string has no `debug`. The
+//! kind is recorded while the member is read, and the claims accept
+//! `Kind::Method` alone.
 
 use super::code_only;
+
+/// What KIND of member this is.
+///
+/// O9/N9: `get` and `set` were read as modifiers, and the accessor's own
+/// parentheses as a parameter list — so `get debug(): string { .. }`,
+/// `get toJSON()` and `static get fromJson()` each satisfied a claim while the
+/// emission calls the name: `value.debug()` on a getter is a call on whatever
+/// the getter answered, which is a `TypeError` for a string. An accessor is not
+/// a method, and the claims accept ordinary methods only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// `name(..) { .. }` — the only kind the emission's calls reach.
+    Method,
+    /// `get name() { .. }` — reading it runs the body and answers a value.
+    Getter,
+    /// `set name(v) { .. }` — a target for assignment, never a call.
+    Setter,
+    /// `name = ..` / `name: T` — no parameter list was written at all.
+    Field,
+}
 
 /// One member written at a class body's top level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub name: String,
     pub is_static: bool,
+    pub kind: Kind,
     /// The text between a method's parentheses. `None` where no parameter list
     /// was written at all, which is a field rather than a method.
     pub params: Option<String>,
@@ -34,12 +63,12 @@ pub struct Member {
 impl Member {
     /// A method callable as `instance.<name>(..)`.
     pub fn is_instance_method(&self, name: &str) -> bool {
-        !self.is_static && self.name == name && self.params.is_some()
+        !self.is_static && self.name == name && self.kind == Kind::Method
     }
 
     /// A method callable as `Class.<name>(..)`.
     pub fn is_static_method(&self, name: &str) -> bool {
-        self.is_static && self.name == name && self.params.is_some()
+        self.is_static && self.name == name && self.kind == Kind::Method
     }
 
     /// A method written with an empty parameter list.
@@ -147,6 +176,10 @@ fn top_level_members(body: &str) -> Vec<Member> {
 
 /// The words that can stand in front of a member's name. Each is a modifier
 /// only where a NAME follows it: `get(key)` declares a member called `get`.
+///
+/// `get` and `set` are here because they stand where a modifier stands, and
+/// they are NOT modifiers: each declares an accessor, which the emission's
+/// calls do not reach. `read_member` records which one it stepped over.
 const MODIFIERS: [&str; 11] =
     ["static", "public", "private", "protected", "readonly", "async", "abstract", "override", "declare", "get", "set"];
 
@@ -155,6 +188,7 @@ const MODIFIERS: [&str; 11] =
 fn read_member(chunk: &str) -> Option<Member> {
     let mut rest = chunk.trim_start();
     let mut is_static = false;
+    let mut accessor: Option<Kind> = None;
     let name = loop {
         rest = rest.trim_start();
         // A generator's `*`, and a private name's `#`, sit against the name.
@@ -170,6 +204,11 @@ fn read_member(chunk: &str) -> Option<Member> {
             after.chars().next().is_some_and(|c| is_name_char(&c) || c == '#' || c == '*' || c == '\'' || c == '"');
         if !private && MODIFIERS.contains(&word.as_str()) && names_something {
             is_static |= word == "static";
+            match word.as_str() {
+                "get" => accessor = Some(Kind::Getter),
+                "set" => accessor = Some(Kind::Setter),
+                _ => {}
+            }
             rest = after;
             continue;
         }
@@ -198,7 +237,14 @@ fn read_member(chunk: &str) -> Option<Member> {
         }
         params
     });
-    Some(Member { name, is_static, params })
+    // An accessor's parentheses are not a parameter list, and a member with no
+    // parentheses at all is a field.
+    let kind = match (accessor, params.is_some()) {
+        (Some(accessor), _) => accessor,
+        (None, true) => Kind::Method,
+        (None, false) => Kind::Field,
+    };
+    Some(Member { name, is_static, kind, params })
 }
 
 fn is_name_char(c: &char) -> bool { c.is_alphanumeric() || *c == '_' || *c == '$' }

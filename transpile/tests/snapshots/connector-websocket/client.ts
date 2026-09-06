@@ -171,9 +171,9 @@ class ClientInner extends Drop {
     const connection = _r0.unwrap();
     try {
       undefined /* action_info!(self , "connecting to" , "{}" , & self . server_url) */;
-      _moved1 = true;
       const _t2 = this.connection.borrowMut();
       try {
+        _moved1 = true;
         _t2.value = connection;
       } finally {
         _t2.drop();

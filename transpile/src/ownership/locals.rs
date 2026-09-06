@@ -76,6 +76,17 @@ impl<'a> BodyTranslator<'a> {
         owned
     }
 
+    /// Does a value of this type, taken BY VALUE, owe a release?
+    ///
+    /// The same two questions `claim_params` asks of a function's parameter:
+    /// what the type's own glue costs, and — where it costs nothing — whether
+    /// the parameter is a callable the body owns.
+    pub(crate) fn by_value_owes_a_release(&self, ty: &crate::ty::Ty) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let drops = ownership::drops_of(&tc.borrow().probe(), ty);
+        drops.is_droppable() || self.callable_by_value(ty).is_droppable()
+    }
+
     /// A callable parameter the body OWNS, and therefore owes a release.
     ///
     /// `fn f<F: Fn(u32) -> u32>(f: F)` takes `f` by value and drops it at the
@@ -219,6 +230,47 @@ impl<'a> BodyTranslator<'a> {
             out.push_str(&format!("{} = true;\n", flag));
         }
         out
+    }
+
+    /// The same, split by WHERE the transfer happens.
+    ///
+    /// O6 puts a flag immediately above the transfer, which is BELOW everything
+    /// the statement lifted out of itself — an argument that throws no longer
+    /// leaves a flag saying the value was handed over. One hoist shape breaks
+    /// that: a `?` lifts the very call that consumes. `let n = eat(c)?;`
+    /// evaluates `eat(c)` in the hoist and leaves the statement on the error
+    /// path, so a flag written below the prelude is never set at all and the
+    /// block releases what `eat` took — a double drop. Those flags stand above
+    /// the prelude, where every flag used to stand; every other one stands
+    /// below it.
+    pub(crate) fn flag_sets_split(&self, stmt: &syn::Stmt) -> (String, String) {
+        let all = self.flag_sets(stmt);
+        if all.is_empty() {
+            return (String::new(), all);
+        }
+        let mut in_a_try: Vec<String> = Vec::new();
+        for operand in crate::body::flags::try_operands(stmt) {
+            let inner = syn::Stmt::Expr(operand, None);
+            for site in ownership::Scan::new(self).shallow(&inner) {
+                if let Some(flag) = self.own.flags.borrow().get(&site.name) {
+                    in_a_try.push(flag.clone());
+                }
+            }
+        }
+        if in_a_try.is_empty() {
+            return (String::new(), all);
+        }
+        let (mut above, mut below) = (String::new(), String::new());
+        for line in all.lines() {
+            let flag = line.split(' ').next().unwrap_or_default();
+            let target = match in_a_try.iter().any(|f| f == flag) {
+                true => &mut above,
+                false => &mut below,
+            };
+            target.push_str(line);
+            target.push('\n');
+        }
+        (above, below)
     }
 
     /// `_moved_x = true;` for a subject a *pattern* handed away rather than an

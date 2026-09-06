@@ -15,12 +15,12 @@
 "src/bincode_module.rs" = 913
 "src/body.rs" = 1314
 "src/cfg.rs" = 742
-"src/codegen.rs" = 1478
+"src/codegen.rs" = 1477
 "src/config.rs" = 890
 "src/convert.rs" = 699
 "src/emit.rs" = 1355
-"src/extract.rs" = 1194
-"src/infer/context.rs" = 1393
+"src/extract.rs" = 906
+"src/infer/context.rs" = 1340
 "src/macros.rs" = 719
 "src/main.rs" = 1472
 "src/match_expr.rs" = 751

@@ -99,6 +99,23 @@ pub fn free_functions_reporting(
     // can say whether they differ in anything emission keeps.
     let mut written_for: Vec<(String, String)> = Vec::new();
     for imp in &file.impls {
+        // G5: a `const` written inside an impl is a member of the type in Rust
+        // and nothing at all here — the emitter has no place to put one, so
+        // `Kind::LIMIT` reads `undefined` and the arithmetic under it quietly
+        // answers `NaN`. Said at the const's own span, for every impl, before
+        // the walk below decides whether this impl is emitted as methods or as
+        // module-level functions: the member is missing either way.
+        for (name, span) in &imp.const_items {
+            sink.push(crate::diag::Diag::at(
+                &sink.file(),
+                *span,
+                format!(
+                    "`{}` is a const declared inside this impl, and the port writes no member \
+                     for one, so `{}::{}` names a member no class declares",
+                    name, imp.target_type, name
+                ),
+            ));
+        }
         let Some(self_ty) = resolved_self(reg, module, imp, &quiet) else {
             continue;
         };

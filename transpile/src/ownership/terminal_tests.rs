@@ -233,3 +233,202 @@ fn into_iter_on_a_bounded_parameter_is_the_spread() {
     assert!(ts.contains("[...values]"), "{}", ts);
     assert!(!ts.contains("intoIter"), "a method nothing declares:\n{}", ts);
 }
+
+/// O2: what the terminal RELEASES is its callback, and only where the source
+/// handed it over. `find(&mut p)` type-checks through `impl FnMut for &mut F`,
+/// so what the terminal takes by value is the reference: dropping it does
+/// nothing and `p` is still the caller's to call again. Released regardless,
+/// the next call read captures that were gone and the caller's own release
+/// dropped the closure a second time.
+#[test]
+fn a_terminal_releases_its_callback_only_where_the_source_handed_it_over() {
+    let owned = body(
+        "pub fn find_one(tokens: Vec<Token>, want: u32) -> Option<Token> {\n\
+           tokens.into_iter().find(move |t| t.0 == want)\n\
+         }",
+        "find_one",
+    );
+    assert!(owned.contains("iterFindOwned("), "{}", owned);
+    assert!(!owned.contains("'borrow'"), "handed over, so the terminal owes it:\n{}", owned);
+
+    let borrowed = body(
+        "pub fn find_one(tokens: Vec<Token>, want: u32) -> Option<Token> {\n\
+           let mut p = move |t: &Token| t.0 == want;\n\
+           tokens.into_iter().find(&mut p)\n\
+         }",
+        "find_one",
+    );
+    assert!(
+        borrowed.contains("iterFindOwned([...tokens], p, 'borrow')"),
+        "borrowed, so the terminal leaves it alone:\n{}",
+        borrowed
+    );
+}
+
+/// The reading family takes its callback the same two ways.
+#[test]
+fn the_reading_family_carries_the_callback_mode_too() {
+    let ts = body(
+        "pub fn find_one(tokens: &Vec<Token>, want: u32) -> bool {\n\
+           let p = move |t: &&Token| t.0 == want;\n\
+           tokens.iter().find(&p).is_some()\n\
+         }",
+        "find_one",
+    );
+    assert!(ts.contains("iterFind([...tokens], p, 'borrow')"), "{}", ts);
+}
+
+/// O5: `Iterator::by_ref(&mut self) -> &mut Self` is a borrowed VIEW of the
+/// iterator it was called on, so a consuming terminal reached through it names
+/// that iterator and is refused exactly as `(&mut it).find(..)` is. The
+/// emitted `it.byRef()` was a method no array declares, and the refusal never
+/// saw the name.
+#[test]
+fn a_consuming_terminal_through_by_ref_names_the_iterator_and_is_refused() {
+    let ts = body(
+        "pub fn first_of(tokens: Vec<Token>) -> Option<Token> {\n\
+           let mut it = tokens.into_iter();\n\
+           it.by_ref().find(|t| t.0 > 0)\n\
+         }",
+        "first_of",
+    );
+    assert!(!ts.contains("byRef"), "no method of that name is written:\n{}", ts);
+    assert!(
+        ts.contains("consumes the elements it walks and leaves the rest in the iterator"),
+        "the same refusal `(&mut it).find(..)` gets:\n{}",
+        ts
+    );
+    assert!(ts.contains("dropOwned(it)"), "and the block keeps the receiver:\n{}", ts);
+}
+
+/// On a BORROWED chain nothing is consumed, so `by_ref` is the identity.
+#[test]
+fn by_ref_on_a_borrowed_chain_is_the_identity() {
+    let ts = body(
+        "pub fn first_of(tokens: &Vec<Token>) -> Option<&Token> {\n\
+           let mut it = tokens.iter();\n\
+           it.by_ref().find(|t| t.0 > 0)\n\
+         }",
+        "first_of",
+    );
+    assert!(ts.contains("iterFind(it, "), "the view is the receiver itself:\n{}", ts);
+    assert!(!ts.contains("byRef"), "{}", ts);
+}
+
+/// O3/O4: an eager adaptor that DISCARDS elements owns what it discards, and
+/// Rust drops it — `Filter` drops what its predicate rejected, `Skip` the
+/// prefix, `Take` the tail, `StepBy` what it stepped over. Written as array
+/// operations they lost them, and the consuming terminal below could not
+/// release what the adaptor had already erased.
+#[test]
+fn an_eager_adaptor_over_owned_elements_releases_what_it_discards() {
+    for (rust, method, helper) in [
+        (
+            "pub fn f(tokens: Vec<Token>) -> Option<Token> { tokens.into_iter().filter(|t| t.0 > 0).last() }",
+            "f",
+            "filterOwned(",
+        ),
+        (
+            "pub fn f(tokens: Vec<Token>) -> Option<Token> { tokens.into_iter().skip(1).last() }",
+            "f",
+            "skipOwned(",
+        ),
+        (
+            "pub fn f(tokens: Vec<Token>) -> Option<Token> { tokens.into_iter().take(1).last() }",
+            "f",
+            "takeOwned(",
+        ),
+        (
+            "pub fn f(tokens: Vec<Token>) -> Option<Token> { tokens.into_iter().step_by(2).last() }",
+            "f",
+            "stepByOwned(",
+        ),
+    ] {
+        let ts = body(rust, method);
+        assert!(ts.contains(helper), "{} is what {} writes:\n{}", helper, rust, ts);
+    }
+}
+
+/// A borrowed chain discards nothing of its own, so the array operations stand.
+#[test]
+fn a_borrowed_chain_keeps_the_plain_adaptors() {
+    let ts = body(
+        "pub fn f(tokens: &Vec<Token>) -> Option<&Token> {\n\
+           tokens.iter().filter(|t| t.0 > 0).skip(1).last()\n\
+         }",
+        "f",
+    );
+    assert!(!ts.contains("Owned("), "nothing here owns anything:\n{}", ts);
+    assert!(ts.contains(".filter("), "{}", ts);
+    assert!(ts.contains(".slice(1)"), "{}", ts);
+}
+
+/// Q1: `next` on a receiver the expression just BUILT has no cursor to be wrong
+/// about — the call answers the head, and the iterator, dropped at the end of
+/// the statement, drops the rest. On a NAMED iterator it stays refused, because
+/// after such a call the port cannot say which elements are still the caller's.
+#[test]
+fn next_on_a_fresh_receiver_is_the_head_and_on_a_named_one_is_refused() {
+    let owned = body(
+        "pub fn f(tokens: Vec<Token>) -> Option<Token> { tokens.into_iter().next() }",
+        "f",
+    );
+    assert!(owned.contains("iterFirstOwned("), "the tail goes with the iterator:\n{}", owned);
+
+    let borrowed = body(
+        "pub fn f(tokens: &Vec<Token>) -> Option<&Token> { tokens.iter().next() }",
+        "f",
+    );
+    assert!(borrowed.contains("iterFirst("), "a borrowed chain reads through:\n{}", borrowed);
+
+    let named = body(
+        "pub fn f(tokens: Vec<Token>) -> Option<Token> {\n\
+           let mut it = tokens.into_iter();\n\
+           it.next()\n\
+         }",
+        "f",
+    );
+    assert!(named.contains("cursor to advance"), "a named iterator is refused:\n{}", named);
+}
+
+/// N5: `Option<Option<T>>` has one `null` for two answers, and the refusal
+/// missed every reader reached through a BORROWED chain. `iter()` hands out
+/// `&T`, so over a `&Vec<Option<u32>>` the element comes back as
+/// `&Option<u32>`; asked about the reference rather than about what it points
+/// at, the port read it as "not a nullable" and flattened the two `null`s with
+/// no diagnostic — while the OWNED spelling of the same reader refused. The
+/// test goes through the iterator path, not through `array::translate`.
+#[test]
+fn a_reader_over_borrowed_options_is_refused_as_the_owned_one_is() {
+    let refusal = "is itself an `Option`";
+    for (rust, method) in [
+        (
+            "pub fn f(slots: &Vec<Option<u32>>) -> Option<&Option<u32>> { slots.iter().find(|s| s.is_some()) }",
+            "f",
+        ),
+        (
+            "pub fn f(slots: &Vec<Option<u32>>) -> Option<&Option<u32>> { slots.iter().reduce(|a, _b| a) }",
+            "f",
+        ),
+        (
+            "pub fn f(slots: &Vec<Option<u32>>) -> Option<&Option<u32>> { slots.iter().min_by_key(|s| s.unwrap_or(0)) }",
+            "f",
+        ),
+        (
+            "pub fn f(slots: Vec<Option<u32>>) -> Option<Option<u32>> { slots.into_iter().find(|s| s.is_some()) }",
+            "f",
+        ),
+    ] {
+        let mut f = Fixture::build(&[("lib.rs", rust)]);
+        let ts = f.translated_method("lib.rs", method);
+        assert!(ts.contains(refusal), "refused:\n{}\nfor:\n{}", ts, rust);
+    }
+    // A plain element still answers.
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn f(ns: &Vec<u32>) -> Option<&u32> { ns.iter().find(|n| **n > 7) }",
+    )]);
+    let plain = f.translated_method("lib.rs", "f");
+    assert!(plain.contains("iterFind("), "{}", plain);
+    assert!(!plain.contains(refusal), "{}", plain);
+}

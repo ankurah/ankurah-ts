@@ -204,7 +204,7 @@ impl TypeContext<'_> {
 /// pattern binds one name per element, each with that element's type. A name
 /// the engine could not type is still bound, without one, so the body reads it
 /// as a name that exists.
-fn names_bound(pat: &syn::Pat, ty: Option<&Ty>) -> Vec<(String, Option<Ty>)> {
+pub(crate) fn names_bound(pat: &syn::Pat, ty: Option<&Ty>) -> Vec<(String, Option<Ty>)> {
     match pat {
         syn::Pat::Reference(inner) => names_bound(&inner.pat, ty),
         syn::Pat::Paren(paren) => names_bound(&paren.pat, ty),

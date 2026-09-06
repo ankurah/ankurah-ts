@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/yrs.rs
-import { Struct, Result, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
+import { Struct, Result, Arc, OwnedClosure, dropOwned, debugString } from '@ankurah/base';
 import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
 import { MutationError } from '../../error';
@@ -57,7 +57,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
     if (!this.entity.isWritable()) {
       return Result.Err(MutationError.fromPropertyError(new PropertyError('TransactionClosed', {})));
     }
-    const _r0 = this.backend.value.delete(this.propertyName, 0, this.value().unwrapOrDefault().length);
+    const _r0 = this.backend.value.delete(this.propertyName, 0, (this.value() ?? '').length);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     _r0.drop();
     const _r1 = this.backend.value.insert(this.propertyName, 0, value);
@@ -105,7 +105,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
   }
 
   debug(): string {
-    return `YrsString { propertyName: ${JSON.stringify(this.propertyName)}, backend: ${this.backend.value.debug()}, entity: ${this.entity.debug()}, phantom: ${this.phantom} }`;
+    return `YrsString { propertyName: ${debugString(this.propertyName)}, backend: ${this.backend.value.debug()}, entity: ${this.entity.debug()}, phantom: ${this.phantom} }`;
   }
 }
 

@@ -25,7 +25,13 @@ export class IndexError extends Enum<IndexErrorV> {
 }
 
 export function encodeComponentTyped(value: Value, expectedType: ValueType, descending: boolean): Result<Uint8Array, IndexError> {
-  const _r0 = Value_castTo(value, expectedType).mapErr((_) => new IndexError('TypeMismatch', { _0: expectedType, _1: ValueType.of(value) }));
+  const _r0 = Value_castTo(value, expectedType).mapErr((_) => {
+    try {
+      return new IndexError('TypeMismatch', { _0: expectedType, _1: ValueType.of(value) });
+    } finally {
+      _.drop();
+    }
+  });
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const value_1 = _r0.unwrap();
   try {

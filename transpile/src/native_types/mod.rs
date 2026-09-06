@@ -10,7 +10,7 @@ pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
 pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
 pub(crate) mod iterator; // Iterator trait methods on arrays
-mod js_value; // serde_json::Value / JsValue → unknown
+pub(crate) mod js_value; // serde_json::Value / JsValue → unknown
 pub(crate) mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 pub mod nullable; // Option<T> → T | null
 mod number; // AtomicUsize/AtomicU32 → number
@@ -98,6 +98,11 @@ pub struct Position {
     /// did not, and the call's own text cannot say — J1: this is the lowering
     /// saying instead.
     pub fresh_receiver: bool,
+    /// Did the terminal take its CALLBACK by value, so that it releases it
+    /// where the call ends? `find(&mut p)` hands over a reference Rust drops
+    /// for nothing and the port has no reference to hand, so the caller says
+    /// which of the two this is (O2).
+    pub callback: iterator::Callback,
 }
 
 /// The position a caller with nothing to say about it stands in.
@@ -107,6 +112,7 @@ pub fn used_and_read() -> Position {
         reads_as_value: true,
         elements: iterator::Elements::Borrowed,
         fresh_receiver: false,
+        callback: iterator::Callback::Owned,
     }
 }
 
@@ -304,6 +310,7 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
             iterator::Receiver::Unknown,
             iterator::Elements::Borrowed,
             false,
+            iterator::Callback::Owned,
         )
     {
         return MethodTranslation::Expr(result);

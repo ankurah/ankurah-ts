@@ -223,9 +223,9 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
                 const _v = upperTuple.lastMut();
                 if (_v != null) {
                   const slot = _v;
-                  _moved0 = true;
                   const _a1 = nextValue;
                   slot.value.drop();
+                  _moved0 = true;
                   slot.value = _a1;
                 }
               }

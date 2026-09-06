@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, iterLast } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, iterLast, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -42,7 +42,7 @@ export class PathExpr extends Struct {
   }
 
   debug(): string {
-    return `PathExpr { steps: ${`[${Array.from(this.steps).map((e) => JSON.stringify(e)).join(', ')}]`} }`;
+    return `PathExpr { steps: ${`[${Array.from(this.steps).map((e) => debugString(e)).join(', ')}]`} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -268,7 +268,7 @@ export type ExprV = {
 
 export class Expr extends Enum<ExprV> {
 
-  populateRecursive<I, V, E>(values: I): Result<Expr, ParseError> {
+  populateRecursive<I extends Iterable<V>, V, E>(values: I): Result<Expr, ParseError> {
     return this.intoMatch({
       Placeholder: () => {
         const _v = values.next();
@@ -561,7 +561,7 @@ export class Literal extends Enum<LiteralV> {
       I64: (v) => `I64(${String(v._0)})`,
       F64: (v) => `F64(${(($f) => Number.isFinite($f) ? (Number.isInteger($f) ? (Object.is($f, -0) ? '-0.0' : $f.toFixed(1)) : String($f)) : ($f !== $f ? 'NaN' : $f > 0 ? 'inf' : '-inf'))(v._0)})`,
       Bool: (v) => `Bool(${String(v._0)})`,
-      String: (v) => `String(${JSON.stringify(v._0)})`,
+      String: (v) => `String(${debugString(v._0)})`,
       EntityId: (v) => `EntityId(${v._0})`,
       Object: (v) => `Object(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
       Binary: (v) => `Binary(${`[${Array.from(v._0).map((e) => String(e)).join(', ')}]`})`,
@@ -963,7 +963,7 @@ export class Predicate extends Enum<PredicateV> {
     });
   }
 
-  populate<I, V, E>(values: I): Result<Predicate, ParseError> {
+  populate<I extends Iterable<V>, V, E>(values: I): Result<Predicate, ParseError> {
     let valuesIter = [...values];
     const _r0 = this.populateRecursive(valuesIter);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
@@ -980,7 +980,7 @@ export class Predicate extends Enum<PredicateV> {
     }
   }
 
-  populateRecursive<I, V, E>(values: I): Result<Predicate, ParseError> {
+  populateRecursive<I extends Iterable<V>, V, E>(values: I): Result<Predicate, ParseError> {
     return this.intoMatch({
       Comparison: (v) => {
         const left = v.left;

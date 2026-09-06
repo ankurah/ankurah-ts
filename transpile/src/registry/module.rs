@@ -220,7 +220,7 @@ impl ModuleTree {
     }
 }
 
-fn file_module_path(rel_path: &str) -> Vec<String> {
+pub(crate) fn file_module_path(rel_path: &str) -> Vec<String> {
     let stem = rel_path.trim_end_matches(".rs");
     let mut segments: Vec<String> = stem
         .split('/')

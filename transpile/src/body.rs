@@ -1249,14 +1249,14 @@ impl<'a> BodyTranslator<'a> {
 
 }
 
-/// What a call, a match or an operator takes away from the block that held it.
 mod holes;
 pub use holes::{hole_text, holes_written};
 mod consumes;
-
+mod defaults;
+#[cfg(test)]
+mod expectation_tests;
 /// A block, and the statements in it.
 mod blocks;
-/// What a statement still owns when its own lowering refused.
 pub(crate) mod refusal;
 
 /// An expression written where a VALUE belongs, and the jump one may carry out
@@ -1284,7 +1284,7 @@ mod items;
 mod ranges;
 mod writes;
 pub(crate) use writes::*;
-mod flags;
+pub(crate) mod flags;
 pub(crate) mod places;
 
 /// A path in expression position, and the values a path names.

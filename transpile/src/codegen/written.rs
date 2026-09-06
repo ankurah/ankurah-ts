@@ -417,3 +417,60 @@ mod tests {
         assert!(line.contains(&"Needed".to_string()), "{:?}", line);
     }
 }
+
+/// The names a file's own top-level items are emitted under.
+///
+/// For: a name the file DECLARES must never be imported. A base helper and a
+/// corpus function can be called the same thing — `filter_owned` is a name
+/// either side may reasonably pick — and importing one the file declares is
+/// `TS2440: Import declaration conflicts with local declaration`, which no gate
+/// was asking about. The cross-module import list has always excluded a file's
+/// own functions; the `@ankurah/base` list had not.
+///
+/// A struct, an enum and a trait keep the name Rust wrote; a function and a
+/// const are emitted under the port's spelling of it.
+pub(crate) fn names_the_file_declares(
+    file: &crate::types::RustFile,
+) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for s in &file.structs {
+        out.insert(s.name.clone());
+    }
+    for e in &file.enums {
+        out.insert(e.name.clone());
+    }
+    for t in &file.traits {
+        out.insert(t.name.clone());
+    }
+    for f in &file.functions {
+        out.insert(crate::name_map::escape_reserved(&crate::name_map::to_camel_case(&f.name)));
+    }
+    for c in &file.consts {
+        out.insert(crate::name_map::escape_reserved(&c.name));
+    }
+    out
+}
+
+#[cfg(test)]
+mod declares_tests {
+    /// A name the file DECLARES is never imported: `core/task.rs` declares
+    /// `spawn`, which `@ankurah/base` also exports, and the emitted file both
+    /// imported and declared it. `tsc` calls that `TS2440` and the import gate
+    /// was not asking.
+    #[test]
+    fn a_function_the_file_declares_keeps_its_name_to_itself() {
+        let mut f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "pub fn spawn<F>(future: F) { let _ = future; }\n\
+             pub fn filter_owned(xs: Vec<u32>) -> Vec<u32> { xs }\n",
+        )]);
+        let ts = f.emitted("lib.rs");
+        assert!(
+            !ts.contains("from '@ankurah/base'"),
+            "neither name is imported into the file that declares it:\n{}",
+            ts
+        );
+        assert!(ts.contains("export function spawn"), "{}", ts);
+        assert!(ts.contains("export function filterOwned"), "{}", ts);
+    }
+}

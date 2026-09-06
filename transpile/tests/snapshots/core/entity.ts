@@ -73,8 +73,10 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     let _moved1 = false;
     const state = _r0.unwrap();
     try {
+      const _b2 = this.id();
+      const _b3 = this.deref().collection.clone();
       _moved1 = true;
-      return Result.Ok(new EntityState(this.id(), this.deref().collection.clone(), state));
+      return Result.Ok(new EntityState(_b2, _b3, state));
     } finally {
       if (!_moved1) state.drop();
     }
@@ -100,8 +102,10 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           if (!_moved2) backend.drop();
         }
       }
+      const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
+      const _b4 = Broadcast.new();
       _moved0 = true;
-      return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(state.head.clone(), backends)), new EntityKind('Primary', {}), Broadcast.new()))));
+      return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, _b3, new EntityKind('Primary', {}), _b4))));
     } finally {
       if (!_moved0) collection.drop();
     }
@@ -130,10 +134,14 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           _moved0 = true;
           const operations_1 = new OperationSet(operations);
           const _b2 = this.deref().collection.clone();
-          const _b3 = state.value.head.clone();
-          _moved0 = true;
-          const event = new Event(_b2, this.deref().id, operations_1, _b3);
-          return Result.Ok(event);
+          try {
+            const _b3 = state.value.head.clone();
+            _moved0 = true;
+            const event = new Event(_b2, this.deref().id, operations_1, _b3);
+            return Result.Ok(event);
+          } finally {
+            if (_b2 != null && !(_b2 as any).isMoved && !(_b2 as any).isDropped) dropOwned(_b2);
+          }
         }
       } finally {
         if (!_moved0) dropOwned(operations);
@@ -222,7 +230,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
             Equal: () => {
               return { $jump: 'return', $value: Result.Ok(false) };
             },
-            Descends: () => event.id(),
+            Descends: () => Clock.fromEventId(event.id()),
             NotDescends: (v) => {
               try {
                 tracing.warn(`NotDescends - HACK - applying (attempt ${checkedAdd(attempt, 1, 'usize')})`);
@@ -507,8 +515,10 @@ export class TemporaryEntity extends Struct implements Filterable {
           if (!_moved2) backend.drop();
         }
       }
+      const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
+      const _b4 = Broadcast.new();
       _moved0 = true;
-      return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(state.head.clone(), backends)), new EntityKind('Primary', {}), Broadcast.new()))));
+      return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, _b3, new EntityKind('Primary', {}), _b4))));
     } finally {
       if (!_moved0) collection.drop();
     }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/error.rs
-import { Enum } from '@ankurah/base';
+import { Enum, debugString } from '@ankurah/base';
 
 export type ParseErrorV = {
   SyntaxError: { _0: string };
@@ -13,11 +13,11 @@ export class ParseError extends Enum<ParseErrorV> {
 
   debug(): string {
     return this.match({
-      SyntaxError: (v) => `SyntaxError(${JSON.stringify(v._0)})`,
+      SyntaxError: (v) => `SyntaxError(${debugString(v._0)})`,
       EmptyExpression: () => 'EmptyExpression',
-      UnexpectedRule: (v) => `UnexpectedRule { expected: ${JSON.stringify(v.expected)}, got: ${v.got} }`,
-      InvalidPredicate: (v) => `InvalidPredicate(${JSON.stringify(v._0)})`,
-      MissingOperand: (v) => `MissingOperand(${JSON.stringify(v._0)})`,
+      UnexpectedRule: (v) => `UnexpectedRule { expected: ${debugString(v.expected)}, got: ${v.got} }`,
+      InvalidPredicate: (v) => `InvalidPredicate(${debugString(v._0)})`,
+      MissingOperand: (v) => `MissingOperand(${debugString(v._0)})`,
     });
   }
 
@@ -43,8 +43,8 @@ export class SqlGenerationError extends Enum<SqlGenerationErrorV> {
   debug(): string {
     return this.match({
       PlaceholderCountMismatch: (v) => `PlaceholderCountMismatch { expected: ${String(v.expected)}, found: ${String(v.found)} }`,
-      InvalidExpression: (v) => `InvalidExpression(${JSON.stringify(v._0)})`,
-      UnsupportedOperator: (v) => `UnsupportedOperator(${JSON.stringify(v._0)})`,
+      InvalidExpression: (v) => `InvalidExpression(${debugString(v._0)})`,
+      UnsupportedOperator: (v) => `UnsupportedOperator(${debugString(v._0)})`,
     });
   }
 

@@ -66,16 +66,11 @@ unexported = [
 # other: 0
 other = []
 
-# undeclared_dependencies: 4
-undeclared_dependencies = [
-  "connector-local: connector-local/index.ts imports \"@ankurah/base\", which packages/connector-local/package.json declares in neither dependencies nor peerDependencies",
-  "connector-websocket: connector-websocket/client.ts imports \"@ankurah/base\", which packages/connector-websocket/package.json declares in neither dependencies nor peerDependencies",
-  "storage-indexeddb: storage-indexeddb/collection.ts imports \"@ankurah/base\", which packages/storage-indexeddb/package.json declares in neither dependencies nor peerDependencies",
-  "storage-sqlite: storage-sqlite/engine.test.ts imports \"@ankurah/base\", which packages/storage-sqlite/package.json declares in neither dependencies nor peerDependencies",
-]
+# undeclared_dependencies: 0
+undeclared_dependencies = []
 
 [summary]
 unresolved = 20
 unexported = 18
 other = 0
-undeclared_dependencies = 4
+undeclared_dependencies = 0

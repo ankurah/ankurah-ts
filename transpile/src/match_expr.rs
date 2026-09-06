@@ -3,13 +3,13 @@
 //! Handles Option match (Some/None → null checks), Result match (Ok/Err → try/catch),
 //! and enum match (variants → .match({}) pattern).
 
+mod arm_body;
 mod arms;
 mod catch_all;
 mod fallback;
 mod chain;
 mod option_chain;
 
-/// What a consuming arm owes the payload it was handed.
 mod owing;
 mod payload;
 mod rendering;

@@ -15,7 +15,7 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 17
+"core" = 15
 "proto" = 0
 "signals" = 0
 "storage-common" = 8
@@ -42,9 +42,9 @@ refusal = "`collect` builds whatever its target type names, and the engine could
 
 [[hole]]
 crate = "core"
-file = "context.ts"
+file = "node.ts"
 calls = 1
-refusal = "`next` advances an iterator's cursor, and the port writes an iterator as the whole sequence with no cursor to advance"
+refusal = "`unwrap_or_default` answers the value or the type's `Default`, and the engine could not type this receiver, so it cannot say which default that is"
 
 [[hole]]
 crate = "core"
@@ -66,27 +66,9 @@ refusal = "`or_default()` needs the value type's default, and `PNValue` is not d
 
 [[hole]]
 crate = "core"
-file = "property/index.ts"
-calls = 1
-refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
-
-[[hole]]
-crate = "core"
-file = "property/value/entity_ref.ts"
-calls = 1
-refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
-
-[[hole]]
-crate = "core"
 file = "property/value/json.ts"
 calls = 1
 refusal = "`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for"
-
-[[hole]]
-crate = "core"
-file = "property/value/json.ts"
-calls = 1
-refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
 
 [[hole]]
 crate = "core"
@@ -117,6 +99,12 @@ crate = "core"
 file = "value/cast_predicate.ts"
 calls = 1
 refusal = "`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "core"
+file = "value/index.ts"
+calls = 1
+refusal = "`serde_json::from_value` answers the type the caller names, and the port reads a JSON value back through that type's own `fromJson`; a free function has no way to be told which type this one is"
 
 [[hole]]
 crate = "storage-common"

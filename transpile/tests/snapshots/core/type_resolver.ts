@@ -77,24 +77,30 @@ export class TypeResolver extends Struct {
     if ((_v[0].is('Literal')) && (_v[1] != null)) {
       const { _0: lit } = _v[0].value;
       const target = _v[1];
-      {
-        const value = Value.fromAstLiteral((lit));
-        try {
-          const _v1 = Value_castTo(value, target);
-          if (_v1.isOk()) {
-            const casted = _v1.unwrap();
-            return new Expr('Literal', { _0: Literal.fromValue(casted) });
-          } else {
-            const _v2 = _v1.unwrapErr();
-            try {
-              return new Expr('Literal', { _0: lit });
-            } finally {
-              _v2.drop();
+      let _moved0 = false;
+      try {
+        {
+          const value = Value.fromAstLiteral((lit));
+          try {
+            const _v1 = Value_castTo(value, target);
+            if (_v1.isOk()) {
+              const casted = _v1.unwrap();
+              return new Expr('Literal', { _0: Literal.fromValue(casted) });
+            } else {
+              const _v2 = _v1.unwrapErr();
+              try {
+                _moved0 = true;
+                return new Expr('Literal', { _0: lit });
+              } finally {
+                _v2.drop();
+              }
             }
+          } finally {
+            value.drop();
           }
-        } finally {
-          value.drop();
         }
+      } finally {
+        if (!_moved0) lit.drop();
       }
     } else {
       const other = _v[0];

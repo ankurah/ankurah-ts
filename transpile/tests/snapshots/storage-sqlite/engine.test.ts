@@ -46,7 +46,13 @@ describe('engine unit tests', () => {
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const engine = _r0.unwrap();
       try {
-        const _r1 = (await engine.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+        const _r1 = (await engine.pool.get()).mapErr((e) => {
+          try {
+            return new SqliteError('Pool', { _0: e.toString() });
+          } finally {
+            dropOwned(e);
+          }
+        });
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const conn = _r1.unwrap();
         try {
@@ -95,11 +101,23 @@ describe('engine unit tests', () => {
         let builder = SqlBuilder.withFields(['id', 'state_buffer']);
         try {
           builder.tableName('test_table');
-          const _r1 = builder.selection(selection).mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
+          const _r1 = builder.selection(selection).mapErr((e) => {
+            try {
+              return new SqliteError('SqlGeneration', { _0: e.toString() });
+            } finally {
+              e.drop();
+            }
+          });
           if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
           _r1.drop();
           _moved0 = true;
-          const _r2 = builder.build().mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
+          const _r2 = builder.build().mapErr((e) => {
+            try {
+              return new SqliteError('SqlGeneration', { _0: e.toString() });
+            } finally {
+              e.drop();
+            }
+          });
           if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
           const [sql, _params] = _r2.unwrap();
           if (!(sql.includes('json_extract'))) throw new Error(`SQL should use json_extract() for JSON path: ${sql}`);
@@ -120,7 +138,13 @@ describe('engine unit tests', () => {
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const engine = _r0.unwrap();
       try {
-        const _r1 = (await engine.pool.get()).mapErr((e) => new SqliteError('Pool', { _0: e.toString() }));
+        const _r1 = (await engine.pool.get()).mapErr((e) => {
+          try {
+            return new SqliteError('Pool', { _0: e.toString() });
+          } finally {
+            dropOwned(e);
+          }
+        });
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const conn = _r1.unwrap();
         try {

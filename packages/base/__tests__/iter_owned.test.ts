@@ -9,6 +9,14 @@
 // Every test below is written against a droppable element that counts its own
 // drops, because the number of drops IS the property: one for every element
 // that did not reach the caller, and none for the one that did.
+//
+// A terminal that hands the element to a callback BY VALUE is tested through
+// `generated`, which is the shape the emitter writes for such a callback: the
+// body runs inside a scope that releases the parameter however the invocation
+// is left. Hand-written callbacks that dropped their argument as the test
+// author saw fit hid the emitter's own gap for a whole slice — the emitted
+// callback released nothing, and the tests still passed because they were
+// doing the emitter's work by hand. O1.
 
 import { describe, expect, test } from 'bun:test';
 import { Drop, OwnedClosure } from '../src/index.ts';
@@ -23,6 +31,11 @@ import {
   iterPositionOwned,
   iterReduceOwned,
   iterRpositionOwned,
+  iterFirstOwned,
+  filterOwned,
+  skipOwned,
+  takeOwned,
+  stepByOwned,
 } from '../src/std/iter_owned.ts';
 
 /** An element that says when it was dropped, and refuses a second drop. */
@@ -46,6 +59,26 @@ function dropped(): number[] {
   return [...Token.dropped].sort((a, b) => a - b);
 }
 
+/**
+ * A callback in the shape the emitter writes for a by-value parameter: the
+ * body's answer, with the parameter released however the invocation is left.
+ *
+ * Rust drops a by-value closure parameter at the end of every call, on the
+ * normal return and while an unwind passes through, because it is a local of
+ * the closure's body. A callback that does anything else is a callback the
+ * emitter does not write, and testing the terminals against one says nothing
+ * about the code the port produces.
+ */
+function generated<T extends Drop, R>(f: (x: T) => R): (x: T) => R {
+  return (x: T) => {
+    try {
+      return f(x);
+    } finally {
+      x.drop();
+    }
+  };
+}
+
 describe('a consuming terminal drops every element it does not hand back', () => {
   test('find: the losers before it, and everything after it', () => {
     const xs = tokens(1, 2, 3, 4);
@@ -65,34 +98,34 @@ describe('a consuming terminal drops every element it does not hand back', () =>
 
   test('position: the closure owns what it was handed, so nothing here drops it', () => {
     const xs = tokens(1, 2, 3, 4);
-    const at = iterPositionOwned(xs, (t) => {
-      // Exactly what Rust permits: the closure was given the element by value.
-      if (t.n !== 3) t.drop();
-      return t.n === 3;
-    });
+    const at = iterPositionOwned(
+      xs,
+      generated((t: Token) => t.n === 3),
+    );
     expect(at).toBe(2);
-    // 1 and 2 were dropped by the closure; 4 was never reached and is the
-    // iterator's. 3 is the closure's, and it kept it.
-    expect(dropped()).toEqual([1, 2, 4]);
+    // 1, 2 and 3 went through the callback, which released each of them at the
+    // end of its own invocation; 4 was never reached and is the walk's.
+    expect(dropped()).toEqual([1, 2, 3, 4]);
   });
 
   test('rposition walks from the end and leaves the front to be dropped', () => {
     const xs = tokens(1, 2, 3, 4);
-    const at = iterRpositionOwned(xs, (t) => {
-      if (t.n !== 3) t.drop();
-      return t.n === 3;
-    });
+    const at = iterRpositionOwned(
+      xs,
+      generated((t: Token) => t.n === 3),
+    );
     expect(at).toBe(2);
-    // 4 was dropped by the closure; 1 and 2 were never reached.
-    expect(dropped()).toEqual([1, 2, 4]);
+    // 4 and 3 went through the callback, which released each of them; 1 and 2
+    // were never reached and are the walk's.
+    expect(dropped()).toEqual([1, 2, 3, 4]);
   });
 
   test('find_map answers the first Some and drops what it never reached', () => {
     const xs = tokens(1, 2, 3);
-    const got = iterFindMapOwned(xs, (t) => {
-      t.drop();
-      return t.n === 2 ? `n${t.n}` : null;
-    });
+    const got = iterFindMapOwned(
+      xs,
+      generated((t: Token) => (t.n === 2 ? `n${t.n}` : null)),
+    );
     expect(got).toBe('n2');
     expect(dropped()).toEqual([1, 2, 3]);
   });
@@ -106,13 +139,21 @@ describe('a consuming terminal drops every element it does not hand back', () =>
   });
 
   test('reduce hands every element to the closure and drops none of them', () => {
+    // `reduce` hands BOTH the accumulator and the next element over by value.
+    // The emitter's shape releases the one the body does not answer with; the
+    // one it returns is the next accumulator and is released by nobody here.
     const xs = tokens(1, 2, 3);
-    const got = iterReduceOwned(xs, (a, b) => {
-      b.drop();
-      return a;
+    const got = iterReduceOwned(xs, (a: Token, b: Token) => {
+      try {
+        return a;
+      } finally {
+        b.drop();
+      }
     });
     expect(got?.n).toBe(1);
     expect(dropped()).toEqual([2, 3]);
+    got!.drop();
+    expect(dropped()).toEqual([1, 2, 3]);
   });
 
   test('max_by and min_by drop every loser', () => {
@@ -183,18 +224,21 @@ describe('a callback that throws leaves nothing behind', () => {
     expect(dropped()).toEqual([1, 2, 3]);
   });
 
-  test('position: the element is the closure’s, and the rest is the walk’s', () => {
+  test('position: the callback releases what it was handed, throw or not', () => {
     const xs = tokens(1, 2, 3);
     expect(() =>
-      iterPositionOwned(xs, (t) => {
-        if (t.n === 2) throw new Error('no');
-        t.drop();
-        return false;
-      }),
+      iterPositionOwned(
+        xs,
+        generated((t: Token) => {
+          if (t.n === 2) throw new Error('no');
+          return false;
+        }),
+      ),
     ).toThrow('no');
-    // 1 was dropped by the closure, 3 was never reached. 2 belongs to the
-    // closure that threw, exactly as Rust's unwind leaves it.
-    expect(dropped()).toEqual([1, 3]);
+    // 1 returned normally and 2 threw; the callback released both, because a
+    // Rust unwind drops the closure's locals as it passes through. 3 was never
+    // reached and the walk released it.
+    expect(dropped()).toEqual([1, 2, 3]);
   });
 });
 
@@ -219,5 +263,123 @@ describe('a wrapped closure reaches the terminal through invokeRef', () => {
   test('and so is a plain arrow, which owns nothing', () => {
     const xs = tokens(1, 2);
     expect(iterFindOwned(xs, (t) => t.n === 1)?.n).toBe(1);
+  });
+
+  // O2: `find(&mut p)` type-checks through `impl FnMut for &mut F`, so what
+  // the terminal takes by value is the REFERENCE — dropping it does nothing
+  // and `p` is still the caller's to call again. The port has no reference to
+  // hand over, so the emitter says which of the two happened.
+  test('a BORROWED callback survives the terminal and can be called again', () => {
+    const captured = new Token(9);
+    Token.dropped = [];
+    const p = new OwnedClosure([captured], (t: Token) => t.n === 2);
+
+    const first = iterFindOwned([new Token(1), new Token(2)], p, 'borrow');
+    expect(first?.n).toBe(2);
+    expect(p.isDropped).toBe(false);
+    first!.drop();
+
+    // The defective answer: `OwnershipFatal` — the closure was released by the
+    // first terminal and this call reads captures that are gone.
+    const second = iterFindOwned([new Token(3), new Token(2)], p, 'borrow');
+    expect(second?.n).toBe(2);
+    second!.drop();
+
+    expect(Token.dropped).not.toContain(9);
+    p.drop();
+    expect(Token.dropped).toContain(9);
+  });
+
+  test('every terminal that takes a callback carries the mode', () => {
+    const made: OwnedClosure<never[], never>[] = [];
+    const closure = <A extends unknown[], R>(f: (...args: A) => R) => {
+      const c = new OwnedClosure<A, R>([], f);
+      made.push(c as unknown as OwnedClosure<never[], never>);
+      return c;
+    };
+    Token.dropped = [];
+    const kept = [
+      iterFindOwned(tokens(1, 2), closure((t: Token) => t.n === 2), 'borrow'),
+      iterMaxByOwned(tokens(1, 2), closure((a: Token, b: Token) => a.n - b.n), 'borrow'),
+      iterMinByOwned(tokens(1, 2), closure((a: Token, b: Token) => a.n - b.n), 'borrow'),
+      iterMaxByKeyOwned(tokens(1, 2), closure((t: Token) => t.n), 'borrow'),
+      iterMinByKeyOwned(tokens(1, 2), closure((t: Token) => t.n), 'borrow'),
+      iterReduceOwned(tokens(1, 2), closure((a: Token, b: Token) => { b.drop(); return a; }), 'borrow'),
+    ];
+    for (const c of made) expect(c.isDropped).toBe(false);
+    for (const k of kept) k?.drop();
+    expect(iterPositionOwned(tokens(1, 2), closure((t: Token) => { t.drop(); return t.n === 2; }), 'borrow')).toBe(1);
+    expect(
+      iterRpositionOwned(tokens(1, 2), closure((t: Token) => { t.drop(); return t.n === 1; }), 'borrow'),
+    ).toBe(0);
+    expect(iterFindMapOwned(tokens(1, 2), closure((t: Token) => { const n = t.n; t.drop(); return n === 2 ? n : null; }), 'borrow')).toBe(2);
+    for (const c of made) {
+      expect(c.isDropped).toBe(false);
+      c.drop();
+    }
+  });
+});
+
+describe('an eager adaptor over owned elements releases what it discards', () => {
+  // O3/O4: Rust's adaptors are lazy and own what they walk — `Filter` drops the
+  // element its predicate rejected, `Skip` the prefix, `Take` the tail with the
+  // iterator it wraps, `StepBy` what it stepped over. The port writes them
+  // eagerly, so the drops happen here; written as array operations they simply
+  // lost the discarded elements, and the consuming terminal below could not
+  // release what the adaptor had already erased.
+  test('filter drops what its predicate rejects and keeps the rest', () => {
+    const xs = tokens(1, 2, 3, 4);
+    const kept = filterOwned(xs, (t) => t.n % 2 === 0);
+    expect(kept.map((t) => t.n)).toEqual([2, 4]);
+    expect(dropped()).toEqual([1, 3]);
+    for (const t of kept) t.drop();
+  });
+
+  test('and on a throw it keeps nothing: the kept, the thrower and the tail', () => {
+    const xs = tokens(1, 2, 3, 4);
+    expect(() =>
+      filterOwned(xs, (t) => {
+        if (t.n === 3) throw new Error('no');
+        return true;
+      }),
+    ).toThrow('no');
+    // Nobody receives the answer on that path, so nothing may be left alive.
+    expect(dropped()).toEqual([1, 2, 3, 4]);
+  });
+
+  test('skip drops the prefix and take drops the tail', () => {
+    const xs = tokens(1, 2, 3, 4);
+    const rest = skipOwned(xs, 2);
+    expect(rest.map((t) => t.n)).toEqual([3, 4]);
+    expect(dropped()).toEqual([1, 2]);
+
+    const front = takeOwned(rest, 1);
+    expect(front.map((t) => t.n)).toEqual([3]);
+    expect(dropped()).toEqual([1, 2, 4]);
+    front[0]!.drop();
+
+    Token.dropped = [];
+    // Out of range on either side is Rust's answer, not an exception.
+    expect(skipOwned([], 3)).toEqual([]);
+    expect(takeOwned(tokens(1), 9).length).toBe(1);
+    expect(dropped()).toEqual([]);
+  });
+
+  test('step_by drops what it stepped over, and refuses a step of zero', () => {
+    const xs = tokens(1, 2, 3, 4, 5);
+    const every = stepByOwned(xs, 2);
+    expect(every.map((t) => t.n)).toEqual([1, 3, 5]);
+    expect(dropped()).toEqual([2, 4]);
+    for (const t of every) t.drop();
+    expect(() => stepByOwned([1, 2], 0)).toThrow(RangeError);
+  });
+
+  test('next on a sequence nobody else holds answers the head and drops the tail', () => {
+    const xs = tokens(1, 2, 3);
+    const head = iterFirstOwned(xs);
+    expect(head?.n).toBe(1);
+    expect(dropped()).toEqual([2, 3]);
+    head!.drop();
+    expect(iterFirstOwned([])).toBe(null);
   });
 });

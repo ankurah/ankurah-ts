@@ -7,15 +7,6 @@
 
 use super::BodyTranslator;
 
-/// One expression's extent, as a comparable key. Two clones of an expression
-/// carry the same span, which is what lets a lowering ask "is this the
-/// expression the statement is about" without holding a borrow of it.
-pub(crate) fn span_key(expr: &syn::Expr) -> (usize, usize, usize, usize) {
-    let span = syn::spanned::Spanned::span(expr);
-    let (start, end) = (span.start(), span.end());
-    (start.line, start.column, end.line, end.column)
-}
-
 impl BodyTranslator<'_> {
     /// What a body's own `let`s declare before its first statement: the
     /// formatter's accumulator, and one move FLAG per parameter that has a live
@@ -47,14 +38,75 @@ impl BodyTranslator<'_> {
         declarations
     }
 
-    /// Give a value a name that stands ABOVE the statement's move flags.
-    fn name_above_the_flag(&self, written: String) -> String {
+    /// Take out the flag declarations nothing assigns, and the guards that
+    /// read them.
+    ///
+    /// E15: a flag says "somebody else owns this now", and a body that never
+    /// sets it never hands the value away — so the flag is a `let` nothing
+    /// assigns beside a test that is always false. `ownership::wrap` drops such
+    /// a guard on its own, and takes the declaration with it where the two
+    /// stand in the SAME text.
+    ///
+    /// N4: for a `let` they do not. The declaration went into the statement
+    /// that declared the local, and the release wraps the REST of the block, so
+    /// `wrap` — handed only the rest — dropped the guard and left the
+    /// declaration standing seventy lines above nothing
+    /// (`storage-indexeddb/collection.ts`). Here both streams are in hand, so
+    /// the answer is read from both and the declaration comes out of the one it
+    /// was written into.
+    pub(crate) fn drop_dead_flags(
+        &self,
+        declarations: &mut String,
+        rest: &str,
+        owned: &mut [crate::ownership::Owned],
+    ) {
+        for local in owned.iter_mut() {
+            let Some(flag) = local.flag.clone() else { continue };
+            if crate::ownership::sets_the_flag(declarations, &flag)
+                || crate::ownership::sets_the_flag(rest, &flag)
+            {
+                continue;
+            }
+            *declarations = crate::ownership::without_declaration(declarations, &flag);
+            local.flag = None;
+        }
+    }
+
+    /// Give a value a name that stands ABOVE the move flag, in the scope the
+    /// expression itself stands in.
+    ///
+    /// O6: an ordinary HOIST, not a statement-global buffer. `before_flags`
+    /// stood above the whole statement, so a call inside a branch, a closure or
+    /// an `await` chain could not lift anything at all — its lift would have
+    /// landed above the names that block declares — and the statement-tail test
+    /// that kept it safe left every such call with its flags above the throw. A
+    /// hoist lands wherever hoists land, which is exactly the scope the call is
+    /// written in.
+    ///
+    /// N3: and it carries a release. A temporary lifted here holds a value
+    /// Rust had not yet built at all — the argument is evaluated where the call
+    /// is — so if the call is never reached, nobody owns what the lift
+    /// produced. The release asks the runtime whether the value still has an
+    /// owner, exactly as slice 6's refusal-owned prelude does, because the
+    /// call may have consumed it.
+    fn name_above_the_flag(&self, written: String, owes_a_release: bool) -> String {
         let name = self.fresh_hoist("_b");
-        self.own
-            .before_flags
-            .borrow_mut()
-            .push(format!("const {} = {};\n", name, written));
+        self.own.prelude.borrow_mut().push(crate::ownership::Hoist {
+            declaration: format!("const {} = {};\n", name, written),
+            owned: None,
+            temp: Some(name.clone()),
+            refused: false,
+            released_if_unreached: owes_a_release,
+        });
         name
+    }
+
+    /// Does the value this expression builds owe a release, so that lifting it
+    /// above something that can throw needs one written?
+    fn lift_owes_a_release(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(expr)) else { return false };
+        crate::ownership::drops_of(&tc.borrow().probe(), &ty).is_droppable()
     }
 
     /// The arguments of a call that hands a flagged local away, each given a
@@ -88,16 +140,6 @@ impl BodyTranslator<'_> {
         if !self.moves_a_flagged_local(whole) {
             return written;
         }
-        // And only one standing where the STATEMENT's own expression stands.
-        // `before_flags` is written above the whole statement, so lifting an
-        // argument of a call nested inside a branch, a closure or an IIFE the
-        // statement writes would put it above the names that block declares —
-        // `storage-indexeddb`'s `collection.ts` reads a `limitVal` bound inside
-        // the `if` the call sits in, and `signals`' `calculated.ts` is the same
-        // shape one level shallower.
-        if self.own.statement_tail.get() != Some(span_key(whole)) {
-            return written;
-        }
         // §3.9: the arguments go above the flag only where the LIST cannot
         // contain the move. An argument that is not a place is evaluated where
         // it is lifted to, so one that performs the move itself would move
@@ -110,6 +152,10 @@ impl BodyTranslator<'_> {
         if exprs.iter().filter(lifts).any(|e| self.moves_a_flagged_local(e.expect("filtered"))) {
             return written;
         }
+        // Only a lift with something AFTER it that can throw needs a release:
+        // the flag assignment cannot throw, and neither can a place, a literal
+        // or a closure left where it stands. The LAST lift is therefore free.
+        let last_lift = exprs.iter().rposition(|e| lifts(&e));
         written
             .into_iter()
             .enumerate()
@@ -120,8 +166,11 @@ impl BodyTranslator<'_> {
                 // asked of the EXPRESSION and what the port writes for it,
                 // rather than of the emitted text, because whether an operand
                 // is a place is a fact the lowering has.
-                Some(e) if lifts(&e) && !self.writes_a_place(e.expect("filtered"))
-                    => self.name_above_the_flag(text),
+                Some(e) if lifts(&e) && !self.writes_a_place(e.expect("filtered")) => {
+                    let owes = Some(index) != last_lift
+                        && self.lift_owes_a_release(e.expect("filtered"));
+                    self.name_above_the_flag(text, owes)
+                }
                 _ => text,
             })
             .collect()
@@ -173,30 +222,6 @@ impl BodyTranslator<'_> {
         )
     }
 
-    /// The statement's own outermost expression, for the placement rule above.
-    /// A `return e` and a `break e` carry the expression the statement is
-    /// really about, and a `let x = e` is the same question about its
-    /// initialiser.
-    pub(crate) fn statement_tail_key(stmt: &syn::Stmt) -> Option<(usize, usize, usize, usize)> {
-        fn through(expr: &syn::Expr) -> &syn::Expr {
-            match expr {
-                syn::Expr::Return(r) => r.expr.as_deref().map(through).unwrap_or(expr),
-                syn::Expr::Break(b) => b.expr.as_deref().map(through).unwrap_or(expr),
-                syn::Expr::Paren(p) => through(&p.expr),
-                syn::Expr::Group(g) => through(&g.expr),
-                other => other,
-            }
-        }
-        match stmt {
-            syn::Stmt::Expr(expr, _) => Some(span_key(through(expr))),
-            syn::Stmt::Local(local) => local
-                .init
-                .as_ref()
-                .map(|init| span_key(through(&init.expr))),
-            _ => None,
-        }
-    }
-
     /// The argument expressions of a call, in the order their emitted text was
     /// built, for the placement rule to read.
     pub(crate) fn each_argument<'e>(
@@ -225,16 +250,58 @@ impl BodyTranslator<'_> {
 /// Can this argument be left where it stands, because evaluating it cannot
 /// throw?
 ///
-/// A place — a name, a field, an index — is the original answer: reading one
-/// cannot fail, and naming it would only add noise. A LITERAL and a CLOSURE are
-/// the same: `f(c, false)` and `opt.map(|v| v)` build a value out of nothing,
-/// and lifting them wrote `const _b2 = false;` and `const _b6 = (v) => v;`
-/// above two live statements.
+/// A name is the original answer: reading one cannot fail, and naming it would
+/// only add noise. A LITERAL and a CLOSURE are the same — `f(c, false)` and
+/// `opt.map(|v| v)` build a value out of nothing, and lifting them wrote
+/// `const _b2 = false;` and `const _b6 = (v) => v;` above two live statements.
+///
+/// N1: a FIELD and an INDEX are quiet only if what they are read OUT of is.
+/// This asked `is_place`, which answers "does this name existing storage" and
+/// says yes to any `Expr::Field` and any `Expr::Index` without looking at the
+/// base or at the index — so `eat(c, maybe().n)` and `eat(c, xs[which()])` set
+/// the flag before `maybe()` and `which()` ran, and on their throw path the
+/// block released nothing. Reused as "can evaluating this throw", `is_place`
+/// was answering a different question.
 fn evaluates_quietly(expr: &syn::Expr) -> bool {
-    matches!(expr, syn::Expr::Lit(_) | syn::Expr::Closure(_)) || crate::body::is_place(expr)
+    match expr {
+        syn::Expr::Lit(_) | syn::Expr::Closure(_) | syn::Expr::Path(_) => true,
+        syn::Expr::Paren(p) => evaluates_quietly(&p.expr),
+        syn::Expr::Group(g) => evaluates_quietly(&g.expr),
+        syn::Expr::Reference(r) => evaluates_quietly(&r.expr),
+        syn::Expr::Unary(syn::ExprUnary { op: syn::UnOp::Deref(_), expr, .. }) => {
+            evaluates_quietly(expr)
+        }
+        syn::Expr::Field(field) => evaluates_quietly(&field.base),
+        syn::Expr::Index(index) => {
+            evaluates_quietly(&index.expr) && evaluates_quietly(&index.index)
+        }
+        other => crate::body::is_place(other),
+    }
 }
 
 
+
+/// The operand of every `?` this statement writes at its own level.
+///
+/// A `?` inside a CLOSURE belongs to the closure, which has its own prelude and
+/// its own flags, so the walk stops there.
+pub(crate) fn try_operands(stmt: &syn::Stmt) -> Vec<syn::Expr> {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Walk {
+        found: Vec<syn::Expr>,
+    }
+    impl<'ast> Visit<'ast> for Walk {
+        fn visit_expr_try(&mut self, node: &'ast syn::ExprTry) {
+            self.found.push((*node.expr).clone());
+            syn::visit::visit_expr_try(self, node);
+        }
+        fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
+    }
+    let mut walk = Walk::default();
+    walk.visit_stmt(stmt);
+    walk.found
+}
 
 #[cfg(test)]
 mod tests {
@@ -304,12 +371,19 @@ mod tests {
         assert!(ts.contains("eat(c, 7)"), "{}", ts);
     }
 
-    /// A call the statement does not evaluate at its own top level is left
-    /// alone: `before_flags` stands above the WHOLE statement, so lifting an
-    /// argument out of a branch would put it above the names that branch
-    /// declares.
+    /// O6: a call inside a BRANCH lifts too, and what it lifts stands inside
+    /// that branch.
+    ///
+    /// This test used to assert the opposite, and the premise it rested on has
+    /// been repealed: the lift went into a statement-global buffer that stood
+    /// above the whole statement, so lifting out of a branch would have put the
+    /// name above the bindings that branch declares. It is an ordinary HOIST
+    /// now, which lands in the scope the call is written in — and the flag
+    /// stands below it, which is the whole point. This arm also wrote no flag
+    /// at all before, so `eat(c, ..)` handed `c` over and the block's `finally`
+    /// released it a second time.
     #[test]
-    fn a_call_inside_a_branch_of_the_statement_is_left_alone() {
+    fn a_call_inside_a_branch_lifts_into_that_branch() {
         let ts = body(
             "pub fn f(c: Token, o: Option<u32>, e: bool) -> u32 {\n\
                if e { return 0; }\n\
@@ -317,7 +391,73 @@ mod tests {
              }",
             "f",
         );
-        assert!(!ts.contains("const _b"), "an argument was lifted out of an arm:\n{}", ts);
+        let bind = ts.find("const n = o;").expect(&format!("the arm binds:\n{}", ts));
+        let lift = ts.find("const _b").expect(&format!("nothing was lifted:\n{}", ts));
+        let flag = ts.find("_moved0 = true;").expect(&format!("no flag:\n{}", ts));
+        assert!(bind < lift, "the lift stands inside the arm:\n{}", ts);
+        assert!(lift < flag, "and the flag stands below it:\n{}", ts);
+        assert!(ts.contains("if (!_moved0) c.drop();"), "the release is guarded:\n{}", ts);
+    }
+
+    /// N1: a field's BASE and an index's INDEX decide whether reading it can
+    /// throw. `is_place` says yes to any `Expr::Field` and any `Expr::Index`
+    /// without looking at either, so the flag was set before `maybe()` and
+    /// `which()` ran.
+    #[test]
+    fn a_field_of_a_call_and_an_index_that_is_a_call_are_lifted() {
+        for rust in [
+            "pub fn maybe() -> Held { Held { t: Token(0), n: 1 } }\n\
+             pub fn f(c: Token, e: bool) -> u32 {\n\
+               if e { return 0; }\n\
+               eat(c, maybe().n)\n\
+             }",
+            "pub fn which() -> usize { 0 }\n\
+             pub fn f(c: Token, xs: Vec<u32>, e: bool) -> u32 {\n\
+               if e { return 0; }\n\
+               eat(c, xs[which()])\n\
+             }",
+        ] {
+            let ts = body(rust, "f");
+            let flag = ts.find("_moved0 = true;").expect(&format!("no flag:\n{}", ts));
+            let call = ts.find("return eat(c,").expect(&format!("no call:\n{}", ts));
+            let opens = ts[..flag].contains("maybe()") || ts[..flag].contains("which()");
+            assert!(opens, "what can throw stands above the flag:\n{}", ts);
+            assert!(flag < call, "and the flag immediately above the transfer:\n{}", ts);
+        }
+    }
+
+    /// N4: a `let`'s flag declaration goes into the statement that declared the
+    /// local, and its guard wraps the REST of the block. Where the body never
+    /// sets the flag, `wrap` drops the guard — and, handed only the rest, left
+    /// the declaration standing. Live at `storage-indexeddb/collection.ts`,
+    /// where a `let _moved0 = false;` stood seventy lines above nothing.
+    #[test]
+    fn a_dead_flag_takes_its_declaration_with_it() {
+        let ts = body(
+            "pub fn f(o: Option<Token>) -> u32 {\n\
+               let mut held = Vec::new();\n\
+               if let Some(t) = o { held.push(t); }\n\
+               held.len() as u32\n\
+             }",
+            "f",
+        );
+        let declares = ts.contains("= false;");
+        let guards = ts.contains("if (!_moved");
+        assert_eq!(declares, guards, "a flag is declared exactly where it is read:\n{}", ts);
+    }
+
+    /// A field of a NAME is still quiet: reading one cannot throw.
+    #[test]
+    fn a_field_of_a_name_is_still_left_where_it_stands() {
+        let ts = body(
+            "pub fn f(c: Token, h: Held, e: bool) -> u32 {\n\
+               if e { return 0; }\n\
+               eat(c, h.n)\n\
+             }",
+            "f",
+        );
+        assert!(!ts.contains("const _b"), "nothing to lift:\n{}", ts);
+        assert!(ts.contains("eat(c, h.n)"), "{}", ts);
     }
 
     /// J1: what is lifted above a move flag is decided from the EXPRESSION and

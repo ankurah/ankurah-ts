@@ -22,9 +22,12 @@ pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<Str
         return Err("the engine could not type it".to_string());
     };
     match ty.peel_refs() {
-        // Rust quotes and escapes a string under Debug, which is what JSON's
-        // own string form does.
-        Ty::Str => Ok(format!("JSON.stringify({})", expr)),
+        // Rust quotes and escapes a string under Debug. `JSON.stringify` is
+        // close and not the same: it writes `\u0000` where Rust writes `\0`,
+        // and `\b` and `\f` where Rust writes `\u{8}` and `\u{c}`. The exact
+        // escaper is `debugString`, and it is the same one `debugChar` shares
+        // (N16).
+        Ty::Str => Ok(format!("debugString({})", expr)),
         // Rust prints a `char` between single quotes and ESCAPES what it holds
         // — `'\''`, `'\\'`, `'\n'`. The port writes a `char` as a
         // one-character string, and writing the quotes alone printed the
@@ -78,7 +81,10 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
     let path = reg.name_of(id);
     let leaf = path.rsplit("::").next().unwrap_or(&path);
     match leaf {
-        "String" => return Ok(format!("JSON.stringify({})", expr)),
+        // N16: the same exact escaper `&str` gets. `JSON.stringify` writes
+        // `\u0000` where Rust writes `\0`, and `\b` and `\f` where Rust
+        // writes `\u{8}` and `\u{c}`.
+        "String" => return Ok(format!("debugString({})", expr)),
         // `Box<T>` is invisible on the wire and invisible under Debug: Rust
         // prints what is inside it. An `Rc` and an `Arc` print their payload
         // too, and the port holds that payload in `.value` — reaching through
@@ -175,11 +181,16 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
             // against `'a'` — so a `char` instantiation is the one thing the
             // runtime cannot get right, and it is reported here rather than
             // rendered as a guess.
-            if let Some(at) = args.iter().position(|a| matches!(a.peel_refs(), Ty::Prim(Prim::Char))) {
+            if let Some((at, what)) =
+                args.iter().enumerate().find_map(|(at, a)| erased_at_run_time(reg, a).map(|w| (at, w)))
+            {
                 return Err(format!(
-                    "`{}` is written by hand and prints its type argument from the value's own                      surface, and argument {} is a `char`: the port writes one as a                      one-character string, which is what a `String` is too, and Rust prints                      those differently",
+                    "`{}` is written by hand and prints its type argument from the value's own \
+                     surface, and argument {} holds {}: the port writes that as a value the \
+                     runtime cannot tell from another one Rust prints differently",
                     path,
-                    at + 1
+                    at + 1,
+                    what
                 ));
             }
             return Ok(format!("{}.debug()", expr));
@@ -248,12 +259,20 @@ mod tests {
 
     #[test]
     fn a_string_prints_quoted() {
-        let f = built("pub struct S { pub name: String }");
-        let ty = f.field("lib.rs", "S", "name");
-        assert_eq!(
-            debug_expr(&f.reg, Some(&ty), "this.name").unwrap(),
-            "JSON.stringify(this.name)"
-        );
+        // N16: through the exact escaper, not `JSON.stringify`, which writes
+        // `\u0000` where Rust writes `\0` and `\b`/`\f` where Rust writes
+        // `\u{8}`/`\u{c}` — and an owned `String` gets the same one a `&str`
+        // gets.
+        let f = built("pub struct S { pub name: String, pub tag: &'static str }");
+        for field in ["name", "tag"] {
+            let ty = f.field("lib.rs", "S", field);
+            assert_eq!(
+                debug_expr(&f.reg, Some(&ty), "this.x").unwrap(),
+                "debugString(this.x)",
+                "{}",
+                field
+            );
+        }
     }
 
     #[test]
@@ -335,29 +354,49 @@ mod tests {
 
     /// F7: a hand-written generic prints its payload from the VALUE's own
     /// surface, and an erased JavaScript string is a Rust `String` and a Rust
-    /// `char` alike — `"a"` against `'a'`. A `char` instantiation is the one
-    /// thing that surface cannot get right, so it is reported rather than
-    /// rendered as a guess.
+    /// `char` alike — `"a"` against `'a'`. N18 is the second erasure: the port
+    /// writes `Option<T>` as `T | null`, so `Some(x)` and `x` are one value and
+    /// `Held<Option<X>>` printed `payload: X` where Rust prints
+    /// `payload: Some(X)`. O11: and the walk goes DOWN, because `debugValue`
+    /// walks an array element by element — a `char` inside a `Vec`, an array, a
+    /// slice or a tuple reaches that surface exactly as one at the top does.
     #[test]
-    fn a_provided_generic_instantiated_with_a_char_is_reported() {
+    fn a_provided_generic_whose_argument_the_runtime_cannot_read_is_reported() {
         let mut f = built(
             "pub struct Held<T> { pub payload: T }\n\
-             pub struct S { pub c: Held<char>, pub s: Held<String> }",
+             pub struct Plain { pub n: u32 }\n\
+             pub struct S {\n\
+               pub c: Held<char>,\n\
+               pub o: Held<Option<u32>>,\n\
+               pub v: Held<Vec<char>>,\n\
+               pub t: Held<(u32, char)>,\n\
+               pub a: Held<[char; 2]>,\n\
+               pub s: Held<String>,\n\
+               pub p: Held<Plain>,\n\
+               pub w: Held<Vec<u32>>,\n\
+             }",
         );
         let held = f.reg.module_type(f.module("lib.rs"), "Held").expect("Held is declared");
         f.reg.mark_members_hand_written(held);
         f.reg.mark_declares_debug(held);
 
-        let with_char = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "c")), "this.c");
-        assert!(with_char.is_err(), "a char payload was rendered: {:?}", with_char);
-        assert!(
-            with_char.unwrap_err().contains("argument 1 is a `char`"),
-            "the reason names the argument"
-        );
+        for (field, what) in
+            [("c", "a `char`"), ("o", "an `Option`"), ("v", "a `char`"), ("t", "a `char`"), ("a", "a `char`")]
+        {
+            let refused = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", field)), "this.x");
+            let why = refused.expect_err(&format!("`{}` was rendered", field));
+            assert!(why.contains("argument 1 holds"), "{}: {}", field, why);
+            assert!(why.contains(what), "{}: {}", field, why);
+        }
 
-        // Every other instantiation prints through the hand-written `debug()`.
-        let with_string = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", "s")), "this.s").unwrap();
-        assert_eq!(with_string, "this.s.debug()");
+        // Every other instantiation prints through the hand-written `debug()` —
+        // including a type that holds an `Option` of its own, because THAT type
+        // prints through the rendering the emitter wrote for it.
+        for field in ["s", "p", "w"] {
+            let rendered = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", field)), "this.x")
+                .unwrap_or_else(|why| panic!("`{}` was refused: {}", field, why));
+            assert_eq!(rendered, "this.x.debug()", "{}", field);
+        }
     }
 
     /// An `Rc` and an `Arc` print their payload, and the port holds that
@@ -397,5 +436,43 @@ mod tests {
     fn an_untyped_value_is_refused_rather_than_guessed() {
         let f = built("pub struct S { pub n: u32 }");
         assert!(debug_expr(&f.reg, None, "x").is_err());
+    }
+}
+
+/// What a hand-written generic's argument holds that the RUNTIME cannot tell
+/// apart, or nothing where it holds no such thing.
+///
+/// F7 named one: a `char`. The port writes it as a one-character string, which
+/// is exactly what it writes a `String` as, and Rust prints those differently —
+/// `'a'` against `"a"`. N18 is the second: the port writes `Option<T>` as
+/// `T | null`, so `Some(x)` and `x` are one value and `Attested<Option<X>>`
+/// printed `payload: X` where Rust prints `payload: Some(X)`.
+///
+/// O11: and the walk goes DOWN. `debugValue` prints a string, a number and a
+/// boolean from the value's own surface, walks an array element by element, and
+/// hands anything with a `debug()` to it — so an erasure inside a `Vec`, an
+/// array, a slice or a tuple reaches it exactly as one at the top does, while
+/// one inside a type that prints through its own `debug()` does not: that type
+/// knows its fields' types and the emitter wrote its rendering.
+fn erased_at_run_time(reg: &TypeRegistry, ty: &Ty) -> Option<&'static str> {
+    match ty.peel_refs() {
+        Ty::Prim(Prim::Char) => Some("a `char`"),
+        Ty::Tuple(elems) => elems.iter().find_map(|e| erased_at_run_time(reg, e)),
+        Ty::Slice(elem) => erased_at_run_time(reg, elem),
+        Ty::Array { elem, .. } => erased_at_run_time(reg, elem),
+        Ty::Named { id, args } => {
+            if reg.system_type("std::option::Option") == Some(*id) {
+                return Some("an `Option`");
+            }
+            // A sequence the runtime walks element by element carries whatever
+            // its elements carry; every other named type prints through the
+            // `debug()` the emitter wrote for it, which reads its own fields'
+            // types.
+            let walked = ["std::vec::Vec", "std::collections::VecDeque"]
+                .iter()
+                .any(|path| reg.system_type(path) == Some(*id));
+            walked.then(|| args.first().and_then(|a| erased_at_run_time(reg, a))).flatten()
+        }
+        _ => None,
     }
 }

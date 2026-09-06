@@ -10,6 +10,7 @@ mod context;
 mod context_tests;
 pub mod expected;
 mod literals;
+mod macro_types;
 mod patterns;
 mod scope;
 

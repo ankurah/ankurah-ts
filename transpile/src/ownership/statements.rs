@@ -66,6 +66,7 @@ impl<'a> BodyTranslator<'a> {
             owned: None,
             temp: None,
             refused: false,
+            released_if_unreached: false,
         });
         format!("{} = {}", left, held)
     }
@@ -145,6 +146,7 @@ impl<'a> BodyTranslator<'a> {
             owned: None,
             temp: None,
             refused: false,
+            released_if_unreached: false,
         });
         Some(chosen)
     }

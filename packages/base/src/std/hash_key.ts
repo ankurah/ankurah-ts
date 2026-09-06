@@ -285,7 +285,17 @@ export function valueNotEquals(left: unknown, right: unknown): boolean {
  */
 function equalByValue(left: unknown, right: unknown): boolean {
   if (left === right) return true;
-  if (left !== left && right !== right) return true; // NaN
+  // P2/O12: and NaN is NOT equal to NaN here. `keysEqual` says it is, because
+  // a map LOOKUP is SameValueZero and a `Map` finds a key it stored under
+  // `NaN`; `==` is Rust's `PartialEq`, and `f64::NAN == f64::NAN` is false, so
+  // `vec![f64::NAN] == vec![f64::NAN]` is false too. The branch was carried
+  // over from the lookup walk when the two were one function, and it answered
+  // `true` for both.
+  //
+  // Rust's `f64` is neither `Hash` nor `Eq`, so no map the port writes is
+  // keyed by one: `keysEqual`'s NaN branch is reached only by a key Rust could
+  // not have used, which is why the two walks can differ here without ever
+  // disagreeing about a value both of them see.
   // A comparison that never reaches the contents cannot be refused: `x == null`
   // and `x == 5` are answered by identity, and Rust's own
   // `PartialEq<Option<T>>` is that shape.

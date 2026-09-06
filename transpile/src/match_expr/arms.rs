@@ -7,6 +7,7 @@
 //! another, and the catch-all's arms lost the match's value in every position
 //! but the enclosing function's return.
 
+use super::arm_body::{translate_body, Body};
 use crate::body::{indent, BodyTranslator};
 use super::Position;
 use crate::name_map;
@@ -77,10 +78,10 @@ pub(super) fn arm_declarations(
     fields: &[(String, String)],
     t: &BodyTranslator,
     match_expr: &syn::ExprMatch,
-) -> Option<(String, Vec<String>, Vec<String>, Option<String>)> {
+) -> Option<(String, Vec<String>, Vec<String>, Option<String>, Vec<String>)> {
     let walked =
         super::payload::payload_walk(pat, param, fields, t, super::payload::Tests::Reported, match_expr)?;
-    Some((walked.text, walked.bound_keys, walked.names, walked.refused))
+    Some((walked.text, walked.bound_keys, walked.names, walked.refused, walked.unowned))
 }
 
 /// The variant a pattern names and the payload slots it takes out of it, as
@@ -247,7 +248,7 @@ pub(super) fn translate_arm(
 ) -> String {
     let param = arm_parameter(fields, &arm.body);
     let _bindings = t.enter_pattern(case, scrutinee_ty);
-    let Some((payload, bound, declared, refused)) =
+    let Some((payload, bound, declared, refused, unowned)) =
         arm_declarations(case, &param, fields, t, match_expr)
     else {
         // The pattern is one `pattern_test` cannot read back, and the key IS
@@ -272,7 +273,12 @@ pub(super) fn translate_arm(
     // pattern wrote `_` for: `intoMatch` releases nothing of its own on any path
     // out, so an unowned part is a leak. Asked inside the pattern's own scope,
     // because the answer turns on what the names it bound are.
-    let release_rest = release_of(case, &param, &bound, takes, t);
+    // H12: what `dropUnbound` cannot name — the positions of a tuple member the
+    // pattern only partly names — is released beside it, by place.
+    let mut release_rest = release_of(case, &param, &bound, takes, t);
+    for place in &unowned {
+        release_rest.push_str(&format!("dropOwned({});\n", place));
+    }
     if let Some(what) = refused {
         // K4: the pattern took a droppable name OUT of a member and left the
         // rest. A plain key has no arm below it, so the whole arm is the hole.
@@ -287,7 +293,16 @@ pub(super) fn translate_arm(
         return format!("{}{{\n{}  }},\n", head, indent(&indent(&block)));
     }
     let Body { body, lifted, owned, flags, value, .. } =
-        translate_body(arm, &declared, takes, t, match_expr, position, produces);
+        translate_body(
+        arm,
+        &declared,
+        takes,
+        t,
+        match_expr,
+        position,
+        produces,
+        unknown_bindings(&unowned),
+    );
     drop(_bindings);
     let refusing = release_before_a_hole_in_the_bindings(&payload, &param, !fields.is_empty(), takes);
     render_arm(
@@ -368,6 +383,7 @@ pub(super) fn translate_link(
         bound_keys: bound,
         names: declared,
         refused,
+        unowned,
     }) =
         super::payload::payload_walk(case, param, fields, t, super::payload::Tests::Kept, match_expr)
     else {
@@ -395,7 +411,12 @@ pub(super) fn translate_link(
     // are held here rather than lifted out of the match: Rust makes this test
     // after the variant dispatch, so a guard that takes a lock takes it only on
     // the path where the variant matched.
-    let release_rest = release_of(case, param, &bound, takes, t);
+    // H12: what `dropUnbound` cannot name — the positions of a tuple member the
+    // pattern only partly names — is released beside it, by place.
+    let mut release_rest = release_of(case, param, &bound, takes, t);
+    for place in &unowned {
+        release_rest.push_str(&format!("dropOwned({});\n", place));
+    }
     let guard = arm.guard.as_ref().map(|(_, guard)| {
         let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
         super::chain::tried::Guard {
@@ -429,7 +450,16 @@ pub(super) fn translate_link(
         };
     }
     let Body { body, lifted, owned, flags, value, leaves } =
-        translate_body(arm, &declared, takes, t, match_expr, position, produces);
+        translate_body(
+        arm,
+        &declared,
+        takes,
+        t,
+        match_expr,
+        position,
+        produces,
+        unknown_bindings(&unowned),
+    );
     drop(_bindings);
     let refusing = release_before_a_hole_in_the_bindings(&payload, param, !fields.is_empty(), takes);
     let (bindings, block) = arm_block_parts(
@@ -473,86 +503,6 @@ pub(super) fn body_of_an_arm(body: &syn::Expr, produces: bool, t: &BodyTranslato
     (t.statements(body), !crate::control_flow::form::writes_statements(body, t))
 }
 
-/// An arm's body, and what the arm owes around it.
-struct Body {
-    body: String,
-    lifted: Vec<crate::ownership::Hoist>,
-    owned: Vec<crate::ownership::Owned>,
-    flags: String,
-    /// Is `body` one EXPRESSION whose value the arm's arrow still has to hand
-    /// back, or a run of statements that has already done it?
-    value: bool,
-    /// Does every path out of the arm leave the arrow — so that a chain need
-    /// write no jump after it?
-    leaves: bool,
-}
-
-/// The body both forms of arm share: what it declares, what it owns, and what
-/// it says about leaving early.
-fn translate_body(
-    arm: &syn::Arm,
-    declared: &[String],
-    takes: crate::ownership::scrutinee::Takes,
-    t: &BodyTranslator,
-    match_expr: &syn::ExprMatch,
-    position: super::Position,
-    produces: bool,
-) -> Body {
-    // Where the enum handed its payload over, the arm owns what the pattern
-    // named and releases it however the arm is left.
-    let names: Vec<String> = match takes {
-        crate::ownership::scrutinee::Takes::Payload => declared.to_vec(),
-        crate::ownership::scrutinee::Takes::Nothing => Vec::new(),
-    };
-    let owned = t.claim_bindings(
-        &names,
-        std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
-    );
-    // An arm is an arrow function, so what the arm's own expression lifted out
-    // of itself stays inside it: the declaration names values the arm's payload
-    // produced, which do not exist outside. A block body is written as the
-    // arrow's own statements, with the `return` on its tail; as an
-    // immediately-called function it computed the arm's value and threw it
-    // away, and a `return` written inside it left the inner function rather
-    // than the enclosing one.
-    //
-    // K2: where the match hands a value back, the body is written for the
-    // position that WANTS one, so a nested match — `Expr::Placeholder =>
-    // match values.next() { Some(v) => Ok(..), None => Err(..) }` — puts a
-    // `return` on each of its own branches instead of standing there as a
-    // statement whose value nobody takes. `ankql/ast.ts`'s
-    // `Expr.populateRecursive` answered `undefined` for exactly that arm.
-    let ((body, value), lifted) = t.with_own_hoists(|| body_of_an_arm(&arm.body, produces, t));
-    let body = body.trim_end().to_string();
-    // Where the match hands a value back, EVERY path out of the arm hands one
-    // back too — that is what Rust's type for the arm says — so the lowering
-    // wrote a `return` on each of them and the arm leaves. Where the match's
-    // own value is `()`, nothing was returned and the arm leaves only where
-    // the Rust does: an `if` with NO `else` runs on when its test fails, which
-    // reading the last line of the text backwards could not tell (K2).
-    let leaves = produces || crate::control_flow::form::always_leaves(&arm.body);
-    // An arm is an arrow function, so a `?` inside one returns from the arm.
-    // Where the match is the enclosing function's value that is exactly right —
-    // the arm's `Result` is what the function returns — and where it is a
-    // statement it is not, and nobody sees the error. `leaves_the_loop` routes
-    // such a match through the sentinel, which sets `jump_as_value`; anything
-    // still here has no route.
-    if position == super::Position::Statement
-        && !t.jump_as_value.get()
-        && super::leaves_the_function(&arm.body)
-    {
-        t.report_match_gap(
-            match_expr,
-            "an arm leaves early, and the arm is an arrow function whose `return` leaves the \
-             arm rather than the function, so nobody sees the error it left with",
-        );
-    }
-    // An arm is an arrow function, so a local this arm hands away sets its drop
-    // flag here — the same line the enclosing block would have written had the
-    // arm been a statement of it.
-    let flags = t.flag_sets_for(&arm.body);
-    Body { body, lifted, owned, flags, value, leaves }
-}
 
 /// One arm's body, written for the position the match stands in.
 ///
@@ -596,5 +546,18 @@ pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position)
                 crate::control_flow::Wrote::Statements => returning(text),
             }
         }
+    }
+}
+
+/// What a name the payload walk could not type owes, for this arm.
+///
+/// Only where the walk found a tuple member the pattern partly named: there the
+/// arm demonstrably owns names the walk has no type for, and `dropOwned`
+/// releases each by its runtime shape. Everywhere else an untyped binding stays
+/// `Drops::Unknown` — nothing is emitted and the site is reported.
+fn unknown_bindings(unowned: &[String]) -> crate::ownership::Drops {
+    match unowned.is_empty() {
+        true => crate::ownership::Drops::Unknown,
+        false => crate::ownership::Drops::Cascade,
     }
 }

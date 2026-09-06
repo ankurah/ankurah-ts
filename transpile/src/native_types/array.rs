@@ -66,8 +66,16 @@ impl Element {
                     crate::registry::Probe::new(reg, reg.crate_root()).implements(ty, clone)
                 });
         let by_reference = crate::name_map::shape::writes_by_reference(reg, ty);
+        // N5: through the REFERENCE Rust's `&`. A chain built with `iter()`
+        // hands out `&T`, so over a `&Vec<Option<u32>>` the element comes back
+        // as `&Option<u32>`, and asking `js_shape` about that answered "not a
+        // nullable" — the reader's own `Option` was flattened onto the
+        // element's with no diagnostic at all, while the owned spelling of the
+        // same reader and the four slice readers refused correctly. `&Option`
+        // is written exactly as `Option` is: the port has no reference, so the
+        // two `null`s are still one value.
         let nullable = matches!(
-            crate::name_map::shape::js_shape(reg, ty),
+            crate::name_map::shape::js_shape(reg, ty.peel_refs()),
             crate::name_map::shape::JsShape::Nullable(_)
         );
         Element { written, copy_of_e, has_clone, by_reference, nullable }
@@ -144,6 +152,23 @@ pub fn translate(
         // Passthrough — same name in JS
         // `find` is NOT here: Rust's answers an `Option` and JavaScript's
         // answers `undefined`, so it goes through the shared table below.
+        // Nor is a `filter` over elements the chain OWNS: Rust's `Filter` drops
+        // what its predicate rejects and `Array.prototype.filter` forgets it,
+        // so that one goes through the shared table too (O4).
+        "filter" if args.len() == 1 && at.elements == super::iterator::Elements::Owned => {
+            match super::iterator::translate(
+                receiver,
+                method,
+                args,
+                super::iterator::Receiver::Sequence,
+                at.elements,
+                at.fresh_receiver,
+                at.callback,
+            ) {
+                Some(result) => result,
+                None => return MethodTranslation::Passthrough,
+            }
+        }
         "push" | "pop" | "reverse" | "join" | "map" | "filter"
             => return MethodTranslation::Passthrough,
 
@@ -293,6 +318,16 @@ pub fn translate(
         // iterator and for the same reason — the port cannot say which elements
         // are still the caller's. A `next` on a stream or on a hand-written
         // iterator is not this arm: it never reaches the sequence table.
+        // …unless the RECEIVER is a sequence this expression just built, which
+        // nobody else holds. Then there is no cursor to be wrong about: the
+        // call answers the first element, and the iterator — dropped at the end
+        // of the statement — drops everything the walk did not reach. Q1: the
+        // three corpus sites are `views.into_iter().next()`,
+        // `inequalities.iter().next()` and `read().iter_entities().next()`.
+        "next" if args.is_empty() && at.fresh_receiver => match at.elements {
+            super::iterator::Elements::Owned => format!("iterFirstOwned({})", receiver),
+            super::iterator::Elements::Borrowed => format!("iterFirst({})", receiver),
+        },
         "next" if args.is_empty() => {
             let message = "`next` advances an iterator's cursor, and the port writes an \
                            iterator as the whole sequence with no cursor to advance"
@@ -314,6 +349,7 @@ pub fn translate(
             super::iterator::Receiver::Sequence,
             at.elements,
             at.fresh_receiver,
+            at.callback,
         ) {
             Some(result) => result,
             None => return MethodTranslation::Passthrough,

@@ -36,7 +36,6 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
     try {
       let stream = undefined /* pin!(scanner . scan ()) */;
       let count = 0n;
-      let _moved0 = false;
       let rows = [];
       try {
         let _moved1 = false;
@@ -68,7 +67,13 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             if ((_m3 as any)?.$jump === 'continue') continue;
             const record = (_m3 as any);
             let _c5;
-            const _r4 = evaluatePredicate(record, predicate).mapErr((e) => new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` }));
+            const _r4 = evaluatePredicate(record, predicate).mapErr((e) => {
+              try {
+                return new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` });
+              } finally {
+                e.drop();
+              }
+            });
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
             _c5 = _r4.unwrap();
             if (_c5) {
@@ -99,8 +104,15 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const results = await (async () => {
               if (limit != null) {
                 const limitVal = limit;
-                return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                const _b9 = orderBySpill.clone();
+                try {
+                  const _b10 = Number(BigInt.asUintN(32, limitVal));
+                  return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                } finally {
+                  if (_b9 != null && !(_b9 as any).isMoved && !(_b9 as any).isDropped) dropOwned(_b9);
+                }
               } else {
+                const _b11 = orderBySpill.clone();
                 return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
               }
             })();
@@ -288,7 +300,13 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                   const scanDirection = v.scanDirection;
                   const remainingPredicate = v.remainingPredicate;
                   const orderBySpill = v.orderBySpill;
-                  const _r2 = (await this.db.assureIndexExists(indexSpec)).mapErr((e) => new RetrievalError('StorageError', { _0: `ensure index exists: ${e}` }));
+                  const _r2 = (await this.db.assureIndexExists(indexSpec)).mapErr((e) => {
+                    try {
+                      return new RetrievalError('StorageError', { _0: `ensure index exists: ${e}` });
+                    } finally {
+                      e.drop();
+                    }
+                  });
                   if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
                   _r2.drop();
                   const dbConnection = await this.db.getConnection();

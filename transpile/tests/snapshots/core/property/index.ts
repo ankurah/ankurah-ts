@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
-import { Result, Ref, dropOwned, unsupported } from '@ankurah/base';
+import { Result, Ref, dropOwned } from '@ankurah/base';
 import { Value } from '../value/index';
 import { PropertyError } from './traits';
 export * from './backend';
@@ -51,7 +51,54 @@ export function Cow_Str_intoValue(self: Cow<string>): Result<Value | null, Prope
 }
 
 export function Cow_Str_fromValue(value: Value | null): Result<Cow<string>, PropertyError> {
-  unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  const _v = value;
+  if (_v != null) {
+    return _v.intoMatch({
+      String: (v) => {
+        const value = v._0;
+        return Result.Ok(value);
+      },
+      I16: (v) => {
+        const variant = new Value('I16', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      I32: (v) => {
+        const variant = new Value('I32', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      I64: (v) => {
+        const variant = new Value('I64', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      F64: (v) => {
+        const variant = new Value('F64', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      Bool: (v) => {
+        const variant = new Value('Bool', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      EntityId: (v) => {
+        const variant = new Value('EntityId', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      Object: (v) => {
+        const variant = new Value('Object', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      Binary: (v) => {
+        const variant = new Value('Binary', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+      Json: (v) => {
+        const variant = new Value('Json', v);
+        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+      },
+    });
+  } else {
+    return Result.Err(new PropertyError('Missing', {}));
+  }
+
 }
 
 export function Value_from(value: string): Value {

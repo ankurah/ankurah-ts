@@ -135,8 +135,20 @@ export function userSome(o: Outer): number {
 export function member(h: Holder): number {
   return h.intoMatch({
     Pair: (v) => {
-      dropUnbound(v, []);
-      unsupported('this arm takes only SOME of the elements of `_0` and leaves a droppable one unnamed, and the port cannot release a tuple minus the elements a name has taken');
+      const [a, ] = v._0;
+      try {
+        let _moved0 = false;
+        try {
+          const n = a.n;
+          _moved0 = true;
+          a.drop();
+          return n;
+        } finally {
+          if (!_moved0) a.drop();
+        }
+      } finally {
+        dropOwned(v._0[1]);
+      }
     },
     Nothing: () => 0,
   });

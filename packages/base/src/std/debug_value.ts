@@ -81,7 +81,14 @@ function refuse(v: unknown): never {
  */
 export function debugString(s: string): string {
   let out = '"';
-  for (const ch of s) out += escapeInto(ch, '"');
+  // Rust escapes a grapheme-extended character only where it is the FIRST of
+  // the string, because anywhere else it is part of the grapheme before it:
+  // `Debug for str` passes `escape_grapheme_extended: first` down.
+  let first = true;
+  for (const ch of s) {
+    out += escapeInto(ch, '"', first);
+    first = false;
+  }
   return `${out}"`;
 }
 
@@ -96,12 +103,36 @@ export function debugString(s: string): string {
  */
 export function debugChar(c: string): string {
   let out = "'";
-  for (const ch of c) out += escapeInto(ch, "'");
+  // `Debug for char` escapes a grapheme-extended character wherever it stands:
+  // on its own there is no grapheme for it to be part of.
+  for (const ch of c) out += escapeInto(ch, "'", true);
   return `${out}'`;
 }
 
+/**
+ * The characters Rust's `char::escape_debug` does NOT leave alone, by Unicode
+ * general category.
+ *
+ * `core::char::printable::is_printable` is a generated table, and what it
+ * excludes is these categories: the control, format, surrogate, private-use and
+ * unassigned characters, the line and paragraph separators, and every space
+ * separator but U+0020 itself. Written as `code < 0x20 || code === 0x7f`, the
+ * port printed U+0085, U+00A0, U+200B, U+200D, U+202E, U+2028 and U+FEFF raw —
+ * each of them invisible, or reordering the output — where Rust writes a
+ * braced escape (O10/N17).
+ *
+ * Matched by CATEGORY rather than by a copied table, so what can differ is the
+ * Unicode version the engine carries, not the rule. `\p{Cn}` moves with it:
+ * a code point unassigned in one version and assigned in the next stops being
+ * escaped, exactly as Rust's regenerated table does.
+ */
+const NOT_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
+
+/** Rust escapes these too, where the position calls for it. */
+const GRAPHEME_EXTENDED = /\p{Grapheme_Extend}/u;
+
 /** One character, escaped for the quote it stands inside. */
-function escapeInto(ch: string, quote: '"' | "'"): string {
+function escapeInto(ch: string, quote: '"' | "'", escapeGraphemeExtended: boolean): string {
   if (ch === '\\') return '\\\\';
   if (ch === quote) return `\\${quote}`;
   if (ch === '\n') return '\\n';
@@ -110,8 +141,12 @@ function escapeInto(ch: string, quote: '"' | "'"): string {
   if (ch === '\0') return '\\0';
   const code = ch.codePointAt(0) as number;
   // Rust's `escape_debug` leaves printable characters alone and writes every
-  // other one as `\u{..}` in lower-case hex with no padding.
-  if (code < 0x20 || code === 0x7f) return `\\u{${code.toString(16)}}`;
+  // other one as `\u{..}` in lower-case hex with no padding. A space is
+  // printable and is the one `Zs` that is.
+  const printable = ch === ' ' || !NOT_PRINTABLE.test(ch);
+  if (!printable || (escapeGraphemeExtended && GRAPHEME_EXTENDED.test(ch))) {
+    return `\\u{${code.toString(16)}}`;
+  }
   return ch;
 }
 

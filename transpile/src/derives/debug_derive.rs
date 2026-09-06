@@ -131,7 +131,7 @@ mod tests {
         let (ts, gaps) = struct_debug(&f.reg, struct_of(&f, "S"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(
-            ts.contains("return `S { name: ${JSON.stringify(this.name)}, n: ${String(this.n)} }`;"),
+            ts.contains("return `S { name: ${debugString(this.name)}, n: ${String(this.n)} }`;"),
             "{}",
             ts
         );
@@ -160,7 +160,7 @@ mod tests {
         let (ts, gaps) = enum_debug(&f.reg, enum_of(&f, "E"));
         assert!(gaps.is_empty(), "{:?}", gaps);
         assert!(ts.contains("A: () => 'A',"), "{}", ts);
-        assert!(ts.contains("B: (v) => `B(${JSON.stringify(v._0)})`,"), "{}", ts);
+        assert!(ts.contains("B: (v) => `B(${debugString(v._0)})`,"), "{}", ts);
         assert!(ts.contains("C: (v) => `C { n: ${String(v.n)} }`,"), "{}", ts);
     }
 

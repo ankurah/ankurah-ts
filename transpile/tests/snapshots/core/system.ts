@@ -137,9 +137,9 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
                   try {
                     _moved2 = true;
                     items.value.push(systemEntity);
-                    _moved11 = true;
                     const _t13 = this._0.value.root.write();
                     try {
+                      _moved11 = true;
                       _t13.value = attestedState;
                     } finally {
                       _t13.drop();
@@ -465,7 +465,7 @@ export function Item_fromValue(value: Value | null): Result<Item, PropertyError>
     const _v = value;
     if (_v != null && (_v.is('String'))) {
       const { _0: string } = _v.value;
-      const _r0 = serde_json.parse(string).mapErr((_) => new PropertyError('InvalidValue', { value: '', ty: 'sys::Item' }));
+      const _r0 = serde_json.parse(string).andThen((v) => Item.fromJson(v)).mapErr((_) => new PropertyError('InvalidValue', { value: '', ty: 'sys::Item' }));
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       let _moved1 = false;
       const item = _r0.unwrap();

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/update.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
@@ -600,7 +600,7 @@ export class NodeUpdateAckBody extends Enum<NodeUpdateAckBodyV> {
   debug(): string {
     return this.match({
       Success: () => 'Success',
-      Error: (v) => `Error(${JSON.stringify(v._0)})`,
+      Error: (v) => `Error(${debugString(v._0)})`,
     });
   }
 

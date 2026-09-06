@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/enum_payload/src/input.rs
-import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type NoticeV = {
@@ -25,7 +25,7 @@ export class Notice extends Enum<NoticeV> {
   debug(): string {
     return this.match({
       Idle: () => 'Idle',
-      Text: (v) => `Text(${JSON.stringify(v._0)})`,
+      Text: (v) => `Text(${debugString(v._0)})`,
       Span: (v) => `Span { start: ${String(v.start)}, end: ${String(v.end)} }`,
     });
   }

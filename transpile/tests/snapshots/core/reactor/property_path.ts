@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/property_path.rs
-import { Struct, Result, serde_json, keyHash } from '@ankurah/base';
+import { Struct, Result, serde_json, debugString, keyHash } from '@ankurah/base';
 import { AbstractEntity } from '../reactor';
 import { Value } from '../value/index';
 import { PathExpr } from '@ankurah/ankql';
@@ -90,7 +90,7 @@ export class PropertyPath extends Struct {
   }
 
   debug(): string {
-    return `PropertyPath { root: ${JSON.stringify(this.root)}, subPath: ${`[${Array.from(this.subPath).map((e) => JSON.stringify(e)).join(', ')}]`} }`;
+    return `PropertyPath { root: ${debugString(this.root)}, subPath: ${`[${Array.from(this.subPath).map((e) => debugString(e)).join(', ')}]`} }`;
   }
 }
 

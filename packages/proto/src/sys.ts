@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/sys.rs
-import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Enum, Result, JsonError, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export type ItemV = {
@@ -17,7 +17,7 @@ export class Item extends Enum<ItemV> {
   debug(): string {
     return this.match({
       SysRoot: () => 'SysRoot',
-      Collection: (v) => `Collection { name: ${JSON.stringify(v.name)} }`,
+      Collection: (v) => `Collection { name: ${debugString(v.name)} }`,
       Other: () => 'Other',
     });
   }

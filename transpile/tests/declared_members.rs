@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::members::{class_members, declares_instance_method, declares_nullary_method, declares_static_method, Member};
+use common::members::{class_members, declares_instance_method, declares_nullary_method, declares_static_method, Kind, Member};
 use common::{code_only, collect_files_with_ext, run_batch, support_tree, transpile_dir, TempDir};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -27,6 +27,14 @@ fn every_from_json_call_names_a_declared_static() {
     let mut missing: Vec<String> = Vec::new();
     let mut called = 0usize;
 
+    // The port flattens every crate into one package surface and an emitted file
+    // imports across them: `core/system.ts` calls `Item.fromJson(v)` on
+    // `proto`'s `Item`. So the declarations are gathered over ALL ten crates
+    // before any call is checked — read per crate, a cross-crate call named a
+    // class this crate's own output does not declare and was reported as
+    // missing, which is a false report about a static that is there.
+    let mut per_crate: Vec<(String, BTreeMap<String, String>)> = Vec::new();
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
     for (package, src) in crates_in_scope() {
         let out = TempDir::new(&format!("declared-members-{package}"));
         run_batch(&src, out.path(), &package);
@@ -37,8 +45,6 @@ fn every_from_json_call_names_a_declared_static() {
         let files: BTreeMap<String, String> =
             files.into_iter().map(|(name, text)| (name, code_only(&text))).collect();
 
-        // Every class this crate's own output declares the static on.
-        let mut emitted: BTreeSet<String> = BTreeSet::new();
         for text in files.values() {
             let mut class = String::new();
             for line in text.lines() {
@@ -54,8 +60,11 @@ fn every_from_json_call_names_a_declared_static() {
                 }
             }
         }
+        per_crate.push((package, files));
+    }
 
-        for (name, text) in &files {
+    for (package, files) in &per_crate {
+        for (name, text) in files {
             for (line_no, line) in text.lines().enumerate() {
                 for class in from_json_receivers(line) {
                     called += 1;
@@ -135,8 +144,59 @@ fn a_static_does_not_satisfy_an_instance_claim_or_the_reverse() {
     let members = class_members(file, "Wrong").expect("Wrong is declared");
     assert!(!declares_nullary_method(&members, "debug"), "a static satisfied has_debug: {members:?}");
     assert!(!declares_static_method(&members, "fromJson"), "an instance method satisfied reads_json: {members:?}");
-    assert_eq!(members[0], Member { name: "debug".into(), is_static: true, params: Some(String::new()) });
-    assert_eq!(members[1], Member { name: "fromJson".into(), is_static: false, params: Some("v: unknown".into()) });
+    assert_eq!(
+        members[0],
+        Member { name: "debug".into(), is_static: true, kind: Kind::Method, params: Some(String::new()) }
+    );
+    assert_eq!(
+        members[1],
+        Member {
+            name: "fromJson".into(),
+            is_static: false,
+            kind: Kind::Method,
+            params: Some("v: unknown".into()),
+        }
+    );
+}
+
+/// O9/N9: an ACCESSOR is not a method, and the emission's calls do not reach
+/// one. `get` and `set` stand where a modifier stands and were read as
+/// modifiers, and the accessor's own parentheses as a parameter list — so
+/// `get debug()`, `get toJSON()` and `static get fromJson()` each satisfied a
+/// claim while `value.debug()` calls whatever the getter answered.
+#[test]
+fn an_accessor_does_not_satisfy_a_method_claim() {
+    let file = "export class Accessors {\n  get debug(): string { return \"x\"; }\n  \
+                get toJSON(): unknown { return 0; }\n  \
+                static get fromJson(): unknown { return 0; }\n  \
+                set held(v: number) { this.n = v; }\n}\n";
+    let members = class_members(file, "Accessors").expect("Accessors is declared");
+    assert!(!declares_nullary_method(&members, "debug"), "a getter satisfied has_debug: {members:?}");
+    assert!(!declares_nullary_method(&members, "toJSON"), "a getter satisfied writes_json: {members:?}");
+    assert!(!declares_static_method(&members, "fromJson"), "a getter satisfied reads_json: {members:?}");
+    assert_eq!(members.iter().map(|m| m.kind).collect::<Vec<_>>(), vec![
+        Kind::Getter,
+        Kind::Getter,
+        Kind::Getter,
+        Kind::Setter,
+    ]);
+    assert!(members[2].is_static, "`static get` is still static: {members:?}");
+
+    // And the ordinary methods of the same names still satisfy them.
+    let methods = "export class Right {\n  debug(): string { return \"x\"; }\n  \
+                   toJSON(): unknown { return 0; }\n  \
+                   static fromJson(v: unknown) { return v; }\n}\n";
+    let members = class_members(methods, "Right").expect("Right is declared");
+    assert!(declares_nullary_method(&members, "debug"), "{members:?}");
+    assert!(declares_nullary_method(&members, "toJSON"), "{members:?}");
+    assert!(declares_static_method(&members, "fromJson"), "{members:?}");
+
+    // A member CALLED `get` is not an accessor: the word is a modifier only
+    // where a name follows it.
+    let named = "export class Map2 {\n  get(key: string): unknown { return key; }\n}\n";
+    let members = class_members(named, "Map2").expect("Map2 is declared");
+    assert_eq!(members[0].kind, Kind::Method);
+    assert!(declares_instance_method(&members, "get"), "{members:?}");
 }
 
 /// A declaration NESTED inside a member is not this class's.

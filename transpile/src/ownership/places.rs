@@ -37,6 +37,19 @@ pub fn is_field_of_place(expr: &syn::Expr) -> bool {
     base_is_place(&field.base)
 }
 
+/// The identifier a place is rooted at: `attested.payload.operations` answers
+/// `attested`, and an expression rooted at anything but a name answers nothing.
+pub fn root_name(expr: &syn::Expr) -> Option<String> {
+    match root_of(expr) {
+        syn::Expr::Path(path) if path.path.is_ident("self") => Some("this".to_string()),
+        syn::Expr::Path(path) => path
+            .path
+            .get_ident()
+            .map(|ident| crate::name_map::to_camel_case(&ident.to_string())),
+        _ => None,
+    }
+}
+
 /// The place a projection starts from: `attested.payload.operations` is rooted
 /// at `attested`, and who owns that decides whether the read hands anything
 /// away.
@@ -167,6 +180,20 @@ impl<'a> BodyTranslator<'a> {
         let ty = self.quietly(|| self.resolve_expr_type(expr)).ok()?;
         let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
         let (receiver, member) = self.field_parts(field);
+        // A field the port cannot take OUT is one Rust moved and the emitted
+        // text still reads in place, so the struct's cascade reaches it as well
+        // as the new owner. `Drops::Nothing` is not that — a `Copy` field, a
+        // number, a string: there is nothing for a cascade to release twice.
+        // `Cascade` and `Unknown` are, the first because the runtime writes the
+        // field as a plain value with no `takeField` of its own and the second
+        // because the engine cannot say, while the runtime's cascade looks at
+        // what is actually there. Whoever was about to claim the struct has to
+        // know.
+        if matches!(drops, ownership::Drops::Cascade | ownership::Drops::Unknown) {
+            if let Some(root) = ownership::places::root_name(expr) {
+                self.own.partial_moves_written_as_reads.borrow_mut().push(root);
+            }
+        }
         if drops == ownership::Drops::Cascade {
             // `takeField` is `AkObject`'s, and a field the runtime writes as a
             // plain array or `Map` is not one: the read hands the same object to

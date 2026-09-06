@@ -637,7 +637,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
       }
       }
     }
-    const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOrDefault();
+    const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOr(new Uint8Array());
     return IVec.from(encoded);
   }
 

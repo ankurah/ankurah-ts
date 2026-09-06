@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/format_strings/src/input.rs
-import { Struct } from '@ankurah/base';
+import { Struct, debugString } from '@ankurah/base';
 
 export class Peer extends Struct {
   readonly id: number;
@@ -16,7 +16,7 @@ export class Peer extends Struct {
   }
 
   debug(): string {
-    return `Peer { id: ${String(this.id)}, name: ${JSON.stringify(this.name)} }`;
+    return `Peer { id: ${String(this.id)}, name: ${debugString(this.name)} }`;
   }
 }
 

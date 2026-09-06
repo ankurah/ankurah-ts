@@ -20,7 +20,7 @@ mod lookup;
 pub mod method;
 #[cfg(test)] mod assoc_tests;
 #[cfg(test)] mod method_tests;
-mod module;
+pub(crate) mod module;
 mod resolve_type;
 pub mod std_surface;
 mod traits;

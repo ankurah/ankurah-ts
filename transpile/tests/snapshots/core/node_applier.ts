@@ -329,9 +329,10 @@ export class NodeApplier extends Struct {
                   if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
                   _r12.drop();
                   _moved9 = true;
-                  const _r13 = EntityChange.new(entity, []);
-                  if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
-                  return Result.Ok(_r13.unwrap());
+                  const _b13 = [];
+                  const _r14 = EntityChange.new(entity, _b13);
+                  if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+                  return Result.Ok(_r14.unwrap());
                 } finally {
                   if (!_moved9) entity.drop();
                 }

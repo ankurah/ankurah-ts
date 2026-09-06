@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_result_fields/src/input.rs
-import { Struct, Enum, Result, JsonError, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, OwnershipFatal, UnsupportedShape, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class Slot extends Struct {
@@ -26,7 +26,7 @@ export class Slot extends Struct {
   }
 
   debug(): string {
-    return `Slot { name: ${(($v) => $v === null ? 'None' : `Some(${JSON.stringify($v)})`)(this.name)}, count: ${(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.count)} }`;
+    return `Slot { name: ${(($v) => $v === null ? 'None' : `Some(${debugString($v)})`)(this.name)}, count: ${(($v) => $v === null ? 'None' : `Some(${String($v)})`)(this.count)} }`;
   }
 
   encode(writer: BincodeWriter): void {

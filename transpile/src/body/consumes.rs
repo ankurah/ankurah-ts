@@ -154,7 +154,7 @@ impl BodyTranslator<'_> {
     /// elements are left, so that shape is refused where it is translated
     /// rather than answered here.
     pub(crate) fn terminal_owns_the_sequence(&self, call: &syn::ExprMethodCall) -> bool {
-        self.consuming_terminal(call) && !crate::body::is_place(&call.receiver)
+        self.consuming_terminal(call) && !names_an_iterator_place(&call.receiver)
     }
 
     /// The shape that is neither: a consuming terminal called on a NAMED
@@ -170,14 +170,35 @@ impl BodyTranslator<'_> {
     /// refused (R12) rather than answered wrongly, and the block keeps the
     /// receiver, which is what a hole leaves it holding (J4).
     pub(crate) fn refuses_named_iterator_terminal(&self, call: &syn::ExprMethodCall) -> bool {
-        self.consuming_terminal(call) && crate::body::is_place(&call.receiver)
+        self.consuming_terminal(call) && names_an_iterator_place(&call.receiver)
     }
 
     /// The same question without the place clause: is this a terminal that
     /// consumes droppable elements at all? The refusal reads it too.
     pub(crate) fn consuming_terminal(&self, call: &syn::ExprMethodCall) -> bool {
+        self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_terminal)
+    }
+
+    /// The same question for an eager ADAPTOR that discards elements.
+    ///
+    /// O3/O4: `filter`, `skip`, `take` and `step_by` throw elements away, and
+    /// Rust drops what they throw away. Written as array operations they simply
+    /// lost them, and the consuming terminal below could not release what the
+    /// adaptor had already erased. There is no place clause: an adaptor takes
+    /// the iterator by value whatever it was called on, so nothing is left in a
+    /// name for the port to be unable to describe.
+    pub(crate) fn adaptor_owns_its_elements(&self, call: &syn::ExprMethodCall) -> bool {
+        self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_adaptor)
+    }
+
+    /// The three questions both of those ask, in the order they are cheapest.
+    fn walks_droppable_elements(
+        &self,
+        call: &syn::ExprMethodCall,
+        is_named: fn(&str, usize) -> bool,
+    ) -> bool {
         let method = call.method.to_string();
-        if !crate::native_types::iterator::is_owned_terminal(&method, call.args.len()) {
+        if !is_named(&method, call.args.len()) {
             return false;
         }
         let Some(tc) = &self.types else { return false };
@@ -211,9 +232,48 @@ impl BodyTranslator<'_> {
         call: &syn::ExprMethodCall,
     ) -> crate::native_types::iterator::Elements {
         use crate::native_types::iterator::Elements;
-        match self.terminal_owns_the_sequence(call) {
+        let owned = self.terminal_owns_the_sequence(call) || self.adaptor_owns_its_elements(call);
+        match owned {
             true => Elements::Owned,
             false => Elements::Borrowed,
+        }
+    }
+
+    /// Did this terminal take its CALLBACK by value, so that it is what
+    /// releases it?
+    ///
+    /// O2: Rust's terminals take their `F` by value and drop it where the call
+    /// ends. `find(&mut p)` type-checks through the `impl FnMut for &mut F`
+    /// blanket, so what the terminal takes by value is the REFERENCE: dropping
+    /// it does nothing and `p` is still the caller's to call again. The port
+    /// has no reference to hand over — the closure object itself goes — so the
+    /// helper is told which of the two this is. Released regardless, the next
+    /// call read captures that were gone and the caller's own release dropped
+    /// it a second time.
+    ///
+    /// The argument's WRITTEN form answers first, because `&mut p` is the shape
+    /// Rust writes for this and nothing about the parameter's declared bound
+    /// says it; a NAME whose own type resolves to a reference is the other
+    /// spelling and is asked of the type.
+    pub(crate) fn callback_ownership(
+        &self,
+        call: &syn::ExprMethodCall,
+    ) -> crate::native_types::iterator::Callback {
+        use crate::native_types::iterator::Callback;
+        let Some(arg) = call.args.first() else { return Callback::Owned };
+        if matches!(arg, syn::Expr::Reference(_)) {
+            return Callback::Borrowed;
+        }
+        let Some(tc) = &self.types else { return Callback::Owned };
+        let tc = tc.borrow();
+        // Asking is not translating: what this resolution defers is reported
+        // once, by the translation of the argument itself.
+        let mark = tc.sink.mark();
+        let ty = tc.resolve_expr(arg);
+        tc.sink.rewind(mark);
+        match ty {
+            Ok(crate::ty::Ty::Ref { .. }) => Callback::Borrowed,
+            _ => Callback::Owned,
         }
     }
 
@@ -228,5 +288,23 @@ impl BodyTranslator<'_> {
                 call.method
             )
         })
+    }
+}
+
+/// Does this receiver name a place the caller still holds — an iterator the
+/// chain below will only partly consume?
+///
+/// `Iterator::by_ref(&mut self) -> &mut Self` is a borrowed view of whatever it
+/// was called on, so `it.by_ref().find(..)` names `it` exactly as
+/// `(&mut it).find(..)` does. Asked of the written receiver alone, the `by_ref`
+/// spelling was a method CALL and not a place: the terminal above it took the
+/// owned lowering, consumed the tail Rust leaves in `it`, and the block's own
+/// `dropOwned(it)` released it a second time (O5).
+fn names_an_iterator_place(receiver: &syn::Expr) -> bool {
+    match receiver {
+        syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty() => {
+            names_an_iterator_place(&call.receiver)
+        }
+        other => crate::body::is_place(other),
     }
 }

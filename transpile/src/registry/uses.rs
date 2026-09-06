@@ -54,9 +54,9 @@ pub(super) fn module_use_bindings(
     // would leave the second body meaning the first body's type. Rust scopes
     // each to its own block and the port has no scope to put them in, so both
     // are reported and neither is hoisted (§3.6).
-    for local in contested_body_names(file) {
+    for (local, span) in contested_body_names(file) {
         sink.report(
-            proc_macro2::Span::call_site(),
+            span,
             format!(
                 "two function bodies in this module write `use` for different types both \
                  named `{}`, and the port has one binding table per module: neither is \
@@ -74,9 +74,27 @@ pub(super) fn module_use_bindings(
             let vis = vis_of(u.vis, module, reg, sink);
             let from_body = u.from_body;
             let claimed = &claimed;
+            let span = u.span;
             u.bindings.iter().filter_map(move |b| {
                 if from_body {
-                    let local = b.local.as_ref()?;
+                    // N20: a GLOB a body wrote binds no name, and hoisting it
+                    // would widen every name it could ever bring — so it is
+                    // dropped, and dropping it in silence left the names it
+                    // would have brought drawing false reports ("no field `v`
+                    // on `Other`"). The `use` says what it did not do.
+                    let Some(local) = b.local.as_ref() else {
+                        sink.report(
+                            span,
+                            format!(
+                                "this `use {}::*` is written inside a body, and the port has \
+                                 one binding table per module: hoisting a glob would widen \
+                                 every name it could ever bring, so the names it brings are not \
+                                 in scope here at all",
+                                b.path.join("::")
+                            ),
+                        );
+                        return None;
+                    };
                     if claimed.contains(local) {
                         return None;
                     }
@@ -106,23 +124,29 @@ fn claimed_names(file: &RustFile) -> std::collections::HashSet<String> {
     claimed
 }
 
-/// The names two different function BODIES bring in from two different paths.
-fn contested_body_names(file: &RustFile) -> Vec<String> {
-    let mut seen: std::collections::HashMap<String, Vec<String>> =
+/// The names two different function BODIES bring in from two different paths,
+/// each with the span of the SECOND `use` that brought it — which is the one a
+/// reader has to look at to see the pair.
+fn contested_body_names(file: &RustFile) -> Vec<(String, proc_macro2::Span)> {
+    let mut seen: std::collections::HashMap<String, (Vec<String>, proc_macro2::Span)> =
         std::collections::HashMap::new();
     for u in file.uses.iter().filter(|u| u.from_body) {
         for b in &u.bindings {
             let Some(local) = &b.local else { continue };
             let path = b.path.join("::");
-            let paths = seen.entry(local.clone()).or_default();
-            if !paths.contains(&path) {
-                paths.push(path);
+            let entry = seen.entry(local.clone()).or_insert_with(|| (Vec::new(), u.span));
+            if !entry.0.contains(&path) {
+                entry.0.push(path);
+                entry.1 = u.span;
             }
         }
     }
-    let mut contested: Vec<String> =
-        seen.into_iter().filter(|(_, paths)| paths.len() > 1).map(|(name, _)| name).collect();
-    contested.sort();
+    let mut contested: Vec<(String, proc_macro2::Span)> = seen
+        .into_iter()
+        .filter(|(_, (paths, _))| paths.len() > 1)
+        .map(|(name, (_, span))| (name, span))
+        .collect();
+    contested.sort_by(|a, b| a.0.cmp(&b.0));
     contested
 }
 
@@ -368,6 +392,14 @@ mod tests {
             f.reg.module_type(f.module("lib.rs"), "Wrap").is_none(),
             "a body use was hoisted anyway"
         );
+        // N20: at the `use`'s own span. Written at `Span::call_site()` the
+        // report reached the reader with no file and no line at all.
+        let located = f.located();
+        let (line, _, _) = located
+            .iter()
+            .find(|(_, _, m)| m.contains("two function bodies in this module write `use`"))
+            .expect("the clash is located");
+        assert!(*line > 0, "the report carries a line: {:?}", located);
     }
 }
 
@@ -425,6 +457,46 @@ mod bound_tests {
             c.messages().iter().all(|m| !m.contains("not in scope here")),
             "the bound IS the declaration: {:?}",
             c.messages()
+        );
+    }
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use crate::testing::Fixture;
+
+    /// N20: a GLOB a body wrote is never hoisted — widening a glob widens every
+    /// name it could ever bring — and dropping it in SILENCE left the names it
+    /// would have brought drawing false reports of their own. The `use` says
+    /// what it did not do, at its own span: written at `Span::call_site()` a
+    /// report about a `use` reaches the reader with no file and no line.
+    #[test]
+    fn a_glob_written_in_a_body_is_reported_where_it_stands() {
+        let f = Fixture::build(&[
+            ("lib.rs", "pub mod far;\npub fn f() -> u32 { use crate::far::*; make() }\n"),
+            ("far.rs", "pub fn make() -> u32 { 7 }\n"),
+        ]);
+        let said = f.located();
+        let (line, _, message) = said
+            .iter()
+            .find(|(_, _, m)| m.contains("is written inside a body"))
+            .unwrap_or_else(|| panic!("the glob is reported: {:?}", said));
+        assert!(message.contains("use crate::far::*"), "{}", message);
+        assert!(*line > 0, "and at its own span, not at call_site: {:?}", said);
+    }
+
+    /// A MODULE-level glob is hoisted as it always was: it is the module's own
+    /// surface, and nothing is being widened.
+    #[test]
+    fn a_module_level_glob_is_not_reported() {
+        let f = Fixture::build(&[
+            ("lib.rs", "pub mod far;\nuse crate::far::*;\npub fn f() -> u32 { make() }\n"),
+            ("far.rs", "pub fn make() -> u32 { 7 }\n"),
+        ]);
+        assert!(
+            !f.messages().iter().any(|m| m.contains("is written inside a body")),
+            "{:?}",
+            f.messages()
         );
     }
 }

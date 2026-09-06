@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/thiserror_display/src/input.rs
-import { Struct, Enum, Result } from '@ankurah/base';
+import { Struct, Enum, Result, debugString } from '@ankurah/base';
 
 export class Rule extends Struct {
   readonly name: string;
@@ -10,7 +10,7 @@ export class Rule extends Struct {
   }
 
   debug(): string {
-    return `Rule { name: ${JSON.stringify(this.name)} }`;
+    return `Rule { name: ${debugString(this.name)} }`;
   }
 }
 
@@ -40,9 +40,9 @@ export class ParseError extends Enum<ParseErrorV> {
   debug(): string {
     return this.match({
       Empty: () => 'Empty',
-      Syntax: (v) => `Syntax(${JSON.stringify(v._0)})`,
-      Unexpected: (v) => `Unexpected { expected: ${JSON.stringify(v.expected)}, got: ${v.got.debug()} }`,
-      Invalid: (v) => `Invalid(${JSON.stringify(v._0)})`,
+      Syntax: (v) => `Syntax(${debugString(v._0)})`,
+      Unexpected: (v) => `Unexpected { expected: ${debugString(v.expected)}, got: ${v.got.debug()} }`,
+      Invalid: (v) => `Invalid(${debugString(v._0)})`,
       Read: (v) => `Read(${v._0.debug()})`,
     });
   }
@@ -80,7 +80,7 @@ export class Wrapped extends Enum<WrappedV> {
   debug(): string {
     return this.match({
       Passed: (v) => `Passed(${v._0.debug()})`,
-      Said: (v) => `Said(${JSON.stringify(v._0)})`,
+      Said: (v) => `Said(${debugString(v._0)})`,
     });
   }
 

@@ -26,7 +26,7 @@
 // iterator drops what it had not yet produced. Every helper releases its
 // callback in the same `finally`, because Rust's terminals take `F` by value.
 
-import { compareKeys, type Seq } from './iter.ts';
+import { foldByKey, releaseCallback, type CallbackMode, type Seq } from './iter.ts';
 import { invokeRef, type Invocable } from '../closure.ts';
 import { dropOwned } from '../object.ts';
 
@@ -42,7 +42,11 @@ function dropFrom<T>(xs: Seq<T>, from: number): void {
  * `p` takes a REFERENCE, so an element it rejects is still the iterator's and
  * is dropped as the walk advances past it. The accepted one is the caller's.
  */
-export function iterFindOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): T | null {
+export function iterFindOwned<T>(
+  xs: Seq<T>,
+  p: Invocable<[T], boolean>,
+  mode: CallbackMode = 'own',
+): T | null {
   let at = 0;
   try {
     for (let i = 0; i < xs.length; i++) {
@@ -56,7 +60,7 @@ export function iterFindOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): T | nu
     return null;
   } finally {
     dropFrom(xs, at);
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
@@ -67,7 +71,11 @@ export function iterFindOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): T | nu
  * closure's and this helper never releases it — on a normal return or on a
  * throw. What is left is everything the walk never reached.
  */
-export function iterPositionOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): number | null {
+export function iterPositionOwned<T>(
+  xs: Seq<T>,
+  p: Invocable<[T], boolean>,
+  mode: CallbackMode = 'own',
+): number | null {
   let at = 0;
   try {
     for (let i = 0; i < xs.length; i++) {
@@ -77,12 +85,16 @@ export function iterPositionOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): nu
     return null;
   } finally {
     dropFrom(xs, at);
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
 /** The same walked from the end: `rposition`. What is left is the front. */
-export function iterRpositionOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): number | null {
+export function iterRpositionOwned<T>(
+  xs: Seq<T>,
+  p: Invocable<[T], boolean>,
+  mode: CallbackMode = 'own',
+): number | null {
   let end = xs.length;
   try {
     for (let i = xs.length - 1; i >= 0; i--) {
@@ -92,7 +104,7 @@ export function iterRpositionOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): n
     return null;
   } finally {
     for (let i = 0; i < end; i++) dropOwned(xs[i]);
-    dropOwned(p);
+    releaseCallback(p, mode);
   }
 }
 
@@ -102,7 +114,11 @@ export function iterRpositionOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>): n
  * `f` takes the element BY VALUE, so what it was handed is its to keep or drop;
  * what is left is everything after the element that answered.
  */
-export function iterFindMapOwned<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>): U | null {
+export function iterFindMapOwned<T, U>(
+  xs: Seq<T>,
+  f: Invocable<[T], U | null>,
+  mode: CallbackMode = 'own',
+): U | null {
   let at = 0;
   try {
     for (let i = 0; i < xs.length; i++) {
@@ -113,7 +129,7 @@ export function iterFindMapOwned<T, U>(xs: Seq<T>, f: Invocable<[T], U | null>):
     return null;
   } finally {
     dropFrom(xs, at);
-    dropOwned(f);
+    releaseCallback(f, mode);
   }
 }
 
@@ -137,9 +153,13 @@ export function iterLastOwned<T>(xs: Seq<T>): T | null {
  * next accumulator, so every element passes through the closure and this helper
  * releases none of them — only what the walk never reached.
  */
-export function iterReduceOwned<T>(xs: Seq<T>, f: Invocable<[T, T], T>): T | null {
+export function iterReduceOwned<T>(
+  xs: Seq<T>,
+  f: Invocable<[T, T], T>,
+  mode: CallbackMode = 'own',
+): T | null {
   if (xs.length === 0) {
-    dropOwned(f);
+    releaseCallback(f, mode);
     return null;
   }
   let at = 1;
@@ -152,7 +172,7 @@ export function iterReduceOwned<T>(xs: Seq<T>, f: Invocable<[T, T], T>): T | nul
     return acc;
   } finally {
     dropFrom(xs, at);
-    dropOwned(f);
+    releaseCallback(f, mode);
   }
 }
 
@@ -164,8 +184,12 @@ export function iterReduceOwned<T>(xs: Seq<T>, f: Invocable<[T, T], T>): T | nul
  * makes the LAST of several equal elements the maximum. The comparator only
  * borrows, so the element it rejects is still the fold's to drop.
  */
-export function iterMaxByOwned<T>(xs: Seq<T>, cmp: Invocable<[T, T], number>): T | null {
-  return foldOwned(xs, cmp, (ordering) => ordering <= 0);
+export function iterMaxByOwned<T>(
+  xs: Seq<T>,
+  cmp: Invocable<[T, T], number>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldOwned(xs, cmp, (ordering) => ordering <= 0, mode);
 }
 
 /**
@@ -173,8 +197,12 @@ export function iterMaxByOwned<T>(xs: Seq<T>, cmp: Invocable<[T, T], number>): T
  * candidate is taken only where `cmp(best, candidate)` is `Greater`, which
  * keeps the FIRST of several equal elements.
  */
-export function iterMinByOwned<T>(xs: Seq<T>, cmp: Invocable<[T, T], number>): T | null {
-  return foldOwned(xs, cmp, (ordering) => ordering > 0);
+export function iterMinByOwned<T>(
+  xs: Seq<T>,
+  cmp: Invocable<[T, T], number>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldOwned(xs, cmp, (ordering) => ordering > 0, mode);
 }
 
 /** The one fold both comparator terminals are, with the loser released. */
@@ -182,9 +210,10 @@ function foldOwned<T>(
   xs: Seq<T>,
   cmp: Invocable<[T, T], number>,
   takeCandidate: (ordering: number) => boolean,
+  mode: CallbackMode,
 ): T | null {
   if (xs.length === 0) {
-    dropOwned(cmp);
+    releaseCallback(cmp, mode);
     return null;
   }
   let best: T = xs[0] as T;
@@ -208,7 +237,7 @@ function foldOwned<T>(
     throw thrown;
   } finally {
     dropFrom(xs, at);
-    dropOwned(cmp);
+    releaseCallback(cmp, mode);
   }
 }
 
@@ -223,59 +252,113 @@ function foldOwned<T>(
  * key with a side effect can see. The losing key is dropped with its element,
  * as the pair Rust builds is.
  */
-export function iterMaxByKeyOwned<T, K>(xs: Seq<T>, f: Invocable<[T], K>): T | null {
-  return foldByKeyOwned(xs, f, (ordering) => ordering <= 0);
+export function iterMaxByKeyOwned<T, K>(
+  xs: Seq<T>,
+  f: Invocable<[T], K>,
+  mode: CallbackMode = 'own',
+): T | null {
+  return foldByKey(xs, f, (ordering) => ordering <= 0, mode, 'own');
 }
 
 /** Rust's `into_iter().min_by_key(f)`. The first of a tie wins. */
-export function iterMinByKeyOwned<T, K>(xs: Seq<T>, f: Invocable<[T], K>): T | null {
-  return foldByKeyOwned(xs, f, (ordering) => ordering > 0);
-}
-
-function foldByKeyOwned<T, K>(
+export function iterMinByKeyOwned<T, K>(
   xs: Seq<T>,
   f: Invocable<[T], K>,
-  takeCandidate: (ordering: number) => boolean,
+  mode: CallbackMode = 'own',
 ): T | null {
-  if (xs.length === 0) {
-    dropOwned(f);
-    return null;
-  }
+  return foldByKey(xs, f, (ordering) => ordering > 0, mode, 'own');
+}
+
+/**
+ * Rust's `into_iter().next()` on an iterator nobody else holds: the first
+ * element, with every other one dropped.
+ *
+ * `next` advances a CURSOR, and the port writes an iterator as the whole
+ * sequence with no cursor to advance, so `it.next()` on a NAMED iterator is
+ * refused — after the call the port cannot say which of the array's elements
+ * are still the caller's. A receiver the expression just BUILT is the one shape
+ * where it can: `views.into_iter().next()` drops the iterator at the end of the
+ * statement, and dropping it drops everything the walk did not reach.
+ */
+export function iterFirstOwned<T>(xs: Seq<T>): T | null {
+  if (xs.length === 0) return null;
+  for (let i = 1; i < xs.length; i++) dropOwned(xs[i]);
+  return xs[0] as T;
+}
+
+/**
+ * Rust's `into_iter().filter(p)`: the elements the predicate accepts, with the
+ * ones it rejects dropped.
+ *
+ * `Filter` drops what it rejects as the walk passes it — the port's adaptors
+ * are eager, so this drops them here. The predicate only borrows, so an element
+ * it accepts is still the walk's until the caller takes the answer; one it
+ * threw over, and everything the walk had not reached, are released with the
+ * ones already kept, because on that path nobody receives the answer at all.
+ */
+export function filterOwned<T>(xs: Seq<T>, p: Invocable<[T], boolean>, mode: CallbackMode = 'own'): T[] {
+  const kept: T[] = [];
+  // The elements from here on are still the walk's — the one being TESTED
+  // included, because the predicate only borrows it.
   let at = 0;
-  let have = false;
-  let best!: T;
-  let bestKey!: K;
+  let done = false;
   try {
     for (let i = 0; i < xs.length; i++) {
-      const candidate = xs[i] as T;
-      const key = invokeRef(f, candidate);
-      if (!have) {
-        best = candidate;
-        bestKey = key;
-        have = true;
-      } else if (takeCandidate(compareKeys(bestKey, key))) {
-        dropOwned(bestKey);
-        dropOwned(best);
-        best = candidate;
-        bestKey = key;
-      } else {
-        dropOwned(key);
-        dropOwned(candidate);
-      }
+      at = i;
+      const element = xs[i] as T;
+      if (invokeRef(p, element)) kept.push(element);
+      else dropOwned(element);
       at = i + 1;
     }
-    // The winner's key goes with the pair Rust destructures; only the element
-    // reaches the caller.
-    dropOwned(bestKey);
-    return best;
-  } catch (thrown) {
-    if (have) {
-      dropOwned(bestKey);
-      dropOwned(best);
-    }
-    throw thrown;
+    done = true;
+    return kept;
   } finally {
-    dropFrom(xs, at);
-    dropOwned(f);
+    if (!done) {
+      for (const k of kept) dropOwned(k);
+      dropFrom(xs, at);
+    }
+    releaseCallback(p, mode);
   }
+}
+
+/**
+ * Rust's `into_iter().skip(n)`: everything past the first `n`, with those `n`
+ * dropped. `Skip` walks past them and drops each as it goes.
+ */
+export function skipOwned<T>(xs: Seq<T>, n: number): T[] {
+  const from = Math.max(0, Math.min(n, xs.length));
+  for (let i = 0; i < from; i++) dropOwned(xs[i]);
+  const out: T[] = [];
+  for (let i = from; i < xs.length; i++) out.push(xs[i] as T);
+  return out;
+}
+
+/**
+ * Rust's `into_iter().take(n)`: the first `n`, with the rest dropped.
+ *
+ * `Take` stops after `n` and the iterator it wraps is dropped with it, which
+ * drops the tail it never reached.
+ */
+export function takeOwned<T>(xs: Seq<T>, n: number): T[] {
+  const to = Math.max(0, Math.min(n, xs.length));
+  dropFrom(xs, to);
+  const out: T[] = [];
+  for (let i = 0; i < to; i++) out.push(xs[i] as T);
+  return out;
+}
+
+/**
+ * Rust's `into_iter().step_by(n)`: every `n`th element, with the ones it steps
+ * over dropped. Rust panics on a step of zero, and so does this.
+ */
+export function stepByOwned<T>(xs: Seq<T>, step: number): T[] {
+  if (!Number.isInteger(step) || step <= 0) {
+    throw new RangeError('step_by: the step must be a positive integer, as Rust requires');
+  }
+  const out: T[] = [];
+  for (let i = 0; i < xs.length; i++) {
+    if (i % step === 0) out.push(xs[i] as T);
+    else dropOwned(xs[i]);
+  }
+  return out;
 }

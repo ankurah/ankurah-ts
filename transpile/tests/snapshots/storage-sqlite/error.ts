@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/error.rs
-import { Enum } from '@ankurah/base';
+import { Enum, debugString } from '@ankurah/base';
 import { MutationError, RetrievalError, StateError } from '@ankurah/core';
 
 export type SqliteErrorV = {
@@ -17,12 +17,12 @@ export class SqliteError extends Enum<SqliteErrorV> {
   debug(): string {
     return this.match({
       Rusqlite: (v) => `Rusqlite(${v._0})`,
-      Pool: (v) => `Pool(${JSON.stringify(v._0)})`,
+      Pool: (v) => `Pool(${debugString(v._0)})`,
       Serialization: (v) => `Serialization(${v._0})`,
       Json: (v) => `Json(${v._0})`,
-      DDL: (v) => `DDL(${JSON.stringify(v._0)})`,
-      SqlGeneration: (v) => `SqlGeneration(${JSON.stringify(v._0)})`,
-      TaskJoin: (v) => `TaskJoin(${JSON.stringify(v._0)})`,
+      DDL: (v) => `DDL(${debugString(v._0)})`,
+      SqlGeneration: (v) => `SqlGeneration(${debugString(v._0)})`,
+      TaskJoin: (v) => `TaskJoin(${debugString(v._0)})`,
     });
   }
 

@@ -37,21 +37,6 @@ pub struct Lowering {
     /// Declarations that have to stand before the statement's MOVE FLAGS, which
     /// otherwise stand before everything.
     ///
-    /// J3: a flag is written first because after a `return` it would be dead
-    /// code — but that puts it above everything the statement evaluates on the
-    /// way to the move, and an argument that THROWS there left the flag set and
-    /// the moved value released by nobody. Only what cannot itself contain the
-    /// move goes here: the `prelude` can (a `?` lifts the very call that
-    /// consumes), and moving the flag below that would double-drop on the error
-    /// path.
-    pub before_flags: std::cell::RefCell<Vec<String>>,
-    /// Where the statement now being translated writes its OWN outermost
-    /// expression, as a span key. A call standing there is evaluated
-    /// unconditionally on the way to the flag, so its arguments can be lifted
-    /// above it; one nested inside a branch, a closure or an IIFE the statement
-    /// writes cannot, because `before_flags` stands above the whole statement
-    /// and the argument may read a name that nested block declares.
-    pub statement_tail: std::cell::Cell<Option<(usize, usize, usize, usize)>>,
     /// What the block now being translated decided about each of its locals,
     /// for the statement now being translated.
     pub stmt_dispositions:
@@ -86,6 +71,27 @@ pub struct Lowering {
     /// `last_match_wrote_statements` is, because the macro's NAME cannot say —
     /// a name-based answer is wrong for every select that produces a value (H1).
     pub select_wrote_statements: std::cell::Cell<bool>,
+    /// The root names a field was moved OUT of and the port wrote as a plain
+    /// property read, in the order the reads were written.
+    ///
+    /// `takeField` is what stops the struct's cascade reaching a field the
+    /// caller now owns, and it is not always writable: a field the runtime
+    /// writes as a plain array or `Map` has no `takeField`, and neither has one
+    /// whose type the engine could not settle. Where it was not written, the
+    /// struct and the new owner both hold the field, so a scope that RELEASES
+    /// the struct would release that field a second time. Recorded here, and
+    /// read by whoever was about to claim the struct.
+    pub partial_moves_written_as_reads: std::cell::RefCell<Vec<String>>,
+    /// The type the next enum match's SUBJECT is really matching, where the
+    /// expression's own type is not it.
+    ///
+    /// `Option<T>` is `T | null`, so an `Option` match whose arms test inside
+    /// the payload is a null test around an enum match on the payload — and the
+    /// payload's type is `T`, while the subject expression still resolves to
+    /// `Option<T>`. Set for exactly one match and TAKEN when that match reads
+    /// it, so nothing nested inside an arm can pick it up.
+    pub payload_subject:
+        std::cell::RefCell<Option<((usize, usize, usize, usize), crate::ty::Ty)>>,
     /// Whether the arguments being translated stand in a position whose own
     /// lowering INVOKES them. `Placement::Loose` reports a closure the emitter
     /// cannot see the call site of; these are call sites it writes itself, so

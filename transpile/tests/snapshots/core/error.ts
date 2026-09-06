@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/error.rs
-import { Struct, Enum, AnyhowError, checkedAdd, HashSet, JoinError } from '@ankurah/base';
+import { Struct, Enum, AnyhowError, checkedAdd, debugString, HashSet, JoinError } from '@ankurah/base';
 import { CollectionId, DecodeError, EntityId, EventId, NodeResponseBody } from '@ankurah/proto';
 import { SendError } from './connector';
 import { AccessDenied } from './policy';
@@ -120,7 +120,7 @@ export class RetrievalError extends Enum<RetrievalErrorV> {
       FailedUpdate: (v) => `FailedUpdate(${v._0})`,
       DeserializationError: (v) => `DeserializationError(${v._0})`,
       NoDurablePeers: () => 'NoDurablePeers',
-      Other: (v) => `Other(${JSON.stringify(v._0)})`,
+      Other: (v) => `Other(${debugString(v._0)})`,
       InvalidBucketName: () => 'InvalidBucketName',
       AnkqlFilter: (v) => `AnkqlFilter(${v._0.debug()})`,
       FutureJoin: (v) => `FutureJoin(${v._0})`,
@@ -184,7 +184,7 @@ export class RequestError extends Enum<RequestErrorV> {
     return this.match({
       PeerNotConnected: () => 'PeerNotConnected',
       ConnectionLost: () => 'ConnectionLost',
-      ServerError: (v) => `ServerError(${JSON.stringify(v._0)})`,
+      ServerError: (v) => `ServerError(${debugString(v._0)})`,
       SendError: (v) => `SendError(${v._0.debug()})`,
       InternalChannelClosed: () => 'InternalChannelClosed',
       UnexpectedResponse: (v) => `UnexpectedResponse(${v._0.debug()})`,
@@ -377,15 +377,15 @@ export class MutationError extends Enum<MutationErrorV> {
       RetrievalError: (v) => `RetrievalError(${v._0.debug()})`,
       StateError: (v) => `StateError(${v._0.debug()})`,
       UpdateFailed: (v) => `UpdateFailed(${v._0})`,
-      FailedStep: (v) => `FailedStep(${JSON.stringify(v._0)}, ${JSON.stringify(v._1)})`,
-      FailedToSetProperty: (v) => `FailedToSetProperty(${JSON.stringify(v._0)}, ${JSON.stringify(v._1)})`,
+      FailedStep: (v) => `FailedStep(${debugString(v._0)}, ${debugString(v._1)})`,
+      FailedToSetProperty: (v) => `FailedToSetProperty(${debugString(v._0)}, ${debugString(v._1)})`,
       General: (v) => `General(${v._0})`,
       NoDurablePeers: () => 'NoDurablePeers',
       DecodeError: (v) => `DecodeError(${v._0})`,
       LineageError: (v) => `LineageError(${v._0.debug()})`,
       PeerRejected: () => 'PeerRejected',
       InvalidEvent: () => 'InvalidEvent',
-      InvalidUpdate: (v) => `InvalidUpdate(${JSON.stringify(v._0)})`,
+      InvalidUpdate: (v) => `InvalidUpdate(${debugString(v._0)})`,
       PropertyError: (v) => `PropertyError(${v._0.debug()})`,
       FutureJoin: (v) => `FutureJoin(${v._0})`,
       Anyhow: (v) => `Anyhow(${v._0})`,
@@ -498,9 +498,9 @@ export class ValidationError extends Enum<ValidationErrorV> {
   debug(): string {
     return this.match({
       Deserialization: (v) => `Deserialization(${v._0})`,
-      ValidationFailed: (v) => `ValidationFailed(${JSON.stringify(v._0)})`,
-      Serialization: (v) => `Serialization(${JSON.stringify(v._0)})`,
-      Rejected: (v) => `Rejected(${JSON.stringify(v._0)})`,
+      ValidationFailed: (v) => `ValidationFailed(${debugString(v._0)})`,
+      Serialization: (v) => `Serialization(${debugString(v._0)})`,
+      Rejected: (v) => `Rejected(${debugString(v._0)})`,
     });
   }
 

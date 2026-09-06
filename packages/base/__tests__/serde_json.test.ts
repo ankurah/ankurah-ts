@@ -120,7 +120,7 @@ describe('serde_json::Error', () => {
 // failure is a value the caller owns rather than an exception — and the
 // `JsonError` in it is a tracked value, dropped here as Rust drops it.
 
-import { fromSlice, parse, stringify } from '../src/serde_json.ts';
+import { fromSlice, parse, stringify, toValue, toVec } from '../src/serde_json.ts';
 
 /** The value a successful parse produced. */
 function parsed(text: string): unknown {
@@ -379,5 +379,33 @@ describe('a lone surrogate is refused raw as well as escaped', () => {
     unwritable('\ud800');
     unwritable({ k: '\udfff' });
     unwritable({ '\ud800': 1 });
+  });
+});
+
+describe('to_vec and to_value', () => {
+  // L2: nine emitted sites named `serde_json.Value`, four `toVec` and one
+  // `toValue`, and `@ankurah/base` exported none of them — every one a
+  // `TypeError`, and invisible to the undefined-name ledger because eslint sees
+  // a member access and not an identifier.
+  test('to_vec is the JSON text, encoded', () => {
+    const bytes = toVec({ a: 1, b: 'x' });
+    expect([...bytes.unwrap()]).toEqual([...new TextEncoder().encode('{"a":1,"b":"x"}')]);
+    // Non-ASCII goes through as UTF-8, which is what JSON text is.
+    expect(new TextDecoder().decode(toVec('é').unwrap())).toBe('"é"');
+  });
+
+  test('and it answers Err where the writing does', () => {
+    // serde_json refuses to write a NaN, and so does the port.
+    const refused = toVec(Number.NaN);
+    expect(refused.isErr()).toBe(true);
+    refused.drop();
+  });
+
+  test('to_value is the serialisable form: the type’s own toJSON', () => {
+    expect(toValue(7).unwrap()).toBe(7);
+    expect(toValue(null).unwrap()).toBe(null);
+    expect(toValue([1, 2]).unwrap()).toEqual([1, 2]);
+    const written = { toJSON: () => ({ kept: true }) };
+    expect(toValue(written).unwrap()).toEqual({ kept: true });
   });
 });

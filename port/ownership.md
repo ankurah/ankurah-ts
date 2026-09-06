@@ -1088,6 +1088,152 @@ their `F` by value and drop it there, and R10 says a closure the emitter wrapped
 in an `OwnedClosure` is never called as a bare function; a plain arrow passes
 through both unchanged.
 
+…unless the source handed the callback over by REFERENCE. `find(&mut p)`
+type-checks through the `impl FnMut for &mut F` blanket: what the terminal takes
+by value is the reference, dropping a reference does nothing, and `p` is still
+the caller's to call again. The port has no reference to hand over — the closure
+object itself goes — so the emitter says which of the two happened, as a third
+argument: `iterFindOwned(xs, p, 'borrow')` leaves `p` alone and
+`iterFindOwned(xs, p)` releases it, and `releaseCallback` is the one place
+either answer is written. Released regardless, the call after the terminal read
+captures that were gone, and the block's own release dropped the closure a
+second time — the fatal latch, from valid Rust.
+
+`Iterator::by_ref(&mut self) -> &mut Self` is the same question about the
+SEQUENCE: a borrowed view of the iterator it was called on, so the chain below
+it advances that iterator and leaves the rest of it in the named place. The port
+writes the view as the receiver itself, and what makes that safe is that a
+consuming terminal reached through it is refused for naming a place, exactly as
+`(&mut it).find(..)` is. On a borrowed chain nothing is consumed and `by_ref` is
+simply the identity.
+
+### What a call hands over is a local of the body it hands it to
+
+Rust drops a by-value closure parameter at the end of every invocation — on the
+normal return and while an unwind passes through — because it IS a local of the
+closure's body, exactly as a function's parameter is a local of the function's.
+So the emitter writes the release into the closure: a parameter the body does
+not hand on is released in a `finally` around the body, one the body hands on
+everywhere is released nowhere, and one handed on in a branch is released behind
+a drop flag. That is the same claim a function's parameters get, and it is made
+per NAME the parameter binds, because `|(id, entry)|` takes the pair apart on
+the way in and each half is a local on its own.
+
+The TERMINAL must not do this for the callback. A legal callback may transfer
+what it was handed somewhere else — `reduce`'s body answers with one of its two
+arguments — and the terminal cannot see which, so `position`, `rposition`,
+`find_map` and `reduce` release only what the walk never handed over. Every test
+of those helpers is written against a callback in the emitter's own shape: a
+hand-written callback that drops its argument where the test author saw fit does
+the emitter's work for it, and hid this gap for a whole slice.
+
+Two things the port does NOT do here, both of them Rust's unwind and neither of
+them reachable from the emitted side:
+
+- A parameter written `&T` is somebody else's, and Rust's match ergonomics make
+  every name a pattern binds under one a borrow too: `pairs.iter().map(|(f, _)|
+  ..)` moves neither half, and the port claims neither.
+- A value at a tuple position the pattern SKIPPED — `|(f, _)|` over an owned
+  pair — is dropped by Rust and the port writes no name for it, because the
+  destructuring writes a hole where the name would stand. Where the skipped
+  half has drop glue it is still owned by nobody. The corpus's `|(f, _)|`
+  closures all walk a BORROWED sequence, where nothing is owed; an owned
+  sequence of pairs would reach it.
+
+And one claim the port makes and then WITHDRAWS. Where the body moved a field
+out of the value and `takeField` was not writable — a field the runtime writes
+as a plain array or `Map`, or one whose type the engine could not settle — the
+emitted text reads the field in place, so the struct's cascade still reaches
+what the caller was given. Releasing the struct there would release that field a
+second time, so the claim is dropped and the site says so: what is left of the
+struct is released by nothing, which is the leak the report names. Two corpus
+sites, `peer_subscription/server.rs`'s `update.items` and `storage-common`'s
+`sorting.rs` `h.item`.
+
+### `{:?}` escapes what Rust escapes, by Unicode class
+
+A string and a `char` are quoted and escaped under Debug, and `JSON.stringify`
+is close and not the same: it writes `\u0000` where Rust writes `\0`, and `\b`
+and `\f` where Rust writes `\u{8}` and `\u{c}`. `debugString` is the exact
+escaper, and it is what a `String` and a `&str` both go through now — the
+emitter wrote `JSON.stringify` for either.
+
+Which characters get escaped is Rust's `is_printable`, and that is a generated
+Unicode table: it excludes the control, format, surrogate, private-use and
+unassigned characters, the line and paragraph separators, and every space
+separator but U+0020. Written as `code < 0x20 || code === 0x7f`, the port
+printed U+0085, U+00A0, U+200B, U+200D, U+202E, U+2028 and U+FEFF raw — each of
+them invisible, or reordering the output. The port asks the CATEGORY rather than
+copying a table, so what can differ from Rust is the Unicode version the engine
+carries and not the rule; `\p{Cn}` moves with the version exactly as Rust's
+regenerated table does. A grapheme-extended character is escaped by
+`Debug for char` wherever it stands and by `Debug for str` only where it leads,
+which is what Rust's `escape_grapheme_extended: first` says.
+
+**Two erasures a hand-written generic cannot see through**, and both are
+reported at the type position rather than rendered as a guess: a `char`, which
+the port writes as a one-character string exactly as it writes a `String`
+(`'a'` against `"a"`), and an `Option`, which it writes as `T | null` so that
+`Some(x)` and `x` are one value. The check goes DOWN through a `Vec`, an array,
+a slice and a tuple, because `debugValue` walks those element by element, and
+stops at a type that prints through its own `debug()` — that type knows its
+fields' types and the emitter wrote its rendering.
+
+### A range answers `contains` from its bounds, and evaluates the item once
+
+`Range::contains` is a comparison against the two ends, and it is what a range
+of a type the port cannot count still answers — a float range is not an iterator
+in Rust either, and neither is an unbounded one. `rangeContains(start, end,
+inclusive, item)` is the one place it is written, with the arguments in Rust's
+own order: Rust builds the whole range before it looks at the item at all.
+Written inline as `start <= item && item < end` the port evaluated the ITEM
+twice — `(0u32..n).contains(&side())` called `side()` twice — and the end only
+where the first comparison held.
+
+A `null` bound is Rust's `Unbounded`. `a..`, `..b`, `..=b` and `..` used to fall
+to the sequence the port could not materialise, though their answers are
+`a <= x`, `x < b`, `x <= b` and `true`.
+
+### `serde_json` reads and writes plain JavaScript values
+
+`serde_json::Value` is the name Rust gives a JSON value, and here that value IS
+the JavaScript one: `parse` and `from_slice` answer it, `stringify` and `to_vec`
+take it. So a variant CONSTRUCTION is the identity on its payload —
+`serde_json::Value::String(s)` is `s`, `Value::Null` is `null` — and there is no
+`Value` class for it to be an instance of. Written as an enum construction the
+port named a `Value` `@ankurah/base` does not export at all, and each of those
+nine sites would have handed `stringify` an object serde_json never wrote.
+
+`to_vec` is the JSON text encoded, which is what serde_json's own is; `to_value`
+is the serialisable form, which for the port is a type's own `toJSON` and for
+anything else is the value itself. `from_value` is NOT here: it answers a `T`
+the caller names and the port reads a JSON value back through that type's own
+`fromJson`, so a free function has no way to be told which type it is — the site
+is a hole until the emitter writes the type out.
+
+### An eager adaptor owns what it discards
+
+`filter`, `skip`, `take` and `step_by` each throw elements away, and Rust drops
+what they throw away: `Filter` drops the element its predicate rejected, `Skip`
+the prefix it walked past, `Take` the tail with the iterator it wraps, `StepBy`
+what it stepped over. Written as `Array.prototype.filter` and `slice` they
+simply lost them — and the consuming terminal below could not make it good,
+because by the time it ran those elements were not in the array any more. So a
+chain whose elements the chain OWNS writes `filterOwned`, `skipOwned`,
+`takeOwned` and `stepByOwned`, each of which drops what it discards; a borrowed
+chain keeps the array operations, because the sequence is somebody else's.
+
+`map` and `flat_map` are not in that list. They hand each element to a closure BY
+VALUE, and a closure's by-value parameters are locals of its body, so the closure
+is what releases them.
+
+A key fold releases its KEYS in either mode. Rust writes `max_by_key` as
+`self.map(|x| (f(&x), x)).max_by(..)`: the loser's pair is dropped, so its key
+goes with it, and the winner's pair is destructured, so its key is dropped where
+the element comes out. `iter()` builds those keys as surely as `into_iter()`
+does, and the reading fold released none of them. One internal fold now writes
+both, with the element half — and only that half — behind a mode.
+
 ## A consuming terminal owns what it walks
 
 `std/iter_owned.ts` is the other half of the same table, and the emitter writes

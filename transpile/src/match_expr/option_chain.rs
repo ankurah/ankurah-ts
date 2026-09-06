@@ -52,6 +52,15 @@ pub fn translate(
     if takes == crate::ownership::scrutinee::Takes::Payload
         && match_expr.arms.iter().any(|arm| tests_inside_the_payload(&arm.pat))
     {
+        // Q3: unless the arms partition — a run of `Some(P)` arms and then the
+        // `None` one. `Option<T>` is `T | null`, so that IS a null test around
+        // a consuming enum match on the payload, which detaches what an arm
+        // binds and marks the payload moved. Three corpus sites are this shape.
+        if let Some(written) =
+            unwrapped_enum_match(&subject, &declaration, match_expr, scrutinee_ty.as_ref(), t, position)
+        {
+            return written;
+        }
         return t.hole(
             syn::spanned::Spanned::span(match_expr),
             "an arm of this consuming `Option` match tests inside the payload, and the port \
@@ -99,12 +108,20 @@ pub fn translate(
         // `value` above the `const value = self;` that declares it — a TDZ
         // `ReferenceError` on the first call, at `core/property/index.ts:17`.
         let ((written, _leaves), lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
+        // A local this arm hands away sets its drop flag here — the same line
+        // every other arm writer writes it on. This one wrote none at all, so
+        // `match o { Some(n) => eat(c, n + 1), .. }` over a flagged `c` handed
+        // `c` to the callee and let the block's `finally` release it as well:
+        // a double drop, from valid Rust, with nothing said. O6: it stands
+        // below what the arm lifted out of itself and immediately above the
+        // transfer.
+        let flags = t.flag_sets_for(&arm.body);
         let body = format!(
             "{}{}",
             bind,
             t.wrap_bindings(
                 &owned,
-                crate::ownership::hoisted(&format!("{}\n", written), &lifted)
+                crate::ownership::hoisted(&format!("{}{}\n", flags, written), &lifted)
             )
         );
         if test == "true" {
@@ -176,6 +193,103 @@ fn payload_owned(
 /// `Some(p)` and `Some(_)` take the payload as it stands; `Some(Payload::Held(t))`
 /// and `Some(Wrap { n })` test what is in it and bind out of it, which is the
 /// shape the chain has no ownership lowering for.
+/// The pattern under a `Some(..)`, where the arm is one.
+fn under_some(pat: &syn::Pat) -> Option<&syn::Pat> {
+    let syn::Pat::TupleStruct(ts) = pat else { return None };
+    if ts.path.segments.last().map(|s| s.ident.to_string()).as_deref() != Some("Some") {
+        return None;
+    }
+    ts.elems.first().filter(|_| ts.elems.len() == 1)
+}
+
+/// Does this pattern match the EMPTY case, and ONLY it?
+///
+/// `None` does. A bare `_` does not: it stands for every value the arms above
+/// it left, which includes the `Some` cases they did not name, so it belongs to
+/// the enum match AND to the null test's else at once. Writing it as the else
+/// alone sent `Some(v)` there for every variant no arm named. That shape keeps
+/// the hole.
+fn matches_absence(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Ident(ident) => ident.subpat.is_none() && ident.ident == "None",
+        syn::Pat::Path(path) => {
+            path.path.segments.last().map(|s| s.ident.to_string()).as_deref() == Some("None")
+        }
+        _ => false,
+    }
+}
+
+/// Q3: a consuming `Option` match whose arms test inside the payload, written
+/// as the null test it is around a consuming enum match on that payload.
+///
+/// For: `Option<T>` is `T | null` here, so the value under test IS the payload
+/// — there is no wrapper to take a name out of and no wrapper left to release.
+/// The right lowering is the one the port already writes for an enum whose arms
+/// take its payload: `intoMatch`, which detaches what the arm binds and marks
+/// the value moved. What was missing is only the rewriting: the arms have to
+/// partition into a run of `Some(P)` arms and the one that stands for `None`,
+/// and the payload's own TYPE has to reach the enum match, because the subject
+/// expression still resolves to the `Option`.
+///
+/// `None` where an arm binds inside a payload is answered nowhere else: the
+/// chain claims only the names each arm bound, so no arm released the payload
+/// at all and every name taken out of it was released twice — once by the arm
+/// and once by the cascade of the value it came out of.
+fn unwrapped_enum_match(
+    subject: &str,
+    declaration: &str,
+    match_expr: &syn::ExprMatch,
+    scrutinee_ty: Option<&crate::ty::Ty>,
+    t: &BodyTranslator,
+    position: Position,
+) -> Option<String> {
+    // The payload's type, which is what the enum match is really over. A
+    // subject the engine could not read as an `Option` has no payload to name.
+    let payload_ty = match scrutinee_ty?.peel_refs() {
+        crate::ty::Ty::Named { args, .. } if args.len() == 1 => args[0].clone(),
+        _ => return None,
+    };
+    let mut inner: Vec<syn::Arm> = Vec::new();
+    let mut absent: Option<&syn::Arm> = None;
+    for arm in &match_expr.arms {
+        // Rust tries arms in order, so anything after the empty case never
+        // runs and this is not that shape.
+        if absent.is_some() {
+            return None;
+        }
+        match (under_some(&arm.pat), matches_absence(&arm.pat)) {
+            (Some(pat), _) => inner.push(syn::Arm { pat: pat.clone(), ..arm.clone() }),
+            (None, true) => absent = Some(arm),
+            (None, false) => return None,
+        }
+    }
+    // A guard reads the names its own pattern bound, and the enum match writes
+    // its arms as callbacks; that pairing is `guarded`'s, not this one's.
+    if inner.is_empty() || absent.is_none() || inner.iter().any(|arm| arm.guard.is_some()) {
+        return None;
+    }
+    let payload_match = syn::ExprMatch { arms: inner, ..match_expr.clone() };
+    let at = BodyTranslator::extent(&payload_match.expr);
+    *t.own.payload_subject.borrow_mut() = Some((at, payload_ty));
+    let present = super::translate_enum_match(subject, &payload_match, t, position);
+    *t.own.payload_subject.borrow_mut() = None;
+    // `translate_enum_match` writes the keyed form as one EXPRESSION and every
+    // other form as statements; it says which, and the position that asked
+    // reads the same answer.
+    let present = match t.last_match_wrote_statements.get() {
+        true => present,
+        false => format!("return {};", present),
+    };
+    let (empty, _) = super::arms::arm_body(&absent.expect("just checked").body, t, position);
+    Some(format!(
+        "{}if ({} != null) {{\n{}}} else {{\n{}}}\n",
+        declaration,
+        subject,
+        indent(&format!("{}\n", present)),
+        indent(&format!("{}\n", empty)),
+    ))
+}
+
 fn tests_inside_the_payload(pat: &syn::Pat) -> bool {
     let syn::Pat::TupleStruct(ts) = pat else { return false };
     if ts.path.segments.last().map(|s| s.ident.to_string()).as_deref() != Some("Some") {
@@ -230,11 +344,16 @@ mod tests {
         assert!(!ts.contains("try {"), "nothing is owed, so nothing is wrapped:\n{}", ts);
     }
 
-    /// An arm that tests inside the payload has no lowering here: the name it
-    /// binds out of the payload is never detached from it, and no arm releases
-    /// what is left. It is a hole, not an arm that runs (R12).
+    /// Q3: an arm that tests inside the payload IS written, as the null test it
+    /// is around a consuming enum match on that payload.
+    ///
+    /// This test used to assert a hole, and the premise it rested on has been
+    /// repealed: `Option<T>` is `T | null`, so the value under test is the
+    /// payload — there is no wrapper to take a name out of and none left to
+    /// release. `intoMatch` detaches what the arm binds and marks the value
+    /// moved, which is what the arm chain could not do.
     #[test]
-    fn an_arm_that_tests_inside_a_consumed_payload_is_a_hole() {
+    fn an_arm_that_tests_inside_a_consumed_payload_is_the_enum_match_on_it() {
         let mut f = built(
             "pub fn nested(slot: Option<Payload>) -> usize {\n\
                match slot {\n\
@@ -245,8 +364,28 @@ mod tests {
              }",
         );
         let ts = f.translated_method("lib.rs", "nested");
+        assert!(!ts.contains("unsupported("), "{}", ts);
+        assert!(ts.contains("if (slot != null)"), "the null test is the outer one:\n{}", ts);
+        assert!(ts.contains("slot.intoMatch("), "and the payload is taken apart:\n{}", ts);
+        assert!(ts.contains("const token = v._0;"), "{}", ts);
+    }
+
+    /// A bare `_` stands for every value the arms above it left, which includes
+    /// the `Some` cases they did not name — so it belongs to the enum match AND
+    /// to the null test's else at once, and the port has no lowering for that.
+    /// The hole stands.
+    #[test]
+    fn an_arm_that_covers_both_halves_at_once_is_still_a_hole() {
+        let mut f = built(
+            "pub fn nested(slot: Option<Payload>) -> usize {\n\
+               match slot {\n\
+                 Some(Payload::Held(token)) => sink(token),\n\
+                 _ => 0,\n\
+               }\n\
+             }",
+        );
+        let ts = f.translated_method("lib.rs", "nested");
         assert!(ts.contains("unsupported("), "{}", ts);
-        assert!(!ts.contains("slot.value"), "no arm of it is written at all:\n{}", ts);
         assert!(
             f.messages().iter().any(|m| m.contains("tests inside the payload")),
             "and the gap is reported: {:?}",

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/indexing/key_spec.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, keyHash } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, debugString, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from '../codec';
 import { ValueType } from '../value/index';
 import { PathExpr } from '@ankurah/ankql';
@@ -229,7 +229,7 @@ export class IndexKeyPart extends Struct {
   }
 
   debug(): string {
-    return `IndexKeyPart { column: ${JSON.stringify(this.column)}, subPath: ${(($v) => $v === null ? 'None' : `Some(${`[${Array.from($v).map((e) => JSON.stringify(e)).join(', ')}]`})`)(this.subPath)}, direction: ${this.direction.debug()}, valueType: ${this.valueType.debug()}, nulls: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.nulls)}, collation: ${(($v) => $v === null ? 'None' : `Some(${JSON.stringify($v)})`)(this.collation)} }`;
+    return `IndexKeyPart { column: ${debugString(this.column)}, subPath: ${(($v) => $v === null ? 'None' : `Some(${`[${Array.from($v).map((e) => debugString(e)).join(', ')}]`})`)(this.subPath)}, direction: ${this.direction.debug()}, valueType: ${this.valueType.debug()}, nulls: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.nulls)}, collation: ${(($v) => $v === null ? 'None' : `Some(${debugString($v)})`)(this.collation)} }`;
   }
 
   encode(writer: BincodeWriter): void {

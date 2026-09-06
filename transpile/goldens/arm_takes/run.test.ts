@@ -2,7 +2,9 @@
 // owns what after an arm's pattern has run: the elements a partial tuple pattern
 // did not name are released where the match ends, a struct-variant arm's fields
 // are paired with the members they NAME, and the two shapes the port has no
-// lowering for throw holding nothing rather than leaking.
+// lowering for throw holding nothing rather than leaking — and a partial tuple
+// inside a payload MEMBER, which used to be one of those, releases the position
+// it did not name (H12).
 
 import { expect, test } from 'bun:test';
 import { Holder, Maybe, Named, Outer, Token, both, member, nothing, outOfOrder, partial, userSome } from './input.ts';
@@ -29,9 +31,14 @@ test('a user variant named Some is refused rather than leaking its wrapper', () 
   expect(() => userSome(new Outer('W', { _0: inner }) as any)).toThrow(/cannot both take a name/);
 });
 
-test('a partial tuple inside a payload member is refused, holding nothing', () => {
-  const pair = [Token.new(5), Token.new(6)] as any;
-  expect(() => member(new Holder('Pair', { _0: pair }) as any)).toThrow(/only SOME of the elements/);
+test('a partial tuple inside a payload member releases the position it did not name', () => {
+  const first = Token.new(5);
+  const second = Token.new(6);
+  // The defective answer: a hole. The arm names `a` and drops it itself; the
+  // element it did not name is the arm's too, and is released by position.
+  expect(member(new Holder('Pair', { _0: [first, second] }) as any)).toBe(5);
+  expect(first.isDropped).toBe(true);
+  expect(second.isDropped).toBe(true);
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

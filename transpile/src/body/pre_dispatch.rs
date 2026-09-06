@@ -32,6 +32,12 @@ impl<'a> BodyTranslator<'a> {
         if let Some(written) = self.range_contains(call, args) {
             return Some(written);
         }
+        // N10: `unwrap_or_default` answers the payload's `Default`, which the
+        // port has to name from the resolved type — the method's own name says
+        // nothing about it, and `unwrapOrDefault` is declared nowhere.
+        if let Some(written) = self.unwrap_or_default(call, rust_method, receiver) {
+            return Some(written);
+        }
         // F1: a consuming terminal on a NAMED iterator leaves part of the
         // sequence behind, and the port's array cannot say which part.
         self.named_iterator_refusal(call)
@@ -42,29 +48,35 @@ impl<'a> BodyTranslator<'a> {
     ///
     /// `Range::contains` is a comparison against the two ends and is the one
     /// method a range of a type the port cannot count still answers — a float
-    /// range is not an iterator in Rust either. Written through the
-    /// materialised sequence, `(0.0f64..1.0f64).contains(&0.5)` came out as
-    /// `range(0, 1).contains(0.5)`: `range(0, 1)` is `[0]`, and an array has no
-    /// `contains`, so the site was a `TypeError` that no diagnostic named
-    /// (F3). Rust's own definition is `start <= item && item < end`, with `<=`
-    /// at the far end for a `..=`.
+    /// range is not an iterator in Rust either, and neither is an unbounded
+    /// one. Written through the materialised sequence,
+    /// `(0.0f64..1.0f64).contains(&0.5)` came out as `range(0, 1).contains(
+    /// 0.5)`: `range(0, 1)` is `[0]`, and an array has no `contains` (F3).
+    ///
+    /// O7: written inline as `start <= item && item < end` it evaluated the
+    /// ITEM twice — `(0u32..n).contains(&side())` called `side()` twice — and
+    /// it evaluated the end only when the first comparison held, where Rust
+    /// builds the whole range before it looks at the item at all. One helper,
+    /// with the arguments in Rust's order.
+    ///
+    /// O8: and every UNBOUNDED form is written here too. `a..`, `..b`, `..=b`
+    /// and `..` each fell to the materialisation hole though their answers are
+    /// `a <= x`, `x < b`, `x <= b` and `true`; a missing bound is `null`, which
+    /// is Rust's `Unbounded`.
     fn range_contains(&self, call: &syn::ExprMethodCall, args: &[String]) -> Option<String> {
         let range = self.range_of_contains(call)?;
-        let (Some(start), Some(end)) = (range.start.as_ref(), range.end.as_ref()) else {
-            return None;
-        };
         let item = args.first()?;
-        let far = match range.limits {
-            syn::RangeLimits::Closed(_) => "<=",
-            syn::RangeLimits::HalfOpen(_) => "<",
+        let bound = |e: Option<&Box<syn::Expr>>| match e {
+            Some(e) => self.expr_value(e),
+            None => "null".to_string(),
         };
+        let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
         Some(format!(
-            "({} <= {} && {} {} {})",
-            self.expr_value(start),
-            item,
-            item,
-            far,
-            self.expr_value(end)
+            "rangeContains({}, {}, {}, {})",
+            bound(range.start.as_ref()),
+            bound(range.end.as_ref()),
+            inclusive,
+            item
         ))
     }
 
@@ -85,9 +97,10 @@ impl<'a> BodyTranslator<'a> {
     }
 
     /// The same question, as the receiver position asks it.
+    /// O8: every bound shape, because every one of them is written from the
+    /// bounds now — an unbounded range has no sequence to materialise at all.
     pub(crate) fn contains_on_a_range(&self, call: &syn::ExprMethodCall) -> bool {
-        self.range_of_contains(call)
-            .is_some_and(|r| r.start.is_some() && r.end.is_some())
+        self.range_of_contains(call).is_some()
     }
 
     /// `IntoIterator::into_iter` on a type PARAMETER, as the spread it is on

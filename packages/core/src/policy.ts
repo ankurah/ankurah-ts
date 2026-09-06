@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/policy.rs
-import { Struct, Enum, Result, tracing } from '@ankurah/base';
+import { Struct, Enum, Result, tracing, debugString } from '@ankurah/base';
 import { ParseError, Predicate } from '@ankurah/ankql';
 import { Attested, Attestation, AuthData, CausalAssertion, CollectionId, EntityId, EntityState, Event, NodeRequest } from '@ankurah/proto';
 import { Entity } from './entity';
@@ -122,7 +122,7 @@ export class AccessDenied extends Enum<AccessDeniedV> {
 
   debug(): string {
     return this.match({
-      ByPolicy: (v) => `ByPolicy(${JSON.stringify(v._0)})`,
+      ByPolicy: (v) => `ByPolicy(${debugString(v._0)})`,
       CollectionDenied: (v) => `CollectionDenied(${v._0.debug()})`,
       PropertyError: (v) => `PropertyError(${v._0.debug()})`,
       ParseError: (v) => `ParseError(${v._0.debug()})`,
