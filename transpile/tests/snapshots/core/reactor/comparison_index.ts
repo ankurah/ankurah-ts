@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
-import { Struct, invoke, Invocable, dropOwned, valueEquals, valueNotEquals, unsupported, iterPosition, range, HashMap, HashSet } from '@ankurah/base';
+import { Struct, invoke, Invocable, dropOwned, valueEquals, valueNotEquals, unsupported, iterPosition, HashMap, HashSet } from '@ankurah/base';
 import { Collatable, Collatable_dispatch_predecessorBytes, Collatable_dispatch_successorBytes, Collatable_dispatch_toBytes } from '../collation';
 import { ComparisonOperator } from '@ankurah/ankql';
 
@@ -73,10 +73,10 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
             }
           },
           In: () => {
-            throw new Error(`Unsupported operator: ${op.debug()}`)
+            throw new Error(`Unsupported operator: ${op.debug()}`);
           },
           Between: () => {
-            throw new Error(`Unsupported operator: ${op.debug()}`)
+            throw new Error(`Unsupported operator: ${op.debug()}`);
           },
         });
       } finally {

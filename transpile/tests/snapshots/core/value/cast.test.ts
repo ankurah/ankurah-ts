@@ -20,31 +20,31 @@ describe('cast unit tests', () => {
             expect(parsedId).toEqual(entityId);
           },
           I16: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           I32: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           I64: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           F64: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           Bool: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           String: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           Object: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           Binary: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
           Json: () => {
-            throw new Error('Expected EntityId variant')
+            throw new Error('Expected EntityId variant');
           },
         });
       } finally {
@@ -67,31 +67,31 @@ describe('cast unit tests', () => {
             expect(s).toEqual(entityId.toBase64());
           },
           I16: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           I32: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           I64: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           F64: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           Bool: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           EntityId: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           Object: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           Binary: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
           Json: () => {
-            throw new Error('Expected String variant')
+            throw new Error('Expected String variant');
           },
         });
       } finally {

@@ -126,7 +126,7 @@ describe('type_resolver unit tests', () => {
                 } else {
                   const other = new Expr('Literal', v);
                   try {
-                    throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`);
                   } finally {
                     other.drop();
                   }
@@ -135,7 +135,7 @@ describe('type_resolver unit tests', () => {
               Path: (v) => {
                 const other = new Expr('Path', v);
                 try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -143,7 +143,7 @@ describe('type_resolver unit tests', () => {
               Predicate: (v) => {
                 const other = new Expr('Predicate', v);
                 try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -151,7 +151,7 @@ describe('type_resolver unit tests', () => {
               InfixExpr: (v) => {
                 const other = new Expr('InfixExpr', v);
                 try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -159,7 +159,7 @@ describe('type_resolver unit tests', () => {
               ExprList: (v) => {
                 const other = new Expr('ExprList', v);
                 try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -167,7 +167,7 @@ describe('type_resolver unit tests', () => {
               Placeholder: (v) => {
                 const other = new Expr('Placeholder', v);
                 try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`)
+                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -208,7 +208,7 @@ describe('type_resolver unit tests', () => {
                 } else {
                   const other = new Expr('Literal', v);
                   try {
-                    throw new Error(`Expected String literal, got ${other.debug()}`)
+                    throw new Error(`Expected String literal, got ${other.debug()}`);
                   } finally {
                     other.drop();
                   }
@@ -217,7 +217,7 @@ describe('type_resolver unit tests', () => {
               Path: (v) => {
                 const other = new Expr('Path', v);
                 try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`)
+                  throw new Error(`Expected String literal, got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -225,7 +225,7 @@ describe('type_resolver unit tests', () => {
               Predicate: (v) => {
                 const other = new Expr('Predicate', v);
                 try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`)
+                  throw new Error(`Expected String literal, got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -233,7 +233,7 @@ describe('type_resolver unit tests', () => {
               InfixExpr: (v) => {
                 const other = new Expr('InfixExpr', v);
                 try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`)
+                  throw new Error(`Expected String literal, got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -241,7 +241,7 @@ describe('type_resolver unit tests', () => {
               ExprList: (v) => {
                 const other = new Expr('ExprList', v);
                 try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`)
+                  throw new Error(`Expected String literal, got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }
@@ -249,7 +249,7 @@ describe('type_resolver unit tests', () => {
               Placeholder: (v) => {
                 const other = new Expr('Placeholder', v);
                 try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`)
+                  throw new Error(`Expected String literal, got ${other.debug()}`);
                 } finally {
                   other.drop();
                 }

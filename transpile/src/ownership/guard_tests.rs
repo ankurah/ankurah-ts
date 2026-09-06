@@ -45,7 +45,12 @@ fn a_guarded_borrowing_enum_match_is_tried_arm_by_arm() {
     );
     let guard = ts.find("if (o.n > 2)").expect(&ts);
     let below = ts.find("look(o)").expect(&ts);
-    assert!(guard < below, "and a failed guard reaches the arm below it:\n{}", ts);
+    assert!(
+        !inside_the_branch(&ts, guard, below),
+        "the arm below stands inside the guard's own branch, so a failed guard never \
+         reaches it:\n{}",
+        ts
+    );
 }
 
 #[test]
@@ -70,9 +75,17 @@ fn a_guarded_consuming_enum_arm_is_written_by_the_chain() {
     assert!(!ts.contains("unsupported("), "{}", ts);
     // Amended (step 9a slice 2, G2): the guard is made in a `try`, so its test
     // is held in a name.
-    let guard = ts.find("o.n > 2").expect(&ts);
+    // The guarded body is inside the branch the guard's `if` opens, and the arm
+    // below it is outside — which is what "a failed guard falls through" means.
+    let branch = ts.find("if (_g0)").expect(&ts);
+    let guarded = ts.find("take(o)").expect(&ts);
     let below = ts.rfind("take(o)").expect(&ts);
-    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
+    assert!(inside_the_branch(&ts, branch, guarded), "the guarded arm is not guarded:\n{}", ts);
+    assert!(
+        !inside_the_branch(&ts, branch, below),
+        "the arm below stands inside the guard's branch:\n{}",
+        ts
+    );
     let said = fixture.messages();
     assert!(
         said.iter().all(|m| !m.contains("guard is dropped")),
@@ -100,9 +113,15 @@ fn a_guarded_result_arm_is_written_and_falls_through_to_the_arm_below() {
     )]);
     let ts = fixture.translated_method("lib.rs", "f");
     assert_eq!(ts.matches(".unwrap()").count(), 1, "the payload is read once:\n{}", ts);
-    let guard = ts.find("v.n > 2").expect(&ts);
+    let branch = ts.find("if (_g0)").expect(&ts);
+    let guarded = ts.find("take(v)").expect(&ts);
     let below = ts.rfind("take(v)").expect(&ts);
-    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
+    assert!(inside_the_branch(&ts, branch, guarded), "the guarded arm is not guarded:\n{}", ts);
+    assert!(
+        !inside_the_branch(&ts, branch, below),
+        "the arm below stands inside the guard's branch:\n{}",
+        ts
+    );
     assert!(
         fixture.messages().iter().all(|m| !m.contains("takes the wrapper apart")),
         "and nothing says the guard was dropped: {:?}",
@@ -110,3 +129,29 @@ fn a_guarded_result_arm_is_written_and_falls_through_to_the_arm_below() {
     );
 }
 
+/// Does `at` stand INSIDE the block the `if` at `opens` starts?
+///
+/// K14: three tests asserted `guard < below` — that the guard's test is written
+/// before the arm below it — which is true of a chain that works and equally
+/// true of one whose fall-through is broken, because both arms are written
+/// either way. What has to hold is the STRUCTURE: the guarded body stands
+/// inside the branch the guard's `if` opens, and the arm below it stands after
+/// that branch has closed.
+fn inside_the_branch(ts: &str, opens: usize, at: usize) -> bool {
+    let mut depth = 0i32;
+    let mut entered = false;
+    for (offset, c) in ts[opens..].char_indices() {
+        if opens + offset >= at {
+            return entered && depth > 0;
+        }
+        match c {
+            '{' => {
+                depth += 1;
+                entered = true;
+            }
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    false
+}

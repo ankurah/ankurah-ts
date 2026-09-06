@@ -5,7 +5,6 @@ import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signal
 import { BincodeReader, BincodeWriter } from './codec';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Value } from '../../value/index';
-import { LWW } from '../value/lww';
 import { PropertyBackend } from './index';
 
 class ValueEntry extends Struct {
@@ -105,7 +104,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
   propertyValues(): HashMap<PropertyName, Value | null> {
     const values = this.values.read();
     try {
-      return HashMap.from([...values.value].map(([k, v]) => [k.clone(), v.value.clone()]));
+      return HashMap.from([...values.value].map(([k, v]) => [k, v.value.clone()]));
     } finally {
       values.drop();
     }

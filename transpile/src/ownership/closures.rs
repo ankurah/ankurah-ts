@@ -266,7 +266,9 @@ impl<'a> BodyTranslator<'a> {
     ) {
         let Some(tc) = &self.types else { return };
         let sig = tc.borrow().closure_signature(closure, expected);
-        for (name, ty) in &sig.params {
+        // The NAMES, not the parameters: a tuple parameter binds one name per
+        // element and the body writes those, never the `[a, b]` spelling.
+        for (name, ty) in &sig.bindings {
             match ty {
                 Some(ty) => self.bind_var(name, ty.clone()),
                 None => self.bind_untyped(name),

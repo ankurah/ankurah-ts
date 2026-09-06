@@ -76,15 +76,13 @@ export abstract class Mutable {
   }
   read(): View {
     const inner = this.entity();
-    const newInner = (() => {
-      return inner.deref().kind.match({
-        Transacted: (v) => {
-          const upstream = v.upstream;
-          return upstream.clone();
-        },
-        Primary: () => inner.clone(),
-      });
-    })();
+    const newInner = inner.deref().kind.match({
+      Transacted: (v) => {
+        const upstream = v.upstream;
+        return upstream.clone();
+      },
+      Primary: () => inner.clone(),
+    });
     return Mutable.fromEntity(newInner);
   }
 }

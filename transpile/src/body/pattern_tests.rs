@@ -355,7 +355,11 @@ fn a_value_position_if_inside_an_operand_is_an_expression() {
     )]);
     let ts = f.emitted("lib.rs");
     assert!(ts.contains("rows[(ok ? 1 : 2)]"), "{ts}");
-    assert!(ts.contains("-(ok ? 1 : 2)"), "{ts}");
+    // K8 (2026-09-06): `-` on a resolved SIGNED width goes through the
+    // runtime's `checkedNeg`, which raises where Rust raises. What this test is
+    // about is unchanged — the operand is still the ternary and not an `if`
+    // statement.
+    assert!(ts.contains("checkedNeg((ok ? 1 : 2), 'i32')"), "{ts}");
     assert!(!ts.contains("[if ("), "a statement stands between the brackets:\n{ts}");
 }
 
@@ -374,4 +378,45 @@ fn an_unresolved_call_written_through_is_not_read_as_a_value() {
     )]);
     let ts = f.emitted("lib.rs");
     assert!(!ts.contains(".value.value"), "the slot was read twice:\n{ts}");
+}
+
+/// K9: `Variant(..)` matches every value of that variant, and the variant key
+/// IS the test.
+///
+/// Read as refutable, `..` went to `pattern_test`, which has no test to write
+/// for it: the arm carried a hole that threw before the body the source wrote
+/// could run. Its member is not declared either — `const ... = v._0;` is not a
+/// declaration a JavaScript engine will read.
+#[test]
+fn a_rest_pattern_covers_the_members_no_name_took() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub enum Wide { Two(u32, u32), One(u32) }\n\
+         pub fn covered(w: &Wide) -> u32 { match w { Wide::Two(..) => 2, Wide::One(n) => *n } }\n\
+         pub fn first_of(w: &Wide) -> u32 { match w { Wide::Two(a, ..) => *a, Wide::One(n) => *n } }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(!ts.contains("unsupported("), "a `..` refused:\n{ts}");
+    assert!(!ts.contains("..."), "a `..` was declared as a name:\n{ts}");
+    assert!(ts.contains("Two: (v) => 2,"), "{ts}");
+    assert!(ts.contains("const a = v._0;"), "{ts}");
+}
+
+/// And a `..` written anywhere but LAST is refused: each element takes the
+/// member at its own position, so every name after the `..` would be bound
+/// from the wrong member — which never says so on its own.
+#[test]
+fn a_rest_pattern_before_the_last_element_is_refused() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub enum Three { All(u32, u32, u32), Nothing }\n\
+         pub fn last_of(w: &Three) -> u32 { match w { Three::All(.., c) => *c, Three::Nothing => 0 } }",
+    )]);
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("unsupported("), "{ts}");
+    assert!(
+        f.messages().iter().any(|m| m.contains("bound from the wrong member")),
+        "{:?}",
+        f.messages()
+    );
 }

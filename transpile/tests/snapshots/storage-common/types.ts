@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/types.rs
-import { Struct, Enum, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum } from '@ankurah/base';
 import { KeySpec, Value, ValueType } from '@ankurah/core';
 import { OrderByItem, Predicate } from '@ankurah/ankql';
 

@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/livequery.rs
 import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
 import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
-import { BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { BroadcastId, CurrentObserver, Get, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
 import { Entity } from './entity';
 import { RetrievalError } from './error';
@@ -11,7 +11,6 @@ import { RemoteQuerySubscriber } from './peer_subscription/client_relay';
 import { PreNotifyHook } from './reactor';
 import { GapFetcher, QueryGapFetcher } from './reactor/fetch_gap';
 import { ReactorSubscription } from './reactor/subscription';
-import { Subscription } from './reactor/subscription_state';
 import { ReactorUpdate } from './reactor/update';
 import { EntityResultSet, ResultSet } from './resultset';
 import { spawn } from './task';

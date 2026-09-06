@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/resultset.rs
 import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, valueEquals, checkedAdd, iterLast, range, HashMap } from '@ankurah/base';
-import { Broadcast, BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { Broadcast, BroadcastId, CurrentObserver, Get, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from './entity';
 import { View } from './indexel';
 import { encodeTupleValuesWithKeySpec } from './indexing/encoding';

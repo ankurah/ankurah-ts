@@ -1,9 +1,10 @@
-// TS-ONLY: the reader's own refusals, which no Rust source mirrors.
+// TS-ONLY: what THIS reader does with a byte run that is not UTF-8.
 //
-// A Rust `String` is UTF-8 by construction, so a byte run that is not valid
-// UTF-8 could not have come from one and `serde` errors there. A non-fatal
-// `TextDecoder` answers U+FFFD instead — a different string that then flows on
-// as though it had been read, which is a silent corruption where Rust reports.
+// Which byte runs are refused, and why refusing them is the port's job, is
+// `packages/base/__tests__/utf8.test.ts` — one table for every site that reads
+// text. What is this reader's own is the rest: it turns the refusal into an
+// error naming the offset the bad bytes were read from, rather than handing a
+// string with U+FFFD in it to whatever asked for the field.
 
 import { describe, test, expect } from 'bun:test';
 import { BincodeReader, BincodeWriter } from './codec.ts';
@@ -20,21 +21,10 @@ function encodedString(bytes: number[]): Uint8Array {
 }
 
 describe('BincodeReader.readString refuses bytes that are not UTF-8', () => {
-  // Each of these is a byte run `serde` rejects and a lenient decoder turns
-  // into U+FFFD.
-  const cases: Record<string, number[]> = {
-    'a continuation byte with no leader': [0x80],
-    'a leader with no continuation': [0xc3],
-    'a truncated three-byte sequence': [0xe2, 0x82],
-    'an overlong encoding of "/"': [0xc0, 0xaf],
-    'a byte no UTF-8 sequence starts with': [0xff],
-  };
-  for (const [what, bytes] of Object.entries(cases)) {
-    test(what, () => {
-      const reader = new BincodeReader(encodedString(bytes));
-      expect(() => reader.readString()).toThrow('not valid UTF-8');
-    });
-  }
+  test('the refusal names the offset the bytes were read from', () => {
+    const reader = new BincodeReader(encodedString([0xc0, 0xaf]));
+    expect(() => reader.readString()).toThrow('2 bytes at offset 8 are not valid UTF-8');
+  });
 
   test('and valid UTF-8 still reads', () => {
     const reader = new BincodeReader(encodedString([0xe2, 0x82, 0xac]));

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, wrappingAdd, HashMap, HashSet, keyHash, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;

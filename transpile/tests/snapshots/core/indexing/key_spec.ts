@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/indexing/key_spec.rs
-import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, Result, JsonError, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ValueType } from '../value/index';
 import { PathExpr } from '@ankurah/ankql';

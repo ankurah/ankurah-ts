@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/common/src/traits.rs
 import { Result } from '@ankurah/base';
-import { EntityId, RetrievalError } from '@ankurah/core';
+import { RetrievalError } from '@ankurah/core';
 import { Attested, EntityState } from '@ankurah/proto';
 
 export abstract class EntityIdStream {

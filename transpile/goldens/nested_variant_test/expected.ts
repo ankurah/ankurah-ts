@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/nested_variant_test/src/input.rs
-import { Struct, Enum, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, keyHash } from '@ankurah/base';
 
 export class Id extends Struct {
   readonly n: number;

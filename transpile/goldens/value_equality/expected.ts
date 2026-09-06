@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/value_equality/src/input.rs
-import { Struct, Enum, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, valueEquals, HashSet } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly name: string;

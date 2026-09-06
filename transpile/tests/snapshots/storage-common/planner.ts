@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
 import { Struct, dropOwned, iterFind, iterFindMap, iterFirst, HashSet } from '@ankurah/base';
-import { ComparisonOperator, Expr, Predicate, Literal, OrderByItem, Selection } from '@ankurah/ankql';
+import { ComparisonOperator, Predicate, Literal, OrderByItem, Selection } from '@ankurah/ankql';
 import { IndexKeyPart, KeySpec, Value, ValueType, Comparison } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
 import { Endpoint, KeyBoundComponent, KeyBounds, KeyDatum, OrderByComponents, Plan, ScanDirection } from './types';
@@ -266,7 +266,7 @@ export class Planner extends Struct {
       }
     }).orElse(() => {
       const _m0 = inequalities.iter().next();
-      return (_m0 != null ? (([k, v]) => [k.asStr(), v])(_m0!) : null);
+      return (_m0 != null ? (([k, v]) => [k, v])(_m0!) : null);
     });
     if (_r1 == null) return null;
     const primary = _r1;
@@ -291,7 +291,7 @@ export class Planner extends Struct {
             Asc: () => new ScanDirection('Forward', {}),
           }));
           let covered = new HashSet();
-          covered.extend([...equalities].map(([f, ]) => f.asStr()));
+          covered.extend([...equalities].map(([f, ]) => f));
           covered.insert(primary._0);
           let presort = [];
           let spill = [];
@@ -396,19 +396,19 @@ export class Planner extends Struct {
               return path.steps.join('.');
             },
             Literal: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             Predicate: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             InfixExpr: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             ExprList: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             Placeholder: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
           });
         })();
@@ -421,19 +421,19 @@ export class Planner extends Struct {
               return literal;
             },
             Path: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             Predicate: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             InfixExpr: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             ExprList: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             Placeholder: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
           });
         })();
@@ -501,7 +501,7 @@ export class Planner extends Struct {
                 const _v1 = orderBy;
                 if (_v1 != null) {
                   const orderByItems = _v1;
-                  const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f.asStr()), ...once(inequalityField)]);
+                  const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f), ...once(inequalityField)]);
                   let presort = [];
                   let spill = [];
                   for (const item of orderByItems) {
@@ -972,13 +972,13 @@ export class Planner extends Struct {
             LessThan: () => [new Endpoint('UnboundedLow', { _0: ValueType.of(value) }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false })] as any,
             LessThanOrEqual: () => [new Endpoint('UnboundedLow', { _0: ValueType.of(value) }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true })] as any,
             NotEqual: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             In: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
             Between: () => {
-              return { $jump: 'return', $value: null }
+              return { $jump: 'return', $value: null };
             },
           });
         })();

@@ -7,6 +7,7 @@
 //! branch could never cover for a `?`, a `break` or an unwind.
 
 pub mod awaiting;
+pub(crate) mod form;
 mod let_chain;
 pub mod sentinel;
 #[cfg(test)]
@@ -59,9 +60,34 @@ fn breaks_with_a_value(loop_expr: &syn::ExprLoop) -> bool {
 }
 
 pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -> String {
+    match in_value_position(expr, t) {
+        (value, Wrote::Value) => format!("return {};", value),
+        (statements, Wrote::Statements) => statements,
+    }
+}
+
+/// What a lowering wrote for an expression whose VALUE the position wants.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wrote {
+    /// One expression: the text IS the value, and whoever asked for it writes
+    /// the `return` or puts it where an expression goes.
+    Value,
+    /// A run of statements that has already done what the position wanted —
+    /// the `return` is inside it, or it leaves without a value at all.
+    Statements,
+}
+
+/// The same, told apart: the text, and which of the two forms it is.
+///
+/// F3/K2: the caller used to decide by reading the text back — a body holding
+/// `";\n"` was called statements, so a nested `match` written as an if-chain
+/// took no `return` and the arm answered `undefined`. The lowering knows which
+/// form it wrote, so it says so.
+pub fn in_value_position(expr: &syn::Expr, t: &BodyTranslator) -> (String, Wrote) {
+    let statements = |text: String| (text, Wrote::Statements);
     match expr {
-        syn::Expr::If(if_expr) => translate_if_at(if_expr, t, Position::Returning),
-        syn::Expr::Match(match_expr) => match_expr::translate_match_returning(match_expr, t),
+        syn::Expr::If(if_expr) => statements(translate_if_at(if_expr, t, Position::Returning)),
+        syn::Expr::Match(match_expr) => statements(match_expr::translate_match_returning(match_expr, t)),
         // A block hands its value on from its tail, so what the position wants
         // of the block it wants of the tail — re-keyed onto the tail, because
         // an expectation is matched by the span of the expression it was
@@ -70,9 +96,7 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
             let want = t.expectation_for(expr);
             if block.block.stmts.len() == 1 {
                 if let syn::Stmt::Expr(inner, None) = &block.block.stmts[0] {
-                    return t.expecting(inner, want.as_ref(), || {
-                        translate_expr_in_return_position(inner, t)
-                    });
+                    return t.expecting(inner, want.as_ref(), || in_value_position(inner, t));
                 }
             }
             let body = match block.block.stmts.last() {
@@ -81,7 +105,7 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
                 }
                 _ => t.translate_block(&block.block),
             };
-            format!("{{\n{}}}", indent(&body))
+            statements(format!("{{\n{}}}", indent(&body)))
         }
         // A `for` and a `while` are statements whose value is `()`; Rust gives
         // neither a `break` payload. A `loop` may have one — `loop { .. break 9 }`
@@ -90,27 +114,32 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
         // fell off the end returning `undefined`.
         syn::Expr::Loop(loop_expr) if breaks_with_a_value(loop_expr) => {
             let (held, lifted) = t.with_own_hoists(|| t.expr_value(expr));
-            format!("{}return {};", crate::ownership::hoisted("", &lifted), held)
+            statements(format!("{}return {};", crate::ownership::hoisted("", &lifted), held))
         }
-        syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => t.expr(expr),
+        syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => statements(t.expr(expr)),
         // These already leave the function, so putting a `return` in front of
         // one wrote `return return Result.Ok(..)`, which does not parse.
         syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_) => {
-            format!("{};", t.expr(expr))
+            statements(format!("{};", t.expr(expr)))
         }
         _ => {
             // A block's last expression is its value, so a field read here
             // hands the field to whoever asked for the block.
             let ts = t.moved_value(expr);
-            // throw/panic is already a terminator — don't prefix with return
-            if ts.starts_with("throw ") {
-                return format!("{};", ts);
-            }
             // A macro whose lowering is a run of statements has already said
-            // what it does: `tokio::select!` declares the arms it is waiting
-            // on, and `return const _v = [` does not parse.
-            if matches!(expr, syn::Expr::Macro(_)) && match_expr::begins_a_statement(&ts) {
-                return ts;
+            // what it does: `assert!(c)` is `if (!(c)) throw ..`, `bail!(..)`
+            // is a `return`, and `panic!` and its family are a `throw`.
+            // `return if (..) throw ..` does not parse. Answered from the macro
+            // the source NAMED, not from the first word of the text.
+            if let syn::Expr::Macro(mac) = expr {
+                if crate::macros::items::writes_statements(&mac.mac.path) {
+                    return statements(ts);
+                }
+            }
+            // A `throw` — `panic!`, `unreachable!`, and every other lowering
+            // that writes one — is already a terminator.
+            if ts.starts_with("throw ") {
+                return statements(format!("{};", ts));
             }
             // A tail whose Rust value is `()` hands nothing back, and the port's
             // spelling of the same call may still produce something:
@@ -122,9 +151,9 @@ pub fn translate_expr_in_return_position(expr: &syn::Expr, t: &BodyTranslator) -
             let unit = matches!(t.resolve_expr_type(expr), Ok(crate::ty::Ty::Unit));
             t.rewind(mark);
             if unit {
-                return format!("{};", ts);
+                return statements(format!("{};", ts));
             }
-            format!("return {};", ts)
+            (ts, Wrote::Value)
         }
     }
 }

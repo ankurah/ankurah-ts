@@ -2,7 +2,6 @@
 import { Enum, Result } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { PropertyError } from '../property/traits';
-import { Json } from '../property/value/json';
 import { Error } from '../selection/filter';
 import { Value, ValueType } from './index';
 

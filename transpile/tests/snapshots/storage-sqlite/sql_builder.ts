@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
 import { Struct, Enum, Result } from '@ankurah/base';
-import { ComparisonOperator, Expr, Literal, OrderByItem, OrderDirection, Predicate, Selection } from '@ankurah/ankql';
+import { ComparisonOperator, Expr, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
 import { EntityId, Comparison, Json, Value } from '@ankurah/core';
 import { SqliteError } from './error';
 import { EntityId } from '@ankurah/proto';
@@ -206,7 +206,7 @@ export class SqlBuilder extends Struct {
           Object: () => {
             this.pushParam(new rusqlite.types.Value('Text', { _0: json.toString() }));
           },
-        })
+        });
       },
     });
   }
@@ -500,7 +500,7 @@ function comparisonOpToSql(op: ComparisonOperator): Result<string, SqlGeneration
       LessThanOrEqual: () => '<=',
       In: () => 'IN',
       Between: () => {
-        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' })) }
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' })) };
       },
     });
   })();

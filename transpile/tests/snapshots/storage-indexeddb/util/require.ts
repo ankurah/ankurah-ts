@@ -1,6 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/util/require.rs
 import { Result, AnyhowError } from '@ankurah/base';
-import { Event } from '@ankurah/proto';
 
 export interface WBGRequire<T> {
   require(err: string): Result<T, Error>;
@@ -27,7 +26,6 @@ export function Result_Option_JsValue_require<T>(self: Result<T | null, unknown>
       return Result.Ok(res);
     }
     {
-      const _v1 = _v;
       return Result.Err(AnyhowError.msg(`${err} is None`));
     }
   } else {

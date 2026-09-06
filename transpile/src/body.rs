@@ -140,13 +140,13 @@ pub struct BodyTranslator<'a> {
     /// it is about to wrap so the entry lowering hands back the Slot there and
     /// the value everywhere else.
     written_through: std::cell::Cell<Option<(usize, usize)>>,
-    /// Is the value the pattern being written is matched against BORROWED?
-    ///
+    /// The TYPE of the value the pattern being written is matched against.
     /// Rust's default binding mode (RFC 2005) says a pattern matched against a
-    /// reference binds by reference, and the payload reads have to agree:
-    /// `match &result { Ok(v) => … }` binds `v: &T` and leaves the `Result`
-    /// whole, where `unwrap()` takes the wrapper apart and marks it moved.
-    borrowed_subject: std::cell::Cell<bool>,
+    /// reference binds by reference: `match &result { Ok(v) => … }` binds
+    /// `v: &T` and leaves the `Result` whole; `unwrap()` takes it apart and
+    /// marks it moved. K16: a tuple is borrowed PER ELEMENT (`(&a, &b)` is not
+    /// one), so each element's type is set while its own pattern is written.
+    subject_ty: std::cell::RefCell<Option<crate::ty::Ty>>,
     /// While an arm of a CONSUMING match is being written, the jump it
     /// performs is handed back to the caller instead of being written where it
     /// stands: an arm of `intoMatch` is a function, and `break` cannot leave
@@ -177,6 +177,11 @@ pub struct BodyTranslator<'a> {
     /// to a closure both write nothing of their own, and declaring an
     /// accumulator nothing appends to is a line that says something untrue.
     wrote_result: std::cell::Cell<bool>,
+    /// Did the `match` written most recently come out as an if-chain rather
+    /// than as the runtime's keyed `.match({..})`, which is one expression?
+    /// A `match`'s form is the one that does not follow from the shape alone.
+    /// Read straight after the call that wrote it (`control_flow::form`).
+    pub(crate) last_match_wrote_statements: std::cell::Cell<bool>,
     /// The identifier Rust's `self` is emitted as in this body.
     ///
     /// A method on an emitted class writes `this`. A method whose impl is
@@ -212,7 +217,7 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             written_through: std::cell::Cell::new(None),
-            borrowed_subject: std::cell::Cell::new(false),
+            subject_ty: std::cell::RefCell::new(None),
             jump_as_value: std::cell::Cell::new(false),
             loops_in_lift: std::cell::RefCell::new(Vec::new()),
             loop_frames: std::cell::RefCell::new(Vec::new()),
@@ -220,6 +225,7 @@ impl<'a> BodyTranslator<'a> {
             cell_candidates: std::cell::RefCell::new(Vec::new()),
             cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
+            last_match_wrote_statements: std::cell::Cell::new(false),
             self_name: "this",
         }
     }
@@ -238,7 +244,7 @@ impl<'a> BodyTranslator<'a> {
             formatter: false,
             discarded_call: std::cell::Cell::new(None),
             written_through: std::cell::Cell::new(None),
-            borrowed_subject: std::cell::Cell::new(false),
+            subject_ty: std::cell::RefCell::new(None),
             jump_as_value: std::cell::Cell::new(false),
             loops_in_lift: std::cell::RefCell::new(Vec::new()),
             loop_frames: std::cell::RefCell::new(Vec::new()),
@@ -246,6 +252,7 @@ impl<'a> BodyTranslator<'a> {
             cell_candidates: std::cell::RefCell::new(Vec::new()),
             cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
+            last_match_wrote_statements: std::cell::Cell::new(false),
             self_name: "this",
         }
     }
@@ -1145,102 +1152,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// `while let PAT = e { body }` as a loop that tests each turn.
-    ///
-    /// The scrutinee is read once per turn into a temporary, tested against the
-    /// pattern, and its payload bound inside the body — which is what Rust does
-    /// and what the previous emission, a comment in the condition, did not.
-    pub(crate) fn while_let(
-        &self,
-        let_expr: &syn::ExprLet,
-        body: &syn::Block,
-        label: &str,
-        written_label: &Option<syn::Label>,
-    ) -> String {
-        // The scrutinee is read afresh every turn, in value position: it is the
-        // turn's own value, and an `if` written there is a run of statements
-        // that `const _v = …` cannot hold. Whatever it lifted belongs inside
-        // the loop with it, because it is taken again on the next turn.
-        let (scrutinee, lifted) = self.with_own_hoists(|| self.expr_value(&let_expr.expr));
-        let ty = self.borrowed_scrutinee_type(&let_expr.expr);
-        let _bindings = self.enter_pattern(&let_expr.pat, ty.as_ref());
-        // The pattern binds afresh each turn, and Rust drops what it bound at
-        // the end of that turn — so the release goes inside the loop, not after
-        // it.
-        let owned = self.claim_bindings(&bound_names(&let_expr.pat), &body.stmts);
-        let translated = crate::control_flow::sentinel::inside_a_loop(self, written_label, || {
-            self.translate_loop_block(body)
-        });
-        drop(_bindings);
-
-        let subject = self.fresh_temp();
-        // The binding scope closed above, so the borrowed-ness of the value
-        // this turn takes apart is said again here.
-        let (test, bind) =
-            self.matching(ty.as_ref(), || self.pattern_test(&subject, &let_expr.pat));
-        let turn = self.wrap_bindings(&owned, translated);
-        let leaving = self.abandoned_scrutinee(&let_expr.expr, &let_expr.pat, &subject);
-        let read = ownership::hoisted(&format!("const {} = {};\n", subject, scrutinee), &lifted);
-        format!(
-            "{}for (;;) {{\n{}  if (!({})) {{\n{}    break;\n  }}\n{}{}}}",
-            label,
-            indent(&read),
-            test,
-            indent(&indent(&leaving)),
-            indent(&bind),
-            indent(&turn)
-        )
-    }
-
-    /// What the turn owes for a scrutinee whose pattern did not match.
-    ///
-    /// Rust drops the value the turn read when no pattern took it apart, so the
-    /// path that leaves the loop releases it. The path that *did* match is a
-    /// different question: where the pattern took an owned payload out, that
-    /// payload belongs to the binding from there and the enum it came out of
-    /// has to be marked moved — which only `intoMatch` does, and an arrow
-    /// function is not something a `break` can leave. That one is reported.
-    fn abandoned_scrutinee(&self, expr: &syn::Expr, pat: &syn::Pat, subject: &str) -> String {
-        // A nullable scrutinee is its own payload: `Option<T>` is `T | null`
-        // here, so `Some(v)` binds the very value the turn read and the turn
-        // that did not match read a `null`, which owns nothing. There is no
-        // wrapper left over on either path.
-        if self
-            .quietly(|| self.resolve_expr_type(expr))
-            .is_ok_and(|ty| self.is_nullable(&ty))
-        {
-            return String::new();
-        }
-        let Some(release) = self.release_of(expr, subject) else {
-            return String::new();
-        };
-        if self.pattern_takes_a_payload(expr, pat) {
-            self.fallback(
-                syn::spanned::Spanned::span(expr),
-                "this `while let` takes an owned payload out of the value it read, and the \
-                 value it came out of is not marked moved, so nothing releases the rest of it",
-            );
-        }
-        format!("{}\n", release)
-    }
-
-    /// `*place`, written as the place an assignment stores into.
-    ///
-    /// A `*` in a value position may reach through nothing at all — `*x` on a
-    /// `&T` is the `T`, and emission erases the reference — so a deref the
-    /// engine could not resolve is written as the value itself. An assignment
-    /// target cannot be: `*guard = v` and `*guard += 1` store *through* the
-    /// wrapper whatever the engine could say about it, and dropping the
-    /// accessor there emitted `counter.lock() += 1`, which names no place at
-    /// all. So the target keeps `.value` as its default, and says that it
-    /// assumed it.
-    /// The same place, read ONCE.
-    ///
-    /// `*counts.entry(k).or_insert(0) += 1` is one place in Rust and two
-    /// mentions here — `p = f(p, 1)` — so a place with a side effect performed
-    /// it twice: the entry was created twice and the key cloned twice, and the
-    /// second clone leaked. The receiver is named first where it is not already
-    /// a place, and the accessor hangs off the name.
     /// A `&mut <place>` handed to a parameter the port holds in a CELL, where
     /// the place is not a local.
     ///
@@ -1283,6 +1194,13 @@ impl<'a> BodyTranslator<'a> {
         ))
     }
 
+    /// The same place, read ONCE.
+    ///
+    /// `*counts.entry(k).or_insert(0) += 1` is one place in Rust and two
+    /// mentions here — `p = f(p, 1)` — so a place with a side effect performed
+    /// it twice: the entry was created twice and the key cloned twice, and the
+    /// second clone leaked. The receiver is named first where it is not already
+    /// a place, and the accessor hangs off the name.
     pub(crate) fn deref_place_read_once(&self, unary: &syn::ExprUnary) -> String {
         if crate::body::is_place(&unary.expr) || self.names_a_cell(&unary.expr) {
             return self.deref_place(unary);
@@ -1304,6 +1222,16 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
+    /// `*place`, written as the place an assignment stores into.
+    ///
+    /// A `*` in a value position may reach through nothing at all — `*x` on a
+    /// `&T` is the `T`, and emission erases the reference — so a deref the
+    /// engine could not resolve is written as the value itself. An assignment
+    /// target cannot be: `*guard = v` and `*guard += 1` store *through* the
+    /// wrapper whatever the engine could say about it, and dropping the
+    /// accessor there emitted `counter.lock() += 1`, which names no place at
+    /// all. So the target keeps `.value` as its default, and says that it
+    /// assumed it.
     pub(crate) fn deref_place(&self, unary: &syn::ExprUnary) -> String {
         // C1: a name the body holds in a cell is ALREADY read through it —
         // `path_expr` writes `found.value` — so `*found` is that place and not
@@ -1356,6 +1284,7 @@ mod scopes;
 
 /// The type of the value a pattern is pointed at, and the scope it opens.
 mod subject;
+mod while_let;
 
 /// A call the engine could not resolve, and the free functions an impl with no
 /// class of its own became.
@@ -1385,6 +1314,7 @@ mod const_patterns;
 
 pub(crate) mod pat_shape;
 mod patterns;
+pub(crate) mod unreadable_alternatives;
 #[cfg(test)]
 mod patterns_tests;
 /// What a module-level `const` and a `static` are, and what naming one means.

@@ -10,7 +10,6 @@
 //! for comes back carrying the jump instead, and the statement below performs
 //! it — which is the sentinel protocol in `control_flow::sentinel`.
 
-use crate::match_expr;
 
 use super::{iife, indent, references_var, BodyTranslator};
 use crate::control_flow;
@@ -238,7 +237,10 @@ impl BodyTranslator<'_> {
                     return self.value_through_a_jump(expr);
                 }
                 let written = self.expr(expr);
-                if !match_expr::is_statements(&written) {
+                // Asked of the lowering that just wrote it, not of the text:
+                // the runtime's keyed `.match({..})` IS an expression and
+                // every other strategy is an if-chain (K2).
+                if !crate::control_flow::form::writes_statements(expr, self) {
                     return written;
                 }
             }

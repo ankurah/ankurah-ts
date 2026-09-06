@@ -166,30 +166,26 @@ export function tally(cause: Cause): number {
 }
 
 export function letInit(cause: Cause): number {
-  const picked = (() => {
-    return cause.match({
-      Denied: (v) => {
-        const inner = v._0;
-        return inner.width;
-      },
-      Missing: () => 2,
-      Other: () => 2,
-    });
-  })();
+  const picked = cause.match({
+    Denied: (v) => {
+      const inner = v._0;
+      return inner.width;
+    },
+    Missing: () => 2,
+    Other: () => 2,
+  });
   return checkedAdd(picked, 1, 'i32');
 }
 
 export function asArgument(cause: Cause): number {
-  return countTwice((() => {
-    return cause.match({
-      Denied: (v) => {
-        const inner = v._0;
-        return inner.width;
-      },
-      Missing: () => 3,
-      Other: () => 3,
-    });
-  })());
+  return countTwice(cause.match({
+    Denied: (v) => {
+      const inner = v._0;
+      return inner.width;
+    },
+    Missing: () => 3,
+    Other: () => 3,
+  }));
 }
 
 function countTwice(n: number): number {
@@ -280,7 +276,7 @@ export function unwind(cause: Cause): number {
     Denied: (v) => {
       const inner = v._0;
       try {
-        throw new Error(`width ${inner.width} is not allowed`)
+        throw new Error(`width ${inner.width} is not allowed`);
       } finally {
         inner.drop();
       }

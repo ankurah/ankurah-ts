@@ -4,6 +4,8 @@
 // u32 enum variants, no varint). This is the authoritative TypeScript bincode codec for
 // ankurah-ts, following patterns from domcorder/proto-ts but adapted for LE byte order.
 
+import { decodeUtf8 } from '@ankurah/base';
+
 // ─── BincodeWriter ──────────────────────────────────────────────────────────
 
 const enc = new TextEncoder();
@@ -177,12 +179,11 @@ export class BincodeWriter {
 
 // ─── BincodeReader ──────────────────────────────────────────────────────────
 
-// A Rust `String` is UTF-8 by construction, so a byte run that is not valid
-// UTF-8 could not have come from one: `serde`'s own decoder errors there. A
-// non-fatal `TextDecoder` answers U+FFFD instead, which is a different string
-// that then flows on as though it had been read — a silent corruption where
-// Rust reports. Fatal, and the exception is turned into this codec's own error.
-const dec = new TextDecoder('utf-8', { fatal: true });
+// Text is decoded by `decodeUtf8`, the one fatal decode in the port. What
+// "fatal" has to mean, case by case, is `packages/base/__tests__/utf8.test.ts`;
+// why it has to mean that is port/ownership.md, "Text crossing into the port is
+// UTF-8". This reader's own job is to turn the refusal into its own error, with
+// the offset the bad bytes were read from.
 
 export class BincodeReader {
   private buf: Uint8Array;
@@ -303,11 +304,11 @@ export class BincodeReader {
     this.checkAvailable(len);
     const bytes = this.buf.subarray(this.pos, this.pos + len);
     this.pos += len;
-    try {
-      return dec.decode(bytes);
-    } catch {
+    const text = decodeUtf8(bytes);
+    if (text === null) {
       throw new Error(`BincodeReader: ${len} bytes at offset ${this.pos - len} are not valid UTF-8`);
     }
+    return text;
   }
 
   /** Read exactly n raw bytes (no length prefix). For fixed-size arrays. */

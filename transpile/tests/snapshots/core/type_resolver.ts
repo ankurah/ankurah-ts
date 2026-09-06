@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/type_resolver.rs
 import { Struct, dropOwned, dropUnbound } from '@ankurah/base';
-import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
+import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { Comparison } from './lineage';
 import { Json } from './property/value/json';
 import { Value_castTo } from './value/cast';

@@ -1,10 +1,9 @@
 // MIRRORS: ankurah/core/src/error.rs
-import { Struct, Enum, AnyhowError, anyhow, checkedAdd, HashSet, JoinError } from '@ankurah/base';
+import { Struct, Enum, AnyhowError, checkedAdd, HashSet, JoinError } from '@ankurah/base';
 import { CollectionId, DecodeError, EntityId, EventId, NodeResponseBody } from '@ankurah/proto';
 import { SendError } from './connector';
 import { AccessDenied } from './policy';
 import { PropertyError } from './property/traits';
-import { Subscription } from './reactor/subscription_state';
 import { Error } from './selection/filter';
 import { ParseError } from '@ankurah/ankql';
 

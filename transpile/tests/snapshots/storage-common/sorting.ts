@@ -73,7 +73,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
             }
           },
           Pending: () => {
-            return { $jump: 'return', $value: Poll.Pending }
+            return { $jump: 'return', $value: Poll.Pending };
           },
         });
         if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;

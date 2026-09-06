@@ -1002,12 +1002,46 @@ addressed by the step that found it.
   a per-file alias map threaded through `map_ty`. Until then the site says so.
   Ten corpus sites: `State` three times in core, `IVec` twice, `ListenerGuard`
   twice in signals.
-- **An import can name a type the emitted text never writes.** The
-  `@ankurah/base` import list reads the emitted TEXT, so it carries nothing
-  unused; the intra-crate list reads the TYPE SCAN over signatures and bodies,
-  which sees a type a body mentioned before that body was dropped. 34 such
-  imports across the emission. They load — the name exists where it is imported
-  from — so this is tidiness, not correctness.
+- **An import list is decided by the names the emission WRITES.** (Rewritten
+  2026-09-06, slice 4 item 1. The bullet this replaces said an import may name
+  a type the emitted text never writes — 34 of them — and called it tidiness.
+  It was not: the same scan also wrote imports for names it read INSIDE STRING
+  LITERALS.) Every list — `@ankurah/base`, the cross-crate one, the intra-crate
+  one and a test file's — is built from the identifiers the emitted text writes
+  as names, lexed by `codegen/written.rs` so that a string literal, a template
+  literal's text and a comment contribute nothing and a name after a `.` is the
+  member read it is. Before, the lists split rendered text on non-word
+  characters: the `collect` refusal names the iterator types it could not build,
+  so `storage-indexeddb/collection.ts` imported `Iter`, `SortedStream` and
+  `TopKStream` from `@ankurah/core`, which exports none of the three, and the
+  module did not load. A `use` hoisted out of a body (§3.4 of slice 3) imported
+  its name whether the lowering reached it or not. Unused imports across the
+  emission: 34 → 10. `transpile/tests/import_gate.rs` is what says the answer
+  resolves — it lays the emitted crates out as packages, with each package's
+  declared hand-written half under the emitted output, and runs `bun build`
+  with NO `--external` over every emitted module; `tests/import_gate.toml`
+  ledgers what is left, matched exactly in both directions.
+- **A pattern that takes a DROPPABLE name out of a payload member is refused,
+  and the same rule now answers for every element.** (Added 2026-09-06, slice 4
+  item 4: K4, K5, K12, K15, K16.) `Outer::W(Inner::X(t))` binds `t` out of the
+  `Inner` the `W` variant holds, and the port cannot release an object minus a
+  field — so nothing releases the `Inner`. The `Result` side had always refused
+  that shape; the plain enum arm merely left the member out of its `dropUnbound`
+  list and carried on, so what the pattern did not take LEAKED with no word
+  said. One rule, `match_expr/taking.rs`, now answers per element and through
+  the wrappers a pattern may be written behind (`|`, parentheses, `&`): a name
+  for the whole element owns it, a pattern that takes nothing or reaches inside
+  without taking anything droppable leaves the element for the arm to release,
+  and one that takes a droppable name (or binds a name the engine cannot type)
+  is an R12 hole with the payload released before it throws. Where the arm is a
+  chain LINK the refusal stands in the branch, so a value the pattern does not
+  match still reaches the arms below it. `Some(x)` is the exception the rule
+  names: `Option<T>` is `T | null`, so `x` IS the member and taking it takes all
+  of it. A tuple's ELEMENTS are answered one at a time too — for what the arm
+  owns, and for whether each is borrowed, which the tuple itself cannot say
+  (`(&*left, &*right)` is not a reference even though both of its elements are).
+  No corpus site takes the refusal today; `goldens/payload_taking` is the five
+  shapes with a driver.
 - **A range is the sequence of its values, and an unbounded one is a hole.**
   The port has no `Range` type. `a..b` is materialised, which is what makes
   `rev`, `map`, `filter` and `contains` work on it, because those are all array

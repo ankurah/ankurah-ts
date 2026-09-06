@@ -158,3 +158,36 @@ fn a_closure_returning_through_its_body_takes_the_tail_type() {
     let sig = cx.closure_signature(&closure("|x| true"), Some(&want));
     assert_eq!(sig.ret, Some(Ty::Prim(Prim::Bool)));
 }
+
+/// A closure parameter written as a TUPLE PATTERN binds one name per element,
+/// each with that element's type.
+///
+/// `|(backend, ops)|` over a map's `iter()` takes one `(&K, &V)`. The signature
+/// and the scope were the same list, so the parameter bound one name spelled
+/// `[backend, ops]` — which no body ever writes — the closure was reported as
+/// "typed by nothing", and `ops.iter()` inside it resolved to nothing. Six
+/// sites in proto's `Display` impls, and thirty more across core and
+/// storage-common.
+#[test]
+fn a_tuple_closure_parameter_types_each_name_it_binds() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "use std::collections::BTreeMap;\n\
+         pub struct Op { pub diff: Vec<u8> }\n\
+         pub fn sizes(m: &BTreeMap<String, Vec<Op>>) -> Vec<String> {\n\
+           m.iter().map(|(backend, ops)| format!(\"{} => {}b\", backend, ops.len())).collect()\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "sizes");
+    assert!(ts.contains("([backend, ops])"), "{ts}");
+    assert!(
+        f.messages().iter().all(|m| !m.contains("typed by nothing")),
+        "the parameter is typed now: {:?}",
+        f.messages()
+    );
+    assert!(
+        f.messages().iter().all(|m| !m.contains("`ops` does not name a value")),
+        "and so is every name inside it: {:?}",
+        f.messages()
+    );
+}

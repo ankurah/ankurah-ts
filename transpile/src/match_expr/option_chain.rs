@@ -98,7 +98,7 @@ pub fn translate(
         // enclosing statement, `Some(value) => Ok(T::into_value(value)?)` read
         // `value` above the `const value = self;` that declares it — a TDZ
         // `ReferenceError` on the first call, at `core/property/index.ts:17`.
-        let (written, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
+        let ((written, _leaves), lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
         let body = format!(
             "{}{}",
             bind,

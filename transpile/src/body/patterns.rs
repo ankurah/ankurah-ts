@@ -17,6 +17,7 @@
 //! Rust's `_` takes NO name, and TypeScript's `_` is a variable called `_`.
 
 use crate::name_map;
+use super::unreadable_alternatives::unreadable_alternatives;
 
 use super::{translate_lit, BodyTranslator};
 
@@ -291,11 +292,15 @@ impl BodyTranslator<'_> {
             }
             // `(a, b)` tests each element against its own pattern and binds
             // through all of them; the port writes a Rust tuple as an array.
+            // K16: each element carries its own borrowedness, or a `(&a, &b)`
+            // of Results had both sides `unwrap()`ed.
             syn::Pat::Tuple(tuple) => {
                 let mut tests = Vec::new();
                 let mut binds = String::new();
                 for (i, element) in tuple.elems.iter().enumerate() {
-                    let (test, bind) = self.pattern_test(&format!("{}[{}]", subject, i), element);
+                    let (test, bind) = self.matching_element(i, || {
+                        self.pattern_test(&format!("{}[{}]", subject, i), element)
+                    });
                     if test != "true" {
                         tests.push(format!("({})", test));
                     }
@@ -550,50 +555,4 @@ fn is_identifier(text: &str) -> bool {
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-}
-
-
-/// An or-pattern whose alternatives bind their names in a form the translator
-/// cannot read back, as the R12 hole it is.
-///
-/// PREMISE CHANGED 2026-09-05 (fixpass4 item 6): what stood here was `false` —
-/// an arm written as one that never matches. That is a wrong answer twice over.
-/// The branch is SKIPPED, so the program carries on as though the pattern had
-/// not matched (core's `watcherset.ts` never registered an index watcher), and
-/// the skipped branch still carried its own releases, naming bindings nothing
-/// declared: `if (false) { .. } finally { literal.drop() }` is a
-/// `ReferenceError` waiting for the day the test stops being `false`.
-///
-/// PREMISE CHANGED 2026-09-05 (fixpass6 item 4, D2): the hole used to stand
-/// where the TEST goes, so the branch refused for every value the match was
-/// given — including the ones whose pattern does not match, which Rust answers
-/// with an empty `else`. R12's own wording is that the hole throws where the
-/// BRANCH would have run. The test is the honest disjunction now, and this
-/// writes the branch: each name the body reads is declared from a hole, so the
-/// first statement of the branch throws and the emitted text is still one a
-/// JavaScript engine loads and TypeScript types (`unsupported` answers
-/// `never`).
-fn unreadable_alternatives(t: &BodyTranslator, or: &syn::PatOr) -> String {
-    let what = "the alternatives of this pattern bind their names in a form the translator \
-                cannot read back — each alternative has to bind the same names, one `const` \
-                apiece — so this branch is a hole";
-    t.fallback(syn::spanned::Spanned::span(or), what);
-    let hole = crate::body::hole_text(what);
-    let mut declared: Vec<String> = Vec::new();
-    let mut bind = String::new();
-    for case in &or.cases {
-        for name in crate::body::pattern_names(case) {
-            if declared.contains(&name) {
-                continue;
-            }
-            // `as any` because `unsupported` answers `never`, and a `never`
-            // name refuses every member the branch's body reads off it —
-            // `a.n`, `a.drop()`. The branch throws at its first statement, so
-            // the type is never observed; what it has to do is let the rest of
-            // the branch through the type checker.
-            bind.push_str(&format!("const {} = {} as any;\n", name, hole));
-            declared.push(name);
-        }
-    }
-    bind
 }

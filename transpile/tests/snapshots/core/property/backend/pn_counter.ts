@@ -51,7 +51,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   fork(): PropertyBackend {
     const values = this.values.value.read();
     try {
-      const snapshotted = HashMap.from([...values.value].map(([key, value]) => [key.clone(), value.snapshot()]));
+      const snapshotted = HashMap.from([...values.value].map(([key, value]) => [key, value.snapshot()]));
       return new PNBackend(Arc.new(new RwLock(snapshotted)));
     } finally {
       values.drop();

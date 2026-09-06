@@ -375,36 +375,34 @@ export async function compareUnstoredEvent<G, E, C>(getter: G, subject: E, other
   let _moved1 = false;
   const result = _r0.unwrap();
   try {
-    return Result.Ok((() => {
-      return result.match({
-        Equal: () => new Ordering('Descends', {}),
-        Descends: () => {
-          _moved1 = true;
-          const other = result;
-          return other;
-        },
-        NotDescends: () => {
-          _moved1 = true;
-          const other = result;
-          return other;
-        },
-        Incomparable: () => {
-          _moved1 = true;
-          const other = result;
-          return other;
-        },
-        PartiallyDescends: () => {
-          _moved1 = true;
-          const other = result;
-          return other;
-        },
-        BudgetExceeded: () => {
-          _moved1 = true;
-          const other = result;
-          return other;
-        },
-      });
-    })());
+    return Result.Ok(result.match({
+      Equal: () => new Ordering('Descends', {}),
+      Descends: () => {
+        _moved1 = true;
+        const other = result;
+        return other;
+      },
+      NotDescends: () => {
+        _moved1 = true;
+        const other = result;
+        return other;
+      },
+      Incomparable: () => {
+        _moved1 = true;
+        const other = result;
+        return other;
+      },
+      PartiallyDescends: () => {
+        _moved1 = true;
+        const other = result;
+        return other;
+      },
+      BudgetExceeded: () => {
+        _moved1 = true;
+        const other = result;
+        return other;
+      },
+    }));
   } finally {
     if (!_moved1) result.drop();
   }

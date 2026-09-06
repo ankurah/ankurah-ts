@@ -29,6 +29,12 @@ pub(in crate::match_expr) struct Guard {
     /// What the link owes if the test THROWS: the pattern has already handed
     /// the payload over, the arm's own `finally` has not been entered, and the
     /// arm below never runs. Empty where the link owns nothing.
+    ///
+    /// It is ALWAYS empty for the value-match caller, and that is not an
+    /// oversight: a value match writes the if-chain over a subject it never
+    /// took apart, so a guard that throws there leaves nothing the block
+    /// around it does not already release. The two consuming callers — a
+    /// variant's links and a `Result` side's arms — are the ones that fill it.
     pub release: String,
 }
 

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/hole_releases_payload/src/input.rs
-import { Struct, Enum, Result, dropUnbound, unsupported, checkedAdd, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, Result, dropUnbound, unsupported, HashMap, keyHash } from '@ankurah/base';
 
 export class Token extends Struct {
   readonly n: number;
@@ -72,39 +72,18 @@ export function pick(w: Wrap): number {
     Held: (v) => {
       if ((v._0.is('A')) || (v._0.is('B'))) {
         dropUnbound(v, []);
-        const a = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole') as any;
-        const b = unsupported('the alternatives of this pattern bind their names in a form the translator cannot read back — each alternative has to bind the same names, one `const` apiece — so this branch is a hole') as any;
-        try {
-          let _moved0 = false;
-          let _moved1 = false;
-          try {
-            try {
-              const n = checkedAdd(a.n, b.n, 'u32');
-              _moved0 = true;
-              a.drop();
-              _moved1 = true;
-              b.drop();
-              return n;
-            } finally {
-              if (!_moved1) b.drop();
-            }
-          } finally {
-            if (!_moved0) a.drop();
-          }
-        } finally {
-          dropUnbound(v, ['_0']);
-        }
+        unsupported('this arm tests inside `_0` and takes a DROPPABLE name out of it, and the port cannot both take a name out of a payload member and release what is left of it');
       } else {
         const rest = v._1;
         try {
-          let _moved2 = false;
+          let _moved0 = false;
           try {
             const n = rest.n;
-            _moved2 = true;
+            _moved0 = true;
             rest.drop();
             return n;
           } finally {
-            if (!_moved2) rest.drop();
+            if (!_moved0) rest.drop();
           }
         } finally {
           dropUnbound(v, ['_1']);

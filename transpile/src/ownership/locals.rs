@@ -318,4 +318,46 @@ impl<'a> BodyTranslator<'a> {
         };
         ownership::drops_of(&tc.borrow().probe(), &ty).is_droppable()
     }
+
+    /// What a statement whose lowering REFUSED owes the locals it was going to
+    /// hand away.
+    ///
+    /// K3: a statement that refuses hands nothing away. The move analysis has
+    /// already decided what each local's disposition is, and it decided from
+    /// the source: a local moved into a `collect` the engine has no
+    /// construction for is `Moved`, so the block releases nothing and the hole
+    /// throws with the value still sitting there.
+    /// `core/property/backend/lww.ts`'s `from_state_buffer` is that case — the
+    /// map its decoder had just built was moved into a refused `collect`, and
+    /// nothing released it on any path. A `Flagged` local is left alone: the
+    /// block's own `finally` releases it once the flag is not written (which
+    /// is the other half of this rule, in `blocks.rs`).
+    pub(crate) fn released_by_a_refusal(
+        &self,
+        stmt: &syn::Stmt,
+        dispositions: &ownership::Dispositions,
+        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
+    ) -> String {
+        let scan = ownership::Scan::new(self);
+        let mut out = String::new();
+        let mut written: Vec<String> = Vec::new();
+        for site in scan.shallow(stmt) {
+            if written.contains(&site.name) || self.own.flags.borrow().contains_key(&site.name) {
+                continue;
+            }
+            let ordinal = ordinals.borrow().get(&site.name).copied().unwrap_or(0);
+            if ordinal == 0 || dispositions.of(&site.name, ordinal) != ownership::Disposition::Moved
+            {
+                continue;
+            }
+            let Some(tc) = &self.types else { continue };
+            let Some(ty) = tc.borrow().lookup(&site.name) else { continue };
+            let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
+            let name = self.emitted_name(&site.name).unwrap_or_else(|| site.name.clone());
+            let Some(release) = drops.release(&name) else { continue };
+            written.push(site.name.clone());
+            out.push_str(&format!("{}\n", release));
+        }
+        out
+    }
 }

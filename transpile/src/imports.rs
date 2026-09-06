@@ -119,15 +119,24 @@ pub fn collect_type_refs(ty: &str, refs: &mut HashSet<String>) {
     }
 }
 
-/// Every name in a body that is one of a known set.
+/// The type-shaped names a body WRITES.
 ///
-/// A module-level function standing for an impl method is named in camelCase,
-/// which the type scan above deliberately skips, so a call to one is found by
-/// matching whole words against the functions the run emitted.
-pub fn collect_named_refs(text: &str, known: &HashSet<String>, refs: &mut HashSet<String>) {
-    for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        if known.contains(word) {
-            refs.insert(word.to_string());
+/// The same rule as `collect_type_refs`, over the identifiers the emission
+/// writes rather than every word of it: a type named inside a string literal
+/// — the `collect` refusal names three iterator types it could not build — is
+/// not a type this file refers to (K1).
+pub fn collect_written_refs(text: &str, refs: &mut HashSet<String>) {
+    for word in crate::codegen::written_names_of(text) {
+        collect_type_refs(&word, refs);
+    }
+}
+
+/// The names of a known set a body WRITES — a module-level function standing
+/// for an impl method is camelCase, which the type scan skips on purpose.
+pub fn collect_written_named_refs(text: &str, known: &HashSet<String>, refs: &mut HashSet<String>) {
+    for word in crate::codegen::written_names_of(text) {
+        if known.contains(&word) {
+            refs.insert(word);
         }
     }
 }
@@ -154,7 +163,7 @@ pub fn is_primitive_or_base_type(ty: &str) -> bool {
 pub fn names_this_module_declares(
     type_to_file: &std::collections::HashMap<String, String>,
     current_module: &str,
-    bodies: &str,
+    writes: &std::collections::BTreeSet<String>,
     declared_here: &HashSet<String>,
     available_types: &HashSet<String>,
     into: &mut Vec<String>,
@@ -167,7 +176,7 @@ pub fn names_this_module_declares(
         {
             continue;
         }
-        if crate::codegen::names_word(bodies, name) {
+        if writes.contains(name) {
             into.push(name.clone());
         }
     }

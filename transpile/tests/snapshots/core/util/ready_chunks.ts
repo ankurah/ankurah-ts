@@ -32,11 +32,11 @@ export class ReadyChunks<F extends Future> extends Struct {
           const item = v._0;
           return batch.push(item);
         } else {
-          return { $jump: 'return', $value: new Poll('Ready', { _0: null }) }
+          return { $jump: 'return', $value: new Poll('Ready', { _0: null }) };
         }
       },
       Pending: () => {
-        return { $jump: 'return', $value: Poll.Pending }
+        return { $jump: 'return', $value: Poll.Pending };
       },
     });
     if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;

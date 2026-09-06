@@ -44,7 +44,7 @@ pub fn takes(
     }
     let moved = patterns
         .iter()
-        .any(|pat| binds_owned_payload(probe, pat, &payload_of));
+        .any(|pat| binds_owned_payload(probe, pat, subject, &payload_of));
     if moved {
         Takes::Payload
     } else {
@@ -56,6 +56,7 @@ pub fn takes(
 fn binds_owned_payload(
     probe: &Probe,
     pat: &syn::Pat,
+    subject: &Ty,
     payload_of: &impl Fn(&syn::Path) -> Vec<Ty>,
 ) -> bool {
     match pat {
@@ -76,14 +77,48 @@ fn binds_owned_payload(
                 .zip(fields)
                 .any(|(f, ty)| binds_by_value(&f.pat) && drops_of(probe, &ty).is_droppable())
         }
+        // K15: `match (a, b) { (Some(x), _) => .. }` takes `x` out of the
+        // tuple's FIRST element, and a tuple has no path for `payload_of` to
+        // answer for — so this used to say the match took nothing, the value
+        // lowering claimed no binding, and a binding the arm then moved was
+        // released a second time by the tuple's own release.
+        syn::Pat::Tuple(tuple) => match subject {
+            Ty::Tuple(elements) => tuple
+                .elems
+                .iter()
+                .zip(elements)
+                .any(|(sub, ty)| element_binds_owned(probe, sub, ty, payload_of)),
+            // A tuple pattern against something the engine could not read as a
+            // tuple: any by-value binding in it may own something.
+            _ => tuple.elems.iter().any(binds_by_value),
+        },
         syn::Pat::Or(or) => or
             .cases
             .iter()
-            .any(|case| binds_owned_payload(probe, case, payload_of)),
-        syn::Pat::Paren(p) => binds_owned_payload(probe, &p.pat, payload_of),
+            .any(|case| binds_owned_payload(probe, case, subject, payload_of)),
+        syn::Pat::Paren(p) => binds_owned_payload(probe, &p.pat, subject, payload_of),
         // `x => ..` binds the whole subject, not a part of it: the arm owns it
         // from there, which the binding's own scope handles.
         _ => false,
+    }
+}
+
+/// One tuple ELEMENT: does its pattern take something the arm has to release
+/// out of the value that element holds?
+///
+/// A name for the whole element owns it when the element is droppable; a
+/// pattern that reaches inside asks the same question of what it finds there.
+fn element_binds_owned(
+    probe: &Probe,
+    pat: &syn::Pat,
+    ty: &Ty,
+    payload_of: &impl Fn(&syn::Path) -> Vec<Ty>,
+) -> bool {
+    match pat {
+        syn::Pat::TupleStruct(_) | syn::Pat::Struct(_) | syn::Pat::Tuple(_) | syn::Pat::Or(_) => {
+            binds_owned_payload(probe, pat, ty, payload_of)
+        }
+        _ => binds_by_value(pat) && drops_of(probe, ty).is_droppable(),
     }
 }
 

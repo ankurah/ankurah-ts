@@ -1071,6 +1071,16 @@ with U+FFFD rather than refusing it, and `JSON.parse` and `JSON.stringify` both
 pass a lone surrogate straight through. So each of those checks is the port's to
 make, and `packages/base/src/std/utf8.ts` is where the two of them live.
 
+`decodeUtf8(bytes)` is the ONE fatal decode, and every site that reads bytes
+into a string goes through it: `serde_json.fromSlice`, and the bincode reader in
+each package's own `codec.ts`. It answers `null` where the bytes are not UTF-8
+and each caller says what that means in its own terms — `serde_json.fromSlice`
+an `Err(invalid utf-8 sequence)`, the bincode reader an error naming the offset
+the bad bytes were read from. What "fatal" has to mean, case by case, is
+`packages/base/__tests__/utf8.test.ts`; a reader that built its own
+`TextDecoder` carried a copy of the reason with it, and one written without the
+`fatal` flag answers U+FFFD and says nothing.
+
 `serde_json.fromSlice(bytes)` is `serde_json::from_slice`: the bytes are decoded
 fatally and an invalid sequence answers `Err`, where the host's decoder answered
 a document with a replacement character in it. It owns nothing the caller does

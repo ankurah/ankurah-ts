@@ -64,9 +64,7 @@ pub(super) fn release_before_a_hole_in_the_bindings(
 /// else holds them any more.
 pub(super) fn leaves_payload_unbound(pat: &syn::Pat, t: &BodyTranslator) -> bool {
     let unowned = |p: &syn::Pat| {
-        matches!(p, syn::Pat::Rest(_))
-            || BodyTranslator::binds_nothing(p)
-            || member_is_left_whole(p, t)
+        matches!(p, syn::Pat::Rest(_)) || super::taking::element_is_left_whole(p, t)
     };
     match pat {
         syn::Pat::TupleStruct(ts) => ts.elems.iter().any(unowned),
@@ -76,43 +74,6 @@ pub(super) fn leaves_payload_unbound(pat: &syn::Pat, t: &BodyTranslator) -> bool
         _ => false,
     }
 }
-
-/// Does this member's pattern reach INSIDE the member and leave the member
-/// itself with no owner?
-///
-/// `Expr::Literal(Lit::Count(n))` takes `n` out of the `Lit` the `Literal`
-/// variant holds. `n` is a `u32`, so nothing droppable came out and the `Lit`
-/// is whole — and nobody released it, because the member is not bound to a name
-/// and `leaves_payload_unbound` looked only for `_` and `..`. That is the
-/// nested-payload wrapper leak `goldens/contested_variant` recorded.
-///
-/// Where the inner pattern DOES take something droppable out, the member is
-/// partially moved and the port cannot release an object minus one field: that
-/// one is refused where the arm is written, and answering `true` here would
-/// release the part the arm already owns a second time.
-/// Asked INSIDE the pattern's own scope, where the names it binds are typed.
-pub(super) fn member_is_left_whole(p: &syn::Pat, t: &BodyTranslator) -> bool {
-    // A name for the whole member is an owner for it.
-    if matches!(p, syn::Pat::Ident(ident) if ident.subpat.is_none()) {
-        return false;
-    }
-    // Only a pattern that goes INSIDE the member: a literal or a path is a
-    // test, which `binds_nothing` has already answered for.
-    if !matches!(p, syn::Pat::TupleStruct(_) | syn::Pat::Struct(_)) {
-        return false;
-    }
-    let Some(types) = t.types.as_ref() else { return false };
-    let takes_something = crate::body::pattern_names(p).iter().any(|name| {
-        let borrowed = types.borrow();
-        match borrowed.lookup(name) {
-            // A name the engine cannot type is one it cannot answer for.
-            None => true,
-            Some(ty) => crate::ownership::drops_of(&borrowed.probe(), &ty).is_droppable(),
-        }
-    });
-    !takes_something
-}
-
 
 /// What a link owes if its GUARD throws.
 ///

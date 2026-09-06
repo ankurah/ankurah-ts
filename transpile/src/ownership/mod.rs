@@ -38,6 +38,8 @@ mod callable_tests;
 mod guard_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod refusal_tests;
 
 pub use glue::{drops_of, fresh_at_each_use, Drops};
 pub use lowering::Lowering;
@@ -130,6 +132,15 @@ pub fn wrap(body: &str, owned: &Owned) -> String {
     let release = owned.release();
     if release.is_empty() {
         return body.to_string();
+    }
+    // K14: a `try` around NOTHING protects nothing. A method whose whole body
+    // is `drop(x)` — `MockLiveQuery::set_last_error` in core's
+    // `client_relay.rs`, and a `_` binding in signals' `broadcast.rs` — came
+    // out as `try { } finally { x.drop(); }`, which is the release and four
+    // lines of ceremony saying it cannot be skipped when there is nothing it
+    // could be skipped by.
+    if body.trim().is_empty() {
+        return release;
     }
     format!(
         "try {{\n{}}} finally {{\n{}}}\n",

@@ -609,11 +609,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                       _arm21: {
                         if (_v5.is('ByPolicy')) {
                           const _v6 = _v5;
-                          try {
-
-                          } finally {
-                            _v6.drop();
-                          }
+                          _v6.drop();
                           break _arm21;
                         }
                         {
@@ -675,11 +671,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                         _arm29: {
                           if (_v9.is('ByPolicy')) {
                             const _v10 = _v9;
-                            try {
-
-                            } finally {
-                              _v10.drop();
-                            }
+                            _v10.drop();
                             break _arm29;
                           }
                           {

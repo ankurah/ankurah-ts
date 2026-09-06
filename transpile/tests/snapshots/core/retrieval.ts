@@ -304,34 +304,34 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
           },
           CommitComplete: (v) => {
             try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) }
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
             } finally {
               dropUnbound(v, []);
             }
           },
           Fetch: (v) => {
             try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) }
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
             } finally {
               dropUnbound(v, []);
             }
           },
           Get: (v) => {
             try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) }
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
             } finally {
               dropUnbound(v, []);
             }
           },
           QuerySubscribed: (v) => {
             try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) }
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
             } finally {
               dropUnbound(v, []);
             }
           },
           Success: () => {
-            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) }
+            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
           },
         }));
         if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;

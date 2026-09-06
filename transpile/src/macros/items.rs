@@ -201,3 +201,23 @@ mod tests {
         assert_eq!(stringify_macro(&tokens), "'Vec < u8 >'");
     }
 }
+
+/// Does this macro's lowering write a run of STATEMENTS rather than one value?
+///
+/// `assert!(c)` is `if (!(c)) throw new Error(..)` and `bail!(..)` is
+/// `return Result.Err(..)`; putting a `return` in front of either does not
+/// parse. Answered from the macro the source named, so that the position
+/// asking has the lowering's own answer rather than a guess at the first word
+/// of the text it produced.
+pub(crate) fn writes_statements(path: &syn::Path) -> bool {
+    matches!(leaf(path).as_str(), "assert" | "debug_assert" | "bail")
+}
+
+/// Does this macro's lowering never come back — a `throw` on every path?
+pub(crate) fn never_comes_back(path: &syn::Path) -> bool {
+    matches!(leaf(path).as_str(), "panic" | "unreachable" | "todo" | "unimplemented")
+}
+
+fn leaf(path: &syn::Path) -> String {
+    path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
+}

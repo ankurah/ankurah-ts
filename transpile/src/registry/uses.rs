@@ -114,6 +114,17 @@ impl Probe<'_> {
     /// showing up in the diagnostics. Where two candidates compete it does
     /// decide, because there the answer turns on it.
     pub(super) fn trait_in_scope(&self, callee: &Callee) -> bool {
+        // A trait the RECEIVER'S OWN TYPE names is in scope for the methods it
+        // declares, whatever the module imported: `where S: serde::Serializer`
+        // is what makes `serializer.is_human_readable()` a call at all, and a
+        // `dyn Trait` or an `impl Trait` says the same at its own type. Asking
+        // the module's `use` list about one answers a different question — it
+        // reported six calls in proto's four serde impls, and the import it
+        // asked for is one Rust does not need. `Callee::TraitObject` is the
+        // callee `bound_picks` writes and the only one those three produce.
+        if matches!(callee, Callee::TraitObject(..)) {
+            return true;
+        }
         let Some(trait_id) = self.trait_of(callee) else {
             return true;
         };
@@ -223,6 +234,64 @@ mod tests {
         assert!(
             !c.messages().iter().any(|m| m.contains("which is not in scope here")),
             "the anonymous import IS the trait being in scope: {:?}",
+            c.messages()
+        );
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use crate::testing::Fixture;
+
+    /// An ALIASED `use` binds a type under a name it is not declared with, and
+    /// the port writes a type under the name it IS declared with — that is
+    /// what its class is called and what the import list names.
+    ///
+    /// `use crate::value::VT as Outer;` emitted `Outer.of(n)`: a name nothing
+    /// declares, nothing imports, and nothing reported.
+    #[test]
+    fn an_aliased_use_is_written_under_the_declared_name() {
+        let mut c = Fixture::build(&[
+            ("lib.rs", "pub mod value;\nuse crate::value::VT as Outer;\npub fn aliased(n: u32) -> u32 { Outer::of(n).n }"),
+            ("value.rs", "pub struct VT { pub n: u32 }\nimpl VT { pub fn of(n: u32) -> VT { VT { n } } }"),
+        ]);
+        let ts = c.emitted("lib.rs");
+        assert!(ts.contains("VT.of(n)"), "{ts}");
+        assert!(!ts.contains("Outer"), "the alias reached the emitted text:\n{ts}");
+        // The import list follows on its own, because it reads what the
+        // emission writes: a batch run over the same two files opens
+        // `import { VT } from './value';`. (This fixture does not resolve
+        // imports, so it says `// TODO imports: VT` instead.)
+    }
+}
+
+#[cfg(test)]
+mod bound_tests {
+    use crate::testing::Fixture;
+
+    /// A trait the RECEIVER'S OWN TYPE names is in scope for the methods it
+    /// declares, whatever the module imported.
+    ///
+    /// `where S: serde::Serializer` is what makes `serializer.is_human_readable()`
+    /// a call at all. Asking the module's `use` list about it answers a
+    /// different question, and reported six calls in proto's four serde impls,
+    /// one in signals and thirty-one in core — each asking for an import Rust
+    /// does not need.
+    #[test]
+    fn a_trait_named_by_a_bound_is_in_scope_for_its_own_methods() {
+        let mut c = Fixture::build(&[
+            ("lib.rs", "pub mod tell;\npub mod ask;\n"),
+            ("tell.rs", "pub trait Tell { fn tell(&self) -> u32; }"),
+            (
+                "ask.rs",
+                "pub fn ask<T>(t: &T) -> u32 where T: crate::tell::Tell { t.tell() }",
+            ),
+        ]);
+        let ts = c.emitted("ask.rs");
+        assert!(ts.contains("t.tell()"), "{ts}");
+        assert!(
+            c.messages().iter().all(|m| !m.contains("not in scope here")),
+            "the bound IS the declaration: {:?}",
             c.messages()
         );
     }

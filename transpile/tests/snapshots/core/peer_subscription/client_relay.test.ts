@@ -122,10 +122,7 @@ class MockLiveQuery extends Struct implements RemoteQuerySubscriber {
   }
 
   setLastError(_error: RetrievalError): void {
-    try {
-    } finally {
-      _error.drop();
-    }
+    _error.drop();
   }
 
   clone(): MockLiveQuery {

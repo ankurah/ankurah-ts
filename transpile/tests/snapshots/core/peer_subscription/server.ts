@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
 import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, iterFilterMap, HashMap } from '@ankurah/base';
-import { Attested, CollectionId, EntityId, EntityState, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
-import { Subscribe, SubscriptionGuard } from '@ankurah/signals';
+import { Attested, CollectionId, EntityId, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
+import { SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../entity';
 import { SubscriptionError } from '../error';
 import { ContextData, Node } from '../node';

@@ -1,9 +1,9 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
-import { Struct, Result, Arc, dropOwned, valueEquals, tracing, unsupported, checkedAdd, wrappingAdd, iterFirst, range, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, valueEquals, tracing, unsupported, checkedAdd, wrappingAdd, iterFirst, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
-import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, Iter, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
+import { Filterable, MutationError, RetrievalError, StorageCollection, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { Attested, EntityId, EntityState, EventId, State, CollectionId, Event } from '@ankurah/proto';
-import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig, SortedStream, TopKStream } from '@ankurah/storage-common';
+import { OrderByComponents, HasEntityId, Planner, PlannerConfig } from '@ankurah/storage-common';
 import { Database } from './database';
 import { IdbValue } from './idb_value';
 import { planBoundsToIdbRange, scanDirectionToCursorDirection } from './planner_integration';

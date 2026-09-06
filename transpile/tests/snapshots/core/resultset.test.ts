@@ -269,7 +269,7 @@ describe('resultset unit tests', () => {
             [];
           },
           Large: (v) => {
-            throw new Error('16-byte key should use Small variant')
+            throw new Error('16-byte key should use Small variant');
           },
         });
         return exactly17.match({
@@ -277,7 +277,7 @@ describe('resultset unit tests', () => {
             [];
           },
           Small: (v) => {
-            throw new Error('17-byte key should use Large variant')
+            throw new Error('17-byte key should use Large variant');
           },
         });
       } finally {

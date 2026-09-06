@@ -62,6 +62,12 @@ impl BodyTranslator<'_> {
                 .map(|(_, inner)| Self::is_irrefutable(inner))
                 .unwrap_or(true),
             syn::Pat::Wild(_) => true,
+            // K9: `..` covers whatever members the pattern did not name, and
+            // asks nothing of any of them — `Variant(..)` matches every value
+            // of that variant. Read as refutable it went to `pattern_test`,
+            // which has no test to write for it, so `Wide::Two(..)` came out as
+            // a hole that throws before the arm the source wrote can run.
+            syn::Pat::Rest(_) => true,
             syn::Pat::Reference(r) => Self::is_irrefutable(&r.pat),
             syn::Pat::Paren(p) => Self::is_irrefutable(&p.pat),
             syn::Pat::Type(t) => Self::is_irrefutable(&t.pat),

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/data.rs
-import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, jsonAll, jsonMap, dropOwned, OwnershipFatal, UnsupportedShape, HashMap, keyHash } from '@ankurah/base';
 import { EventId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { AttestationSet, Attested } from './auth';

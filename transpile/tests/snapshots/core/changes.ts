@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/core/src/changes.rs
 import { Struct, Enum, Result, dropOwned, derivedClone, iterFilterMap } from '@ankurah/base';
 import { Attested, Event } from '@ankurah/proto';
-import { Peek } from '@ankurah/signals';
 import { Entity } from './entity';
 import { MutationError } from './error';
 import { ChangeNotification } from './reactor';
@@ -93,31 +92,27 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   initial(): R[] {
-    return iterFilterMap([...this.changes], (change) => (() => {
-      return change.match({
-        Initial: (v) => {
-          const item = v.item;
-          return item.clone();
-        },
-        Add: () => null,
-        Update: () => null,
-        Remove: () => null,
-      });
-    })());
+    return iterFilterMap([...this.changes], (change) => change.match({
+      Initial: (v) => {
+        const item = v.item;
+        return item.clone();
+      },
+      Add: () => null,
+      Update: () => null,
+      Remove: () => null,
+    }));
   }
 
   added(): R[] {
-    return iterFilterMap([...this.changes], (change) => (() => {
-      return change.match({
-        Add: (v) => {
-          const item = v.item;
-          return item.clone();
-        },
-        Initial: () => null,
-        Update: () => null,
-        Remove: () => null,
-      });
-    })());
+    return iterFilterMap([...this.changes], (change) => change.match({
+      Add: (v) => {
+        const item = v.item;
+        return item.clone();
+      },
+      Initial: () => null,
+      Update: () => null,
+      Remove: () => null,
+    }));
   }
 
   appeared(): R[] {
@@ -136,17 +131,15 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   removed(): R[] {
-    return iterFilterMap([...this.changes], (change) => (() => {
-      return change.match({
-        Remove: (v) => {
-          const item = v.item;
-          return item.clone();
-        },
-        Initial: () => null,
-        Add: () => null,
-        Update: () => null,
-      });
-    })());
+    return iterFilterMap([...this.changes], (change) => change.match({
+      Remove: (v) => {
+        const item = v.item;
+        return item.clone();
+      },
+      Initial: () => null,
+      Add: () => null,
+      Update: () => null,
+    }));
   }
 
   removes(): R[] {
@@ -154,17 +147,15 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   updated(): R[] {
-    return iterFilterMap([...this.changes], (change) => (() => {
-      return change.match({
-        Update: (v) => {
-          const item = v.item;
-          return item.clone();
-        },
-        Initial: () => null,
-        Add: () => null,
-        Remove: () => null,
-      });
-    })());
+    return iterFilterMap([...this.changes], (change) => change.match({
+      Update: (v) => {
+        const item = v.item;
+        return item.clone();
+      },
+      Initial: () => null,
+      Add: () => null,
+      Remove: () => null,
+    }));
   }
 
   updates(): R[] {

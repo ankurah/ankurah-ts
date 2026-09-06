@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
 import { Struct, Enum, Result, invokeRef, dropOwned, derivedEquals, derivedClone } from '@ankurah/base';
-import { ComparisonOperator, Expr, Predicate, Literal } from '@ankurah/ankql';
+import { Expr, Predicate, Literal } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { Value_castTo } from '../value/cast';
 import { Value, ValueType } from '../value/index';
@@ -26,11 +26,9 @@ export class FilterIterator<I extends Iterator> extends Struct {
       if (_v4.isOk()) {
         const _v5 = _v4.unwrap();
         if (_v5 === true) {
-          const _v6 = _v5;
           return new FilterResult('Pass', { _0: item });
         }
         {
-          const _v7 = _v5;
           return new FilterResult('Skip', { _0: item });
         }
       } else {
@@ -360,7 +358,7 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
                 });
               },
               Between: () => {
-                return { $jump: 'return', $value: Result.Err(new Error('UnsupportedOperator', { _0: 'BETWEEN operator not yet supported' })) }
+                return { $jump: 'return', $value: Result.Err(new Error('UnsupportedOperator', { _0: 'BETWEEN operator not yet supported' })) };
               },
             });
           })();

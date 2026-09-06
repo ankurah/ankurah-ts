@@ -180,7 +180,6 @@ export function bridge(n: number): number {
       }
     }
     {
-      const _v2 = _v1;
       return 0;
     }
   } else {

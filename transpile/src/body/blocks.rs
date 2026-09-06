@@ -172,6 +172,7 @@ impl BodyTranslator<'_> {
 
         let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
         let previous_pending = std::mem::take(&mut *self.own.pending.borrow_mut());
+        let holes_before = crate::body::holes_written();
         let text = if is_tail {
             let held;
             let expr = match stmt {
@@ -214,9 +215,20 @@ impl BodyTranslator<'_> {
         } else {
             self.stmt(stmt)
         };
+        // K3: a statement that REFUSED hands nothing away, so its move flags
+        // are lies — a set flag turns the block's release off for a value the
+        // hole left sitting there (`core/value/cast_predicate.ts`'s `ExprList`
+        // arm leaked its payload on every call). Taking the flags off puts the
+        // value back under the block's `finally`; a local marked moved outright
+        // has no `finally`, so its release is written above the throw.
+        let refused = crate::body::holes_written() > holes_before;
+        let flags = if refused { String::new() } else { flags };
         let before_flags =
             std::mem::replace(&mut *self.own.before_flags.borrow_mut(), previous_before).join("");
         out.push_str(&before_flags);
+        if refused {
+            out.push_str(&self.released_by_a_refusal(stmt, dispositions, ordinals));
+        }
         out.push_str(&flags);
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);

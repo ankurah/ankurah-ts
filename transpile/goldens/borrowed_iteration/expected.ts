@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/borrowed_iteration/src/input.rs
-import { Struct, dropOwned, checkedAdd, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, dropOwned, checkedAdd, HashMap, keyHash } from '@ankurah/base';
 
 export class Key extends Struct {
   readonly name: string;

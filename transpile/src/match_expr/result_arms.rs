@@ -204,6 +204,7 @@ fn one_arm(
     // is bound to a temporary and the disposition analysis gives that temporary
     // the drop the source's `_` implies — under the type the SIDE knows it read,
     // because a temporary has no declaration to look one up from.
+    let bound_by_the_source = bound.clone();
     let name = bound.unwrap_or_else(|| t.fresh_temp());
     let body_stmt = [syn::Stmt::Expr(arm.body.as_ref().clone(), None)];
     let holds = |looked_up: &str| {
@@ -241,18 +242,33 @@ fn one_arm(
             release: released_payload(&name, &owed_by_the_guard),
         }
     });
-    let (body, lifted) = t.with_own_hoists(|| super::arms::arm_body(&arm.body, t, position));
+    let ((body, leaves), lifted) = t.with_own_hoists(|| super::arms::arm_body(&arm.body, t, position));
     drop(_bindings);
     let flags = t.flag_sets_for(&arm.body);
     let inner = crate::ownership::hoisted(&format!("{}\n", body), &lifted);
     let statements = format!("{}{}", flags, inner);
+    // K14: a `_` arm binds nothing the body can read, so its temporary is a
+    // line that says nothing unless something releases it — `const _v2 = _v1;`
+    // in `goldens/guarded_arms`. The read itself is another matter: where
+    // `payload.expr` is the `unwrap()` rather than a name the side already read
+    // into, the declaration is what performs it and is always written.
+    let names_a_place = payload.expr.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    let dead = bound_by_the_source.is_none()
+        && owned.is_empty()
+        && owed_by_the_guard.is_empty()
+        && names_a_place;
+    let declaration = if dead {
+        String::new()
+    } else {
+        format!("const {} = {};\n", name, payload.expr)
+    };
     Arm {
-        bindings: format!("const {} = {};\n{}", name, payload.expr, reads),
+        bindings: format!("{}{}", declaration, reads),
         guard,
-        // Asked of the body itself rather than of what `wrap_bindings` puts
-        // around it: a `finally` that releases the arm's binding still runs on
-        // the way out of a `return`.
-        leaves: super::leaves_the_arm(&statements),
+        // Carried from the lowering rather than read off `statements`: a
+        // `finally` that releases the arm's binding still runs on the way out
+        // of a `return`, and an `if` with no `else` does not leave at all.
+        leaves,
         block: t.wrap_bindings(&owned, statements),
     }
 }

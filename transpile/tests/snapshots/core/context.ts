@@ -4,7 +4,7 @@ import { Attested, Clock, CollectionId, EntityState, EntityId, NodeRequestBody }
 import { EntityChange } from './changes';
 import { Entity } from './entity';
 import { MutationError, RetrievalError } from './error';
-import { Model, View } from './indexel';
+import { View } from './indexel';
 import { EntityLiveQuery, LiveQuery } from './livequery';
 import { ContextData, MatchArgs, Node } from './node';
 import { NodeApplier } from './node_applier';
@@ -326,15 +326,13 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
       for (const [entity, event] of entityEvents) {
         const trxAlive = Arc.new(true);
         const forked = entity.snapshot(trxAlive);
-        const entityBefore = (() => {
-          return entity.kind.match({
-            Transacted: (v) => {
-              const upstream = v.upstream;
-              return upstream.clone();
-            },
-            Primary: () => entity.clone(),
-          });
-        })();
+        const entityBefore = entity.kind.match({
+          Transacted: (v) => {
+            const upstream = v.upstream;
+            return upstream.clone();
+          },
+          Primary: () => entity.clone(),
+        });
         const collectionId = event.collection;
         const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
         const _r5 = await forked.applyEvent(retriever, event);

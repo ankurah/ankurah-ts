@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/filtering.rs
 import { Struct, Result } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
-import { Filterable, Context, evaluatePredicate } from '@ankurah/core';
+import { Context, evaluatePredicate } from '@ankurah/core';
 import { Item } from '@ankurah/proto';
 
 export class FilteredStream<I> extends Struct {
@@ -27,11 +27,9 @@ export class FilteredStream<I> extends Struct {
         if (_v1.isOk()) {
           const _v2 = _v1.unwrap();
           if (_v2 === true) {
-            const _v3 = _v2;
             return new Poll('Ready', { _0: item })
           }
           {
-            const _v4 = _v2;
             continue
           }
         } else {

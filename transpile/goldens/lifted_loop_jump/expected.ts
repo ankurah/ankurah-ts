@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/lifted_loop_jump/src/input.rs
-import { Enum, Result, BorrowMut } from '@ankurah/base';
+import { Enum, Result, BorrowMut, checkedNeg } from '@ankurah/base';
 
 export type RefusalV = {
   Empty: {};
@@ -76,7 +76,7 @@ export function firstOver(rows: number[][], limit: number): number {
           }
         })();
         if ((_m1 as any)?.$jump === 'break' && (_m1 as any)?.$label === 'outer') { _lv0 = (_m1 as any).$value; break outer; };
-        const scaled = -(_m1 as any);
+        const scaled = checkedNeg((_m1 as any), 'i32');
         if (scaled < -100) {
           _lv0 = 0;
           break outer;

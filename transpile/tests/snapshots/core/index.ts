@@ -1,5 +1,4 @@
 // MIRRORS: ankurah/core/src/lib.rs
-import { EntityId } from '@ankurah/proto';
 export * from './changes';
 export * from './collation';
 export * from './connector';

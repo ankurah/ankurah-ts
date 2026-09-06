@@ -20,6 +20,10 @@ export * as serde_json from './serde_json.ts';
 // A flat `setSink` would say nothing about what it is a sink for, next to the
 // package's other host hooks (`setOnFatal`, `setOnDiagnostic`).
 export * as tracing from './log.ts';
+// The one fatal UTF-8 decode: every site that reads bytes into a string calls
+// it, so the reason lives in one place and the `fatal` flag cannot be forgotten
+// at one of them (port/ownership.md, "Text crossing into the port is UTF-8").
+export { decodeUtf8 } from './std/utf8.ts';
 export { Drop, DropGuard } from './std/drop.ts';
 export {
   disposeSymbol,

@@ -5,18 +5,18 @@
 
 mod arms;
 mod catch_all;
+mod fallback;
 mod chain;
 mod option_chain;
 
 /// What a consuming arm owes the payload it was handed.
 mod owing;
 mod payload;
+mod rendering;
+mod taking;
 mod result_arms;
 
-/// A `match` the runtime has no `match` of its own for, as the if-chain the
-/// arms describe.
 mod value_match;
-pub(crate) use value_match::leaves_the_arm;
 use value_match::{subject_of_bound, translate_value_match};
 
 use crate::body::{translate_pat, indent, BodyTranslator};
@@ -25,8 +25,17 @@ use arms::{arm_statements, payload_of, render_arm, ArmParts};
 
 /// Translate a match expression in return position (adds return to each arm)
 pub fn translate_match_returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let scrutinee = scrutinee_of(match_expr, t);
+    let written = returning(match_expr, t);
+    // Every strategy writes STATEMENTS here: the keyed form is the one
+    // expression among them and it is wrapped in a `return` of its own. Set
+    // after the strategies run, because an arm holding a match of its own
+    // would otherwise be the last to have its say.
+    t.last_match_wrote_statements.set(true);
+    written
+}
 
+fn returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
+    let scrutinee = scrutinee_of(match_expr, t);
     if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Returning) {
         return written;
     }
@@ -79,36 +88,50 @@ enum Position {
 }
 
 
-/// Translate a match expression
+/// Translate a match expression.
+///
+/// Records which FORM it wrote in `t.last_match_wrote_statements`: only the
+/// runtime's keyed `.match({..})` is one expression, and every other strategy
+/// here is an if-chain. The position that asked reads it straight afterwards
+/// (`control_flow::form::writes_statements`), which is what replaced reading
+/// the punctuation of the text back.
 pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
-    let scrutinee = scrutinee_of(match_expr, t);
+    let (written, statements) = statement_position(match_expr, t);
+    // Set after the strategies run: an arm holding a match of its own would
+    // otherwise be the last to have its say about this one.
+    t.last_match_wrote_statements.set(statements);
+    written
+}
 
+fn statement_position(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> (String, bool) {
+    let scrutinee = scrutinee_of(match_expr, t);
     if let Some(written) = guarded(&scrutinee, match_expr, t, Position::Statement) {
-        return written;
+        return (written, true);
     }
     if is_option_match_typed(match_expr, t) {
-        return option_chain::translate(&scrutinee, match_expr, t, Position::Statement);
+        return (option_chain::translate(&scrutinee, match_expr, t, Position::Statement), true);
     }
     if is_result_match(&match_expr.arms) {
-        return translate_result_match(&scrutinee, match_expr, t, Position::Statement);
+        return (translate_result_match(&scrutinee, match_expr, t, Position::Statement), true);
     }
     // An ordering is a number, so a `match` on one is a chain of comparisons.
     // The runtime's `.match({..})` dispatches on a variant name, and a number
     // has none.
     if t.is_ordering_value(&match_expr.expr) {
-        return translate_value_match(&scrutinee, match_expr, t, Position::Statement);
+        return (translate_value_match(&scrutinee, match_expr, t, Position::Statement), true);
     }
     if looks_like_enum_match(&match_expr.arms) {
         if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Statement) {
-            return written;
+            return (written, true);
         }
         if let Some(written) = tests_inside_a_variant(&scrutinee, match_expr, t, Position::Statement) {
-            return written;
+            return (written, true);
         }
-        return translate_enum_match(&scrutinee, match_expr, t, Position::Statement);
+        // The one form that is an EXPRESSION: `subject.match({ A: () => .. })`.
+        return (translate_enum_match(&scrutinee, match_expr, t, Position::Statement), false);
     }
 
-    translate_value_match(&scrutinee, match_expr, t, Position::Statement)
+    (translate_value_match(&scrutinee, match_expr, t, Position::Statement), true)
 }
 
 /// A match with an arm that tests inside its variant and a catch-all below it,
@@ -677,36 +700,6 @@ enum Written {
     Arm(String),
     /// The arms that name it, to be written as the chain Rust tries.
     Chain { links: Vec<chain::Link>, param: String, has_payload: bool },
-}
-
-/// Does this body already read as a run of statements?
-pub(crate) fn is_statements(body: &str) -> bool {
-    body.starts_with("if ")
-        || body.starts_with("for ")
-        || body.starts_with("while ")
-        || body.starts_with("return ")
-        || body.starts_with("throw ")
-        || body.starts_with('{')
-        || body.contains(";\n")
-        // A tail whose Rust value is `()` is written as the statement it is,
-        // and a value expression never ends in a semicolon, so the semicolon
-        // is what tells them apart: without this the arm put a `return` back
-        // in front of it and handed back what the port's own spelling produced.
-        || body.trim_end().ends_with(';')
-}
-
-/// Does this text *open* with a statement, rather than merely contain one?
-///
-/// `is_statements` answers the looser question — an expression written over
-/// several lines contains a `;` too — and the difference matters where the
-/// caller is deciding whether to write `return` in front of the text: `return
-/// const _v = [` does not parse, and `return await (async () => { … })()` is
-/// exactly what a value-producing macro wants.
-pub(crate) fn begins_a_statement(body: &str) -> bool {
-    let body = body.trim_start();
-    ["const ", "let ", "var ", "if ", "for ", "while ", "do ", "return ", "throw ", "{"]
-        .iter()
-        .any(|opener| body.starts_with(opener))
 }
 
 #[cfg(test)]

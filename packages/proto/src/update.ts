@@ -4,7 +4,7 @@ import { UpdateId } from './id.provided';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attested } from './auth';
 import { CollectionId } from './collection';
-import { EntityState, EventFragment, State, StateFragment } from './data';
+import { EntityState, EventFragment, StateFragment } from './data';
 import { EntityId } from './id';
 import { QueryId } from './subscription';
 export { UpdateId };

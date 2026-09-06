@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/connector.rs
-import { Enum, Result, timeout } from '@ankurah/base';
+import { Enum, Result } from '@ankurah/base';
 import { Attested, EntityState, EntityId, NodeMessage, Presence } from '@ankurah/proto';
 
 export type SendErrorV = {

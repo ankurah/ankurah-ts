@@ -23,6 +23,16 @@ use crate::ty::Ty;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClosureSig {
     pub params: Vec<(String, Option<Ty>)>,
+    /// The NAMES each parameter binds, with what each of them holds.
+    ///
+    /// A parameter written as a tuple pattern binds several: `|(backend, ops)|`
+    /// over a map's `iter()` binds `backend: &K` and `ops: &V`, and the
+    /// parameter itself is the pair. The scope the body is translated in needs
+    /// the names; the `Fn(..)` shape needs the parameter. They were the same
+    /// list, so a tuple parameter bound one name spelled `[backend, ops]` —
+    /// which no body ever writes — and `ops.iter()` inside it resolved to
+    /// nothing (six sites in proto's `Display` impls).
+    pub bindings: Vec<(String, Option<Ty>)>,
     pub ret: Option<Ty>,
 }
 
@@ -75,6 +85,7 @@ impl TypeContext<'_> {
         }
 
         let mut params: Vec<(String, Option<Ty>)> = Vec::new();
+        let mut bindings: Vec<(String, Option<Ty>)> = Vec::new();
         for (index, pat) in closure.inputs.iter().enumerate() {
             let name = crate::body::BodyTranslator::pat_static(pat);
             let annotated = match pat {
@@ -111,6 +122,7 @@ impl TypeContext<'_> {
                 (None, Some(want)) => self.through_pattern(pat, &want),
                 (None, None) => None,
             };
+            bindings.extend(names_bound(pat, ty.as_ref()));
             params.push((name, ty));
         }
 
@@ -124,10 +136,10 @@ impl TypeContext<'_> {
                 .as_ref()
                 .map(|s| s.output.clone())
                 .filter(|ty| *ty != Ty::Unit && expected::is_settled(ty, &self.params))
-                .or_else(|| self.closure_body_type(closure, &params)),
+                .or_else(|| self.closure_body_type(closure, &bindings)),
         };
 
-        let sig = ClosureSig { params, ret };
+        let sig = ClosureSig { params, bindings, ret };
         crate::trace::record_closure(
             self.registry,
             &self.sink.file(),
@@ -149,8 +161,16 @@ impl TypeContext<'_> {
             syn::Pat::Reference(inner) => self.through_pattern(&inner.pat, want.peel_refs()),
             syn::Pat::Type(typed) => self.through_pattern(&typed.pat, want),
             syn::Pat::Paren(paren) => self.through_pattern(&paren.pat, want),
-            // A tuple or a struct pattern binds several names at once, and the
-            // translator binds those through the pattern machinery instead.
+            // A tuple pattern binds several names at once, and the PARAMETER is
+            // still the tuple: `|(backend, ops)|` over a map's `iter()` takes
+            // one `(&K, &V)`. `names_bound` is what gives each name inside it
+            // its own type; answering `None` here said the parameter was typed
+            // by nothing, which is what the report said and it was not true.
+            syn::Pat::Tuple(tuple) => {
+                let crate::ty::Ty::Tuple(elements) = want.peel_refs() else { return None };
+                (tuple.elems.len() == elements.len()).then(|| want.clone())
+            }
+            // A struct pattern binds through the pattern machinery instead.
             _ => None,
         }
     }
@@ -164,9 +184,9 @@ impl TypeContext<'_> {
     fn closure_body_type(
         &self,
         closure: &syn::ExprClosure,
-        params: &[(String, Option<Ty>)],
+        bindings: &[(String, Option<Ty>)],
     ) -> Option<Ty> {
-        self.with_closure_params(params, || match &*closure.body {
+        self.with_closure_params(bindings, || match &*closure.body {
             syn::Expr::Block(block) => self.block_tail_type(&block.block).ok(),
             other => self.resolve_expr(other).ok(),
         })
@@ -175,5 +195,37 @@ impl TypeContext<'_> {
         // on. Propagation is one level deep (spec 4.6), so the engine says it
         // cannot tell rather than handing on somebody else's open parameter.
         .filter(|ty| expected::is_settled(ty, &self.params))
+    }
+}
+
+/// The names one closure parameter binds, with what each of them holds.
+///
+/// A plain name binds itself and takes the whole parameter's type; a tuple
+/// pattern binds one name per element, each with that element's type. A name
+/// the engine could not type is still bound, without one, so the body reads it
+/// as a name that exists.
+fn names_bound(pat: &syn::Pat, ty: Option<&Ty>) -> Vec<(String, Option<Ty>)> {
+    match pat {
+        syn::Pat::Reference(inner) => names_bound(&inner.pat, ty),
+        syn::Pat::Paren(paren) => names_bound(&paren.pat, ty),
+        syn::Pat::Type(typed) => names_bound(&typed.pat, ty),
+        syn::Pat::Tuple(tuple) => {
+            let elements = match ty.map(|ty| ty.peel_refs()) {
+                Some(Ty::Tuple(elements)) if elements.len() == tuple.elems.len() => {
+                    elements.iter().map(Some).map(|e| e.cloned()).collect()
+                }
+                _ => vec![None; tuple.elems.len()],
+            };
+            tuple
+                .elems
+                .iter()
+                .zip(elements)
+                .flat_map(|(sub, element)| names_bound(sub, element.as_ref()))
+                .collect()
+        }
+        // `_` is bound too, under that spelling: the body's own `let _ = ..`
+        // has to see the name already taken and freshen itself, or two `const
+        // _` land in one scope and `signals/porcelain/wait.ts` stops loading.
+        other => vec![(crate::body::BodyTranslator::pat_static(other), ty.cloned())],
     }
 }

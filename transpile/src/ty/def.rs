@@ -81,6 +81,15 @@ impl Prim {
         )
     }
 
+    /// Is this one of the SIGNED integer widths? Only those have a `MIN` with
+    /// no positive of its own, which is what makes negating one fallible.
+    pub fn is_signed_integer(self) -> bool {
+        matches!(
+            self,
+            Prim::I8 | Prim::I16 | Prim::I32 | Prim::I64 | Prim::I128 | Prim::Isize
+        )
+    }
+
     /// The Rust name, which is also the name the runtime knows the width by.
     pub fn rust_name(self) -> String {
         format!("{:?}", self).to_lowercase()

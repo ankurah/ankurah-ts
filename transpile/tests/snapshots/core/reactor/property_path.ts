@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/property_path.rs
-import { Struct, Result, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, keyHash } from '@ankurah/base';
 import { Json } from '../property/value/json';
 import { AbstractEntity } from '../reactor';
 import { Value } from '../value/index';

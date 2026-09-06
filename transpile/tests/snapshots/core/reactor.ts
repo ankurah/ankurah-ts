@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor.rs
-import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFindMap, iterFilterMap, HashMap, AsyncMutex, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, OwnedClosure, invoke, AnyhowError, dropOwned, tracing, iterFindMap, iterFilterMap, HashMap, AsyncMutex, tokio } from '@ankurah/base';
 import { Entity } from './entity';
 import { SubscriptionError } from './error';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
@@ -281,7 +281,8 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
               _moved0 = true;
               return iterFilterMap([...candidatesBySub], ([subId, candidates]) => {
                 const _m1 = subscriptions.value.get(subId);
-                return (_m1 != null ? ((subscription) => subscription.clone().evaluateChanges(candidates))(_m1!) : null);
+                const _m2 = new OwnedClosure([candidates], (subscription: Subscription<E, Ev>) => subscription.clone().evaluateChanges(candidates), undefined, true);
+                return (_m1 != null ? invoke(_m2, _m1!) : (dropOwned(_m2), null));
               });
             } finally {
               subscriptions.drop();
@@ -290,15 +291,15 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           const allWatcherChanges = (await joinAll(evaluations)).intoIter().flatten();
           let watcherSet = this._0.value.watcherSet.value.lock();
           try {
-            const _seq2 = allWatcherChanges;
-            let _at3 = 0;
+            const _seq3 = allWatcherChanges;
+            let _at4 = 0;
             try {
-              while (_at3 < _seq2.length) {
-                const change = _seq2[_at3++];
+              while (_at4 < _seq3.length) {
+                const change = _seq3[_at4++];
                 watcherSet.value.applyWatcherChange(change);
               }
             } finally {
-              dropOwned(_seq2.slice(_at3));
+              dropOwned(_seq3.slice(_at4));
             }
           } finally {
             watcherSet.drop();
@@ -436,7 +437,10 @@ function buildKeySpecFromSelection<E extends AbstractEntity>(orderBy: OrderByIte
   try {
     for (const item of orderBy) {
       const column = item.path.property();
-      const valueType = iterFindMap(read.iterEntities(), ([, e]) => e.value(column).map((v) => ValueType.of(v))) ?? new ValueType('String', {});
+      const valueType = iterFindMap(read.iterEntities(), ([, e]) => {
+        const _m0 = e.value(column);
+        return (_m0 != null ? ((v) => ValueType.of(v))(_m0!) : null);
+      }) ?? new ValueType('String', {});
       const direction = item.direction.match({
         Asc: () => new IndexDirection('Asc', {}),
         Desc: () => new IndexDirection('Desc', {}),

@@ -3,14 +3,14 @@ import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iter
 import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
 import { SendError } from '../connector';
 import { ApplyError, MutationError, RequestError, RetrievalError, StateError } from '../error';
-import { ContextData, Node } from '../node';
+import { ContextData } from '../node';
 import { NodeApplier } from '../node_applier';
 import { AccessDenied } from '../policy';
 import { PropertyError } from '../property/traits';
 import { EphemeralNodeRetriever, GetEvents } from '../retrieval';
 import { spawn } from '../task';
 import { SafeSet } from '../util/safeset';
-import { ParseError, Predicate, Selection } from '@ankurah/ankql';
+import { ParseError, Selection } from '@ankurah/ankql';
 import { Get } from '@ankurah/signals';
 
 export class Content<CD extends ContextData> extends Struct {
@@ -518,41 +518,39 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
     let _moved0 = false;
     try {
       const errorMsg = error.toString();
-      const isRetryable = (() => {
-        return error.match({
-          RequestError: (v) => {
-            const reqErr = v._0;
-            return reqErr.match({
-              PeerNotConnected: () => true,
-              ConnectionLost: () => true,
-              SendError: (v) => true,
-              InternalChannelClosed: () => true,
-              ServerError: (v) => false,
-              UnexpectedResponse: (v) => false,
-              AccessDenied: (v) => false,
-            });
-          },
-          AccessDenied: () => false,
-          ParseError: () => false,
-          EntityNotFound: () => false,
-          EventNotFound: () => false,
-          StorageError: () => false,
-          CollectionNotFound: () => false,
-          FailedUpdate: () => false,
-          DeserializationError: () => false,
-          NoDurablePeers: () => false,
-          Other: () => false,
-          InvalidBucketName: () => false,
-          AnkqlFilter: () => false,
-          FutureJoin: () => false,
-          Anyhow: () => false,
-          DecodeError: () => false,
-          StateError: () => false,
-          MutationError: () => false,
-          PropertyError: () => false,
-          ApplyError: () => false,
-        });
-      })();
+      const isRetryable = error.match({
+        RequestError: (v) => {
+          const reqErr = v._0;
+          return reqErr.match({
+            PeerNotConnected: () => true,
+            ConnectionLost: () => true,
+            SendError: (v) => true,
+            InternalChannelClosed: () => true,
+            ServerError: (v) => false,
+            UnexpectedResponse: (v) => false,
+            AccessDenied: (v) => false,
+          });
+        },
+        AccessDenied: () => false,
+        ParseError: () => false,
+        EntityNotFound: () => false,
+        EventNotFound: () => false,
+        StorageError: () => false,
+        CollectionNotFound: () => false,
+        FailedUpdate: () => false,
+        DeserializationError: () => false,
+        NoDurablePeers: () => false,
+        Other: () => false,
+        InvalidBucketName: () => false,
+        AnkqlFilter: () => false,
+        FutureJoin: () => false,
+        Anyhow: () => false,
+        DecodeError: () => false,
+        StateError: () => false,
+        MutationError: () => false,
+        PropertyError: () => false,
+        ApplyError: () => false,
+      });
       let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
       try {
         {
@@ -664,27 +662,27 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
               },
               Error: (v) => {
                 const e = v._0;
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('ServerError', { _0: e }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('ServerError', { _0: e }) })) };
               },
               CommitComplete: (v) => {
                 const other = new NodeResponseBody('CommitComplete', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
               },
               Fetch: (v) => {
                 const other = new NodeResponseBody('Fetch', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
               },
               Get: (v) => {
                 const other = new NodeResponseBody('Get', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
               },
               GetEvents: (v) => {
                 const other = new NodeResponseBody('GetEvents', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
               },
               Success: (v) => {
                 const other = new NodeResponseBody('Success', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) }
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
               },
             });
           })();

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
-import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { PropertyError } from '../property/traits';
 import { Json } from '../property/value/json';

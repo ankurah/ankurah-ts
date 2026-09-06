@@ -459,3 +459,31 @@ fn a_mut_reference_to_an_object_needs_no_cell() {
     assert!(ts.contains("row.n = 1"), "{}", ts);
     assert!(!ts.contains(".value"), "{}", ts);
 }
+
+/// K8: `-` on a resolved SIGNED width goes through the runtime's `checkedNeg`.
+///
+/// A signed width's `MIN` has no positive of its own, and Rust's debug build
+/// panics there. JavaScript's `-` answered `2147483648` for an `i32` and said
+/// nothing; `abs()` has gone through the same helper since Z8.
+#[test]
+fn negating_a_signed_integer_goes_through_the_checked_helper() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn negate(n: i32) -> i32 { -n }\n\
+         pub fn wide(n: i64) -> i64 { -n }\n\
+         pub fn float(x: f64) -> f64 { -x }\n\
+         pub fn smallest() -> i32 { -2147483648 }\n\
+         pub fn unsigned_diff(a: u32, b: u32) -> u32 { a - b }",
+    )]);
+    assert!(f.translated_method("lib.rs", "negate").contains("checkedNeg(n, 'i32')"));
+    assert!(f.translated_method("lib.rs", "wide").contains("checkedNeg(n, 'i64')"));
+    // A float keeps the operator: IEEE negation is total.
+    let float = f.translated_method("lib.rs", "float");
+    assert!(float.contains("-x"), "{}", float);
+    assert!(!float.contains("checkedNeg"), "{}", float);
+    // And a literal keeps it: `-2147483648` is how `i32::MIN` is written, and
+    // the helper would raise on the literal it is written from.
+    let smallest = f.translated_method("lib.rs", "smallest");
+    assert!(smallest.contains("-2147483648"), "{}", smallest);
+    assert!(!smallest.contains("checkedNeg"), "{}", smallest);
+}

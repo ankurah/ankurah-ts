@@ -276,9 +276,9 @@ export class Expr extends Enum<ExprV> {
           const value = _v;
           const _r0 = value.tryInto().mapErr((e) => e);
           if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-          Result.Ok(_r0.unwrap())
+          return Result.Ok(_r0.unwrap());
         } else {
-          Result.Err(new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' }))
+          return Result.Err(new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' }));
         }
       },
       Literal: (v) => {

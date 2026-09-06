@@ -111,10 +111,7 @@ describe('broadcast unit tests', () => {
           try {
             const _tempSub = _t2.listen((_) => {
             });
-            try {
-            } finally {
-              _tempSub.drop();
-            }
+            _tempSub.drop();
           } finally {
             _t2.drop();
           }

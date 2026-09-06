@@ -5,6 +5,9 @@ mod paths;
 use paths::{crate_path_to_fqn_prefix, relative_import_path};
 mod const_order;
 mod surface;
+mod written;
+use written::written_names;
+pub(crate) use written::written_names as written_names_of;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -68,17 +71,17 @@ pub fn generate_ts_with_imports_configured(
             imports::collect_type_refs(&m.return_type, &mut referenced);
             imports::collect_type_refs(&m.generics, &mut referenced);
             for p in &m.params { imports::collect_type_refs(&p.ty, &mut referenced); }
-            if let Some(b) = &m.body_ts { imports::collect_type_refs(b, &mut referenced); }
+            if let Some(b) = &m.body_ts { imports::collect_written_refs(b, &mut referenced); }
         }
     }
     for f in &file.functions {
         imports::collect_type_refs(&f.return_type, &mut referenced);
         imports::collect_type_refs(&f.generics, &mut referenced);
         for p in &f.params { imports::collect_type_refs(&p.ty, &mut referenced); }
-        if let Some(b) = &f.body_ts { imports::collect_type_refs(b, &mut referenced); }
+        if let Some(b) = &f.body_ts { imports::collect_written_refs(b, &mut referenced); }
     }
     for decl in &file.module_decls {
-        imports::collect_type_refs(decl, &mut referenced);
+        imports::collect_written_refs(decl, &mut referenced);
     }
     // Trait names from `implements` clauses
     for imp in &file.impls {
@@ -103,7 +106,7 @@ pub fn generate_ts_with_imports_configured(
             .chain(file.functions.iter())
             .filter_map(|f| f.body_ts.as_deref());
         for body in bodies {
-            imports::collect_named_refs(body, &free_names, &mut referenced);
+            imports::collect_written_named_refs(body, &free_names, &mut referenced);
         }
     }
 
@@ -388,52 +391,25 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
             base_imports.push("Drop");
         }
     }
-    // What the file will actually contain. The import list is read off it.
+    // What the file will actually contain, and the names that emission WRITES.
+    // The import lists are read off the second: a name a body only names
+    // inside a string literal — the `collect` refusal names three iterator
+    // types — is not a name this file has to import (K1).
     let emitted = generate_declarations(reg, file, &provided_set, None);
+    let writes = written_names(&emitted);
 
-    // Auto-detect base types used in fields, return types, and method bodies
-    let mut all_type_refs = String::new();
-    for s in &file.structs {
-        if provided_set.contains(&s.name) { continue; }
-        for f in &s.fields { all_type_refs.push_str(&f.ts_ty(reg)); all_type_refs.push(' '); }
-    }
-    for e in &file.enums {
-        if provided_set.contains(&e.name) { continue; }
-        for v in &e.variants { for f in &v.fields { all_type_refs.push_str(&f.ts_ty(reg)); all_type_refs.push(' '); } }
-    }
-    for imp in &file.impls {
-        if provided_set.contains(&imp.target_type) { continue; }
-        for m in &imp.methods {
-            all_type_refs.push_str(&m.return_type); all_type_refs.push(' ');
-            for p in &m.params { all_type_refs.push_str(&p.ty); all_type_refs.push(' '); }
-            if let Some(b) = &m.body_ts { all_type_refs.push_str(b); all_type_refs.push(' '); }
-        }
-    }
-    for f in &file.functions {
-        all_type_refs.push_str(&f.return_type); all_type_refs.push(' ');
-        for p in &f.params { all_type_refs.push_str(&p.ty); all_type_refs.push(' '); }
-        if let Some(b) = &f.body_ts { all_type_refs.push_str(b); all_type_refs.push(' '); }
-    }
-    for decl in &file.module_decls {
-        all_type_refs.push_str(decl); all_type_refs.push(' ');
-    }
     let base_runtime_types = BASE_RUNTIME_SYMBOLS;
     for ty in &base_runtime_types {
-        // Read the emitted text, not the types the file mentions: a body that
-        // was generated and then not emitted used to pull in an import nothing
-        // in the file uses. Don't import if the file defines its own type with
-        // the same name. The match is on whole words: `Mutex` is a part of
-        // `AsyncMutex`, and matching on any substring imported std's `Mutex`
-        // for a file that only ever names tokio's.
-        if mentions(&emitted, ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
+        // Don't import if the file defines its own type with the same name.
+        if writes.contains(*ty) && !base_imports.contains(ty) && !local_types.contains(*ty) {
             base_imports.push(ty);
         }
     }
     // The cascade, which the ownership emission calls to release a plain
     // JavaScript value that owns what is inside it — an array of entities, a
-    // map of them. It is a function rather than a type, so it is looked for by
-    // the call the emitter writes.
-    if emitted.contains("dropOwned(") && !base_imports.contains(&"dropOwned") {
+    // map of them. It is a function rather than a type, and the emission
+    // writes it as a call.
+    if writes.contains("dropOwned") && !base_imports.contains(&"dropOwned") {
         base_imports.push("dropOwned");
     }
     if !base_imports.is_empty() {
@@ -462,9 +438,15 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         let mut symbols = cross_crate_imports[*package].clone();
         symbols.sort();
         symbols.dedup();
+        // A `use` for a name the emission never writes imports nothing: the
+        // engine hoists a `use` written inside a body into the module (slice
+        // 3's §3.4), so `use ankurah_signals::Peek;` inside a body whose
+        // lowering does not reach `Peek`, and a test module's
+        // `use ankql::ast::OrderDirection;`, each used to be imported anyway.
         let symbols: Vec<String> = symbols.into_iter()
             .filter(|s| !imports::is_primitive_or_base_type(s)
-                && s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+                && s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                && writes.contains(s))
             .collect();
         if !symbols.is_empty() {
             out.push_str(&format!("import {{ {} }} from '{}';\n", symbols.join(", "), package));
@@ -1156,11 +1138,14 @@ pub fn generate_test_ts_with_imports(
         .chain(std::iter::once(fixture_text.as_str()))
         .collect::<Vec<_>>()
         .join(" ");
+    // What the suite WRITES, lexed: a name a fixture only holds inside a
+    // string literal is not a name the test file imports (K1).
+    let writes = written_names(&bodies_and_fixtures);
     for f in &file.functions {
         if f.is_test || declared_here.contains(&f.ts_name) {
             continue;
         }
-        if names_word(&bodies_and_fixtures, &f.ts_name) && !from_parent.contains(&f.ts_name) {
+        if writes.contains(&f.ts_name) && !from_parent.contains(&f.ts_name) {
             from_parent.push(f.ts_name.clone());
         }
     }
@@ -1168,14 +1153,14 @@ pub fn generate_test_ts_with_imports(
         if declared_here.contains(&c.name) {
             continue;
         }
-        if names_word(&bodies_and_fixtures, &c.name) && !from_parent.contains(&c.name) {
+        if writes.contains(&c.name) && !from_parent.contains(&c.name) {
             from_parent.push(c.name.clone());
         }
     }
     imports::names_this_module_declares(
         type_to_file,
         current_module,
-        &bodies_and_fixtures,
+        &writes,
         &declared_here,
         &available_types,
         &mut from_parent,
@@ -1193,16 +1178,14 @@ pub fn generate_test_ts_with_imports(
     // Import base types (Arc, Mutex, RefCell, etc.)
     let base_runtime_types = BASE_RUNTIME_SYMBOLS;
     // The fixture declarations are part of this file too, and they name
-    // `Struct`, `Enum` and whatever else the runtime supplies.
-    let all_bodies: String = bodies_and_fixtures.clone();
-    // Read the emitted bodies rather than the PascalCase names the type scan
-    // found: `dropOwned` is a function and `oneshot` a namespace, and neither is
-    // a type reference.
+    // `Struct`, `Enum` and whatever else the runtime supplies. `dropOwned` is
+    // a function and `oneshot` a namespace, so neither is found by the
+    // PascalCase type scan; both are found by what the suite writes.
     let mut base_imports: Vec<&&str> = base_runtime_types.iter()
-        .filter(|t| mentions(&all_bodies, t) && !available_types.contains(**t))
+        .filter(|t| writes.contains(**t) && !available_types.contains(**t))
         .collect();
     let cascade = "dropOwned";
-    if all_bodies.contains("dropOwned(") {
+    if writes.contains(cascade) {
         base_imports.push(&cascade);
     }
     // The bases a fixture class extends. `Struct` and `Enum` are not in the
@@ -1234,8 +1217,10 @@ pub fn generate_test_ts_with_imports(
         .cloned()
         .collect();
     let mut test_refs = test_refs;
-    if !free_names.is_empty() {
-        imports::collect_named_refs(&all_bodies, &free_names, &mut test_refs);
+    for name in &writes {
+        if free_names.contains(name) {
+            test_refs.insert(name.clone());
+        }
     }
 
     // Cross-file imports from the same crate (using type_to_file map)
@@ -1362,50 +1347,6 @@ pub fn generate_test_ts_with_imports(
     Some(out)
 }
 
-/// Does this text name `word` as a word of its own?
-///
-/// The import scan reads emitted text rather than a symbol table, so a
-/// substring match imported `Mutex` for a file that only ever wrote
-/// `AsyncMutex`, and `Ref` for one that only wrote `RefCell`.
-fn mentions(text: &str, word: &str) -> bool {
-    let boundary = |c: char| !(c.is_alphanumeric() || c == '_' || c == '$');
-    let mut from = 0;
-    while let Some(at) = text[from..].find(word) {
-        let start = from + at;
-        let end = start + word.len();
-        // A member read is not a name the file has to import: `tokio.mpsc`
-        // needs `tokio`, and nothing else.
-        let previous = text[..start].chars().next_back();
-        let before = previous.is_none_or(boundary) && previous != Some('.');
-        let after = text[end..].chars().next().is_none_or(boundary);
-        if before && after {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-/// Does this text name `word` as a whole identifier?
-///
-/// The import lists are built by looking for a name in emitted text, and a
-/// substring match imported `Mutex` into a file that only ever wrote
-/// `AsyncMutex`.
-pub(crate) fn names_word(text: &str, word: &str) -> bool {
-    let is_part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-    let mut from = 0usize;
-    while let Some(at) = text[from..].find(word) {
-        let start = from + at;
-        let end = start + word.len();
-        let before = text[..start].chars().next_back().is_some_and(is_part);
-        let after = text[end..].chars().next().is_some_and(is_part);
-        if !before && !after {
-            return true;
-        }
-        from = end;
-    }
-    false
-}
 
 #[cfg(test)]
 mod tests {

@@ -88,11 +88,34 @@ impl<'a> BodyTranslator<'a> {
         scrutinee: Option<&crate::ty::Ty>,
         body: impl FnOnce() -> R,
     ) -> R {
-        let held = self
-            .borrowed_subject
-            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
+        let held = self.subject_ty.replace(scrutinee.cloned());
         let written = body();
-        self.borrowed_subject.set(held);
+        *self.subject_ty.borrow_mut() = held;
+        written
+    }
+
+    /// The same, for ONE element of a tuple subject: `(&*left, &*right)` is a
+    /// tuple whose elements are references and which is not one itself, so the
+    /// element's own type is what says whether its pattern binds by reference
+    /// (K16). A subject the engine could not read as a tuple leaves the answer
+    /// where it was.
+    pub(crate) fn matching_element<R>(&self, at: usize, body: impl FnOnce() -> R) -> R {
+        let element = match &*self.subject_ty.borrow() {
+            Some(crate::ty::Ty::Tuple(elements)) => elements.get(at).cloned(),
+            // A `&(A, B)` binds each element by reference too.
+            Some(crate::ty::Ty::Ref { inner, .. }) => match &**inner {
+                crate::ty::Ty::Tuple(elements) => elements.get(at).map(|ty| crate::ty::Ty::Ref {
+                    mutable: false,
+                    inner: Box::new(ty.clone()),
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(element) = element else { return body() };
+        let held = self.subject_ty.replace(Some(element));
+        let written = body();
+        *self.subject_ty.borrow_mut() = held;
         written
     }
 
@@ -101,7 +124,7 @@ impl<'a> BodyTranslator<'a> {
     /// `enter_pattern` sets it from the scrutinee's type and the scope it opens
     /// restores it, so it answers for the pattern currently being written.
     pub(crate) fn matches_a_reference(&self) -> bool {
-        self.borrowed_subject.get()
+        matches!(*self.subject_ty.borrow(), Some(crate::ty::Ty::Ref { .. }))
     }
 
     /// Open a scope holding the names a pattern introduces, typed from the value
@@ -118,11 +141,9 @@ impl<'a> BodyTranslator<'a> {
         scrutinee: Option<&crate::ty::Ty>,
     ) -> PatternScope<'t, 'a> {
         self.push_block();
-        let borrowed_before = self
-            .borrowed_subject
-            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
+        let subject_before = self.subject_ty.replace(scrutinee.cloned());
         self.bind_pattern_here(pat, scrutinee);
-        PatternScope { translator: self, borrowed_before }
+        PatternScope { translator: self, subject_before }
     }
 
     /// Bind a pattern's names in the scope that is already open. Used where the

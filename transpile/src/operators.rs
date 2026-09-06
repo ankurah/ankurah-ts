@@ -383,11 +383,30 @@ impl BodyTranslator<'_> {
 /// the port wrote the JavaScript operator instead. `-object` is `NaN`,
 /// `object[0]` is `undefined`, and neither said anything.
 impl BodyTranslator<'_> {
-    /// `-a` where `a` is not a number: the `Neg` impl's method.
+    /// `-a`: the `Neg` impl's method where `a` is not a number, and the runtime's
+    /// `checkedNeg` where it is a SIGNED integer.
+    ///
+    /// K8: a signed width's `MIN` has no positive of its own — `-i32::MIN`
+    /// does not fit in an `i32` — and Rust's debug build panics there.
+    /// JavaScript's `-` answers `2147483648`, a number that width cannot hold,
+    /// and says nothing. `checkedNeg` raises where Rust raises, with what Rust
+    /// says. The same helper `abs()` has always gone through (Z8, R7, I5).
+    ///
+    /// A LITERAL keeps the operator: `-2147483648` is how `i32::MIN` is
+    /// written, and negating the literal `2147483648` through the helper would
+    /// raise on the very value the source is naming. A FLOAT keeps it too —
+    /// IEEE negation is total.
     pub(crate) fn unary_neg(&self, unary: &syn::ExprUnary, written: &str) -> Option<String> {
         let ty = self.quietly(|| self.resolve_expr_type(&unary.expr)).ok()?;
-        if matches!(self.operand_kind(&ty), Operand::Number(_)) {
-            return None;
+        if let Operand::Number(prim) = self.operand_kind(&ty) {
+            if !prim.is_signed_integer() || matches!(&*unary.expr, syn::Expr::Lit(_)) {
+                return None;
+            }
+            return Some(format!(
+                "checkedNeg({}, '{}')",
+                written,
+                crate::operators::primitives::width_name(prim)
+            ));
         }
         self.unary_through("std::ops::Neg", "Neg", "neg", &ty, written, "-", syn::spanned::Spanned::span(unary))
     }

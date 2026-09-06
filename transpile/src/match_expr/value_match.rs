@@ -103,6 +103,10 @@ struct Arm {
     flags: String,
     /// The arm's body, with what it lifted out of itself declared inside it.
     body: String,
+    /// Does every path out of the body leave the block the arms are tried in,
+    /// so that nothing needs to jump over the arms below it? Carried from the
+    /// lowering (K2) rather than read back out of the text.
+    leaves: bool,
 }
 
 /// Write one arm out.
@@ -142,7 +146,7 @@ fn written_arm(
         }
         None => (String::new(), None),
     };
-    let (body, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
+    let ((body, leaves), lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
     drop(_bindings);
     // A local this arm hands away sets its drop flag here — the same line the
     // enclosing block would have written had the arm been a statement of it.
@@ -155,6 +159,7 @@ fn written_arm(
         guard,
         flags,
         body: t.wrap_bindings(&owned, crate::ownership::hoisted(&format!("{}\n", body), &lifted)),
+        leaves,
     }
 }
 
@@ -188,40 +193,13 @@ fn tested_in_turn(arms: &[Arm], t: &BodyTranslator) -> String {
                     release: String::new(),
                 }),
                 block: format!("{}{}", arm.flags, arm.body),
-                leaves: leaves_the_arm(&arm.body),
+                leaves: arm.leaves,
             }
         })
         .collect();
     // Trimmed: this stands as one statement of the enclosing block, which adds
     // its own line ending, and the labelled form it replaced carried none.
     super::chain::tried::tried_in_turn(&branches, "", "_match", t).trim_end().to_string()
-}
-
-/// Does this arm body leave the function by itself, so that nothing after it
-/// in the arm would run?
-///
-/// Read from the END, through the closing braces of whatever groups the body
-/// was written inside: a `}` on its own line closes a block whose last
-/// statement stands above it, so the statement that actually runs last is the
-/// first line that is not one. Reading only the very last line said a body
-/// wrapped in a block or a `try` did not leave, and the chain wrote an
-/// unreachable `break` after it.
-pub(crate) fn leaves_the_arm(body: &str) -> bool {
-    for line in body.trim_end().lines().rev() {
-        let line = line.trim();
-        if line.is_empty() || line == "}" {
-            continue;
-        }
-        // `continue` and `break` leave the arm as surely as a `return` does:
-        // they belong to the loop around the match, and the chain that wrote
-        // them needs no jump of its own after one.
-        return line.starts_with("return ")
-            || line.starts_with("return;")
-            || line.starts_with("throw ")
-            || line.starts_with("continue")
-            || line.starts_with("break");
-    }
-    false
 }
 
 /// A name the arms can test against, and the declaration that gives it one.

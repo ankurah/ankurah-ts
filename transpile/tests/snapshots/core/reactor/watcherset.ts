@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
 import { Struct, Enum, Arc, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
-import { Expr, Predicate, Literal } from '@ankurah/ankql';
+import { Predicate } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';

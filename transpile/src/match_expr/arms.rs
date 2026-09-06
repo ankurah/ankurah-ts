@@ -11,7 +11,8 @@ use crate::body::{indent, BodyTranslator};
 use super::Position;
 use crate::name_map;
 use super::owing::{guard_release, hole_in_an_arm, release_before_a_hole_in_the_bindings, release_of};
-use super::{is_statements, translate_pat};
+use super::translate_pat;
+pub(super) use super::rendering::{arm_block, arm_block_parts, render_arm, ArmParts};
 
 /// A name for the arm's parameter that nothing else in the arm answers to.
 pub(super) fn arm_parameter(fields: &[(String, String)], body: &syn::Expr) -> String {
@@ -76,11 +77,10 @@ pub(super) fn arm_declarations(
     fields: &[(String, String)],
     t: &BodyTranslator,
     match_expr: &syn::ExprMatch,
-) -> (String, Vec<String>, Vec<String>) {
+) -> Option<(String, Vec<String>, Vec<String>, Option<String>)> {
     let walked =
-        super::payload::payload_walk(pat, param, fields, t, super::payload::Tests::Reported, match_expr)
-            .expect("a reported walk has no test to be a hole");
-    (walked.text, walked.bound_keys, walked.names)
+        super::payload::payload_walk(pat, param, fields, t, super::payload::Tests::Reported, match_expr)?;
+    Some((walked.text, walked.bound_keys, walked.names, walked.refused))
 }
 
 /// The variant a pattern names and the payload slots it takes out of it, as
@@ -89,6 +89,9 @@ pub(super) fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)
     match pat {
         syn::Pat::TupleStruct(ts) => {
             let variant = ts.path.segments.last()?.ident.to_string();
+            // K9: each element takes the member at its own position, so a
+            // trailing `..` shifts nothing — that is the shape the rule is
+            // written for, and `payload_walk` refuses one written anywhere else.
             let fields = ts
                 .elems
                 .iter()
@@ -117,91 +120,6 @@ pub(super) fn payload_of(pat: &syn::Pat) -> Option<(String, Vec<(String, String)
     }
 }
 
-/// One arm of a `.match({..})`, as the pieces the two callers assemble it from.
-///
-/// `enum_match_over` writes an arm the source named; `catch_all` writes one per
-/// variant the source left to its `_`. Both need the same decisions made the
-/// same way — whether the arm's value needs a `return`, whether its releases
-/// need a block, whether it is `async` — so both build one of these and hand it
-/// to `render_arm`. The catch-all used to format its arms itself and lost the
-/// match's value in every position but the enclosing function's return.
-pub(super) struct ArmParts<'a> {
-    /// The key the runtime's match dispatches on.
-    pub variant: &'a str,
-    /// What the arm declares before its body: the drop flags a hand-away owes,
-    /// and the names the arm takes out of the value it was given.
-    pub bindings: String,
-    /// The payload parameter, where the arm takes one.
-    pub param: Option<String>,
-    pub body: &'a str,
-    pub owned: &'a [crate::ownership::Owned],
-    pub lifted: &'a [crate::ownership::Hoist],
-    /// Whether the match hands a value back at all.
-    pub produces: bool,
-    pub is_async: bool,
-    /// What this arm's outermost `finally` says about the parts of the payload
-    /// no name took. A consuming arm owns the whole payload from the moment it
-    /// is called — `intoMatch` releases nothing of its own, on any path — so an
-    /// arm that binds only some of it releases the rest here.
-    pub release_rest: String,
-}
-
-/// One arm of a `.match({..})`.
-///
-/// The payload's names are declared inside the arm, from the value the arm is
-/// handed. They used to be substituted into the rendered TypeScript by walking
-/// its characters, which could not tell a binding from the same word inside a
-/// string literal or a comment, and knew nothing of a name shadowed further in.
-pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
-    let ArmParts { variant, bindings, param, body, owned, lifted, produces, is_async, release_rest } = parts;
-    // An arm is an arrow function, and JavaScript's `await` belongs to the
-    // nearest one — so an arm that awaits is `async`, and the whole `.match`
-    // is awaited where it stands.
-    let keyword = if is_async { "async " } else { "" };
-    let head = match &param {
-        Some(param) => format!("  {}: {}({}) => ", variant, keyword, param),
-        None => format!("  {}: {}() => ", variant, keyword),
-    };
-    if owned.is_empty() && lifted.is_empty() && release_rest.is_empty() {
-        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces));
-    }
-    // An arm that owns what it was handed, that lifted a declaration out of its
-    // own body, or that owes the payload a release, is always a block: the
-    // release goes in a `finally`, so the arm cannot be the bare expression
-    // form.
-    let inner = arm_block(
-        ArmParts { variant, bindings, param: None, body, owned, lifted, produces, is_async, release_rest },
-        t,
-    );
-    format!("{}{{\n{}  }},\n", head, indent(&indent(&inner)))
-}
-
-/// One arm's body as STATEMENTS: what `render_arm` puts inside the arrow.
-///
-/// A link of a chain has already been handed the payload by the key around it,
-/// so it needs the same statements without an arrow of its own.
-pub(super) fn arm_block(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
-    let (bindings, inner) = arm_block_parts(parts, t);
-    format!("{}{}", bindings, inner)
-}
-
-/// The same, with the DECLARATIONS kept apart from the body.
-///
-/// A guarded link needs the two separately: the names the pattern took have to
-/// stand before the guard, because the guard reads them, and the body has to
-/// stand inside the `if` the guard opens.
-pub(super) fn arm_block_parts(parts: ArmParts<'_>, t: &BodyTranslator) -> (String, String) {
-    let ArmParts { bindings, body, owned, lifted, produces, release_rest, .. } = parts;
-    let mut inner = t.wrap_bindings(
-        owned,
-        crate::ownership::hoisted(&arm_statements(body, produces), lifted),
-    );
-    if !release_rest.is_empty() {
-        inner = format!("try {{\n{}}} finally {{\n{}}}\n", indent(&inner), indent(&release_rest));
-    }
-    (bindings, inner)
-}
-
 /// A pattern's alternatives: an `|` pattern writes one body for several
 /// variants, and each of them is an arm of its own with the same body.
 pub(super) fn cases_of(pat: &syn::Pat) -> Vec<&syn::Pat> {
@@ -213,11 +131,11 @@ pub(super) fn cases_of(pat: &syn::Pat) -> Vec<&syn::Pat> {
 
 /// An arm body as statements: its own control flow where it has some, and
 /// otherwise the `return` that makes its value the arm's.
-pub(super) fn arm_statements(body: &str, produces: bool) -> String {
+pub(super) fn arm_statements(body: &str, produces: bool, value: bool) -> String {
     if body.trim().is_empty() {
         return String::new();
     }
-    if is_statements(body) {
+    if !value {
         return format!("{}\n", body);
     }
     // An arm of a match whose Rust value is `()` produces nothing. Handing back
@@ -233,7 +151,7 @@ pub(super) fn arm_statements(body: &str, produces: bool) -> String {
 /// An arm's value: its declarations, then the body. A body that is already a
 /// sequence of statements keeps its own control flow; anything else is the
 /// value the arm produces.
-pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool) -> String {
+pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool, value: bool) -> String {
     // An arm whose body is nothing — `Self::Large(_) => { /* Vec drops itself */ }`
     // — still has to be a function. `Large: (v) => ,` is not one.
     if body.trim().is_empty() {
@@ -242,14 +160,14 @@ pub(super) fn as_arm_value(body: &str, bindings: &str, produces: bool) -> String
         }
         return format!("{{\n{}  }}", indent(&indent(bindings)));
     }
-    let statements = is_statements(body);
+    let statements = !value;
     // An arm that produces nothing is always written as statements: the bare
     // expression form would make the arrow hand back whatever the expression
     // produced, and the match's own value is `()`.
     if !produces {
         return format!(
             "{{\n{}  }}",
-            indent(&indent(&format!("{}{}\n", bindings, arm_statements(body, false).trim_end())))
+            indent(&indent(&format!("{}{}\n", bindings, arm_statements(body, false, value).trim_end())))
         );
     }
     // A tuple literal confuses TypeScript's inference across arms: `match`
@@ -298,14 +216,47 @@ pub(super) fn translate_arm(
 ) -> String {
     let param = arm_parameter(fields, &arm.body);
     let _bindings = t.enter_pattern(case, scrutinee_ty);
-    let (payload, bound, declared) = arm_declarations(case, &param, fields, t, match_expr);
+    let Some((payload, bound, declared, refused)) =
+        arm_declarations(case, &param, fields, t, match_expr)
+    else {
+        // The pattern is one `pattern_test` cannot read back, and the key IS
+        // the test for a plain arm, so there is nothing to keep.
+        drop(_bindings);
+        let what = format!(
+            "an arm naming `{}` tests the payload with a pattern the translator cannot read \
+             back, so this arm is not written",
+            variant
+        );
+        t.report_match_gap(match_expr, what.clone());
+        let keyword = if is_async { "async " } else { "" };
+        let head = if fields.is_empty() {
+            format!("  {}: {}() => ", variant, keyword)
+        } else {
+            format!("  {}: {}({}) => ", variant, keyword, param)
+        };
+        let block = hole_in_an_arm(&what, &param, !fields.is_empty(), takes);
+        return format!("{}{{\n{}  }},\n", head, indent(&indent(&block)));
+    };
     // A consuming arm owns every part of the payload, including the parts its
     // pattern wrote `_` for: `intoMatch` releases nothing of its own on any path
     // out, so an unowned part is a leak. Asked inside the pattern's own scope,
     // because the answer turns on what the names it bound are.
     let release_rest = release_of(case, &param, &bound, takes, t);
-    let Body { body, lifted, owned, flags } =
-        translate_body(arm, &declared, takes, t, match_expr, position);
+    if let Some(what) = refused {
+        // K4: the pattern took a droppable name OUT of a member and left the
+        // rest. A plain key has no arm below it, so the whole arm is the hole.
+        drop(_bindings);
+        let keyword = if is_async { "async " } else { "" };
+        let head = if fields.is_empty() {
+            format!("  {}: {}() => ", variant, keyword)
+        } else {
+            format!("  {}: {}({}) => ", variant, keyword, param)
+        };
+        let block = hole_in_an_arm(&what, &param, !fields.is_empty(), takes);
+        return format!("{}{{\n{}  }},\n", head, indent(&indent(&block)));
+    }
+    let Body { body, lifted, owned, flags, value, .. } =
+        translate_body(arm, &declared, takes, t, match_expr, position, produces);
     drop(_bindings);
     let refusing = release_before_a_hole_in_the_bindings(&payload, &param, !fields.is_empty(), takes);
     render_arm(
@@ -317,6 +268,7 @@ pub(super) fn translate_arm(
             owned: &owned,
             lifted: &lifted,
             produces,
+            value,
             is_async,
             release_rest,
         },
@@ -341,7 +293,13 @@ pub(super) fn translate_link(
     is_async: bool,
 ) -> super::chain::Link {
     let _bindings = t.enter_pattern(case, scrutinee_ty);
-    let Some(super::payload::Payload { test, text: payload, bound_keys: bound, names: declared }) =
+    let Some(super::payload::Payload {
+        test,
+        text: payload,
+        bound_keys: bound,
+        names: declared,
+        refused,
+    }) =
         super::payload::payload_walk(case, param, fields, t, super::payload::Tests::Kept, match_expr)
     else {
         // R12: the arm's pattern is one the translator cannot read back, so
@@ -369,6 +327,18 @@ pub(super) fn translate_link(
     // after the variant dispatch, so a guard that takes a lock takes it only on
     // the path where the variant matched.
     let release_rest = release_of(case, param, &bound, takes, t);
+    if let Some(what) = refused {
+        // K4, and fixpass4's D2: the TEST still decides, so the refusal stands
+        // in the branch and a value it does not match reaches the arm below.
+        drop(_bindings);
+        return super::chain::Link {
+            test,
+            bindings: String::new(),
+            guard: None,
+            block: hole_in_an_arm(&what, param, !fields.is_empty(), takes),
+            leaves: true,
+        };
+    }
     let guard = arm.guard.as_ref().map(|(_, guard)| {
         let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
         super::chain::tried::Guard {
@@ -377,8 +347,8 @@ pub(super) fn translate_link(
             release: guard_release(&declared, &release_rest, takes, t),
         }
     });
-    let Body { body, lifted, owned, flags } =
-        translate_body(arm, &declared, takes, t, match_expr, position);
+    let Body { body, lifted, owned, flags, value, leaves } =
+        translate_body(arm, &declared, takes, t, match_expr, position, produces);
     drop(_bindings);
     let refusing = release_before_a_hole_in_the_bindings(&payload, param, !fields.is_empty(), takes);
     let (bindings, block) = arm_block_parts(
@@ -390,27 +360,35 @@ pub(super) fn translate_link(
             owned: &owned,
             lifted: &lifted,
             produces,
+            value,
             is_async,
             release_rest,
         },
         t,
     );
-    super::chain::Link {
-        test,
-        bindings,
-        guard,
-        block,
-        leaves: leaves_by_itself(&body, produces),
-    }
+    super::chain::Link { test, bindings, guard, block, leaves }
 }
 
-/// Does this arm's body leave the arrow by itself?
+/// An arm's body, written for what the arm's arrow owes, and which form the
+/// lowering wrote.
 ///
-/// Only a chain with a GUARD asks: an arm whose guard failed falls into the arm
-/// below it, so an arm that ran has to say it is finished — and a body that
-/// returns or throws has said so already.
-fn leaves_by_itself(body: &str, produces: bool) -> bool {
-    super::leaves_the_arm(&arm_statements(body, produces))
+/// An arm IS an arrow function, so a block body is written as that arrow's own
+/// statements: wrapping it in a block of its own would add a scope the arrow
+/// already provides. Everything else goes to the position that wants the
+/// value, which is what puts a `return` on each branch of a nested match
+/// instead of leaving it standing as a statement (K2).
+pub(super) fn body_of_an_arm(body: &syn::Expr, produces: bool, t: &BodyTranslator) -> (String, bool) {
+    use crate::control_flow::Wrote;
+    if let syn::Expr::Block(block) = body {
+        if block.label.is_none() {
+            return (t.translate_block(&block.block), false);
+        }
+    }
+    if produces {
+        let (text, wrote) = crate::control_flow::in_value_position(body, t);
+        return (text, wrote == Wrote::Value);
+    }
+    (t.statements(body), !crate::control_flow::form::writes_statements(body, t))
 }
 
 /// An arm's body, and what the arm owes around it.
@@ -419,6 +397,12 @@ struct Body {
     lifted: Vec<crate::ownership::Hoist>,
     owned: Vec<crate::ownership::Owned>,
     flags: String,
+    /// Is `body` one EXPRESSION whose value the arm's arrow still has to hand
+    /// back, or a run of statements that has already done it?
+    value: bool,
+    /// Does every path out of the arm leave the arrow — so that a chain need
+    /// write no jump after it?
+    leaves: bool,
 }
 
 /// The body both forms of arm share: what it declares, what it owns, and what
@@ -430,6 +414,7 @@ fn translate_body(
     t: &BodyTranslator,
     match_expr: &syn::ExprMatch,
     position: super::Position,
+    produces: bool,
 ) -> Body {
     // Where the enum handed its payload over, the arm owns what the pattern
     // named and releases it however the arm is left.
@@ -448,8 +433,22 @@ fn translate_body(
     // immediately-called function it computed the arm's value and threw it
     // away, and a `return` written inside it left the inner function rather
     // than the enclosing one.
-    let (body, lifted) = t.with_own_hoists(|| t.statements(&arm.body));
+    //
+    // K2: where the match hands a value back, the body is written for the
+    // position that WANTS one, so a nested match — `Expr::Placeholder =>
+    // match values.next() { Some(v) => Ok(..), None => Err(..) }` — puts a
+    // `return` on each of its own branches instead of standing there as a
+    // statement whose value nobody takes. `ankql/ast.ts`'s
+    // `Expr.populateRecursive` answered `undefined` for exactly that arm.
+    let ((body, value), lifted) = t.with_own_hoists(|| body_of_an_arm(&arm.body, produces, t));
     let body = body.trim_end().to_string();
+    // Where the match hands a value back, EVERY path out of the arm hands one
+    // back too — that is what Rust's type for the arm says — so the lowering
+    // wrote a `return` on each of them and the arm leaves. Where the match's
+    // own value is `()`, nothing was returned and the arm leaves only where
+    // the Rust does: an `if` with NO `else` runs on when its test fails, which
+    // reading the last line of the text backwards could not tell (K2).
+    let leaves = produces || crate::control_flow::form::always_leaves(&arm.body);
     // An arm is an arrow function, so a `?` inside one returns from the arm.
     // Where the match is the enclosing function's value that is exactly right —
     // the arm's `Result` is what the function returns — and where it is a
@@ -470,7 +469,7 @@ fn translate_body(
     // flag here — the same line the enclosing block would have written had the
     // arm been a statement of it.
     let flags = t.flag_sets_for(&arm.body);
-    Body { body, lifted, owned, flags }
+    Body { body, lifted, owned, flags, value, leaves }
 }
 
 /// One arm's body, written for the position the match stands in.
@@ -481,13 +480,20 @@ fn translate_body(
 /// run of statements — asked as an expression, `{ if n == 0 { return .. } .. }`
 /// came back an arrow function whose value was then written as a statement of
 /// its own.
-pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String {
+pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> (String, bool) {
+    // K2: whether the arm LEAVES is answered from the Rust, on every path — an
+    // `if` with no `else` runs on when its test fails, which reading the last
+    // line of the text backwards could not tell.
+    let leaves = |text: String| (text, crate::control_flow::form::always_leaves(body));
+    let returning = |text: String| {
+        (text, crate::control_flow::form::leaves_in_return_position(body, t))
+    };
     match position {
         Position::Statement => match body {
             syn::Expr::Block(block) if block.label.is_none() => {
-                t.translate_block(&block.block).trim_end().to_string()
+                leaves(t.translate_block(&block.block).trim_end().to_string())
             }
-            other => t.expr(other),
+            other => leaves(t.expr(other)),
         },
         // Whatever this arm produces IS what the function answers, so the
         // function's return type is the arm's expectation — re-keyed onto the
@@ -498,9 +504,15 @@ pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position)
         // `core/indexing/encoding.rs`, three arms of one match.
         Position::Returning => {
             let want = t.fn_return.clone();
-            t.expecting(body, want.as_ref(), || {
-                crate::control_flow::translate_expr_in_return_position(body, t)
-            })
+            let (text, wrote) = t.expecting(body, want.as_ref(), || {
+                crate::control_flow::in_value_position(body, t)
+            });
+            match wrote {
+                // The `return` the position owes goes on here, and a `return`
+                // leaves.
+                crate::control_flow::Wrote::Value => (format!("return {};", text), true),
+                crate::control_flow::Wrote::Statements => returning(text),
+            }
         }
     }
 }

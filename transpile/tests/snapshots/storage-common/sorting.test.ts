@@ -100,31 +100,31 @@ describe('sorting unit tests', () => {
         return n;
       },
       I16: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       I64: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       F64: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       Bool: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       String: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       EntityId: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       Object: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       Binary: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
       Json: () => {
-        throw new Error('expected I32')
+        throw new Error('expected I32');
       },
     });
   }
@@ -136,31 +136,31 @@ describe('sorting unit tests', () => {
         return s;
       },
       I16: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       I32: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       I64: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       F64: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       Bool: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       EntityId: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       Object: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       Binary: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
       Json: () => {
-        throw new Error('expected String')
+        throw new Error('expected String');
       },
     });
   }

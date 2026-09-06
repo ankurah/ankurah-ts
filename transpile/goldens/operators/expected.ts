@@ -112,7 +112,7 @@ export class Charge extends Struct {
 
   neg(): Charge {
     try {
-      return new Charge(-this.amount);
+      return new Charge(checkedNeg(this.amount, 'i32'));
     } finally {
       this.drop();
     }

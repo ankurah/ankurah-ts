@@ -20,7 +20,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
     },
     Literal: (v) => {
       const lit = v._0;
-      lit.match<any>({
+      return lit.match<any>({
         I16: (v) => {
           const i = v._0;
           buffer.value += i.toString();
@@ -79,7 +79,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
           buffer.value += value.toString();
           buffer.value += '\'';
         },
-      })
+      });
     },
     Path: (v) => {
       const path = v._0;
@@ -115,7 +115,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
           },
           Literal: (v) => {
             const lit = v._0;
-            lit.match<any>({
+            return lit.match<any>({
               I16: (v) => {
                 const i = v._0;
                 buffer.value += i.toString();
@@ -170,7 +170,7 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
                 buffer.value += value.toString();
                 buffer.value += '\'';
               },
-            })
+            });
           },
           Path: () => {
             return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal expressions and placeholders are supported in IN lists' })) };
@@ -190,10 +190,10 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
       buffer.value += ')';
     },
     Predicate: () => {
-      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) }
+      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) };
     },
     InfixExpr: () => {
-      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) }
+      return { $jump: 'return', $value: Result.Err(new SqlGenerationError('InvalidExpression', { _0: 'Only literal, identifier, and list expressions are supported' })) };
     },
   });
   if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
@@ -211,7 +211,7 @@ function comparisonOpToSql(op: ComparisonOperator): Result<string, SqlGeneration
       LessThanOrEqual: () => '<=',
       In: () => 'IN',
       Between: () => {
-        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' })) }
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedOperator', { _0: 'BETWEEN operator is not yet supported' })) };
       },
     });
   })();

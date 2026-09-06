@@ -1,11 +1,9 @@
 // MIRRORS: ankurah/core/src/indexing/encoding.rs
 import { Enum, Result, wrappingSub } from '@ankurah/base';
-import { Json } from '../property/value/json';
 import { Value_castTo } from '../value/cast';
 import { Value_toBytes } from '../value/collatable';
 import { Value, ValueType } from '../value/index';
 import { KeySpec } from './key_spec';
-import { EntityId } from '@ankurah/proto';
 
 export type IndexErrorV = {
   TypeMismatch: { _0: ValueType; _1: ValueType };
@@ -139,59 +137,57 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
 }
 
 function encodeJsonValue(json: unknown, descending: boolean): Uint8Array {
-  const [tag, payload] = (() => {
-    return json.match({
-      Null: () => [JSON_TAG_NULL, []] as any,
-      Bool: (v) => {
-        const b = v._0;
-        return [JSON_TAG_BOOL, [(b ? 1 : 0)]] as any;
-      },
-      Number: (v) => {
-        const n = v._0;
-        {
-          const _v3 = n.asI64();
-          if (_v3 != null) {
-            const i = _v3;
-            const _t2 = new Value('I64', { _0: i });
-            try {
-              return [JSON_TAG_INT, Value_toBytes(_t2)];
-            } finally {
-              _t2.drop();
-            }
-          } else {
-          const _v2 = n.asF64();
-          if (_v2 != null) {
-            const f = _v2;
-            const _t3 = new Value('F64', { _0: f });
-            try {
-              return [JSON_TAG_FLOAT, Value_toBytes(_t3)];
-            } finally {
-              _t3.drop();
-            }
-          } else {
-          return [JSON_TAG_NULL, []];
-        }
-        }
-        }
-      },
-      String: (v) => {
-        const s = v._0;
-        let payload = [];
-        for (const b of s.asBytes()) {
-          if (b === 0) {
-            payload.push(0);
-            payload.push(255);
-          } else {
-            payload.push(b);
+  const [tag, payload] = json.match({
+    Null: () => [JSON_TAG_NULL, []] as any,
+    Bool: (v) => {
+      const b = v._0;
+      return [JSON_TAG_BOOL, [(b ? 1 : 0)]] as any;
+    },
+    Number: (v) => {
+      const n = v._0;
+      {
+        const _v1 = n.asI64();
+        if (_v1 != null) {
+          const i = _v1;
+          const _t0 = new Value('I64', { _0: i });
+          try {
+            return [JSON_TAG_INT, Value_toBytes(_t0)];
+          } finally {
+            _t0.drop();
           }
+        } else {
+        const _v = n.asF64();
+        if (_v != null) {
+          const f = _v;
+          const _t1 = new Value('F64', { _0: f });
+          try {
+            return [JSON_TAG_FLOAT, Value_toBytes(_t1)];
+          } finally {
+            _t1.drop();
+          }
+        } else {
+        return [JSON_TAG_NULL, []];
+      }
+      }
+      }
+    },
+    String: (v) => {
+      const s = v._0;
+      let payload = [];
+      for (const b of s.asBytes()) {
+        if (b === 0) {
+          payload.push(0);
+          payload.push(255);
+        } else {
+          payload.push(b);
         }
-        payload.push(0);
-        return [JSON_TAG_STRING, payload];
-      },
-      Object: (v) => [JSON_TAG_NULL, []] as any,
-      Array: (v) => [JSON_TAG_NULL, []] as any,
-    });
-  })();
+      }
+      payload.push(0);
+      return [JSON_TAG_STRING, payload];
+    },
+    Object: (v) => [JSON_TAG_NULL, []] as any,
+    Array: (v) => [JSON_TAG_NULL, []] as any,
+  });
   if (!descending) {
     let out = [];
     out.push(tag);

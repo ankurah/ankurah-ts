@@ -1,33 +1,28 @@
-# Emitted imports that name a module `batch` does not write and
-             # `transpile.toml` does not declare as `[[provided]]`. Written by
-             # transpile/tests/parse_gate.rs. Matched EXACTLY in both directions.
-             # Generated: do not hand-edit. Refresh with:
-             #     cd transpile && UPDATE_PARSE_GATE=1 cargo test --test parse_gate
+# Imports the emitted port writes that do not resolve, written by
+# transpile/tests/import_gate.rs. `unresolved` is a specifier naming no module —
+# every one of these is a `[[provided]]` module the port has not written yet.
+# `unexported` is a name its module does not offer, which is a defect in the
+# import list. Matched EXACTLY in both directions. Generated: do not hand-edit.
+# Refresh with:
+#     cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate
 
-             unresolved = [
-  "core/context.ts: `./indexel` names no emitted file",
-  "core/entity.ts: `./indexel` names no emitted file",
-  "core/indexing/key_spec.ts: `./codec` names no emitted file",
-  "core/livequery.ts: `./indexel` names no emitted file",
-  "core/property/backend/index.ts: `./yrs` names no emitted file",
-  "core/property/backend/index.ts: `./yrs` names no emitted file",
-  "core/property/backend/lww.ts: `./codec` names no emitted file",
-  "core/property/value/entity_ref.ts: `../../indexel` names no emitted file",
-  "core/property/value/entity_ref.ts: `./codec` names no emitted file",
-  "core/property/value/index.ts: `./yrs` names no emitted file",
-  "core/property/value/json.ts: `./codec` names no emitted file",
-  "core/property/value/yjs.ts: `../backend/yrs` names no emitted file",
-  "core/resultset.ts: `./indexel` names no emitted file",
-  "core/transaction.ts: `./indexel` names no emitted file",
-  "core/value/index.test.ts: `./mod` names no emitted file",
-  "core/value/index.ts: `./codec` names no emitted file",
-  "proto/auth.ts: `./auth.provided` names no emitted file",
-  "proto/clock.ts: `./clock.provided` names no emitted file",
-  "proto/data.ts: `./id.provided` names no emitted file",
-  "proto/error.ts: `./error.provided` names no emitted file",
-  "proto/id.ts: `./id.provided` names no emitted file",
-  "proto/request.ts: `./id.provided` names no emitted file",
-  "proto/subscription.ts: `./id.provided` names no emitted file",
-  "proto/transaction.ts: `./id.provided` names no emitted file",
-  "proto/update.ts: `./id.provided` names no emitted file",
+# unresolved: 10
+unresolved = [
+  "connector-websocket/client.ts:4: Could not resolve: \"./connection\"",
+  "connector-websocket/client.ts:5: Could not resolve: \"./connection_state\"",
+  "core/property/backend/index.ts:6: Could not resolve: \"./yrs\"",
+  "core/property/backend/index.ts:8: Could not resolve: \"./yrs\"",
+  "core/property/backend/lww.ts:5: Could not resolve: \"./codec\"",
+  "core/property/value/index.ts:5: Could not resolve: \"./yrs\"",
+  "core/transaction.ts:7: Could not resolve: \"./indexel\"",
+  "core/value/index.test.ts:4: Could not resolve: \"./mod\"",
+  "storage-sqlite/engine.ts:5: Could not resolve: \"./connection\"",
+  "storage-sqlite/index.ts:3: Could not resolve: \"./connection\"",
 ]
+
+# unexported: 2
+unexported = [
+  "core/lineage.test.ts:4: No matching export in \"pkg/core/src/lineage.ts\" for import \"Comparison\"",
+  "core/reactor/comparison_index.test.ts:4: No matching export in \"pkg/core/src/reactor/comparison_index.ts\" for import \"ComparisonIndex\"",
+]
+

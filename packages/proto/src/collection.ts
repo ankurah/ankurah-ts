@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/collection.rs
-import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, keyHash } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 
 export class CollectionId extends Struct {

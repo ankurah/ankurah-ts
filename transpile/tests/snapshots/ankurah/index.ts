@@ -1,5 +1,4 @@
 // MIRRORS: ankurah/ankurah/src/lib.rs
-import { Context, LiveQuery, MatchArgs, Model, Mutable, Node, PermissiveAgent, Property, QueryValue, ResultSet, Value, ValueType, View } from '@ankurah/core';
 export * as ankql from '@ankurah/ankql';
 export * as core from '@ankurah/core';
 export * as proto from '@ankurah/proto';

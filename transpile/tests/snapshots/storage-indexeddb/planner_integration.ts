@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
 import { Result, AnyhowError, floatMax, tracing, checkedAdd, saturatingAdd, iterLast, range } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
-import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
+import { CanonicalRange, KeyBounds, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
 import { Object } from './util/object';
 import { EntityId } from '@ankurah/proto';

@@ -5,7 +5,6 @@ import { Entity } from '../../entity';
 import { MutationError } from '../../error';
 import { YrsBackend } from '../backend/yrs';
 import { FromActiveType, FromEntity, InitializeWith, PropertyError } from '../traits';
-import { fromActive } from './pn_counter';
 
 export class YrsString<Projected extends Clone> extends Struct implements FromEntity, InitializeWith<string>, InitializeWith<string | null>, Signal, Subscribe<string> {
   readonly propertyName: PropertyName;

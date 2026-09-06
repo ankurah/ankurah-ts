@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/entity.rs
 import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, invoke, Invocable, dropOwned, valueNotEquals, tracing, dropUnbound, checkedAdd, iterFindMap, range, HashMap } from '@ankurah/base';
-import { Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
+import { Clock, CollectionId, EntityId, EntityState, Event, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
 import { LineageError, MutationError, RetrievalError, StateError } from './error';
 import { View } from './indexel';
 import { compare, compareUnstoredEvent } from './lineage';
@@ -218,7 +218,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         const _m5 = await (async () => {
           return _r3.unwrap().intoMatch<any>({
             Equal: () => {
-              return { $jump: 'return', $value: Result.Ok(false) }
+              return { $jump: 'return', $value: Result.Ok(false) };
             },
             Descends: () => event.id(),
             NotDescends: (v) => {
@@ -301,22 +301,22 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           const _m1 = await (async () => {
             return _r0.unwrap().intoMatch<any>({
               Equal: () => {
-                return { $jump: 'return', $value: Result.Ok(false) }
+                return { $jump: 'return', $value: Result.Ok(false) };
               },
               Descends: () => true,
               NotDescends: (v) => {
                 try {
-                  return { $jump: 'return', $value: Result.Ok(false) }
+                  return { $jump: 'return', $value: Result.Ok(false) };
                 } finally {
                   dropUnbound(v, []);
                 }
               },
               Incomparable: () => {
-                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) }
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
               },
               PartiallyDescends: (v) => {
                 const meet = v.meet;
-                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) }
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
               },
               BudgetExceeded: (v) => {
                 const subjectFrontier = v.subjectFrontier;
@@ -437,7 +437,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
       return state.value.backends.values().flatMap((backend) => {
         const _t0 = backend.value.propertyValues();
         try {
-          return [..._t0].map(([name, value]) => [name.toString(), value.clone()]);
+          return [..._t0].map(([name, value]) => [name, value.clone()]);
         } finally {
           dropOwned(_t0);
         }

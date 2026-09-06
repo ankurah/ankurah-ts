@@ -206,17 +206,17 @@ pub fn strip_binding(pat: &syn::Pat) -> &syn::Pat {
 
 /// A scope holding one pattern's bindings; it closes when this drops.
 ///
-/// It also carries whether the value being taken apart is BORROWED, restored
-/// when the scope closes: a match over an owned value written inside a borrowed
-/// one answers for itself.
+/// It also carries the TYPE of the value being taken apart, restored when the
+/// scope closes: a match over an owned value written inside a borrowed one
+/// answers for itself.
 pub struct PatternScope<'t, 'a> {
     pub(crate) translator: &'t BodyTranslator<'a>,
-    pub(crate) borrowed_before: bool,
+    pub(crate) subject_before: Option<crate::ty::Ty>,
 }
 
 impl Drop for PatternScope<'_, '_> {
     fn drop(&mut self) {
-        self.translator.borrowed_subject.set(self.borrowed_before);
+        *self.translator.subject_ty.borrow_mut() = self.subject_before.take();
         self.translator.pop_scope();
     }
 }

@@ -60,7 +60,7 @@ pub(super) enum Fallthrough<'a> {
     Exhaustive,
     /// The catch-all, which the chain asks for the body of under the variant it
     /// is writing.
-    CatchAll(&'a catch_all::Fallback<'a>),
+    CatchAll(&'a super::fallback::Fallback<'a>),
     /// A catch-all whose body the port cannot write here, with the reason.
     Unwritable(String),
 }

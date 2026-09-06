@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/node_applier.rs
 import { Struct, Result, OwnedClosure, dropOwned, tracing, dropUnbound } from '@ankurah/base';
-import { Event, EventId, Attested, CollectionId, EntityDelta, EntityId, EntityState, EventFragment, SubscriptionUpdateItem } from '@ankurah/proto';
+import { Event, Attested, CollectionId, EntityDelta, EntityId, EntityState, EventFragment, SubscriptionUpdateItem } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
 import { ApplyError, ApplyErrorItem, MutationError } from './error';
@@ -233,11 +233,7 @@ export class NodeApplier extends Struct {
             }
             {
               const _v1 = _v;
-              try {
-
-              } finally {
-                dropOwned(_v1);
-              }
+              dropOwned(_v1);
             }
           }
         } else {

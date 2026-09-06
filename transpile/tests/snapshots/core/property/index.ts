@@ -1,6 +1,5 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
 import { Result, Ref, dropOwned, unsupported } from '@ankurah/base';
-import { EntityId } from '@ankurah/proto';
 import { Value } from '../value/index';
 import { PropertyError } from './traits';
 export * from './backend';

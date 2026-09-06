@@ -186,14 +186,14 @@ export function drain(items: Payload[], into: number[]): number {
           }
         } else {
           try {
-            return { $jump: 'break' }
+            return { $jump: 'break' };
           } finally {
             dropUnbound(v, []);
           }
         }
       },
       Pending: () => {
-        return { $jump: 'break' }
+        return { $jump: 'break' };
       },
     });
     if ((_m0 as any)?.$jump === 'break') break;

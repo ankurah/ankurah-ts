@@ -4,10 +4,8 @@ import { Attested, Clock, CollectionId, EntityState, Event, Item } from '@ankura
 import { CollectionSet } from './collectionset';
 import { Entity, WeakEntitySet } from './entity';
 import { MutationError, RetrievalError } from './error';
-import { Node } from './node';
 import { Property } from './property/index';
 import { PropertyError } from './property/traits';
-import { LWW } from './property/value/lww';
 import { Reactor } from './reactor';
 import { LocalRetriever } from './retrieval';
 import { StorageCollectionWrapper } from './storage';
