@@ -39,7 +39,9 @@ test('a borrowed match takes nothing apart', () => {
 test('a `_` that covers both halves at once is still a hole', () => {
   const held = new Value('Held', { _0: new Token(2) });
   expect(() => readLoosely(held)).toThrow(/tests inside the payload/);
-  held.drop();
+  // R9: the parameter is taken BY VALUE, so Rust's unwind drops it and the
+  // emitted `finally` does the same. The driver used to drop it here, because
+  // the refusal walk skipped every by-value parameter and the value leaked.
   clearFatalLatch();
 });
 

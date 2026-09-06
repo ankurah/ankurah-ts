@@ -149,6 +149,12 @@ pub fn split_tsc_line(line: &str) -> Option<(String, String)> {
 /// Which of tsc's import diagnostics this is, and what it is about.
 pub fn tsc_subject(complaint: &str) -> Option<(Kind, String)> {
     let (code, message) = complaint.split_once(": ")?;
+    // The gate is an import gate: a diagnostic about a BODY — a wrong argument
+    // type, a missing property — is not its business, and filing those would
+    // make the `other` list a second type-error budget.
+    if !is_an_import_code(code) {
+        return None;
+    }
     match code {
         // Cannot find module './indexel' or its corresponding type declarations.
         "TS2307" => Some((Kind::Unresolved, single_quoted(message, 0)?)),
@@ -159,8 +165,42 @@ pub fn tsc_subject(complaint: &str) -> Option<(Kind, String)> {
         "TS2305" | "TS2724" | "TS2614" => Some((Kind::Unexported, single_quoted(message, 1)?)),
         // Module '"./lineage"' declares 'Comparison' locally, but it is not exported.
         "TS2459" => Some((Kind::Unexported, single_quoted(message, 1)?)),
-        _ => None,
+        // S5: the two shapes that used to escape, and then everything else.
+        //
+        // Module '"./x"' has no default export.
+        "TS1192" => Some((Kind::Unexported, "default".to_string())),
+        // Namespace '"./x"' has no exported member 'Y'.
+        "TS2694" => Some((Kind::Unexported, single_quoted(message, 1)?)),
+        // Every OTHER import code is filed as `Other` rather than dropped.
+        // Dropping it meant a type-only namespace use could pass the gate
+        // unrecorded: the gate reported what it recognised, which is not the
+        // same as reporting what tsc said.
+        _ => Some((Kind::Other, format!("{code}: {message}"))),
     }
+}
+
+/// Is this tsc code about an IMPORT at all?
+///
+/// The gate is an import gate: a diagnostic about a body — a wrong argument
+/// type, a missing property — is not its business, and filing those as `Other`
+/// would make the `other` list a second type-error budget. The codes here are
+/// the ones tsc emits for a module specifier or for a name read out of one.
+pub fn is_an_import_code(code: &str) -> bool {
+    matches!(
+        code,
+        "TS1192" // no default export
+            | "TS1259" // esModuleInterop needed for a default import
+            | "TS1261" // casing differs from the file on disk
+            | "TS2305" // no exported member
+            | "TS2307" // cannot find module
+            | "TS2308" // two modules export the same name
+            | "TS2440" // an import conflicts with a local declaration
+            | "TS2459" // declared locally but not exported
+            | "TS2614" // no exported member, meant a default import
+            | "TS2691" // an import path must not end in .ts
+            | "TS2694" // a namespace has no such member
+            | "TS2724" // no exported member, did you mean
+    )
 }
 
 /// The `n`th `'…'` of a tsc message, with the `"` tsc wraps a specifier in
@@ -250,23 +290,70 @@ pub fn undeclared_dependencies(
     out
 }
 
-/// The `@ankurah/<name>` specifiers a module imports, read off its import
-/// lines. A specifier inside a string the emission wrote for a message is not
-/// an import, so only `from '…'` and `import '…'` count.
+/// The `@ankurah/<name>` specifiers a module imports.
+///
+/// A specifier inside a string the emission wrote for a MESSAGE is not an
+/// import, so the scan is anchored on the keyword that begins a declaration —
+/// but a declaration is not a line. S6: reading one line at a time, requiring
+/// that line to begin with `import`/`export`, and splitting on single quotes
+/// only, missed `import { X } from "@ankurah/x";` and every multi-line named
+/// import, whose `} from '@ankurah/x';` begins with a brace. The manifest check
+/// then said a package declared everything it needed while an undeclared
+/// dependency stood two lines down.
+///
+/// So: find each `import`/`export` KEYWORD at the start of a statement, then
+/// read forward to the first quote of either kind and take what is inside it.
 pub fn bare_ankurah_specifiers(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if !line.starts_with("import ") && !line.starts_with("export ") {
-            continue;
-        }
-        for piece in line.split('\'').skip(1).step_by(2) {
-            if piece.starts_with("@ankurah/") {
-                out.insert(piece.to_string());
+    for start in declaration_starts(text) {
+        let rest = &text[start..];
+        // A declaration ends at its semicolon or at the newline that follows
+        // the specifier; either way the specifier is the first quoted run.
+        let end = rest.find(';').unwrap_or(rest.len());
+        if let Some(specifier) = first_quoted(&rest[..end]) {
+            if specifier.starts_with("@ankurah/") {
+                out.insert(specifier);
             }
         }
     }
     out
+}
+
+/// Where each `import`/`export` statement begins: the keyword at the start of a
+/// line, or after a `;` or `}` — never inside an identifier and never inside a
+/// string the emission wrote.
+fn declaration_starts(text: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    for keyword in ["import", "export"] {
+        let mut from = 0;
+        while let Some(at) = text[from..].find(keyword) {
+            let at = from + at;
+            from = at + keyword.len();
+            let before = text[..at].trim_end();
+            let begins = before.is_empty()
+                || before.ends_with(';')
+                || before.ends_with('}')
+                || text[..at].ends_with('\n')
+                || before.len() < text[..at].trim_end_matches([' ', '\t']).len();
+            let after_is_part = bytes
+                .get(from)
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_');
+            if begins && !after_is_part {
+                out.push(at);
+            }
+        }
+    }
+    out
+}
+
+/// The first single- or double-quoted run in this text.
+fn first_quoted(text: &str) -> Option<String> {
+    let at = text.find(['\'', '"'])?;
+    let quote = text.as_bytes()[at] as char;
+    let rest = &text[at + 1..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
 }
 
 fn declared_dependencies(manifest: &Path) -> BTreeSet<String> {
@@ -294,3 +381,4 @@ fn declared_dependencies(manifest: &Path) -> BTreeSet<String> {
     }
     out
 }
+

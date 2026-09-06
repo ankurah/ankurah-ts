@@ -137,7 +137,7 @@ fn written_arm(
     scrutinee_ty: Option<&crate::ty::Ty>,
     t: &BodyTranslator,
     position: Position,
-    unowned: Vec<usize>,
+    unowned: Vec<Vec<usize>>,
     consumes: bool,
 ) -> Arm {
     let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
@@ -210,26 +210,29 @@ fn unowned_elements(
     pat: &syn::Pat,
     scrutinee_ty: Option<&crate::ty::Ty>,
     t: &BodyTranslator,
-) -> Vec<usize> {
+) -> Vec<Vec<usize>> {
     let Some(crate::ty::Ty::Tuple(elements)) = scrutinee_ty.map(|ty| ty.peel_refs()) else {
         return Vec::new();
     };
     let Some(tc) = &t.types else { return Vec::new() };
     let tc = tc.borrow();
-    crate::ownership::arm_takes::unowned_droppable_positions(pat, elements, &tc.probe())
+    crate::ownership::arm_takes::unowned_droppable_paths(pat, elements, &tc.probe())
         .unwrap_or_default()
 }
 
 /// The arm's body with the positions nothing named released on every path out
 /// of it, which is where Rust drops them: at the end of the match, however the
 /// arm leaves.
-fn releasing_unowned_elements(body: String, subject: &str, unowned: &[usize]) -> String {
+fn releasing_unowned_elements(body: String, subject: &str, unowned: &[Vec<usize>]) -> String {
     if unowned.is_empty() {
         return body;
     }
     let releases: String = unowned
         .iter()
-        .map(|at| format!("  dropOwned({}[{}]);\n", subject, at))
+        .map(|path| {
+            let place: String = path.iter().map(|at| format!("[{}]", at)).collect();
+            format!("  dropOwned({}{});\n", subject, place)
+        })
         .collect();
     format!("try {{\n{}}} finally {{\n{}}}\n", super::indent(&body), releases)
 }

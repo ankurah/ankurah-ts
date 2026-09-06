@@ -110,7 +110,16 @@ fn scan(source: &[char], out: &mut BTreeSet<String>) {
             if previous != Some('.') && !is_key {
                 out.insert(source[from..at].iter().collect());
             }
-            previous = Some('x');
+            // S9: what a name IS decides what a `/` after it means. A KEYWORD
+            // is not a value, so `return /"/;` opens a regular-expression
+            // literal where `x /2/ y` is two divisions — and reading every name
+            // as a value swallowed the rest of the file from the first `/`
+            // after a `return`. The category travels, not the character.
+            let word: String = source[from..at].iter().collect();
+            previous = Some(match opens_a_regex_after(&word) {
+                true => 'k',
+                false => 'x',
+            });
             continue;
         }
         previous = Some(c);
@@ -130,6 +139,33 @@ fn next_is_colon(source: &[char], from: usize) -> bool {
 fn opens_a_regex(previous: Option<char>) -> bool {
     !matches!(previous, Some('x') | Some('0') | Some(')') | Some(']') | Some('}') | Some('\'')
         | Some('"') | Some('`'))
+}
+
+/// Is this word a KEYWORD after which a `/` opens a literal rather than
+/// dividing? S9: the ones that are followed by an expression.
+///
+/// The emitter writes no regular-expression literal today, so this half is
+/// modelled and the other half — a `/` after a value — is what the corpus
+/// exercises. Both are here because the lexer is read by the import gate, and a
+/// gate that mis-lexes one file reports the wrong names for it.
+fn opens_a_regex_after(word: &str) -> bool {
+    matches!(
+        word,
+        "return"
+            | "throw"
+            | "case"
+            | "yield"
+            | "await"
+            | "typeof"
+            | "instanceof"
+            | "in"
+            | "of"
+            | "new"
+            | "delete"
+            | "void"
+            | "do"
+            | "else"
+    )
 }
 
 /// Where the regular-expression literal that opens at `at` ends, one past its
@@ -415,6 +451,32 @@ mod tests {
         assert!(found.contains(&"Needed".to_string()), "{:?}", found);
         let line = names("`a ${\n  // }\n  Needed.make()\n}`");
         assert!(line.contains(&"Needed".to_string()), "{:?}", line);
+    }
+
+    /// S9: a `/` after a KEYWORD opens a regular-expression literal.
+    ///
+    /// Read as division, `return /"/;` left the lexer inside a string from the
+    /// quote onwards and the rest of the file was never read — so a gate that
+    /// asks this lexer which names a file writes got the wrong answer for it.
+    #[test]
+    fn a_slash_after_a_keyword_opens_a_literal() {
+        let found = names("return /\"/;\nNeeded.make();\n");
+        assert!(found.contains(&"Needed".to_string()), "the rest of the file was read: {found:?}");
+    }
+
+    /// And a `/` after a VALUE is still division.
+    #[test]
+    fn a_slash_after_a_value_is_still_division() {
+        let found = names("const q = total / Scale.of(2);\n");
+        assert!(found.contains(&"Scale".to_string()), "{found:?}");
+        assert!(found.contains(&"total".to_string()), "{found:?}");
+    }
+
+    /// A name that merely BEGINS with a keyword is not one.
+    #[test]
+    fn a_name_beginning_with_a_keyword_is_not_a_keyword() {
+        let found = names("const returned = a / b / Held.of(1);\n");
+        assert!(found.contains(&"Held".to_string()), "{found:?}");
     }
 }
 

@@ -171,3 +171,51 @@ fn a_claim_that_would_double_drop_a_field_is_withdrawn_and_reported() {
         f.messages()
     );
 }
+
+/// S3/R6: a tuple SUBJECT's release walks into nested tuple positions.
+///
+/// `((a, _), c)` over `((Token, Token), Token)` released `c` and released `a`
+/// through its name, and left `pair[0][1]` to the collector: the walk stopped
+/// at the top level.
+#[test]
+fn a_nested_tuple_position_no_name_took_is_released_by_path() {
+    let ts = crate::ownership::tests::body(
+        "pub fn f(pair: ((Owned, Owned), Owned)) -> u32 {\n\
+             match pair { ((a, _), c) => a.n + c.n }\n\
+         }",
+        "f",
+    );
+    assert!(
+        ts.contains("dropOwned(pair[0][1]);"),
+        "the leaf the pattern reached past:\n{}",
+        ts
+    );
+}
+
+/// Three levels, so the order can be read: deepest first.
+#[test]
+fn three_levels_of_tuple_are_all_walked() {
+    let ts = crate::ownership::tests::body(
+        "pub fn f(deep: (((Owned, Owned), Owned), Owned)) -> u32 {\n\
+             match deep { (((a, _), _), d) => a.n + d.n }\n\
+         }",
+        "f",
+    );
+    let inner = ts.find("dropOwned(deep[0][0][1]);").expect(&format!("{}", ts));
+    let outer = ts.find("dropOwned(deep[0][1]);").expect(&format!("{}", ts));
+    assert!(inner < outer, "the deeper leaf is released first:\n{}", ts);
+}
+
+/// A nested position the pattern NAMED whole is released through that name and
+/// not walked into.
+#[test]
+fn a_nested_position_a_name_owns_is_not_walked() {
+    let ts = crate::ownership::tests::body(
+        "pub fn f(pair: ((Owned, Owned), Owned)) -> u32 {\n\
+             match pair { (inner, c) => inner.0.n + c.n }\n\
+         }",
+        "f",
+    );
+    assert!(!ts.contains("[0][1]"), "the name owns the whole element:\n{}", ts);
+    assert!(ts.contains("dropOwned(inner);"), "and releases it:\n{}", ts);
+}

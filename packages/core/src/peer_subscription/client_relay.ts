@@ -663,56 +663,60 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
           _moved4 = true;
           const _r5 = (await node.request(peerId, contextData, new NodeRequestBody('SubscribeQuery', { queryId: queryId, collection: collectionId.clone(), selection: selection.clone(), version: version, knownMatches: knownMatches }))).mapErr((e) => new RetrievalError('RequestError', { _0: e }));
           if (_r5.isErr()) return { $jump: 'return', $value: Result.Err(_r5.unwrapErr()) };
-          const _m6 = await (async () => {
-            return _r5.unwrap().intoMatch<any>({
-              QuerySubscribed: (v) => {
-                const _responseQueryId = v.queryId;
-                const deltas = v.deltas;
-                return deltas;
-              },
-              Error: (v) => {
-                const e = v._0;
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('ServerError', { _0: e }) })) };
-              },
-              CommitComplete: (v) => {
-                const other = new NodeResponseBody('CommitComplete', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
-              },
-              Fetch: (v) => {
-                const other = new NodeResponseBody('Fetch', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
-              },
-              Get: (v) => {
-                const other = new NodeResponseBody('Get', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
-              },
-              GetEvents: (v) => {
-                const other = new NodeResponseBody('GetEvents', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
-              },
-              Success: (v) => {
-                const other = new NodeResponseBody('Success', v);
-                return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
-              },
-            });
-          })();
-          if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
-          const deltas = (_m6 as any);
-          tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
-          _moved0 = true;
-          const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
-          const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
           try {
-            const eventStoreResult = await retriever.storeUsedEvents();
-            const _r7 = applyResult;
-            if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
-            _r7.drop();
-            const _r8 = eventStoreResult;
-            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-            _r8.drop();
-            return Result.Ok([]);
+            const _m6 = await (async () => {
+              return _r5.unwrap().intoMatch<any>({
+                QuerySubscribed: (v) => {
+                  const _responseQueryId = v.queryId;
+                  const deltas = v.deltas;
+                  return deltas;
+                },
+                Error: (v) => {
+                  const e = v._0;
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('ServerError', { _0: e }) })) };
+                },
+                CommitComplete: (v) => {
+                  const other = new NodeResponseBody('CommitComplete', v);
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+                },
+                Fetch: (v) => {
+                  const other = new NodeResponseBody('Fetch', v);
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+                },
+                Get: (v) => {
+                  const other = new NodeResponseBody('Get', v);
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+                },
+                GetEvents: (v) => {
+                  const other = new NodeResponseBody('GetEvents', v);
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+                },
+                Success: (v) => {
+                  const other = new NodeResponseBody('Success', v);
+                  return { $jump: 'return', $value: Result.Err(new RetrievalError('RequestError', { _0: new RequestError('UnexpectedResponse', { _0: other }) })) };
+                },
+              });
+            })();
+            if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
+            const deltas = (_m6 as any);
+            tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
+            _moved0 = true;
+            const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
+            const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
+            try {
+              const eventStoreResult = await retriever.storeUsedEvents();
+              const _r7 = applyResult;
+              if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
+              _r7.drop();
+              const _r8 = eventStoreResult;
+              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+              _r8.drop();
+              return Result.Ok([]);
+            } finally {
+              applyResult.drop();
+            }
           } finally {
-            applyResult.drop();
+            if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);
           }
         } finally {
           if (!_moved4) dropOwned(knownMatches);

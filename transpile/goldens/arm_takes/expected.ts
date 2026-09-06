@@ -154,3 +154,60 @@ export function member(h: Holder): number {
   });
 }
 
+export function nestedPair(pair: [[Token, Token], Token]): number {
+  {
+    const a = pair[0][0];
+    const c = pair[1];
+    try {
+      try {
+        try {
+          return checkedAdd(a.n, c.n, 'u32');
+        } finally {
+          c.drop();
+        }
+      } finally {
+        a.drop();
+      }
+    } finally {
+      dropOwned(pair[0][1]);
+    }
+  }
+}
+
+export function threeDeep(deep: [[[Token, Token], Token], Token]): number {
+  {
+    const a = deep[0][0][0];
+    const d = deep[1];
+    try {
+      try {
+        try {
+          return checkedAdd(a.n, d.n, 'u32');
+        } finally {
+          d.drop();
+        }
+      } finally {
+        a.drop();
+      }
+    } finally {
+      dropOwned(deep[0][0][1]);
+      dropOwned(deep[0][1]);
+    }
+  }
+}
+
+export function namedWhole(pair: [[Token, Token], Token]): number {
+  {
+    const inner = pair[0];
+    const c = pair[1];
+    try {
+      try {
+        return checkedAdd(inner[0].n, c.n, 'u32');
+      } finally {
+        c.drop();
+      }
+    } finally {
+      dropOwned(inner);
+    }
+  }
+}
+

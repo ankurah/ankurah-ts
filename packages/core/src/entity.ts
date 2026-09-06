@@ -133,14 +133,16 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         } else {
           _moved0 = true;
           const operations_1 = new OperationSet(operations);
+          let _moved3 = false;
           const _b2 = this.deref().collection.clone();
           try {
-            const _b3 = state.value.head.clone();
+            const _b4 = state.value.head.clone();
+            _moved3 = true;
             _moved0 = true;
-            const event = new Event(_b2, this.deref().id, operations_1, _b3);
+            const event = new Event(_b2, this.deref().id, operations_1, _b4);
             return Result.Ok(event);
           } finally {
-            if (_b2 != null && !(_b2 as any).isMoved && !(_b2 as any).isDropped) dropOwned(_b2);
+            if (!_moved3) dropOwned(_b2);
           }
         }
       } finally {
@@ -225,70 +227,74 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
       for (const attempt of range(0, MAX_RETRIES)) {
         const _r3 = await compareUnstoredEvent(getter, event, head, budget);
         if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r3.unwrapErr())) };
-        const _m5 = await (async () => {
-          return _r3.unwrap().intoMatch<any>({
-            Equal: () => {
-              return { $jump: 'return', $value: Result.Ok(false) };
-            },
-            Descends: () => Clock.fromEventId(event.id()),
-            NotDescends: (v) => {
-              try {
-                tracing.warn(`NotDescends - HACK - applying (attempt ${checkedAdd(attempt, 1, 'usize')})`);
-                return head.withEvent(event.id());
-              } finally {
-                dropUnbound(v, []);
-              }
-            },
-            Incomparable: () => {
-              return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
-            },
-            PartiallyDescends: (v) => {
-              const meet = v.meet;
-              let _moved4 = false;
-              try {
-                _moved4 = true;
-                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
-              } finally {
-                if (!_moved4) dropOwned(meet);
-              }
-            },
-            BudgetExceeded: (v) => {
-              const subjectFrontier = v.subjectFrontier;
-              const otherFrontier = v.otherFrontier;
-              try {
+        try {
+          const _m5 = await (async () => {
+            return _r3.unwrap().intoMatch<any>({
+              Equal: () => {
+                return { $jump: 'return', $value: Result.Ok(false) };
+              },
+              Descends: () => Clock.fromEventId(event.id()),
+              NotDescends: (v) => {
                 try {
-                  tracing.warn(`apply_event budget exhausted after ${budget} events. Assuming Descends. subject_frontier: ${[...subjectFrontier].map((id) => id.toBase64Short()).join(', ')}, other_frontier: ${[...otherFrontier].map((id) => id.toBase64Short()).join(', ')}`);
-                  return event.id();
+                  tracing.warn(`NotDescends - HACK - applying (attempt ${checkedAdd(attempt, 1, 'usize')})`);
+                  return head.withEvent(event.id());
                 } finally {
-                  dropOwned(otherFrontier);
+                  dropUnbound(v, []);
                 }
-              } finally {
-                dropOwned(subjectFrontier);
-              }
-            },
-          });
-        })();
-        if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
-        const newHead = (_m5 as any);
-        let _c9;
-        const _r8 = this.tryMutate(head, new OwnedClosure([newHead], (state: EntityInnerState) => {
-          for (const [backendName, operations] of [...event.operations.deref()]) {
-            const _r6 = state.applyOperations(backendName, operations);
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-            _r6.drop();
+              },
+              Incomparable: () => {
+                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
+              },
+              PartiallyDescends: (v) => {
+                const meet = v.meet;
+                let _moved4 = false;
+                try {
+                  _moved4 = true;
+                  return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
+                } finally {
+                  if (!_moved4) dropOwned(meet);
+                }
+              },
+              BudgetExceeded: (v) => {
+                const subjectFrontier = v.subjectFrontier;
+                const otherFrontier = v.otherFrontier;
+                try {
+                  try {
+                    tracing.warn(`apply_event budget exhausted after ${budget} events. Assuming Descends. subject_frontier: ${[...subjectFrontier].map((id) => id.toBase64Short()).join(', ')}, other_frontier: ${[...otherFrontier].map((id) => id.toBase64Short()).join(', ')}`);
+                    return event.id();
+                  } finally {
+                    dropOwned(otherFrontier);
+                  }
+                } finally {
+                  dropOwned(subjectFrontier);
+                }
+              },
+            });
+          })();
+          if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
+          const newHead = (_m5 as any);
+          let _c9;
+          const _r8 = this.tryMutate(head, new OwnedClosure([newHead], (state: EntityInnerState) => {
+            for (const [backendName, operations] of [...event.operations.deref()]) {
+              const _r6 = state.applyOperations(backendName, operations);
+              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+              _r6.drop();
+            }
+            const _a7 = newHead;
+            state.head.drop();
+            state.head = _a7;
+            return Result.Ok([]);
+          }, undefined, true));
+          if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+          _c9 = _r8.unwrap();
+          if (_c9) {
+            this.deref().broadcast.send([]);
+            return Result.Ok(true);
           }
-          const _a7 = newHead;
-          state.head.drop();
-          state.head = _a7;
-          return Result.Ok([]);
-        }, undefined, true));
-        if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-        _c9 = _r8.unwrap();
-        if (_c9) {
-          this.deref().broadcast.send([]);
-          return Result.Ok(true);
+          continue;
+        } finally {
+          if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
         }
-        continue;
       }
       tracing.warn('apply_event retries exhausted while chasing moving head; applying event as Descends');
       return Result.Err(new MutationError('TOCTOUAttemptsExhausted', {}));
@@ -308,69 +314,73 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         for (const _attempt of range(0, MAX_RETRIES)) {
           const _r0 = await compare(getter, newHead, head, budget);
           if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r0.unwrapErr())) };
-          const _m1 = await (async () => {
-            return _r0.unwrap().intoMatch<any>({
-              Equal: () => {
-                return { $jump: 'return', $value: Result.Ok(false) };
-              },
-              Descends: () => true,
-              NotDescends: (v) => {
-                try {
+          try {
+            const _m1 = await (async () => {
+              return _r0.unwrap().intoMatch<any>({
+                Equal: () => {
                   return { $jump: 'return', $value: Result.Ok(false) };
-                } finally {
-                  dropUnbound(v, []);
-                }
-              },
-              Incomparable: () => {
-                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
-              },
-              PartiallyDescends: (v) => {
-                const meet = v.meet;
-                return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
-              },
-              BudgetExceeded: (v) => {
-                const subjectFrontier = v.subjectFrontier;
-                const otherFrontier = v.otherFrontier;
-                try {
+                },
+                Descends: () => true,
+                NotDescends: (v) => {
                   try {
-                    tracing.warn(`${this} apply_state - budget exhausted after ${budget} events. Assuming Descends. subject: ${subjectFrontier}, other: ${otherFrontier}`);
-                    return true;
+                    return { $jump: 'return', $value: Result.Ok(false) };
                   } finally {
-                    dropOwned(otherFrontier);
+                    dropUnbound(v, []);
                   }
-                } finally {
-                  dropOwned(subjectFrontier);
+                },
+                Incomparable: () => {
+                  return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('Incomparable', {}))) };
+                },
+                PartiallyDescends: (v) => {
+                  const meet = v.meet;
+                  return { $jump: 'return', $value: Result.Err(MutationError.fromLineageError(new LineageError('PartiallyDescends', { meet: meet }))) };
+                },
+                BudgetExceeded: (v) => {
+                  const subjectFrontier = v.subjectFrontier;
+                  const otherFrontier = v.otherFrontier;
+                  try {
+                    try {
+                      tracing.warn(`${this} apply_state - budget exhausted after ${budget} events. Assuming Descends. subject: ${subjectFrontier}, other: ${otherFrontier}`);
+                      return true;
+                    } finally {
+                      dropOwned(otherFrontier);
+                    }
+                  } finally {
+                    dropOwned(subjectFrontier);
+                  }
+                },
+              });
+            })();
+            if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+            const apply = (_m1 as any);
+            if (apply) {
+              let _c5;
+              const _r4 = this.tryMutate(head, (es) => {
+                for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+                  const _r2 = backendFromString(name, stateBuffer);
+                  if (_r2.isErr()) return Result.Err(MutationError.fromRetrievalError(_r2.unwrapErr()));
+                  let _moved3 = false;
+                  const backend = _r2.unwrap();
+                  try {
+                    _moved3 = true;
+                    es.backends.insert(name, backend);
+                  } finally {
+                    if (!_moved3) backend.drop();
+                  }
                 }
-              },
-            });
-          })();
-          if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-          const apply = (_m1 as any);
-          if (apply) {
-            let _c5;
-            const _r4 = this.tryMutate(head, (es) => {
-              for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
-                const _r2 = backendFromString(name, stateBuffer);
-                if (_r2.isErr()) return Result.Err(MutationError.fromRetrievalError(_r2.unwrapErr()));
-                let _moved3 = false;
-                const backend = _r2.unwrap();
-                try {
-                  _moved3 = true;
-                  es.backends.insert(name, backend);
-                } finally {
-                  if (!_moved3) backend.drop();
-                }
+                es.head = state.head.clone();
+                return Result.Ok([]);
+              });
+              if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+              _c5 = _r4.unwrap();
+              if (_c5) {
+                this.deref().broadcast.send([]);
+                return Result.Ok(true);
               }
-              es.head = state.head.clone();
-              return Result.Ok([]);
-            });
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            _c5 = _r4.unwrap();
-            if (_c5) {
-              this.deref().broadcast.send([]);
-              return Result.Ok(true);
+              continue;
             }
-            continue;
+          } finally {
+            if (_r0 != null && !(_r0 as any).isMoved && !(_r0 as any).isDropped) dropOwned(_r0);
           }
         }
         tracing.warn(`${this} apply_state retries exhausted while chasing moving head`);

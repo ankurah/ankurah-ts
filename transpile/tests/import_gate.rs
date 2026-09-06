@@ -48,6 +48,7 @@
 
 mod common;
 
+use common::gate_ledger::{compare, listed, render};
 use common::imports::{self, Kind};
 use common::{collect_files_with_ext, crates_in_scope, run_batch, transpile_dir, TempDir};
 use std::collections::BTreeSet;
@@ -364,79 +365,6 @@ fn where_in_the_port(_root: &Path, site: &str) -> String {
     }
 }
 
-fn listed(recorded: &toml::Table, key: &str) -> BTreeSet<String> {
-    recorded
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
-}
-
-fn compare(what: &str, found: &BTreeSet<String>, listed: BTreeSet<String>, into: &mut String) {
-    for row in found.difference(&listed) {
-        let _ = writeln!(into, "  new — {what}: {row}");
-    }
-    for row in listed.difference(found) {
-        let _ = writeln!(into, "  gone, take the line out: {row}");
-    }
-}
-
-fn render(
-    unresolved: &BTreeSet<String>,
-    unexported: &BTreeSet<String>,
-    other: &BTreeSet<String>,
-    undeclared: &BTreeSet<String>,
-) -> String {
-    let mut out = String::from(
-        "# Imports the emitted port writes that do not resolve, written by\n\
-         # transpile/tests/import_gate.rs, from `bun build` AND `tsc --noEmit` over the same\n\
-         # laid-out port: bun erases a type-only import before it resolves anything, so it\n\
-         # sees about half of these.\n\
-         #\n\
-         # `unresolved` is a specifier naming no module. Most are a `[[provided]]` module the\n\
-         # port has not written yet; a relative specifier the EMITTER built wrongly is a\n\
-         # defect and is marked as one when it is read. `unexported` is a name its module\n\
-         # does not offer, which is a defect in the import list. `other` is any further\n\
-         # complaint a tool makes about an import, listed rather than filed under one of the\n\
-         # first two. `undeclared_dependencies` is a cross-package import whose package.json\n\
-         # declares neither a dependency nor a peerDependency on the package it names — which\n\
-         # resolves in this workspace and does not resolve when Expo installs by manifest.\n\
-         #\n\
-         # Matched EXACTLY in both directions, and a RATCHET: these lists may shrink, and a\n\
-         # row that appears is a defect to fix rather than a line to record. Generated: do\n\
-         # not hand-edit. Refresh with:\n\
-         #     cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate\n\n",
-    );
-    for (key, rows) in [
-        ("unresolved", unresolved),
-        ("unexported", unexported),
-        ("other", other),
-        ("undeclared_dependencies", undeclared),
-    ] {
-        let _ = writeln!(out, "# {}: {}", key, rows.len());
-        if rows.is_empty() {
-            let _ = writeln!(out, "{key} = []\n");
-            continue;
-        }
-        let _ = writeln!(out, "{key} = [");
-        for row in rows {
-            let _ = writeln!(out, "  {row:?},");
-        }
-        out.push_str("]\n\n");
-    }
-    // Last, because a TOML table header owns everything below it: the counts a
-    // review reads, checked against the lists above them.
-    let _ = writeln!(
-        out,
-        "[summary]\nunresolved = {}\nunexported = {}\nother = {}\nundeclared_dependencies = {}",
-        unresolved.len(),
-        unexported.len(),
-        other.len(),
-        undeclared.len()
-    );
-    out
-}
-
 fn require_bun() {
     match Command::new("bun").arg("--version").output() {
         Ok(probe) if probe.status.success() => {}
@@ -541,4 +469,84 @@ fn an_import_line_names_its_cross_package_specifiers() {
     let found = imports::bare_ankurah_specifiers(text);
     assert!(found.contains("@ankurah/base") && found.contains("@ankurah/proto"));
     assert!(!found.contains("@ankurah/nothing"), "a name inside a message is not an import");
+}
+
+/// S5: the two import shapes that used to escape the classifier, and the rule
+/// that nothing else does.
+///
+/// `imports::tsc_subject` returned `None` for every code it did not recognise, so a
+/// missing default export and a namespace import's missing member passed the
+/// gate unrecorded — a type-only namespace use COULD escape.
+#[test]
+fn a_missing_default_and_a_namespace_member_are_both_filed() {
+    let default = "pkg/core/src/node.ts(3,8): error TS1192: Module '\"./thing\"' has no \
+                   default export.";
+    let (site, complaint) = imports::split_tsc_line(default).unwrap();
+    assert_eq!(site, "core/node.ts:3");
+    assert_eq!(
+        imports::tsc_subject(&complaint),
+        Some((imports::Kind::Unexported, "default".to_string())),
+        "the missing name IS `default`"
+    );
+
+    let member = "pkg/core/src/node.ts(9,14): error TS2694: Namespace '\"./thing\"' has no \
+                  exported member 'Held'.";
+    let (_, complaint) = imports::split_tsc_line(member).unwrap();
+    assert_eq!(
+        imports::tsc_subject(&complaint),
+        Some((imports::Kind::Unexported, "Held".to_string())),
+        "and here it is the member the namespace does not offer"
+    );
+}
+
+/// Any OTHER import code is filed as `Other` rather than dropped: the gate
+/// reports what tsc said, not only what it recognises.
+#[test]
+fn an_import_code_nobody_has_read_yet_is_filed_as_other() {
+    let line = "pkg/core/src/node.ts(4,1): error TS2308: Module './a' has already exported a \
+                member named 'X'.";
+    let (_, complaint) = imports::split_tsc_line(line).unwrap();
+    let (kind, subject) = imports::tsc_subject(&complaint).unwrap();
+    assert_eq!(kind, imports::Kind::Other);
+    assert!(subject.starts_with("TS2308: "), "the code travels with it: {subject}");
+}
+
+/// S6: a specifier is read off a DECLARATION, not off a line.
+///
+/// Reading one line at a time, requiring that line to begin with
+/// `import`/`export`, and splitting on single quotes only, missed a
+/// double-quoted specifier and every multi-line named import — whose
+/// `} from '@ankurah/x';` begins with a brace.
+#[test]
+fn a_specifier_is_read_across_newlines_and_both_quotes() {
+    let text = "import { X } from \"@ankurah/double\";\n\
+                import {\n  A,\n  B,\n} from '@ankurah/multiline';\n\
+                import '@ankurah/side-effect';\n\
+                import type { T } from '@ankurah/types-only';\n\
+                export * from \"@ankurah/re-exported\";\n\
+                export { y } from '@ankurah/named-re-export';\n";
+    let found = imports::bare_ankurah_specifiers(text);
+    for expected in [
+        "@ankurah/double",
+        "@ankurah/multiline",
+        "@ankurah/side-effect",
+        "@ankurah/types-only",
+        "@ankurah/re-exported",
+        "@ankurah/named-re-export",
+    ] {
+        assert!(found.contains(expected), "{expected} was not read: {found:?}");
+    }
+}
+
+/// And a name inside a MESSAGE the emission wrote is still not an import,
+/// however it is quoted.
+#[test]
+fn a_specifier_inside_a_message_is_still_not_an_import() {
+    let text = "import { Enum } from '@ankurah/base';\n\
+                const message = `see \"@ankurah/nothing\"`;\n\
+                const other = 'exported from \"@ankurah/neither\"';\n";
+    let found = imports::bare_ankurah_specifiers(text);
+    assert!(found.contains("@ankurah/base"));
+    assert!(!found.contains("@ankurah/nothing"), "{found:?}");
+    assert!(!found.contains("@ankurah/neither"), "{found:?}");
 }

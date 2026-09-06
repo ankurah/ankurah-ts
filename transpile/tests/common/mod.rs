@@ -18,6 +18,9 @@ pub mod members;
 /// answer, and the manifest question neither of them asks.
 pub mod imports;
 
+/// The import gate's recorded lists: read, compared and written back.
+pub mod gate_ledger;
+
 /// The transpiler's own package directory. `transpile.toml` is read relative to
 /// the current directory, so every `batch` run below starts here — the same
 /// place a person stands when they run `cargo run -- batch ...` by hand.

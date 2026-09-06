@@ -72,3 +72,32 @@ describe('decodeUtf8Lossy substitutes where decodeUtf8 refuses', () => {
     expect(decodeUtf8Lossy(Uint8Array.from([0x68, 0xff, 0x69]))).toBe('h\uFFFDi');
   });
 });
+
+describe('a leading byte-order mark', () => {
+  // R2: `TextDecoder`'s default is `ignoreBOM: false`, whose name says the
+  // opposite of what it does — it REMOVES a leading EF BB BF from the answer.
+  // Rust's `from_utf8` and `from_utf8_lossy` keep U+FEFF as an ordinary
+  // character, so the default silently dropped one from every string whose
+  // bytes began with a mark. Both decoders now ask to keep it.
+  const withMark = Uint8Array.from([0xef, 0xbb, 0xbf, 0x68, 0x69]);
+
+  test('is kept by the fatal decoder, as `from_utf8` keeps it', () => {
+    expect(decodeUtf8(withMark)).toBe('﻿hi');
+  });
+
+  test('is kept by the lossy decoder, as `from_utf8_lossy` keeps it', () => {
+    expect(decodeUtf8Lossy(withMark)).toBe('﻿hi');
+  });
+
+  test('and one in the MIDDLE was never at risk, which says what changed', () => {
+    const inTheMiddle = Uint8Array.from([0x68, 0xef, 0xbb, 0xbf, 0x69]);
+    expect(decodeUtf8(inTheMiddle)).toBe('h﻿i');
+    expect(decodeUtf8Lossy(inTheMiddle)).toBe('h﻿i');
+  });
+
+  test('a mark on its own is one character, not an empty string', () => {
+    const alone = Uint8Array.from([0xef, 0xbb, 0xbf]);
+    expect(decodeUtf8(alone)).toBe('﻿');
+    expect(decodeUtf8Lossy(alone)).toBe('﻿');
+  });
+});

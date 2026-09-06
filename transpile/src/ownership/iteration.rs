@@ -189,6 +189,28 @@ impl<'a> BodyTranslator<'a> {
                 )
             }
         };
+        // S2: the names this turn holds, and the ones the claim above released.
+        // A statement inside the body that REFUSES hands nothing away, so a
+        // binding the claim wrote off as moved is still the turn's — and the
+        // tail release starts after the current index and cannot reach it.
+        if !matches!(form, Iterate::Borrowed) {
+            // The sequence itself is the loop's from here: it is aliased into
+            // `_seqN` and its tail is released by the loop's own `finally`.
+            if let syn::Expr::Path(path) = &*for_loop.expr {
+                if let Some(name) = ownership::moves::local_name(path) {
+                    self.own.released_elsewhere.borrow_mut().insert(name);
+                }
+            }
+            let claimed: Vec<String> = owned.iter().map(|o| o.name.clone()).collect();
+            let mut all = self.own.loop_bindings.borrow_mut();
+            let mut done = self.own.claimed_loop_bindings.borrow_mut();
+            for name in crate::body::pattern_names(&for_loop.pat) {
+                all.insert(name.clone());
+                if claimed.contains(&name) {
+                    done.insert(name);
+                }
+            }
+        }
         let body = crate::control_flow::sentinel::inside_a_loop(self, &for_loop.label, || {
             self.translate_loop_block(&for_loop.body)
         });

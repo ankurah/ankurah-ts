@@ -38,6 +38,18 @@ use crate::ty::Ty;
 /// borrowed, so the arm took the value AND the subject's owner released it —
 /// the same double drop the borrowing form was written to avoid.
 pub fn binds_by_value(pat: &syn::Pat) -> bool {
+    // R7 IS NOT LANDED HERE, and the reason is written down rather than left
+    // to be rediscovered. Asking `BodyTranslator::binds_nothing(pat)` first —
+    // so that this half agrees with `taking::taken` about a pattern that only
+    // TESTS — is right in isolation and flips a corpus answer that rests on the
+    // wrong one: `scrutinee.rs` decides whether a match CONSUMES its subject,
+    // and for `storage-common/sorting.rs`'s comparators the only arm that says
+    // yes is the one whose `None` this reads as a by-value binding. Corrected
+    // here alone, those two matches stop consuming and their six arms stop
+    // releasing what they bind. What is owed first is the honest yes: `Some(x)`
+    // over a nullable takes the whole element, which `takes_the_whole_nullable`
+    // answers and `binds_owned_payload` cannot ask, because it holds a `Probe`
+    // and that question needs the translator's `names_option_variant`.
     match pat {
         syn::Pat::Ident(ident) => ident.by_ref.is_none(),
         syn::Pat::Paren(p) => binds_by_value(&p.pat),
@@ -110,6 +122,15 @@ pub fn members_of<'p, 't>(
 /// positions by index. `None` is the shape this cannot count: a `..`, whose
 /// positions are counted from the END, and a pattern naming a different number
 /// of positions than the value has.
+///
+/// R5 IS NOT LANDED HERE, and the reason is written down: the question ought to
+/// be whether a name owns the WHOLE element — `(Rec { copy, .. }, b)` over
+/// `(Rec { held: Token, copy: u32 }, Token)` binds `copy` INSIDE the first
+/// element, so this answers yes and the `Token` inside `Rec` is released by
+/// nobody. The release it would write is only ever written for a match the port
+/// already calls CONSUMING, and that decision (`ownership/scrutinee.rs`) rests
+/// today on `binds_by_value` reading `None` as a binding, which is R7. Both
+/// wait on the honest yes: `Some(x)` over a nullable takes the whole element.
 pub fn unowned_positions(pat: &syn::Pat, len: usize) -> Option<Vec<usize>> {
     if has_a_rest(pat) {
         return None;
@@ -128,20 +149,59 @@ pub fn unowned_positions(pat: &syn::Pat, len: usize) -> Option<Vec<usize>> {
     )
 }
 
-/// The positions of a tuple or slice pattern that a droppable element sits at
-/// and no name owns — what a consuming arm has to release itself.
-pub fn unowned_droppable_positions(
+
+
+
+/// The PATHS into a tuple subject that a droppable value sits at and no name
+/// owns — what a consuming arm has to release itself, one index per level.
+///
+/// S3/R6: the flat answer stopped at the top level, so `((a, _), c)` over
+/// `((Token, Token), Token)` released `c`, released `a` through its name, and
+/// left `pair[0][1]` to the collector. A position whose pattern is ITSELF a
+/// tuple and whose type is itself a tuple is asked the same question one level
+/// down; `[0, 1]` is the answer for that leaf, and the arm writes
+/// `dropOwned(subject[0][1])`.
+///
+/// A nested position the pattern did not name at all — `(inner, c)` where
+/// `inner` binds the whole first element — is NOT walked: the name owns it and
+/// releases the whole thing.
+pub fn unowned_droppable_paths(
     pat: &syn::Pat,
     elements: &[Ty],
     probe: &Probe,
-) -> Option<Vec<usize>> {
+) -> Option<Vec<Vec<usize>>> {
     let unowned = unowned_positions(pat, elements.len())?;
-    Some(
-        unowned
-            .into_iter()
-            .filter(|at| drops_of(probe, &elements[*at]).is_droppable())
-            .collect(),
-    )
+    let subs = element_patterns(pat)?;
+    let mut paths = Vec::new();
+    for (at, ty) in elements.iter().enumerate() {
+        if unowned.contains(&at) {
+            // Nobody named this position. Where it is a tuple the pattern
+            // reached into, the leaves it named are owned and the rest are not;
+            // otherwise the whole position is the leaf.
+            let deeper = match (ty, subs.get(at)) {
+                (Ty::Tuple(inner), Some(sub)) => unowned_droppable_paths(sub, inner, probe),
+                _ => None,
+            };
+            match deeper {
+                Some(deeper) => paths.extend(deeper.into_iter().map(|mut path| {
+                    path.insert(0, at);
+                    path
+                })),
+                None if drops_of(probe, ty).is_droppable() => paths.push(vec![at]),
+                None => {}
+            }
+        } else if let (Ty::Tuple(inner), Some(sub)) = (ty, subs.get(at)) {
+            // A position the pattern DID name element by element: its own
+            // unnamed leaves are still nobody's.
+            if let Some(deeper) = unowned_droppable_paths(sub, inner, probe) {
+                paths.extend(deeper.into_iter().map(|mut path| {
+                    path.insert(0, at);
+                    path
+                }));
+            }
+        }
+    }
+    Some(paths)
 }
 
 /// The sub-patterns of a tuple or slice pattern, through parentheses and `&`.
@@ -173,6 +233,12 @@ fn has_a_rest(pat: &syn::Pat) -> bool {
 pub fn takes_the_whole_nullable(pat: &syn::Pat, is_option: &dyn Fn(&syn::Path) -> bool) -> bool {
     let syn::Pat::TupleStruct(ts) = pat else { return false };
     let Some(leaf) = ts.path.segments.last() else { return false };
+    // R8 IS NOT LANDED HERE. Dropping the name test so that identity alone
+    // decides is right, and `is_option` cannot carry it today: it answers "yes"
+    // for a path it could not resolve as well as for one that resolved to
+    // `Option`, so without the leaf every unresolved one-element tuple-struct
+    // pattern would read as the nullable. The lowering half in
+    // `body/patterns.rs` says what is owed first.
     if leaf.ident != "Some" || ts.elems.len() != 1 || !is_option(&ts.path) {
         return false;
     }

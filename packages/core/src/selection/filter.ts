@@ -375,18 +375,34 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
       const right = v._1;
       const _r28 = evaluatePredicate(item, left);
       if (_r28.isErr()) return Result.Err(_r28.unwrapErr());
-      const _r29 = evaluatePredicate(item, right);
-      if (_r29.isErr()) return Result.Err(_r29.unwrapErr());
-      return Result.Ok(_r28.unwrap() && _r29.unwrap());
+      try {
+        const _r29 = evaluatePredicate(item, right);
+        if (_r29.isErr()) return Result.Err(_r29.unwrapErr());
+        try {
+          return Result.Ok(_r28.unwrap() && _r29.unwrap());
+        } finally {
+          if (_r29 != null && !(_r29 as any).isMoved && !(_r29 as any).isDropped) dropOwned(_r29);
+        }
+      } finally {
+        if (_r28 != null && !(_r28 as any).isMoved && !(_r28 as any).isDropped) dropOwned(_r28);
+      }
     },
     Or: (v) => {
       const left = v._0;
       const right = v._1;
       const _r30 = evaluatePredicate(item, left);
       if (_r30.isErr()) return Result.Err(_r30.unwrapErr());
-      const _r31 = evaluatePredicate(item, right);
-      if (_r31.isErr()) return Result.Err(_r31.unwrapErr());
-      return Result.Ok(_r30.unwrap() || _r31.unwrap());
+      try {
+        const _r31 = evaluatePredicate(item, right);
+        if (_r31.isErr()) return Result.Err(_r31.unwrapErr());
+        try {
+          return Result.Ok(_r30.unwrap() || _r31.unwrap());
+        } finally {
+          if (_r31 != null && !(_r31 as any).isMoved && !(_r31 as any).isDropped) dropOwned(_r31);
+        }
+      } finally {
+        if (_r30 != null && !(_r30 as any).isMoved && !(_r30 as any).isDropped) dropOwned(_r30);
+      }
     },
     Not: (v) => {
       const pred = v._0;

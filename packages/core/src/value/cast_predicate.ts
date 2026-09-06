@@ -110,9 +110,17 @@ export function castPredicateTypes<S extends CollectionSchema>(predicate: Predic
         try {
           const _r14 = castPredicateTypes(left, schema);
           if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
-          const _r15 = castPredicateTypes(right, schema);
-          if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
-          return Result.Ok(new Predicate('And', { _0: _r14.unwrap(), _1: _r15.unwrap() }));
+          try {
+            const _r15 = castPredicateTypes(right, schema);
+            if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
+            try {
+              return Result.Ok(new Predicate('And', { _0: _r14.unwrap(), _1: _r15.unwrap() }));
+            } finally {
+              if (_r15 != null && !(_r15 as any).isMoved && !(_r15 as any).isDropped) dropOwned(_r15);
+            }
+          } finally {
+            if (_r14 != null && !(_r14 as any).isMoved && !(_r14 as any).isDropped) dropOwned(_r14);
+          }
         } finally {
           dropOwned(right);
         }
@@ -127,9 +135,17 @@ export function castPredicateTypes<S extends CollectionSchema>(predicate: Predic
         try {
           const _r16 = castPredicateTypes(left, schema);
           if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-          const _r17 = castPredicateTypes(right, schema);
-          if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
-          return Result.Ok(new Predicate('Or', { _0: _r16.unwrap(), _1: _r17.unwrap() }));
+          try {
+            const _r17 = castPredicateTypes(right, schema);
+            if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+            try {
+              return Result.Ok(new Predicate('Or', { _0: _r16.unwrap(), _1: _r17.unwrap() }));
+            } finally {
+              if (_r17 != null && !(_r17 as any).isMoved && !(_r17 as any).isDropped) dropOwned(_r17);
+            }
+          } finally {
+            if (_r16 != null && !(_r16 as any).isMoved && !(_r16 as any).isDropped) dropOwned(_r16);
+          }
         } finally {
           dropOwned(right);
         }
@@ -177,9 +193,17 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
         try {
           const _r1 = castExprTypes(left, schema);
           if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-          const _r2 = castExprTypes(right, schema);
-          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-          return Result.Ok(new Expr('InfixExpr', { left: _r1.unwrap(), operator: operator, right: _r2.unwrap() }));
+          try {
+            const _r2 = castExprTypes(right, schema);
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            try {
+              return Result.Ok(new Expr('InfixExpr', { left: _r1.unwrap(), operator: operator, right: _r2.unwrap() }));
+            } finally {
+              if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+            }
+          } finally {
+            if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+          }
         } finally {
           dropOwned(right);
         }

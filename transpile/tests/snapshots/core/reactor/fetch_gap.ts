@@ -33,7 +33,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
       _moved2 = true;
       const node = new Node(nodeInner);
       const nodeContext = new NodeAndContext(node, this.cdata.clone());
-      const _m8 = (() => {
+      const _m9 = (() => {
         {
           const _v1 = lastEntity;
           if (_v1 != null) {
@@ -55,13 +55,15 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
             let _moved5 = false;
             const gapPredicate = (_m4 as any);
             try {
+              let _moved7 = false;
               const _b6 = selection.orderBy.clone();
               try {
-                const _b7 = BigInt(gapSize);
+                const _b8 = BigInt(gapSize);
+                _moved7 = true;
                 _moved5 = true;
-                return new Selection(gapPredicate, _b6, _b7);
+                return new Selection(gapPredicate, _b6, _b8);
               } finally {
-                if (_b6 != null && !(_b6 as any).isMoved && !(_b6 as any).isDropped) dropOwned(_b6);
+                if (!_moved7) dropOwned(_b6);
               }
             } finally {
               if (!_moved5) gapPredicate.drop();
@@ -71,21 +73,21 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
         }
         }
       })();
-      if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
-      let _moved9 = false;
-      const gapSelection = (_m8 as any);
+      if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
+      let _moved10 = false;
+      const gapSelection = (_m9 as any);
       try {
-        _moved9 = true;
-        let _moved10 = false;
+        _moved10 = true;
+        let _moved11 = false;
         const matchArgs = new MatchArgs(gapSelection, false);
         try {
-          _moved10 = true;
+          _moved11 = true;
           return await nodeContext.fetchEntities(collectionId, matchArgs);
         } finally {
-          if (!_moved10) matchArgs.drop();
+          if (!_moved11) matchArgs.drop();
         }
       } finally {
-        if (!_moved9) gapSelection.drop();
+        if (!_moved10) gapSelection.drop();
       }
     } finally {
       if (!_moved2) nodeInner.drop();

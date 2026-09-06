@@ -54,9 +54,23 @@ fn a_refused_statement_releases_what_it_was_going_to_hand_away() {
          }",
     )]);
     let ts = f.translated_method("lib.rs", "refused");
-    let released = ts.find("dropOwned(held);").expect(&format!("nothing released `held`:\n{}", ts));
+    // R9/D11: the release used to stand ABOVE the statement, on the reasoning
+    // that nothing of a refused statement has run. That is false wherever part
+    // of it HAS run — a `?` operand to the left of the hole, or a hoist above
+    // it — so there is now one shape for every refusal: a `finally` around the
+    // statement, which a throw leaves through just as surely.
+    assert!(
+        ts.contains("dropOwned(held);"),
+        "nothing released `held`:\n{}",
+        ts
+    );
     let hole = ts.find("unsupported(").expect("the collect was expected to refuse");
-    assert!(released < hole, "the release stands below the hole that throws:\n{}", ts);
+    let released = ts.find("dropOwned(held);").expect("just checked");
+    assert!(
+        hole < released && ts[..hole].contains("try {"),
+        "the release stands in a `finally` the hole throws out through:\n{}",
+        ts
+    );
 }
 
 /// A method declared `self` takes its receiver with it, and a receiver that is
@@ -127,4 +141,156 @@ fn a_refused_link_keeps_its_guard() {
     // refused link declared none of the pattern's names: naming one would be a
     // `ReferenceError` in the `catch`.
     assert!(!ts.contains("t.drop()"), "nothing declared `t` here:\n{}", ts);
+}
+
+/// R1: a `?` keeps its null test unless its OWN operand's value is a hole.
+///
+/// The counter it used to read is global, so a refusal buried in a callback the
+/// operand passes was read as "the operand IS a hole" and the test went with
+/// it. `storage-common/planner.ts`'s `build_ineq_first_plan` then bound `null`
+/// and carried on computing where Rust answers `None`.
+#[test]
+fn a_hole_inside_the_operand_does_not_take_the_question_marks_test() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn pick(xs: Vec<u32>, ys: Vec<u32>) -> Option<u32> {\n\
+             let v: u32 = xs.iter().find_map(|x| {\n\
+                 if *x == 99 { let mut it = ys.clone().into_iter(); it.next() } else { Some(*x) }\n\
+             })?;\n\
+             Some(v + 1)\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "pick");
+    assert!(
+        ts.contains("if (_r0 == null) return null;"),
+        "the operand answered an `Option`; the hole is in a branch of the \
+         callback it passed:\n{}",
+        ts
+    );
+    assert!(ts.contains("unsupported("), "the hole is still written:\n{}", ts);
+}
+
+/// The other half of the same rule: where the operand's own value IS the hole
+/// there is nothing to test, and the `?` stands for the name the hole left.
+#[test]
+fn a_hole_that_is_the_whole_operand_still_leaves_no_test_behind() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub fn wholly(ys: Vec<u32>) -> Option<u32> {\n\
+             let mut it = ys.into_iter();\n\
+             let v = it.next()?;\n\
+             Some(v + 1)\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "wholly");
+    assert!(
+        !ts.contains("== null"),
+        "a hole answers `never`; testing it would read as though it might have \
+         answered something:\n{}",
+        ts
+    );
+}
+
+/// S1: the transfer a refusal cleanup waits on is a fact about the FRAME, not a
+/// mark on the value.
+///
+/// `count(rest)` takes the `Vec<Token>` by value, so by the time the second `?`
+/// refuses the tokens are already released. The cleanup used to ask the array
+/// whether it had been moved — `markMoved` is protected on `AkObject` and an
+/// array is not one, so both reads answered `undefined`, the guard passed, and
+/// the tokens were dropped a second time: `BUG: Token was dropped twice`.
+#[test]
+fn a_vec_handed_over_before_the_refusal_is_not_released_again() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn pass(t: Token) -> Result<Token, String> { Ok(t) }\n\
+         pub fn count(xs: Vec<Token>) -> Result<u32, String> { Ok(xs.len() as u32) }\n\
+         pub fn f(rest: Vec<Token>, more: Vec<Token>) -> Result<u32, String> {\n\
+             let _pair = (count(rest)?, more.into_iter().map(pass).collect::<Result<Vec<_>, _>>()?);\n\
+             Ok(0)\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(
+        !ts.contains("(rest as any).isMoved"),
+        "an array carries no move mark, so asking it was asking something that \
+         always answered `nobody has taken it`:\n{}",
+        ts
+    );
+    let set = ts.find("= true;").expect("a flag is set somewhere");
+    let call = ts.find("count(rest)").expect("the consuming call is written");
+    assert!(
+        call < set,
+        "the flag stands where the transfer is written, below the call that \
+         performs it:\n{}",
+        ts
+    );
+    assert!(
+        ts.contains(") dropOwned(rest);"),
+        "and the release still stands, under the flag:\n{}",
+        ts
+    );
+}
+
+/// R9: a refusal in the statement's OWN text releases the by-value parameters
+/// the call it aborted would have taken.
+///
+/// There used to be two walks here, and only the one for a refusal in a HOIST
+/// knew about parameters; the other skipped every name with no block ordinal.
+/// `let _v = take2(held, <hole>);` therefore released neither of its two.
+#[test]
+fn a_refusal_in_the_statements_own_text_releases_its_parameters() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn pass(t: Token) -> Result<Token, String> { Ok(t) }\n\
+         pub fn take2(a: Token, b: Vec<Token>) -> u32 { a.n + b.len() as u32 }\n\
+         pub fn f(held: Token, rest: Vec<Token>) -> u32 {\n\
+             let _v = take2(held, rest.into_iter().map(pass).collect::<Result<Vec<_>, _>>().unwrap());\n\
+             _v\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("held.drop();"), "the first parameter:\n{}", ts);
+    assert!(ts.contains("dropOwned(rest);"), "and the second:\n{}", ts);
+}
+
+/// S2: a refusal inside a consuming loop releases the element THIS turn holds.
+///
+/// The loop's own claim removes a binding it sees moved, and the tail release
+/// starts after the current index — so the element already handed out was
+/// reached by neither, and the collector reported it.
+#[test]
+fn a_refusal_inside_a_consuming_loop_releases_the_current_element() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn pass(t: Token) -> Result<Token, String> { Ok(t) }\n\
+         pub fn f(items: Vec<Vec<Token>>) -> u32 {\n\
+             let mut total = 0;\n\
+             for rest in items {\n\
+                 let _v = rest.into_iter().map(pass).collect::<Result<Vec<_>, _>>().unwrap();\n\
+                 total += 1;\n\
+             }\n\
+             total\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("dropOwned(rest);"), "the element this turn holds:\n{}", ts);
+    assert!(
+        ts.contains(".slice(_at"),
+        "and the tail the loop never handed out, which is a different set:\n{}",
+        ts
+    );
+    assert!(
+        !ts.contains("dropOwned(items);"),
+        "the sequence itself is the LOOP's — it is aliased into `_seqN` and its \
+         tail released from the loop's own `finally`, so releasing the name as \
+         well drops every element the loop already handed out:\n{}",
+        ts
+    );
 }

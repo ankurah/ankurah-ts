@@ -48,18 +48,22 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
             const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
             try {
               const _b6 = node.clone();
+              let _moved8 = false;
               const _b7 = resultset.clone();
               try {
-                const _b8 = Mut.new(null);
-                const _b9 = tokio.sync.Notify.new();
+                const _b9 = Mut.new(null);
+                let _moved11 = false;
+                const _b10 = tokio.sync.Notify.new();
                 try {
-                  const _b10 = 0;
-                  const _b11 = 1;
-                  const _b12 = Mut.new([args.selection.clone(), 1]);
-                  const _b13 = collectionId.clone();
+                  const _b12 = 0;
+                  const _b13 = 1;
+                  const _b14 = Mut.new([args.selection.clone(), 1]);
+                  const _b15 = collectionId.clone();
+                  _moved8 = true;
+                  _moved11 = true;
                   _moved4 = true;
                   _moved5 = true;
-                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b8, _b9, _b10, _b11, _b12, _b13, gapFetcher)));
+                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b9, _b10, _b12, _b13, _b14, _b15, gapFetcher)));
                   const hasRelay = (node.deref().value.subscriptionRelay != null);
                   if (args.cached || !hasRelay) {
                     const me2 = me.clone();
@@ -83,10 +87,10 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
                   }
                   return Result.Ok(me);
                 } finally {
-                  if (_b9 != null && !(_b9 as any).isMoved && !(_b9 as any).isDropped) dropOwned(_b9);
+                  if (!_moved11) dropOwned(_b10);
                 }
               } finally {
-                if (_b7 != null && !(_b7 as any).isMoved && !(_b7 as any).isDropped) dropOwned(_b7);
+                if (!_moved8) dropOwned(_b7);
               }
             } finally {
               if (!_moved5) gapFetcher.drop();

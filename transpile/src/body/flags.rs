@@ -91,12 +91,25 @@ impl BodyTranslator<'_> {
     /// call may have consumed it.
     fn name_above_the_flag(&self, written: String, owes_a_release: bool) -> String {
         let name = self.fresh_hoist("_b");
+        // S1: the release is read from a flag this frame declares, not from a
+        // mark on the value. `markMoved` is protected on `AkObject` and only
+        // base's own wrappers call it, so an array, a `Map` or a `Set` — which
+        // is what the port writes a `Vec`, a `HashMap` and a `HashSet` as —
+        // always answered "nobody has taken it" and the release ran on top of
+        // the callee that had just taken the value.
+        let flag = owes_a_release.then(|| self.fresh_hoist("_moved"));
+        let declaration = match &flag {
+            Some(flag) => format!("let {} = false;\nconst {} = {};\n", flag, name, written),
+            None => format!("const {} = {};\n", name, written),
+        };
         self.own.prelude.borrow_mut().push(crate::ownership::Hoist {
-            declaration: format!("const {} = {};\n", name, written),
+            declaration,
             owned: None,
             temp: Some(name.clone()),
             refused: false,
             released_if_unreached: owes_a_release,
+            wrapper: false,
+            flag,
         });
         name
     }
@@ -193,14 +206,24 @@ impl BodyTranslator<'_> {
             syn::Expr::Unary(syn::ExprUnary { op: syn::UnOp::Deref(_), expr, .. }) => {
                 self.writes_a_place(expr)
             }
+            // `clone` and `to_owned` on a value the port holds as a JavaScript
+            // VALUE are the value itself: the emitted text is the receiver, so
+            // the whole expression is still the place the receiver was.
             syn::Expr::MethodCall(call)
                 if call.args.is_empty()
-                    && matches!(
-                        call.method.to_string().as_str(),
-                        "clone" | "to_owned" | "to_string"
-                    ) =>
+                    && matches!(call.method.to_string().as_str(), "clone" | "to_owned") =>
             {
                 self.writes_a_place(&call.receiver) && self.copies_by_reading(&call.receiver)
+            }
+            // R13(e): `to_string` is that only on a `str`, where the emitted
+            // text is again the receiver. On a number, a boolean or a `bigint`
+            // it BUILDS — `String(n)` — and calling the answer a place was right
+            // only by accident, because that particular call cannot throw. The
+            // rule is about what the text IS, so it asks about the text.
+            syn::Expr::MethodCall(call)
+                if call.args.is_empty() && call.method == "to_string" =>
+            {
+                self.writes_a_place(&call.receiver) && self.is_already_a_string(&call.receiver)
             }
             other => evaluates_quietly(other),
         }
@@ -209,6 +232,18 @@ impl BodyTranslator<'_> {
     /// Is this receiver a value the port holds as a JavaScript VALUE, so that
     /// copying it is reading it? A `string`, a number, a boolean and a `bigint`
     /// are; everything with a class of its own has a `clone()` that builds.
+    /// Is this receiver ALREADY a JavaScript string, so that `to_string` on it
+    /// writes the receiver and builds nothing?
+    fn is_already_a_string(&self, receiver: &syn::Expr) -> bool {
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(receiver)) else { return false };
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        matches!(
+            crate::name_map::shape::js_shape(tc.registry, ty.peel_refs()),
+            crate::name_map::shape::JsShape::Str
+        )
+    }
+
     fn copies_by_reading(&self, receiver: &syn::Expr) -> bool {
         let Ok(ty) = self.quietly(|| self.resolve_expr_type(receiver)) else { return false };
         let Some(tc) = &self.types else { return false };

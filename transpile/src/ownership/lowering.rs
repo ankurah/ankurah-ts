@@ -65,6 +65,22 @@ pub struct Lowering {
     /// Every by-value parameter the function takes, claimed or not — the names
     /// a refusal may owe a release for.
     pub by_value_params: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// The current-element bindings of every consuming loop this body is
+    /// inside, and of those the ones the loop's own claim releases.
+    ///
+    /// S2: a loop over an owned sequence hands out one element per turn, and
+    /// the tail release covers only what it never handed out. Where the claim
+    /// saw the binding moved it releases nothing, and a statement that then
+    /// REFUSES hands nothing away — so the element sat in the turn with no
+    /// owner at all, reached by neither release walk. It is this frame's, so
+    /// the frame's walk has to be able to see it.
+    pub loop_bindings: std::cell::RefCell<std::collections::HashSet<String>>,
+    pub claimed_loop_bindings: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Names whose value some OTHER emitted frame already owns, so a refusal
+    /// walk must leave them alone. A consuming loop aliases its sequence into
+    /// `_seqN` and releases the tail from its own `finally`; releasing the name
+    /// as well drops every element the loop already handed out.
+    pub released_elsewhere: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Which FORM the `select!` just written took: the value-producing one is
     /// one expression and the escaping one opens `const _bN = [`, which a
     /// `return` in front of does not parse. Recorded by the lowering, as

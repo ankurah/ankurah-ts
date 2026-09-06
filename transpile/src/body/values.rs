@@ -45,6 +45,8 @@ impl BodyTranslator<'_> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         // The value's type is the union of what the arms produced and the
         // sentinel, and the jump above is what rules the sentinel out.
@@ -83,6 +85,8 @@ impl BodyTranslator<'_> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         held
     }

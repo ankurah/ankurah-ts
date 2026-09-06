@@ -1350,6 +1350,14 @@ the bad bytes were read from. What "fatal" has to mean, case by case, is
 `TextDecoder` carried a copy of the reason with it, and one written without the
 `fatal` flag answers U+FFFD and says nothing.
 
+Both decoders also pass `ignoreBOM: true`, whose name says the opposite of what
+it does: the host's default of `false` REMOVES a leading EF BB BF from the
+answer. Rust's `from_utf8` and `from_utf8_lossy` do no such thing — U+FEFF is an
+ordinary character to them — so the default silently dropped a character from
+every string whose bytes began with a byte-order mark, and the six emitted sites
+that reach these two are the ones that write an arbitrary byte value out as a
+query literal.
+
 `decodeUtf8Lossy(bytes)` is the OTHER answer, and a deliberate one: Rust has
 both, and which one a site takes is the source's choice rather than the port's.
 `String::from_utf8_lossy` substitutes U+FFFD for every byte run that is not

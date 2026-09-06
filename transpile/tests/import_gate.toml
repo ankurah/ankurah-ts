@@ -1,16 +1,28 @@
-# Imports the emitted port writes that do not resolve, written by
+# Imports that do not resolve in the laid-out port, written by
 # transpile/tests/import_gate.rs, from `bun build` AND `tsc --noEmit` over the same
-# laid-out port: bun erases a type-only import before it resolves anything, so it
-# sees about half of these.
+# layout: bun erases a type-only import before it resolves anything, so it sees
+# about half of these.
+#
+# R11: the layout is the port as it RUNS, which is the emission plus each package's
+# hand-written half, so a row here is not necessarily an import the emitter wrote.
+# The two `storage-indexeddb/database.ts:8` rows are the `[[provided]]` file's own
+# import list. There is no mark on a row saying which: the reader is told here
+# instead, because the file is generated and a mark inside it would be lost on the
+# next refresh. A `.provided.ts` name, and any file `transpile.toml` lists under
+# `[[provided]]`, is the hand-written half.
 #
 # `unresolved` is a specifier naming no module. Most are a `[[provided]]` module the
-# port has not written yet; a relative specifier the EMITTER built wrongly is a
-# defect and is marked as one when it is read. `unexported` is a name its module
-# does not offer, which is a defect in the import list. `other` is any further
-# complaint a tool makes about an import, listed rather than filed under one of the
-# first two. `undeclared_dependencies` is a cross-package import whose package.json
-# declares neither a dependency nor a peerDependency on the package it names — which
-# resolves in this workspace and does not resolve when Expo installs by manifest.
+# port has not written yet. `unexported` is a name its module does not offer, which
+# is a defect in the import list. `other` is any further complaint a tool makes
+# about an IMPORT — the codes are listed in `tests/common/imports.rs` — rather than
+# about a body, which has its own measure. `undeclared_dependencies` is a
+# cross-package import whose package.json declares neither a dependency nor a
+# peerDependency on the package it names — which resolves in this workspace and does
+# not resolve when Expo installs by manifest.
+#
+# TypeScript reports only SYNTACTIC diagnostics for a program that has any, so a
+# parse error anywhere would hide every semantic row here. `tests/parse_gate.rs`
+# keeps that at zero, and a parse error is loud rather than silent.
 #
 # Matched EXACTLY in both directions, and a RATCHET: these lists may shrink, and a
 # row that appears is a defect to fix rather than a line to record. Generated: do

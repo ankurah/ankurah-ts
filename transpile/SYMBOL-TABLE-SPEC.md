@@ -570,6 +570,10 @@ for `equals` versus `===`, `compareTo` versus `<`, and `Index` on a `Map`.
   scope, so the shadow is emitted under a fresh identifier and every later use
   of the name follows it; assigning to the old one instead changed a value that
   a closure capturing it, or a caller owning it, could still see.
+- A name a pattern binds is typed only INSIDE that pattern's scope. A question
+  about what an arm takes — `taking::taken`, and everything that reads it — has
+  to be asked there; asked outside it, a binding the engine could type reads as
+  one it could not, which is the answer that refuses (R5, step 9a slice 8).
 
 ### 4.10 Types for macros and derives
 

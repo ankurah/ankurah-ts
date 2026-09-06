@@ -301,9 +301,17 @@ export class Expr extends Enum<ExprV> {
         const right = v.right;
         const _r2 = left.populateRecursive(values);
         if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        const _r3 = right.populateRecursive(values);
-        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-        return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
+        try {
+          const _r3 = right.populateRecursive(values);
+          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+          try {
+            return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
+          } finally {
+            if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
+          }
+        } finally {
+          if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+        }
       },
       ExprList: (v) => {
         const exprs = v._0;
@@ -988,9 +996,17 @@ export class Predicate extends Enum<PredicateV> {
         const right = v.right;
         const _r0 = left.populateRecursive(values);
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-        const _r1 = right.populateRecursive(values);
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-        return Result.Ok(new Predicate('Comparison', { left: _r0.unwrap(), operator: operator, right: _r1.unwrap() }));
+        try {
+          const _r1 = right.populateRecursive(values);
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          try {
+            return Result.Ok(new Predicate('Comparison', { left: _r0.unwrap(), operator: operator, right: _r1.unwrap() }));
+          } finally {
+            if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+          }
+        } finally {
+          if (_r0 != null && !(_r0 as any).isMoved && !(_r0 as any).isDropped) dropOwned(_r0);
+        }
       },
       And: (v) => {
         const left = v._0;
@@ -1003,9 +1019,17 @@ export class Predicate extends Enum<PredicateV> {
             _moved3 = true;
             const _r4 = left.populateRecursive(values);
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            const _r5 = right.populateRecursive(values);
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            return Result.Ok(new Predicate('And', { _0: _r4.unwrap(), _1: _r5.unwrap() }));
+            try {
+              const _r5 = right.populateRecursive(values);
+              if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+              try {
+                return Result.Ok(new Predicate('And', { _0: _r4.unwrap(), _1: _r5.unwrap() }));
+              } finally {
+                if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);
+              }
+            } finally {
+              if (_r4 != null && !(_r4 as any).isMoved && !(_r4 as any).isDropped) dropOwned(_r4);
+            }
           } finally {
             if (!_moved3) dropOwned(right);
           }
@@ -1024,9 +1048,17 @@ export class Predicate extends Enum<PredicateV> {
             _moved7 = true;
             const _r8 = left.populateRecursive(values);
             if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-            const _r9 = right.populateRecursive(values);
-            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-            return Result.Ok(new Predicate('Or', { _0: _r8.unwrap(), _1: _r9.unwrap() }));
+            try {
+              const _r9 = right.populateRecursive(values);
+              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              try {
+                return Result.Ok(new Predicate('Or', { _0: _r8.unwrap(), _1: _r9.unwrap() }));
+              } finally {
+                if (_r9 != null && !(_r9 as any).isMoved && !(_r9 as any).isDropped) dropOwned(_r9);
+              }
+            } finally {
+              if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
+            }
           } finally {
             if (!_moved7) dropOwned(right);
           }

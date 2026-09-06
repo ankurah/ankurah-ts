@@ -149,6 +149,20 @@ impl BodyTranslator<'_> {
                 // and reading `State::Some(n)` as a null test made arm one run
                 // for `State::Other`.
                 let option = self.names_option_variant(&ts.path);
+                // S4 IS NOT LANDED HERE, and the reason is written down:
+                // switching on the canonical variant instead of the written
+                // leaf — so that `use Option::Some as Yep` writes a null test
+                // rather than `value.is('Yep')` on a `number | null` — needs
+                // `names_option_variant` to mean "resolved to `Option`". It
+                // means "resolved to `Option`, OR could not be resolved at
+                // all": a bare `Some`/`None` the module never re-bound is the
+                // prelude's, which is the right default for a name already
+                // known to be a variant and the wrong one for deciding whether
+                // a path is one. Switched on here it turned every unresolved
+                // bare variant into a null test (nine harness targets red).
+                // What is owed first: the use map records
+                // `use Option::Some as Yep`, and this question separates
+                // "answered `Option`" from "did not answer".
                 match name.as_str() {
                     // The port writes an `Option<T>` as `T | null`, so the
                     // payload of a `Some` *is* the subject — which is why a

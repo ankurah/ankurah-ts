@@ -104,15 +104,17 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const results = await (async () => {
               if (limit != null) {
                 const limitVal = limit;
-                const _b9 = orderBySpill.clone();
+                let _moved11 = false;
+                const _b10 = orderBySpill.clone();
                 try {
-                  const _b10 = Number(BigInt.asUintN(32, limitVal));
+                  const _b12 = Number(BigInt.asUintN(32, limitVal));
+                  _moved11 = true;
                   return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
                 } finally {
-                  if (_b9 != null && !(_b9 as any).isMoved && !(_b9 as any).isDropped) dropOwned(_b9);
+                  if (!_moved11) dropOwned(_b10);
                 }
               } else {
-                const _b11 = orderBySpill.clone();
+                const _b13 = orderBySpill.clone();
                 return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
               }
             })();
@@ -264,11 +266,23 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
       try {
         const _r6 = entity.get(STATE_BUFFER_KEY);
         if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-        const _r7 = entity.get(HEAD_KEY);
-        if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-        const _r8 = entity.get(ATTESTATIONS_KEY);
-        if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-        return Result.Ok(new Attested(new EntityState(id, this.collectionId.clone(), new State(_r6.unwrap(), _r7.unwrap())), _r8.unwrap()));
+        try {
+          const _r7 = entity.get(HEAD_KEY);
+          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+          try {
+            const _r8 = entity.get(ATTESTATIONS_KEY);
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            try {
+              return Result.Ok(new Attested(new EntityState(id, this.collectionId.clone(), new State(_r6.unwrap(), _r7.unwrap())), _r8.unwrap()));
+            } finally {
+              if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
+            }
+          } finally {
+            if (_r7 != null && !(_r7 as any).isMoved && !(_r7 as any).isDropped) dropOwned(_r7);
+          }
+        } finally {
+          if (_r6 != null && !(_r6 as any).isMoved && !(_r6 as any).isDropped) dropOwned(_r6);
+        }
       } finally {
         entity.drop();
       }
@@ -481,14 +495,30 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
               try {
                 const _r7 = eventObj.get(ENTITY_ID_KEY);
                 if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-                const _r8 = eventObj.get(OPERATIONS_KEY);
-                if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-                const _r9 = eventObj.get(PARENT_KEY);
-                if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-                const _r10 = eventObj.get(ATTESTATIONS_KEY);
-                if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-                const event = new Attested(new Event(this.collectionId.clone(), _r7.unwrap(), _r8.unwrap(), _r9.unwrap()), _r10.unwrap());
-                events.push(event);
+                try {
+                  const _r8 = eventObj.get(OPERATIONS_KEY);
+                  if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+                  try {
+                    const _r9 = eventObj.get(PARENT_KEY);
+                    if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                    try {
+                      const _r10 = eventObj.get(ATTESTATIONS_KEY);
+                      if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+                      try {
+                        const event = new Attested(new Event(this.collectionId.clone(), _r7.unwrap(), _r8.unwrap(), _r9.unwrap()), _r10.unwrap());
+                        events.push(event);
+                      } finally {
+                        if (_r10 != null && !(_r10 as any).isMoved && !(_r10 as any).isDropped) dropOwned(_r10);
+                      }
+                    } finally {
+                      if (_r9 != null && !(_r9 as any).isMoved && !(_r9 as any).isDropped) dropOwned(_r9);
+                    }
+                  } finally {
+                    if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
+                  }
+                } finally {
+                  if (_r7 != null && !(_r7 as any).isMoved && !(_r7 as any).isDropped) dropOwned(_r7);
+                }
               } finally {
                 eventObj.drop();
               }
@@ -548,17 +578,33 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
           try {
             const _r8 = eventObj.get(ENTITY_ID_KEY);
             if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-            const _r9 = eventObj.get(OPERATIONS_KEY);
-            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-            const _r10 = eventObj.get(PARENT_KEY);
-            if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-            const _r11 = eventObj.get(ATTESTATIONS_KEY);
-            if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
-            const event = new Attested(new Event(this.collectionId.clone(), _r8.unwrap(), _r9.unwrap(), _r10.unwrap()), _r11.unwrap());
-            events.push(event);
-            const _r12 = cursor.continue().require('Failed to advance cursor');
-            if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-            _r12.drop();
+            try {
+              const _r9 = eventObj.get(OPERATIONS_KEY);
+              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              try {
+                const _r10 = eventObj.get(PARENT_KEY);
+                if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+                try {
+                  const _r11 = eventObj.get(ATTESTATIONS_KEY);
+                  if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+                  try {
+                    const event = new Attested(new Event(this.collectionId.clone(), _r8.unwrap(), _r9.unwrap(), _r10.unwrap()), _r11.unwrap());
+                    events.push(event);
+                    const _r12 = cursor.continue().require('Failed to advance cursor');
+                    if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+                    _r12.drop();
+                  } finally {
+                    if (_r11 != null && !(_r11 as any).isMoved && !(_r11 as any).isDropped) dropOwned(_r11);
+                  }
+                } finally {
+                  if (_r10 != null && !(_r10 as any).isMoved && !(_r10 as any).isDropped) dropOwned(_r10);
+                }
+              } finally {
+                if (_r9 != null && !(_r9 as any).isMoved && !(_r9 as any).isDropped) dropOwned(_r9);
+              }
+            } finally {
+              if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
+            }
           } finally {
             eventObj.drop();
           }
@@ -673,19 +719,27 @@ function jsObjectToEntityState(entityObj: Object, collectionId: CollectionId): R
   const id = _r0.unwrap();
   const _r1 = entityObj.get(STATE_BUFFER_KEY);
   if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-  const _r2 = entityObj.get(HEAD_KEY);
-  if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-  let _moved3 = false;
-  const entityState = new EntityState(id, collectionId.clone(), new State(_r1.unwrap(), _r2.unwrap()));
   try {
-    const _r4 = entityObj.get(ATTESTATIONS_KEY);
-    if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-    const attestations = _r4.unwrap();
-    _moved3 = true;
-    const attestedState = new Attested(entityState, attestations);
-    return Result.Ok(attestedState);
+    const _r2 = entityObj.get(HEAD_KEY);
+    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+    try {
+      let _moved3 = false;
+      const entityState = new EntityState(id, collectionId.clone(), new State(_r1.unwrap(), _r2.unwrap()));
+      try {
+        const _r4 = entityObj.get(ATTESTATIONS_KEY);
+        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+        const attestations = _r4.unwrap();
+        _moved3 = true;
+        const attestedState = new Attested(entityState, attestations);
+        return Result.Ok(attestedState);
+      } finally {
+        if (!_moved3) entityState.drop();
+      }
+    } finally {
+      if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+    }
   } finally {
-    if (!_moved3) entityState.drop();
+    if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
   }
 }
 

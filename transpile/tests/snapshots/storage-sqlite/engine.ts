@@ -215,9 +215,17 @@ export class SqliteBucket extends Struct implements StorageCollection {
       const _r3 = stmt.queryMap([], (row) => {
         const _r1 = row.get(1);
         if (_r1.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r1.unwrapErr()));
-        const _r2 = row.get(2);
-        if (_r2.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r2.unwrapErr()));
-        return Result.Ok(new SqliteColumn(_r1.unwrap(), _r2.unwrap()));
+        try {
+          const _r2 = row.get(2);
+          if (_r2.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r2.unwrapErr()));
+          try {
+            return Result.Ok(new SqliteColumn(_r1.unwrap(), _r2.unwrap()));
+          } finally {
+            if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+          }
+        } finally {
+          if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+        }
       });
       if (_r3.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r3.unwrapErr()));
       let _moved4 = false;

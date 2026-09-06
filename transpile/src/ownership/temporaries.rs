@@ -174,6 +174,8 @@ impl<'a> BodyTranslator<'a> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         name
     }
@@ -195,6 +197,8 @@ impl<'a> BodyTranslator<'a> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         name
     }

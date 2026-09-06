@@ -68,3 +68,27 @@ pub fn member(h: Holder) -> u32 {
         Holder::Nothing => 0,
     }
 }
+
+
+/// S3/R6: the tuple release walks INTO nested positions. `((a, _), c)` over
+/// `((Token, Token), Token)` released `c`, released `a` through its name, and
+/// left `pair[0][1]` to the collector — the walk stopped at the top level.
+pub fn nested_pair(pair: ((Token, Token), Token)) -> u32 {
+    match pair {
+        ((a, _), c) => a.n + c.n,
+    }
+}
+
+/// Three levels, deepest leaf first.
+pub fn three_deep(deep: (((Token, Token), Token), Token)) -> u32 {
+    match deep {
+        (((a, _), _), d) => a.n + d.n,
+    }
+}
+
+/// A nested position a NAME owns is released through that name and not walked.
+pub fn named_whole(pair: ((Token, Token), Token)) -> u32 {
+    match pair {
+        (inner, c) => inner.0.n + c.n,
+    }
+}

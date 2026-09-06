@@ -36,3 +36,26 @@ thread_local! {
 pub fn holes_written() -> usize {
     HOLES_WRITTEN.with(|n| n.get())
 }
+
+/// Is this lowered VALUE a hole — the whole of it, not something with one
+/// buried inside?
+///
+/// R1: `try_operand` used to read the global hole counter before and after
+/// lowering the `?`'s operand, so a refusal ANYWHERE in the operand's subtree —
+/// inside a closure the operand passes, in one branch of an `if`, in an
+/// unrelated argument beside it — was read as "the operand IS a hole" and the
+/// `?` lost its null/error test. `let v = a.or_else(|| xs.into_iter().next())?;`
+/// then computed on `null` where Rust answers `None`, with nothing said.
+///
+/// The counter answers "did anything refuse", which is the question `blocks.rs`
+/// asks about a whole statement and the right one there. The question HERE is
+/// about one value, so it is asked of that value. Reading the text is what the
+/// module doc warns against when the text is a rendered BODY — a body that
+/// mentions these characters for another reason is not a body that refused. One
+/// lowered value is not a body: it either is the string `hole_text` just made
+/// or it is not, and the leading `unsupported('` carries the quote a call to a
+/// user function of that name would not have in that position.
+pub fn value_is_a_hole(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with("unsupported('") && value.ends_with(')')
+}

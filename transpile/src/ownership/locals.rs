@@ -391,9 +391,20 @@ impl<'a> BodyTranslator<'a> {
     ///
     /// The same question `released_by_a_refusal` answers, asked where the
     /// statement's own prefix may already have run: a `?` operand standing
-    /// before the refusal is evaluated, and whatever it consumed is gone. So
-    /// each release is guarded by the runtime's own answer, and it stands in a
-    /// `finally` around the statement rather than above it.
+    /// before the refusal is evaluated, and whatever it consumed is gone.
+    /// So the release stands in a `finally` around the statement rather than
+    /// above it, and each one carries a FLAG saying whether the transfer it
+    /// was waiting for happened.
+    ///
+    /// S1: that flag used to be the runtime's own `isMoved`/`isDropped`, read
+    /// off the value. Those marks live on `AkObject`, and the port writes a
+    /// `Vec`, a `HashMap` and a `HashSet` as a plain array, `Map` and `Set` —
+    /// which carry neither, so both reads answered `undefined`, the guard
+    /// always passed, and a `Vec<Token>` an earlier `?` had already handed to a
+    /// consuming call was dropped a SECOND time: `BUG: Token was dropped twice`
+    /// in place of the intended refusal. The transfer is a fact about this
+    /// frame, so this frame records it: a `let` above the statement, set where
+    /// the transfer is written, read in the `finally`.
     ///
     /// A by-value PARAMETER is here too, which `released_by_a_refusal` cannot
     /// reach: it is not a local of any block, so it has no ordinal and no
@@ -405,22 +416,29 @@ impl<'a> BodyTranslator<'a> {
         stmt: &syn::Stmt,
         dispositions: &ownership::Dispositions,
         ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
-    ) -> String {
+    ) -> Vec<ownership::RefusalRelease> {
         let scan = ownership::Scan::new(self);
-        let mut out = String::new();
+        let mut out: Vec<ownership::RefusalRelease> = Vec::new();
         let mut written: Vec<String> = Vec::new();
         for site in scan.shallow(stmt) {
-            if written.contains(&site.name) || self.own.flags.borrow().contains_key(&site.name) {
+            if written.contains(&site.name)
+                || self.own.flags.borrow().contains_key(&site.name)
+                || self.own.released_elsewhere.borrow().contains(&site.name)
+            {
                 continue;
             }
             let ordinal = ordinals.borrow().get(&site.name).copied().unwrap_or(0);
             let owed = if ordinal == 0 {
-                // Not a local of any block here: a parameter the function's own
-                // claim let go of, or a name from further out that this body
-                // does not own at all. Only the first is owed, and the claim is
-                // what tells them apart.
-                self.own.by_value_params.borrow().contains(&site.name)
-                    && !self.own.claimed_params.borrow().contains(&site.name)
+                // Not a local of any block here: a by-value PARAMETER the
+                // function's own claim let go of, a consuming LOOP's current
+                // element the loop's claim let go of, or a name from further
+                // out that this body does not own at all. The first two are
+                // owed, and the two claims are what tell them apart.
+                let param = self.own.by_value_params.borrow().contains(&site.name)
+                    && !self.own.claimed_params.borrow().contains(&site.name);
+                let element = self.own.loop_bindings.borrow().contains(&site.name)
+                    && !self.own.claimed_loop_bindings.borrow().contains(&site.name);
+                param || element
             } else {
                 dispositions.of(&site.name, ordinal) == ownership::Disposition::Moved
             };
@@ -433,38 +451,18 @@ impl<'a> BodyTranslator<'a> {
                 continue;
             }
             let name = self.emitted_name(&site.name).unwrap_or_else(|| site.name.clone());
+            let Some(release) = ownership::drops_of(&tc.borrow().probe(), &ty).release(&name)
+            else {
+                continue;
+            };
             written.push(site.name.clone());
-            out.push_str(&ownership::guarded_release(&name));
+            out.push(ownership::RefusalRelease {
+                name,
+                flag: self.fresh_hoist("_moved"),
+                release,
+            });
         }
         out
     }
 
-    pub(crate) fn released_by_a_refusal(
-        &self,
-        stmt: &syn::Stmt,
-        dispositions: &ownership::Dispositions,
-        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
-    ) -> String {
-        let scan = ownership::Scan::new(self);
-        let mut out = String::new();
-        let mut written: Vec<String> = Vec::new();
-        for site in scan.shallow(stmt) {
-            if written.contains(&site.name) || self.own.flags.borrow().contains_key(&site.name) {
-                continue;
-            }
-            let ordinal = ordinals.borrow().get(&site.name).copied().unwrap_or(0);
-            if ordinal == 0 || dispositions.of(&site.name, ordinal) != ownership::Disposition::Moved
-            {
-                continue;
-            }
-            let Some(tc) = &self.types else { continue };
-            let Some(ty) = tc.borrow().lookup(&site.name) else { continue };
-            let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
-            let name = self.emitted_name(&site.name).unwrap_or_else(|| site.name.clone());
-            let Some(release) = drops.release(&name) else { continue };
-            written.push(site.name.clone());
-            out.push_str(&format!("{}\n", release));
-        }
-        out
-    }
 }

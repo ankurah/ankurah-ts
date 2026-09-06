@@ -34,7 +34,15 @@ export function decodeUtf8(bytes: Uint8Array): string | null {
 // them written without it would have answered U+FFFD and said nothing; here the
 // flag is stated once, and constructing a decoder for every byte run read is
 // work nobody asked for.
-const fatalDecoder = new TextDecoder('utf-8', { fatal: true });
+//
+// R2: `ignoreBOM` is the second flag, and its name says the opposite of what it
+// does. The host's default is `false`, which REMOVES a leading EF BB BF from
+// the answer; `true` keeps it. Rust's `from_utf8` and `from_utf8_lossy` do no
+// such thing — U+FEFF is an ordinary character to them — so the default silently
+// dropped a character from every string whose bytes began with a byte-order
+// mark, and the sites that reach these two are the ones that write an arbitrary
+// byte value out as a query literal.
+const fatalDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 /**
  * The bytes as UTF-8 text, with every byte run that is not UTF-8 replaced by
@@ -54,7 +62,7 @@ export function decodeUtf8Lossy(bytes: Uint8Array): string {
   return lossyDecoder.decode(bytes);
 }
 
-const lossyDecoder = new TextDecoder('utf-8');
+const lossyDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 
 /**
  * The index of a surrogate code unit that is not half of a pair, or `null`.

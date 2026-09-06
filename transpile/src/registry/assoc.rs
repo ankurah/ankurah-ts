@@ -264,6 +264,14 @@ impl Probe<'_> {
     /// a call on an array, and the array's own table is what knows how to write
     /// it (spec 4.4a). Answered from the DECLARED bound, so it holds in a
     /// generic body that never learns which iterator it is.
+    ///
+    /// R13(b), the LIMIT: this reroutes EVERY method on an `Iterator`-bounded
+    /// projection through the array table, and that is right only while the
+    /// value really is written as an array. `next` is the one method for which
+    /// it is not — it advances a CURSOR the whole-sequence form does not have —
+    /// and the array table refuses it there rather than answering the first
+    /// element. Anything else the port learns to write as something other than
+    /// an array has to be excluded here in the same way.
     pub fn written_as_sequence(&self, ty: &Ty) -> Option<Ty> {
         if !matches!(ty.peel_refs(), Ty::Assoc { .. }) {
             return None;

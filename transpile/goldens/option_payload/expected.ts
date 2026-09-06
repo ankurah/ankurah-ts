@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/option_payload/src/input.rs
-import { Struct, Enum, Drop, unsupported } from '@ankurah/base';
+import { Struct, Enum, Drop, dropOwned, unsupported } from '@ankurah/base';
 
 export class Token extends Drop {
   readonly _0: number;
@@ -91,6 +91,10 @@ export function peek(value: Value | null): number {
 }
 
 export function readLoosely(value: Value | null): number {
-  unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  try {
+    unsupported('an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here');
+  } finally {
+    dropOwned(value);
+  }
 }
 

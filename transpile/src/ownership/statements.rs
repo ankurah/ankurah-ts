@@ -67,6 +67,8 @@ impl<'a> BodyTranslator<'a> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         format!("{} = {}", left, held)
     }
@@ -147,6 +149,8 @@ impl<'a> BodyTranslator<'a> {
             temp: None,
             refused: false,
             released_if_unreached: false,
+            wrapper: false,
+            flag: None,
         });
         Some(chosen)
     }

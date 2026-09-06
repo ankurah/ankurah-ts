@@ -7,7 +7,22 @@
 // it did not name (H12).
 
 import { expect, test } from 'bun:test';
-import { Holder, Maybe, Named, Outer, Token, both, member, nothing, outOfOrder, partial, userSome } from './input.ts';
+import {
+  Holder,
+  Maybe,
+  Named,
+  Outer,
+  Token,
+  both,
+  member,
+  namedWhole,
+  nestedPair,
+  nothing,
+  outOfOrder,
+  partial,
+  threeDeep,
+  userSome,
+} from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a partial tuple pattern releases the element it did not name', () => {
@@ -39,6 +54,20 @@ test('a partial tuple inside a payload member releases the position it did not n
   expect(member(new Holder('Pair', { _0: [first, second] }) as any)).toBe(5);
   expect(first.isDropped).toBe(true);
   expect(second.isDropped).toBe(true);
+});
+
+test('a nested tuple position no name took is released by path', () => {
+  // `((a, _), c)` names `a` and `c`; `pair[0][1]` is nobody's, and the walk
+  // used to stop at the top level and leave it to the collector.
+  expect(nestedPair([[Token.new(1), Token.new(2)], Token.new(3)])).toBe(4);
+});
+
+test('three levels are all walked, deepest leaf first', () => {
+  expect(threeDeep([[[Token.new(4), Token.new(5)], Token.new(6)], Token.new(7)])).toBe(11);
+});
+
+test('a nested position a name owns is released through that name', () => {
+  expect(namedWhole([[Token.new(8), Token.new(9)], Token.new(10)])).toBe(18);
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

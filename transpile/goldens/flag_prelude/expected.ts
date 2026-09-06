@@ -154,13 +154,15 @@ export function twoLifts(c: Token, o: number | null, skip: boolean): number {
     if (skip) {
       return 0;
     }
+    let _moved2 = false;
     const _b1 = make();
     try {
-      const _b2 = (o ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      const _b3 = (o ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      _moved2 = true;
       _moved0 = true;
-      return eatTwo(c, _b1, _b2);
+      return eatTwo(c, _b1, _b3);
     } finally {
-      if (_b1 != null && !(_b1 as any).isMoved && !(_b1 as any).isDropped) dropOwned(_b1);
+      if (!_moved2) dropOwned(_b1);
     }
   } finally {
     if (!_moved0) c.drop();
