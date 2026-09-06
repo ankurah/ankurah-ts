@@ -130,10 +130,30 @@ export function rangeContains<T>(
   inclusive: boolean,
   item: T,
 ): boolean {
-  if (start != null && compareKeys(start, item) > 0) return false;
+  // T4/U5: a PARTIAL comparison, because `RangeBounds::contains` is written
+  // over `PartialOrd` and `NaN` is ordered against nothing. `compareKeys`
+  // answers 0 for any pair it cannot separate, which read as "equal": both
+  // `(..=5.0).contains(&f64::NAN)` and a NaN BOUND answered true where Rust
+  // answers false. An unordered pair fails the test it is asked, so an
+  // unbounded side — which performs no comparison at all — still answers true,
+  // as Rust's `(..)` does.
+  if (start != null && !partiallyBefore(start, item, true)) return false;
   if (end == null) return true;
-  const at = compareKeys(item, end);
-  return inclusive ? at <= 0 : at < 0;
+  return partiallyBefore(item, end, inclusive);
+}
+
+/**
+ * Is `a` before `b`, or equal to it where `orEqual` says so, under Rust's
+ * PartialOrd? An unordered pair — anything involving a `NaN` — is neither, and
+ * answers false to every one of the four comparisons, which is what makes a
+ * range containing it empty.
+ */
+function partiallyBefore(a: unknown, b: unknown, orEqual: boolean): boolean {
+  if (typeof a === 'number' && typeof b === 'number' && (Number.isNaN(a) || Number.isNaN(b))) {
+    return false;
+  }
+  const at = compareKeys(a, b, 'contains');
+  return orEqual ? at <= 0 : at < 0;
 }
 
 /** Rust's `a..=b`, which includes the last value. */
@@ -370,14 +390,29 @@ export function foldByKey<T, K>(
         best = candidate;
         bestKey = key;
         have = true;
-      } else if (takeCandidate(compareKeys(bestKey, key))) {
-        dropOwned(bestKey);
-        if (owns) dropOwned(best);
-        best = candidate;
-        bestKey = key;
       } else {
-        dropOwned(key);
-        if (owns) dropOwned(candidate);
+        // The candidate's key is this fold's from the moment the closure
+        // answered it, and the comparison can THROW — a hand-written
+        // `compareTo` may. Until the comparison has said which of the two keys
+        // wins, the candidate's key is in neither set: the `catch` below
+        // releases the accumulator and its key, and the `finally` releases
+        // `xs[at..]`, and neither of them holds this one. So it is settled
+        // here, in its own `finally`.
+        let settled = false;
+        try {
+          if (takeCandidate(compareKeys(bestKey, key))) {
+            dropOwned(bestKey);
+            if (owns) dropOwned(best);
+            best = candidate;
+            bestKey = key;
+          } else {
+            dropOwned(key);
+            if (owns) dropOwned(candidate);
+          }
+          settled = true;
+        } finally {
+          if (!settled) dropOwned(key);
+        }
       }
       at = i + 1;
     }
@@ -436,7 +471,7 @@ export function iterReduce<T>(
  * read, and answering `0` there would silently pick the first element, so it
  * raises instead.
  */
-export function compareKeys(a: unknown, b: unknown): number {
+export function compareKeys(a: unknown, b: unknown, caller = 'max_by_key/min_by_key'): number {
   if (a !== null && typeof a === 'object' && typeof (a as { compareTo?: unknown }).compareTo === 'function') {
     return (a as { compareTo: (o: unknown) => number }).compareTo(b);
   }
@@ -445,6 +480,6 @@ export function compareKeys(a: unknown, b: unknown): number {
   if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
   if (typeof a === 'boolean' && typeof b === 'boolean') return a === b ? 0 : a ? 1 : -1;
   throw new TypeError(
-    `max_by_key/min_by_key: a key of type ${typeof a} declares no order (no compareTo, not a primitive)`,
+    `${caller}: a key of type ${typeof a} declares no order (no compareTo, not a primitive)`,
   );
 }

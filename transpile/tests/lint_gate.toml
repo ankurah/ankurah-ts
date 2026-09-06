@@ -277,7 +277,7 @@ repeated = [
   "lineage.ts:415: TClock_dispatch_members() × 2",
   "node.ts:114: SafeMap.new() × 2",
   "node.ts:125: SafeMap.new() × 2",
-  "node.ts:877: entity.clone() × 2",
+  "node.ts:889: entity.clone() × 2",
   "node.ts:90: SafeMap.new() × 2",
   "peer_subscription/client_relay.test.ts:153: collectionId.clone() × 2",
   "peer_subscription/client_relay.test.ts:187: collectionId.clone() × 2",

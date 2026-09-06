@@ -311,19 +311,21 @@ impl TypeContext<'_> {
         self.call_argument_types_of(call, expected).unwrap_or_default()
     }
 
-    pub(super) fn call_argument_types_of(
+    /// The signature a `f(..)` call resolves to, with the impl's own parameters
+    /// bound. `None` for a call that names no function: an enum variant, a
+    /// tuple struct's constructor, or a path the registry cannot settle.
+    pub fn call_sig(
         &self,
         call: &syn::ExprCall,
         expected: Option<&Ty>,
-    ) -> Option<Vec<Option<Ty>>> {
+    ) -> Option<(crate::registry::MethodSig, Subst)> {
         let syn::Expr::Path(path) = &*call.func else {
             return None;
         };
-        if let Some(fields) = self.variant_argument_types(path, expected) {
-            return Some(fields);
-        }
-        if let Some(fields) = self.tuple_struct_argument_types(path, expected) {
-            return Some(fields);
+        if self.variant_argument_types(path, expected).is_some()
+            || self.tuple_struct_argument_types(path, expected).is_some()
+        {
+            return None;
         }
         let name = path.path.segments.last()?.ident.to_string();
         // `Box::new(..)` names `Box` with no arguments, and the impl is written
@@ -346,6 +348,24 @@ impl TypeContext<'_> {
             let open = open_params(&sig.ret.substitute(&subst));
             let _ = unify(&open, &sig.ret.substitute(&subst), want.peel_refs(), &mut subst);
         }
+        Some((sig, subst))
+    }
+
+    pub(super) fn call_argument_types_of(
+        &self,
+        call: &syn::ExprCall,
+        expected: Option<&Ty>,
+    ) -> Option<Vec<Option<Ty>>> {
+        let syn::Expr::Path(path) = &*call.func else {
+            return None;
+        };
+        if let Some(fields) = self.variant_argument_types(path, expected) {
+            return Some(fields);
+        }
+        if let Some(fields) = self.tuple_struct_argument_types(path, expected) {
+            return Some(fields);
+        }
+        let (sig, subst) = self.call_sig(call, expected)?;
         let probe = self.probe();
         Some(
             sig.params

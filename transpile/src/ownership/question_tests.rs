@@ -189,3 +189,84 @@ fn an_option_question_mark_writes_no_guarded_release() {
         ts
     );
 }
+
+// ── U3: the flag stands above the transfer, not above the prelude ─────
+
+/// A local handed to a `?`'d call has its move flag set immediately above the
+/// call that takes it — below every argument the statement lifted so that the
+/// flag could stand below them.
+///
+/// U3: the flag used to stand above the whole prelude, which is above those
+/// lifts. `self.0.query(R::Model::collection(), args)?` in `core/context.ts`
+/// marked `args` handed over and THEN called `R::Model::collection()`, so that
+/// call's throw path left `args` with a flag saying somebody else owned it and
+/// nobody released it.
+#[test]
+fn a_question_marks_flag_stands_below_the_arguments_lifted_above_it() {
+    let ts = body(
+        "pub fn build() -> Owned { Owned { n: 1 } }\n\
+         pub fn eat(a: Owned, b: Owned) -> Result<u32, Oops> { Ok(a.n + b.n) }\n\
+         pub fn f() -> Result<u32, Oops> {\n\
+           let held = Owned { n: 2 };\n\
+           let gate = fallible(0)?;\n\
+           let n = eat(build(), held)?;\n\
+           Ok(n + gate.n)\n\
+         }",
+        "f",
+    );
+    let lift = ts.find("= build();").expect(&ts);
+    let flag = ts.find("_moved0 = true;").expect(&ts);
+    let call = ts.find("= eat(").expect(&ts);
+    assert!(
+        lift < flag && flag < call,
+        "the lifted argument stands above the flag and the flag above the call:\n{}",
+        ts
+    );
+}
+
+/// Two `?` operands in one statement each set their OWN transfer's flag, at
+/// their own hoist. Setting both above the first one leaves the second local
+/// flagged while the first call can still throw.
+#[test]
+fn each_question_mark_sets_only_the_flags_its_own_operand_hands_away() {
+    let ts = body(
+        "pub fn eat(o: Owned) -> Result<u32, Oops> { Ok(o.n) }\n\
+         pub fn f() -> Result<u32, Oops> {\n\
+           let first = Owned { n: 1 };\n\
+           let second = Owned { n: 2 };\n\
+           let gate = fallible(0)?;\n\
+           let n = eat(first)? + eat(second)?;\n\
+           Ok(n + gate.n)\n\
+         }",
+        "f",
+    );
+    let first_flag = ts.find("_moved0 = true;").expect(&ts);
+    let first_call = ts.find("= eat(first);").expect(&ts);
+    let second_flag = ts.find("_moved1 = true;").expect(&ts);
+    let second_call = ts.find("= eat(second);").expect(&ts);
+    assert!(
+        first_flag < first_call && first_call < second_flag && second_flag < second_call,
+        "the second local is flagged only once the first call has returned:\n{}",
+        ts
+    );
+}
+
+/// A `?` whose operand hands a local away still sets the flag ABOVE the hoist,
+/// because the statement's own text — where every other flag stands — is never
+/// reached on the error path.
+#[test]
+fn a_question_marks_flag_still_stands_above_the_hoist_that_consumes() {
+    let ts = body(
+        "pub fn eat(o: Owned) -> Result<u32, Oops> { Ok(o.n) }\n\
+         pub fn f() -> Result<u32, Oops> {\n\
+           let held = Owned { n: 1 };\n\
+           let gate = fallible(0)?;\n\
+           let n = eat(held)?;\n\
+           Ok(n + gate.n)\n\
+         }",
+        "f",
+    );
+    let flag = ts.find("_moved0 = true;").expect(&ts);
+    let call = ts.find("= eat(held);").expect(&ts);
+    assert!(flag < call, "the flag is set before the call that can leave:\n{}", ts);
+}

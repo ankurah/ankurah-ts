@@ -4,7 +4,7 @@
 //! introduce names, and each one has a type the scrutinee decides. Split out of
 //! `context.rs`, which had grown past the point where a reader could hold it.
 
-use super::context::member_name;
+use super::shapes::member_name;
 use super::TypeContext;
 use crate::name_map;
 use crate::ty::{bind_params, TraitRef, Ty};

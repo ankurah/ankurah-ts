@@ -193,3 +193,45 @@ fn a_function_on_a_primitive_is_a_hole_like_a_constant_with_no_spelling() {
         f.messages()
     );
 }
+
+// ── U8: `unwrap_or_default` on a FIXED-SIZE array ────────────────────────
+
+/// Rust's `Default` for `[T; N]` is N of `T`'s default. The port's shape for an
+/// array erases the length, so `Option<[u32; 3]>::unwrap_or_default()` came out
+/// `value ?? []` and `Option<[u8; 3]>`'s `value ?? new Uint8Array()` — an empty
+/// collection where Rust answers three zeros, which is a wrong value rather
+/// than a missing one.
+#[test]
+fn a_fixed_size_array_default_has_as_many_elements_as_the_length_says() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn three(v: Option<[u32; 3]>) -> [u32; 3] { v.unwrap_or_default() }",
+    )]);
+    let ts = f.translated_method("lib.rs", "three");
+    assert!(ts.contains("?? [0, 0, 0]"), "three zeros, not an empty array:\n{}", ts);
+}
+
+#[test]
+fn a_fixed_size_byte_array_default_is_the_runtime_s_own_zeroes() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn bytes(v: Option<[u8; 4]>) -> [u8; 4] { v.unwrap_or_default() }",
+    )]);
+    let ts = f.translated_method("lib.rs", "bytes");
+    assert!(
+        ts.contains("?? new Uint8Array(4)"),
+        "four zero bytes, not an empty one:\n{}",
+        ts
+    );
+}
+
+/// A length the port cannot read is still a refusal, which is what it was.
+#[test]
+fn an_array_whose_length_is_a_const_generic_keeps_the_refusal() {
+    let mut f = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub fn n<const N: usize>(v: Option<[u32; N]>) -> [u32; N] { v.unwrap_or_default() }",
+    )]);
+    let ts = f.translated_method("lib.rs", "n");
+    assert!(ts.contains("unsupported("), "the length is not a literal:\n{}", ts);
+}

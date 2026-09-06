@@ -109,6 +109,7 @@ impl BodyTranslator<'_> {
             refused: false,
             released_if_unreached: owes_a_release,
             wrapper: false,
+            sets: String::new(),
             flag,
         });
         name

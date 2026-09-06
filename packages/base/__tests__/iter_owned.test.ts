@@ -36,7 +36,9 @@ import {
   skipOwned,
   takeOwned,
   stepByOwned,
+  SeqCursor,
 } from '../src/std/iter_owned.ts';
+import { iterMaxByKey } from '../src/std/iter.ts';
 
 /** An element that says when it was dropped, and refuses a second drop. */
 class Token extends Drop {
@@ -371,7 +373,72 @@ describe('an eager adaptor over owned elements releases what it discards', () =>
     expect(every.map((t) => t.n)).toEqual([1, 3, 5]);
     expect(dropped()).toEqual([2, 4]);
     for (const t of every) t.drop();
-    expect(() => stepByOwned([1, 2], 0)).toThrow(RangeError);
+  });
+
+  // U1: `step_by` takes the iterator BY VALUE and then panics on a zero step,
+  // so Rust's unwind drops the whole sequence. The helper owns `xs` from the
+  // moment it is called, and the old test asserted only the throw — which the
+  // defective version passed while leaving every element with no owner.
+  test('a step of zero throws AND releases the sequence it was handed', () => {
+    const xs = tokens(1, 2, 3);
+    expect(() => stepByOwned(xs, 0)).toThrow(RangeError);
+    expect(dropped()).toEqual([1, 2, 3]);
+    const negative = tokens(4, 5);
+    expect(() => stepByOwned(negative, -1)).toThrow(RangeError);
+    expect(dropped()).toEqual([4, 5]);
+    const fractional = tokens(6);
+    expect(() => stepByOwned(fractional, 1.5)).toThrow(RangeError);
+    expect(dropped()).toEqual([6]);
+  });
+
+  // U4: the candidate's key is the fold's from the moment the closure answered
+  // it, and a hand-written `compareTo` may throw. Until the comparison has
+  // said which key wins, the candidate's is in neither set — the `catch`
+  // releases the accumulator's, the `finally` releases the untouched tail, and
+  // neither of them holds this one.
+  test('a keyed fold releases the candidate key when the comparison throws', () => {
+    const keys: number[] = [];
+    class Key extends Drop {
+      constructor(readonly n: number) {
+        super();
+      }
+      compareTo(other: Key): number {
+        if (other.n === 2 || this.n === 2) throw new Error('no comparison');
+        return this.n - other.n;
+      }
+      protected override onDrop(): void {
+        keys.push(this.n);
+      }
+    }
+    const xs = tokens(1, 2, 3);
+    expect(() => iterMaxByKeyOwned(xs, (t: Token) => new Key(t.n))).toThrow('no comparison');
+    // Both keys made so far are released: the accumulator's by the catch, the
+    // candidate's by its own finally.
+    expect([...keys].sort((a, b) => a - b)).toEqual([1, 2]);
+    // And every element: the two the fold held, and the one it never reached.
+    expect(dropped()).toEqual([1, 2, 3]);
+  });
+
+  test('the same with borrowed elements, where the fold releases no element', () => {
+    const keys: number[] = [];
+    class Key extends Drop {
+      constructor(readonly n: number) {
+        super();
+      }
+      compareTo(other: Key): number {
+        if (other.n === 2 || this.n === 2) throw new Error('no comparison');
+        return this.n - other.n;
+      }
+      protected override onDrop(): void {
+        keys.push(this.n);
+      }
+    }
+    const xs = tokens(1, 2, 3);
+    expect(() => iterMaxByKey(xs, (t: Token) => new Key(t.n))).toThrow('no comparison');
+    expect([...keys].sort((a, b) => a - b)).toEqual([1, 2]);
+    // The elements are the caller's here, so none of them is released.
+    expect(dropped()).toEqual([]);
+    for (const t of xs) t.drop();
   });
 
   test('next on a sequence nobody else holds answers the head and drops the tail', () => {
@@ -381,5 +448,79 @@ describe('an eager adaptor over owned elements releases what it discards', () =>
     expect(dropped()).toEqual([2, 3]);
     head!.drop();
     expect(iterFirstOwned([])).toBe(null);
+  });
+});
+
+// ── SeqCursor: an OPAQUE iterator, which is the one shape the array cannot be ──
+//
+// A generic body that takes `I: Iterator<Item = V>` and calls `next()` is doing
+// the one thing the whole-sequence shape cannot express. The cursor holds the
+// sequence and the index of the first element it has not handed out; what it
+// has handed out belongs to whoever took it, and dropping the cursor releases
+// exactly the rest — which is what Rust drops when a part-walked iterator goes
+// out of scope.
+
+describe('SeqCursor', () => {
+  test('next hands out each element in order and then answers null', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2)]);
+    const first = cursor.next();
+    const second = cursor.next();
+    expect(first?.n).toBe(1);
+    expect(second?.n).toBe(2);
+    expect(cursor.next()).toBe(null);
+    expect(Token.dropped).toEqual([]);
+    cursor.drop();
+    // Nothing was left in the cursor, so dropping it released nothing.
+    expect(Token.dropped).toEqual([]);
+    first?.drop();
+    second?.drop();
+    expect(Token.dropped).toEqual([1, 2]);
+  });
+
+  test('dropping a part-walked cursor releases only what it still held', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    const taken = cursor.next();
+    expect(taken?.n).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([2, 3]);
+    // The one that was handed out is still the caller's.
+    taken?.drop();
+    expect(Token.dropped).toEqual([2, 3, 1]);
+  });
+
+  test('remaining counts what has not been handed out', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2)]);
+    expect(cursor.remaining).toBe(2);
+    cursor.next()?.drop();
+    expect(cursor.remaining).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2]);
+  });
+
+  test('takeRest hands the tail over and CONSUMES the cursor', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    cursor.next()?.drop();
+    const rest = cursor.takeRest();
+    expect(rest.map((t) => t.n)).toEqual([2, 3]);
+    // Every consuming `Iterator` method takes the iterator by value, so the
+    // cursor is gone: the frame that declared it must not release it, and
+    // touching it again is a use after move.
+    expect(cursor.isMoved).toBe(true);
+    expect(Token.dropped).toEqual([1]);
+    for (const token of rest) token.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('a cursor over an empty sequence answers null and drops cleanly', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor<Token>([]);
+    expect(cursor.next()).toBe(null);
+    expect(cursor.remaining).toBe(0);
+    cursor.drop();
+    expect(Token.dropped).toEqual([]);
   });
 });

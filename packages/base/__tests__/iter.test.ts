@@ -270,6 +270,38 @@ describe('a borrowed callback survives the reading terminals too', () => {
 });
 
 describe('rangeContains answers from the bounds', () => {
+  // T4/U5: `RangeBounds::contains` is written over `PartialOrd`, and `NaN` is
+  // ordered against nothing — every one of the four comparisons against it is
+  // false, so no range with a comparison in it contains one. `compareKeys`
+  // answers 0 for a pair it cannot separate, which read as "equal": both the
+  // NaN item and the NaN bound answered true where Rust answers false.
+  test('a NaN item is in no range that performs a comparison', () => {
+    expect(rangeContains(null, 5, true, Number.NaN)).toBe(false);
+    expect(rangeContains(null, 5, false, Number.NaN)).toBe(false);
+    expect(rangeContains(0, null, false, Number.NaN)).toBe(false);
+    expect(rangeContains(0, 5, false, Number.NaN)).toBe(false);
+    expect(rangeContains(0, 5, true, Number.NaN)).toBe(false);
+  });
+
+  test('a NaN BOUND fails its own test', () => {
+    expect(rangeContains(Number.NaN, 5, false, 1)).toBe(false);
+    expect(rangeContains(0, Number.NaN, false, 1)).toBe(false);
+    expect(rangeContains(0, Number.NaN, true, 1)).toBe(false);
+  });
+
+  // The unbounded range performs no comparison at all, so it contains
+  // everything — which is what Rust's `(..)` does with a `NaN` too.
+  test('the fully unbounded range contains a NaN', () => {
+    expect(rangeContains(null, null, false, Number.NaN)).toBe(true);
+  });
+
+  test('an ordinary float range is unchanged', () => {
+    expect(rangeContains(0, 5, false, 4.5)).toBe(true);
+    expect(rangeContains(0, 5, false, 5)).toBe(false);
+    expect(rangeContains(0, 5, true, 5)).toBe(true);
+    expect(rangeContains(0, 5, true, -0.5)).toBe(false);
+  });
+
   // O7/O8: the item is evaluated ONCE, the ends in Rust's order, and every
   // bound shape is answered — `a..`, `..b`, `..=b` and `..` each used to fall
   // to the materialisation hole though Rust answers `a <= x`, `x < b`,

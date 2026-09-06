@@ -88,6 +88,7 @@ export {
   iterMinByOwned,
   iterMaxByKeyOwned,
   iterMinByKeyOwned,
+  SeqCursor,
 } from './std/iter_owned.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
 export {

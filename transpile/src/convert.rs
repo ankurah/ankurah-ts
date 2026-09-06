@@ -18,9 +18,13 @@ use crate::registry::NoConversion;
 use crate::ty::Ty;
 
 pub(crate) mod cast;
+pub(crate) mod copies;
+pub(crate) mod dictionary;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod dictionary_tests;
 
 impl BodyTranslator<'_> {
     /// The function `?` calls on the error, where the two error types differ.
@@ -137,9 +141,18 @@ impl BodyTranslator<'_> {
         // class and keeps the first of any two that would take the same name,
         // so a call to a name two impls share cannot be trusted to arrive at
         // the one the engine picked.
+        //
+        // Unless the impls sharing the name also share a SOURCE the port writes
+        // as one TypeScript type. `From<String> for Expr` and `From<&str> for
+        // Expr` are two impls in Rust and one function here, because the port
+        // writes `String` and `&str` as `string`: the call reaches the only
+        // function there is, and which of the two bodies survived is said where
+        // the class is emitted rather than at every call to it.
         let names = crate::emit_impls::conversion_names(reg, to, FROM_PATH);
         let method = call.callee.rsplit('.').next().unwrap_or(&call.callee);
-        if names.iter().filter(|n| *n == method).count() > 1 {
+        let sharing: Vec<&String> =
+            names.iter().filter(|(n, _)| n == method).map(|(_, source)| source).collect();
+        if sharing.len() > 1 && sharing.iter().any(|source| *source != sharing[0]) {
             self.fallback(
                 span,
                 format!(
@@ -210,6 +223,15 @@ impl BodyTranslator<'_> {
         }
         let span = syn::spanned::Spanned::span(call);
         let from = self.quietly(|| self.resolve_expr_type(&call.receiver)).ok();
+        // Spec 4.4b: `value.try_into()` on a parameter its own bound converts
+        // is decided by the caller's WRITTEN type, and the caller handed that
+        // decision in as a value. Asked before the impl table, because the impl
+        // table cannot answer it: `V` is open here and stays open.
+        if matches!(method.as_str(), "into" | "try_into") {
+            if let Some(text) = self.through_a_dictionary(from.as_ref(), receiver, &method) {
+                return Some(text);
+            }
+        }
         match method.as_str() {
             "to_string" | "to_owned" => self.owned_copy(&method, from.as_ref(), receiver, span),
             "into" => Some(self.into_call(from.as_ref(), expected, receiver, span)),
@@ -217,72 +239,6 @@ impl BodyTranslator<'_> {
             // settle keeps the shape it had rather than being handed a value
             // where the source reads a wrapper.
             _ => self.try_into_call(from.as_ref(), expected, receiver, span),
-        }
-    }
-
-    /// `to_string()` and `to_owned()`: a value of the receiver's own type,
-    /// owned rather than borrowed.
-    ///
-    /// The port maps `String` and `&str` to one type, so `s.to_string()` on a
-    /// string is the string — `'Alice'.toString()` was a call whose only effect
-    /// was to be there. Everything else keeps a real copy: `to_string` through
-    /// `Display`, `to_owned` through `Clone`.
-    fn owned_copy(
-        &self,
-        method: &str,
-        from: Option<&Ty>,
-        receiver: &str,
-        span: proc_macro2::Span,
-    ) -> Option<String> {
-        let tc = self.types.as_ref()?;
-        let tc = tc.borrow();
-        let Some(from) = from else {
-            self.fallback(
-                span,
-                format!(
-                    "`{}` is written on a receiver the engine could not type, so the copy is \
-                     written by the method's name alone",
-                    method
-                ),
-            );
-            // `to_owned` on an untyped receiver keeps the `clone` it was
-            // written as before this: a string is the one type it is wrong for,
-            // and a string is what the engine names most reliably.
-            return (method == "to_owned").then(|| format!("{}.clone()", receiver));
-        };
-        use crate::name_map::shape::{js_shape, JsShape};
-        // A reference is erased in emission, so `&str` and `String` are one
-        // question here and `&Vec<u8>` and `Vec<u8>` are another.
-        match js_shape(tc.registry, from.peel_refs()) {
-            JsShape::Str => Some(receiver.to_string()),
-            // A number and a bigint each carry `toString`, and a class that
-            // implements `Display` is emitted with one, so the ordinary method
-            // call is what `to_string` wants.
-            _ if method == "to_string" => None,
-            // A number, a bigint and a boolean are copied by being read: there
-            // is nothing to clone and no `clone` on them to call, and
-            // `n.clone()` was a TypeError at run time.
-            JsShape::Number | JsShape::BigInt | JsShape::Boolean => Some(receiver.to_string()),
-            JsShape::Bytes => Some(format!("{}.slice()", receiver)),
-            // An array is copied element by element, by the element's own Clone
-            // shape: `[...xs]` copies the ARRAY and leaves both copies holding
-            // the same elements, which in the port is two owners for one value.
-            JsShape::Array(inner) => {
-                let element = crate::native_types::array::Element::of(tc.registry, &inner);
-                match crate::native_types::array::copy(receiver, &element, &format!("[...{}]", receiver)) {
-                    Ok(written) => Some(written),
-                    Err(why) => {
-                        self.fallback(
-                            span,
-                            format!("`{}` copies an array, which clones each element, and {}", method, why),
-                        );
-                        Some(format!("[...{}]", receiver))
-                    }
-                }
-            }
-            // `ToOwned` for everything else in the corpus is `Clone`, and the
-            // emitted class carries `clone`.
-            _ => Some(format!("{}.clone()", receiver)),
         }
     }
 

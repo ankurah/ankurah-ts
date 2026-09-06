@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, iterLast, debugString } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, iterLast, SeqCursor, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -268,13 +268,13 @@ export type ExprV = {
 
 export class Expr extends Enum<ExprV> {
 
-  populateRecursive<I extends Iterable<V>, V, E>(values: I): Result<Expr, ParseError> {
+  populateRecursive<I extends Iterable<V>, V, E>(values: SeqCursor<V>, _convV: (value: V) => Result<Expr, E>): Result<Expr, ParseError> {
     return this.intoMatch({
       Placeholder: () => {
         const _v = values.next();
         if (_v != null) {
           const value = _v;
-          const _r0 = value.tryInto().mapErr((e) => e);
+          const _r0 = _convV(value).mapErr((e) => e);
           if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
           return Result.Ok(_r0.unwrap());
         } else {
@@ -291,7 +291,7 @@ export class Expr extends Enum<ExprV> {
       },
       Predicate: (v) => {
         const pred = v._0;
-        const _r1 = pred.populateRecursive(values);
+        const _r1 = pred.populateRecursive(values, _convV);
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         return Result.Ok(new Expr('Predicate', { _0: _r1.unwrap() }));
       },
@@ -299,10 +299,10 @@ export class Expr extends Enum<ExprV> {
         const left = v.left;
         const operator = v.operator;
         const right = v.right;
-        const _r2 = left.populateRecursive(values);
+        const _r2 = left.populateRecursive(values, _convV);
         if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
         try {
-          const _r3 = right.populateRecursive(values);
+          const _r3 = right.populateRecursive(values, _convV);
           if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
           try {
             return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
@@ -324,7 +324,7 @@ export class Expr extends Enum<ExprV> {
           try {
             while (_at7 < _seq6.length) {
               const expr = _seq6[_at7++];
-              const _r5 = expr.populateRecursive(values);
+              const _r5 = expr.populateRecursive(values, _convV);
               if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
               populatedExprs.push(_r5.unwrap());
             }
@@ -971,33 +971,37 @@ export class Predicate extends Enum<PredicateV> {
     });
   }
 
-  populate<I extends Iterable<V>, V, E>(values: I): Result<Predicate, ParseError> {
-    let valuesIter = [...values];
-    const _r0 = this.populateRecursive(valuesIter);
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-    let _moved1 = false;
-    const result = _r0.unwrap();
+  populate<I extends Iterable<V>, V, E>(values: I, _convV: (value: V) => Result<Expr, E>): Result<Predicate, ParseError> {
+    let valuesIter = new SeqCursor([...values]);
     try {
-      if ((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') != null)) {
-        return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
+      const _r0 = this.populateRecursive(valuesIter, _convV);
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      let _moved1 = false;
+      const result = _r0.unwrap();
+      try {
+        if ((valuesIter.next() != null)) {
+          return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
+        }
+        _moved1 = true;
+        return Result.Ok(result);
+      } finally {
+        if (!_moved1) result.drop();
       }
-      _moved1 = true;
-      return Result.Ok(result);
     } finally {
-      if (!_moved1) result.drop();
+      valuesIter.drop();
     }
   }
 
-  populateRecursive<I extends Iterable<V>, V, E>(values: I): Result<Predicate, ParseError> {
+  populateRecursive<I extends Iterable<V>, V, E>(values: SeqCursor<V>, _convV: (value: V) => Result<Expr, E>): Result<Predicate, ParseError> {
     return this.intoMatch({
       Comparison: (v) => {
         const left = v.left;
         const operator = v.operator;
         const right = v.right;
-        const _r0 = left.populateRecursive(values);
+        const _r0 = left.populateRecursive(values, _convV);
         if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         try {
-          const _r1 = right.populateRecursive(values);
+          const _r1 = right.populateRecursive(values, _convV);
           if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
           try {
             return Result.Ok(new Predicate('Comparison', { left: _r0.unwrap(), operator: operator, right: _r1.unwrap() }));
@@ -1016,11 +1020,11 @@ export class Predicate extends Enum<PredicateV> {
         try {
           try {
             _moved2 = true;
-            _moved3 = true;
-            const _r4 = left.populateRecursive(values);
+            const _r4 = left.populateRecursive(values, _convV);
             if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
             try {
-              const _r5 = right.populateRecursive(values);
+              _moved3 = true;
+              const _r5 = right.populateRecursive(values, _convV);
               if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
               try {
                 return Result.Ok(new Predicate('And', { _0: _r4.unwrap(), _1: _r5.unwrap() }));
@@ -1045,11 +1049,11 @@ export class Predicate extends Enum<PredicateV> {
         try {
           try {
             _moved6 = true;
-            _moved7 = true;
-            const _r8 = left.populateRecursive(values);
+            const _r8 = left.populateRecursive(values, _convV);
             if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
             try {
-              const _r9 = right.populateRecursive(values);
+              _moved7 = true;
+              const _r9 = right.populateRecursive(values, _convV);
               if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
               try {
                 return Result.Ok(new Predicate('Or', { _0: _r8.unwrap(), _1: _r9.unwrap() }));
@@ -1068,13 +1072,13 @@ export class Predicate extends Enum<PredicateV> {
       },
       Not: (v) => {
         const pred = v._0;
-        const _r10 = pred.populateRecursive(values);
+        const _r10 = pred.populateRecursive(values, _convV);
         if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
         return Result.Ok(new Predicate('Not', { _0: _r10.unwrap() }));
       },
       IsNull: (v) => {
         const expr = v._0;
-        const _r11 = expr.populateRecursive(values);
+        const _r11 = expr.populateRecursive(values, _convV);
         if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
         return Result.Ok(new Predicate('IsNull', { _0: _r11.unwrap() }));
       },

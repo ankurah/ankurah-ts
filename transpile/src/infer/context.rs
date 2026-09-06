@@ -14,6 +14,7 @@ use crate::name_map;
 use crate::registry::{
     resolve_type, Def, ModuleId, Ns, Probe, TypeEnv, TypeRegistry,
 };
+use super::shapes::{break_value, expr_form, is_unsuffixed_int, member_name};
 use crate::ty::subst::Subst;
 use crate::ty::{unify, Prim, TraitRef, Ty};
 
@@ -28,6 +29,11 @@ pub struct TypeContext<'a> {
     /// a call on `self` inside a trait's own default body, dispatch through
     /// these and nothing else.
     pub param_bounds: Vec<(String, TraitRef)>,
+    /// The conversions this body's own callers hand it, one per type parameter
+    /// a conversion bound names (spec 4.4b). `value.try_into()` on a bounded
+    /// parameter is decided by the caller's written type, which the body
+    /// cannot see; the dictionary is that decision, arrived as a value.
+    pub dictionaries: Vec<crate::convert::dictionary::Dictionary>,
     /// What `Self` means in the enclosing impl.
     pub self_ty: Option<Ty>,
     /// The parameters of the closure whose body is being typed right now,
@@ -61,6 +67,7 @@ impl<'a> TypeContext<'a> {
             module,
             params,
             param_bounds: Vec::new(),
+            dictionaries: Vec::new(),
             self_ty,
             closure_params: std::cell::RefCell::new(Vec::new()),
             sink,
@@ -1251,90 +1258,4 @@ fn collect_params(ty: &Ty, out: &mut Vec<String>) {
 #[allow(dead_code)]
 pub fn prim_name(p: Prim) -> String {
     format!("{:?}", p).to_lowercase()
-}
-
-/// The name of an expression form, so a refusal says which one it could not
-/// read rather than only that it could not.
-pub fn expr_form(expr: &syn::Expr) -> &'static str {
-    match expr {
-        syn::Expr::Array(_) => "array",
-        syn::Expr::Assign(_) => "assignment",
-        syn::Expr::Binary(_) => "binary operator",
-        syn::Expr::Break(_) => "break",
-        syn::Expr::Closure(_) => "closure",
-        syn::Expr::Const(_) => "const block",
-        syn::Expr::Continue(_) => "continue",
-        syn::Expr::ForLoop(_) => "for loop",
-        syn::Expr::If(_) => "if",
-        syn::Expr::Index(_) => "index",
-        syn::Expr::Let(_) => "let condition",
-        syn::Expr::Lit(_) => "literal",
-        syn::Expr::Loop(_) => "loop",
-        syn::Expr::Macro(_) => "macro invocation",
-        syn::Expr::Match(_) => "match",
-        syn::Expr::Range(_) => "range",
-        syn::Expr::Repeat(_) => "array repeat",
-        syn::Expr::Return(_) => "return",
-        syn::Expr::Unary(_) => "unary operator",
-        syn::Expr::Unsafe(_) => "unsafe block",
-        syn::Expr::While(_) => "while loop",
-        syn::Expr::Yield(_) => "yield",
-        syn::Expr::Async(_) => "async block",
-        _ => "this",
-    }
-}
-
-pub fn member_name(member: &syn::Member) -> String {
-    match member {
-        syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
-        syn::Member::Unnamed(idx) => format!("_{}", idx.index),
-    }
-}
-
-/// Is this an integer literal written without a suffix?
-///
-/// Rust infers such a literal's type from where it stands. In index position it
-/// can only be a `usize`, because that and the ranges of it are what
-/// `SliceIndex` is implemented for; nothing else is being decided here.
-fn is_unsuffixed_int(expr: &syn::Expr) -> bool {
-    matches!(
-        expr,
-        syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(int),
-            ..
-        }) if int.suffix().is_empty()
-    )
-}
-
-/// The first value a `break` inside this loop's body carries, which is what the
-/// loop's own type is.
-///
-/// A `break` in a loop written INSIDE the body belongs to that loop, and a
-/// closure carries its own control flow, so neither is looked into.
-fn break_value(block: &syn::Block) -> Option<&syn::Expr> {
-    fn in_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
-        match expr {
-            syn::Expr::Break(brk) if brk.label.is_none() => brk.expr.as_deref(),
-            syn::Expr::Loop(_)
-            | syn::Expr::While(_)
-            | syn::Expr::ForLoop(_)
-            | syn::Expr::Closure(_)
-            | syn::Expr::Async(_) => None,
-            syn::Expr::Block(b) => in_block(&b.block),
-            syn::Expr::Unsafe(b) => in_block(&b.block),
-            syn::Expr::If(if_expr) => in_block(&if_expr.then_branch).or_else(|| {
-                if_expr.else_branch.as_ref().and_then(|(_, other)| in_expr(other))
-            }),
-            syn::Expr::Match(m) => m.arms.iter().find_map(|arm| in_expr(&arm.body)),
-            _ => None,
-        }
-    }
-    fn in_block(block: &syn::Block) -> Option<&syn::Expr> {
-        block.stmts.iter().find_map(|stmt| match stmt {
-            syn::Stmt::Expr(expr, _) => in_expr(expr),
-            syn::Stmt::Local(local) => local.init.as_ref().and_then(|init| in_expr(&init.expr)),
-            _ => None,
-        })
-    }
-    in_block(block)
 }

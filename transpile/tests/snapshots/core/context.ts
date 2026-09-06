@@ -96,8 +96,8 @@ export class Context extends Struct {
     let _moved1 = false;
     const args_1 = _r0.unwrap();
     try {
-      _moved1 = true;
       const _b2 = R.Model.collection();
+      _moved1 = true;
       const _r3 = this._0.value.query(_b2, args_1);
       if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
       return Result.Ok(_r3.unwrap().map());

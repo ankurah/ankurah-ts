@@ -15,40 +15,6 @@ use crate::native_types;
 /// Translate a single expression (used by match_expr, control_flow, macros modules)
 /// Extract a single expression from a block (for ternary conversion)
 
-// ── Public entry points ─────────────────────────────────────────────────
-pub fn translate_expr(expr: &syn::Expr) -> String {
-    BodyTranslator::new("Self").expr(expr)
-}
-
-/// Translate a pattern (used by match_expr, control_flow modules)
-pub fn translate_pat(pat: &syn::Pat) -> String {
-    BodyTranslator::pat_static(pat)
-}
-
-
-
-
-pub fn indent(s: &str) -> String {
-    s.lines()
-        .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + if s.ends_with('\n') { "\n" } else { "" }
-}
-
-/// Where an expression sits in the file, as the two ends of its span. Two
-/// expressions are the same one when they start and end in the same place,
-/// which is what an expectation is matched against.
-type Position = ((usize, usize), (usize, usize));
-
-pub(crate) fn position_of(expr: &syn::Expr) -> Position {
-    span_position(syn::spanned::Spanned::span(expr))
-}
-
-pub(crate) fn span_position(span: proc_macro2::Span) -> Position {
-    let (start, end) = (span.start(), span.end());
-    ((start.line, start.column), (end.line, end.column))
-}
 
 // ── Translator struct ───────────────────────────────────────────────────
 
@@ -192,15 +158,6 @@ pub struct BodyTranslator<'a> {
     pub self_name: &'a str,
 }
 
-/// One loop being written, and what a `break` carrying a value does in it.
-#[derive(Clone)]
-pub struct LoopFrame {
-    /// The label the loop carries, where the source wrote one.
-    pub label: Option<String>,
-    /// The name a `break <value>` assigns to, and the label it then leaves —
-    /// only for a loop whose own value the code around it wanted.
-    pub value: Option<(String, String)>,
-}
 
 impl<'a> BodyTranslator<'a> {
     pub fn new(self_type: &'a str) -> Self {
@@ -399,7 +356,8 @@ impl<'a> BodyTranslator<'a> {
                     );
                     let instead = format!("`{}` is dispatched by name", rust_method);
                     if let Some(found) = self.or_fallback(found, &instead) {
-                        let mut recv = receiver.clone();
+                        let mut recv =
+                            self.receiver_of(call, &rust_method, receiver.clone());
                         for accessor in found.accessors() {
                             recv = format!("{}.{}", recv, accessor);
                         }
@@ -456,6 +414,12 @@ impl<'a> BodyTranslator<'a> {
                             false => ts_method.clone(),
                         };
                         drop(tc_ref);
+                        // Spec 4.4b: only a call the native tables passed
+                        // through is an emitted function with a dictionary
+                        // parameter to fill.
+                        let passthrough =
+                            matches!(translated, native_types::MethodTranslation::Passthrough);
+                        let args = self.with_dictionaries(passthrough, args, &found, call);
                         return self.render_translation(
                             translated,
                             &recv,
@@ -538,6 +502,10 @@ impl<'a> BodyTranslator<'a> {
                         })
                     })
                     .collect();
+                // Spec 4.4b: a free or associated function bounded by a
+                // conversion trait with a concrete target reads that conversion
+                // out of a trailing parameter.
+                let args = self.with_call_dictionaries(args, call, expected.as_ref());
                 // E10/J3: the flag stands after everything the call evaluates.
                 let args = self.lifted_above_the_flag(expr, &Self::each_argument(&call.args), args);
                 // An `OwnedClosure` is deliberately not a bare callable, so a
@@ -1179,6 +1147,7 @@ mod while_let;
 pub(crate) mod calls;
 
 /// Methods the body translator answers before the native-type dispatch.
+pub(crate) mod cursors;
 mod pre_dispatch;
 
 /// Reading a field, and the places a value moves out of.
@@ -1195,6 +1164,7 @@ mod paths;
 
 /// The small pieces of TypeScript the translator writes by hand.
 mod writing;
+pub use writing::{indent, position_of, span_position, translate_expr, translate_pat, Position};
 pub(crate) use writing::*;
 /// A name in a pattern that resolves to a `const`.
 mod const_patterns;

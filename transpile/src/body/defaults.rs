@@ -32,6 +32,30 @@ impl BodyTranslator<'_> {
     /// corpus site here, so both wait for one rather than being guessed at.
     fn default_text(&self, ty: &Ty) -> Option<String> {
         let tc = self.types.as_ref()?.borrow();
+        // U8: a FIXED-SIZE array first, because the port's shape erases the
+        // length. `[u32; 3]`'s default is three zeros and `[u8; 3]`'s is three
+        // zero bytes; read through `js_shape` both came out empty — `value ?? []`
+        // and `value ?? new Uint8Array()` — which is a wrong value rather than
+        // a missing one. Written only where the length is a literal and the
+        // element's own default is one of the shapes below; anything else
+        // (a `const N` length, an element with a `Default` of its own) takes
+        // the refusal, which is what it took before.
+        if let Ty::Array { elem, len } = ty.peel_refs() {
+            // A length the port cannot read is a refusal rather than an empty
+            // collection: `[u32; N]`'s default is N zeroes whatever N is, and
+            // the empty array is that only for N = 0.
+            let crate::ty::ArrayLen::Lit(len) = len else { return None };
+            let element = self.default_text(elem)?;
+            let repeated = vec![element.as_str(); *len as usize];
+            return Some(match js_shape(tc.registry, elem.peel_refs()) {
+                // A byte array is a `Uint8Array` in the port, whose own
+                // constructor makes N zeroes.
+                JsShape::Number if matches!(elem.peel_refs(), Ty::Prim(crate::ty::Prim::U8)) => {
+                    format!("new Uint8Array({})", len)
+                }
+                _ => format!("[{}]", repeated.join(", ")),
+            });
+        }
         Some(match js_shape(tc.registry, ty.peel_refs()) {
             JsShape::Str => "''".to_string(),
             JsShape::Number => "0".to_string(),

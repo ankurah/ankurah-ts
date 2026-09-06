@@ -225,8 +225,19 @@ impl BodyTranslator<'_> {
             true => (String::new(), String::new()),
             false => (flags_above, flags),
         };
-        out.push_str(&flags_above);
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
+        // U3: a flag whose transfer is inside a `?` operand travels with that
+        // operand's own hoist and stands immediately above it. What is left
+        // here is a transfer no hoist claimed — a `?` the lowering did not
+        // hoist at all — and that flag still has to stand above the prelude,
+        // because the statement's own text is not reached on the error path.
+        for line in flags_above.lines() {
+            if prelude.iter().any(|h| h.sets.lines().any(|s| s == line)) {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
         // I4: part of a refused statement RAN before it refused. A `?` operand
         // standing to the left of the hole is evaluated and its temporary holds
         // what it took, and so is every hoist above a hole that is in the

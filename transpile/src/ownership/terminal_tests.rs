@@ -301,6 +301,41 @@ fn a_consuming_terminal_through_by_ref_names_the_iterator_and_is_refused() {
     assert!(ts.contains("dropOwned(it)"), "and the block keeps the receiver:\n{}", ts);
 }
 
+/// T3: the same for an owning ADAPTOR above a `by_ref`. "An adaptor takes the
+/// iterator by value whatever it was called on" is false here, and the emitted
+/// `iterFind(filterOwned(it, p), q)` released `it` on top of the adaptor that
+/// had already disposed of what it rejected: the rejected elements dropped
+/// twice, and the one the caller received dropped while the caller held it.
+#[test]
+fn an_owning_adaptor_through_by_ref_names_the_iterator_and_is_refused() {
+    let ts = body(
+        "pub fn first_big(tokens: Vec<Token>) -> Vec<Token> {\n\
+           let mut it = tokens.into_iter();\n\
+           it.by_ref().filter(|t| t.0 > 0).collect()\n\
+         }",
+        "first_big",
+    );
+    assert!(!ts.contains("filterOwned"), "the owning adaptor is not written:\n{}", ts);
+    assert!(
+        ts.contains("consumes the elements it walks and leaves the rest in the iterator"),
+        "it takes the same refusal a terminal through `by_ref` takes:\n{}",
+        ts
+    );
+}
+
+/// An owning adaptor on a chain the expression itself built is unchanged: there
+/// is no name for the port to be unable to describe.
+#[test]
+fn an_owning_adaptor_on_a_fresh_chain_still_owns_its_elements() {
+    let ts = body(
+        "pub fn kept(tokens: Vec<Token>) -> Vec<Token> {\n\
+           tokens.into_iter().filter(|t| t.0 > 0).collect()\n\
+         }",
+        "kept",
+    );
+    assert!(ts.contains("filterOwned"), "the adaptor releases what it rejects:\n{}", ts);
+}
+
 /// On a BORROWED chain nothing is consumed, so `by_ref` is the identity.
 #[test]
 fn by_ref_on_a_borrowed_chain_is_the_identity() {

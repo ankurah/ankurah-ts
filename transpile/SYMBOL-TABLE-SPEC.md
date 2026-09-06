@@ -456,6 +456,70 @@ The declared std surface is where this is written down for std: the stubs
 already say `type IntoIter: Iterator<Item = Self::Item>;`, and the extractor now
 keeps that bound instead of keeping only the name.
 
+### 4.4b A conversion bound's impl arrives as a value
+
+For: a body compiled once cannot pick a conversion Rust picks per instantiation.
+`Expr::populate_recursive<V: TryInto<Expr, Error = E>>` calls `value.try_into()`,
+and which `TryFrom` impl runs is decided by the caller's WRITTEN type — the one
+thing 4.4a's projection machinery cannot recover, because the port erases the
+difference: `From<String> for Expr` and `From<&str> for Expr` both take a
+JavaScript `string`, so no test on the value could tell them apart. The emitted
+call was `value.tryInto()`, a member call on a value that has no such member.
+
+So the conversion travels as a value the caller supplies: dictionary passing.
+
+- **What it is.** A function whose own type parameter carries a `TryInto<C>`
+  bound with a concrete `C` gains one synthetic trailing parameter per such
+  parameter, named `_conv<Param>` and declared `(value: V) => Result<C, E>` —
+  the callback shape G2 and G3 already use for a generic field's reader. The
+  body writes `_convV(value)` where Rust wrote `value.try_into()`.
+- **Who fills it in.** A caller whose own parameter stands at that position, and
+  which carries the same bound, hands its own dictionary over. A caller that
+  instantiated the parameter with a concrete type writes the conversion the impl
+  table gives for that type, wrapped as the `Result` the bound answers. A caller
+  that can name neither is REFUSED: an emitted call missing the conversion its
+  callee reads would be a `TypeError` three frames down, where nothing says what
+  went wrong.
+- **How the parameter is matched.** The callee's own type parameters are renamed
+  apart, then unified against the written arguments — first as written, so a
+  parameter standing for `&'static str` reaches the impl written for it, then
+  with both sides peeled, because emission erases a reference. A parameter named
+  only by a binding on another's bound (`I: Iterator<Item = V>`) is read off
+  that other one: from the CALLER's own bound where the argument is one of the
+  caller's parameters, and through the impl table where it is concrete. A
+  projection is read at its ROOT — `values.into_iter()` on an
+  `I: IntoIterator<Item = V>` has the type `<I as IntoIterator>::IntoIter`, and
+  what its `Item` is comes from the same bound that named `I`'s — and only where
+  exactly one binding of that name is written on the root.
+- **Scope.** `TryInto` with a concrete target, and a target that has a class of
+  its own with at least one conversion the port emits onto it. Nothing else.
+  `From` and `TryFrom` bounds put the parameter on the TARGET side, where which
+  impl runs depends on an instantiation the declaration cannot see. A plain
+  `Into<C>` is the shape the wasm boundary is written in —
+  `Object::set<K: Into<JsValue>>`, `cb_future<S: Into<EventNames>>` — where the
+  callee is a hand-written file in the port and an extra argument at its call
+  sites would be an argument nothing declares. A target with no class of its own
+  has nothing for a dictionary to carry: asking anyway turned ONE diagnostic in
+  `Object::set`'s body into twenty-two refusals at its call sites.
+- **What it does not do.** A parameter that appears only in BOUNDS gets no
+  dictionary. `E` in `TryInto<Expr, Error = E>` is what the conversion failed
+  with, decided by the conversion rather than by the caller, so a dictionary for
+  it would be a parameter no call site could name; `e.into()` on such a parameter
+  keeps the diagnostic it has. A parameter with two conversion bounds gets one
+  dictionary, for the first written, and the rest keep theirs. And 4.4a's rule is
+  untouched: this says who supplies an IMPL, not what a type is.
+
+  A TRAIT METHOD's declaration does not grow the parameter, only its impls do:
+  the parameter is added where a body is translated and a declaration has no
+  body. `trait Sink { fn put<V: TryInto<Held>>(&self, v: V); }` therefore emits
+  an interface member with one parameter and an implementation with two, which
+  TypeScript reads as not satisfying it. No corpus trait carries a conversion
+  bound; a slice that meets one has to add the parameter at the declaration
+  before the impl can take it.
+- **Ownership.** The synthetic parameter is borrowed by the callee and released
+  by nobody: it carries no `rust_ty`, which is what keeps it out of the typed,
+  owned and cell walks, and `port/ownership.md` says the same.
+
 ### 4.5 Closures
 
 For: 256 closures with a non-unit return, and closure parameters typed by the

@@ -6,7 +6,44 @@
 //! rule, each is read by several of the modules above, and none of them is
 //! about the shape of the Rust that reached it.
 
-use super::{indent, BodyTranslator};
+use super::BodyTranslator;
+
+/// Where an expression sits in the file, as the two ends of its span. Two
+/// expressions are the same one when they start and end in the same place,
+/// which is what an expectation is matched against.
+pub type Position = ((usize, usize), (usize, usize));
+
+pub fn position_of(expr: &syn::Expr) -> Position {
+    span_position(syn::spanned::Spanned::span(expr))
+}
+
+pub fn span_position(span: proc_macro2::Span) -> Position {
+    let (start, end) = (span.start(), span.end());
+    ((start.line, start.column), (end.line, end.column))
+}
+
+// ── Public entry points ─────────────────────────────────────────────────
+pub fn translate_expr(expr: &syn::Expr) -> String {
+    BodyTranslator::new("Self").expr(expr)
+}
+
+/// Translate a pattern (used by match_expr, control_flow modules)
+pub fn translate_pat(pat: &syn::Pat) -> String {
+    BodyTranslator::pat_static(pat)
+}
+
+
+
+
+pub fn indent(s: &str) -> String {
+    s.lines()
+        .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if s.ends_with('\n') { "\n" } else { "" }
+}
+
+
 use crate::name_map;
 
 /// The BASE of a postfix expression, parenthesised where JavaScript would read
@@ -456,4 +493,14 @@ mod literal_tests {
         assert_eq!(quoted("hello"), "'hello'");
         assert_eq!(quoted("héllo →"), "'héllo →'");
     }
+}
+
+/// One loop being written, and what a `break` carrying a value does in it.
+#[derive(Clone)]
+pub struct LoopFrame {
+    /// The label the loop carries, where the source wrote one.
+    pub label: Option<String>,
+    /// The name a `break <value>` assigns to, and the label it then leaves —
+    /// only for a loop whose own value the code around it wanted.
+    pub value: Option<(String, String)>,
 }

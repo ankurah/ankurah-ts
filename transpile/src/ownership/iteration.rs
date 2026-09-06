@@ -150,7 +150,12 @@ impl<'a> BodyTranslator<'a> {
     pub(crate) fn for_loop(&self, for_loop: &syn::ExprForLoop) -> String {
         use ownership::iteration::Iterate;
         let pat = Self::pat_static(&for_loop.pat);
-        let sequence = self.expr(&for_loop.expr);
+        // A cursor iterated is a cursor consumed: the loop sees the elements
+        // it has not handed out, and takes them out of it.
+        let sequence = self.cursor_gives_up_its_rest(
+            &for_loop.expr,
+            self.expr(&for_loop.expr),
+        );
         let item = self.iteration_item(&for_loop.expr);
         let sequence_ty = self.quietly(|| self.iterated_type(&for_loop.expr));
         let form = match &self.types {

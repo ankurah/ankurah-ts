@@ -26,6 +26,7 @@ pub(crate) fn translate_fn_body(
     consts: &[(String, ty::Ty)],
     sink: &diag::DiagSink,
 ) {
+    let mut synthetic: Vec<types::ParamInfo> = Vec::new();
     if let Some(ref block) = func.body_ast {
         let mut params = impl_params.to_vec();
         params.extend(func.type_params.iter().cloned());
@@ -104,7 +105,14 @@ pub(crate) fn translate_fn_body(
                 continue;
             }
             if let Ok(resolved) = quiet_type(&tc, written) {
-                param.ty = name_map::map_ty(registry, &resolved);
+                // Leg A: a parameter whose type is an opaque ITERATOR is handed
+                // a cursor, because that is what the caller's `into_iter()`
+                // built; `Iterable<V>` is what a sequence the port can spread
+                // looks like, and a cursor is not one.
+                param.ty = match body::cursors::written_as_a_cursor(&tc, &resolved, &func.type_params) {
+                    Some(spelling) => spelling,
+                    None => name_map::map_ty(registry, &resolved),
+                };
             }
         }
         if let Some(written) = func.rust_return.as_ref() {
@@ -114,6 +122,13 @@ pub(crate) fn translate_fn_body(
                 }
             }
         }
+
+        // The conversions this function's own bounds ask its callers for
+        // (spec 4.4b). Read here because this is where the bounds are
+        // resolved; the parameters they add are appended below the body walk,
+        // which still holds the block this borrow of `func` opened.
+        tc.dictionaries = dictionaries::wanted_by(func, &tc, registry);
+        synthetic = dictionaries::parameters(&tc.dictionaries, registry);
 
         // What this function returns, so that `?` can say whether the error it
         // hands on needs a `From` conversion Rust would have called.
@@ -179,6 +194,11 @@ pub(crate) fn translate_fn_body(
         // Fallbacks taken on translation paths that carry no sink of their own.
         diag::pending::drain(sink);
     }
+    // Spec 4.4b: the synthetic parameters go on last, so that nothing above
+    // reads them as parameters the Rust wrote. They carry no `rust_ty`, which
+    // is what keeps them out of the typed, owned and cell walks: a dictionary
+    // is borrowed by the callee and released by nobody.
+    func.params.extend(synthetic);
     if func.body_ts.is_some() {
         func.body_ast = None;
     }
@@ -253,3 +273,51 @@ pub(crate) fn quiet_type(tc: &infer::TypeContext<'_>, written: &syn::Type) -> Re
     Ok(tc.probe().normalize(&resolved?))
 }
 
+
+/// Spec 4.4b: the synthetic parameter a conversion bound with a concrete other
+/// side asks a caller for.
+mod dictionaries {
+    use crate::convert::dictionary;
+    use crate::{infer, registry, ty, types};
+
+    /// Give this function the dictionaries its bounds ask for: record them on
+    /// the type context, so the body writes `_convV(value)` where Rust wrote
+    /// `value.try_into()`, and append one parameter each, so the emitted
+    /// signature declares them and every call site can hand them over.
+    pub(super) fn wanted_by(
+        func: &types::FnInfo,
+        tc: &infer::TypeContext<'_>,
+        registry: &registry::TypeRegistry,
+    ) -> Vec<dictionary::Dictionary> {
+        let mut value_types: Vec<ty::Ty> = func
+            .params
+            .iter()
+            .filter_map(|p| p.rust_ty.as_ref())
+            .filter_map(|written| super::quiet_type(tc, written).ok())
+            .collect();
+        if let Some(written) = func.rust_return.as_ref() {
+            if let Ok(resolved) = super::quiet_type(tc, written) {
+                value_types.push(resolved);
+            }
+        }
+        let carried = dictionary::carried(registry, &func.type_params, &value_types, &tc.param_bounds);
+        dictionary::wanted(registry, &func.type_params, &tc.param_bounds, &carried)
+    }
+
+    /// One parameter per dictionary, in the order the type parameters were
+    /// declared, so the declaration and every call site agree on which
+    /// trailing argument is which.
+    pub(super) fn parameters(
+        wanted: &[dictionary::Dictionary],
+        registry: &registry::TypeRegistry,
+    ) -> Vec<types::ParamInfo> {
+        wanted
+            .iter()
+            .map(|one| types::ParamInfo {
+                name: one.name(),
+                ty: one.ts_type(registry),
+                rust_ty: None,
+            })
+            .collect()
+    }
+}

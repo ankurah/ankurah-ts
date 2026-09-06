@@ -106,12 +106,18 @@ pub fn conversion_call(
     })
 }
 
-/// Every method name the `From` impls for one target would be emitted under.
+/// Every method name the `From` impls for one target would be emitted under,
+/// each with the TypeScript type its SOURCE is written as.
 ///
 /// Emission hangs them all on one class and keeps the first of any two that
 /// agree, so a name that appears twice here is a name a call cannot be trusted
-/// to reach.
-pub fn conversion_names(reg: &TypeRegistry, target: &Ty, trait_path: &str) -> Vec<String> {
+/// to reach — unless the impls that share it also share a source type, in which
+/// case the port writes ONE function for both and the call reaches it.
+pub fn conversion_names(
+    reg: &TypeRegistry,
+    target: &Ty,
+    trait_path: &str,
+) -> Vec<(String, String)> {
     let Some(trait_id) = reg.system_type(trait_path) else {
         return Vec::new();
     };
@@ -143,13 +149,14 @@ pub fn conversion_names(reg: &TypeRegistry, target: &Ty, trait_path: &str) -> Ve
             if source_ts == "never" || source_ts == "Infallible" {
                 return None;
             }
-            Some(crate::emit::disambiguate_trait_method(
+            let name = crate::emit::disambiguate_trait_method(
                 base,
                 &trait_name,
                 &[source_ts],
                 "",
                 Some(target_id),
-            ))
+            );
+            Some((name, crate::name_map::map_ty(reg, source.peel_refs())))
         })
         .collect()
 }

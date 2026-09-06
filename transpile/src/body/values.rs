@@ -46,6 +46,7 @@ impl BodyTranslator<'_> {
             refused: false,
             released_if_unreached: false,
             wrapper: false,
+            sets: String::new(),
             flag: None,
         });
         // The value's type is the union of what the arms produced and the
@@ -86,6 +87,7 @@ impl BodyTranslator<'_> {
             refused: false,
             released_if_unreached: false,
             wrapper: false,
+            sets: String::new(),
             flag: None,
         });
         held

@@ -46,6 +46,12 @@ pub(crate) fn hoist_a_try(
     // plain array or `Map` carrying no move mark — and releasing that from a
     // guard is S1's double drop. That half waits for the lexical flag.
     let wrapper = lowered.wrapper.is_some();
+    // U3: a local this operand hands away has its move flag set here, right
+    // above the call that hands it away, rather than above the statement's
+    // whole prelude — which is above the arguments that were lifted so the flag
+    // could stand below them. A flag a hoist nested INSIDE this one already
+    // claimed stays there: that hoist runs first and is nearer the transfer.
+    let sets = claimed_here(t, &try_expr.expr);
     t.own.prelude.borrow_mut().push(ownership::Hoist {
         declaration: lowered.declaration,
         owned: None,
@@ -53,9 +59,20 @@ pub(crate) fn hoist_a_try(
         refused: lowered.temp.is_none() && lowered.wrapper.is_none(),
         released_if_unreached: false,
         wrapper,
+        sets,
         flag: None,
     });
     lowered.value
+}
+
+/// The move-flag assignments this `?` operand owes and no hoist already in the
+/// prelude has taken.
+fn claimed_here(t: &BodyTranslator, operand: &syn::Expr) -> String {
+    t.flag_sets_for(operand)
+        .lines()
+        .filter(|line| !t.own.prelude.borrow().iter().any(|h| h.sets.lines().any(|s| s == *line)))
+        .map(|line| format!("{}\n", line))
+        .collect()
 }
 
 /// One statement of a block, written for the path where one of its HOISTS

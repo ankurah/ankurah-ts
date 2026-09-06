@@ -184,11 +184,33 @@ impl BodyTranslator<'_> {
     /// O3/O4: `filter`, `skip`, `take` and `step_by` throw elements away, and
     /// Rust drops what they throw away. Written as array operations they simply
     /// lost them, and the consuming terminal below could not release what the
-    /// adaptor had already erased. There is no place clause: an adaptor takes
-    /// the iterator by value whatever it was called on, so nothing is left in a
-    /// name for the port to be unable to describe.
+    /// adaptor had already erased.
+    ///
+    /// T3: the place clause reaches here too. "An adaptor takes the iterator by
+    /// value whatever it was called on" is false above a `by_ref`, which the
+    /// terminal rule already treats as naming its receiver:
+    /// `it.by_ref().filter(p).find(q)` emitted `iterFind(filterOwned(it, p), q)`
+    /// and then released `it` on top of it — the rejected elements dropped
+    /// twice, and the one the caller received dropped while the caller held it.
+    /// Refused for the same reason `by_ref` above `find` is refused: the port
+    /// writes an iterator as the whole array, so after the call it cannot say
+    /// which of its elements are still the caller's.
     pub(crate) fn adaptor_owns_its_elements(&self, call: &syn::ExprMethodCall) -> bool {
         self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_adaptor)
+            && !names_an_iterator_place(&call.receiver)
+    }
+
+    /// The same, asked the other way round: is this an owning adaptor the port
+    /// has to REFUSE because its receiver names an iterator the caller keeps?
+    pub(crate) fn refuses_named_iterator_adaptor(&self, call: &syn::ExprMethodCall) -> bool {
+        // `next` is in the same list, because its lowering owns the tail it
+        // hands past — but it has a refusal of its own that says exactly what
+        // is wrong with it (there is no cursor to advance), and that is the one
+        // the hole ledger records. Saying the adaptor's instead told a reader
+        // less.
+        call.method != "next"
+            && self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_adaptor)
+            && names_an_iterator_place(&call.receiver)
     }
 
     /// The three questions both of those ask, in the order they are cheapest.
@@ -233,10 +255,47 @@ impl BodyTranslator<'_> {
     ) -> crate::native_types::iterator::Elements {
         use crate::native_types::iterator::Elements;
         let owned = self.terminal_owns_the_sequence(call) || self.adaptor_owns_its_elements(call);
+        // T5: "not droppable" and "the engine cannot say" are two different
+        // answers, and only one of them is a reason to write the reading
+        // helper. `views.into_iter().next()` on an `R: View + Clone` takes
+        // `iterFirst` because `R`'s drop glue is unknown, and the tail is then
+        // released by nobody — safe today only because no `View` in the corpus
+        // has any. Said out loud rather than defaulted.
+        if !owned && self.elements_the_engine_cannot_type(call) {
+            self.fallback(
+                syn::spanned::Spanned::span(call),
+                format!(
+                    "`{}` walks elements whose drop glue the engine could not name, so it is \
+                     written as the reading helper and the elements it does not hand back are \
+                     released by nobody",
+                    call.method
+                ),
+            );
+        }
         match owned {
             true => Elements::Owned,
             false => Elements::Borrowed,
         }
+    }
+
+    /// Was the ownership answer above decided by `Drops::Unknown` — a bare type
+    /// parameter or an unnormalised projection — rather than by a type the
+    /// engine can see owns nothing?
+    fn elements_the_engine_cannot_type(&self, call: &syn::ExprMethodCall) -> bool {
+        let method = call.method.to_string();
+        let named = crate::native_types::iterator::is_owned_terminal(&method, call.args.len())
+            || crate::native_types::iterator::is_owned_adaptor(&method, call.args.len());
+        if !named {
+            return false;
+        }
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let found = tc.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref());
+        let receiver_ty = found.as_ref().ok().map(|f| f.receiver_type().clone());
+        tc.sink.rewind(mark);
+        let Some(ty) = receiver_ty else { return false };
+        matches!(crate::ownership::drops_of(&tc.probe(), &ty), crate::ownership::Drops::Unknown)
     }
 
     /// Did this terminal take its CALLBACK by value, so that it is what
@@ -280,7 +339,9 @@ impl BodyTranslator<'_> {
     /// The refusal a consuming terminal on a NAMED iterator gets, as the reason
     /// the hole carries.
     pub(crate) fn named_iterator_refusal(&self, call: &syn::ExprMethodCall) -> Option<String> {
-        self.refuses_named_iterator_terminal(call).then(|| {
+        let refused = self.refuses_named_iterator_terminal(call)
+            || self.refuses_named_iterator_adaptor(call);
+        refused.then(|| {
             format!(
                 "`{}` consumes the elements it walks and leaves the rest in the iterator this \
                  receiver names; the port writes an iterator as the whole array, so after the \

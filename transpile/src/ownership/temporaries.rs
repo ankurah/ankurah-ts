@@ -175,6 +175,7 @@ impl<'a> BodyTranslator<'a> {
             refused: false,
             released_if_unreached: false,
             wrapper: false,
+            sets: String::new(),
             flag: None,
         });
         name
@@ -198,6 +199,7 @@ impl<'a> BodyTranslator<'a> {
             refused: false,
             released_if_unreached: false,
             wrapper: false,
+            sets: String::new(),
             flag: None,
         });
         name

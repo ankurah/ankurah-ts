@@ -11,7 +11,7 @@
 
 # A summary, for a reader. The assertion is the table below it.
 [summary]
-"ankql" = 1
+"ankql" = 0
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
@@ -21,12 +21,6 @@
 "storage-common" = 8
 "storage-indexeddb" = 3
 "storage-sqlite" = 0
-
-[[hole]]
-crate = "ankql"
-file = "ast.ts"
-calls = 1
-refusal = "`next` advances an iterator's cursor, and the port writes an iterator as the whole sequence with no cursor to advance"
 
 [[hole]]
 crate = "core"

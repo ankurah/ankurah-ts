@@ -85,10 +85,16 @@ pub fn drops_of(probe: &Probe, ty: &Ty) -> Drops {
         // Iterator>::Item` with no impl behind it is not.
         Ty::Assoc { .. } => {
             let normalized = probe.normalize(ty);
-            if normalized == *ty {
-                Drops::Unknown
-            } else {
-                drops_of(probe, &normalized)
+            if normalized != *ty {
+                return drops_of(probe, &normalized);
+            }
+            // Leg A: an opaque ITERATOR is held as a `SeqCursor`, a class with
+            // a `drop()` that releases everything the walk did not reach. That
+            // is the one unnormalised projection the port can name a release
+            // for; every other one is still a type the engine cannot see.
+            match holds_an_opaque_iterator(probe, ty) {
+                true => Drops::Own,
+                false => Drops::Unknown,
             }
         }
 
@@ -214,4 +220,16 @@ fn is_copy(probe: &Probe, ty: &Ty) -> bool {
 /// aborts the run.
 pub fn fresh_at_each_use(probe: &Probe, ty: &Ty, is_static: bool) -> bool {
     !is_static && drops_of(probe, ty).is_droppable()
+}
+
+/// Is this unnormalised projection an ITERATOR the port holds as a `SeqCursor`?
+///
+/// The same question `body::cursors` asks when it writes the cursor, asked here
+/// so that what the emitter constructs and what the scope releases cannot
+/// disagree. `<I as IntoIterator>::IntoIter` where `I: IntoIterator<Item = V>`
+/// carries `Iterator<Item = V>` (spec 4.4a), and that bound is what says the
+/// value is a walk rather than an arbitrary associated type.
+fn holds_an_opaque_iterator(probe: &Probe, ty: &Ty) -> bool {
+    let Some(iterator) = probe.reg.system_type("std::iter::Iterator") else { return false };
+    probe.bounds_of(ty).into_iter().any(|bound| bound.id == iterator)
 }

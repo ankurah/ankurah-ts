@@ -204,6 +204,19 @@ pub struct Hoist {
     /// own honest answer, which is why S1 retires the guard for a lifted
     /// argument — an arbitrary value that may carry no mark — and not here.
     pub wrapper: bool,
+    /// The move flags a LOCAL handed away inside THIS hoist owes, written
+    /// immediately above this declaration.
+    ///
+    /// U3: a `?` evaluates the consuming call in its hoist and leaves the
+    /// statement on the error path, so its flag cannot stand below the prelude
+    /// — it would never be set, and the block would release what the callee
+    /// took. It used to stand above the WHOLE prelude instead, which is above
+    /// the arguments `lifted_above_the_flag` lifted precisely so that the flag
+    /// could stand below them: `self.0.query(R::Model::collection(), args)?`
+    /// marked `args` handed over and then called `R::Model::collection()`, and
+    /// on that call's throw path nobody released `args`. The flag belongs to
+    /// the transfer, so it travels with the hoist the transfer is written in.
+    pub sets: String,
     /// The flag that says whether the call this temporary was lifted FOR took
     /// it, for a lift that owes a release (N3).
     ///
@@ -381,7 +394,10 @@ pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
             (None, Some(temp)) if hoist.released_if_unreached => wrap_guarded(&inner, temp),
             (None, _) => inner,
         };
-        inner = format!("{}{}", hoist.declaration, wrapped);
+        // U3: the flag stands immediately above the declaration whose call
+        // performs the transfer, which is below everything the statement
+        // lifted out of itself.
+        inner = format!("{}{}{}", hoist.sets, hoist.declaration, wrapped);
     }
     inner
 }

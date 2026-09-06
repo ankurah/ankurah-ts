@@ -23,10 +23,27 @@ impl<'a> BodyTranslator<'a> {
         receiver: &str,
         args: &[String],
     ) -> Option<String> {
+        // A cursor asked for anything but `next` gives up its rest, here as
+        // well as below the dispatch: `collect` is written as the receiver
+        // itself, so a cursor reached it and was answered where an array was
+        // declared.
+        let held;
+        let receiver = match rust_method {
+            "next" => receiver,
+            _ => {
+                held = self.cursor_gives_up_its_rest(&call.receiver, receiver.to_string());
+                held.as_str()
+            }
+        };
         if let Some(written) = self.collected_into(call, rust_method, receiver) {
             return Some(written);
         }
         if let Some(written) = self.iteration_of_a_parameter(call, rust_method, receiver) {
+            return Some(written);
+        }
+        // Leg A: an opaque iterator is a cursor, and `next` is the one method
+        // the whole-sequence form cannot answer.
+        if let Some(written) = self.cursor_next(call, rust_method, receiver) {
             return Some(written);
         }
         if let Some(written) = self.range_contains(call, args) {
@@ -156,7 +173,11 @@ impl<'a> BodyTranslator<'a> {
         // is recorded before the answer is written — the way `collect` is.
         drop(tc);
         self.record_resolution(call, rust_method);
-        Some(format!("[...{}]", receiver))
+        // Leg A: the value a bare type parameter's `into_iter()` answers is an
+        // OPAQUE iterator — nothing in this body says which one — so it is held
+        // as a cursor, whose `drop()` releases whatever the walk did not reach.
+        // A chain the port can see through never comes here.
+        Some(format!("new SeqCursor([...{}])", receiver))
     }
 
     /// A method call's arguments, each translated for the type the callee

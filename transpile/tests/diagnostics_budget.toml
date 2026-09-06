@@ -38,26 +38,24 @@ total = 68
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 153
+total = 144
 
 [ankql.by_cause]
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 48
 "obligation deferred: X (the subject is still a type parameter)" = 18
 "X is bound here but the engine could not type it" = 15
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 14
-"X has no expected type here, so what it converts to is not said and the value stands as it is" = 11
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 6
 "no method X on X" = 6
+"X has no expected type here, so what it converts to is not said and the value stands as it is" = 5
 "this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 5
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 4
-"X has a type the engine cannot say owns anything, so nothing releases it" = 4
+"X has a type the engine cannot say owns anything, so nothing releases it" = 3
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two impls differ in something the naming scheme does not write down" = 2
 "X does not name a function here" = 2
 "X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 2
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 2
-"X advances an iterator's cursor, and the port writes an iterator as the whole sequence with no cursor to advance" = 1
-"X converts X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X converts from X" = 1
 "X is lowered as a X without the engine having named what it tests" = 1
 "X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 1
@@ -95,7 +93,7 @@ total = 246
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1989
+total = 1991
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 582
@@ -149,8 +147,8 @@ total = 1989
 "X's X prints under Debug as whatever its X says, because X is not declared" = 5
 "X builds whatever its target type names, and the engine could not name the type this one is collected into" = 4
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
-"X here is called through a bound on X, whose impls are emitted as module-level functions, and no run-time selection among them can be written because the trait is declared outside this crate, where its dispatcher lives" = 4
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 4
+"X walks elements whose drop glue the engine could not name, so it is written as the reading helper and the elements it does not hand back are released by nobody" = 4
 "X's X prints under Debug as whatever its X says, because XIX has no Debug rendering in the port" = 4
 "X's X prints under Debug as whatever its X says, because XIdX has no Debug rendering in the port" = 4
 "no declaration for trait X" = 4
@@ -159,6 +157,7 @@ total = 1989
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 4
 "X dereferences without a field to assign through" = 3
 "X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 3
+"X here is called through a bound on X, whose impls are emitted as module-level functions, and no run-time selection among them can be written because the trait is declared outside this crate, where its dispatcher lives" = 3
 "X into X is a X the port has no construction for" = 3
 "X is declared in more than one module of this crate, and this file names it unqualified: the import binds one of them and a signature written against the other names the wrong class. The crate index tells them apart with an alias" = 3
 "X is imported from ./task and @ankurah/base at once, and TypeScript has one name here where Rust had two paths" = 3
@@ -188,7 +187,6 @@ total = 1989
 "X answers the type the caller names, and the port reads a JSON value back through that type's own X" = 1
 "X answers the value or the type's X, and the engine could not type this receiver, so it cannot say which default that is" = 1
 "X casts a JavaScript value to a type the emitted call does not name, so the value stands as it is and nothing checks it" = 1
-"X converts X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 1
 "X converts from X" = 1
 "X converts from X to X through X, and no impl in the table performs it" = 1
 "X here is a X step taken through a bound, and the port writes each implementor's dereference differently — a field on X, nothing at all on a lock guard, a method on a crate's own class — so no one call stands for all of them" = 1
@@ -218,7 +216,7 @@ total = 1989
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [storage-common]
-total = 978
+total = 984
 
 [storage-common.by_cause]
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 463
@@ -233,6 +231,7 @@ total = 978
 "no declaration for type X" = 9
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X advances an iterator's cursor, and the port writes an iterator as the whole sequence with no cursor to advance" = 7
+"X walks elements whose drop glue the engine could not name, so it is written as the reading helper and the elements it does not hand back are released by nobody" = 6
 "no field X on X" = 5
 "path qualifiers std are dropped by name" = 5
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4

@@ -101,7 +101,7 @@ impl Probe<'_> {
 
     /// The traits a `dyn Trait`, an `impl Trait`, a bounded parameter or a
     /// PROJECTION is required to implement here.
-    pub(super) fn bounds_of(&self, base: &Ty) -> Vec<TraitRef> {
+    pub fn bounds_of(&self, base: &Ty) -> Vec<TraitRef> {
         self.bounds_of_within(base, 0)
     }
 

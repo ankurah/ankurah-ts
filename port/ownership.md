@@ -1194,6 +1194,18 @@ A `null` bound is Rust's `Unbounded`. `a..`, `..b`, `..=b` and `..` used to fall
 to the sequence the port could not materialise, though their answers are
 `a <= x`, `x < b`, `x <= b` and `true`.
 
+### `contains` is a PARTIAL comparison, and `NaN` is ordered against nothing
+
+`RangeBounds::contains` is written over `PartialOrd`, where a pair may be
+unordered: every comparison involving a `NaN` — less, greater, equal — is false,
+so no range whose test performs a comparison contains one, and a `NaN` BOUND
+fails its own test. The port's ordered comparator answers 0 for a pair it cannot
+separate, which reads as "equal", so both of those answered true. The range
+helper asks its own partial question instead; the ordered comparator the keyed
+folds use is unchanged, because a fold over keys Rust could not order is a
+different question with a different answer, and the comparator now names the
+caller that asked so a failure says which one it was.
+
 ### `serde_json` reads and writes plain JavaScript values
 
 `serde_json::Value` is the name Rust gives a JSON value, and here that value IS
@@ -1233,6 +1245,26 @@ goes with it, and the winner's pair is destructured, so its key is dropped where
 the element comes out. `iter()` builds those keys as surely as `into_iter()`
 does, and the reading fold released none of them. One internal fold now writes
 both, with the element half — and only that half — behind a mode.
+
+### A helper that REFUSES still owns what it was handed
+
+`step_by(0)` panics in Rust, and the iterator it was called on has already been
+moved into it: the unwind drops the whole sequence. A helper here is the same —
+`stepByOwned(xs, 0)` owns `xs` from the moment it is called — so the validation
+that refuses the step releases the sequence before it throws. Written the other
+way it threw with every element owned by nobody, and a test that asserted only
+the throw did not notice.
+
+### A key the closure answered is the fold's before the comparison runs
+
+A keyed fold makes one key per element and keeps the best it has seen. The
+candidate's key is the fold's from the moment the closure answered it, and the
+comparison between the two keys can THROW — a hand-written `compareTo` may. Until
+that comparison has said which key wins, the candidate's key is in neither set:
+the fold's `catch` releases the accumulator and its key, and its `finally`
+releases the elements the walk never reached, and neither of them holds this one.
+So the comparison runs inside a `finally` of its own that releases the
+candidate's key unless the comparison made it the accumulator's.
 
 ## A consuming terminal owns what it walks
 
@@ -1415,3 +1447,24 @@ overflow". A signed width has one more negative value than positive, so `MIN`
 has no positive and `i64::MIN.abs()` is that panic: written as a subtraction it
 raised at exactly the right value and named the wrong operation, which is the
 line a reader greps for.
+
+### A conversion dictionary is borrowed by the callee and released by nobody
+
+A function whose type parameter carries a `TryInto<C>` bound with a concrete `C`
+takes the conversion as a synthetic trailing parameter (spec 4.4b), because
+Rust picks the impl per instantiation and one emitted body cannot. That
+parameter holds a FUNCTION the caller wrote at the call site — either the
+caller's own dictionary handed on, or an arrow the emitter built out of the
+impl the caller's type picks — and a function is not a value the port's
+ownership model owns: nothing constructs it as an `AkObject`, nothing has a
+`drop()` to call on it, and the same one is handed to every turn of a recursive
+walk. So the callee borrows it: it is never released, never marked moved, and
+never counted among a body's by-value parameters. In the emitter this is exactly
+what carrying no written Rust type means — the synthetic parameter has no
+`rust_ty`, and the typed, owned and cell walks all read `rust_ty` to decide what
+a parameter is.
+
+What the dictionary CONVERTS is owned in the ordinary way: the arrow takes the
+value the caller passed at that position and answers a new one, and whichever
+side of the conversion the emitted impl consumes is the impl's own business, as
+it is at any other call to it.

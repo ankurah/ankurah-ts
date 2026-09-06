@@ -366,7 +366,6 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         const includedEntities = _r3.unwrap();
         try {
           const resultset = subscription.upsertQuery(queryId, collectionId.clone(), node, cdata);
-          _moved4 = true;
           let _moved6 = false;
           const _b5 = collectionId.clone();
           try {
@@ -374,6 +373,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             const _b7 = selection.clone();
             try {
               const _b9 = [];
+              _moved4 = true;
               const _r10 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, _b9);
               if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
               _moved6 = true;

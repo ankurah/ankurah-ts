@@ -375,9 +375,18 @@ impl BodyTranslator<'_> {
         // through. `o.ok_or(e)` is the second read backwards: the whole is a
         // `Result<T, E>` and the receiver an `Option<T>`, and taking the
         // expectation whole would have asked the `Option` for a `Result`.
-        const OPENS: [&str; 6] =
-            ["unwrap", "expect", "unwrap_or_default", "ok", "unwrap_or", "unwrap_or_else"];
-        const KEEPS: [&str; 5] = ["map_err", "ok_or", "ok_or_else", "context", "with_context"];
+        //
+        // T7/U12: `ok` is the second kind, not the first. `Result::ok()` hands
+        // back an `Option<T>` — it CHANGES the wrapper and keeps the payload —
+        // so `let v: Option<Vec<u8>> = r.ok();` read as an opener asked the
+        // receiver for a `Result<Option<Vec<u8>>, E>` where a
+        // `Result<Vec<u8>, E>` stands. That is how `bytes.try_into().ok()`
+        // under `-> Option<Held>` never reached `try_into` with `Held`, while
+        // the `map_err` spelling of the same conversion did.
+        const OPENS: [&str; 5] =
+            ["unwrap", "expect", "unwrap_or_default", "unwrap_or", "unwrap_or_else"];
+        const KEEPS: [&str; 6] =
+            ["map_err", "ok_or", "ok_or_else", "context", "with_context", "ok"];
         let want = expected?;
         let method = call.method.to_string();
         let opens = OPENS.contains(&method.as_str());
@@ -447,6 +456,18 @@ impl BodyTranslator<'_> {
             format!("new Uint8Array({})", list)
         } else {
             list
+        }
+    }
+
+    /// What a sequence type holds, where the port writes it as an array of
+    /// something. `Vec<u8>` answers nothing: the port writes it as a
+    /// `Uint8Array`, whose elements are numbers with no conversion to make.
+    pub(crate) fn element_of(&self, want: &crate::ty::Ty) -> Option<crate::ty::Ty> {
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        match crate::name_map::shape::js_shape(tc.registry, want.peel_refs()) {
+            crate::name_map::shape::JsShape::Array(inner) => Some(inner),
+            _ => None,
         }
     }
 

@@ -115,7 +115,7 @@ type RuleContext = Parameters<Parameters<typeof rule.create>[0] extends never ? 
 };
 
 interface Scope {
-  variables: { name: string; defs: { node: TSESTree.Node }[] }[];
+  variables: { name: string; defs: { node: TSESTree.Node; name?: TSESTree.Node }[] }[];
   upper: Scope | null;
 }
 
@@ -126,49 +126,135 @@ interface Scope {
  * one. Everything else is not: this rule has no types to ask, and a `deref`
  * method is not evidence — the port writes Rust's `Deref` impl under that name,
  * and `@ankurah/base`'s `Weak<T>` upgrades rather than dereferencing.
+ *
+ * T8/U6: four spellings the file gives are read as well as the two it used to.
+ * A class FIELD (`private ref: WeakRef<T>`, used as `this.ref.deref()`) is a
+ * member expression rather than an identifier; a PARAMETER carries its
+ * annotation on the definition's NAME rather than on its node; a value alias
+ * (`const Ref = WeakRef`) and a type alias or an import alias
+ * (`import { WeakRef as Ref }`) reach the real name only through another
+ * declaration. Every resolution carries a visited set, because an alias may
+ * name itself.
  */
 function namesAWeakRef(receiver: TSESTree.Node, context: RuleContext): boolean {
-  if (buildsAWeakRef(receiver)) return true;
+  if (buildsAWeakRef(receiver, context)) return true;
+  // `this.ref.deref()` and `holder.ref.deref()`: the evidence is the class
+  // field's own annotation, which is written where the class is.
+  if (receiver.type === AST_NODE_TYPES.MemberExpression) {
+    const key = receiver.property;
+    if (key.type !== AST_NODE_TYPES.Identifier || receiver.computed) return false;
+    return fieldIsAWeakRef(receiver, key.name, context);
+  }
   if (receiver.type !== AST_NODE_TYPES.Identifier) return false;
+  return definitionsOf(receiver, context).some((node) => declaresAWeakRef(node, context));
+}
+
+/** The declarations a name resolves to, innermost scope first. */
+function definitionsOf(name: TSESTree.Identifier, context: RuleContext): TSESTree.Node[] {
   const source = (context as { sourceCode?: unknown }).sourceCode
     ?? (context as { getSourceCode?: () => unknown }).getSourceCode?.();
   const scoped = source as { getScope?: (node: TSESTree.Node) => Scope } | undefined;
-  let scope: Scope | null = scoped?.getScope?.(receiver) ?? null;
+  let scope: Scope | null = scoped?.getScope?.(name) ?? null;
   while (scope) {
-    const found = scope.variables.find((v) => v.name === receiver.name);
-    if (found) return found.defs.some((def) => declaresAWeakRef(def.node));
+    const found = scope.variables.find((v) => v.name === name.name);
+    if (found) return found.defs.map((def) => def.name ?? def.node);
     scope = scope.upper;
+  }
+  return [];
+}
+
+/** Is the field this member expression reads annotated as a `WeakRef`? */
+function fieldIsAWeakRef(node: TSESTree.Node, field: string, context: RuleContext): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+  while (current) {
+    if (current.type === AST_NODE_TYPES.ClassBody) {
+      return current.body.some((member) => {
+        if (member.type !== AST_NODE_TYPES.PropertyDefinition) return false;
+        if (member.key.type !== AST_NODE_TYPES.Identifier || member.key.name !== field) return false;
+        const annotation = member.typeAnnotation?.typeAnnotation;
+        if (annotation && namesTheWeakRefType(annotation, context)) return true;
+        return member.value != null && buildsAWeakRef(member.value, context);
+      });
+    }
+    current = current.parent;
   }
   return false;
 }
 
-/** `new WeakRef(..)`, however it is parenthesised. */
-function buildsAWeakRef(node: TSESTree.Node): boolean {
-  if (node.type === AST_NODE_TYPES.TSNonNullExpression) return buildsAWeakRef(node.expression);
-  return (
-    node.type === AST_NODE_TYPES.NewExpression &&
-    node.callee.type === AST_NODE_TYPES.Identifier &&
-    node.callee.name === 'WeakRef'
-  );
+/** `new WeakRef(..)`, however it is parenthesised or aliased. */
+function buildsAWeakRef(node: TSESTree.Node, context: RuleContext, seen = new Set<string>()): boolean {
+  if (node.type === AST_NODE_TYPES.TSNonNullExpression) {
+    return buildsAWeakRef(node.expression, context, seen);
+  }
+  if (node.type !== AST_NODE_TYPES.NewExpression) return false;
+  if (node.callee.type !== AST_NODE_TYPES.Identifier) return false;
+  return valueNamesWeakRef(node.callee, context, seen);
+}
+
+/** Does this identifier name the `WeakRef` constructor, directly or by alias? */
+function valueNamesWeakRef(
+  name: TSESTree.Identifier,
+  context: RuleContext,
+  seen: Set<string>,
+): boolean {
+  if (name.name === 'WeakRef') return true;
+  if (seen.has(name.name)) return false;
+  seen.add(name.name);
+  return definitionsOf(name, context).some((node) => {
+    // `import { WeakRef as Ref }` — the imported name is the evidence. The
+    // definition is reported as the LOCAL identifier, so the specifier is its
+    // parent.
+    if (importsWeakRef(node)) return true;
+    const init = (node as { init?: TSESTree.Node | null }).init
+      ?? (node.parent as { init?: TSESTree.Node | null } | undefined)?.init;
+    if (init?.type === AST_NODE_TYPES.Identifier) {
+      return valueNamesWeakRef(init, context, seen);
+    }
+    return init != null && buildsAWeakRef(init, context, seen);
+  });
+}
+
+/** Is this definition an `import { WeakRef as .. }` specifier? */
+function importsWeakRef(node: TSESTree.Node): boolean {
+  const specifier = node.type === AST_NODE_TYPES.ImportSpecifier
+    ? node
+    : (node.parent?.type === AST_NODE_TYPES.ImportSpecifier ? node.parent : undefined);
+  return specifier != null
+    && specifier.imported.type === AST_NODE_TYPES.Identifier
+    && specifier.imported.name === 'WeakRef';
 }
 
 /** A declaration that builds a `WeakRef` or is annotated as one. */
-function declaresAWeakRef(node: TSESTree.Node): boolean {
+function declaresAWeakRef(node: TSESTree.Node, context: RuleContext): boolean {
   const annotation = (node as { typeAnnotation?: { typeAnnotation?: TSESTree.Node } })
     .typeAnnotation?.typeAnnotation
     ?? (node as { id?: { typeAnnotation?: { typeAnnotation?: TSESTree.Node } } }).id
       ?.typeAnnotation?.typeAnnotation;
-  if (annotation && namesTheWeakRefType(annotation)) return true;
-  const init = (node as { init?: TSESTree.Node | null }).init;
-  return init != null && buildsAWeakRef(init);
+  if (annotation && namesTheWeakRefType(annotation, context)) return true;
+  const init = (node as { init?: TSESTree.Node | null }).init
+    ?? (node.parent as { init?: TSESTree.Node | null } | undefined)?.init;
+  return init != null && buildsAWeakRef(init, context);
 }
 
-function namesTheWeakRefType(node: TSESTree.Node): boolean {
-  return (
-    node.type === AST_NODE_TYPES.TSTypeReference &&
-    node.typeName.type === AST_NODE_TYPES.Identifier &&
-    node.typeName.name === 'WeakRef'
-  );
+/** A written type that IS `WeakRef<..>`, directly or through a type alias. */
+function namesTheWeakRefType(
+  node: TSESTree.Node,
+  context: RuleContext,
+  seen = new Set<string>(),
+): boolean {
+  if (node.type !== AST_NODE_TYPES.TSTypeReference) return false;
+  if (node.typeName.type !== AST_NODE_TYPES.Identifier) return false;
+  const name = node.typeName;
+  if (name.name === 'WeakRef') return true;
+  if (seen.has(name.name)) return false;
+  seen.add(name.name);
+  return definitionsOf(name, context).some((def) => {
+    if (importsWeakRef(def)) return true;
+    const alias = def.type === AST_NODE_TYPES.TSTypeAliasDeclaration
+      ? def
+      : (def.parent?.type === AST_NODE_TYPES.TSTypeAliasDeclaration ? def.parent : undefined);
+    return alias != null && namesTheWeakRefType(alias.typeAnnotation, context, seen);
+  });
 }
 
 function isInsideNullCheck(node: TSESTree.Node, varName: string): boolean {

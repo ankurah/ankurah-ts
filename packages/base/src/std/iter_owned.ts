@@ -28,7 +28,7 @@
 
 import { foldByKey, releaseCallback, type CallbackMode, type Seq } from './iter.ts';
 import { invokeRef, type Invocable } from '../closure.ts';
-import { dropOwned } from '../object.ts';
+import { AkObject, dropOwned } from '../object.ts';
 
 /** Release `xs[from..]` — what the iterator still held when it was dropped. */
 function dropFrom<T>(xs: Seq<T>, from: number): void {
@@ -353,6 +353,12 @@ export function takeOwned<T>(xs: Seq<T>, n: number): T[] {
  */
 export function stepByOwned<T>(xs: Seq<T>, step: number): T[] {
   if (!Number.isInteger(step) || step <= 0) {
+    // Rust's `step_by` takes the iterator BY VALUE and then panics on a zero
+    // step, so the unwind drops the whole sequence it was handed. This owns
+    // `xs` from the moment it is called, and throwing without releasing it left
+    // every element with no owner at all — the one path in this file where the
+    // cursor discipline was not applied.
+    dropFrom(xs, 0);
     throw new RangeError('step_by: the step must be a positive integer, as Rust requires');
   }
   const out: T[] = [];
@@ -361,4 +367,70 @@ export function stepByOwned<T>(xs: Seq<T>, step: number): T[] {
     else dropOwned(xs[i]);
   }
   return out;
+}
+
+/**
+ * Rust's `IntoIterator::into_iter` on a sequence NOBODY ELSE HOLDS, where the
+ * body then advances it by hand.
+ *
+ * For: `Iterator::next` moves one element out of the iterator and leaves the
+ * rest in it, and the port writes an iterator as the whole sequence with no
+ * cursor to advance — so `next` on one was a hole (R12). That is right for a
+ * chain the port can see through, which it rewrites into an array operation
+ * with no cursor in it at all. It is not right for an OPAQUE iterator: a
+ * generic body that takes `I: Iterator<Item = V>` and calls `next` in a loop is
+ * doing the one thing the array shape cannot express, and `ankql`'s
+ * `Predicate::populate` is exactly that — it pulls one value per placeholder
+ * and then asks the iterator whether anything is left over.
+ *
+ * So an opaque iterator IS a cursor here: one owned value holding the sequence
+ * and the index of the first element it has not yet handed out. `next()` hands
+ * out that element and steps past it; `drop()` releases everything from the
+ * index on, which is what Rust drops when an iterator goes out of scope
+ * part-walked. What has been handed out belongs to whoever took it, exactly as
+ * `iterFindOwned` and its family already treat their own index.
+ */
+export class SeqCursor<T> extends AkObject {
+  #items: T[];
+  #at = 0;
+
+  constructor(items: Seq<T>) {
+    super();
+    this.#items = Array.from(items);
+  }
+
+  /** Rust's `next()`: the element at the cursor, or `None`. */
+  next(): T | null {
+    if (this.#at >= this.#items.length) return null;
+    const held = this.#items[this.#at] as T;
+    this.#at += 1;
+    return held;
+  }
+
+  /** How many elements the cursor has not handed out. */
+  get remaining(): number {
+    return this.#items.length - this.#at;
+  }
+
+  /**
+   * The elements still in the cursor, taken OUT of it — what every consuming
+   * `Iterator` method other than `next` sees.
+   *
+   * This CONSUMES the cursor, because those methods take the iterator by value:
+   * `for token in walk` and `walk.collect()` each end with the iterator gone.
+   * So the cursor is marked moved here, which is what stops the frame that
+   * declared it from releasing it as well and what keeps it out of the leak
+   * registry — it holds nothing afterwards, and nobody may touch it again.
+   */
+  takeRest(): T[] {
+    const rest = this.#items.slice(this.#at);
+    this.#at = this.#items.length;
+    this.markMoved();
+    return rest;
+  }
+
+  /** What the cursor still held: everything from the index on. */
+  protected override ownedFields(): unknown[] {
+    return this.#items.slice(this.#at);
+  }
 }
