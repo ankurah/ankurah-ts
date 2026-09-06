@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/hole_releases_payload/src/input.rs
-import { Struct, Enum, dropUnbound, unsupported, checkedAdd } from '@ankurah/base';
+import { Struct, Enum, Result, dropUnbound, unsupported, checkedAdd, HashMap, HashSet, keyHash } from '@ankurah/base';
 
 export class Token extends Struct {
   readonly n: number;
@@ -11,6 +11,43 @@ export class Token extends Struct {
 
   static new(n: number): Token {
     return new Token(n);
+  }
+}
+
+export class Name extends Struct {
+  readonly text: string;
+
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+
+  equals(other: Name): boolean {
+    if (this.text !== other.text) return false;
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [keyHash(this.text)].map((p) => p.length + ':' + p).join('');
+  }
+}
+
+export class Counts extends Struct {
+  readonly m: HashMap<Name, Result<number, number>>;
+
+  constructor(m: HashMap<Name, Result<number, number>>) {
+    super();
+    this.m = m;
+  }
+
+  finish(k: Name): number {
+    try {
+      unsupported('`or_default()` needs the value type\'s default, and the port writes `Result<u32, u32>` as Result([Prim(U32), Prim(U32)]), which has no default value');
+      return 0;
+    } finally {
+      k.drop();
+    }
   }
 }
 

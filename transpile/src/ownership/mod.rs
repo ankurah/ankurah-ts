@@ -24,6 +24,7 @@ pub mod iteration;
 pub mod locals;
 pub mod lowering;
 pub mod matching;
+pub mod dispositions;
 pub mod moves;
 pub mod places;
 pub mod scrutinee;
@@ -40,7 +41,8 @@ mod tests;
 
 pub use glue::{drops_of, fresh_at_each_use, Drops};
 pub use lowering::Lowering;
-pub use moves::{Disposition, Dispositions, Scan};
+pub use dispositions::Dispositions;
+pub use moves::{Disposition, Scan};
 
 /// One value a block holds and owes a release for.
 #[derive(Debug, Clone)]

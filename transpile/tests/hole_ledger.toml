@@ -15,8 +15,8 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 18
-"proto" = 1
+"core" = 15
+"proto" = 0
 "signals" = 0
 "storage-common" = 1
 "storage-indexeddb" = 3
@@ -36,14 +36,8 @@ refusal = "`collect` builds whatever its target type names, and the engine could
 
 [[hole]]
 crate = "core"
-file = "indexing/encoding.ts"
-calls = 3
-refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
-
-[[hole]]
-crate = "core"
 file = "peer_subscription/server.ts"
-calls = 2
+calls = 1
 refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
 
 [[hole]]
@@ -90,9 +84,9 @@ refusal = "`collect` builds whatever its target type names, and the engine could
 
 [[hole]]
 crate = "core"
-file = "retrieval.ts"
-calls = 1
-refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+file = "reactor/comparison_index.ts"
+calls = 2
+refusal = "an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken"
 
 [[hole]]
 crate = "core"
@@ -105,12 +99,6 @@ crate = "core"
 file = "value/cast_predicate.ts"
 calls = 1
 refusal = "`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for"
-
-[[hole]]
-crate = "proto"
-file = "clock.ts"
-calls = 1
-refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
 
 [[hole]]
 crate = "storage-common"

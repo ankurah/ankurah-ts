@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/collation.rs
-import { Enum, derivedEquals, derivedClone, checkedAdd, checkedSub } from '@ankurah/base';
+import { Enum, derivedEquals, derivedClone, checkedAdd, checkedSub, range } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { Json } from './property/value/json';
 
@@ -198,16 +198,16 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
       if (!b) {
         return null;
       } else {
-        return [1];
+        return new Uint8Array([1]);
       }
     },
     EntityId: (v) => {
       const ulid = v._0;
       let bytes = ulid.toBytes();
-      for (const i of (undefined /* range 0..bytes.length */).rev()) {
+      for (const i of (range(0, bytes.length)).slice().reverse()) {
         if (bytes[i] < 255) {
           bytes[i] = checkedAdd(bytes[i], 1, 'u8');
-          for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes.length */) {
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
             bytes[j] = 0;
           }
           return bytes.slice();
@@ -218,10 +218,10 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     Object: (v) => {
       const bytes = v._0;
       let bytes_1 = bytes.clone();
-      for (const i of (undefined /* range 0..bytes_1.length */).rev()) {
+      for (const i of (range(0, bytes_1.length)).slice().reverse()) {
         if (bytes_1[i] < 255) {
           bytes_1[i] = checkedAdd(bytes_1[i], 1, 'u8');
-          for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes_1.length */) {
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
             bytes_1[j] = 0;
           }
           return bytes_1;
@@ -233,10 +233,10 @@ export function Literal_successorBytes(self: Literal): Uint8Array | null {
     Binary: (v) => {
       const bytes = v._0;
       let bytes_1 = bytes.clone();
-      for (const i of (undefined /* range 0..bytes_1.length */).rev()) {
+      for (const i of (range(0, bytes_1.length)).slice().reverse()) {
         if (bytes_1[i] < 255) {
           bytes_1[i] = checkedAdd(bytes_1[i], 1, 'u8');
-          for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes_1.length */) {
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
             bytes_1[j] = 0;
           }
           return bytes_1;
@@ -297,7 +297,7 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     Bool: (v) => {
       const b = v._0;
       if (b) {
-        return [0];
+        return new Uint8Array([0]);
       } else {
         return null;
       }
@@ -305,10 +305,10 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
     EntityId: (v) => {
       const ulid = v._0;
       let bytes = ulid.toBytes();
-      for (const i of (undefined /* range 0..bytes.length */).rev()) {
+      for (const i of (range(0, bytes.length)).slice().reverse()) {
         if (bytes[i] > 0) {
           bytes[i] = checkedSub(bytes[i], 1, 'u8');
-          for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes.length */) {
+          for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
             bytes[j] = 255;
           }
           return bytes.slice();
@@ -322,10 +322,10 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
         return null;
       } else {
         let bytes_1 = bytes.clone();
-        for (const i of (undefined /* range 0..bytes_1.length */).rev()) {
+        for (const i of (range(0, bytes_1.length)).slice().reverse()) {
           if (bytes_1[i] > 0) {
             bytes_1[i] = checkedSub(bytes_1[i], 1, 'u8');
-            for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes_1.length */) {
+            for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
               bytes_1[j] = 255;
             }
             return bytes_1;
@@ -345,10 +345,10 @@ export function Literal_predecessorBytes(self: Literal): Uint8Array | null {
         return null;
       } else {
         let bytes_1 = bytes.clone();
-        for (const i of (undefined /* range 0..bytes_1.length */).rev()) {
+        for (const i of (range(0, bytes_1.length)).slice().reverse()) {
           if (bytes_1[i] > 0) {
             bytes_1[i] = checkedSub(bytes_1[i], 1, 'u8');
-            for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes_1.length */) {
+            for (const j of range((checkedAdd(i, 1, 'usize')), bytes_1.length)) {
               bytes_1[j] = 255;
             }
             return bytes_1;
@@ -557,10 +557,10 @@ export function EntityId_successorBytes(self: EntityId): Uint8Array | null {
     return null;
   } else {
     let bytes = self.toBytes();
-    for (const i of (undefined /* range 0..bytes.length */).rev()) {
+    for (const i of (range(0, bytes.length)).slice().reverse()) {
       if (bytes[i] < 255) {
         bytes[i] = checkedAdd(bytes[i], 1, 'u8');
-        for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes.length */) {
+        for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
           bytes[j] = 0;
         }
         return bytes.slice();
@@ -575,10 +575,10 @@ export function EntityId_predecessorBytes(self: EntityId): Uint8Array | null {
     return null;
   } else {
     let bytes = self.toBytes();
-    for (const i of (undefined /* range 0..bytes.length */).rev()) {
+    for (const i of (range(0, bytes.length)).slice().reverse()) {
       if (bytes[i] > 0) {
         bytes[i] = checkedSub(bytes[i], 1, 'u8');
-        for (const j of undefined /* range (checkedAdd(i, 1, 'usize'))..bytes.length */) {
+        for (const j of range((checkedAdd(i, 1, 'usize')), bytes.length)) {
           bytes[j] = 255;
         }
         return bytes.slice();

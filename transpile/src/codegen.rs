@@ -1,5 +1,8 @@
 //! Top-level TS code generation — orchestrates imports, emission, and output
 
+mod base_symbols;
+mod paths;
+use paths::{crate_path_to_fqn_prefix, relative_import_path};
 mod const_order;
 mod surface;
 
@@ -106,11 +109,29 @@ pub fn generate_ts_with_imports_configured(
 
     // Group external types by source module
     let mut imports_by_module: HashMap<String, Vec<String>> = HashMap::new();
+    // I11: a leaf two of this crate's modules declare cannot be imported by
+    // that leaf — the import binds one of them, and a signature written against
+    // the other names the wrong class. The crate index already tells them apart
+    // with an alias; a file cannot yet, so the site says so.
+    let twice = reg.leaves_declared_twice();
     for type_name in &referenced {
         if local_types.contains(type_name) || imports::is_primitive_or_base_type(type_name) {
             continue;
         }
         if let Some(source_module) = type_to_file.get(type_name) {
+            if twice.contains(type_name) {
+                crate::diag::pending::park_at(
+                    0,
+                    0,
+                    format!(
+                        "`{}` is declared in more than one module of this crate, and this file \
+                         names it unqualified: the import binds one of them and a signature \
+                         written against the other names the wrong class. The crate index tells \
+                         them apart with an alias; a file's own imports do not yet",
+                        type_name
+                    ),
+                );
+            }
             if source_module != current_module {
                 imports_by_module.entry(source_module.clone())
                     .or_default()
@@ -316,59 +337,7 @@ fn writes_through(c: &crate::types::ConstInfo) -> bool {
     name.starts_with("Atomic") || name == "Cell"
 }
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 85] = [
-    "Result", "Arc", "Weak", "Mutex", "MutexGuard",
-    "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
-    "RefCell", "Ref", "RefMut", "ThreadLocal",
-    // The closure that owns its captures, and the error `?` converts into.
-    // R10: `invoke` is the one place a bound closure parameter is called, so a
-    // callee cannot be handed a shape it does not know how to invoke.
-    "OwnedClosure", "invoke", "invokeRef", "Invocable", "AnyhowError", "anyhow",
-    // What an emitted `fromJson` answers with: serde_json::Error's stand-in,
-    // the lossless reader and writer, and the two combinators a list or a map
-    // reads through. `dropOwned` releases what a failed decode had already
-    // built, and `OwnershipFatal` and `UnsupportedShape` are the two its
-    // `catch` has to rethrow — one is the ownership runtime saying the program
-    // is broken, the other is an R12 hole saying the ENGINE is.
-    "JsonError", "serde_json", "jsonAll", "jsonMap", "dropOwned", "OwnershipFatal",
-    "UnsupportedShape",
-    // What a derived `equals` and a derived `clone` ask of a field written as
-    // the type's own PARAMETER: `T` is a number in one instantiation and a class
-    // in another, so the decision is the value's own surface at run time.
-    "derivedEquals", "derivedClone", "derivedHash",
-    // The four float methods whose JavaScript spelling answers something else:
-    // half away from zero rather than half up, a signum with no zero, and a
-    // `NaN` operand ignored rather than spreading.
-    "floatRound", "floatSignum", "floatMin", "floatMax",
-    // The logger every `tracing::` macro writes a call on.
-    "tracing",
-    // What a consuming match arm releases the payload it took no name for
-    // with, and Rust's two eager boolean operators.
-    "dropUnbound", "boolAnd", "boolOr",
-    // R12: the hole an emitted file carries where the port has no lowering.
-    "unsupported",
-    // C1: the cell a `&mut` to a JavaScript VALUE is passed in.
-    "BorrowMut",
-    // R7: arithmetic on a fixed-width integer PANICS on overflow, as the
-    // `debug_assertions = true` build this port mirrors does, and the four
-    // families Rust offers for saying what should happen instead.
-    "checkedAdd", "checkedSub", "checkedNeg", "checkedMul", "checkedDiv", "checkedRem",
-    "wrappingAdd", "wrappingSub", "wrappingMul",
-    "checkedAddOption", "checkedSubOption", "checkedMulOption", "checkedDivOption", "checkedRemOption",
-    "saturatingAdd", "saturatingSub", "saturatingMul",
-    "overflowingAdd", "overflowingSub", "overflowingMul",
-    // The keyed containers a `HashMap`/`HashSet` becomes, and the hash a
-    // derived key writes itself with.
-    "HashMap", "HashSet", "keyHash",
-    "AsyncMutex", "AsyncMutexGuard",
-    "AsyncRwLock", "AsyncRwLockReadGuard", "AsyncRwLockWriteGuard",
-    "Notify", "Notified", "TryLockError",
-    "JoinHandle", "JoinError", "Elapsed",
-    "tokio", "oneshot", "mpsc", "select", "spawn", "spawn_local", "yield_now",
-    "sleep", "timeout",
-    // The channel ends, which `mpsc::channel` hands back and a dispatcher names.
-    "Sender", "UnboundedSender", "Receiver", "UnboundedReceiver",
-];
+pub(crate) use base_symbols::BASE_RUNTIME_SYMBOLS;
 
 pub fn generate_ts(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str) -> String {
     generate_ts_inner(reg, file, rust_crate_path, None)
@@ -1029,7 +998,7 @@ fn generate_declarations(
         let export = if t.is_pub { "export " } else { "" };
         out.push_str(&format!("{}type {} = {};\n\n", export, t.name, t.ty));
     }
-    for c in const_order::in_dependency_order(&file.consts) {
+    for c in const_order::in_dependency_order(reg, here, file) {
         // Skip consts that have a module_decl (e.g., thread_local constants)
         let has_decl = file.module_decls.iter().any(|d| d.contains(&c.name));
         if has_decl { continue; }
@@ -1391,117 +1360,6 @@ pub fn generate_test_ts_with_imports(
     out.push_str("});\n");
 
     Some(out)
-}
-
-/// Convert crate path to FQN prefix
-/// "proto/src/error.rs" → "ankurah_proto::error"
-/// "core/src/entity.rs" → "ankurah_core::entity"
-/// "ankql/src/ast.rs" → "ankql::ast"
-fn crate_path_to_fqn_prefix(crate_path: &str) -> String {
-    // crate_path is like "proto/src/error.rs"
-    let parts: Vec<&str> = crate_path.split('/').collect();
-    if parts.len() < 3 {
-        return crate_path.replace('/', "::").replace(".rs", "");
-    }
-
-    let crate_name = parts[0];
-    // Map crate dir name to Rust crate name
-    let rust_crate = match crate_name {
-        "proto" => "ankurah_proto",
-        "core" => "ankurah_core",
-        "signals" => "ankurah_signals",
-        "ankql" => "ankql",
-        "storage-common" | "storage/common" => "ankurah_storage_common",
-        "storage-sqlite" | "storage/sqlite" => "ankurah_storage_sqlite",
-        "storage-postgres" | "storage/postgres" => "ankurah_storage_postgres",
-        "storage-indexeddb" | "storage/indexeddb-wasm" => "ankurah_storage_indexeddb_wasm",
-        other => other,
-    };
-
-    // Everything after "src/" is the module path
-    let module_path = parts[2..].join("::")
-        .replace(".rs", "")
-        .replace("mod", "")
-        .replace("lib", "");
-
-    if module_path.is_empty() || module_path == "::" {
-        rust_crate.to_string()
-    } else {
-        format!("{}::{}", rust_crate, module_path.trim_matches(':'))
-    }
-}
-
-/// Compute relative import path from `current_module` to `target_module`.
-///
-/// Both are TS module specifiers like `./signal/calculated` or `./broadcast`.
-/// Non-relative paths (e.g., `@ankurah/proto`) are returned unchanged.
-///
-/// Examples:
-///   ("./signal/calculated", "./broadcast")         → "../broadcast"
-///   ("./signal/calculated", "./signal/map")         → "./map"
-///   ("./broadcast", "./signal/calculated")          → "./signal/calculated"
-///   ("./observer/callback_observer", "./broadcast")  → "../broadcast"
-fn relative_import_path(current_module: &str, target_module: &str) -> String {
-    // Only adjust paths that are relative (start with "./")
-    if !target_module.starts_with("./") || !current_module.starts_with("./") {
-        return target_module.to_string();
-    }
-
-    // Strip leading "./" to get bare paths like "signal/calculated" or "broadcast"
-    let current = &current_module[2..];
-    let target = &target_module[2..];
-
-    // Get directory of the current module (everything before last '/')
-    let current_dir = match current.rfind('/') {
-        Some(pos) => &current[..pos],
-        None => "", // current module is at root level
-    };
-
-    // If both are at root level, no adjustment needed
-    if current_dir.is_empty() {
-        return target_module.to_string();
-    }
-
-    // Get directory and filename of the target module
-    let (target_dir, target_file) = match target.rfind('/') {
-        Some(pos) => (&target[..pos], &target[pos + 1..]),
-        None => ("", target),
-    };
-
-    // Split into path components
-    let current_parts: Vec<&str> = current_dir.split('/').collect();
-    let target_parts: Vec<&str> = if target_dir.is_empty() {
-        Vec::new()
-    } else {
-        target_dir.split('/').collect()
-    };
-
-    // Find common prefix length
-    let common = current_parts.iter().zip(target_parts.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-
-    // Number of ".." needed to go up from current dir to common ancestor
-    let ups = current_parts.len() - common;
-
-    // Remaining target path components after common prefix
-    let remaining_dirs = &target_parts[common..];
-
-    // Build the relative path
-    let mut parts: Vec<&str> = Vec::new();
-    if ups == 0 {
-        parts.push(".");
-    } else {
-        for _ in 0..ups {
-            parts.push("..");
-        }
-    }
-    for dir in remaining_dirs {
-        parts.push(dir);
-    }
-    parts.push(target_file);
-
-    parts.join("/")
 }
 
 /// Does this text name `word` as a word of its own?

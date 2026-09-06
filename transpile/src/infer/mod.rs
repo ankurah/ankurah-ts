@@ -9,6 +9,7 @@ mod context;
 #[cfg(test)]
 mod context_tests;
 pub mod expected;
+mod literals;
 mod patterns;
 mod scope;
 

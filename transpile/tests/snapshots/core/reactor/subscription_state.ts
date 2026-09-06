@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/subscription_state.rs
-import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, derivedClone, tracing, checkedSub, HashMap, HashSet, spawn } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, derivedClone, valueNotEquals, tracing, checkedSub, iterFilterMap, HashMap, HashSet, spawn } from '@ankurah/base';
 import { Entity } from '../entity';
 import { ContextData, Node } from '../node';
 import { AbstractEntity, ChangeNotification } from '../reactor';
@@ -71,12 +71,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
   anyQueryMatches(entityId: EntityId): boolean {
     const state = this.deref().state.lock();
     try {
-      const _t0 = state.value.queries.values();
-      try {
-        return _t0.some((q) => q.resultset.containsKey(entityId));
-      } finally {
-        dropOwned(_t0);
-      }
+      return state.value.queries.values().some((q) => q.resultset.containsKey(entityId));
     } finally {
       state.drop();
     }
@@ -91,7 +86,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         _t0.drop();
         try {
           let _moved2 = false;
-          const updateItems = [];
+          let updateItems = [];
           try {
             for (const [queryId, queryState] of state.queries) {
               for (const entityId of queryState.resultset.keys()) {
@@ -214,13 +209,13 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
               const _r3 = (selection.orderBy != null ? ((ob) => buildKeySpecFromSelection(ob.asSlice(), queryState.resultset))(selection.orderBy!) : null).transpose();
               if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
               queryState.resultset.orderBy(_r3.unwrap());
-              if (isFirstUpdate || (oldSelection != null ? ((s) => s.limit)(oldSelection!) : null) !== selection.limit) {
+              if (isFirstUpdate || valueNotEquals((oldSelection != null ? ((s) => s.limit)(oldSelection!) : null), selection.limit)) {
                 queryState.resultset.limit((selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null));
               }
               let _moved4 = false;
               let rwResultset = queryState.resultset.write();
               try {
-                const newlyAdded = [];
+                let newlyAdded = [];
                 rwResultset.markAllDirty();
                 for (const entity of includedEntities) {
                   if (evaluatePredicate(entity, selection.predicate).unwrapOr(false)) {
@@ -336,7 +331,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     try {
       try {
         let watcherChanges = [];
-        const items = IndexMap.new();
+        let items = IndexMap.new();
         let stateGuard = this.deref().state.lock();
         const state = stateGuard.value;
         try {
@@ -452,7 +447,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
   }
 
   collectGapsToFillInternal(state: State<E, Ev>): GapFillData<E>[] {
-    return [...state.queries].filterMap(([queryId, queryState]) => this.extractGapData(queryId, queryState));
+    return iterFilterMap([...state.queries], ([queryId, queryState]) => this.extractGapData(queryId, queryState));
   }
 
   async fillGapsForQueryEntities(queryId: QueryId, entities: E[]): Promise<void> {

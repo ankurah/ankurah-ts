@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/context/stack
-import { Arc, RefCell, ThreadLocal, invokeRef, Invocable, dropOwned } from '@ankurah/base';
+import { Arc, RefCell, ThreadLocal, invokeRef, Invocable, dropOwned, iterLast } from '@ankurah/base';
 import { Observer, Observer_dispatch_observe, Observer_dispatch_observerId } from '../observer';
 import { Signal } from '../signal';
 
@@ -8,7 +8,7 @@ export function track<S extends Signal>(signal: S): void {
     const _t0 = stack.borrow();
     try {
       {
-        const _v = _t0.value.at(-1);
+        const _v = iterLast(_t0.value);
         if (_v != null) {
           const observer = _v;
           Observer_dispatch_observe(observer.value, signal);
@@ -48,7 +48,7 @@ export function remove(observer: Observer): void {
     let stack_1 = stack.borrowMut();
     try {
       {
-        const _v = stack_1.value.at(-1);
+        const _v = iterLast(stack_1.value);
         if (_v != null) {
           const last = _v;
           if (Observer_dispatch_observerId(last.value) === targetId) {
@@ -80,7 +80,7 @@ export function current(): Arc<Observer> | null {
   return OBSERVER_STACK.with((stack) => {
     const _t0 = stack.borrow();
     try {
-      return _t0.value.at(-1);
+      return iterLast(_t0.value);
     } finally {
       _t0.drop();
     }

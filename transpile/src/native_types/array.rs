@@ -87,7 +87,9 @@ pub fn translate(
         "is_empty" => format!("{}.length === 0", receiver),
 
         // Passthrough — same name in JS
-        "push" | "pop" | "reverse" | "join" | "map" | "filter" | "find"
+        // `find` is NOT here: Rust's answers an `Option` and JavaScript's
+        // answers `undefined`, so it goes through the shared table below.
+        "push" | "pop" | "reverse" | "join" | "map" | "filter"
             => return MethodTranslation::Passthrough,
 
         // `Vec::sort()` orders by `Ord`. JavaScript's argument-less `sort`
@@ -100,8 +102,9 @@ pub fn translate(
 
         // Renamed methods
         "contains" => format!("{}.includes({})", receiver, args.join(", ")),
-        "last" => format!("{}.at(-1)", receiver),
-        "first" => format!("{}[0]", receiver),
+        // J1: `last` and `first` answer an `Option`, and the sentinel each of
+        // their JavaScript spellings answers is `undefined`. Both go through
+        // the shared Option-adaptor table below.
         "sort_by" | "sort_unstable_by" => format!("{}.sort({})", receiver, args.join(", ")),
         // `sort_by_key(f)` orders by what `f` answers, through that type's own
         // ordering.
@@ -203,7 +206,7 @@ pub fn translate(
         // table for those is shared with the untyped path rather than copied:
         // a `Cloned<Values<'_, K, V>>` is a JavaScript array, so `collect` and
         // `cloned` mean on it what they mean on any other one.
-        _ => match super::iterator::translate(receiver, method, args) {
+        _ => match super::iterator::translate(receiver, method, args, super::iterator::Receiver::Sequence) {
             Some(result) => result,
             None => return MethodTranslation::Passthrough,
         },

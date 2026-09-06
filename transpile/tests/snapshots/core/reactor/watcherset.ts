@@ -1,5 +1,6 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
-import { Struct, Enum, Arc, derivedClone, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Arc, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Expr, Predicate, Literal } from '@ankurah/ankql';
 import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
@@ -7,7 +8,6 @@ import { ComparisonIndex } from './comparison_index';
 import { PropertyPath } from './property_path';
 import { ReactorSubscriptionId } from './subscription';
 import { Subscription } from './subscription_state';
-import { Literal, Predicate } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 
 export class WatcherSet extends Struct {
@@ -29,7 +29,7 @@ export class WatcherSet extends Struct {
   accumulateInterestedWatchers<E extends AbstractEntity, C>(entity: E, offset: number, changesArc: Arc<C[]>, candidatesBySub: HashMap<ReactorSubscriptionId, CandidateChanges<C>>): void {
     const entityId = AbstractEntity.id(entity);
     for (const [[collectionId, propertyPath], indexRef] of this.indexWatchers) {
-      if (collectionId === AbstractEntity.collection(entity)) {
+      if (valueEquals(collectionId, AbstractEntity.collection(entity))) {
         {
           const _v = propertyPath.extractValue(entity);
           if (_v != null) {

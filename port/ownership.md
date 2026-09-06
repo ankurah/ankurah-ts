@@ -872,6 +872,147 @@ constructor that raised would still leave the fields to the `finally` — which 
 what Rust's unwind does. A reader with nothing to release writes neither the bag
 nor the `finally`.
 
+## A hand-written type's members are whatever its `[provided_impls]` entry says
+
+The engine never reads TypeScript it did not write, so "this type is
+hand-written" was never evidence about what its file declares. Two facts a hook
+needs are stated by the entry and nowhere else: `reads_json` (a `static
+fromJson` and a `toJSON`) and `has_debug` (a `debug(): string`).
+
+Read as evidence rather than stated, the first put `Attested.fromJson` in three
+emitted call sites where no such static exists. The second was the other way
+round: with nothing stating it, `#[derive(Debug)]` on a type holding an
+`EntityId`, a `Clock` or an `Attested` printed the field through `toString` —
+`[object Object]` for a class — at forty-five emitted fields in `proto` alone.
+
+`tests/declared_members.rs` checks both claims against the file each entry
+names, so an entry beside a file that lost the member fails the harness rather
+than the run.
+
+## A range is the sequence of its values, and owns nothing
+
+Rust's `a..b` is a VALUE with methods on it — `for i in 0..n` iterates one,
+`(0..n).rev()` calls a method on one — and the port has no `Range` type. It was
+written `undefined`, so `for (const attempt of undefined)` raised
+`undefined is not iterable` the first time the loop was reached;
+`Entity::commit`'s retry loop was one of those.
+
+A BOUNDED range is now `range(a, b)` (or `rangeIncl` for `a..=b`): the sequence
+of its values, which is what makes every adaptor on it work, because `rev`,
+`map`, `filter` and `contains` are all array operations here. It holds numbers,
+so it owns nothing and no release is written for it.
+
+An UNBOUNDED range — `..n`, `a..`, `..` — has no sequence to build, and in the
+one position where Rust means a SLICE by it the index lowering has already
+answered. It is a hole (R12). So is a range over a width the port holds in a
+`bigint`: `n++` on a `bigint` is a `TypeError`, and no corpus range is one.
+
+## A call the engine refuses takes nothing
+
+R12 replaces a call the engine has no lowering for with a hole, and the hole
+THROWS. Nothing the call would have consumed reaches a new owner: the receiver
+and every argument are still the block's, and Rust's own unwind releases them.
+
+The move scan used to count them as moved anyway, because a call is a call —
+so every owned value a refused call named leaked, on the refusal path, which is
+the one path a reported gap is supposed to make safe. The scan now asks the
+LOWERING whether the call is one it refuses, exactly as the emitter asks it, so
+the two cannot disagree about which calls are written.
+
+Today the whole-call refusals are the `map.entry(..)` finisher family and
+nothing else: a receiver the engine could not type says nothing `or_insert` can
+be written from, and a value type with no default says nothing `or_default` can.
+
+| Rust | what the block owes |
+|---|---|
+| `map.entry(k).or_insert(v)` on a typed map | nothing: the entry took both |
+| the same on a receiver the engine could not type | `k` and `v`, released by the block's own `finally` |
+
+## `==` compares contents, and the runtime is what compares them
+
+Rust's `==` is `PartialEq`, which compares CONTENTS; JavaScript's `===` on two
+objects compares identity. Where the operator table could route a `==` to an
+emitted impl it writes that impl's `equals` and always has. Where it could not —
+no impl in the table, an impl the declared surface wrote, an operand of a type
+the engine could not name — it used to leave `===` standing, and `===` between
+two objects, two arrays or two byte buffers answers false for every pair that is
+not the same value. Eight emitted sites were live branches that could never be
+taken.
+
+So the runtime performs it: `valueEquals(a, b)`, and `valueNotEquals(a, b)` for
+`!=`. The walk is `===` for a primitive, element by element for a sequence
+(bytes included), and the value's own `equals()` for anything that declares one.
+`HashMap` and `HashSet` declare one — the same size and the same contents, in
+any order, as Rust's own impls answer.
+
+Two objects that BOTH declare no `equals()` raise. Rust's `==` needs a
+`PartialEq` impl and will not compile without one, so a pair standing there is a
+shape the port wrote and Rust would not have; answering false would turn that
+into a quiet "not equal" no test can see. A comparison with one primitive or
+`null` side never reaches a member and never raises.
+
+Neither helper participates in ownership: they read what they are handed and
+answer a boolean.
+
+## An iterator owes what it HANDS OUT, not what it is written over
+
+Every iterator the port produces is a JavaScript array, and what is IN that
+array is the iterator's `Iterator::Item`. `slice::Iter<'a, T>` hands out
+`&'a T`: the array a `.iter()` spreads into holds borrows, and the scope owes
+it nothing. `Cloned<I>` hands out the clone, and the scope owes that.
+
+Reading the iterator's type ARGUMENT instead answered "an array of `T`" for
+both, so a `.iter()` over a borrowed sequence of droppable elements was lifted
+into a temporary with `dropOwned(_t0)` around it — a release of elements the
+caller still owns, and a double drop the moment the caller released them too.
+Fifteen emitted sites carried it, `storage-common`'s `build_bounds` among them,
+where `equalities.iter()` over a `&[(String, Value)]` released every `Value` in
+the caller's slice.
+
+| Rust | what the scope owes the spread |
+|---|---|
+| `v.iter().any(..)` over a `&Vec<Cell>` | nothing: the items are `&Cell` |
+| `v.iter().cloned().collect()` | the clones: `Cloned`'s item is a `Cell` |
+| `v.into_iter().find(..)` | the elements: the item is a `Cell` |
+
+The local or field the iterator was written over keeps its own release either
+way. Only the temporary changed.
+
+## The Option-returning iterator readers own nothing, and answer `null`
+
+`@ankurah/base`'s `std/iter.ts` holds the iterator and slice readers Rust
+answers an `Option` with — `position`, `rposition`, `find`, `find_map`, `first`,
+`last`, `get`, `reduce`, and the `max_by`/`min_by` families. Like the arithmetic
+helpers they take no ownership: each reads the sequence it is handed and hands
+back one of its elements, an index, or whatever the caller's own closure built.
+Nothing is cloned and nothing is released, so the release the sequence already
+had is the whole of it.
+
+They exist because the port spells `None` as `null` (R5) and JavaScript's own
+spellings answer something else. `findIndex` answers `-1`, and `-1 != null` is
+TRUE: the reactor's watcher removal therefore ran `entries.splice(-1, 1)` for a
+watcher that had already gone and deleted the last LIVE one. `find`, `at(-1)`
+and `xs[0]` answer `undefined`, which passes `!= null` by accident but is not
+the value a declared `T | null` promises. `Array.prototype.reduce` with no
+initial value throws on an empty array rather than answering absence at all.
+
+Each helper takes the sequence as its FIRST argument so the emitter writes the
+receiver exactly once; a receiver written twice is evaluated twice.
+
+| Rust | TypeScript |
+|---|---|
+| `xs.iter().position(p)` | `iterPosition(xs, p)` — `null`, never `-1` |
+| `xs.iter().find(p)` | `iterFind(xs, p)` — `null`, never `undefined` |
+| `xs.iter().reduce(f)` | `iterReduce(xs, f)` — `null` for an empty sequence |
+
+`find`, `first`, `last`, `get` and `reduce` are written this way only where the
+engine has TYPED the receiver as a sequence. Any type may declare a method of
+those names — `ankql`'s `PathExpr::first()` answers a `&str`, and
+`js_sys::Array::get` answers a `JsValue` rather than an `Option` — so claiming
+them on a receiver the engine could not name would call the wrong function. On
+an untyped receiver the call keeps its own spelling and the crate's diagnostic
+already says the receiver was dispatched by name.
+
 ## The arithmetic helpers own nothing, and the two that can refuse say so
 
 `@ankurah/base`'s `ops.ts` holds the integer arithmetic every emitted body goes
@@ -904,6 +1045,11 @@ names it and the only thing that notices is the leak check, long after.
 
 So the runtime's container clones build into a LOCAL list, release the whole
 list if any element throws, and only then construct the container and fill it.
+Filling is guarded too: `set` and `add` hash the key, and a key whose `hash()`
+throws part way through left a registered half-built destination to nobody and
+gave everything already in it two owners — the destination and the list. What
+has not been handed over is still the list's; what has is the destination's,
+which its own `drop()` releases.
 The destination is built last on purpose: a `HashMap` registers itself with the
 drop registry when it is constructed, so a destination built first and filled as
 the walk went left a registered half-built map behind as well as the pairs in

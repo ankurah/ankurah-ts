@@ -181,6 +181,37 @@ pub struct Item { pub id: u32, pub name: String }\n\
         f.translated_method("lib.rs", method)
     }
 
+    /// Every position that names a target, one test each. The `let`
+    /// annotation and the function's return type were already read; the three
+    /// added here are the ones the corpus needed — a tuple-struct
+    /// constructor's field (including through `Self`), an `Ok(..)` inside a
+    /// match arm or an `if` branch, and a field of an enum-VARIANT literal.
+    #[test]
+    fn every_position_that_names_a_target_names_it() {
+        let mut c = Fixture::build(&[(
+            "lib.rs",
+            "use std::collections::HashSet;\n\
+             pub struct Clock(pub Vec<u32>);\n\
+             pub enum Body { Get { ids: HashSet<u32> } }\n\
+             impl From<Vec<u32>> for Clock {\n\
+             fn from(ids: Vec<u32>) -> Self { Self(ids.into_iter().collect()) } }\n\
+             pub fn build(ids: Vec<u32>) -> Clock { Clock(ids.into_iter().collect()) }\n\
+             pub fn in_arm(ns: Vec<u32>, flag: bool) -> Result<Vec<u32>, ()> {\n\
+             match flag { true => Ok(ns.into_iter().collect()), false => Err(()) } }\n\
+             pub fn in_branch(ns: Vec<u32>, flag: bool) -> Result<Vec<u32>, ()> {\n\
+             if flag { Err(()) } else { Ok(ns.into_iter().collect()) } }\n\
+             pub fn variant_field(ids: Vec<u32>) -> Body { Body::Get { ids: ids.into_iter().collect() } }",
+        )]);
+        for f in ["from", "build", "in_arm", "in_branch", "variant_field"] {
+            let ts = c.translated_method("lib.rs", f);
+            assert!(!ts.contains("unsupported("), "`{}` still has no target:\n{}", f, ts);
+        }
+        assert!(
+            c.translated_method("lib.rs", "variant_field").contains("HashSet.from("),
+            "the variant's field type says a set is built"
+        );
+    }
+
     /// `collect` builds whatever its TARGET names, and the target comes from
     /// the position: the `let`'s annotation, the function's return type, or a
     /// turbofish. Written as the identity it handed back an array for every one

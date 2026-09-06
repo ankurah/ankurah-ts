@@ -188,14 +188,6 @@ export function parse(text: string): ResultValue<unknown, JsonError> {
 }
 
 /**
- * `serde_json::to_string` for the port: `JSON.stringify` with a `bigint`
- * written as the bare integer token Rust writes, rather than throwing.
- *
- * A `bigint` outside `u64::MAX` or below `i64::MIN` is a value Rust could not
- * have produced and could not read back, so it is an error here rather than a
- * token nothing accepts.
- */
-/**
  * `serde_json::from_slice` — a document read from UTF-8 BYTES.
  *
  * The bytes are decoded FATALLY, because serde_json answers `Err` for every
@@ -210,6 +202,14 @@ export function fromSlice(bytes: Uint8Array): ResultValue<unknown, JsonError> {
   return parse(text);
 }
 
+/**
+ * `serde_json::to_string` for the port: `JSON.stringify` with a `bigint`
+ * written as the bare integer token Rust writes, rather than throwing.
+ *
+ * A `bigint` outside `u64::MAX` or below `i64::MIN` is a value Rust could not
+ * have produced and could not read back, so it is an error here rather than a
+ * token nothing accepts.
+ */
 export function stringify(value: unknown): ResultValue<string, JsonError> {
   try {
     return ResultValue.Ok(write(value));

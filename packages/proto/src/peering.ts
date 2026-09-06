@@ -38,7 +38,7 @@ export class Presence extends Struct {
   }
 
   debug(): string {
-    return `Presence { nodeId: ${this.nodeId}, durable: ${String(this.durable)}, systemRoot: ${this.systemRoot} }`;
+    return `Presence { nodeId: ${this.nodeId.debug()}, durable: ${String(this.durable)}, systemRoot: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(this.systemRoot)} }`;
   }
 
   encode(writer: BincodeWriter): void {

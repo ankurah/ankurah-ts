@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Comparison, EventAccumulator, Ordering, compare, compareUnstoredEvent } from './lineage';
-import { HashMap, Result, Struct } from '@ankurah/base';
+import { HashMap, HashSet, Result, Struct, rangeIncl } from '@ankurah/base';
 
 class TestClock extends Struct implements TClock {
   members: TestId[];
@@ -385,7 +385,7 @@ describe('lineage unit tests', () => {
           try {
             const _t0 = (await compare(store, descendant, ancestor, 2)).unwrap();
             try {
-              const _t1 = new Ordering('BudgetExceeded', { subjectFrontier: [2], otherFrontier: [] });
+              const _t1 = new Ordering('BudgetExceeded', { subjectFrontier: HashSet.from([2]), otherFrontier: [] });
               try {
                 expect(_t0).toEqual(_t1);
               } finally {
@@ -414,7 +414,7 @@ describe('lineage unit tests', () => {
             }
             const _t3 = (await compare(store, ancestor, descendant, 2)).unwrap();
             try {
-              const _t4 = new Ordering('BudgetExceeded', { subjectFrontier: [], otherFrontier: [2] });
+              const _t4 = new Ordering('BudgetExceeded', { subjectFrontier: [], otherFrontier: HashSet.from([2]) });
               try {
                 expect(_t3).toEqual(_t4);
               } finally {
@@ -458,7 +458,7 @@ describe('lineage unit tests', () => {
   test('multiple_roots', async () => {
     let store = MockEventStore.new();
     try {
-      for (const id of undefined /* range 1..6 */) {
+      for (const id of rangeIncl(1, 6)) {
         store.add(id, []);
       }
       store.add(7, [1, 2, 3, 4, 5, 6]);

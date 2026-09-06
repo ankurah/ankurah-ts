@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/lineage.rs
-import { Struct, Enum, Result, dropOwned, derivedEquals, derivedClone, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, derivedEquals, derivedClone, valueEquals, checkedAdd, saturatingSub, HashMap, HashSet } from '@ankurah/base';
 import { RetrievalError } from './error';
 import { TClock, TClock_dispatch_members, TEvent_dispatch_id, TEvent_dispatch_parent } from './retrieval';
 import { Attested, Event } from '@ankurah/proto';
@@ -182,7 +182,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]]);
     const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]]);
     const originalOtherEvents = other_1.clone();
-    const initialHeadsEqual = subjectFrontier === other_1;
+    const initialHeadsEqual = valueEquals(subjectFrontier, other_1);
     const headOverlap = initialHeadsEqual;
     return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, other_1.clone(), new HashMap<Id, State<Id>>(), new HashSet<Id>(), other_1.size, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
   }
@@ -200,7 +200,7 @@ class Comparison<G extends GetEvents> extends Struct {
       return Result.Ok(new Ordering('Equal', {}));
     }
     const ids = [...this.subjectFrontier.union(this.otherFrontier)];
-    const resultChecklist = HashSet.from([...[...ids]]);
+    let resultChecklist = HashSet.from([...[...ids]]);
     const _r0 = await this.getter.retrieveEvent(ids);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const [cost, events] = _r0.unwrap();
@@ -312,7 +312,7 @@ class Comparison<G extends GetEvents> extends Struct {
   computeNotDescendsOrdering(): Ordering<Id> {
     const meet = [...[...this.meetCandidates].filter((id) => {
       const _m0 = this.states.get(id);
-      return (_m0 != null ? ((state) => state.commonChildCount)(_m0!) : 0) === 0;
+      return valueEquals((_m0 != null ? ((state) => state.commonChildCount)(_m0!) : 0), 0);
     })];
     if (this.headOverlap) {
       return new Ordering('PartiallyDescends', { meet: meet });
@@ -366,7 +366,7 @@ export class Ordering<Id> extends Enum<OrderingV<Id>> {
 }
 
 export async function compareUnstoredEvent<G, E, C>(getter: G, subject: E, other: C, budget: number): Promise<Result<Ordering<Id>, RetrievalError>> {
-  if (TClock_dispatch_members(other).length === 1 && TClock_dispatch_members(other)[0] === TEvent_dispatch_id(subject)) {
+  if (TClock_dispatch_members(other).length === 1 && valueEquals(TClock_dispatch_members(other)[0], TEvent_dispatch_id(subject))) {
     return Result.Ok(new Ordering('Equal', {}));
   }
   const subjectParent = TEvent_dispatch_parent(subject);
@@ -414,7 +414,7 @@ export async function compare<G, C>(getter: G, subject: C, other: C, budget: num
   if (TClock_dispatch_members(subject).length === 0 || TClock_dispatch_members(other).length === 0) {
     return Result.Ok(new Ordering('Incomparable', {}));
   }
-  if (TClock_dispatch_members(subject) === TClock_dispatch_members(other)) {
+  if (valueEquals(TClock_dispatch_members(subject), TClock_dispatch_members(other))) {
     return Result.Ok(new Ordering('Equal', {}));
   }
   let comparison = Comparison.new(getter, subject, other, budget);

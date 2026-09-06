@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/peer_subscription/client_relay.rs
-import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
+import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFilterMap, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
 import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
 import { SendError } from '../connector';
 import { ApplyError, MutationError, RequestError, RetrievalError, StateError } from '../error';
@@ -390,7 +390,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
     const targetPeer = connectedPeers[0];
     const _t1 = this.inner.value.subscriptions.lock();
     try {
-      const pending = _t1.value.values().filterMap((info) => {
+      const pending = iterFilterMap(_t1.value.values(), (info) => {
         {
           const _v1 = info.status;
           if (_v1.is('PendingRemote')) {

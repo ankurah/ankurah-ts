@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/entity.rs
-import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, invoke, Invocable, dropOwned, tracing, dropUnbound, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Enum, Result, Arc, Weak, RwLock, OwnedClosure, invoke, Invocable, dropOwned, valueNotEquals, tracing, dropUnbound, checkedAdd, iterFindMap, range, HashMap } from '@ankurah/base';
 import { Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, Operation, StateBuffers } from '@ankurah/proto';
 import { LineageError, MutationError, RetrievalError, StateError } from './error';
 import { View } from './indexel';
@@ -177,7 +177,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   }
 
   view<V extends View>(): V | null {
-    if (this.collection() !== V.collection()) {
+    if (valueNotEquals(this.collection(), V.collection())) {
       return null;
     } else {
       return V.fromEntity(this.clone());
@@ -210,8 +210,9 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     }
     let head = this.head();
     try {
+      const MAX_RETRIES = 5;
       const budget = 100;
-      for (const attempt of undefined /* range 0..MAX_RETRIES */) {
+      for (const attempt of range(0, MAX_RETRIES)) {
         const _r3 = await compareUnstoredEvent(getter, event, head, budget);
         if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r3.unwrapErr())) };
         const _m5 = await (async () => {
@@ -293,7 +294,8 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
       try {
         tracing.debug(`${this} apply_state - new head: ${newHead}`);
         const budget = 100;
-        for (const _attempt of undefined /* range 0..MAX_RETRIES */) {
+        const MAX_RETRIES = 5;
+        for (const _attempt of range(0, MAX_RETRIES)) {
           const _r0 = await compare(getter, newHead, head, budget);
           if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r0.unwrapErr())) };
           const _m1 = await (async () => {
@@ -459,12 +461,7 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     } else {
       const state = this.deref().state.read();
       try {
-        const _t0 = state.value.backends.values();
-        try {
-          return _t0.findMap((backend) => backend.value.propertyValue(field));
-        } finally {
-          dropOwned(_t0);
-        }
+        return iterFindMap(state.value.backends.values(), (backend) => backend.value.propertyValue(field));
       } finally {
         state.drop();
       }
@@ -538,12 +535,7 @@ export class TemporaryEntity extends Struct implements Filterable {
     } else {
       const state = this._0.value.state.read();
       try {
-        const _t0 = state.value.backends.values();
-        try {
-          return _t0.findMap((backend) => backend.value.propertyValue(name));
-        } finally {
-          dropOwned(_t0);
-        }
+        return iterFindMap(state.value.backends.values(), (backend) => backend.value.propertyValue(name));
       } finally {
         state.drop();
       }
@@ -804,7 +796,7 @@ export class WeakEntitySet extends Struct {
                   if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
                   const _t2 = _r1.unwrap();
                   try {
-                    return _t2._1;
+                    return _t2[1];
                   } finally {
                     dropOwned(_t2);
                   }
@@ -829,11 +821,17 @@ export class WeakEntitySet extends Struct {
           }
         })();
         if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+        let _moved5 = false;
         const entity = (_m4 as any);
-        const _r5 = await entity.applyState(retriever, state);
-        if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-        const changed = _r5.unwrap();
-        return Result.Ok([changed, entity]);
+        try {
+          const _r6 = await entity.applyState(retriever, state);
+          if (_r6.isErr()) return Result.Err(RetrievalError.fromMutationError(_r6.unwrapErr()));
+          const changed = _r6.unwrap();
+          _moved5 = true;
+          return Result.Ok([changed, entity]);
+        } finally {
+          if (!_moved5) entity.drop();
+        }
       } finally {
         state.drop();
       }

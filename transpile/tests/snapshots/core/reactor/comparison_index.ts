@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
-import { Struct, invoke, Invocable, dropOwned, HashMap, HashSet } from '@ankurah/base';
+import { Struct, invoke, Invocable, dropOwned, valueEquals, valueNotEquals, unsupported, iterPosition, range, HashMap, HashSet } from '@ankurah/base';
 import { Collatable, Collatable_dispatch_predecessorBytes, Collatable_dispatch_successorBytes, Collatable_dispatch_toBytes } from '../collation';
 import { ComparisonOperator } from '@ankurah/ankql';
 
@@ -94,7 +94,7 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
   remove<V extends Collatable>(value: V, op: ComparisonOperator, watcherId: T): void {
     this.forEntry(value, op, (entries) => {
       {
-        const _v = [...entries].findIndex((id) => id === watcherId);
+        const _v = iterPosition([...entries], (id) => valueEquals(id, watcherId));
         if (_v != null) {
           const pos = _v;
           entries.splice(pos, 1)[0];
@@ -114,18 +114,18 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
       }
     }
     for (const [storedBytes, subs] of this.ne) {
-      if (bytes !== storedBytes) {
+      if (valueNotEquals(bytes, storedBytes)) {
         result.extend([...[...subs]]);
       }
     }
-    for (const [_threshold, subs] of this.gt.range(undefined /* range ..bytes.clone() */)) {
+    for (const [_threshold, subs] of this.gt.range(unsupported('an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken'))) {
       result.extend([...[...subs]]);
     }
     {
       const _v1 = Collatable_dispatch_successorBytes(value);
       if (_v1 != null) {
         const pred = _v1;
-        for (const [_threshold, subs] of this.lt.range(undefined /* range pred.. */)) {
+        for (const [_threshold, subs] of this.lt.range(unsupported('an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken'))) {
           result.extend([...[...subs]]);
         }
       }

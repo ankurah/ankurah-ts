@@ -122,6 +122,21 @@ function generateUlidBytes(): Uint8Array {
   return bytes;
 }
 
+/**
+ * The `u128` a ULID's 16 bytes are, as Rust's derived `Debug` prints it.
+ *
+ * `ulid::Ulid` is `#[derive(Debug)] pub struct Ulid(pub u128)`, so
+ * `#[derive(Debug)]` on a wrapper over one prints `Wrapper(Ulid(<decimal>))`.
+ * The bytes stored here are that `u128` big-endian — `Ulid::to_bytes` is
+ * `self.0.to_be_bytes()` — so reading them most significant first is the same
+ * number.
+ */
+function ulidDebug(bytes: Uint8Array): string {
+  let n = 0n;
+  for (const b of bytes) n = (n << 8n) | BigInt(b);
+  return `Ulid(${n})`;
+}
+
 function ulidBytesToString(bytes: Uint8Array): string {
   let value = 0n;
   for (let i = 0; i < 16; i++) {
@@ -235,6 +250,11 @@ export class EntityId extends Struct {
     return this.toBase64();
   }
 
+  // impl std::fmt::Debug for EntityId — `write!(f, "{}", self.to_base64())`
+  debug(): string {
+    return this.toBase64();
+  }
+
   // impl Ord for EntityId
   //
   // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
@@ -345,6 +365,11 @@ export class EventId extends Struct {
     return this.toBase64();
   }
 
+  // impl std::fmt::Debug for EventId — `write!(f, "EventId({})", self.to_base64())`
+  debug(): string {
+    return `EventId(${this.toBase64()})`;
+  }
+
   // impl Ord for EventId
   compareTo(other: EventId): number {
     for (let i = 0; i < 32; i++) {
@@ -424,6 +449,12 @@ export class TransactionId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // #[derive(Debug)] on `TransactionId(Ulid)` — rustc prints the name and the inner
+  // value's own Debug, and `ulid::Ulid` derives one over its `u128`.
+  debug(): string {
+    return `TransactionId(${ulidDebug(this._0)})`;
+  }
+
   // impl Ord for TransactionId
   //
   // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
@@ -489,6 +520,12 @@ export class RequestId extends Struct {
 
   toUlidString(): string {
     return ulidBytesToString(this._0);
+  }
+
+  // #[derive(Debug)] on `RequestId(Ulid)` — rustc prints the name and the inner
+  // value's own Debug, and `ulid::Ulid` derives one over its `u128`.
+  debug(): string {
+    return `RequestId(${ulidDebug(this._0)})`;
   }
 
   // impl Ord for RequestId
@@ -569,6 +606,12 @@ export class QueryId extends Struct {
     return ulidBytesToString(this._0);
   }
 
+  // #[derive(Debug)] on `QueryId(Ulid)` — rustc prints the name and the inner
+  // value's own Debug, and `ulid::Ulid` derives one over its `u128`.
+  debug(): string {
+    return `QueryId(${ulidDebug(this._0)})`;
+  }
+
   // impl Ord for QueryId
   //
   // The derive orders the inner Ulid, and Ulid's Ord is over its u128. The 16 bytes
@@ -634,6 +677,12 @@ export class UpdateId extends Struct {
 
   toUlidString(): string {
     return ulidBytesToString(this._0);
+  }
+
+  // #[derive(Debug)] on `UpdateId(Ulid)` — rustc prints the name and the inner
+  // value's own Debug, and `ulid::Ulid` derives one over its `u128`.
+  debug(): string {
+    return `UpdateId(${ulidDebug(this._0)})`;
   }
 
   // impl Ord for UpdateId

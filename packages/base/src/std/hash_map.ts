@@ -39,7 +39,8 @@ import { dropContainer } from './guard.ts';
 import { dropOwned, isCopyLike } from '../object.ts';
 import { Table, cloned, type Entry } from './hash_key.ts';
 import { fatalSelfAssignment } from '../drop_registry.ts';
-export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, type Hashable } from './hash_key.ts';
+export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, valueEquals, valueNotEquals, type Hashable } from './hash_key.ts';
+import { keysEqual } from './hash_key.ts';
 import { BorrowMut } from './borrow.ts';
 import { invoke, type Invocable } from '../closure.ts';
 
@@ -222,6 +223,28 @@ export class HashMap<K, V> {
    * A shallow copy handed both maps one set of values, and the second drop of
    * the pair released each of them twice.
    */
+  /**
+   * `impl PartialEq for HashMap`: the same size, and every key mapping to a
+   * value the other's does too.
+   *
+   * Order is not part of it — Rust's is a hash map and so is this — and the
+   * lookup goes through the table, so two maps whose keys were inserted in
+   * different orders still compare equal. `==` between two maps had been
+   * `===`, which compares identity and was false for every pair of distinct
+   * maps.
+   */
+  equals(other: HashMap<K, V>): boolean {
+    this.#guard.assertNotDropped();
+    if (other === this) return true;
+    if (!(other instanceof HashMap) || other.size !== this.size) return false;
+    for (const entry of this.#table.all()) {
+      const found = other.#table.find(entry.key);
+      if (found === null) return false;
+      if (!keysEqual(entry.value, (found.bucket[found.at] as Entry<K, V>).value)) return false;
+    }
+    return true;
+  }
+
   clone(): HashMap<K, V> {
     this.#guard.assertNotDropped();
     // The destination used to be built first and filled as the walk went, so a
@@ -242,8 +265,20 @@ export class HashMap<K, V> {
       dropOwned(pairs);
       throw error;
     }
+    // J5: the INSERTION phase is exception-unsafe too. `set` hashes the key,
+    // and a key whose `hash()` throws left a registered half-built map to
+    // nobody and gave every pair already in it two owners — the map and the
+    // list. So the walk is guarded: what has not been handed over is still the
+    // list's, and what has is the map's, which its own `drop()` releases.
     const copy = new HashMap<K, V>(null, this.#label);
-    for (const [key, value] of pairs) copy.set(key, value);
+    let at = 0;
+    try {
+      for (; at < pairs.length; at++) copy.set(pairs[at]![0], pairs[at]![1]);
+    } catch (error) {
+      dropOwned(pairs.slice(at));
+      copy.drop();
+      throw error;
+    }
     return copy;
   }
 
@@ -408,6 +443,26 @@ export class MapEntry<K, V> {
   orDefault(make: Invocable<[], V>): BorrowMut<V> {
     return this.orInsertWith(make);
   }
+
+  /**
+   * `and_modify(f)`: `f` sees the value only where there is one, and the entry
+   * comes back either way so a finisher can follow it.
+   *
+   * What `f` is handed is a `&mut V` into the MAP — the same write-through slot
+   * `or_insert` answers — so `entry(k).and_modify(|n| *n += 1).or_insert(1)`
+   * counts. Rust takes `f` by value and drops it whether or not it calls it;
+   * `invoke` marks it moved where it runs, so only the untaken path releases it
+   * here. The key stays the entry's: `and_modify` does not consume it.
+   */
+  andModify(change: Invocable<[BorrowMut<V>], void>): MapEntry<K, V> {
+    const found = this.#map.$findEntry(this.#key);
+    if (found === null) {
+      dropOwned(change);
+      return this;
+    }
+    invoke(change, new Slot(this.#map, found));
+    return this;
+  }
 }
 
 /**
@@ -519,6 +574,20 @@ export class HashSet<T> {
   }
 
   /** `#[derive(Clone)]`: a new set holding a clone of every value. */
+  /**
+   * `impl PartialEq for HashSet`: the same size, and every element of one in
+   * the other. Order is not part of it.
+   */
+  equals(other: HashSet<T>): boolean {
+    this.#guard.assertNotDropped();
+    if (other === this) return true;
+    if (!(other instanceof HashSet) || other.size !== this.size) return false;
+    for (const entry of this.#table.all()) {
+      if (!other.has(entry.key)) return false;
+    }
+    return true;
+  }
+
   clone(): HashSet<T> {
     this.#guard.assertNotDropped();
     // Exception-safe for the same reason `HashMap::clone` is.
@@ -529,8 +598,18 @@ export class HashSet<T> {
       dropOwned(values);
       throw error;
     }
+    // Guarded for the same reason `HashMap::clone`'s insertion phase is: `add`
+    // hashes the value, and a value whose `hash()` throws part way through left
+    // a registered half-built set and two owners for everything already in it.
     const copy = new HashSet<T>(null, this.#label);
-    for (const value of values) copy.add(value);
+    let at = 0;
+    try {
+      for (; at < values.length; at++) copy.add(values[at]!);
+    } catch (error) {
+      dropOwned(values.slice(at));
+      copy.drop();
+      throw error;
+    }
     return copy;
   }
 

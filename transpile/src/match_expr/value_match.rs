@@ -10,7 +10,8 @@
 //! a borrow needs and what a consuming match cannot have — `guarded` sends
 //! those elsewhere.
 
-use super::{arm_body, indent, Position};
+use super::arms::arm_body;
+use super::{indent, Position};
 use crate::body::BodyTranslator;
 
 /// A `match` on something the runtime has no `match` of its own for — a number,

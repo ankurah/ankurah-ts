@@ -34,6 +34,17 @@ pub struct Lowering {
     /// A temporary and a `?` both produce one: a line that has to stand before
     /// the statement that needs it.
     pub prelude: std::cell::RefCell<Vec<ownership::Hoist>>,
+    /// Declarations that have to stand before the statement's MOVE FLAGS, which
+    /// otherwise stand before everything.
+    ///
+    /// J3: a flag is written first because after a `return` it would be dead
+    /// code — but that puts it above everything the statement evaluates on the
+    /// way to the move, and an argument that THROWS there left the flag set and
+    /// the moved value released by nobody. Only what cannot itself contain the
+    /// move goes here: the `prelude` can (a `?` lifts the very call that
+    /// consumes), and moving the flag below that would double-drop on the error
+    /// path.
+    pub before_flags: std::cell::RefCell<Vec<String>>,
     /// What the block now being translated decided about each of its locals,
     /// for the statement now being translated.
     pub stmt_dispositions:

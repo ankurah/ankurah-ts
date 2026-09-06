@@ -132,6 +132,12 @@ export class Clock extends Struct {
     return this.toBase64();
   }
 
+  // #[derive(Debug)] on `Clock(Vec<EventId>)` — rustc prints the name and the
+  // sequence, and each element through its own Debug.
+  debug(): string {
+    return `Clock([${this._0.map((id) => id.debug()).join(', ')}])`;
+  }
+
   // derive(Clone) clones each element; sharing the id objects would give the original
   // and the copy the same owned values, and dropping both would drop each id twice.
   clone(): Clock {

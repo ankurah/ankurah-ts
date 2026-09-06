@@ -1,6 +1,7 @@
 // MIRRORS: ankurah/core/src/changes.rs
-import { Struct, Enum, Result, dropOwned, derivedClone } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, derivedClone, iterFilterMap } from '@ankurah/base';
 import { Attested, Event } from '@ankurah/proto';
+import { Peek } from '@ankurah/signals';
 import { Entity } from './entity';
 import { MutationError } from './error';
 import { ChangeNotification } from './reactor';
@@ -92,7 +93,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   initial(): R[] {
-    return [...this.changes].filterMap((change) => (() => {
+    return iterFilterMap([...this.changes], (change) => (() => {
       return change.match({
         Initial: (v) => {
           const item = v.item;
@@ -106,7 +107,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   added(): R[] {
-    return [...this.changes].filterMap((change) => (() => {
+    return iterFilterMap([...this.changes], (change) => (() => {
       return change.match({
         Add: (v) => {
           const item = v.item;
@@ -120,7 +121,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   appeared(): R[] {
-    return [...this.changes].filterMap((change) => (() => {
+    return iterFilterMap([...this.changes], (change) => (() => {
       if ((change.is('Add')) || (change.is('Initial'))) {
         const { item } = change.value;
         return item.clone();
@@ -135,7 +136,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   removed(): R[] {
-    return [...this.changes].filterMap((change) => (() => {
+    return iterFilterMap([...this.changes], (change) => (() => {
       return change.match({
         Remove: (v) => {
           const item = v.item;
@@ -153,7 +154,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   updated(): R[] {
-    return [...this.changes].filterMap((change) => (() => {
+    return iterFilterMap([...this.changes], (change) => (() => {
       return change.match({
         Update: (v) => {
           const item = v.item;

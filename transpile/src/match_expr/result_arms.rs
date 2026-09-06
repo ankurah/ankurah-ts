@@ -241,7 +241,7 @@ fn one_arm(
             release: released_payload(&name, &owed_by_the_guard),
         }
     });
-    let (body, lifted) = t.with_own_hoists(|| super::arm_body(&arm.body, t, position));
+    let (body, lifted) = t.with_own_hoists(|| super::arms::arm_body(&arm.body, t, position));
     drop(_bindings);
     let flags = t.flag_sets_for(&arm.body);
     let inner = crate::ownership::hoisted(&format!("{}\n", body), &lifted);

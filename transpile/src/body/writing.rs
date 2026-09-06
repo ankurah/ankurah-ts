@@ -234,11 +234,19 @@ pub(crate) const STD_QUALIFIERS: [&str; 11] = [
     "marker",
 ];
 
+/// Does this `let` pattern bind a name the body writes to?
+///
+/// I7: only `Pat::Ident` was read, and an ANNOTATION wraps the pattern —
+/// `let mut t: u32 = 0` is a `Pat::Type` whose inner pattern carries the `mut`.
+/// So the annotated form emitted `const t = 0` and every later `t = ..` was a
+/// `TypeError: Assignment to constant variable`. A `ref` pattern wraps it the
+/// same way.
 pub(crate) fn is_mut_binding(pat: &syn::Pat) -> bool {
-    if let syn::Pat::Ident(ident) = pat {
-        ident.mutability.is_some()
-    } else {
-        false
+    match pat {
+        syn::Pat::Ident(ident) => ident.mutability.is_some(),
+        syn::Pat::Type(annotated) => is_mut_binding(&annotated.pat),
+        syn::Pat::Reference(reference) => is_mut_binding(&reference.pat),
+        _ => false,
     }
 }
 

@@ -8,6 +8,7 @@
 //! but the enclosing function's return.
 
 use crate::body::{indent, BodyTranslator};
+use super::Position;
 use crate::name_map;
 use super::owing::{guard_release, hole_in_an_arm, release_before_a_hole_in_the_bindings, release_of};
 use super::{is_statements, translate_pat};
@@ -472,3 +473,34 @@ fn translate_body(
     Body { body, lifted, owned, flags }
 }
 
+/// One arm's body, written for the position the match stands in.
+///
+/// F3: whether a value is wanted comes from the POSITION the lowering chose,
+/// never from anything read off the generated text or off an expectation left
+/// standing. An arm of a statement match produces nothing, so its block is a
+/// run of statements — asked as an expression, `{ if n == 0 { return .. } .. }`
+/// came back an arrow function whose value was then written as a statement of
+/// its own.
+pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String {
+    match position {
+        Position::Statement => match body {
+            syn::Expr::Block(block) if block.label.is_none() => {
+                t.translate_block(&block.block).trim_end().to_string()
+            }
+            other => t.expr(other),
+        },
+        // Whatever this arm produces IS what the function answers, so the
+        // function's return type is the arm's expectation — re-keyed onto the
+        // arm's own span, because an expectation is matched by the span of the
+        // expression it was written for. Without it `match f { true => Ok(xs
+        // .collect()), .. }` had nothing saying what `collect` built, where the
+        // same `Ok(..)` written as the function's tail did. Live at
+        // `core/indexing/encoding.rs`, three arms of one match.
+        Position::Returning => {
+            let want = t.fn_return.clone();
+            t.expecting(body, want.as_ref(), || {
+                crate::control_flow::translate_expr_in_return_position(body, t)
+            })
+        }
+    }
+}

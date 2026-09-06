@@ -13,24 +13,24 @@
 
 [over]
 "src/bincode_module.rs" = 913
-"src/body.rs" = 1492
+"src/body.rs" = 1399
 "src/body/paths.rs" = 634
 "src/cfg.rs" = 742
-"src/codegen.rs" = 1680
-"src/config.rs" = 897
+"src/codegen.rs" = 1538
+"src/config.rs" = 890
 "src/convert.rs" = 702
-"src/emit.rs" = 1442
-"src/extract.rs" = 1250
-"src/infer/context.rs" = 1443
+"src/emit.rs" = 1355
+"src/extract.rs" = 1194
+"src/infer/context.rs" = 1393
 "src/macros.rs" = 719
-"src/main.rs" = 1571
-"src/match_expr.rs" = 777
+"src/main.rs" = 1472
+"src/match_expr.rs" = 758
 "src/match_expr/catch_all.rs" = 802
-"src/ownership/moves.rs" = 753
+"src/ownership/moves.rs" = 671
 "src/ownership/tests.rs" = 1326
-"src/registry/build.rs" = 1148
+"src/registry/build.rs" = 1137
 "src/registry/engine_tests.rs" = 1289
-"src/registry/method.rs" = 1152
+"src/registry/method.rs" = 1107
 "src/registry/method_tests.rs" = 726
-"src/registry/mod.rs" = 849
+"src/registry/mod.rs" = 785
 "tests/oracle.rs" = 879

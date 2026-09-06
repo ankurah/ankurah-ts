@@ -205,6 +205,17 @@ impl Fixture {
     /// The declared std surface is loaded into every fixture and reports its own
     /// gaps; those are the same in every test and would drown out the one thing
     /// a test is asking about, so they are kept apart.
+    /// Every diagnostic with the line and column it was filed at, for a test
+    /// about WHERE a refusal is reported rather than what it says.
+    pub fn located(&self) -> Vec<(usize, usize, String)> {
+        self.sink
+            .sorted()
+            .into_iter()
+            .filter(|d| !crate::diag::is_surface(&d.file))
+            .map(|d| (d.line, d.col, d.message))
+            .collect()
+    }
+
     pub fn messages(&self) -> Vec<String> {
         self.sink
             .sorted()

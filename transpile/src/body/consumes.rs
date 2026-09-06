@@ -17,6 +17,23 @@ use super::BodyTranslator;
 /// `Option::take` and the `into_*` family all take `self`, and a receiver they
 /// took is not the block's to release any more.
 impl ownership::moves::Consumes for BodyTranslator<'_> {
+    /// J4: the whole-call refusals are the `map.entry(..)` finisher family and
+    /// nothing else today — a receiver the engine could not type says nothing
+    /// `or_insert` can be written from, and a value type with no default says
+    /// nothing `or_default` can. The question is the LOWERING's, asked exactly
+    /// as `finishes_an_entry` asks it (I1's rule), so the scan and the emitter
+    /// cannot disagree about which calls are written.
+    fn refuses_call(&self, call: &syn::ExprMethodCall) -> bool {
+        let mark = self.types.as_ref().map(|tc| tc.borrow().sink.mark());
+        let answer = self.finishes_an_entry(&syn::Expr::MethodCall(call.clone()));
+        // Asking is not translating: the resolution files what it deferred, and
+        // the translation of the call reports it once.
+        if let (Some(tc), Some(mark)) = (&self.types, mark) {
+            tc.borrow().sink.rewind(mark);
+        }
+        answer == crate::body::places::EntryFinish::Hole
+    }
+
     fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool {
         let Some(tc) = &self.types else { return false };
         let tc = tc.borrow();

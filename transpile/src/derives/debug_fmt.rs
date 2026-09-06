@@ -36,6 +36,19 @@ pub fn debug_expr(reg: &TypeRegistry, ty: Option<&Ty>, expr: &str) -> Result<Str
         Ty::Prim(_) => Ok(format!("String({})", expr)),
         Ty::Slice(elem) => sequence(reg, elem, expr),
         Ty::Array { elem, .. } => sequence(reg, elem, expr),
+        // Rust prints a tuple as `(a, b)`, each element through its own Debug.
+        // The port writes a tuple as an ARRAY, so each element is read by its
+        // index — and the subject is read once, into a name.
+        Ty::Tuple(elems) => {
+            let parts: Result<Vec<String>, String> = elems
+                .iter()
+                .enumerate()
+                .map(|(at, e)| debug_expr(reg, Some(e), &format!("$t[{}]", at)))
+                .collect();
+            let parts = parts?;
+            let rendered: Vec<String> = parts.iter().map(|p| format!("${{{}}}", p)).collect();
+            Ok(format!("(($t) => `({})`)({})", rendered.join(", "), expr))
+        }
         Ty::Named { id, args } => named(reg, *id, args, expr),
         other => Err(format!("`{}` has no Debug rendering in the port", describe(other))),
     }
@@ -94,6 +107,34 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
             };
             return sequence(reg, inner, expr);
         }
+        // Rust prints a set as `{a, b}` and a map as `{k: v, w: x}`, each part
+        // through its own Debug. The port holds both in a runtime container
+        // that iterates its contents, and a `BTreeMap` iterates in key order —
+        // which is what the ordering note in the container says.
+        "HashSet" | "BTreeSet" => {
+            let Some(inner) = args.first() else {
+                return Err("a set with no element type".to_string());
+            };
+            let each = debug_expr(reg, Some(inner), "e")?;
+            return Ok(format!(
+                "`{{${{Array.from({}).map((e) => {}).join(', ')}}}}`",
+                expr, each
+            ));
+        }
+        "HashMap" | "BTreeMap" => {
+            let (Some(key), Some(value)) = (args.first(), args.get(1)) else {
+                return Err("a map with no key or value type".to_string());
+            };
+            // `$p` rather than `e`: a key or a value that is itself a
+            // sequence renders through an arrow whose parameter is `e`, and the
+            // pair would be reading the element it shadows.
+            let k = debug_expr(reg, Some(key), "$p[0]")?;
+            let v = debug_expr(reg, Some(value), "$p[1]")?;
+            return Ok(format!(
+                "`{{${{Array.from({}).map(($p) => `${{{}}}: ${{{}}}`).join(', ')}}}}`",
+                expr, k, v
+            ));
+        }
         _ => {}
     }
 
@@ -108,8 +149,16 @@ fn named(reg: &TypeRegistry, id: TypeId, args: &[Ty], expr: &str) -> Result<Stri
         return Err(format!("`{}` is a std type with no Debug rendering in the port", path));
     }
     if reg.members_are_hand_written(id) {
+        // Only the `[provided_impls]` entry can say whether the file declares
+        // one: the engine never reads the TypeScript it did not write. Without
+        // the declaration the field printed through `toString`, which for a
+        // class is `[object Object]`.
+        if reg.declares_debug(id) {
+            return Ok(format!("{}.debug()", expr));
+        }
         return Err(format!(
-            "`{}`'s TypeScript is written by hand, so it has no emitted `debug()` to call",
+            "`{}`'s TypeScript is written by hand and its `[provided_impls]` entry does not say \
+             it declares `debug()`, so there is none to call",
             path
         ));
     }

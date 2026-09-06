@@ -371,7 +371,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
       if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
       _r10.drop();
       let _moved11 = false;
-      const changes = [];
+      let changes = [];
       try {
         for (const [entity, attestedEvent] of entityAttestedEvents) {
           const collectionId = attestedEvent.payload.collection;

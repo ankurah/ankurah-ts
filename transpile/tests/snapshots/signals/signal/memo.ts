@@ -61,8 +61,9 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
           const output = this.source.with((input) => (this.transform)(input));
           guard.value = output;
         }
+        const _b2 = (guard.value ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
         _moved0 = true;
-        return invoke(f, (guard.value ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()));
+        return invoke(f, _b2);
       } finally {
         guard.drop();
       }

@@ -247,10 +247,11 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
     // read — so a receiver the engine could not type says nothing a finisher
     // can be written from. Written from the name, `orDefault()` invoked
     // `undefined` on the first unseen key, on core's property write path.
-    if matches!(rust_method, "or_insert" | "or_insert_with" | "or_default") {
+    if matches!(rust_method, "or_insert" | "or_insert_with" | "or_default" | "and_modify") {
         let message = format!(
-            "`{}` finishes a `map.entry(..)`, and this receiver is not an `Entry` the engine \
-             could type, so neither what the map holds nor its default is known here",
+            "`{}` is one of the ways Rust reads or finishes a `map.entry(..)`, and this receiver \
+             is not an `Entry` the engine could type, so neither what the map holds nor its \
+             default is known here",
             rust_method
         );
         return MethodTranslation::Refused {
@@ -265,7 +266,7 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
     }
 
     // Iterator methods are commonly called on untyped receivers
-    if let Some(result) = iterator::translate(receiver, rust_method, args) {
+    if let Some(result) = iterator::translate(receiver, rust_method, args, iterator::Receiver::Unknown) {
         return MethodTranslation::Expr(result);
     }
 

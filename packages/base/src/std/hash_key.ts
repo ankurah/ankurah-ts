@@ -225,6 +225,59 @@ export class Table<K, V> {
  */
 
 /**
+ * Rust's `a == b`, where the operands are not primitives.
+ *
+ * For: JavaScript's `===` on two objects compares IDENTITY where Rust's `==`
+ * compares values, so every emitted `===` between two objects, two arrays or
+ * two byte buffers answered `false` for values Rust calls equal. Eight sites
+ * were live — `bytes == [0u8; 16]` in `collatable`, two `BTreeSet`s in
+ * `lineage`, `ValueType::of(l) == ValueType::of(r)` in `filter`, a `KeySpec` in
+ * `resultset`, and `diff == Update::EMPTY_V2` in the yjs backend — and each of
+ * them was a branch that could never be taken.
+ *
+ * The walk is `keysEqual`: `===` for a primitive, element by element for a
+ * sequence (bytes included), and the value's own `equals()` for anything that
+ * declares one. What this adds is the REFUSAL. Rust's `==` needs a `PartialEq`
+ * impl and will not compile without one, so an object standing here that
+ * declares no `equals()` is a shape the port could not write; answering `false`
+ * for it would turn that into a quiet "not equal" that no test can see.
+ */
+export function valueEquals(left: unknown, right: unknown): boolean {
+  refuseOperandWithout(left, right);
+  return keysEqual(left, right);
+}
+
+/** The same, for `a != b`. Written out so the emitted text reads as Rust does. */
+export function valueNotEquals(left: unknown, right: unknown): boolean {
+  return !valueEquals(left, right);
+}
+
+/**
+ * `==` between two objects, neither of which can be compared by value.
+ *
+ * Only raised where BOTH sides are objects with no `equals()`: `x == null` and
+ * `x == y` where one side is a primitive are answered by `keysEqual` without
+ * ever reaching a member, and Rust's own `PartialEq<Option<T>>` is that shape.
+ */
+function refuseOperandWithout(left: unknown, right: unknown): void {
+  if (comparable(left) || comparable(right)) return;
+  const name = (v: unknown) =>
+    v === null ? 'null' : typeof v === 'object' ? ((v as object).constructor?.name ?? '(anonymous)') : typeof v;
+  throw new Error(
+    `BUG: \`${name(left)} == ${name(right)}\` compares two values by their contents, and ` +
+    `neither\ndeclares an equals(). Rust's == needs a PartialEq impl, so this is a ` +
+    `comparison\nthe port wrote where Rust would not have compiled one.`,
+  );
+}
+
+/** Can this value be compared by contents at all? */
+function comparable(v: unknown): boolean {
+  if (v === null || typeof v !== 'object') return true; // a primitive, or absence
+  if (isSequence(v)) return true;
+  return typeof (v as Partial<Hashable>).equals === 'function';
+}
+
+/**
  * Two values of a type PARAMETER, compared the way `#[derive(PartialEq)]`
  * compares them.
  *

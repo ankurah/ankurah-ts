@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
-import { Struct, dropOwned, HashSet } from '@ankurah/base';
+import { Struct, dropOwned, iterFind, iterFindMap, iterFirst, HashSet } from '@ankurah/base';
 import { ComparisonOperator, Expr, Predicate, Literal, OrderByItem, Selection } from '@ankurah/ankql';
 import { IndexKeyPart, KeySpec, Value, ValueType, Comparison } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
@@ -52,109 +52,89 @@ export class Planner extends Struct {
       const [equalities, inequalities] = this.categorizeConjunctsExcludingPrimaryKey(conjuncts, primaryKey);
       const hasPrimaryKeyRanges = this.hasPrimaryKeyRangePredicates(conjuncts, primaryKey);
       const hasPrimaryKeyOrderBy = this.hasPrimaryKeyOrderBy(selection.orderBy, primaryKey);
-      const _t0 = [...conjuncts];
-      try {
-        const hasNonPrimaryPredicates = _t0.some((pred) => !pred.is('True') && !this.isPrimaryKeyPredicate(pred, primaryKey));
-        if ((hasPrimaryKeyRanges || hasPrimaryKeyOrderBy) && !hasNonPrimaryPredicates) {
-          const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-          return [tableScan];
-        }
-        let plans = [];
-        {
-          const _v2 = selection.orderBy;
-          if (_v2 != null) {
-            const orderBy = _v2;
-            if (!(orderBy.length === 0)) {
-              {
-                const _v = this.buildOrderFirstPlan(equalities, inequalities, orderBy, conjuncts);
-                if (_v != null) {
-                  const plan = _v;
-                  plans.push(plan);
-                }
-              }
-              const _t1 = [...orderBy];
-              try {
-                const coveredIneq = _t1.some((item) => (item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false));
-                if (!coveredIneq) {
-                  if (!inequalities.isEmpty()) {
-                    {
-                      const _v1 = this.buildIneqFirstPlan(equalities, inequalities, orderBy, conjuncts);
-                      if (_v1 != null) {
-                        const plan = _v1;
-                        plans.push(plan);
-                      }
-                    }}}
-                let _moved2 = false;
-                const deduplicatedPlans = this.deduplicatePlans(plans);
-                try {
-                  const _t3 = [...deduplicatedPlans];
-                  try {
-                    const hasEmptyScan = _t3.some((plan) => plan.is('EmptyScan'));
-                    if (!hasEmptyScan) {
-                      _moved2 = true;
-                      let finalPlans = deduplicatedPlans;
-                      const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-                      finalPlans.push(tableScan);
-                      return finalPlans;
-                    } else {
-                      _moved2 = true;
-                      return deduplicatedPlans;
-                    }
-                  } finally {
-                    dropOwned(_t3);
-                  }
-                } finally {
-                  if (!_moved2) dropOwned(deduplicatedPlans);
-                }
-              } finally {
-                dropOwned(_t1);
-              }
-            }
-          }
-        }
-        if (!inequalities.isEmpty()) {
-          for (const [field, ] of inequalities) {
+      const hasNonPrimaryPredicates = [...conjuncts].some((pred) => !pred.is('True') && !this.isPrimaryKeyPredicate(pred, primaryKey));
+      if ((hasPrimaryKeyRanges || hasPrimaryKeyOrderBy) && !hasNonPrimaryPredicates) {
+        const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+        return [tableScan];
+      }
+      let plans = [];
+      {
+        const _v2 = selection.orderBy;
+        if (_v2 != null) {
+          const orderBy = _v2;
+          if (!(orderBy.length === 0)) {
             {
-              const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy);
-              if (_v3 != null) {
-                const plan = _v3;
+              const _v = this.buildOrderFirstPlan(equalities, inequalities, orderBy, conjuncts);
+              if (_v != null) {
+                const plan = _v;
                 plans.push(plan);
               }
             }
+            const coveredIneq = [...orderBy].some((item) => (item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false));
+            if (!coveredIneq) {
+              if (!inequalities.isEmpty()) {
+                {
+                  const _v1 = this.buildIneqFirstPlan(equalities, inequalities, orderBy, conjuncts);
+                  if (_v1 != null) {
+                    const plan = _v1;
+                    plans.push(plan);
+                  }
+                }}}
+            let _moved0 = false;
+            const deduplicatedPlans = this.deduplicatePlans(plans);
+            try {
+              const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
+              if (!hasEmptyScan) {
+                _moved0 = true;
+                let finalPlans = deduplicatedPlans;
+                const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+                finalPlans.push(tableScan);
+                return finalPlans;
+              } else {
+                _moved0 = true;
+                return deduplicatedPlans;
+              }
+            } finally {
+              if (!_moved0) dropOwned(deduplicatedPlans);
+            }
           }
-        } else if (!(equalities.length === 0)) {
+        }
+      }
+      if (!inequalities.isEmpty()) {
+        for (const [field, ] of inequalities) {
           {
-            const _v4 = this.generateEqualityPlan(equalities, conjuncts);
-            if (_v4 != null) {
-              const plan = _v4;
+            const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy);
+            if (_v3 != null) {
+              const plan = _v3;
               plans.push(plan);
             }
           }
         }
-        let _moved4 = false;
-        const deduplicatedPlans = this.deduplicatePlans(plans);
-        try {
-          const _t5 = [...deduplicatedPlans];
-          try {
-            const hasEmptyScan = _t5.some((plan) => plan.is('EmptyScan'));
-            if (!hasEmptyScan) {
-              _moved4 = true;
-              let finalPlans = deduplicatedPlans;
-              const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-              finalPlans.push(tableScan);
-              return finalPlans;
-            } else {
-              _moved4 = true;
-              return deduplicatedPlans;
-            }
-          } finally {
-            dropOwned(_t5);
+      } else if (!(equalities.length === 0)) {
+        {
+          const _v4 = this.generateEqualityPlan(equalities, conjuncts);
+          if (_v4 != null) {
+            const plan = _v4;
+            plans.push(plan);
           }
-        } finally {
-          if (!_moved4) dropOwned(deduplicatedPlans);
+        }
+      }
+      let _moved1 = false;
+      const deduplicatedPlans = this.deduplicatePlans(plans);
+      try {
+        const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
+        if (!hasEmptyScan) {
+          _moved1 = true;
+          let finalPlans = deduplicatedPlans;
+          const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+          finalPlans.push(tableScan);
+          return finalPlans;
+        } else {
+          _moved1 = true;
+          return deduplicatedPlans;
         }
       } finally {
-        dropOwned(_t0);
+        if (!_moved1) dropOwned(deduplicatedPlans);
       }
     } finally {
       dropOwned(conjuncts);
@@ -166,7 +146,7 @@ export class Planner extends Struct {
       return null;
     }
     let _moved0 = false;
-    const indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));
+    let indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));
     try {
       if (this.config.supportsDescIndexes) {
         for (const item of orderBy) {
@@ -196,85 +176,80 @@ export class Planner extends Struct {
           firstDir.drop();
         }
       }
-      const _t1 = [...orderBy];
+      const appliedIneq = iterFindMap([...orderBy], (item) => {
+        if (item.path.isSimple()) {
+          const name = item.path.first();
+          return inequalities.getKeyValue(name).map(([k, v]) => [k.asStr(), v]);
+        } else {
+          return null;
+        }
+      });
+      const _m3 = (() => {
+        if (appliedIneq != null) {
+          const [field, vec] = appliedIneq;
+          const _r1 = this.buildBounds(equalities, [field, vec], indexKeyparts);
+          if (_r1 == null) return { $jump: 'return', $value: null };
+          return _r1;
+        } else {
+          const _r2 = this.buildBounds(equalities, null, indexKeyparts);
+          if (_r2 == null) return { $jump: 'return', $value: null };
+          return _r2;
+        }
+      })();
+      if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+      let _moved4 = false;
+      const bounds = (_m3 as any);
       try {
-        const appliedIneq = _t1.findMap((item) => {
-          if (item.path.isSimple()) {
-            const name = item.path.first();
-            return inequalities.getKeyValue(name).map(([k, v]) => [k.asStr(), v]);
-          } else {
-            return null;
-          }
-        });
-        const _m4 = (() => {
-          if (appliedIneq != null) {
-            const [field, vec] = appliedIneq;
-            const _r2 = this.buildBounds(equalities, [field, vec], indexKeyparts);
-            if (_r2 == null) return { $jump: 'return', $value: null };
-            return _r2;
-          } else {
-            const _r3 = this.buildBounds(equalities, null, indexKeyparts);
-            if (_r3 == null) return { $jump: 'return', $value: null };
-            return _r3;
-          }
-        })();
-        if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+        if (this.isEmptyBounds(bounds)) {
+          return new Plan('EmptyScan', {});
+        }
         let _moved5 = false;
-        const bounds = (_m4 as any);
+        const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, (appliedIneq != null ? (([f, ]) => f)(appliedIneq!) : null));
         try {
-          if (this.isEmptyBounds(bounds)) {
-            return new Plan('EmptyScan', {});
-          }
+          const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
+            Desc: () => new ScanDirection('Reverse', {}),
+            Asc: () => new ScanDirection('Forward', {}),
+          }));
           let _moved6 = false;
-          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, (appliedIneq != null ? (([f, ]) => f)(appliedIneq!) : null));
-          try {
-            const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
-              Desc: () => new ScanDirection('Reverse', {}),
-              Asc: () => new ScanDirection('Forward', {}),
-            }));
-            let _moved7 = false;
-            const orderBy_1 = (() => {
-              if (!this.config.supportsDescIndexes) {
-                const firstDir = orderBy[0].direction.clone();
-                try {
-                  let presort = [];
-                  let spill = [];
-                  let broke = false;
-                  for (const item of orderBy) {
-                    if (item.path.isSimple()) {
-                      if (!broke && item.direction.equals(firstDir)) {
-                        presort.push(item.clone());
-                      } else {
-                        broke = true;
-                        spill.push(item.clone());
-                      }
+          const orderBy_1 = (() => {
+            if (!this.config.supportsDescIndexes) {
+              const firstDir = orderBy[0].direction.clone();
+              try {
+                let presort = [];
+                let spill = [];
+                let broke = false;
+                for (const item of orderBy) {
+                  if (item.path.isSimple()) {
+                    if (!broke && item.direction.equals(firstDir)) {
+                      presort.push(item.clone());
+                    } else {
+                      broke = true;
+                      spill.push(item.clone());
                     }
                   }
-                  return OrderByComponents.new(presort, spill);
-                } finally {
-                  firstDir.drop();
                 }
-              } else {
-                return OrderByComponents.new(orderBy.map((e) => e.clone()), []);
+                return OrderByComponents.new(presort, spill);
+              } finally {
+                firstDir.drop();
               }
-            })();
-            try {
-              _moved5 = true;
-              _moved6 = true;
-              _moved7 = true;
-              _moved0 = true;
-              return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
-            } finally {
-              if (!_moved7) orderBy_1.drop();
+            } else {
+              return OrderByComponents.new(orderBy.map((e) => e.clone()), []);
             }
+          })();
+          try {
+            _moved4 = true;
+            _moved5 = true;
+            _moved6 = true;
+            _moved0 = true;
+            return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
           } finally {
-            if (!_moved6) remainingPredicate.drop();
+            if (!_moved6) orderBy_1.drop();
           }
         } finally {
-          if (!_moved5) bounds.drop();
+          if (!_moved5) remainingPredicate.drop();
         }
       } finally {
-        dropOwned(_t1);
+        if (!_moved4) bounds.drop();
       }
     } finally {
       if (!_moved0) dropOwned(indexKeyparts);
@@ -282,89 +257,79 @@ export class Planner extends Struct {
   }
 
   buildIneqFirstPlan(equalities: [string, Value][], inequalities: IndexMap<string, [ComparisonOperator, Value][], RandomState>, orderBy: OrderByItem[], conjuncts: Predicate[]): Plan | null {
-    const _t0 = [...orderBy];
+    const _r1 = iterFindMap([...orderBy], (item) => {
+      if (item.path.isSimple()) {
+        const name = item.path.first();
+        return inequalities.getKeyValue(name).map(([k, v]) => [k.asStr(), v]);
+      } else {
+        return null;
+      }
+    }).orElse(() => {
+      const _m0 = inequalities.iter().next();
+      return (_m0 != null ? (([k, v]) => [k.asStr(), v])(_m0!) : null);
+    });
+    if (_r1 == null) return null;
+    const primary = _r1;
+    let _moved2 = false;
+    let indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));
     try {
-      const _r3 = _t0.findMap((item) => {
-        if (item.path.isSimple()) {
-          const name = item.path.first();
-          return inequalities.getKeyValue(name).map(([k, v]) => [k.asStr(), v]);
-        } else {
-          return null;
-        }
-      }).orElse(() => {
-        const _t1 = inequalities.iter();
-        try {
-          const _m2 = _t1.next();
-          return (_m2 != null ? (([k, v]) => [k.asStr(), v])(_m2!) : null);
-        } finally {
-          dropOwned(_t1);
-        }
-      });
+      const primaryValue = primary._1[0]._1;
+      indexKeyparts.push(IndexKeyPart.ascPath(primary._0, ValueType.of(primaryValue)));
+      const _r3 = this.buildBounds(equalities, primary, indexKeyparts);
       if (_r3 == null) return null;
-      const primary = _r3;
       let _moved4 = false;
-      const indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));
+      const bounds = _r3;
       try {
-        const primaryValue = primary._1[0]._1;
-        indexKeyparts.push(IndexKeyPart.ascPath(primary._0, ValueType.of(primaryValue)));
-        const _r5 = this.buildBounds(equalities, primary, indexKeyparts);
-        if (_r5 == null) return null;
-        let _moved6 = false;
-        const bounds = _r5;
+        if (this.isEmptyBounds(bounds)) {
+          return new Plan('EmptyScan', {});
+        }
+        let _moved5 = false;
+        const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, primary._0);
         try {
-          if (this.isEmptyBounds(bounds)) {
-            return new Plan('EmptyScan', {});
-          }
-          let _moved7 = false;
-          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, primary._0);
-          try {
-            const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
-              Desc: () => new ScanDirection('Reverse', {}),
-              Asc: () => new ScanDirection('Forward', {}),
-            }));
-            let covered = new HashSet();
-            covered.extend([...equalities].map(([f, ]) => f.asStr()));
-            covered.insert(primary._0);
-            let presort = [];
-            let spill = [];
-            for (const item of orderBy) {
-              if (item.path.isSimple()) {
-                const name = item.path.first();
-                if (covered.includes(name)) {
-                  presort.push(item.clone());
-                } else {
-                  spill.push(item.clone());
-                }
+          const scanDirection = (this.config.supportsDescIndexes ? new ScanDirection('Forward', {}) : orderBy[0].direction.match({
+            Desc: () => new ScanDirection('Reverse', {}),
+            Asc: () => new ScanDirection('Forward', {}),
+          }));
+          let covered = new HashSet();
+          covered.extend([...equalities].map(([f, ]) => f.asStr()));
+          covered.insert(primary._0);
+          let presort = [];
+          let spill = [];
+          for (const item of orderBy) {
+            if (item.path.isSimple()) {
+              const name = item.path.first();
+              if (covered.includes(name)) {
+                presort.push(item.clone());
+              } else {
+                spill.push(item.clone());
               }
             }
-            let _moved8 = false;
-            const orderBy_1 = OrderByComponents.new(presort, spill);
-            try {
-              _moved6 = true;
-              _moved7 = true;
-              _moved8 = true;
-              _moved4 = true;
-              return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
-            } finally {
-              if (!_moved8) orderBy_1.drop();
-            }
+          }
+          let _moved6 = false;
+          const orderBy_1 = OrderByComponents.new(presort, spill);
+          try {
+            _moved4 = true;
+            _moved5 = true;
+            _moved6 = true;
+            _moved2 = true;
+            return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
           } finally {
-            if (!_moved7) remainingPredicate.drop();
+            if (!_moved6) orderBy_1.drop();
           }
         } finally {
-          if (!_moved6) bounds.drop();
+          if (!_moved5) remainingPredicate.drop();
         }
       } finally {
-        if (!_moved4) dropOwned(indexKeyparts);
+        if (!_moved4) bounds.drop();
       }
     } finally {
-      dropOwned(_t0);
+      if (!_moved2) dropOwned(indexKeyparts);
     }
   }
 
   categorizeConjunctsExcludingPrimaryKey(conjuncts: Predicate[], primaryKey: string): [[string, Value][], IndexMap<string, [ComparisonOperator, Value][], RandomState>] {
     let equalities = [];
-    const inequalities = IndexMap.new();
+    let inequalities = IndexMap.new();
     for (const conjunct of conjuncts) {
       {
         const _v = this.extractComparison(conjunct);
@@ -494,87 +459,93 @@ export class Planner extends Struct {
     const _r0 = inequalities.get(inequalityField);
     if (_r0 == null) return null;
     const inequalityValues = _r0;
-    const firstInequalityValue = inequalityValues[0]._1;
-    indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
     let _moved1 = false;
-    const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
+    const firstInequalityValue = inequalityValues[0][1];
     try {
       _moved1 = true;
-      const _m3 = (() => {
-        const _v = bounds;
-        if (_v != null) {
-          const bounds = _v;
-          let _moved2 = false;
-          try {
-            {
-              if (this.isEmptyBounds(bounds)) {
-                return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-              }
-              _moved2 = true;
-              return bounds;
-            }
-          } finally {
-            if (!_moved2) bounds.drop();
-          }
-        } else {
-          return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-        }
-      })();
-      if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
-      let _moved4 = false;
-      const bounds_1 = (_m3 as any);
+      indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
+      let _moved2 = false;
+      const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
       try {
+        _moved2 = true;
+        const _m4 = (() => {
+          const _v = bounds;
+          if (_v != null) {
+            const bounds = _v;
+            let _moved3 = false;
+            try {
+              {
+                if (this.isEmptyBounds(bounds)) {
+                  return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+                }
+                _moved3 = true;
+                return bounds;
+              }
+            } finally {
+              if (!_moved3) bounds.drop();
+            }
+          } else {
+            return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+          }
+        })();
+        if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
         let _moved5 = false;
-        const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
+        const bounds_1 = (_m4 as any);
         try {
           let _moved6 = false;
-          const orderBySpill = (() => {
-            {
-              const _v1 = orderBy;
-              if (_v1 != null) {
-                const orderByItems = _v1;
-                const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f.asStr()), ...once(inequalityField)]);
-                let presort = [];
-                let spill = [];
-                for (const item of orderByItems) {
-                  if (item.path.isSimple()) {
-                    const name = item.path.first();
-                    if (coveredFields.has(name)) {
-                      presort.push(item.clone());
-                    } else {
-                      spill.push(item.clone());
-                    }
-                  }
-                }
-                return OrderByComponents.new(presort, spill);
-              } else {
-              return OrderByComponents.default();
-            }
-            }
-          })();
+          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
           try {
             let _moved7 = false;
-            const indexSpec = KeySpec.new(indexKeyparts);
+            const orderBySpill = (() => {
+              {
+                const _v1 = orderBy;
+                if (_v1 != null) {
+                  const orderByItems = _v1;
+                  const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f.asStr()), ...once(inequalityField)]);
+                  let presort = [];
+                  let spill = [];
+                  for (const item of orderByItems) {
+                    if (item.path.isSimple()) {
+                      const name = item.path.first();
+                      if (coveredFields.has(name)) {
+                        presort.push(item.clone());
+                      } else {
+                        spill.push(item.clone());
+                      }
+                    }
+                  }
+                  return OrderByComponents.new(presort, spill);
+                } else {
+                return OrderByComponents.default();
+              }
+              }
+            })();
             try {
-              _moved7 = true;
-              _moved4 = true;
-              _moved5 = true;
-              _moved6 = true;
-              return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+              let _moved8 = false;
+              const indexSpec = KeySpec.new(indexKeyparts);
+              try {
+                _moved8 = true;
+                _moved5 = true;
+                _moved6 = true;
+                _moved7 = true;
+                return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+              } finally {
+                if (!_moved8) indexSpec.drop();
+              }
             } finally {
-              if (!_moved7) indexSpec.drop();
+              if (!_moved7) orderBySpill.drop();
             }
           } finally {
-            if (!_moved6) orderBySpill.drop();
+            if (!_moved6) remainingPredicate.drop();
           }
         } finally {
-          if (!_moved5) remainingPredicate.drop();
+          if (!_moved5) dropOwned(bounds_1);
         }
       } finally {
-        if (!_moved4) dropOwned(bounds_1);
+        if (!_moved2) dropOwned(bounds);
       }
     } finally {
-      if (!_moved1) dropOwned(bounds);
+      if (!_moved1) firstInequalityValue.drop();
     }
   }
 
@@ -633,98 +604,93 @@ export class Planner extends Struct {
     let keypartBounds = [];
     for (const keypart of indexKeyparts) {
       const fullPath = keypart.fullPath();
-      const _t0 = [...equalities];
-      try {
-        const _m1 = _t0.find(([field, ]) => field === fullPath);
-        const equalityValue = (_m1 != null ? (([, value]) => value)(_m1!) : null);
-        {
-          const _v1 = equalityValue;
-          if (_v1 != null) {
-            const value = _v1;
-            keypartBounds.push(new KeyBoundComponent(fullPath, Endpoint.incl(value.clone()), Endpoint.incl(value.clone())));
-          } else {
-          const _v = inequality;
-          if (_v != null) {
-            const [ineqField, inequalities] = _v;
-            if (ineqField === fullPath) {
-              let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0]._1) });
-              let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0]._1) });
-              for (const [op, value] of inequalities) {
-                op.match({
-                  GreaterThan: () => {
-                    let _moved2 = false;
-                    const candidate = Endpoint.excl(value.clone());
-                    try {
-                      if (this.isMoreRestrictiveLower(candidate, low)) {
-                        _moved2 = true;
-                        const _a3 = candidate;
-                        low.drop();
-                        low = _a3;
-                      }
-                    } finally {
-                      if (!_moved2) candidate.drop();
+      const _m0 = iterFind([...equalities], ([field, ]) => field === fullPath);
+      const equalityValue = (_m0 != null ? (([, value]) => value)(_m0!) : null);
+      {
+        const _v1 = equalityValue;
+        if (_v1 != null) {
+          const value = _v1;
+          keypartBounds.push(new KeyBoundComponent(fullPath, Endpoint.incl(value.clone()), Endpoint.incl(value.clone())));
+        } else {
+        const _v = inequality;
+        if (_v != null) {
+          const [ineqField, inequalities] = _v;
+          if (ineqField === fullPath) {
+            let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0][1]) });
+            let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0][1]) });
+            for (const [op, value] of inequalities) {
+              op.match({
+                GreaterThan: () => {
+                  let _moved1 = false;
+                  const candidate = Endpoint.excl(value.clone());
+                  try {
+                    if (this.isMoreRestrictiveLower(candidate, low)) {
+                      _moved1 = true;
+                      const _a2 = candidate;
+                      low.drop();
+                      low = _a2;
                     }
-                  },
-                  GreaterThanOrEqual: () => {
-                    let _moved4 = false;
-                    const candidate = Endpoint.incl(value.clone());
-                    try {
-                      if (this.isMoreRestrictiveLower(candidate, low)) {
-                        _moved4 = true;
-                        const _a5 = candidate;
-                        low.drop();
-                        low = _a5;
-                      }
-                    } finally {
-                      if (!_moved4) candidate.drop();
+                  } finally {
+                    if (!_moved1) candidate.drop();
+                  }
+                },
+                GreaterThanOrEqual: () => {
+                  let _moved3 = false;
+                  const candidate = Endpoint.incl(value.clone());
+                  try {
+                    if (this.isMoreRestrictiveLower(candidate, low)) {
+                      _moved3 = true;
+                      const _a4 = candidate;
+                      low.drop();
+                      low = _a4;
                     }
-                  },
-                  LessThan: () => {
-                    let _moved6 = false;
-                    const candidate = Endpoint.excl(value.clone());
-                    try {
-                      if (this.isMoreRestrictiveUpper(candidate, high)) {
-                        _moved6 = true;
-                        const _a7 = candidate;
-                        high.drop();
-                        high = _a7;
-                      }
-                    } finally {
-                      if (!_moved6) candidate.drop();
+                  } finally {
+                    if (!_moved3) candidate.drop();
+                  }
+                },
+                LessThan: () => {
+                  let _moved5 = false;
+                  const candidate = Endpoint.excl(value.clone());
+                  try {
+                    if (this.isMoreRestrictiveUpper(candidate, high)) {
+                      _moved5 = true;
+                      const _a6 = candidate;
+                      high.drop();
+                      high = _a6;
                     }
-                  },
-                  LessThanOrEqual: () => {
-                    let _moved8 = false;
-                    const candidate = Endpoint.incl(value.clone());
-                    try {
-                      if (this.isMoreRestrictiveUpper(candidate, high)) {
-                        _moved8 = true;
-                        const _a9 = candidate;
-                        high.drop();
-                        high = _a9;
-                      }
-                    } finally {
-                      if (!_moved8) candidate.drop();
+                  } finally {
+                    if (!_moved5) candidate.drop();
+                  }
+                },
+                LessThanOrEqual: () => {
+                  let _moved7 = false;
+                  const candidate = Endpoint.incl(value.clone());
+                  try {
+                    if (this.isMoreRestrictiveUpper(candidate, high)) {
+                      _moved7 = true;
+                      const _a8 = candidate;
+                      high.drop();
+                      high = _a8;
                     }
-                  },
-                  Equal: () => {},
-                  NotEqual: () => {},
-                  In: () => {},
-                  Between: () => {},
-                });
-              }
-              keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
-              break;
-            } else {
-              break;
+                  } finally {
+                    if (!_moved7) candidate.drop();
+                  }
+                },
+                Equal: () => {},
+                NotEqual: () => {},
+                In: () => {},
+                Between: () => {},
+              });
             }
+            keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
+            break;
           } else {
-          break;
-        }
-        }
-        }
-      } finally {
-        dropOwned(_t0);
+            break;
+          }
+        } else {
+        break;
+      }
+      }
       }
     }
     return KeyBounds.new(keypartBounds);
@@ -862,7 +828,7 @@ export class Planner extends Struct {
       return [...remainingConjuncts].next();
     } else {
       let result = remainingConjuncts[0].clone();
-      for (const conjunct of [...remainingConjuncts].skip(1)) {
+      for (const conjunct of [...remainingConjuncts].slice(1)) {
         result = new Predicate('And', { _0: result, _1: conjunct });
       }
       return result;
@@ -923,7 +889,7 @@ export class Planner extends Struct {
         if (_v1 != null) {
           const orderItems = _v1;
           {
-            const _v = orderItems[0];
+            const _v = iterFirst(orderItems);
             if (_v != null) {
               const firstItem = _v;
               if (firstItem.path.isSimple() && firstItem.path.first() === primaryKey) {
@@ -1127,7 +1093,7 @@ export class Planner extends Struct {
       if (_v != null) {
         const orderItems = _v;
         {
-          const _v1 = orderItems[0];
+          const _v1 = iterFirst(orderItems);
           if (_v1 != null) {
             const firstItem = _v1;
             if (firstItem.path.isSimple()) {
@@ -1139,38 +1105,33 @@ export class Planner extends Struct {
   }
 
   hasPrimaryKeyRangePredicates(conjuncts: Predicate[], primaryKey: string): boolean {
-    const _t0 = [...conjuncts];
-    try {
-      return _t0.some((predicate) => {
-        {
-          const _v2 = predicate;
-          if (_v2.is('Comparison')) {
-            const { left, operator } = _v2.value;
-            const isPrimaryKeyField = (() => {
-              const _v1 = left.asRef();
-              if (_v1.is('Path')) {
-                const { _0: path } = _v1.value;
-                if (path.isSimple()) {
-                  return path.first() === primaryKey;
-                }
+    return [...conjuncts].some((predicate) => {
+      {
+        const _v2 = predicate;
+        if (_v2.is('Comparison')) {
+          const { left, operator } = _v2.value;
+          const isPrimaryKeyField = (() => {
+            const _v1 = left.asRef();
+            if (_v1.is('Path')) {
+              const { _0: path } = _v1.value;
+              if (path.isSimple()) {
+                return path.first() === primaryKey;
               }
-              {
-                return false;
-              }
-            })();
-            if (isPrimaryKeyField) {
-              return (operator.is('Equal')) || (operator.is('GreaterThan')) || (operator.is('GreaterThanOrEqual')) || (operator.is('LessThan')) || (operator.is('LessThanOrEqual'));
-            } else {
+            }
+            {
               return false;
             }
+          })();
+          if (isPrimaryKeyField) {
+            return (operator.is('Equal')) || (operator.is('GreaterThan')) || (operator.is('GreaterThanOrEqual')) || (operator.is('LessThan')) || (operator.is('LessThanOrEqual'));
           } else {
-          return false;
-        }
-        }
-      });
-    } finally {
-      dropOwned(_t0);
-    }
+            return false;
+          }
+        } else {
+        return false;
+      }
+      }
+    });
   }
 }
 

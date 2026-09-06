@@ -13,7 +13,7 @@ describe('ready_chunks unit tests', () => {
     tx1.send(1).unwrap();
     tx2.send(2).unwrap();
     const chunk = (await stream.next());
-    const values = [...chunk].map((r) => r);
+    let values = [...chunk].map((r) => r);
     values.sort((a, b) => a.compareTo(b));
     expect(values).toEqual([1, 2]);
     tx3.send(3).unwrap();

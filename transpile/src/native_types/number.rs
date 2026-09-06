@@ -158,21 +158,25 @@ pub fn translate(
         // and `Math.min`/`Math.max` become `NaN` where Rust ignores a `NaN`
         // operand. The rule is stated once, in `@ankurah/base`.
         "round" if args.is_empty() => return float_helper("floatRound", "round", &[receiver], width),
-        "abs" if args.is_empty() => match (bigint_backed(width), width) {
-            // `Math.abs` converts its argument to a number, which throws on a
-            // `bigint`. Written out, each operand is read once — and the
-            // negation goes through the width's own helper, because `i64::MIN`
-            // has no positive: Rust's debug build panics there, and an
-            // unbounded `-$x` answered a number one wider than the type holds
-            // (Z8, R7). The helper is `checkedNeg`, which raises at the value
-            // Rust raises at AND says what Rust says — "attempt to negate with
-            // overflow", the line a reader greps for.
-            (true, Some(prim)) => format!(
-                "(($x) => $x < 0n ? checkedNeg($x, '{}') : $x)({})",
-                crate::operators::primitives::width_name(prim),
-                receiver
-            ),
-            (true, None) => {
+        // `MIN.abs()` has no answer in the type: Rust's debug build panics
+        // there, and `Math.abs` hands back a number one wider than the type
+        // holds — `(i32::MIN).abs()` was `2147483648`, which no `i32` can be.
+        // So EVERY signed integer width goes through its own `checkedNeg`,
+        // which raises at exactly the value Rust raises at and says what Rust
+        // says: "attempt to negate with overflow" (Z8, R7, I5). Written out,
+        // the operand is read once. A FLOAT keeps `Math.abs`: `f64::MIN` is not
+        // its own edge case, and IEEE negation is total.
+        "abs" if args.is_empty() => match width {
+            Some(prim) if prim.is_integer() => {
+                let zero = if bigint_backed(width) { "0n" } else { "0" };
+                format!(
+                    "(($x) => $x < {} ? checkedNeg($x, '{}') : $x)({})",
+                    zero,
+                    crate::operators::primitives::width_name(prim),
+                    receiver
+                )
+            }
+            None if bigint_backed(width) => {
                 return no_width(
                     "`abs()` on a width the port holds in a `bigint` has no positive for that \
                      width's `MIN`, and the engine could not resolve which width this is"
@@ -411,6 +415,31 @@ mod tests {
         // A width the port writes as a `number` keeps the `Math.*` call.
         assert_eq!(widened("a", "min", &["b"], Some(Prim::I32)), "Math.min(a, b)");
         assert_eq!(widened("v", "abs", &[], Some(Prim::I128)), "(($x) => $x < 0n ? checkedNeg($x, 'i128') : $x)(v)");
+    }
+
+    /// I5: `MIN.abs()` has no answer in the type. `Math.abs` hands back a number
+    /// one wider than the type holds — `(i32::MIN).abs()` was `2147483648` —
+    /// where Rust's debug build panics, so every SIGNED INTEGER width goes
+    /// through its own `checkedNeg`, not only the ones the port holds in a
+    /// `bigint`. A float keeps `Math.abs`.
+    #[test]
+    fn abs_panics_at_min_on_every_signed_width() {
+        use crate::ty::Prim;
+        for (prim, name, zero) in [
+            (Prim::I8, "i8", "0"),
+            (Prim::I16, "i16", "0"),
+            (Prim::I32, "i32", "0"),
+            (Prim::Isize, "isize", "0"),
+            (Prim::I64, "i64", "0n"),
+            (Prim::I128, "i128", "0n"),
+        ] {
+            assert_eq!(
+                widened("v", "abs", &[], Some(prim)),
+                format!("(($x) => $x < {} ? checkedNeg($x, '{}') : $x)(v)", zero, name)
+            );
+        }
+        // A float has no `MIN` whose negation overflows.
+        assert_eq!(widened("v", "abs", &[], Some(Prim::F64)), "Math.abs(v)");
     }
 
     /// Without the width the helper cannot answer, so the call is refused

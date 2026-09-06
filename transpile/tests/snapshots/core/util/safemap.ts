@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safemap.rs
-import { Struct, Result, RwLock, invokeRef, Invocable, dropOwned, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, RwLock, invokeRef, Invocable, dropOwned, valueNotEquals, HashMap, HashSet } from '@ankurah/base';
 
 export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Default & Debug> extends Struct {
   _0: RwLock<HashMap<K, V>>;
@@ -180,7 +180,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
               $xs.length = $at;
               dropOwned($p);
             }
-          })(v, (h) => h !== value));
+          })(v, (h) => valueNotEquals(h, value)));
         }
       }
     } finally {

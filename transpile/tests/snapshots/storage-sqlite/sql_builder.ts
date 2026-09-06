@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
-import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, OrderByItem, OrderDirection, Predicate, Selection } from '@ankurah/ankql';
 import { EntityId, Comparison, Json, Value } from '@ankurah/core';
 import { SqliteError } from './error';
@@ -102,7 +102,7 @@ export class SqlBuilder extends Struct {
           this.pushSql(`"${escaped}"`);
         } else {
           const first = path.first().replace('"', '""');
-          const jsonPath = (path.steps.length === 2 ? `$.${path.steps[1].replace('\'', '\'\'')}` : `$.${[...path.steps].skip(1).map((s) => s.replace('\'', '\'\'')).join('.')}`);
+          const jsonPath = (path.steps.length === 2 ? `$.${path.steps[1].replace('\'', '\'\'')}` : `$.${[...path.steps].slice(1).map((s) => s.replace('\'', '\'\'')).join('.')}`);
           this.pushSql(`json_extract("${first}", '${jsonPath}')`);
         }
       },
@@ -325,7 +325,7 @@ export class SqlBuilder extends Struct {
     } else {
       const first = orderBy.path.first().replace('"', '""');
       this.pushSql(`"${first}"`);
-      for (const step of [...orderBy.path.steps].skip(1)) {
+      for (const step of [...orderBy.path.steps].slice(1)) {
         const escaped = step.replace('\'', '\'\'');
         this.pushSql(`->'${escaped}'`);
       }
@@ -481,12 +481,7 @@ function canPushdownExpr(expr: Expr): boolean {
     },
     ExprList: (v) => {
       const exprs = v._0;
-      const _t0 = [...exprs];
-      try {
-        return _t0.every(canPushdownExpr);
-      } finally {
-        dropOwned(_t0);
-      }
+      return [...exprs].every(canPushdownExpr) as any;
     },
     Predicate: (v) => false,
     InfixExpr: () => false,

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor.rs
-import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, HashMap, AsyncMutex, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFindMap, iterFilterMap, HashMap, AsyncMutex, tokio } from '@ankurah/base';
 import { Entity } from './entity';
 import { SubscriptionError } from './error';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
@@ -263,7 +263,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       try {
         tracing.debug(`Reactor.notify_change(${changes_1.value.length} changes)`);
         let _moved0 = false;
-        const candidatesBySub = new HashMap<ReactorSubscriptionId, CandidateChanges<C>>();
+        let candidatesBySub = new HashMap<ReactorSubscriptionId, CandidateChanges<C>>();
         try {
           (() => {
             const watcherSet = this._0.value.watcherSet.value.lock();
@@ -279,7 +279,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             const subscriptions = this._0.value.subscriptions.lock();
             try {
               _moved0 = true;
-              return [...candidatesBySub].filterMap(([subId, candidates]) => {
+              return iterFilterMap([...candidatesBySub], ([subId, candidates]) => {
                 const _m1 = subscriptions.value.get(subId);
                 return (_m1 != null ? ((subscription) => subscription.clone().evaluateChanges(candidates))(_m1!) : null);
               });
@@ -390,7 +390,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       const subscriptions = this._0.value.subscriptions.lock();
       try {
         const [indexWatchers, wildcardWatchers, entityWatchers] = watcherSet.value.debugData();
-        _result += `Reactor { subscriptions: ${subscriptions}, index_watchers: ${indexWatchers}, wildcard_watchers: ${wildcardWatchers}, entity_watchers: ${entityWatchers} }`;
+        _result += `Reactor { subscriptions: ${subscriptions}, index_watchers: ${`{${Array.from(indexWatchers).map(($p) => `${(($t) => `(${$t[0].debug()}, ${$t[1].debug()})`)($p[0])}: ${$p[1].debug()}`).join(', ')}}`}, wildcard_watchers: ${wildcardWatchers}, entity_watchers: ${entityWatchers} }`;
         return _result;
       } finally {
         subscriptions.drop();
@@ -436,7 +436,7 @@ function buildKeySpecFromSelection<E extends AbstractEntity>(orderBy: OrderByIte
   try {
     for (const item of orderBy) {
       const column = item.path.property();
-      const valueType = read.iterEntities().findMap(([, e]) => e.value(column).map((v) => ValueType.of(v))) ?? new ValueType('String', {});
+      const valueType = iterFindMap(read.iterEntities(), ([, e]) => e.value(column).map((v) => ValueType.of(v))) ?? new ValueType('String', {});
       const direction = item.direction.match({
         Asc: () => new IndexDirection('Asc', {}),
         Desc: () => new IndexDirection('Desc', {}),

@@ -17,7 +17,7 @@
 //! the program; a value that was kept and is not dropped is a leak the
 //! registry reports. The first is worse, and the memo's rule follows.
 
-use std::collections::HashMap;
+use super::dispositions::collect_pattern_names;
 
 use syn::parse::Parser;
 
@@ -39,7 +39,7 @@ pub enum Disposition {
 
 /// Where a move was written, relative to the block that declared the local.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Where {
+pub(super) enum Where {
     /// A statement of the declaring block itself, outside any branch: the value
     /// is gone by the time the block ends, on every path.
     Straight,
@@ -58,7 +58,7 @@ enum Where {
 #[derive(Debug, Clone)]
 pub struct Site {
     pub name: String,
-    at: Where,
+    pub(super) at: Where,
     pub span: proc_macro2::Span,
 }
 
@@ -67,6 +67,16 @@ pub struct Site {
 /// all do, and the impl table knows which.
 pub trait Consumes {
     fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool;
+
+    /// Is this call one the engine REFUSES, so that a hole stands where the
+    /// whole call would have?
+    ///
+    /// J4: a hole throws before anything the call would have consumed reaches a
+    /// new owner, so the receiver and every argument are still the block's.
+    /// Counting them as moved left the block releasing nothing and the values
+    /// to the leak check — a leak on the refusal path, which is the one path a
+    /// reported gap is supposed to make safe.
+    fn refuses_call(&self, call: &syn::ExprMethodCall) -> bool;
 
     /// Whether a `match` hands its subject's payload to an arm. Rust moves the
     /// subject there, and the emitted `intoMatch` leaves it moved, so the block
@@ -270,6 +280,15 @@ impl<'c> Scan<'c> {
             }
 
             syn::Expr::MethodCall(call) => {
+                // J4: a call the engine refuses takes NOTHING: the hole that
+                // replaces it throws, and the receiver and arguments are still
+                // the block's to release. The sub-expressions are still walked,
+                // because a move written INSIDE an argument — `f(g(x))` — is
+                // one the hole does not undo... but nothing inside a refused
+                // call is emitted at all, so the walk stops here too.
+                if self.consumes.refuses_call(call) {
+                    return;
+                }
                 // A method taking `self` consumes the receiver: `r.unwrap()`,
                 // `v.into_iter()`, `opt.take()`.
                 if self.consumes.consumes_receiver(call) {
@@ -598,107 +617,6 @@ pub(crate) fn local_name(path: &syn::ExprPath) -> Option<String> {
     Some(crate::name_map::to_camel_case(&ident))
 }
 
-/// What each declared local's block should do with it.
-///
-/// Sites are attributed to the declaration that was in scope where they were
-/// written, so `let staged = ..; use(staged); let staged = ..;` reads the first
-/// binding as moved and the second as kept.
-#[derive(Debug, Default)]
-pub struct Dispositions {
-    /// Keyed by the name Rust wrote and which declaration of it this is,
-    /// counting from one.
-    by_declaration: HashMap<(String, usize), Disposition>,
-    /// The move sites that took a value into a closure, so the capture can be
-    /// reported once at the site rather than once per use.
-    pub captures: Vec<Site>,
-    /// The sites the emitter could not write a flag for.
-    pub unwritable: Vec<Site>,
-}
-
-impl Dispositions {
-    pub fn of(&self, name: &str, ordinal: usize) -> Disposition {
-        self.by_declaration
-            .get(&(name.to_string(), ordinal))
-            .copied()
-            .unwrap_or(Disposition::Kept)
-    }
-
-    /// Attribute each site to the declaration it was written under.
-    ///
-    /// `declarations` is, in source order, the statement index of each `let`
-    /// and the names it binds. A site in statement j belongs to the last
-    /// declaration of that name before j.
-    pub fn build(declarations: &[(usize, Vec<String>)], sites: Vec<(usize, Site)>) -> Dispositions {
-        let mut result = Dispositions::default();
-        for (stmt_index, site) in sites {
-            let ordinal = declarations
-                .iter()
-                .filter(|(at, names)| *at < stmt_index && names.iter().any(|n| *n == site.name))
-                .count();
-            if ordinal == 0 {
-                // Not one of this block's locals: a parameter, an outer local,
-                // or a name from a pattern. The block that owns it decides.
-                continue;
-            }
-            let key = (site.name.clone(), ordinal);
-            let disposition = match site.at {
-                Where::Straight | Where::Closure => Disposition::Moved,
-                Where::Branch => Disposition::Flagged,
-                Where::Unwritable => Disposition::Unsure,
-            };
-            if site.at == Where::Closure {
-                result.captures.push(site.clone());
-            }
-            if site.at == Where::Unwritable {
-                result.unwritable.push(site.clone());
-            }
-            // A local moved on a straight-line path is gone whatever else
-            // happened to it; a flag would only ask a question already
-            // answered. Otherwise the strongest claim wins.
-            let existing = result.by_declaration.entry(key).or_insert(Disposition::Kept);
-            *existing = stronger(*existing, disposition);
-        }
-        result
-    }
-}
-
-/// Which of two claims about one local stands. "Gone" beats "sometimes gone"
-/// beats "kept", because releasing a value somebody else owns is the failure
-/// this analysis exists to prevent.
-fn stronger(a: Disposition, b: Disposition) -> Disposition {
-    let rank = |d: Disposition| match d {
-        Disposition::Kept => 0,
-        Disposition::Flagged => 1,
-        Disposition::Unsure => 2,
-        Disposition::Moved => 3,
-    };
-    if rank(a) >= rank(b) {
-        a
-    } else {
-        b
-    }
-}
-
-/// Every name a pattern binds, in the TypeScript spelling the sites use.
-fn collect_pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
-    match pat {
-        syn::Pat::Ident(ident) => {
-            out.push(crate::name_map::to_camel_case(&ident.ident.to_string()));
-            if let Some((_, sub)) = &ident.subpat {
-                collect_pattern_names(sub, out);
-            }
-        }
-        syn::Pat::Tuple(t) => t.elems.iter().for_each(|p| collect_pattern_names(p, out)),
-        syn::Pat::TupleStruct(t) => t.elems.iter().for_each(|p| collect_pattern_names(p, out)),
-        syn::Pat::Slice(s) => s.elems.iter().for_each(|p| collect_pattern_names(p, out)),
-        syn::Pat::Struct(s) => s.fields.iter().for_each(|f| collect_pattern_names(&f.pat, out)),
-        syn::Pat::Reference(r) => collect_pattern_names(&r.pat, out),
-        syn::Pat::Type(t) => collect_pattern_names(&t.pat, out),
-        syn::Pat::Paren(p) => collect_pattern_names(&p.pat, out),
-        syn::Pat::Or(or) => or.cases.iter().for_each(|p| collect_pattern_names(p, out)),
-        _ => {}
-    }
-}
 
 /// Can this statement leave the block it stands in, before the statements below
 /// it run?

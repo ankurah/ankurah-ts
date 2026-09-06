@@ -7,7 +7,7 @@ import { Attested, EntityId, EntityState } from '@ankurah/proto';
 export async function expandStates(states: Attested<EntityState>[], additionalEntityIds: EntityId[], collection: StorageCollectionWrapper): Promise<Result<Attested<EntityState>[], RetrievalError>> {
   let _moved0 = false;
   try {
-    const entityMap = HashSet.from([...states].map((s) => s.payload.entityId));
+    let entityMap = HashSet.from([...states].map((s) => s.payload.entityId));
     for (const entityId of additionalEntityIds) {
       if (!entityMap.has(entityId)) {
         const _v = await collection.deref().value.getState(entityId);

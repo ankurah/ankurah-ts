@@ -7,6 +7,13 @@
 //! owns the whole payload, and a refusal that walked away from it turned a
 //! reported gap into a leak: the `Inner`, both its `Token`s and the trailing
 //! `Token` were all collected with nobody having dropped them.
+//!
+//! J4 is the same rule at a CALL. A call the engine refuses is replaced by a
+//! hole, which throws before anything the call would have consumed reaches a
+//! new owner — so the receiver and every argument are still the block's, and
+//! counting them as moved left the block releasing nothing. `finish` below is
+//! that shape: a `map.entry(..)` finisher on a receiver the engine could not
+//! type, holding two owned values Rust would have moved into the map.
 
 pub struct Token {
     pub n: u32,
@@ -39,5 +46,26 @@ pub fn pick(w: Wrap) -> u32 {
             n
         }
         Wrap::Empty => 0,
+    }
+}
+
+/// A `Token` that can be a map key, so the finisher below has a real receiver.
+#[derive(Hash, PartialEq, Eq)]
+pub struct Name {
+    pub text: String,
+}
+
+pub struct Counts {
+    pub m: std::collections::HashMap<Name, Result<u32, u32>>,
+}
+
+impl Counts {
+    /// A call the engine REFUSES: `or_default()` needs the value type's
+    /// default, and a `Result` has none the port can write. The KEY is moved
+    /// into `entry(k)` in Rust, but the hole throws before the entry is ever
+    /// made — so the key is still this block's, and its unwind releases it.
+    pub fn finish(&mut self, k: Name) -> u32 {
+        self.m.entry(k).or_default();
+        0
     }
 }

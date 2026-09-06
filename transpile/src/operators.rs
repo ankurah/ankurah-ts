@@ -16,88 +16,14 @@ use crate::registry::NoConversion;
 use crate::ty::{Prim, Ty};
 
 pub(crate) mod primitives;
+mod resolution;
+
+pub(crate) use resolution::Operator;
+use resolution::{by_value_comparison, operator_of, Operand};
+pub(crate) use resolution::operator_trait;
 
 #[cfg(test)]
 mod tests;
-
-/// What an operand is, as far as an operator is concerned.
-enum Operand {
-    /// A number, and which one: the width decides truncation and whether the
-    /// port writes it as a `bigint`.
-    Number(Prim),
-    /// A string or a boolean, which JavaScript's own operators compare by
-    /// value.
-    Native,
-    /// Anything else, whose operator is an impl.
-    Object,
-}
-
-/// One operator: the trait it resolves through, that trait's method, and the
-/// text that stands between the two operands when both are primitives.
-#[derive(Clone)]
-struct Operator {
-    /// Where the trait is declared, so the impl table can be asked for it.
-    trait_path: String,
-    trait_name: &'static str,
-    rust_method: &'static str,
-    ts_method: String,
-    native: &'static str,
-}
-
-fn operator_of(op: &syn::BinOp) -> Option<Operator> {
-    use syn::BinOp::*;
-    let (trait_name, rust_method, native) = match op {
-        Add(_) => ("Add", "add", "+"),
-        Sub(_) => ("Sub", "sub", "-"),
-        Mul(_) => ("Mul", "mul", "*"),
-        Div(_) => ("Div", "div", "/"),
-        Rem(_) => ("Rem", "rem", "%"),
-        BitXor(_) => ("BitXor", "bitxor", "^"),
-        BitAnd(_) => ("BitAnd", "bitand", "&"),
-        BitOr(_) => ("BitOr", "bitor", "|"),
-        Shl(_) => ("Shl", "shl", "<<"),
-        Shr(_) => ("Shr", "shr", ">>"),
-        Eq(_) => ("PartialEq", "eq", "==="),
-        Ne(_) => ("PartialEq", "eq", "!=="),
-        Lt(_) => ("PartialOrd", "partial_cmp", "<"),
-        Le(_) => ("PartialOrd", "partial_cmp", "<="),
-        Gt(_) => ("PartialOrd", "partial_cmp", ">"),
-        Ge(_) => ("PartialOrd", "partial_cmp", ">="),
-        AddAssign(_) => ("AddAssign", "add_assign", "+="),
-        SubAssign(_) => ("SubAssign", "sub_assign", "-="),
-        MulAssign(_) => ("MulAssign", "mul_assign", "*="),
-        DivAssign(_) => ("DivAssign", "div_assign", "/="),
-        RemAssign(_) => ("RemAssign", "rem_assign", "%="),
-        BitXorAssign(_) => ("BitXorAssign", "bitxor_assign", "^="),
-        BitAndAssign(_) => ("BitAndAssign", "bitand_assign", "&="),
-        BitOrAssign(_) => ("BitOrAssign", "bitor_assign", "|="),
-        ShlAssign(_) => ("ShlAssign", "shl_assign", "<<="),
-        ShrAssign(_) => ("ShrAssign", "shr_assign", ">>="),
-        _ => return None,
-    };
-    let trait_path = match trait_name {
-        "PartialEq" => "std::cmp::PartialEq".to_string(),
-        "PartialOrd" => "std::cmp::PartialOrd".to_string(),
-        other => format!("std::ops::{}", other),
-    };
-    Some(Operator {
-        trait_path,
-        trait_name,
-        rust_method,
-        ts_method: crate::name_map::to_camel_case(rust_method),
-        native,
-    })
-}
-
-/// The trait an operator resolves through, as the impl table knows it.
-///
-/// The type engine asks this to find what an overloaded operator *answers*:
-/// `impl Add for Tag { type Output = Tag; }` is the only place that is written
-/// down, and without it the local a `+` was bound to had no type and nothing
-/// released what it held.
-pub(crate) fn operator_trait(op: &syn::BinOp) -> Option<String> {
-    operator_of(op).map(|found| found.trait_path)
-}
 
 impl BodyTranslator<'_> {
     /// `a OP b`, written the way the port means it.
@@ -137,7 +63,22 @@ impl BodyTranslator<'_> {
         // could not type it` and its kin — and filing it again at every
         // operator that reads the name would count one gap once per use and
         // make the coverage number a use count.
-        let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
+        let (Some(lhs), Some(rhs)) = (lhs.clone(), rhs.clone()) else {
+            // One side typed and NOT a primitive settles an equality on its
+            // own: `===` between two objects, two arrays or two byte buffers is
+            // identity whatever the other side turns out to be, so the runtime
+            // comparison is the only correct writing. `diff == Update::EMPTY_V2`
+            // in the yjs backend is the shape — a `Vec<u8>` against a constant
+            // of a foreign package the surface does not declare.
+            //
+            // Both sides untyped is left as written: the engine cannot tell a
+            // primitive comparison from an object one there, and turning a
+            // working `===` between two numbers into a call would be a guess.
+            // The gap is reported where the name was bound.
+            let known = lhs.as_ref().or(rhs.as_ref())?;
+            if matches!(self.operand_kind(known), Operand::Object) {
+                return by_value_comparison(&op, left, right);
+            }
             return None;
         };
         match (self.operand_kind(&lhs), self.operand_kind(&rhs)) {
@@ -196,7 +137,15 @@ impl BodyTranslator<'_> {
             let tc = tc.borrow();
             (tc.registry.describe(lhs), tc.registry.describe(rhs))
         };
+        let by_value = || by_value_comparison(op, left, right);
         let say = |why: String| {
+            // Where the comparison IS written the site is not a gap: what the
+            // diagnostic used to report — "the JavaScript operator is written,
+            // which compares references rather than values" — is no longer what
+            // happens.
+            if by_value().is_some() {
+                return;
+            }
             self.fallback(
                 span,
                 format!(
@@ -220,7 +169,7 @@ impl BodyTranslator<'_> {
                         format!("{} impls in the table perform it", ids.len())
                     }
                 });
-                return None;
+                return by_value();
             }
         };
         let tc = tc.borrow();
@@ -234,12 +183,12 @@ impl BodyTranslator<'_> {
             say("the impl is the declared surface's, so the comparison is the runtime's own \
                  and `@ankurah/base` supplies none"
                 .to_string());
-            return None;
+            return by_value();
         }
         if !crate::emit_impls::has_emitted_class(tc.registry, &def.self_ty) {
             drop(tc);
             say("the left operand has no class of its own for the method to be on".to_string());
-            return None;
+            return by_value();
         }
         let args: Vec<String> = def
             .trait_ref

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
-import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, HashMap, HashSet } from '@ankurah/base';
+import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals, HashMap, HashSet } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { PropertyError } from '../property/traits';
 import { Json } from '../property/value/json';
@@ -179,7 +179,7 @@ export class Value extends Enum<ValueV> {
   }
 
   gt(other: Value): boolean {
-    return this.partialCompareTo(other) === 1;
+    return valueEquals(this.partialCompareTo(other), 1);
   }
 
   ge(other: Value): boolean {
@@ -190,7 +190,7 @@ export class Value extends Enum<ValueV> {
   }
 
   lt(other: Value): boolean {
-    return this.partialCompareTo(other) === -1;
+    return valueEquals(this.partialCompareTo(other), -1);
   }
 
   le(other: Value): boolean {

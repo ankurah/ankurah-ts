@@ -179,6 +179,16 @@ impl Drop for Subscription { fn drop(&mut self) { todo!() } }
 pub struct Update;
 
 impl Update {
+    /// The 13-byte v2 encoding of an update that carries nothing.
+    /// `YrsBackend::to_operations` compares its diff against this to decide a
+    /// backend produced no operations, so the surface has to declare it: with
+    /// no declaration the comparison had no type on the right, the operator
+    /// stayed `===` between two byte buffers — identity, never true — and no
+    /// diagnostic was filed, because a gap is reported where a NAME is bound
+    /// and this one is bound nowhere. The value itself is the foreign
+    /// package's; only its type is the engine's business.
+    pub const EMPTY_V2: &'static [u8] = &[];
+
     /// 0.24 mutates in place and returns nothing; the pre-0.22 form returned a
     /// merged `Update`. `Cargo.lock` pins 0.24.0, so this is the shape.
     pub fn merge(&mut self, other: Update) { todo!() }

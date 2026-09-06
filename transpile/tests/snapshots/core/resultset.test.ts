@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { EntityResultSet, IVec } from './resultset';
-import { HashMap, Struct } from '@ankurah/base';
+import { HashMap, Struct, range, valueEquals } from '@ankurah/base';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
 import { Value, ValueType } from './value/index';
 
@@ -45,7 +45,7 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   debug(): string {
-    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, properties: ${this.properties} }`;
+    return `TestEntity { id: ${this.id}, collection: ${this.collection.debug()}, properties: ${`{${Array.from(this.properties).map(($p) => `${JSON.stringify($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
   }
 }
 
@@ -138,7 +138,7 @@ describe('resultset unit tests', () => {
     const resultset = EntityResultSet.empty();
     try {
       let write = resultset.write();
-      for (const i of undefined /* range 0..5 */) {
+      for (const i of range(0, 5)) {
         let props = new HashMap();
         props.insert('value', new Value('I32', { _0: (i | 0) }));
         const entity = TestEntity.new(i, props);
@@ -170,14 +170,14 @@ describe('resultset unit tests', () => {
           write.add(entity1.clone());
           write.add(entity2.clone());
           write.markAllDirty();
-          const removed = write.retainDirty((entity) => entity.value('active') === new Value('Bool', { _0: true }));
+          const removed = write.retainDirty((entity) => valueEquals(entity.value('active'), new Value('Bool', { _0: true })));
           write.drop();
           expect(removed.length).toEqual(1);
           expect(removed[0]).toEqual(entity2.id);
           expect(resultset.len()).toEqual(1);
           const _t0 = resultset.read();
           try {
-            expect((_t0.iterEntities().next() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())._0).toEqual(entity1.id);
+            expect((_t0.iterEntities().next() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
           } finally {
             _t0.drop();
           }

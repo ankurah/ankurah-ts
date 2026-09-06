@@ -123,10 +123,22 @@ impl Probe<'_> {
     /// declares it, and Rust resolves the binding through the supertrait.
     /// Asking only the written trait left `<impl DerefMut>::Target` standing,
     /// and every call on the map behind it was written from its name alone.
+    /// I10: every bound is asked, and one that BINDS the name wins over one
+    /// that only inherits it. `T: Iterator + DoubleEndedIterator<Item = u8>`
+    /// answered `Open` from the first bound — `Iterator` declares `Item` and
+    /// binds nothing — and the search stopped there, so the `Item` the site
+    /// actually wrote was never read. Written order is not the question a bound
+    /// answers.
     pub(super) fn bound_assoc(&self, base: &Ty, name: &str) -> Option<BoundAssoc> {
-        self.bounds_of(base)
-            .iter()
-            .find_map(|bound| self.assoc_through(bound, name, &mut Vec::new()))
+        let mut open = None;
+        for bound in self.bounds_of(base) {
+            match self.assoc_through(&bound, name, &mut Vec::new()) {
+                Some(found @ BoundAssoc::Bound(_)) => return Some(found),
+                Some(found @ BoundAssoc::Open) => open = open.or(Some(found)),
+                None => {}
+            }
+        }
+        open
     }
 
     fn assoc_through(
@@ -243,3 +255,30 @@ impl Probe<'_> {
         }
         found
     }}
+
+#[cfg(test)]
+mod i10_tests {
+    use crate::testing::Fixture;
+
+    /// I10: a bound that only INHERITS an associated name used to answer first
+    /// and stop the search, so the bound that actually BINDS it — written later
+    /// — was never read. Written order is not the question a bound answers.
+    #[test]
+    fn a_bound_that_binds_the_name_wins_over_one_that_only_inherits_it() {
+        let mut c = Fixture::build(&[(
+            "lib.rs",
+            "pub trait Holds { type Held; fn held(&self) -> Self::Held; }\n\
+             pub trait AlsoHolds: Holds {}\n\
+             pub struct Tag { pub n: u32 }\n\
+             pub fn read<T: Holds + AlsoHolds<Held = Tag>>(t: &T) -> u32 { t.held().n }",
+        )]);
+        let ts = c.translated_method("lib.rs", "read");
+        assert!(
+            !c.messages().iter().any(|m| m.contains("no method") || m.contains("could not")),
+            "the binding is read through the later bound: {:?}\n{}",
+            c.messages(),
+            ts
+        );
+        assert!(ts.contains(".n"), "{}", ts);
+    }
+}

@@ -89,23 +89,27 @@ describe('engine unit tests', () => {
 
   test('test_json_path_query', async () => {
     (await (async () => {
-      const selection = parseSelection('data.status = \'active\'');
-      let _moved0 = false;
-      let builder = SqlBuilder.withFields(['id', 'state_buffer']);
+      const selection = parseSelection('data.status = \'active\'').expect('Failed to parse query');
       try {
-        builder.tableName('test_table');
-        const _r1 = builder.selection(selection).mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-        _r1.drop();
-        _moved0 = true;
-        const _r2 = builder.build().mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        const [sql, _params] = _r2.unwrap();
-        if (!(sql.includes('json_extract'))) throw new Error(`SQL should use json_extract() for JSON path: ${sql}`);
-        if (!(sql.includes('json_extract("data", \'$.status\')'))) throw new Error(`SQL should extract from data column with $.status path: ${sql}`);
-        return Result.Ok([]);
+        let _moved0 = false;
+        let builder = SqlBuilder.withFields(['id', 'state_buffer']);
+        try {
+          builder.tableName('test_table');
+          const _r1 = builder.selection(selection).mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
+          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          _r1.drop();
+          _moved0 = true;
+          const _r2 = builder.build().mapErr((e) => new SqliteError('SqlGeneration', { _0: e.toString() }));
+          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          const [sql, _params] = _r2.unwrap();
+          if (!(sql.includes('json_extract'))) throw new Error(`SQL should use json_extract() for JSON path: ${sql}`);
+          if (!(sql.includes('json_extract("data", \'$.status\')'))) throw new Error(`SQL should extract from data column with $.status path: ${sql}`);
+          return Result.Ok([]);
+        } finally {
+          if (!_moved0) builder.drop();
+        }
       } finally {
-        if (!_moved0) builder.drop();
+        selection.drop();
       }
     })()).unwrap();
   });

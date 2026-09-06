@@ -123,7 +123,7 @@ export class CanonicalRange extends Struct {
   }
 
   debug(): string {
-    return `CanonicalRange { lower: ${this.lower}, upper: ${this.upper} }`;
+    return `CanonicalRange { lower: ${(($v) => $v === null ? 'None' : `Some(${(($t) => `(${`[${Array.from($t[0]).map((e) => e.debug()).join(', ')}]`}, ${String($t[1])})`)($v)})`)(this.lower)}, upper: ${(($v) => $v === null ? 'None' : `Some(${(($t) => `(${`[${Array.from($t[0]).map((e) => e.debug()).join(', ')}]`}, ${String($t[1])})`)($v)})`)(this.upper)} }`;
   }
 }
 

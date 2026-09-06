@@ -278,10 +278,20 @@ fn qualified(candidate: &Candidate) -> String {
     let source = &candidate.identity.source;
     let leaf = leaf(source);
     let tail = if candidate.plain || !nameable(&leaf) {
-        // `From<i32>` and `From<f64>` are both `from(v: number)`, so the
-        // TypeScript spelling cannot tell them apart and the RUST leaf is what
-        // names them: `fromI32`, `fromF64`.
-        crate::emit::name_fragment(&leaf).unwrap_or_else(|| capitalised(&leaf))
+        // J7: a GENERIC source carries its module path in front of the outer
+        // type, and the leaf drops it — `From<left::Wrap<u8>>` and
+        // `From<right::Wrap<u8>>` both named `fromWrapU8`, so one static
+        // answered two impls and the second body was lost. The outer type is
+        // qualified by the same rule a plain source is, and the arguments are
+        // read after it.
+        if let Some(named) = generic_source(source) {
+            named
+        } else {
+            // `From<i32>` and `From<f64>` are both `from(v: number)`, so the
+            // TypeScript spelling cannot tell them apart and the RUST leaf is
+            // what names them: `fromI32`, `fromF64`.
+            crate::emit::name_fragment(&leaf).unwrap_or_else(|| capitalised(&leaf))
+        }
     } else {
         crate::emit::qualified_source(source)
     };
@@ -290,6 +300,24 @@ fn qualified(candidate: &Candidate) -> String {
     } else {
         format!("{}{}", candidate.base, tail)
     }
+}
+
+/// A source written with type ARGUMENTS, named from its outer type's full path
+/// and then its arguments.
+///
+/// `Vec<u8>` has no module and reads as it always did (`VecU8`);
+/// `left::Wrap<u8>` reads `LeftWrapU8`, where the leaf alone read `WrapU8` and
+/// collided with every other module's `Wrap`.
+fn generic_source(source: &str) -> Option<String> {
+    let (outer, args) = source.split_once('<')?;
+    let outer = outer.trim().trim_end_matches("::");
+    if !outer.contains("::") {
+        // No module in front of it: nothing was being dropped.
+        return None;
+    }
+    let head = crate::emit::qualified_source(outer);
+    let args = crate::emit::name_fragment(args).unwrap_or_default();
+    Some(format!("{}{}", head, args))
 }
 
 /// The source type, with a BORROWED spelling read as the owned one it is a

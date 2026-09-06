@@ -188,11 +188,15 @@ fn reaching_through_a_refcell_guard_emits_the_accessor() {
     // `PathExpr::property` answered `undefined` for an empty path instead of
     // stopping. The `??` reads exactly null and undefined, which is what
     // "nothing there" is here, and it reads the receiver once.
+    //
+    // PREMISE CHANGED AGAIN (J1): `at(-1)` answered `undefined` for an empty
+    // vector, and the port spells `None` as `null`. `Vec::last` answers an
+    // `Option`, so it goes through `iterLast`, which answers `null`.
     assert_eq!(
         body.trim(),
         "const _t0 = this.entries.borrow();\n\
          try {\n  \
-           return (_t0.value.at(-1) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());\n\
+           return (iterLast(_t0.value) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());\n\
          } finally {\n  \
            _t0.drop();\n\
          }",

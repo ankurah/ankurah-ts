@@ -121,7 +121,7 @@ export class SqliteValue extends Enum<SqliteValueV> {
   static from(value: Value | null): SqliteValue {
     if (value != null) {
       const v = value;
-      return v;
+      return SqliteValue.fromValue(v);
     } else {
       return new SqliteValue('Null', {});
     }

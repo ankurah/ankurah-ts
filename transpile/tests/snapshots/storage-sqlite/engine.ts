@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/engine.rs
-import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, HashSet, AsyncMutex, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, iterFilterMap, range, HashSet, AsyncMutex, tokio } from '@ankurah/base';
 import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, Json, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, StateBuffers } from '@ankurah/proto';
 import { PooledConnection, SqliteConnectionManager } from './connection';
@@ -108,7 +108,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
         let stmt = _r1.unwrap();
         const _r2 = stmt.queryMap([], (row) => row.get(0));
         if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-        const tables = _r2.unwrap().filterMap((r) => r.ok());
+        const tables = iterFilterMap(_r2.unwrap(), (r) => r.ok());
         if (tables.length === 0) {
           return Result.Ok(false);
         }
@@ -188,12 +188,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
   hasColumn(name: string): boolean {
     const columns = this.columns.value.read();
     try {
-      const _t0 = [...columns.value];
-      try {
-        return _t0.some((c) => c.name === name);
-      } finally {
-        dropOwned(_t0);
-      }
+      return [...columns.value].some((c) => c.name === name);
     } finally {
       columns.drop();
     }
@@ -214,7 +209,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
       });
       if (_r3.isErr()) return Result.Err(SqliteError.fromRusqliteError(_r3.unwrapErr()));
       let _moved4 = false;
-      const columns = _r3.unwrap().filterMap((r) => r.ok());
+      const columns = iterFilterMap(_r3.unwrap(), (r) => r.ok());
       try {
         _moved4 = true;
         return Result.Ok(columns);
@@ -287,7 +282,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const attestationsBlob = _r3.unwrap();
         const id = state.payload.entityId.toBase64();
         const idClone = id;
-        const materialized = [];
+        let materialized = [];
         try {
           let seenProperties = new HashSet();
           for (const [name, stateBuffer] of [...state.payload.state.stateBuffers.deref()]) {
@@ -339,16 +334,17 @@ export class SqliteBucket extends Struct implements StorageCollection {
               backend.drop();
             }
           }
+          const BASE_COLUMNS = ['id', 'state_buffer', 'head', 'attestations'];
           const tableName = this.stateTable();
           const numColumns = BASE_COLUMNS.length + materialized.length;
-          const columns = [];
+          let columns = [];
           columns.extendFromSlice(BASE_COLUMNS);
-          const values = [];
+          let values = [];
           values.push(new rusqlite.types.Value('Text', { _0: id }));
           values.push(new rusqlite.types.Value('Blob', { _0: stateBuffers }));
           values.push(new rusqlite.types.Value('Text', { _0: headJson }));
           values.push(new rusqlite.types.Value('Blob', { _0: attestationsBlob }));
-          const placeholderIsJsonb = [];
+          let placeholderIsJsonb = [];
           placeholderIsJsonb.resize(BASE_COLUMNS.length, false);
           for (const [name, value, isJsonb] of materialized) {
             columns.push(name);
@@ -364,7 +360,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           }
           const columnsStr = [...columns].map((c) => `"${c}"`).join(', ');
           const placeholders = [...placeholderIsJsonb].map((isJsonb) => (isJsonb ? 'jsonb(?)' : '?')).join(', ');
-          const updateStr = [...columns].skip(1).map((c) => `"${c}" = excluded."${c}"`).join(', ');
+          const updateStr = [...columns].slice(1).map((c) => `"${c}" = excluded."${c}"`).join(', ');
           const query = `INSERT INTO "${tableName}"(${columnsStr}) VALUES(${placeholders})\n               ON CONFLICT("id") DO UPDATE SET ${updateStr}`;
           tracing.debug(`set_state query: ${query}`);
           const newHead = state.payload.state.head.clone();
@@ -700,7 +696,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const idStrings = [...eventIds].map((id) => id.toBase64());
         const numIds = idStrings.length;
         return (await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
-          const placeholders = (undefined /* range 0..numIds */).map((_) => '?').join(', ');
+          const placeholders = (range(0, numIds)).map((_) => '?').join(', ');
           const query = `SELECT "id", "entity_id", "operations", "parent", "attestations" FROM "${tableName}" WHERE "id" IN (${placeholders})`;
           const _r1 = c.prepare(query);
           if (_r1.isErr()) return Result.Err(_r1.unwrapErr());

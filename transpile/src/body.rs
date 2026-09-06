@@ -12,102 +12,10 @@ use crate::control_flow;
 use crate::ownership;
 use crate::native_types;
 
-/// Check if an expression is a write!/writeln! macro call
-fn is_write_macro(expr: &syn::Expr) -> bool {
-    if let syn::Expr::Macro(mac) = expr {
-        let name = mac.mac.path.segments.last()
-            .map(|s| s.ident.to_string())
-            .unwrap_or_default();
-        matches!(name.as_str(), "write" | "writeln")
-    } else {
-        false
-    }
-}
-
-/// Does this formatter body COMPOSE, or does every path through it write once?
-///
-/// `fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}", self.0) }`
-/// composes nothing: the one write IS the string, and so is each arm of a
-/// `match self { .. }` whose arms each write once. Those need no accumulator,
-/// and the method stays the expression it always was. A body that writes twice
-/// in sequence needs one, and it is the only thing that does.
-pub fn writes_once_at_the_tail(block: &syn::Block) -> bool {
-    matches!(block.stmts.as_slice(), [syn::Stmt::Expr(expr, None)] if writes_once(expr))
-}
-
-fn writes_once(expr: &syn::Expr) -> bool {
-    match expr {
-        _ if as_write_macro(expr).is_some() => true,
-        syn::Expr::Match(m) => m.arms.iter().all(|arm| writes_once(&arm.body)),
-        syn::Expr::If(if_expr) => {
-            single_block_expr(&if_expr.then_branch).is_some_and(writes_once)
-                && if_expr.else_branch.as_ref().is_some_and(|(_, e)| writes_once(e))
-        }
-        syn::Expr::Block(block) => writes_once_at_the_tail(&block.block),
-        syn::Expr::Paren(p) => writes_once(&p.expr),
-        _ => false,
-    }
-}
-
-/// Is this macro a `write!` or a `writeln!`?
-fn is_write_macro_path(mac: &syn::Macro) -> bool {
-    let name = mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-    matches!(name.as_str(), "write" | "writeln")
-}
-
-/// The `write!`/`writeln!` an expression is, through the `?` it may carry.
-pub(crate) fn as_write_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
-    match expr {
-        syn::Expr::Try(try_expr) => as_write_macro(&try_expr.expr),
-        syn::Expr::Paren(p) => as_write_macro(&p.expr),
-        _ if is_write_macro(expr) => extract_macro(expr),
-        _ => None,
-    }
-}
-
-/// The write a formatter statement performs, and whether the statement LEAVES
-/// the formatter having performed it.
-///
-/// `write!(f, "..")` appends and carries on; `return write!(f, "..")` appends
-/// and then answers what the formatter has composed. The second was read as an
-/// ordinary `return`, so the string it wrote became the whole answer and
-/// everything written before it was discarded: `Display for Size` answered
-/// `'big)'` where Rust answers `Size(big)`.
-pub(crate) fn formatter_write(expr: &syn::Expr) -> Option<(&syn::Macro, bool)> {
-    match expr {
-        syn::Expr::Return(ret) => {
-            let value = ret.expr.as_deref()?;
-            as_write_macro(value).map(|mac| (mac, true))
-        }
-        _ => as_write_macro(expr).map(|mac| (mac, false)),
-    }
-}
-
-/// Extract the Macro from an expression (for write! detection)
-fn extract_macro(expr: &syn::Expr) -> Option<&syn::Macro> {
-    if let syn::Expr::Macro(mac) = expr {
-        Some(&mac.mac)
-    } else {
-        None
-    }
-}
-
-/// Check if a match expression has arms that are write! macro calls (Display pattern)
-fn is_match_with_write_arms(expr: &syn::Expr) -> bool {
-    if let syn::Expr::Match(m) = expr {
-        m.arms.iter().any(|arm| {
-            matches!(&*arm.body, syn::Expr::Try(t) if is_write_macro(&t.expr))
-        })
-    } else {
-        false
-    }
-}
-
+/// Translate a single expression (used by match_expr, control_flow, macros modules)
 /// Extract a single expression from a block (for ternary conversion)
 
 // ── Public entry points ─────────────────────────────────────────────────
-
-/// Translate a single expression (used by match_expr, control_flow, macros modules)
 pub fn translate_expr(expr: &syn::Expr) -> String {
     BodyTranslator::new("Self").expr(expr)
 }
@@ -117,16 +25,8 @@ pub fn translate_pat(pat: &syn::Pat) -> String {
     BodyTranslator::pat_static(pat)
 }
 
-/// Indent each line by 2 spaces
-/// The text of an R12 hole: what an emitted file carries where the port has no
-/// lowering for a Rust shape.
-///
-/// One spelling, in one place, so a hole is greppable in emitted output and the
-/// harness can hold a ledger of them. `unsupported` answers `never`, so this
-/// stands wherever the expression it replaces stood.
-pub fn hole_text(what: &str) -> String {
-    format!("unsupported({})", quoted(what))
-}
+
+
 
 pub fn indent(s: &str) -> String {
     s.lines()
@@ -384,7 +284,7 @@ impl<'a> BodyTranslator<'a> {
 
             syn::Expr::Field(field) => {
                 let (receiver, member) = self.field_parts(field);
-                format!("{}.{}", receiver, member)
+                crate::body::places::join_member(&receiver, &member)
             }
 
             syn::Expr::MethodCall(call) => {
@@ -393,8 +293,11 @@ impl<'a> BodyTranslator<'a> {
                 // `assert_eq!(id, from_str(&s).unwrap())` says the parse
                 // produces an `EntityId`, and nothing else does.
                 let through = self.receiver_expectation(call, expected.as_ref());
+                // I6: a receiver is a value position. `(if ok { a } else { b })
+                // .len()` written through `expr` put an `if` statement in front
+                // of the `.`, which does not parse.
                 let receiver = self.expecting(&call.receiver, through.as_ref(), || {
-                    self.expr(&call.receiver)
+                    self.expr_value(&call.receiver)
                 });
                 let receiver = self.hoist_receiver(call, receiver);
                 let receiver = parenthesise_receiver(&call.receiver, receiver);
@@ -649,6 +552,15 @@ impl<'a> BodyTranslator<'a> {
                 // the callee cannot see which. `invoke` is the one place that
                 // tells them apart.
                 if let Some(helper) = self.bound_closure_helper(&call.func) {
+                    // J3: the statement's move flag says the callee was handed
+                    // over, and it is written before everything the statement
+                    // evaluates. An argument that THROWS before the call starts
+                    // therefore left the flag set and nothing releasing the
+                    // closure — `signals`' `Memo::with_cached` passes
+                    // `guard.value ?? throw`, which is exactly that shape. Each
+                    // argument that is not a place is given a name above the
+                    // flag, so the flag stands after everything that can throw.
+                    let args = self.lifted_above_the_flag(&call.func, &call.args, args);
                     let mut through = vec![func.clone()];
                     through.extend(args.iter().cloned());
                     return format!("{}({})", helper, through.join(", "));
@@ -991,7 +903,12 @@ impl<'a> BodyTranslator<'a> {
                 // `[Owned::new()][0]` reads out of a sequence the expression
                 // itself built, and that sequence is a temporary Rust drops at
                 // the end of the statement.
-                let base = self.expr(&idx.expr);
+                //
+                // I6: the base is a VALUE position too, and `expr` writes an
+                // `if` as an `if` STATEMENT — `(if ok { a } else { b })[0]` did
+                // not parse, and nothing reported it. R3 said this of the
+                // OPERAND alone; every part of an index is a value.
+                let base = self.expr_value(&idx.expr);
                 let base = self.hoist_produced(&idx.expr, base);
                 let base = parenthesise_receiver(&idx.expr, base);
                 // R3: an operand is a VALUE position — `v[if ok {1} else {2}]`
@@ -1090,25 +1007,7 @@ impl<'a> BodyTranslator<'a> {
                 format!("await {}", self.expr_value(&await_expr.base))
             }
 
-            // A range is a value in Rust — `(0..n).rev()` calls a method on one
-            // — and the port has no type for it. It used to be written as a
-            // comment, which is not an expression: `(/* range 0..n */).rev()`
-            // does not parse, and one of those stopped the compiler from
-            // checking the rest of the file it was in. `undefined` parses and
-            // is wrong, which is what the diagnostic says.
-            syn::Expr::Range(range) => {
-                let from = range.start.as_ref().map(|e| self.expr(e)).unwrap_or_default();
-                let to = range.end.as_ref().map(|e| self.expr(e)).unwrap_or_default();
-                self.fallback(
-                    syn::spanned::Spanned::span(range),
-                    format!(
-                        "the range types in `std::ops` are not declared, so `{}..{}` is \
-                         written as `undefined`",
-                        from, to
-                    ),
-                );
-                format!("undefined /* range {}..{} */", from, to)
-            }
+            syn::Expr::Range(range) => self.range_value(range),
 
             syn::Expr::Cast(cast) => self.cast(cast),
 
@@ -1440,6 +1339,8 @@ impl<'a> BodyTranslator<'a> {
 }
 
 /// What a call, a match or an operator takes away from the block that held it.
+mod holes;
+pub use holes::{hole_text, holes_written};
 mod consumes;
 
 /// A block, and the statements in it.
@@ -1464,7 +1365,13 @@ pub(crate) mod calls;
 mod pre_dispatch;
 
 /// Reading a field, and the places a value moves out of.
-mod places;
+pub(crate) mod cells;
+mod items;
+mod ranges;
+mod writes;
+pub(crate) use writes::*;
+mod flags;
+pub(crate) mod places;
 
 /// A path in expression position, and the values a path names.
 mod paths;

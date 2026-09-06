@@ -1,9 +1,10 @@
 // MIRRORS: ankurah/core/src/type_resolver.rs
 import { Struct, dropOwned, dropUnbound } from '@ankurah/base';
-import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
+import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { Comparison } from './lineage';
 import { Json } from './property/value/json';
-import { ValueType } from './value/index';
+import { Value_castTo } from './value/cast';
+import { Value, ValueType } from './value/index';
 import { EntityId } from '@ankurah/proto';
 
 export class TypeResolver extends Struct {
@@ -38,18 +39,22 @@ export class TypeResolver extends Struct {
   }
 
   static literalToJson(literal: Literal): Literal {
-    const value = literal;
-    const _v = value.castTo(new ValueType('Json', {}));
-    if (_v.isOk()) {
-      const jsonValue = _v.unwrap();
-      return jsonValue;
-    } else {
-      const _v1 = _v.unwrapErr();
-      try {
-        return literal.clone();
-      } finally {
-        dropOwned(_v1);
+    const value = Value.fromRefAstLiteral(literal);
+    try {
+      const _v = Value_castTo(value, new ValueType('Json', {}));
+      if (_v.isOk()) {
+        const jsonValue = _v.unwrap();
+        return Literal.fromValue(jsonValue);
+      } else {
+        const _v1 = _v.unwrapErr();
+        try {
+          return literal.clone();
+        } finally {
+          _v1.drop();
+        }
       }
+    } finally {
+      value.drop();
     }
   }
 
@@ -76,18 +81,22 @@ export class TypeResolver extends Struct {
       const { _0: lit } = _v[0].value;
       const target = _v[1];
       {
-        const value = (lit);
-        const _v1 = value.castTo(target);
-        if (_v1.isOk()) {
-          const casted = _v1.unwrap();
-          return new Expr('Literal', { _0: casted });
-        } else {
-          const _v2 = _v1.unwrapErr();
-          try {
-            return new Expr('Literal', { _0: lit });
-          } finally {
-            dropOwned(_v2);
+        const value = Value.fromAstLiteral((lit));
+        try {
+          const _v1 = Value_castTo(value, target);
+          if (_v1.isOk()) {
+            const casted = _v1.unwrap();
+            return new Expr('Literal', { _0: Literal.fromValue(casted) });
+          } else {
+            const _v2 = _v1.unwrapErr();
+            try {
+              return new Expr('Literal', { _0: lit });
+            } finally {
+              _v2.drop();
+            }
           }
+        } finally {
+          value.drop();
         }
       }
     } else {

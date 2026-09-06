@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/retrieval.rs
-import { Struct, Result, Arc, Mutex, dropOwned, dropUnbound, unsupported, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, dropOwned, dropUnbound, HashMap, HashSet } from '@ankurah/base';
 import { Attested, Clock, EntityId, EntityState, Event, EventId, CollectionId, NodeRequestBody } from '@ankurah/proto';
 import { MutationError, RetrievalError } from './error';
 import { Node } from './node';
@@ -49,7 +49,7 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
   async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
     let events = [];
     let _moved0 = false;
-    const eventIds_1 = HashSet.from([...eventIds]);
+    let eventIds_1 = HashSet.from([...eventIds]);
     try {
       const _t1 = this._0.value.stagedEvents.lock();
       try {
@@ -220,7 +220,7 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
   async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
     let events = [];
     let _moved0 = false;
-    const eventIds_1 = HashSet.from([...eventIds]);
+    let eventIds_1 = HashSet.from([...eventIds]);
     try {
       const _t1 = this.stagedEvents.lock();
       try {
@@ -280,7 +280,7 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
         }
         const peerId = _v2;
         _moved0 = true;
-        const _r7 = await this.node.request(peerId, this.cdata, new NodeRequestBody('GetEvents', { collection: this.collection.clone(), eventIds: unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into') }));
+        const _r7 = await this.node.request(peerId, this.cdata, new NodeRequestBody('GetEvents', { collection: this.collection.clone(), eventIds: [...eventIds_1] }));
         if (_r7.isErr()) return Result.Err(RetrievalError.fromRequestError(_r7.unwrapErr()));
         const _m10 = await (_r7.unwrap().intoMatch<any>({
           GetEvents: async (v) => {

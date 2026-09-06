@@ -279,3 +279,49 @@ fn a_result_arm_releases_a_payload_the_engine_cannot_name() {
     let ts = fixture.translated_method("lib.rs", "f");
     assert!(ts.contains("dropOwned(_v2)"), "the Missing arm owns the error:\n{ts}");
 }
+
+/// An ITERATOR is a JavaScript array of what it HANDS OUT, and what it hands
+/// out is its `Iterator::Item`. `slice::Iter<'a, T>` hands out `&'a T`, so the
+/// array a `.iter()` spreads into holds borrows and owes nothing. Reading the
+/// type ARGUMENT instead answered "an array of `Cell`", and the emitted
+/// `dropOwned(_t0)` released the caller's own elements: live at
+/// `storage-common`'s `build_bounds`, over a `&[(String, Value)]`.
+#[test]
+fn iterating_a_borrowed_sequence_releases_nothing_the_caller_owns() {
+    let ts = body(
+        "pub fn f(cells: &Vec<Cell>) -> bool { cells.iter().any(|c| c.value > 0) }",
+        "f",
+    );
+    assert!(!ts.contains("dropOwned("), "a borrowed iteration releases nothing:\n{ts}");
+}
+
+/// The other side of the same question: a local the function OWNS keeps its own
+/// release, and `.iter()` over it adds no second one.
+#[test]
+fn a_borrowed_iteration_over_an_owned_local_leaves_the_locals_release_alone() {
+    let ts = body(
+        "pub fn f() -> bool {\n\
+         let cells = vec![Cell { value: 1 }];\n\
+         cells.iter().any(|c| c.value > 0) }",
+        "f",
+    );
+    assert_eq!(
+        ts.matches("dropOwned(").count(),
+        1,
+        "exactly the local's own release, and no release of the iteration:\n{ts}"
+    );
+    assert!(ts.contains("dropOwned(cells)"), "and it is the local's:\n{ts}");
+}
+
+/// `Cloned<I>` is the same question the other way: its `Item` is the CLONE, so
+/// the sequence it builds owns what is in it and the scope does owe a release.
+#[test]
+fn a_cloning_adaptor_owns_what_it_cloned() {
+    let ts = body(
+        "pub fn f(cells: &Vec<Cell>) -> u32 {\n\
+         let owned: Vec<Cell> = cells.iter().cloned().collect();\n\
+         owned.len() as u32 }",
+        "f",
+    );
+    assert!(ts.contains("dropOwned(owned)"), "the clones are released:\n{ts}");
+}

@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Status, SubscriptionRelay } from './client_relay';
-import { AnyhowError, Arc, Mutex, Result, Struct } from '@ankurah/base';
+import { AnyhowError, Arc, Mutex, Result, Struct, valueEquals } from '@ankurah/base';
 import { RequestError } from '../error';
 import { Predicate, Selection } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
@@ -167,7 +167,7 @@ describe('client_relay unit tests', () => {
         if (!(((_v1) => {
           if (!(_v1 != null && (_v1.is('Established')))) return false;
           const { _0: establishedPeerId } = _v1.value;
-          return establishedPeerId === peerId;
+          return valueEquals(establishedPeerId, peerId);
         })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
         predicate.drop();
@@ -192,7 +192,7 @@ describe('client_relay unit tests', () => {
       if (!(((_v) => {
         if (!(_v != null && (_v.is('Established')))) return false;
         const { _0: establishedPeerId } = _v.value;
-        return establishedPeerId === peerId;
+        return valueEquals(establishedPeerId, peerId);
       })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       relay.notifyPeerDisconnected(peerId);
       if (!(((_v1) => {
@@ -229,7 +229,7 @@ describe('client_relay unit tests', () => {
         if (!(((_v1) => {
           if (!(_v1 != null && (_v1.is('Established')))) return false;
           const { _0: establishedPeerId } = _v1.value;
-          return establishedPeerId === peerId;
+          return valueEquals(establishedPeerId, peerId);
         })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
         predicate.drop();
@@ -255,7 +255,7 @@ describe('client_relay unit tests', () => {
         if (!(((_v) => {
           if (!(_v != null && (_v.is('Established')))) return false;
           const { _0: establishedPeerId } = _v.value;
-          return establishedPeerId === peerId;
+          return valueEquals(establishedPeerId, peerId);
         })(relay.getStatus(queryId)))) throw new Error('assertion failed');
         relay.notifyPeerDisconnected(peerId);
         if (!(((_v1) => {
@@ -318,7 +318,7 @@ describe('client_relay unit tests', () => {
         if (!(((_v2) => {
           if (!(_v2 != null && (_v2.is('Established')))) return false;
           const { _0: establishedPeerId } = _v2.value;
-          return establishedPeerId === peerId;
+          return valueEquals(establishedPeerId, peerId);
         })(relay.getStatus(retryableQueryId)))) throw new Error('assertion failed');
         if (!(((_v3) => {
           if (!(_v3 != null && (_v3.is('Failed')))) return false;
@@ -347,7 +347,7 @@ describe('client_relay unit tests', () => {
       if (!(((_v) => {
         if (!(_v != null && (_v.is('Established')))) return false;
         const { _0: establishedPeerId } = _v.value;
-        return establishedPeerId === peerId;
+        return valueEquals(establishedPeerId, peerId);
       })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       mockSender.clearSentRequests();
       relay.unsubscribePredicate(queryId);
@@ -392,7 +392,7 @@ describe('client_relay unit tests', () => {
         if (!(((_v2) => {
           if (!(_v2 != null && (_v2.is('Established')))) return false;
           const { _0: establishedPeerId } = _v2.value;
-          return establishedPeerId === peerId;
+          return valueEquals(establishedPeerId, peerId);
         })(relay.getStatus(queryId)))) throw new Error('assertion failed');
         expect(mockSender.getSentRequests().length).toEqual(1);
       } finally {

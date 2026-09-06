@@ -11,7 +11,7 @@
 //! reported, naming what was tried.
 
 use super::impls::{head_of, Bound, Head, ImplId};
-use super::{ModuleId, Ns, TypeRegistry};
+use super::{ModuleId, TypeRegistry};
 use crate::ty::subst::Subst;
 use crate::types::SelfKind;
 use crate::ty::{bind_params, TraitRef, Ty, TypeId};
@@ -538,7 +538,7 @@ impl<'a> Probe<'a> {
     }
 
     /// The trait a callee came through, when it came through one.
-    fn trait_of(&self, callee: &Callee) -> Option<TypeId> {
+    pub(super) fn trait_of(&self, callee: &Callee) -> Option<TypeId> {
         match callee {
             Callee::Inherent(..) => None,
             Callee::TraitObject(id, _) => Some(*id),
@@ -548,25 +548,6 @@ impl<'a> Probe<'a> {
         }
     }
 
-    /// Is the trait this callee came from nameable from the module that wrote
-    /// the call?
-    ///
-    /// Rust needs the trait in scope for the method to exist at all. The engine
-    /// only *reports* a sole candidate whose trait it cannot name, rather than
-    /// deleting the method: the answer would then depend on the `use` map being
-    /// complete, and a gap there would silently remove a method instead of
-    /// showing up in the diagnostics. Where two candidates compete it does
-    /// decide, because there the answer turns on it.
-    fn trait_in_scope(&self, callee: &Callee) -> bool {
-        let Some(trait_id) = self.trait_of(callee) else {
-            return true;
-        };
-        let name = self.reg.name_of(trait_id);
-        matches!(
-            self.reg.lookup(self.module, Ns::Type, &[name]),
-            Ok(Some(super::Def::Type(found))) if found == trait_id
-        )
-    }
 
     /// Methods declared by a trait the candidate is known to implement because
     /// it *is* that trait: `dyn Trait`, or a parameter carrying the bound.
@@ -1027,21 +1008,6 @@ impl FieldResolution {
 }
 
 impl<'a> Probe<'a> {
-    /// The type of `expr.field`, walking the same chain method calls walk.
-    pub fn resolve_field(&self, receiver: &Ty, field: &str) -> Option<FieldResolution> {
-        let steps = self.deref_chain(receiver).ok()?;
-        let mut candidates: Vec<Ty> = vec![receiver.clone()];
-        candidates.extend(steps.iter().map(|s| s.to.clone()));
-        for (depth, candidate) in candidates.iter().enumerate() {
-            if let Some(ty) = self.field_on(candidate, field) {
-                return Some(FieldResolution {
-                    ty: self.normalize(&ty),
-                    steps: steps[..depth].to_vec(),
-                });
-            }
-        }
-        None
-    }
 
     /// Does an impl written for this exact type declare a method of that name,
     /// without dereferencing to find it? The unresolved-call path in the
@@ -1054,17 +1020,6 @@ impl<'a> Probe<'a> {
         })
     }
 
-    fn field_on(&self, ty: &Ty, field: &str) -> Option<Ty> {
-        let Ty::Named { id, args } = ty else {
-            return None;
-        };
-        let def = self.reg.def(*id)?;
-        let subst = bind_params(&def.type_params, args);
-        def.fields
-            .iter()
-            .find(|(name, _)| name == field)
-            .map(|(_, ty)| ty.substitute(&subst))
-    }
 }
 
 /// Bounds written on a trait declaration or an impl block, keyed by the

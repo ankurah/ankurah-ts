@@ -1,6 +1,6 @@
 // TS-ONLY: Tests for the value-keyed HashMap and HashSet (src/std/hash_map.ts).
 import { describe, test, expect, afterEach } from 'bun:test';
-import { HashMap, HashSet, Struct, Drop, clearFatalLatch, keyHash, derivedEquals, derivedClone, derivedHash } from '../src/index.ts';
+import { HashMap, HashSet, Struct, Drop, OwnedClosure, clearFatalLatch, keyHash, derivedEquals, derivedClone, derivedHash } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
 installOwnershipTestHooks();
@@ -687,6 +687,38 @@ describe('intoEntries hands the pairs over and consumes the map', () => {
   });
 });
 
+describe('and_modify', () => {
+  // I9: `and_modify` was outside the finisher family, so it fell to the name
+  // table and emitted `andModify(..)` on a `MapEntry` that had no such method.
+  test('the closure sees the value only where there is one, and writes through the map', () => {
+    const counts = new HashMap<string, number>();
+    counts.set('a', 1);
+    counts.entry('a').andModify((n) => { n.value = n.value + 10; }).orInsert(0);
+    expect(counts.get('a')).toBe(11);
+    // Nothing under 'b': the closure is not called, and `or_insert` puts 7 there.
+    counts.entry('b').andModify((n) => { n.value = 99; }).orInsert(7);
+    expect(counts.get('b')).toBe(7);
+    counts.drop();
+  });
+
+  test('the entry comes back, so a finisher can follow it', () => {
+    const counts = new HashMap<string, number>();
+    const slot = counts.entry('a').andModify(() => {}).orInsert(3);
+    expect(slot.value).toBe(3);
+    counts.drop();
+  });
+
+  // Rust takes `f` by value and drops it whether or not it calls it.
+  test('a closure that owns captures is released on the path that does not call it', () => {
+    const counts = new HashMap<string, number>();
+    const held = new Id(new Uint8Array([1]));
+    const change = new OwnedClosure([held], () => { /* never runs */ });
+    counts.entry('missing').andModify(change);
+    expect(held.isDropped).toBe(true);
+    counts.drop();
+  });
+});
+
 describe('a container clone that throws leaves nothing behind', () => {
   /** A value whose `clone()` throws once a set number of clones have been made. */
   class Fragile extends Struct {
@@ -738,6 +770,61 @@ describe('a container clone that throws leaves nothing behind', () => {
     set.add(new Fragile(2));
     expect(() => set.clone()).toThrow('clone failed');
     everyCloneWasReleased(1);
+    set.drop();
+  });
+
+  // J5: cloning every element is only half of it. The INSERTION phase hashes
+  // each key, and a key whose `hash()` throws part way through left a
+  // registered half-built destination to nobody and gave everything already in
+  // it two owners — the destination and the list of clones.
+  /** A value that clones happily and refuses to hash after the Nth time. */
+  class Brittle extends Struct {
+    static made: Brittle[] = [];
+    static hashesBeforeFailing = Infinity;
+    static hashed = 0;
+    constructor(readonly n: number) { super(`Brittle(${n})`); }
+    hash(): string {
+      if (Brittle.hashed++ >= Brittle.hashesBeforeFailing) throw new Error('hash failed');
+      return String(this.n);
+    }
+    equals(other: Brittle): boolean { return other.n === this.n; }
+    clone(): Brittle {
+      const copy = new Brittle(this.n);
+      Brittle.made.push(copy);
+      return copy;
+    }
+  }
+
+  function everyBrittleCloneWasReleased(count: number): void {
+    expect(Brittle.made.length).toBe(count);
+    expect(Brittle.made.filter((c) => !c.isDropped)).toEqual([]);
+  }
+
+  test('a map whose key refuses to hash part way through builds no map at all', () => {
+    const map = new HashMap<Brittle, Brittle>();
+    map.set(new Brittle(1), new Brittle(10));
+    map.set(new Brittle(2), new Brittle(20));
+    // From here: two clones per pair, then one hash per insertion. The second
+    // insertion's hash is the one that throws.
+    Brittle.made = [];
+    Brittle.hashed = 0;
+    Brittle.hashesBeforeFailing = 1;
+    expect(() => map.clone()).toThrow('hash failed');
+    everyBrittleCloneWasReleased(4);
+    Brittle.hashesBeforeFailing = Infinity;
+    map.drop();
+  });
+
+  test('a set whose value refuses to hash part way through builds no set at all', () => {
+    const set = new HashSet<Brittle>();
+    set.add(new Brittle(1));
+    set.add(new Brittle(2));
+    Brittle.made = [];
+    Brittle.hashed = 0;
+    Brittle.hashesBeforeFailing = 1;
+    expect(() => set.clone()).toThrow('hash failed');
+    everyBrittleCloneWasReleased(2);
+    Brittle.hashesBeforeFailing = Infinity;
     set.drop();
   });
 });

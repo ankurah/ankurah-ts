@@ -40,7 +40,26 @@ export { AsyncMutex, AsyncMutexGuard } from './std/async_mutex.ts';
 export { RefCell, Ref, RefMut } from './std/cell.ts';
 export { Borrow, BorrowMut } from './std/borrow.ts';
 export { ThreadLocal } from './std/thread_local.ts';
-export { HashMap, HashSet, MapEntry, keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, type Hashable } from './std/hash_map.ts';
+export { HashMap, HashSet, MapEntry, keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, valueEquals, valueNotEquals, type Hashable } from './std/hash_map.ts';
+// J1: the iterator adaptors Rust answers an `Option` with. JavaScript's nearest
+// spellings answer `-1` and `undefined`, and `-1 != null` reads as PRESENT.
+export {
+  iterPosition,
+  iterRposition,
+  iterFind,
+  iterFindMap,
+  iterLast,
+  iterFilterMap,
+  range,
+  rangeIncl,
+  iterFirst,
+  iterGet,
+  iterMaxBy,
+  iterMinBy,
+  iterMaxByKey,
+  iterMinByKey,
+  iterReduce,
+} from './std/iter.ts';
 // Rust's eager `&` and `|` on booleans, which JavaScript's `&&` and `||` are not.
 export {
   boolAnd,

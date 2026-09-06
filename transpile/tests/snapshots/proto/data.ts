@@ -45,7 +45,7 @@ export class Event extends Struct {
   }
 
   debug(): string {
-    return `Event { collection: ${this.collection.debug()}, entityId: ${this.entityId}, operations: ${this.operations.debug()}, parent: ${this.parent} }`;
+    return `Event { collection: ${this.collection.debug()}, entityId: ${this.entityId.debug()}, operations: ${this.operations.debug()}, parent: ${this.parent.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -151,7 +151,7 @@ export class EventFragment extends Struct {
   }
 
   debug(): string {
-    return `EventFragment { operations: ${this.operations.debug()}, parent: ${this.parent}, attestations: ${this.attestations.debug()} }`;
+    return `EventFragment { operations: ${this.operations.debug()}, parent: ${this.parent.debug()}, attestations: ${this.attestations.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -323,7 +323,7 @@ export class OperationSet extends Struct {
   }
 
   debug(): string {
-    return `OperationSet(${this._0})`;
+    return `OperationSet(${`{${Array.from(this._0).map(($p) => `${JSON.stringify($p[0])}: ${`[${Array.from($p[1]).map((e) => e.debug()).join(', ')}]`}`).join(', ')}}`})`;
   }
 
   get size(): number {
@@ -462,7 +462,7 @@ export class EntityState extends Struct {
   }
 
   debug(): string {
-    return `EntityState { entityId: ${this.entityId}, collection: ${this.collection.debug()}, state: ${this.state.debug()} }`;
+    return `EntityState { entityId: ${this.entityId.debug()}, collection: ${this.collection.debug()}, state: ${this.state.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -552,7 +552,7 @@ export class State extends Struct {
   }
 
   debug(): string {
-    return `State { stateBuffers: ${this.stateBuffers.debug()}, head: ${this.head} }`;
+    return `State { stateBuffers: ${this.stateBuffers.debug()}, head: ${this.head.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -630,7 +630,7 @@ export class StateBuffers extends Struct {
   }
 
   debug(): string {
-    return `StateBuffers(${this._0})`;
+    return `StateBuffers(${`{${Array.from(this._0).map(($p) => `${JSON.stringify($p[0])}: ${`[${Array.from($p[1]).map((e) => String(e)).join(', ')}]`}`).join(', ')}}`})`;
   }
 
   get size(): number {

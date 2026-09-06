@@ -87,12 +87,20 @@ impl BodyTranslator<'_> {
 
         // No type at all — the methods that translate the same way whatever the
         // receiver is.
+        //
+        // I2: the refusal is reported at the RECEIVER, not at `call_site()`,
+        // which has no position and printed the whole family at line 1 column 1
+        // — where nothing anybody can read stands. The receiver's span is in
+        // scope on every path that reaches here; only a caller that handed none
+        // over has nothing better to say.
         self.render_translation(
             native_types::translate_untyped(receiver, rust_method, args),
             receiver,
             ts_method,
             args,
-            proc_macro2::Span::call_site(),
+            receiver_expr
+                .map(syn::spanned::Spanned::span)
+                .unwrap_or_else(proc_macro2::Span::call_site),
         )
     }
 
@@ -460,5 +468,42 @@ fn reads_the_same_twice(expr: &syn::Expr) -> bool {
                 && reads_the_same_twice(&call.receiver)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    /// I2: a refusal on the by-name path used to be filed at `Span::call_site`,
+    /// which has no position, so `translate_untyped`'s whole family printed at
+    /// line 1 column 1 — where nothing anybody can read stands. The receiver's
+    /// span is what says where the call is.
+    #[test]
+    fn a_by_name_refusal_reports_at_the_receiver() {
+        let mut c = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Bag { pub n: u8 }\n\
+             impl Bag {\n\
+             pub fn go(&self, k: String) {\n\
+             let m = whatever();\n\
+             m.entry(k).or_default();\n\
+             }\n\
+             }",
+        )]);
+        let _ = c.translated_method("lib.rs", "go");
+        let filed: Vec<(usize, usize, String)> = c
+            .located()
+            .into_iter()
+            .filter(|(_, _, m)| m.contains("finishes a `map.entry(..)`"))
+            .collect();
+        assert_eq!(filed.len(), 1, "{:?}", c.located());
+        let (line, col, _) = &filed[0];
+        assert!(
+            (*line, *col) != (1, 1),
+            "the refusal is filed where the call is, not at line 1: {:?}",
+            filed
+        );
+        assert_eq!(*line, 5, "the receiver's own line: {:?}", filed);
     }
 }

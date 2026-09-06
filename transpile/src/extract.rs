@@ -1,7 +1,13 @@
 //! Rust source extraction via syn
 //!
 //! Parses .rs files and extracts structs, enums, traits, functions,
-//! impl blocks, use statements into the intermediate data structures.
+//! impl blocks, mod and use statements into the intermediate data structures.
+
+mod attrs;
+use attrs::{has_from_attr, has_source_attr, serde_with_attr};
+mod uses;
+use uses::{body_uses, extract_use};
+pub(crate) use uses::UseInfo;
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -103,6 +109,9 @@ pub(crate) fn report_undecided_cfg(span: proc_macro2::Span, text: &str) {
         ),
     );
 }
+
+
+
 
 /// Read one module's items into `file`. A file's top level and an inline
 /// `mod x { .. }` are the same thing to Rust, so they are read by the same walk.
@@ -277,6 +286,23 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
             _ => {}
         }
     }
+    // Every `use` a body wrote, hoisted to the module (see `BodyUses`). Read
+    // from the extracted bodies rather than the raw items, so a statement a
+    // `#[cfg]` pruned brings no binding with it.
+    let mut hoisted: Vec<UseInfo> = Vec::new();
+    let fns = file
+        .functions
+        .iter()
+        .chain(&file.test_functions)
+        .chain(&file.test_helpers)
+        .chain(file.impls.iter().flat_map(|i| i.methods.iter()))
+        .chain(file.traits.iter().flat_map(|t| t.methods.iter()));
+    for f in fns {
+        if let Some(block) = &f.body_ast {
+            body_uses(block, &mut hoisted);
+        }
+    }
+    file.uses.extend(hoisted);
 }
 
 fn is_public(vis: &Visibility) -> bool {
@@ -708,6 +734,7 @@ fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn
         is_test: is_test_fn(attrs),
         body_ast: None,
         body_ts: None,
+        body_has_hole: false,
     }
 }
 
@@ -811,94 +838,11 @@ fn receiver_kind(r: &syn::Receiver) -> SelfKind {
     }
 }
 
-fn extract_use(u: &syn::ItemUse) -> UseInfo {
-    let mut bindings = Vec::new();
-    collect_use_bindings(&u.tree, &mut Vec::new(), &mut bindings);
-    UseInfo { path: use_tree_to_string(&u.tree), vis: visibility(&u.vis), bindings }
-}
 
-/// Flatten a `use` tree into the names it binds. `use a::{b, c as d}` binds `b`
-/// to `a::b` and `d` to `a::c`; `use a::*` binds nothing under a name and is
-/// recorded as a glob over `a`.
-fn collect_use_bindings(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseBindingInfo>) {
-    match tree {
-        syn::UseTree::Path(p) => {
-            prefix.push(p.ident.to_string());
-            collect_use_bindings(&p.tree, prefix, out);
-            prefix.pop();
-        }
-        // `use a::b::{self}` binds `b` to `a::b`, not a name called "self".
-        syn::UseTree::Name(n) if n.ident == "self" => {
-            if let Some(parent) = prefix.last().cloned() {
-                out.push(UseBindingInfo { local: Some(parent), path: prefix.clone() });
-            }
-        }
-        syn::UseTree::Rename(r) if r.ident == "self" => {
-            out.push(UseBindingInfo { local: Some(r.rename.to_string()), path: prefix.clone() });
-        }
-        syn::UseTree::Name(n) => {
-            let mut path = prefix.clone();
-            path.push(n.ident.to_string());
-            out.push(UseBindingInfo { local: Some(n.ident.to_string()), path });
-        }
-        syn::UseTree::Rename(r) => {
-            let mut path = prefix.clone();
-            path.push(r.ident.to_string());
-            out.push(UseBindingInfo { local: Some(r.rename.to_string()), path });
-        }
-        syn::UseTree::Glob(_) => {
-            out.push(UseBindingInfo { local: None, path: prefix.clone() });
-        }
-        syn::UseTree::Group(g) => {
-            for item in &g.items {
-                collect_use_bindings(item, prefix, out);
-            }
-        }
-    }
-}
 
-fn use_tree_to_string(tree: &syn::UseTree) -> String {
-    match tree {
-        syn::UseTree::Path(p) => format!("{}::{}", p.ident, use_tree_to_string(&p.tree)),
-        syn::UseTree::Name(n) => n.ident.to_string(),
-        syn::UseTree::Rename(r) => format!("{} as {}", r.ident, r.rename),
-        syn::UseTree::Glob(_) => "*".to_string(),
-        syn::UseTree::Group(g) => {
-            let items: Vec<String> = g.items.iter().map(|t| use_tree_to_string(t)).collect();
-            format!("{{{}}}", items.join(", "))
-        }
-    }
-}
 
-/// `#[from]` on a field of a `thiserror` enum. The attribute is thiserror's
-/// instruction to write an `impl From` for the enum, and it implies `#[source]`
-/// — which is why `#[source]` alone does not count here.
-fn has_from_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| a.path().is_ident("from"))
-}
 
-/// Is this the error the variant wraps? `#[from]` implies `#[source]`, which is
-/// how thiserror reads it.
-fn has_source_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| a.path().is_ident("source") || a.path().is_ident("from"))
-}
 
-/// The module named by `#[serde(with = "..")]`, if the field carries one.
-fn serde_with_attr(attrs: &[syn::Attribute]) -> Option<String> {
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let tokens = attr.meta.to_token_stream().to_string();
-        if let Some(at) = tokens.find("with") {
-            let rest = &tokens[at + 4..];
-            let start = rest.find('"')? + 1;
-            let end = rest[start..].find('"')? + start;
-            return Some(rest[start..end].to_string());
-        }
-    }
-    None
-}
 
 /// One declaration's fields, minus the ones this build leaves out.
 ///

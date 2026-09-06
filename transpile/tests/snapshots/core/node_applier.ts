@@ -312,7 +312,7 @@ export class NodeApplier extends Struct {
                 const entity = _r8.unwrap();
                 try {
                   _moved7 = true;
-                  for (const event of [...attestedEvents].rev()) {
+                  for (const event of [...attestedEvents].slice().reverse()) {
                     try {
                       const _r10 = await entity.applyEvent(retriever, event.payload);
                       if (_r10.isErr()) return Result.Err(_r10.unwrapErr());

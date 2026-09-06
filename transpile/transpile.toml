@@ -351,28 +351,32 @@ reason = "the bincode reader and writer; `bincode` is a crate in Rust and a modu
 # it changed nothing.
 
 [provided_impls]
-# `reads_json` says whether the hand-written file declares `static fromJson`.
+# `reads_json` says whether the hand-written file declares `static fromJson`,
+# and `has_debug` whether it declares `debug(): string`. Both are facts only the
+# entry can state: the engine never reads the TypeScript it did not write, and a
+# `#[derive(Debug)]` on a type holding one of these printed the field through
+# `toString` — `[object Object]` for a class — until the entry said otherwise.
 # The engine never reads TypeScript it did not write, so this is the only place
 # that fact can be stated; a type that does not declare one is refused a JSON
 # half, and so is anything holding it.
 # Custom impl Serialize/Deserialize (raw bytes + base64) — not derive-based
 # TODO: transpilable if we add (1) base64.provided.ts module, (2) provided_redirect
 # for base64 crate, (3) transpiler support for custom impl Serialize (not just derive)
-"ankurah_proto::id::EntityId" = { path = "id.provided", reads_json = true }
-"ankurah_proto::data::EventId" = { path = "id.provided", reads_json = true }
+"ankurah_proto::id::EntityId" = { path = "id.provided", reads_json = true, has_debug = true }
+"ankurah_proto::data::EventId" = { path = "id.provided", reads_json = true, has_debug = true }
 
 # Ulid wrappers — depend on ULID generation/encoding infrastructure
 # TODO: transpilable by mapping Ulid→string in name_map + providing Ulid utility
 # class with new()/fromParts(). Serde would work since Ulid serializes as string.
-"ankurah_proto::transaction::TransactionId" = { path = "id.provided", reads_json = true }
-"ankurah_proto::request::RequestId" = { path = "id.provided", reads_json = true }
-"ankurah_proto::subscription::QueryId" = { path = "id.provided", reads_json = true }
-"ankurah_proto::update::UpdateId" = { path = "id.provided", reads_json = true }
+"ankurah_proto::transaction::TransactionId" = { path = "id.provided", reads_json = true, has_debug = true }
+"ankurah_proto::request::RequestId" = { path = "id.provided", reads_json = true, has_debug = true }
+"ankurah_proto::subscription::QueryId" = { path = "id.provided", reads_json = true, has_debug = true }
+"ankurah_proto::update::UpdateId" = { path = "id.provided", reads_json = true, has_debug = true }
 
 # Complex method bodies (binary_search, try_into, iterator combinators)
 # TODO: transpilable if we add binary_search utility + translate try_into patterns.
 # The struct/serde itself is trivial (Vec<EventId>), only the methods are complex.
-"ankurah_proto::clock::Clock" = { path = "clock.provided", reads_json = true }
+"ankurah_proto::clock::Clock" = { path = "clock.provided", reads_json = true, has_debug = true }
 
 # Error types — callers in provided impls use factory methods (DecodeError.invalidLength())
 # TODO: transpilable once we either (1) generate Enum static factories per variant,
@@ -384,7 +388,7 @@ reason = "the bincode reader and writer; `bincode` is a crate in Rust and a modu
 # Generic type requires callback-based encode/decode
 # TODO: transpilable if transpiler detects generic type params in Serialize/Deserialize
 # derives and generates callback-based encode/decode automatically.
-"ankurah_proto::auth::Attested" = { path = "auth.provided" }
+"ankurah_proto::auth::Attested" = { path = "auth.provided", has_debug = true }
 
 [provided_redirect.yrs]
 source_crate = "yrs"

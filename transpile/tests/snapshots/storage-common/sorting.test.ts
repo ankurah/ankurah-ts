@@ -80,7 +80,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   debug(): string {
-    return `TestItem { values: ${this.values} }`;
+    return `TestItem { values: ${`{${Array.from(this.values).map(($p) => `${JSON.stringify($p[0])}: ${$p[1].debug()}`).join(', ')}}`} }`;
   }
 }
 

@@ -102,7 +102,7 @@ export function ordered(): HashMap<Key, number> {
 }
 
 export function counted(words: Key[]): HashMap<Key, number> {
-  const counts = new HashMap<Key, number>();
+  let counts = new HashMap<Key, number>();
   for (const w of words) {
     const _m0 = counts.entry(w.clone()).orInsert(0);
     _m0.value = checkedAdd(_m0.value, 1, 'u32');
@@ -111,7 +111,7 @@ export function counted(words: Key[]): HashMap<Key, number> {
 }
 
 export function countedByName(words: Key[]): HashMap<Key, number> {
-  const counts = new HashMap<Key, number>();
+  let counts = new HashMap<Key, number>();
   for (const w of words) {
     const slot = counts.entry(w.clone()).orInsert(0);
     slot.value = checkedAdd(slot.value, 1, 'u32');

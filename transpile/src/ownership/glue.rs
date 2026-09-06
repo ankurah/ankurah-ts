@@ -129,6 +129,19 @@ fn named(probe: &Probe, id: TypeId, args: &[Ty], ty: &Ty) -> Drops {
         {
             return Drops::Own;
         }
+        // An ITERATOR is written as a JavaScript array of what it hands out,
+        // and what it hands out is its `Iterator::Item` — not its type
+        // arguments. `slice::Iter<'a, T>` hands out `&'a T`, so the array the
+        // port spreads it into holds BORROWS and owes nothing; reading the
+        // argument `T` instead answered `Cascade`, and the emitted
+        // `dropOwned(_t0)` released a vector the caller still owned. Live at
+        // `storage-common/planner.ts`'s `buildBounds`, where
+        // `equalities.iter()` over a `&[(String, Value)]` released every
+        // `Value` in the caller's slice. `Cloned<I>` is the same question the
+        // other way: its `Item` is the CLONE, which the scope does owe.
+        if let Some(item) = iterator_item(probe, id, args) {
+            return cascade_over(probe, std::iter::once(&item));
+        }
         return cascade_over(probe, args.iter());
     }
 
@@ -139,6 +152,29 @@ fn named(probe: &Probe, id: TypeId, args: &[Ty], ty: &Ty) -> Drops {
         return Drops::Nothing;
     }
     Drops::Own
+}
+
+/// What a declared iterator hands out, or nothing when this is not an iterator
+/// or its element type is not settled.
+///
+/// Only asked of a system type with no `Form` of its own: a `Vec`, a `HashMap`,
+/// an `Option` and a `Result` are read through their arguments and are not
+/// iterators, and asking the impl table about each of them would be this
+/// question's whole cost. An adaptor whose `Item` does not normalise — `Map<I,
+/// F>` before the closure is known — answers nothing here, and the arguments
+/// decide as they did.
+fn iterator_item(probe: &Probe, id: TypeId, args: &[Ty]) -> Option<Ty> {
+    if probe.reg.shapes().form(id).is_some() {
+        return None;
+    }
+    let iterator = probe.reg.system_type("std::iter::Iterator")?;
+    let projection = Ty::Assoc {
+        base: Box::new(Ty::Named { id, args: args.to_vec() }),
+        trait_: Some(Box::new(crate::ty::TraitRef { id: iterator, args: Vec::new(), bindings: Vec::new() })),
+        name: "Item".to_string(),
+    };
+    let item = probe.normalize(&projection);
+    (item != projection).then_some(item)
 }
 
 /// A container's answer, read off what it holds: `Cascade` where any argument

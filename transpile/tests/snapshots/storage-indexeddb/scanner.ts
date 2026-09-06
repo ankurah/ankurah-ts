@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/scanner.rs
-import { Struct, Enum, Result, dropOwned } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, range } from '@ankurah/base';
 import { RetrievalError, Value } from '@ankurah/core';
 import { IdbValue } from './idb_value';
 import { CBStream, cbStream } from './util/cb_stream';
@@ -149,7 +149,7 @@ async function getNextRecord(state: ScanState): Promise<[Result<Object, Retrieva
         const keyJs = _v2.unwrap();
         if (!((keyJs === undefined)) && !((keyJs === null))) {
           const keyArr = jsSys.Array.from(keyJs);
-          for (const i of undefined /* range 0..(eqPrefixLen) */) {
+          for (const i of range(0, (eqPrefixLen))) {
             const lhs = keyArr.get(i);
             const rhs = eqPrefixJs[i];
             if (!jsSys.Object.is(lhs, rhs)) {

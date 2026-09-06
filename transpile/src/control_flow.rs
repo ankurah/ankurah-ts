@@ -229,10 +229,26 @@ pub(crate) fn branch(block: &syn::Block, t: &BodyTranslator, position: Position)
                 // hoists the declaration stood outside the branch that needed
                 // it and ran on the path that did not.
                 let flags = t.flag_sets_for(expr);
-                let (body, lifted) =
-                    t.with_own_hoists(|| translate_expr_in_return_position(expr, t));
+                // Whatever this branch produces IS what the function answers,
+                // so the return type is the branch's expectation — re-keyed
+                // onto the branch's own span, because an expectation is matched
+                // by the span of the expression it was written for. Live at
+                // `core/indexing/encoding.rs`, where the `else` of an `if`
+                // inside a match arm writes `Ok(bytes.into_iter().map(..)
+                // .collect())` and the `collect` had nothing saying what it
+                // built.
+                let want = t.fn_return.clone();
+                let (body, lifted) = t.with_own_hoists(|| {
+                    t.expecting(expr, want.as_ref(), || {
+                        translate_expr_in_return_position(expr, t)
+                    })
+                });
+                // J3: what the branch lifted ABOVE its flag — an argument that
+                // can throw before the call starts — stands ahead of it.
+                let before = std::mem::take(&mut *t.own.before_flags.borrow_mut()).join("");
                 return format!(
-                    "{}{}",
+                    "{}{}{}",
+                    before,
                     flags,
                     crate::ownership::hoisted(&format!("{}\n", body), &lifted)
                 );

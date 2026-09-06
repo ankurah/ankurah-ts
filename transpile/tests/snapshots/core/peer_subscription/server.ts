@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
-import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, HashMap } from '@ankurah/base';
+import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, iterFilterMap, HashMap } from '@ankurah/base';
 import { Attested, CollectionId, EntityId, EntityState, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
 import { Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../entity';
@@ -33,7 +33,7 @@ export class SubscriptionHandler extends Struct {
           const node = _v;
           try {
             tracing.debug(`SubscriptionHandler[${peerId}] sending update to peer ${peerId}`);
-            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into') }));
+            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: iterFilterMap([...update.items], (item) => convertItem(node, peerId, item)) }));
           } finally {
             node.drop();
           }
@@ -84,7 +84,7 @@ export class SubscriptionHandler extends Struct {
             const matchingEntities = _r5.unwrap();
             try {
               _moved6 = true;
-              const initialStates = [...matchingEntities].filterMap((e) => {
+              const initialStates = iterFilterMap([...matchingEntities], (e) => {
                 const _r7 = e.toEntityState().ok();
                 if (_r7 == null) return null;
                 let _moved8 = false;

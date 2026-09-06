@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/yrs.rs
-import { Struct, Result, Arc, Mutex, OwnedClosure, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, OwnedClosure, valueEquals, HashMap, HashSet } from '@ankurah/base';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Transaction } from '../../transaction';
 import { Value } from '../../value/index';
@@ -172,7 +172,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
       const txn = this.doc.transactMut();
       const diff = txn.encodeDiffV2(previousState);
       previousState.value = txn.stateVector();
-      if (diff === Update.EMPTY_V2) {
+      if (valueEquals(diff, Update.EMPTY_V2)) {
         return Result.Ok(null);
       } else {
         return Result.Ok([new Operation(diff)]);

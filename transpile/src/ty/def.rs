@@ -10,6 +10,17 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(pub u32);
 
+/// The id spaces are a partition of `u32`; running out of either is a bug in
+/// the corpus size, not something to paper over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdSpaceExhausted;
+
+impl std::fmt::Display for IdSpaceExhausted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the type id space is exhausted")
+    }
+}
+
 impl TypeId {
     pub const FOREIGN_BASE: u32 = 1 << 31;
 

@@ -31,7 +31,7 @@ export class NodeRequest extends Struct {
   }
 
   debug(): string {
-    return `NodeRequest { id: ${this.id}, to: ${this.to}, from: ${this.from}, body: ${this.body.debug()} }`;
+    return `NodeRequest { id: ${this.id.debug()}, to: ${this.to.debug()}, from: ${this.from.debug()}, body: ${this.body.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -65,7 +65,7 @@ export class KnownEntity extends Struct {
   }
 
   debug(): string {
-    return `KnownEntity { entityId: ${this.entityId}, head: ${this.head} }`;
+    return `KnownEntity { entityId: ${this.entityId.debug()}, head: ${this.head.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -136,7 +136,7 @@ export class CausalAssertion extends Struct {
   }
 
   debug(): string {
-    return `CausalAssertion { entityId: ${this.entityId}, subject: ${this.subject}, other: ${this.other}, relation: ${this.relation.debug()} }`;
+    return `CausalAssertion { entityId: ${this.entityId.debug()}, subject: ${this.subject.debug()}, other: ${this.other.debug()}, relation: ${this.relation.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -294,7 +294,7 @@ export class EntityDelta extends Struct {
   }
 
   debug(): string {
-    return `EntityDelta { entityId: ${this.entityId}, collection: ${this.collection.debug()}, content: ${this.content.debug()} }`;
+    return `EntityDelta { entityId: ${this.entityId.debug()}, collection: ${this.collection.debug()}, content: ${this.content.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -374,7 +374,7 @@ export class NodeResponse extends Struct {
   }
 
   debug(): string {
-    return `NodeResponse { requestId: ${this.requestId}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+    return `NodeResponse { requestId: ${this.requestId.debug()}, from: ${this.from.debug()}, to: ${this.to.debug()}, body: ${this.body.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -420,9 +420,9 @@ export class CausalRelation extends Enum<CausalRelationV> {
       Equal: () => 'Equal',
       StrictDescends: () => 'StrictDescends',
       StrictAscends: () => 'StrictAscends',
-      DivergedSince: (v) => `DivergedSince { meet: ${v.meet}, subject: ${v.subject}, other: ${v.other} }`,
-      Disjoint: (v) => `Disjoint { gca: ${v.gca}, subjectRoot: ${v.subjectRoot}, otherRoot: ${v.otherRoot} }`,
-      BudgetExceeded: (v) => `BudgetExceeded { subject: ${v.subject}, other: ${v.other} }`,
+      DivergedSince: (v) => `DivergedSince { meet: ${v.meet.debug()}, subject: ${v.subject.debug()}, other: ${v.other.debug()} }`,
+      Disjoint: (v) => `Disjoint { gca: ${(($v) => $v === null ? 'None' : `Some(${$v.debug()})`)(v.gca)}, subjectRoot: ${v.subjectRoot.debug()}, otherRoot: ${v.otherRoot.debug()} }`,
+      BudgetExceeded: (v) => `BudgetExceeded { subject: ${v.subject.debug()}, other: ${v.other.debug()} }`,
     });
   }
 
@@ -801,11 +801,11 @@ export class NodeRequestBody extends Enum<NodeRequestBodyV> {
 
   debug(): string {
     return this.match({
-      CommitTransaction: (v) => `CommitTransaction { id: ${v.id}, events: ${v.events} }`,
-      Get: (v) => `Get { collection: ${v.collection.debug()}, ids: ${v.ids} }`,
-      GetEvents: (v) => `GetEvents { collection: ${v.collection.debug()}, eventIds: ${v.eventIds} }`,
+      CommitTransaction: (v) => `CommitTransaction { id: ${v.id.debug()}, events: ${`[${Array.from(v.events).map((e) => e.debug()).join(', ')}]`} }`,
+      Get: (v) => `Get { collection: ${v.collection.debug()}, ids: ${`[${Array.from(v.ids).map((e) => e.debug()).join(', ')}]`} }`,
+      GetEvents: (v) => `GetEvents { collection: ${v.collection.debug()}, eventIds: ${`[${Array.from(v.eventIds).map((e) => e.debug()).join(', ')}]`} }`,
       Fetch: (v) => `Fetch { collection: ${v.collection.debug()}, selection: ${v.selection.debug()}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
-      SubscribeQuery: (v) => `SubscribeQuery { queryId: ${v.queryId}, collection: ${v.collection.debug()}, selection: ${v.selection.debug()}, version: ${String(v.version)}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
+      SubscribeQuery: (v) => `SubscribeQuery { queryId: ${v.queryId.debug()}, collection: ${v.collection.debug()}, selection: ${v.selection.debug()}, version: ${String(v.version)}, knownMatches: ${`[${Array.from(v.knownMatches).map((e) => e.debug()).join(', ')}]`} }`,
     });
   }
 
@@ -925,11 +925,11 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
 
   debug(): string {
     return this.match({
-      CommitComplete: (v) => `CommitComplete { id: ${v.id} }`,
+      CommitComplete: (v) => `CommitComplete { id: ${v.id.debug()} }`,
       Fetch: (v) => `Fetch(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
-      Get: (v) => `Get(${v._0})`,
-      GetEvents: (v) => `GetEvents(${v._0})`,
-      QuerySubscribed: (v) => `QuerySubscribed { queryId: ${v.queryId}, deltas: ${`[${Array.from(v.deltas).map((e) => e.debug()).join(', ')}]`} }`,
+      Get: (v) => `Get(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      GetEvents: (v) => `GetEvents(${`[${Array.from(v._0).map((e) => e.debug()).join(', ')}]`})`,
+      QuerySubscribed: (v) => `QuerySubscribed { queryId: ${v.queryId.debug()}, deltas: ${`[${Array.from(v.deltas).map((e) => e.debug()).join(', ')}]`} }`,
       Success: () => 'Success',
       Error: (v) => `Error(${JSON.stringify(v._0)})`,
     });

@@ -31,6 +31,34 @@ impl BodyTranslator<'_> {
         }
     }
 
+    /// Does this path name a TUPLE STRUCT this crate declares?
+    ///
+    /// A tuple struct's name IS its constructor in Rust, so a capitalised call
+    /// on one is a construction the registry can settle rather than the shape
+    /// of the name guessing at. `Self(..)` inside the type's own impl is the
+    /// same constructor.
+    fn names_a_tuple_struct(&self, callee: Option<&syn::Path>) -> bool {
+        let Some(path) = callee else { return false };
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let id = if segments == ["Self"] {
+            match tc.self_ty.as_ref() {
+                Some(crate::ty::Ty::Named { id, .. }) => *id,
+                _ => return false,
+            }
+        } else {
+            match tc.registry.lookup(tc.module, crate::registry::Ns::Type, &segments) {
+                Ok(Some(crate::registry::Def::Type(id))) => id,
+                _ => return false,
+            }
+        };
+        let Some(def) = tc.registry.def(id) else { return false };
+        matches!(def.kind, crate::registry::TypeKind::Struct)
+            && !def.field_order.is_empty()
+            && def.field_order.iter().all(|f| f.starts_with('_'))
+    }
+
     pub(crate) fn translate_call(
         &self,
         func: &str,
@@ -269,15 +297,21 @@ impl BodyTranslator<'_> {
             }
         }
 
-        // 9. PascalCase function → constructor heuristic
+        // 9. A capitalised name that RESOLVES to a tuple struct is that
+        // struct's constructor — the registry says so, and a guess from the
+        // shape of the name is only what is left where it does not. `Clock(..)`,
+        // `CollectionId(..)` and `AttestationSet(..)` are eleven such calls in
+        // `proto`, every one of them a tuple struct this crate declares.
         if func.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
             && !func.contains('.')
             && !matches!(func, "Ok" | "Some" | "Err" | "None" | "Self")
         {
-            self.fallback(
-                span,
-                format!("`{}` is guessed to be a constructor from its capitalisation", func),
-            );
+            if !self.names_a_tuple_struct(callee) {
+                self.fallback(
+                    span,
+                    format!("`{}` is guessed to be a constructor from its capitalisation", func),
+                );
+            }
             return format!("new {}({})", func, args.join(", "));
         }
 

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use super::impls::{Bound, ImplDef, ImplId};
-use super::module::{ModuleId, UseBinding, Vis};
+use super::module::{ModuleId, Vis};
 use super::traits::{TraitDef, TraitMethod};
 use super::std_surface::Surface;
 use super::{
@@ -78,7 +78,7 @@ pub(super) enum Update {
 
 /// Translate the visibility a declaration was written with into the module the
 /// resolver judges it against.
-fn vis_of(vis: VisInfo, module: ModuleId, reg: &TypeRegistry, sink: &DiagSink) -> Vis {
+pub(super) fn vis_of(vis: VisInfo, module: ModuleId, reg: &TypeRegistry, sink: &DiagSink) -> Vis {
     match vis {
         VisInfo::Public => Vis::Public,
         VisInfo::Crate => Vis::Crate,
@@ -303,18 +303,7 @@ pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
 
 /// Pass one: the module's imports and everything it declares, in both namespaces.
 pub(super) fn declare_file(reg: &mut TypeRegistry, module: ModuleId, file: &RustFile, sink: &DiagSink) {
-    let bindings: Vec<UseBinding> = file
-        .uses
-        .iter()
-        .flat_map(|u| {
-            let vis = vis_of(u.vis, module, reg, sink);
-            u.bindings.iter().map(move |b| UseBinding {
-                local: b.local.clone(),
-                path: b.path.clone(),
-                vis,
-            })
-        })
-        .collect();
+    let bindings = super::uses::module_use_bindings(reg, module, file, sink);
     reg.modules_mut().get_mut(module).uses.extend(bindings);
 
     for s in &file.structs {

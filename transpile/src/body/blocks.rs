@@ -10,6 +10,7 @@
 use crate::control_flow;
 use crate::macros;
 use crate::ownership;
+use crate::body::places::EntryFinish;
 
 use super::{
     as_move_closure, extract_macro, is_match_with_write_arms,
@@ -40,7 +41,7 @@ impl BodyTranslator<'_> {
         // writes as a JavaScript VALUE has to live in a cell, because the
         // callee's writes have nowhere else to go. Read before anything is
         // translated, so the `let` that introduces it declares the cell.
-        *self.cell_candidates.borrow_mut() = super::places::cells_wanted(block);
+        *self.cell_candidates.borrow_mut() = super::cells::cells_wanted(block);
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
         self.pop_scope();
@@ -162,8 +163,12 @@ impl BodyTranslator<'_> {
 
         // A move written directly by this statement sets its flag first: after
         // it would be dead code behind a `return`, and the flag only ever
-        // decides what the `finally` releases.
-        let mut out = self.flag_sets(stmt);
+        // decides what the `finally` releases. What the statement lifted ABOVE
+        // the flag (J3) — an argument that can throw before the call starts —
+        // is collected while it is translated and stands ahead of it.
+        let flags = self.flag_sets(stmt);
+        let previous_before = std::mem::take(&mut *self.own.before_flags.borrow_mut());
+        let mut out = String::new();
 
         let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
         let previous_pending = std::mem::take(&mut *self.own.pending.borrow_mut());
@@ -209,6 +214,10 @@ impl BodyTranslator<'_> {
         } else {
             self.stmt(stmt)
         };
+        let before_flags =
+            std::mem::replace(&mut *self.own.before_flags.borrow_mut(), previous_before).join("");
+        out.push_str(&before_flags);
+        out.push_str(&flags);
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);
 
@@ -342,6 +351,7 @@ impl BodyTranslator<'_> {
                     format!("{};\n", ts)
                 }
             }
+            syn::Stmt::Item(syn::Item::Const(c)) => self.body_const(c),
             syn::Stmt::Item(_) => String::new(),
             // A macro written with a semicolon is `Stmt::Macro`, so a
             // `write!(f, ..);` never reached the append above and was emitted
@@ -434,8 +444,10 @@ impl BodyTranslator<'_> {
             ),
             None => self.expecting(&init.expr, annotation.as_ref(), || match entry_slot {
                 // R1: the `let` answers the same question the `*` does.
-                true => self.through_place(&init.expr, || self.moved_value(&init.expr)),
-                false => self.moved_value(&init.expr),
+                EntryFinish::Slot => {
+                    self.through_place(&init.expr, || self.moved_value(&init.expr))
+                }
+                EntryFinish::Hole | EntryFinish::Neither => self.moved_value(&init.expr),
             }),
         };
 
@@ -485,7 +497,10 @@ impl BodyTranslator<'_> {
                 });
         // A finisher the engine had to REFUSE wrote a hole, not a slot, and
         // reading `.value` off a hole says nothing the hole does not already.
-        let entry_slot = entry_slot && !expr.contains("unsupported(");
+        // The disposition comes from the LOWERING (I1): reading it off the
+        // rendered text meant an initialiser whose value carried the characters
+        // `unsupported(` for any other reason stopped binding the slot.
+        let entry_slot = entry_slot == EntryFinish::Slot;
         if wants_a_cell || entry_slot {
             // `freshen` hands out a NEW name each time it is asked, so the
             // rename is computed once, here, and not again below.

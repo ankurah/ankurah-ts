@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
-import { Result, AnyhowError, floatMax, tracing, checkedAdd, saturatingAdd } from '@ankurah/base';
+import { Result, AnyhowError, floatMax, tracing, checkedAdd, saturatingAdd, iterLast, range } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
 import { CanonicalRange, Endpoint, KeyBounds, KeyDatum, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
@@ -211,7 +211,7 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
   const [canonicalRange, eqPrefixLen, eqPrefixValues] = normalize(bounds);
   const adjustedRange = (scanDirection.equals(new ScanDirection('Reverse', {})) && (canonicalRange.upper == null) && eqPrefixLen > 0 && (canonicalRange.lower != null) ? (() => {
     {
-      const _v2 = eqPrefixValues.at(-1);
+      const _v2 = iterLast(eqPrefixValues);
       if (_v2 != null) {
         const lastEqValue = _v2;
         {

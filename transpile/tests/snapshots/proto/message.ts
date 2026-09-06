@@ -106,7 +106,7 @@ export class NodeMessage extends Enum<NodeMessageV> {
       Response: (v) => `Response(${v._0.debug()})`,
       Update: (v) => `Update(${v._0.debug()})`,
       UpdateAck: (v) => `UpdateAck(${v._0.debug()})`,
-      UnsubscribeQuery: (v) => `UnsubscribeQuery { from: ${v.from}, queryId: ${v.queryId} }`,
+      UnsubscribeQuery: (v) => `UnsubscribeQuery { from: ${v.from.debug()}, queryId: ${v.queryId.debug()} }`,
     });
   }
 

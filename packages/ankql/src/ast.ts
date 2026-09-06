@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, iterLast } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -25,7 +25,7 @@ export class PathExpr extends Struct {
   }
 
   property(): string {
-    return (this.steps.at(-1) ?? (() => { throw new Error('PathExpr must have at least one step'); })());
+    return (iterLast(this.steps) ?? (() => { throw new Error('PathExpr must have at least one step'); })());
   }
 
   toString(): string {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/collatable.rs
-import { checkedAdd, checkedSub } from '@ankurah/base';
+import { valueEquals, checkedAdd, checkedSub, range } from '@ankurah/base';
 import { Collatable } from '../collation';
 import { Json } from '../property/value/json';
 import { EntityId } from '@ankurah/proto';
@@ -108,13 +108,13 @@ export function Value_successorBytes(self: Value): Uint8Array | null {
       if (b) {
         return null;
       } else {
-        return [1];
+        return new Uint8Array([1]);
       }
     },
     EntityId: (v) => {
       const entityId = v._0;
       let bytes = entityId.toBytes();
-      for (const i of (undefined /* range 0..16 */).rev()) {
+      for (const i of (range(0, 16)).slice().reverse()) {
         if (bytes[i] === 255) {
           bytes[i] = 0;
         } else {
@@ -178,7 +178,7 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     Bool: (v) => {
       const b = v._0;
       if (b) {
-        return [0];
+        return new Uint8Array([0]);
       } else {
         return null;
       }
@@ -186,10 +186,10 @@ export function Value_predecessorBytes(self: Value): Uint8Array | null {
     EntityId: (v) => {
       const entityId = v._0;
       let bytes = entityId.toBytes();
-      if (bytes === Array(16).fill(0)) {
+      if (valueEquals(bytes, Array(16).fill(0))) {
         return null;
       } else {
-        for (const i of (undefined /* range 0..16 */).rev()) {
+        for (const i of (range(0, 16)).slice().reverse()) {
           if (bytes[i] === 0) {
             bytes[i] = 255;
           } else {
@@ -234,7 +234,7 @@ export function Value_isMinimum(self: Value): boolean {
     },
     EntityId: (v) => {
       const entityId = v._0;
-      return entityId.toBytes() === Array(16).fill(0);
+      return valueEquals(entityId.toBytes(), Array(16).fill(0));
     },
     Object: (v) => false,
     Binary: (v) => false,
@@ -267,7 +267,7 @@ export function Value_isMaximum(self: Value): boolean {
     },
     EntityId: (v) => {
       const entityId = v._0;
-      return entityId.toBytes() === Array(16).fill(255);
+      return valueEquals(entityId.toBytes(), Array(16).fill(255));
     },
     Object: (v) => false,
     Binary: (v) => false,

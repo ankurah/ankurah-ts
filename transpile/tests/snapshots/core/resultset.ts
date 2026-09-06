@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/resultset.rs
-import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, checkedAdd, HashMap } from '@ankurah/base';
+import { Struct, Enum, Drop, Arc, Mutex, MutexGuard, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, valueEquals, checkedAdd, iterLast, range, HashMap } from '@ankurah/base';
 import { Broadcast, BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Peek, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from './entity';
 import { View } from './indexel';
@@ -139,7 +139,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
   lastEntity(): E | null {
     const st = this._0.value.state.lock();
     try {
-      const _m0 = st.value.order.at(-1);
+      const _m0 = iterLast(st.value.order);
       return (_m0 != null ? ((entry) => entry.entity.clone())(_m0!) : null);
     } finally {
       st.drop();
@@ -151,7 +151,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
       let _moved0 = false;
       let st = this._0.value.state.lock();
       try {
-        if (st.value.keySpec === keySpec) {
+        if (valueEquals(st.value.keySpec, keySpec)) {
           return;
         }
         const _a1 = keySpec.clone();
@@ -212,7 +212,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
     let _moved0 = false;
     let st = this._0.value.state.lock();
     try {
-      if (st.value.limit === limit) {
+      if (valueEquals(st.value.limit, limit)) {
         return;
       }
       st.value.limit = limit;
@@ -457,7 +457,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
     }).unwrapOrElse((pos) => pos);
     guard.value.order.splice(pos, 0, entry);
     guard.value.index.set(id, pos);
-    for (const i of undefined /* range (checkedAdd(pos, 1, 'usize'))..guard.value.order.length */) {
+    for (const i of range((checkedAdd(pos, 1, 'usize')), guard.value.order.length)) {
       const entryId = guard.value.order[i].entity.id();
       guard.value.index.set(entryId, i);
     }
@@ -820,7 +820,7 @@ class IVec extends Enum<IVecV> {
 }
 
 function fixFrom<E extends AbstractEntity>(st: State<E>, start: number): void {
-  for (const i of undefined /* range start..st.order.length */) {
+  for (const i of range(start, st.order.length)) {
     const id = st.order[i].entity.id();
     st.index.set(id, i);
   }

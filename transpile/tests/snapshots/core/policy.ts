@@ -22,7 +22,7 @@ export class PermissiveAgent extends Struct implements PolicyAgent {
 
   signRequest<SE extends StorageEngine, C>(_node: NodeInner<SE, PermissiveAgent>, cdata: C, _request: NodeRequest): Result<AuthData[], AccessDenied> {
     tracing.debug(`PermissiveAgent sign_request: ${_request.debug()}`);
-    return Result.Ok(Iterable_dispatch_iterable(cdata).map((_) => proto.AuthData([])));
+    return Result.Ok(Iterable_dispatch_iterable(cdata).map((_) => proto.AuthData(new Uint8Array([]))));
   }
 
   async checkRequest<SE extends StorageEngine, A>(_node: Node<SE, PermissiveAgent>, auth: A, _request: NodeRequest): Promise<Result<DefaultContext[], ValidationError>> {

@@ -32,6 +32,16 @@ export class Attested<T> extends Struct {
     return `Attested(${this.payload})`;
   }
 
+  // #[derive(Debug)] on a named-field struct — rustc prints
+  // `Attested { payload: .., attestations: .. }`, each field through its own
+  // Debug. `T` is whatever the instantiation put there, so the payload is
+  // asked for its `debug()` and falls back to `String(..)` where it has none,
+  // which is what a primitive payload wants.
+  debug(): string {
+    const payload = (this.payload as { debug?: () => string })?.debug?.() ?? String(this.payload);
+    return `Attested { payload: ${payload}, attestations: ${this.attestations.debug()} }`;
+  }
+
   equals(other: Attested<T>): boolean {
     return (this.payload as any).equals?.(other.payload) ?? this.payload === other.payload;
   }

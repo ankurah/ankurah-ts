@@ -306,6 +306,9 @@ impl TypeContext<'_> {
         if let Some(fields) = self.variant_argument_types(path, expected) {
             return Some(fields);
         }
+        if let Some(fields) = self.tuple_struct_argument_types(path, expected) {
+            return Some(fields);
+        }
         let name = path.path.segments.last()?.ident.to_string();
         // `Box::new(..)` names `Box` with no arguments, and the impl is written
         // for `Box<T>`; a bare `Box` does not resolve to a type at all. What
@@ -335,6 +338,72 @@ impl TypeContext<'_> {
                     let filled = probe.normalize(&ty.substitute(&subst));
                     (!expected::has_infer(&filled) && open_params(&filled).is_empty())
                         .then_some(filled)
+                })
+                .collect(),
+        )
+    }
+
+    /// What a TUPLE STRUCT's constructor takes: its fields, in order.
+    ///
+    /// `Clock(ids.into_iter().collect())` is a call whose callee is a type, not
+    /// a function, and nothing declared what it takes — so the `collect` inside
+    /// it had no target and became a hole. Rust's tuple struct is exactly a
+    /// constructor over its field types, and the registry has them.
+    ///
+    /// A named-field struct is not this: `Wrap { items: .. }` is a struct
+    /// LITERAL, whose fields are typed where the literal is written.
+    fn tuple_struct_argument_types(
+        &self,
+        path: &syn::ExprPath,
+        expected: Option<&Ty>,
+    ) -> Option<Vec<Option<Ty>>> {
+        let segments: Vec<String> = path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        // `Self(..)` inside the type's own impl names the same constructor:
+        // `impl From<Vec<EventId>> for Clock { fn from(ids) -> Self {
+        // Self(ids.into_iter().collect()) } }` is `proto`'s, and the `collect`
+        // inside it had no target.
+        let id = if segments == ["Self"] {
+            match self.self_ty.as_ref() {
+                Some(Ty::Named { id, .. }) => *id,
+                _ => return None,
+            }
+        } else {
+            match self.registry.lookup(self.module, crate::registry::Ns::Type, &segments).ok()?? {
+                crate::registry::Def::Type(id) => id,
+                _ => return None,
+            }
+        };
+        let def = self.registry.def(id)?;
+        if !matches!(def.kind, crate::registry::TypeKind::Struct) {
+            return None;
+        }
+        // Positional fields are named `_0`, `_1` — the spelling emission uses
+        // and the one `field_order` records for a tuple struct.
+        if def.field_order.is_empty() || !def.field_order.iter().all(|f| f.starts_with('_')) {
+            return None;
+        }
+        // The position binds whatever the declaration left open: `Wrapper<T>`
+        // in a place wanting a `Wrapper<u8>` takes a `u8`.
+        let mut subst = Subst::new();
+        if let Some(Ty::Named { id: want, args }) = expected.map(|ty| ty.peel_refs()) {
+            if *want == id {
+                for (param, arg) in def.type_params.iter().zip(args) {
+                    subst.insert(param.clone(), arg.clone());
+                }
+            }
+        }
+        Some(
+            def.field_order
+                .iter()
+                .map(|name| {
+                    let ty = def.fields.iter().find(|(f, _)| f == name)?;
+                    let filled = ty.1.substitute(&subst);
+                    (open_params(&filled).is_empty() && !expected::has_infer(&filled)).then_some(filled)
                 })
                 .collect(),
         )

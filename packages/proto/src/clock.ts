@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/clock.rs
-import { Result, dropOwned, unsupported } from '@ankurah/base';
+import { Result, dropOwned } from '@ankurah/base';
 import { Clock } from './clock.provided';
 import { EventId } from './data';
 import { DecodeError } from './error';
@@ -7,7 +7,7 @@ export { Clock };
 
 export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeError> {
   let _moved0 = false;
-  const ids = [];
+  let ids = [];
   try {
     for (const idBytes of self) {
       const _r1 = idBytes.tryInto().mapErr((_) => new DecodeError('InvalidLength', {}));
@@ -23,7 +23,7 @@ export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeErro
       }
     }
     _moved0 = true;
-    return Result.Ok(new Clock(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into')));
+    return Result.Ok(new Clock([...ids]));
   } finally {
     if (!_moved0) dropOwned(ids);
   }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/porcelain/wait.rs
-import { Arc, OwnedClosure, invokeRef, Invocable, dropOwned, tokio } from '@ankurah/base';
+import { Arc, OwnedClosure, invokeRef, Invocable, dropOwned, valueEquals, tokio } from '@ankurah/base';
 
 export interface Wait<T> {
   waitValue(targetValue: T): Promise<void>;
@@ -26,7 +26,7 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
   let _c1;
   const _t0 = self.getReadcell();
   try {
-    _c1 = _t0.with((v) => v === targetValue);
+    _c1 = _t0.with((v) => valueEquals(v, targetValue));
   } finally {
     _t0.drop();
   }
@@ -44,7 +44,7 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
         let _c3;
         const _t2 = self.getReadcell();
         try {
-          _c3 = _t2.with((v) => v === targetValue);
+          _c3 = _t2.with((v) => valueEquals(v, targetValue));
         } finally {
           _t2.drop();
         }

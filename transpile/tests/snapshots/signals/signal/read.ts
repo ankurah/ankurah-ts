@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/read.rs
-import { Struct, Arc, OwnedClosure, Invocable } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, Invocable, valueEquals } from '@ankurah/base';
 import { Broadcast, BroadcastId, BroadcastListener } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -68,7 +68,7 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
     if (ptr.eq(this, other)) {
       return true;
     }
-    return this.with((selfVal) => other.with((otherVal) => selfVal === otherVal));
+    return this.with((selfVal) => other.with((otherVal) => valueEquals(selfVal, otherVal)));
   }
 
   toString(): string {

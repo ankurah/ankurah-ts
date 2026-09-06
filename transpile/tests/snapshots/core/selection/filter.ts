@@ -270,7 +270,7 @@ function evaluateSubPath<I extends Filterable>(item: I, propertyName: string, su
 
 function compareValuesWithCast(left: Value, right: Value, op: (arg0: Value, arg1: Value) => boolean): boolean {
   try {
-    if (ValueType.of(left) === ValueType.of(right)) {
+    if (ValueType.of(left).equals(ValueType.of(right))) {
       return invokeRef(op, left, right);
     }
     {
@@ -319,7 +319,7 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
         if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
         const rightVal = _r1.unwrap();
         try {
-          const _m28 = (() => {
+          const _m27 = (() => {
             return operator.match<any>({
               Equal: () => {
                 const _m2 = leftVal.asValue().zip(rightVal.asValue());
@@ -354,23 +354,18 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
                 const _r23 = (_m22 != null ? Result.Ok(_m22!) : Result.Err((() => new Error('PropertyNotFound', { _0: 'Expected list for IN right operand' }))()));
                 if (_r23.isErr()) return { $jump: 'return', $value: Result.Err(_r23.unwrapErr()) };
                 const list = _r23.unwrap();
-                const _t24 = [...list];
-                try {
-                  return _t24.some((item) => {
-                    const _m25 = item.asValue();
-                    return (_m25 != null ? ((v) => compareValuesWithCast(value, v, (a, b) => a.equals(b)))(_m25!) : null) ?? false;
-                  });
-                } finally {
-                  dropOwned(_t24);
-                }
+                return [...list].some((item) => {
+                  const _m24 = item.asValue();
+                  return (_m24 != null ? ((v) => compareValuesWithCast(value, v, (a, b) => a.equals(b)))(_m24!) : null) ?? false;
+                });
               },
               Between: () => {
                 return { $jump: 'return', $value: Result.Err(new Error('UnsupportedOperator', { _0: 'BETWEEN operator not yet supported' })) }
               },
             });
           })();
-          if ((_m28 as any)?.$jump === 'return') return (_m28 as any).$value;
-          return Result.Ok((_m28 as any));
+          if ((_m27 as any)?.$jump === 'return') return (_m27 as any).$value;
+          return Result.Ok((_m27 as any));
         } finally {
           rightVal.drop();
         }
@@ -381,36 +376,36 @@ export function evaluatePredicate<I extends Filterable>(item: I, predicate: Pred
     And: (v) => {
       const left = v._0;
       const right = v._1;
-      const _r29 = evaluatePredicate(item, left);
+      const _r28 = evaluatePredicate(item, left);
+      if (_r28.isErr()) return Result.Err(_r28.unwrapErr());
+      const _r29 = evaluatePredicate(item, right);
       if (_r29.isErr()) return Result.Err(_r29.unwrapErr());
-      const _r30 = evaluatePredicate(item, right);
-      if (_r30.isErr()) return Result.Err(_r30.unwrapErr());
-      return Result.Ok(_r29.unwrap() && _r30.unwrap());
+      return Result.Ok(_r28.unwrap() && _r29.unwrap());
     },
     Or: (v) => {
       const left = v._0;
       const right = v._1;
-      const _r31 = evaluatePredicate(item, left);
+      const _r30 = evaluatePredicate(item, left);
+      if (_r30.isErr()) return Result.Err(_r30.unwrapErr());
+      const _r31 = evaluatePredicate(item, right);
       if (_r31.isErr()) return Result.Err(_r31.unwrapErr());
-      const _r32 = evaluatePredicate(item, right);
-      if (_r32.isErr()) return Result.Err(_r32.unwrapErr());
-      return Result.Ok(_r31.unwrap() || _r32.unwrap());
+      return Result.Ok(_r30.unwrap() || _r31.unwrap());
     },
     Not: (v) => {
       const pred = v._0;
-      const _r33 = evaluatePredicate(item, pred);
-      if (_r33.isErr()) return Result.Err(_r33.unwrapErr());
-      return Result.Ok(!_r33.unwrap());
+      const _r32 = evaluatePredicate(item, pred);
+      if (_r32.isErr()) return Result.Err(_r32.unwrapErr());
+      return Result.Ok(!_r32.unwrap());
     },
     IsNull: (v) => {
       const expr = v._0;
-      const _r34 = evaluateExpr(item, expr);
-      if (_r34.isErr()) return Result.Err(_r34.unwrapErr());
-      const _t35 = _r34.unwrap();
+      const _r33 = evaluateExpr(item, expr);
+      if (_r33.isErr()) return Result.Err(_r33.unwrapErr());
+      const _t34 = _r33.unwrap();
       try {
-        return Result.Ok(_t35.isNone());
+        return Result.Ok(_t34.isNone());
       } finally {
-        _t35.drop();
+        _t34.drop();
       }
     },
     True: () => Result.Ok(true),

@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Reactor } from './reactor';
-import { AnyhowError, Arc, HashMap, Mutex, Result, Struct, dropOwned, unsupported } from '@ankurah/base';
+import { AnyhowError, Arc, HashMap, Mutex, Result, Struct, dropOwned, unsupported, valueEquals } from '@ankurah/base';
 import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './reactor/update';
 import { EntityResultSet } from './resultset';
 import { CollectionId, QueryId } from '@ankurah/proto';
@@ -24,7 +24,7 @@ class TestEntity extends Struct implements Filterable, AbstractEntity {
   }
 
   equals(other: TestEntity): boolean {
-    return this.id === other.id;
+    return valueEquals(this.id, other.id);
   }
 
   partialCompareTo(other: TestEntity): number | null {
@@ -82,7 +82,7 @@ class TestEvent extends Struct {
   }
 
   debug(): string {
-    return `TestEvent { id: ${this.id}, collection: ${this.collection}, changes: ${this.changes} }`;
+    return `TestEvent { id: ${this.id}, collection: ${this.collection}, changes: ${`{${Array.from(this.changes).map(($p) => `${JSON.stringify($p[0])}: ${JSON.stringify($p[1])}`).join(', ')}}`} }`;
   }
 }
 

@@ -923,7 +923,11 @@ addressed by the step that found it.
   a free function's parameter (read from the signature the registry keeps for
   it), an enum variant's payload — `Err(e.into())` inside a function returning
   `Result<_, MutationError>` — the place an assignment stores into, and the
-  operand opposite a binary operator.
+  operand opposite a binary operator. Four more since (step 9a, third slice): a
+  TUPLE STRUCT's field, including through `Self(..)` inside the type's own impl;
+  a MATCH ARM and an `if` BRANCH in return position, each re-keyed onto its own
+  span because whatever it produces is what the function answers; and a field of
+  an enum-VARIANT literal, whose fields live on the variant and not on the enum.
 - **An impl written for a reference to its own parameter, whose methods really
   forward, is not emitted.** `impl<T: Signal> Signal for &T` exists because
   `&T` is a distinct type in Rust, and each of its methods forwards to the same
@@ -989,6 +993,28 @@ addressed by the step that found it.
 - **A function whose body awaits is not always emitted `async`.** 45 sites in
   core say "'await' expressions are only allowed within async functions"; the
   `async` belongs on whatever function the emitter wrapped the body in.
+- **A same-leaf type in two modules of one crate is reported, not aliased.**
+  The port flattens a crate's modules into one package surface, and a file's
+  import list is keyed by the LEAF name — so a file naming `left::Wrap` and
+  `right::Wrap` imports one of them and writes the bare name for both, and a
+  signature against the other names the wrong class. The crate INDEX already
+  tells them apart (`left_Wrap`, `right_Wrap`); a file's own imports would need
+  a per-file alias map threaded through `map_ty`. Until then the site says so.
+  Ten corpus sites: `State` three times in core, `IVec` twice, `ListenerGuard`
+  twice in signals.
+- **An import can name a type the emitted text never writes.** The
+  `@ankurah/base` import list reads the emitted TEXT, so it carries nothing
+  unused; the intra-crate list reads the TYPE SCAN over signatures and bodies,
+  which sees a type a body mentioned before that body was dropped. 34 such
+  imports across the emission. They load — the name exists where it is imported
+  from — so this is tidiness, not correctness.
+- **A range is the sequence of its values, and an unbounded one is a hole.**
+  The port has no `Range` type. `a..b` is materialised, which is what makes
+  `rev`, `map`, `filter` and `contains` work on it, because those are all array
+  operations here; the corpus's ranges are small (`0..16`, `0..MAX_RETRIES`,
+  `0..bytes.length`). `..n`, `a..` and a range over a width the port holds in a
+  `bigint` have no sequence to build and are refused. A `BTreeMap::range(a..)`
+  — an ordered-map range query — is two of those refusals.
 - **`#[derive(Serialize, Deserialize)]`'s JSON half is refused for a type whose
   provided parts do not declare it.** (Rewritten 2026-09-05: the bullet this
   replaces said the JSON half is not emitted at all. It is: `encode`/`decode`

@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/livequery.rs
-import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, wrappingAdd, Notify, tokio, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
 import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
-import { BroadcastId, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard, CurrentObserver } from '@ankurah/signals';
+import { BroadcastId, CurrentObserver, Get, IntoSubscribeListener, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
 import { Entity } from './entity';
 import { RetrievalError } from './error';
@@ -375,22 +375,22 @@ function livequeryChangeSetFrom<R extends View>(resultset: ResultSet<R>, reactor
         try {
           const view = R.fromEntity(item.takeField('entity'));
           {
-            const _v = item.predicateRelevance[0];
+            const _v = iterFirst(item.predicateRelevance);
             if (_v != null) {
               const [, membershipChange] = _v;
               return membershipChange.match({
                 Initial: () => {
-                  changes.push(new ItemChange.Initial(view));
+                  changes.push(new ItemChange('Initial', { item: view }));
                 },
                 Add: () => {
-                  changes.push(new ItemChange.Add(view, item.events));
+                  changes.push(new ItemChange('Add', { item: view, events: item.events }));
                 },
                 Remove: () => {
-                  changes.push(new ItemChange.Remove(view, item.events));
+                  changes.push(new ItemChange('Remove', { item: view, events: item.events }));
                 },
               });
             } else {
-            changes.push(new ItemChange.Update(view, item.events));
+            changes.push(new ItemChange('Update', { item: view, events: item.events }));
           }
           }
         } finally {

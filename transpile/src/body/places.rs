@@ -13,6 +13,20 @@ use crate::native_types;
 
 use super::{turbofish_type, turbofish_written, BodyTranslator};
 
+/// What a `let` initialiser that finishes a `map.entry(..)` produced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryFinish {
+    /// The finisher was written: the `let` binds the write-through slot the
+    /// runtime's `MapEntry` hands back, which is what `*e.or_insert(0) += 1`
+    /// stores into.
+    Slot,
+    /// The receiver IS an entry and the finisher had to be refused (R12), so
+    /// the initialiser is a hole.
+    Hole,
+    /// Not an entry finisher at all.
+    Neither,
+}
+
 impl BodyTranslator<'_> {
     // ── Field reads and the places a value moves out of ─────────────
 
@@ -20,9 +34,20 @@ impl BodyTranslator<'_> {
     /// the field name itself, with every wrapper the field sits behind written
     /// out — one accessor per hop the engine took to find it.
     pub(crate) fn field_parts(&self, field: &syn::ExprField) -> (String, String) {
-        let base = self.expr(&field.base);
+        // I6: the base of a field read is a value position, and `expr` writes
+        // an `if` as an `if` STATEMENT — `(if ok { a } else { b }).n` did not
+        // parse, and nothing reported it.
+        let base = self.expr_value(&field.base);
+        // A positional member is spelled `_0` on an emitted class and read by
+        // INDEX on a tuple, because the port writes a tuple as an array.
+        // Written `._0` either way, `value.0` on a `(A, B, C)` read `undefined`
+        // — fourteen reports in `proto` from one impl, and every one of them a
+        // wrong value rather than a missing one.
         let member = match &field.member {
             syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),
+            syn::Member::Unnamed(idx) if self.base_is_a_tuple(&field.base) => {
+                format!("[{}]", idx.index)
+            }
             syn::Member::Unnamed(idx) => format!("_{}", idx.index),
         };
         // A body with no type context never went through `path_expr`, so a bare
@@ -42,7 +67,11 @@ impl BodyTranslator<'_> {
         let Some(tc) = &self.types else {
             return (base, member);
         };
-        let found = tc.borrow().resolve_field_access(&field.base, &member);
+        // The registry names a tuple's fields `_0`, `_1` — the spelling
+        // emission uses for a tuple STRUCT — whatever the written access is.
+        let asked = member.strip_prefix('[').map(|m| format!("_{}", m.trim_end_matches(']')));
+        let found =
+            tc.borrow().resolve_field_access(&field.base, asked.as_deref().unwrap_or(&member));
         let instead = format!("`.{}` is emitted without a wrapper accessor", member);
         let Some(found) = self.or_fallback(found, &instead) else {
             return (base, member);
@@ -53,6 +82,15 @@ impl BodyTranslator<'_> {
             receiver.push_str(&accessor);
         }
         (receiver, member)
+    }
+
+    /// Is the base of this field read a TUPLE, which the port writes as an
+    /// array and therefore reads by index?
+    fn base_is_a_tuple(&self, base: &syn::Expr) -> bool {
+        matches!(
+            self.quietly(|| self.resolve_expr_type(base)).as_ref().map(crate::ty::Ty::peel_refs),
+            Ok(crate::ty::Ty::Tuple(_))
+        )
     }
 
     /// A call written as the module-level function its impl was emitted as.
@@ -130,14 +168,6 @@ impl BodyTranslator<'_> {
         ))
     }
 
-    /// The name a call through an OPEN BOUND has to write, where the trait's
-    /// impls become module-level functions.
-    ///
-    /// The engine resolved `subject.members()` only to `TClock`'s declaration,
-    /// because `subject` is a type parameter. `Clock`'s impl of that trait is
-    /// written in core while `Clock` itself is declared in proto, so the method
-    /// is `Clock_members(self)` and the class carries nothing called `members`.
-    /// One such impl is called by name; several go through the dispatcher.
     /// `v[a..b]`, which is a SLICE and not an index.
     ///
     /// Emitting the range as an index expression produced `v[/* range a..b */]`,
@@ -192,30 +222,63 @@ impl BodyTranslator<'_> {
         }
     }
 
-    /// Is this initialiser one of the three ways Rust finishes a
-    /// `map.entry(k)`?
+    /// What a `let` initialiser that finishes a `map.entry(..)` DID.
     ///
-    /// For: a finisher answers `&mut V`, and a `let` that binds one binds the
-    /// write-through slot itself — `let slot = map.entry(k).or_insert(0);
-    /// *slot += 1` stores into the map, and a name bound to the number it held
-    /// cannot. Every read of such a name goes through the slot, which is what
-    /// holding it in a cell already writes.
-    pub(crate) fn finishes_an_entry(&self, expr: &syn::Expr) -> bool {
+    /// I1: the answer used to be a `bool` beside a search of the rendered text
+    /// for `unsupported(` — so an initialiser whose emitted value carried those
+    /// characters for any reason stopped binding the slot, and the decision
+    /// depended on the shape of a string rather than on what was lowered. The
+    /// disposition is the lowering's, and it is the same question
+    /// `native_types::map::translate_entry` asks: a finisher it can write binds
+    /// the write-through slot; one it has to refuse leaves a hole, and reading
+    /// `.value` off a hole says nothing the hole does not already say.
+    pub(crate) fn finishes_an_entry(&self, expr: &syn::Expr) -> EntryFinish {
         let syn::Expr::MethodCall(call) = expr else {
-            return false;
+            return EntryFinish::Neither;
         };
+        let method = call.method.to_string();
+        // `and_modify` is one of the entry family — an untyped receiver refuses
+        // it with the other three — but it answers the ENTRY rather than a
+        // write-through slot, so a `let` binding it binds no slot.
         if !matches!(
-            call.method.to_string().as_str(),
-            "or_insert" | "or_insert_with" | "or_default"
+            method.as_str(),
+            "or_insert" | "or_insert_with" | "or_default" | "and_modify"
         ) {
-            return false;
+            return EntryFinish::Neither;
         }
-        let Some(tc) = &self.types else { return false };
+        let Some(tc) = &self.types else { return EntryFinish::Neither };
         let tc = tc.borrow();
+        // A receiver the engine could not type says nothing a finisher can be
+        // written from — what to write needs the map's value type — so
+        // `translate_untyped` refuses all three names outright and the whole
+        // call becomes a hole.
         let Ok(receiver) = tc.resolve_expr(&call.receiver) else {
-            return false;
+            return EntryFinish::Hole;
         };
-        crate::native_types::map::is_entry_type(tc.registry, &receiver)
+        if !crate::native_types::map::is_entry_type(tc.registry, &receiver) {
+            return EntryFinish::Neither;
+        }
+        if method == "and_modify" {
+            return EntryFinish::Neither;
+        }
+        // The one finisher the lowering can refuse: `or_default()` needs the
+        // value type's default, which TypeScript has no way to read off a type.
+        if method == "or_default" {
+            let held = match receiver.peel_refs() {
+                crate::ty::Ty::Named { args, .. } => args.get(1).cloned(),
+                _ => None,
+            };
+            let refused = match held {
+                Some(value) => {
+                    crate::derives::default_value::default_value(tc.registry, &value).is_err()
+                }
+                None => true,
+            };
+            if refused {
+                return EntryFinish::Hole;
+            }
+        }
+        EntryFinish::Slot
     }
 
     /// A call the receiver's own class does not carry.
@@ -283,6 +346,14 @@ impl BodyTranslator<'_> {
         ))
     }
 
+    /// The name a call through an OPEN BOUND has to write, where the trait's
+    /// impls become module-level functions.
+    ///
+    /// The engine resolved `subject.members()` only to `TClock`'s declaration,
+    /// because `subject` is a type parameter. `Clock`'s impl of that trait is
+    /// written in core while `Clock` itself is declared in proto, so the method
+    /// is `Clock_members(self)` and the class carries nothing called `members`.
+    /// One such impl is called by name; several go through the dispatcher.
     pub(crate) fn open_bound_call(
         &self,
         tc: &crate::infer::TypeContext<'_>,
@@ -501,36 +572,14 @@ impl BodyTranslator<'_> {
 
 }
 
-/// Every local this block hands out as `&mut`, by the name the emitter writes.
+/// `receiver.member`, or `receiver[0]` where the member is an index.
 ///
-/// A `&mut` to a class is already a reference in JavaScript and needs no cell;
-/// the decision about the TYPE is made where the local is declared, which is
-/// the only place the type is known. This is the syntactic half: which names
-/// are borrowed mutably at all.
-pub(crate) fn cells_wanted(block: &syn::Block) -> Vec<String> {
-    struct Borrows {
-        names: Vec<String>,
+/// The port writes a tuple as an array, so a positional read on one is an index
+/// and carries no dot.
+pub(crate) fn join_member(receiver: &str, member: &str) -> String {
+    if member.starts_with('[') {
+        format!("{}{}", receiver, member)
+    } else {
+        format!("{}.{}", receiver, member)
     }
-    impl syn::visit::Visit<'_> for Borrows {
-        fn visit_expr_reference(&mut self, node: &syn::ExprReference) {
-            if node.mutability.is_some() {
-                if let syn::Expr::Path(path) = &*node.expr {
-                    if path.path.segments.len() == 1 {
-                        let name = crate::name_map::escape_reserved(&crate::name_map::to_camel_case(
-                            &path.path.segments[0].ident.to_string(),
-                        ));
-                        if !self.names.contains(&name) {
-                            self.names.push(name);
-                        }
-                    }
-                }
-            }
-            syn::visit::visit_expr_reference(self, node);
-        }
-        // A closure's own body borrows in its own scope.
-        fn visit_expr_closure(&mut self, _: &syn::ExprClosure) {}
-    }
-    let mut borrows = Borrows { names: Vec::new() };
-    syn::visit::Visit::visit_block(&mut borrows, block);
-    borrows.names
 }

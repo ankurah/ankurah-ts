@@ -1,5 +1,6 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
 import { Struct, Result, Weak, derivedClone } from '@ankurah/base';
+import { ComparisonOperator, Expr, Literal, OrderDirection, PathExpr, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
 import { NodeAndContext } from '../context';
 import { Entity } from '../entity';
 import { RetrievalError } from '../error';
@@ -7,7 +8,6 @@ import { Comparison } from '../lineage';
 import { ContextData, MatchArgs, Node, NodeInner } from '../node';
 import { AbstractEntity } from '../reactor';
 import { ValueType } from '../value/index';
-import { ComparisonOperator, Expr, Literal, OrderByItem, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { CollectionId, EntityId } from '@ankurah/proto';
 
 export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> extends Struct implements GapFetcher<Entity> {

@@ -12,7 +12,8 @@
 //! Arms are tested in the order Rust tries them, each against the same subject,
 //! which is read once.
 
-use super::{Position, arm_body, indent, subject_of_bound};
+use super::arms::arm_body;
+use super::{Position, indent, subject_of_bound};
 use crate::body::BodyTranslator;
 
 pub fn translate(

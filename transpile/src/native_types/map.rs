@@ -127,6 +127,11 @@ pub fn translate_entry(
     if !is_entry(reg, *id) {
         return None;
     }
+    // `and_modify(f)` answers the ENTRY, not the value in it — a finisher can
+    // follow it — so the value read below never applies to it.
+    if (method, args.len()) == ("and_modify", 1) {
+        return Some(MethodTranslation::Expr(format!("{}.andModify({})", receiver, args[0])));
+    }
     let finished = match (method, args.len()) {
         ("or_insert", 1) => format!("{}.orInsert({})", receiver, args[0]),
         ("or_insert_with", 1) => format!("{}.orInsertWith({})", receiver, args[0]),

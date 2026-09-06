@@ -3,6 +3,11 @@
 // JavaScript's `Map` and `Set` — which compare by identity — a key read back off
 // the wire matched nothing, and `HashMap::from` named a static that did not
 // exist at all.
+//
+// I7: `let mut counts: HashMap<..> = ..` is a `Pat::Type` whose INNER pattern
+// carries the `mut`, and only `Pat::Ident` was read — so the annotated form came
+// out `const` and any later write to it was `Assignment to constant variable`.
+// Both bindings below are written to, and both are `let`.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, PartialEq, Eq, Hash)]

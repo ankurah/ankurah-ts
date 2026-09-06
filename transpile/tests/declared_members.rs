@@ -324,3 +324,60 @@ fn walk(dir: &Path, out: &mut BTreeMap<String, PathBuf>) {
         }
     }
 }
+
+/// Every `debug()` the emitter writes on a HAND-WRITTEN type is one the file
+/// really declares.
+///
+/// The same rule `reads_json` follows, for the other member a `[provided_impls]`
+/// entry can claim. `#[derive(Debug)]` on a type holding a provided one printed
+/// the field through `toString` — which for a class is `[object Object]` — and
+/// the entry saying `has_debug = true` is what turns that into a real call, so
+/// an entry beside a file with no such method has to fail here.
+#[test]
+fn every_has_debug_claim_names_a_declared_method() {
+    let table = config_table();
+    let provided = table
+        .get("provided_impls")
+        .and_then(|v| v.as_table())
+        .unwrap_or_else(|| panic!("transpile.toml has no [provided_impls] table"));
+    let crates = table
+        .get("crates")
+        .and_then(|v| v.as_table())
+        .unwrap_or_else(|| panic!("transpile.toml has no [crates] table"));
+
+    let mut checked = 0usize;
+    for (fqn, entry) in provided {
+        let entry = entry.as_table().unwrap_or_else(|| panic!("[provided_impls] {fqn} is not a table"));
+        if !entry.get("has_debug").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let path = entry
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("[provided_impls] {fqn} has no `path`"));
+        let class = fqn.rsplit("::").next().unwrap_or(fqn).to_string();
+        let file = provided_file(crates, fqn, path);
+        let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+            panic!("[provided_impls] {fqn} names {}, which cannot be read: {e}", file.display())
+        });
+        let members = declared_members_of(&text, &class).unwrap_or_else(|| {
+            panic!(
+                "[provided_impls] {fqn} says `has_debug = true`, but {} declares no \
+                 `export class {class}`.",
+                file.display()
+            )
+        });
+        assert!(
+            members.contains("debug()"),
+            "[provided_impls] {fqn} says `has_debug = true`, but class `{class}` in {} declares \
+             no `debug()`. Either the file lost it or the entry is wrong; emitted `Debug` lines \
+             call it.",
+            file.display()
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no [provided_impls] entry says `has_debug = true`, so this check is proving nothing"
+    );
+}

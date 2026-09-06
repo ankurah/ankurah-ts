@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/sorting.rs
-import { Struct, dropOwned, checkedAdd } from '@ankurah/base';
+import { Struct, dropOwned, valueEquals, checkedAdd } from '@ankurah/base';
 import { Filterable, Value, Context } from '@ankurah/core';
 import { OrderByComponents } from './types';
 import { OrderByItem } from '@ankurah/ankql';
@@ -130,7 +130,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
                 }
                 if (this_.currentPartitionKey != null) {
                   const currentKey = this_.currentPartitionKey;
-                  if (currentKey === itemKey) {
+                  if (valueEquals(currentKey, itemKey)) {
                     {
                       this_.currentPartition.push(item);
                     }
@@ -311,7 +311,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
         }
       }
       let _moved0 = false;
-      const heap = BinaryHeap.new();
+      let heap = BinaryHeap.new();
       try {
         while (true) {
           const _m1 = (() => {
@@ -346,7 +346,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
               } else {
                 this_.inner = null;
                 _moved0 = true;
-                const topK = heap.intoIter().map((h) => h.item);
+                let topK = heap.intoIter().map((h) => h.item);
                 sortItemsByOrder(topK, this_.orderBy.spill);
                 this_.sortedPartition = [...topK];
                 const _m2 = new Poll('Ready', { _0: null });
@@ -429,7 +429,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                 }
                 if (this_.currentPartitionKey != null) {
                   const currentKey = this_.currentPartitionKey;
-                  if (currentKey === itemKey) {
+                  if (valueEquals(currentKey, itemKey)) {
                     {
                       this_.currentPartition.push(item);
                     }

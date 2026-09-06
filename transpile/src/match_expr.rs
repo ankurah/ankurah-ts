@@ -78,25 +78,6 @@ enum Position {
     Returning,
 }
 
-/// One arm's body, written for the position the match stands in.
-///
-/// F3: whether a value is wanted comes from the POSITION the lowering chose,
-/// never from anything read off the generated text or off an expectation left
-/// standing. An arm of a statement match produces nothing, so its block is a
-/// run of statements — asked as an expression, `{ if n == 0 { return .. } .. }`
-/// came back an arrow function whose value was then written as a statement of
-/// its own.
-fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position) -> String {
-    match position {
-        Position::Statement => match body {
-            syn::Expr::Block(block) if block.label.is_none() => {
-                t.translate_block(&block.block).trim_end().to_string()
-            }
-            other => t.expr(other),
-        },
-        Position::Returning => crate::control_flow::translate_expr_in_return_position(body, t),
-    }
-}
 
 /// Translate a match expression
 pub fn translate_match(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {

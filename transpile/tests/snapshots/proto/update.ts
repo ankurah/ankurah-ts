@@ -48,7 +48,7 @@ export class SubscriptionUpdateItem extends Struct {
   }
 
   debug(): string {
-    return `SubscriptionUpdateItem { entityId: ${this.entityId}, collection: ${this.collection.debug()}, content: ${this.content.debug()}, predicateRelevance: ${this.predicateRelevance} }`;
+    return `SubscriptionUpdateItem { entityId: ${this.entityId.debug()}, collection: ${this.collection.debug()}, content: ${this.content.debug()}, predicateRelevance: ${`[${Array.from(this.predicateRelevance).map((e) => (($t) => `(${$t[0].debug()}, ${$t[1].debug()})`)(e)).join(', ')}]`} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -137,7 +137,7 @@ export class NodeUpdate extends Struct {
   }
 
   debug(): string {
-    return `NodeUpdate { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+    return `NodeUpdate { id: ${this.id.debug()}, from: ${this.from.debug()}, to: ${this.to.debug()}, body: ${this.body.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {
@@ -226,7 +226,7 @@ export class NodeUpdateAck extends Struct {
   }
 
   debug(): string {
-    return `NodeUpdateAck { id: ${this.id}, from: ${this.from}, to: ${this.to}, body: ${this.body.debug()} }`;
+    return `NodeUpdateAck { id: ${this.id.debug()}, from: ${this.from.debug()}, to: ${this.to.debug()}, body: ${this.body.debug()} }`;
   }
 
   encode(writer: BincodeWriter): void {

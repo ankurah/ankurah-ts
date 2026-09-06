@@ -1,7 +1,8 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
-import { Struct, Result, Arc, dropOwned, tracing, unsupported, checkedAdd, wrappingAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, valueEquals, tracing, unsupported, checkedAdd, wrappingAdd, iterFirst, range, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
+import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, Iter, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
-import { Attested, EntityState, EventId, State, CollectionId, EntityId, Event } from '@ankurah/proto';
+import { Attested, EntityId, EntityState, EventId, State, CollectionId, Event } from '@ankurah/proto';
 import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig, SortedStream, TopKStream } from '@ankurah/storage-common';
 import { Database } from './database';
 import { IdbValue } from './idb_value';
@@ -11,7 +12,6 @@ import { cbFuture } from './util/cb_future';
 import { cbStream } from './util/cb_stream';
 import { Object } from './util/object';
 import { Result_JsValue_require } from './util/require';
-import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
 
 export class IndexedDBBucket extends Struct implements StorageCollection {
   db: Database;
@@ -37,10 +37,10 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
       let stream = undefined /* pin!(scanner . scan ()) */;
       let count = 0n;
       let _moved0 = false;
-      const rows = [];
+      let rows = [];
       try {
         let _moved1 = false;
-        const directResults = [];
+        let directResults = [];
         try {
           for (;;) {
             const _v6 = await stream.next();
@@ -158,7 +158,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                   const _v = _r5.unwrap();
                   if (_v != null) {
                     const oldClock = _v;
-                    if (oldClock === state.payload.state.head) {
+                    if (valueEquals(oldClock, state.payload.state.head)) {
                       return Result.Ok(false);
                     }
                   }
@@ -273,7 +273,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         try {
           const plans = planner.plan(amendedSelection, 'id');
           try {
-            const _m0 = plans[0];
+            const _m0 = iterFirst(plans);
             const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => new RetrievalError('StorageError', { _0: 'No plan generated' }))()));
             if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
             const plan = _r1.unwrap();
@@ -677,21 +677,37 @@ function extractAllFields(entityObj: Object, entityState: EntityState): Result<v
     const _r0 = backendFromString(backendName, stateBuffer).mapErr((e) => new MutationError('General', { _0: e }));
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const backend = _r0.unwrap();
-    for (const [fieldName, value] of backend.propertyValues()) {
-      if (!seenFields.insert(fieldName.clone())) {
-        continue;
-      }
-      const jsValue = (() => {
-        if (value != null) {
-          const propValue = value;
-          return IdbValue.from(propValue);
-        } else {
-          return JsValue.NULL;
+    try {
+      const _seq3 = backend.value.propertyValues().intoEntries();
+      let _at4 = 0;
+      try {
+        while (_at4 < _seq3.length) {
+          const [fieldName, value] = _seq3[_at4++];
+          let _moved1 = false;
+          try {
+            if (!seenFields.insert(fieldName)) {
+              continue;
+            }
+            const jsValue = (() => {
+              if (value != null) {
+                const propValue = value;
+                return IdbValue.fromRefValue(propValue);
+              } else {
+                return JsValue.NULL;
+              }
+            })();
+            const _r2 = entityObj.set(fieldName, jsValue);
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            _r2.drop();
+          } finally {
+            if (!_moved1) dropOwned(value);
+          }
         }
-      })();
-      const _r1 = entityObj.set(fieldName, jsValue);
-      if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-      _r1.drop();
+      } finally {
+        dropOwned(_seq3.slice(_at4));
+      }
+    } finally {
+      backend.drop();
     }
   }
   return Result.Ok([]);

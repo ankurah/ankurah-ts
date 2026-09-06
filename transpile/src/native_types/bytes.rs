@@ -38,9 +38,8 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
         "iter" | "into_iter" => format!("[...{}]", receiver),
 
         // Reading one byte, or a run of them.
-        "first" => format!("{}[0]", receiver),
-        "last" => format!("{}.at(-1)", receiver),
-        "get" if args.len() == 1 => format!("{}[{}]", receiver, args[0]),
+        // J1: `first`, `last` and `get` answer an `Option`, whose JavaScript
+        // sentinel is `undefined`. The shared Option-adaptor table writes them.
         "contains" if args.len() == 1 => format!("{}.includes({})", receiver, args[0]),
         "starts_with" if args.len() == 1 => format!(
             "{}.slice(0, {}.length).every((b, i) => b === {}[i])",
@@ -54,7 +53,12 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             receiver, receiver, args[0]
         ),
 
-        _ => return MethodTranslation::Passthrough,
+        // Everything else a byte slice shares with any other sequence — the
+        // Option-returning readers among them — is written by the shared table.
+        _ => match super::iterator::translate(receiver, method, args, super::iterator::Receiver::Sequence) {
+            Some(written) => written,
+            None => return MethodTranslation::Passthrough,
+        },
     };
     MethodTranslation::Expr(result)
 }

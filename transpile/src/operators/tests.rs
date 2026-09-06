@@ -28,14 +28,49 @@ fn inequality_negates_the_same_call() {
     assert!(ts.contains("!a.equals(b)"), "{}", ts);
 }
 
+/// PREMISE CHANGED (I8): this used to expect `a === b` and a diagnostic saying
+/// the JavaScript operator had been written. `===` on two objects compares
+/// IDENTITY where Rust compares contents, so what it left was a branch that
+/// could never be taken — eight of them were live, `bytes == [0u8; 16]` and two
+/// `BTreeSet`s among them. `==` is now performed by the runtime whatever the
+/// impl table says, and the site is no longer a gap.
 #[test]
-fn equality_with_no_impl_says_so_and_keeps_the_operator() {
+fn equality_with_no_impl_is_performed_by_the_runtime() {
     let (ts, messages) = body("pub fn f(a: &Loose, b: &Loose) -> bool { a == b }", "f");
-    assert!(ts.contains("a === b"), "{}", ts);
+    assert!(ts.contains("valueEquals(a, b)"), "{}", ts);
+    assert!(!ts.contains("a === b"), "{}", ts);
     assert!(
+        !messages.iter().any(|m| m.contains("compares references rather than values")),
+        "the comparison is written, so nothing is reported: {:?}",
         messages
-            .iter()
-            .any(|m| m.contains("no impl in the table performs it")),
+    );
+}
+
+/// The negation is written out rather than `!valueEquals(..)`, so the emitted
+/// text reads as one call and no parenthesisation question arises around it.
+#[test]
+fn inequality_with_no_impl_is_the_negated_runtime_comparison() {
+    let (ts, _) = body("pub fn f(a: &Loose, b: &Loose) -> bool { a != b }", "f");
+    assert!(ts.contains("valueNotEquals(a, b)"), "{}", ts);
+}
+
+/// Two sequences are compared element by element — `===` on two arrays is
+/// identity, so `bytes == [0u8; 16]` was ALWAYS false.
+#[test]
+fn two_byte_buffers_are_compared_by_content() {
+    let (ts, _) = body("pub fn f(a: &Vec<u8>, b: &Vec<u8>) -> bool { a == b }", "f");
+    assert!(ts.contains("valueEquals(a, b)"), "{}", ts);
+}
+
+/// An ORDERING with no impl is untouched: `<` between two objects is not a
+/// question the runtime can answer without a `compareTo`, and the diagnostic
+/// there still stands.
+#[test]
+fn an_ordering_with_no_impl_still_reports() {
+    let (ts, messages) = body("pub fn f(a: &Loose, b: &Loose) -> bool { a < b }", "f");
+    assert!(ts.contains("a < b"), "{}", ts);
+    assert!(
+        messages.iter().any(|m| m.contains("no impl in the table performs it")),
         "{:?}",
         messages
     );

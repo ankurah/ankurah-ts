@@ -5,6 +5,8 @@
 //! emission's business and are produced by `name_map`, never parsed back.
 
 use crate::ty::Ty;
+// A `use` item's shape lives beside the extraction that reads it.
+pub(crate) use crate::extract::UseInfo;
 
 /// Visibility as written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +270,14 @@ pub struct FnInfo {
     /// Translated function body (None = stub, Some = translated).
     /// Populated in Phase 3 (translate) from body_ast, or eagerly for legacy codepaths.
     pub body_ts: Option<String>,
+    /// Did translating this body write an R12 hole?
+    ///
+    /// Recorded by the lowering rather than read back out of `body_ts`: a body
+    /// that mentions `unsupported(` for any other reason is not a body that
+    /// refused a shape, and a method carrying a refusal is never dropped from
+    /// the emitted class, because a refusal that is not in the file is not a
+    /// refusal.
+    pub body_has_hole: bool,
 }
 
 impl std::fmt::Debug for FnInfo {
@@ -495,20 +505,6 @@ impl ImplInfo {
     }
 }
 
-#[derive(Debug)]
-pub struct UseInfo {
-    pub path: String,
-    pub vis: VisInfo,
-    /// What this `use` binds in its module, one entry per imported name.
-    pub bindings: Vec<UseBindingInfo>,
-}
-
-/// One name a `use` brings into scope. `local` is `None` for `use path::*`.
-#[derive(Debug, Clone)]
-pub struct UseBindingInfo {
-    pub local: Option<String>,
-    pub path: Vec<String>,
-}
 
 #[derive(Debug)]
 pub struct TypeAliasInfo {
