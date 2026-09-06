@@ -141,9 +141,11 @@ describe('engine unit tests', () => {
             const extracted = _r6.unwrap();
             console.log(`Extracted territory: '${extracted}'`);
             const queryParam = 'US';
+            let _moved7 = false;
             const result = c.queryRow('SELECT id FROM test_jsonb WHERE json_extract(data, \'$.territory\') = ?', [queryParam], (row) => row.get(0));
             try {
               console.log(`Query result: ${result}`);
+              _moved7 = true;
               if (result.isOk()) {
                 const id = result.unwrap();
                 expect(id).toEqual('1')
@@ -153,7 +155,7 @@ describe('engine unit tests', () => {
               }
               return Result.Ok([]);
             } finally {
-              result.drop();
+              if (!_moved7) result.drop();
             }
           });
         } finally {

@@ -50,18 +50,41 @@ async function settle(): Promise<void> {
 }
 
 /**
- * A report a golden EXPECTS, because the golden stands on a defect that is open
- * and named. Written as the first line of the report — `BUG: HashMap was garbage
- * collected without being dropped.` — and matched against exactly that.
+ * One report a golden EXPECTS, because the golden stands on a defect that is
+ * open and named.
+ *
+ * A recorded report is a DEBT, not an acceptance, so it names the item that owes
+ * the fix: `owes` is required, and a driver that records a leak without saying
+ * who is going to fix it does not compile.
+ */
+export interface RecordedReport {
+  /**
+   * The first line of the report, as the runtime prints it — `BUG: HashMap was
+   * garbage collected without being dropped.` — and matched against exactly
+   * that.
+   */
+  report: string;
+  /**
+   * The addendum item that owes the fix, named so a reader can find it: the
+   * file it is in and what it governs.
+   */
+  owes: string;
+}
+
+/**
+ * The reports a golden expects, because the golden stands on a defect that is
+ * open and named.
  */
 export interface KnownReports {
   /**
    * Why each of these is here, and the whole line the runtime prints. Matched in
-   * BOTH directions: an expected report that stops appearing fails the golden as
-   * loudly as an unexpected one, so a fix cannot pass unnoticed and a papered
-   * leak cannot sit here forever.
+   * BOTH directions and as a MULTISET: an expected report that stops appearing
+   * fails the golden as loudly as an unexpected one, so a fix cannot pass
+   * unnoticed and a papered leak cannot sit here forever — and a golden that
+   * leaks TWICE where it recorded once fails too, which set comparison let
+   * through.
    */
-  except: readonly string[];
+  except: readonly RecordedReport[];
 }
 
 /** The first line of each report, which is what a `KnownReports` entry names. */
@@ -79,10 +102,21 @@ async function check(known: KnownReports | undefined): Promise<void> {
   // the message below is the one worth reading.
   if (collected.length > 0) clearFatalLatch();
 
-  const expected = [...(known?.except ?? [])].sort();
-  const seen = headlines(collected).sort();
-  const surplus = seen.filter((line) => !expected.includes(line));
-  const missing = expected.filter((line) => !seen.includes(line));
+  // A MULTISET, not a set: each expected line takes one occurrence out of what
+  // was seen, so a golden that leaks twice where it recorded once is left with a
+  // surplus. Compared as sets, `includes` answered `true` for the second
+  // occurrence as readily as the first and the extra leak passed.
+  const unmatched = headlines(collected);
+  const missing: string[] = [];
+  for (const entry of known?.except ?? []) {
+    const at = unmatched.indexOf(entry.report);
+    if (at === -1) {
+      missing.push(entry.report);
+      continue;
+    }
+    unmatched.splice(at, 1);
+  }
+  const surplus = unmatched;
   if (surplus.length === 0 && missing.length === 0) return;
 
   const parts: string[] = [];

@@ -2178,6 +2178,7 @@ import {
   checkedMul,
   checkedRem,
   checkedSub,
+  checkedNeg,
   checkedAddOption,
   checkedDivOption,
   checkedRemOption,
@@ -2207,6 +2208,19 @@ describe('checked arithmetic panics where the debug build does', () => {
     expect(() => checkedMul(128, 2, 'i8')).toThrow('attempt to multiply with overflow');
     expect(() => checkedAdd(18446744073709551615n, 1n, 'u64')).toThrow();
     expect(() => checkedSub(-2147483648, 1, 'i32')).toThrow();
+  });
+
+  // A signed width has one more negative value than positive, so `MIN` has no
+  // positive: `i64::MIN.abs()` panics in Rust's debug build. Written as
+  // `checkedSub(0, x, width)` the value it raised at was exactly right and the
+  // message named the wrong operation, which is the line a reader greps for.
+  test('negation raises at MIN, and says it is negation', () => {
+    expect(checkedNeg(-5, 'i32')).toBe(5);
+    expect(checkedNeg(5n, 'i64')).toBe(-5n);
+    expect(() => checkedNeg(-2147483648, 'i32')).toThrow('attempt to negate with overflow');
+    expect(() => checkedNeg(-9223372036854775808n, 'i64')).toThrow('attempt to negate with overflow');
+    // An unsigned width has no negative at all.
+    expect(() => checkedNeg(1, 'u8')).toThrow('attempt to negate with overflow');
   });
 
   test('a wide answer is exact, not a double', () => {

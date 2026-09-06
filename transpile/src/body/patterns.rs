@@ -417,17 +417,38 @@ impl BodyTranslator<'_> {
             syn::Pat::Wild(_) => ("true".to_string(), String::new()),
             syn::Pat::Reference(r) => self.pattern_test(subject, &r.pat),
             syn::Pat::Paren(p) => self.pattern_test(subject, &p.pat),
+            // `[a, b]` against a sequence: the length, and then each position
+            // by its own rule. A `..` is the case this has no lowering for —
+            // the positions after it are counted from the END, and the names
+            // before and after it index differently — so that one falls to the
+            // refusal below.
+            syn::Pat::Slice(slice)
+                if !slice.elems.iter().any(|p| matches!(p, syn::Pat::Rest(_))) =>
+            {
+                let mut tests = vec![format!("{}.length === {}", subject, slice.elems.len())];
+                let mut binds = String::new();
+                for (at, elem) in slice.elems.iter().enumerate() {
+                    let place = format!("{}[{}]", subject, at);
+                    let (test, bind) = self.pattern_test(&place, elem);
+                    if test.trim() != "true" {
+                        tests.push(test);
+                    }
+                    binds.push_str(&bind);
+                }
+                (tests.join(" && "), binds)
+            }
             // A pattern with no test the translator can write is NOT a
-            // catch-all. `true` here was the opposite convention from the
-            // or-pattern's `false` a hundred lines above, and it ran an arm
-            // whose bindings the translator had just said it could not write.
+            // catch-all, and it is not an arm that never matches either: the
+            // arm's own bindings are written whatever the test says, so
+            // `if (false)` named `a` and `b` where nothing declares them. D2:
+            // the test is `true` and the refusal is the branch's first
+            // statement, so every value that reaches the arm gets it, loudly.
             other => {
-                self.fallback(
+                let hole = self.hole(
                     syn::spanned::Spanned::span(other),
-                    "this pattern has no test the translator can write, so the arm is written \
-                     as one that never matches",
+                    "this pattern has no test the translator can write",
                 );
-                ("false".to_string(), String::new())
+                ("true".to_string(), format!("{};\n", hole))
             }
         }
     }
@@ -531,88 +552,6 @@ fn is_identifier(text: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
-impl<'a> BodyTranslator<'a> {
-    /// Does this path name a `const` or a `static`, rather than a binding?
-    ///
-    /// Rust resolves a pattern's identifier in the VALUE namespace first: a
-    /// name that lands on a const is a comparison against its value, and only a
-    /// name that lands on nothing binds. The registry's value namespace holds
-    /// consts, statics and free functions; a function has a signature and a
-    /// const does not, which is what tells them apart.
-    ///
-    /// The answer carries the const's declared type, because that is what
-    /// decides how the comparison is written.
-    pub(crate) fn names_a_const(&self, segments: &[String]) -> Option<Option<crate::ty::Ty>> {
-        let tc = self.types.as_ref()?;
-        let tc = tc.borrow();
-        let mark = tc.sink.mark();
-        let found = tc
-            .registry
-            .lookup(tc.module, crate::registry::Ns::Value, segments);
-        tc.sink.rewind(mark);
-        match found {
-            Ok(Some(crate::registry::Def::Value(id))) => {
-                let value = tc.registry.value(id)?;
-                // A free function is in the value namespace too, and naming one
-                // in a pattern is not a comparison.
-                if value.sig.is_some() {
-                    return None;
-                }
-                Some(value.ty.clone())
-            }
-            _ => None,
-        }
-    }
-
-    /// Is every use of this name a fresh value, so the emitted name is a
-    /// function this use calls? See `ValueDef::fresh_at_each_use`.
-    pub(crate) fn names_a_fresh_const(&self, segments: &[String]) -> bool {
-        let Some(tc) = self.types.as_ref() else { return false };
-        let tc = tc.borrow();
-        let mark = tc.sink.mark();
-        let found = tc
-            .registry
-            .lookup(tc.module, crate::registry::Ns::Value, segments);
-        tc.sink.rewind(mark);
-        match found {
-            Ok(Some(crate::registry::Def::Value(id))) => tc
-                .registry
-                .value(id)
-                .is_some_and(|value| value.fresh_at_each_use),
-            _ => false,
-        }
-    }
-
-    /// The test a const pattern writes: the subject against the const's value.
-    fn const_pattern_test(
-        &self,
-        subject: &str,
-        segments: &[String],
-        pat: &syn::Pat,
-    ) -> (String, String) {
-        let name = crate::name_map::escape_reserved(segments.last().expect("a path has a segment"));
-        let ty = self.names_a_const(segments).flatten();
-        let compares_by_identity = matches!(
-            ty.as_ref().map(|t| t.peel_refs()),
-            Some(crate::ty::Ty::Prim(_)) | Some(crate::ty::Ty::Str) | None
-        );
-        if compares_by_identity {
-            return (format!("{} === {}", subject, name), String::new());
-        }
-        // A const of a type the port writes as an object compares by value in
-        // Rust, and `===` here is reference identity. R12: the arm says so and
-        // stops rather than answering what Rust would not.
-        let hole = self.hole(
-            syn::spanned::Spanned::span(pat),
-            format!(
-                "`{}` is a const of a type the port compares by identity, and Rust compares a \
-                 const pattern by value",
-                segments.join("::")
-            ),
-        );
-        (hole, String::new())
-    }
-}
 
 /// An or-pattern whose alternatives bind their names in a form the translator
 /// cannot read back, as the R12 hole it is.

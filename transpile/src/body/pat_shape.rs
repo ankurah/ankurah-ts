@@ -14,6 +14,23 @@
 
 use super::BodyTranslator;
 
+/// Is this identifier written the way Rust writes a `const`?
+///
+/// At least one letter, and no lowercase one. A binding is `snake_case` and a
+/// const is `SCREAMING_SNAKE_CASE`, and rustc warns on either written the other
+/// way round. Rust resolves a pattern's identifier in the VALUE namespace
+/// first, so a name that lands on a const is a COMPARISON against its value and
+/// not a binding — which makes it refutable, and makes it bind nothing.
+///
+/// One definition, three consumers: this file's two questions and
+/// `writing::collect_bound`, which had a copy. With only the copy,
+/// `match p { ORIGIN => .. }` was irrefutable — an arm that matched everything,
+/// with the arms below it reported unreachable — and `Wrap::Held(ORIGIN, t)`
+/// counted `ORIGIN` among the names the arm took out of the payload.
+pub(crate) fn names_a_constant(ident: &str) -> bool {
+    ident.chars().any(|c| c.is_alphabetic()) && !ident.chars().any(|c| c.is_lowercase())
+}
+
 impl BodyTranslator<'_> {
     /// Does this pattern match whatever it is given?
     ///
@@ -31,6 +48,13 @@ impl BodyTranslator<'_> {
             // was read as a name that matches everything, and the arm ran for
             // a value that was there.
             syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => false,
+            // A `const` in a pattern is a comparison against its value, so it
+            // asks a question like any other test.
+            syn::Pat::Ident(ident)
+                if ident.subpat.is_none() && names_a_constant(&ident.ident.to_string()) =>
+            {
+                false
+            }
             // `x @ Some(_)` binds *and* asks.
             syn::Pat::Ident(ident) => ident
                 .subpat
@@ -64,6 +88,12 @@ impl BodyTranslator<'_> {
             // name, so an arm that writes `Some(None)` took nothing out of the
             // payload and still owes the release.
             syn::Pat::Ident(ident) if ident.ident == "None" && ident.subpat.is_none() => true,
+            // A `const` in a pattern is a comparison, and takes no name out.
+            syn::Pat::Ident(ident)
+                if ident.subpat.is_none() && names_a_constant(&ident.ident.to_string()) =>
+            {
+                true
+            }
             // A pattern that is only a TEST takes no name either. `Lit::Flag(true)`
             // asks a question of the payload and puts nothing anywhere, so the arm
             // owes a release for the whole payload — and answering `false` here

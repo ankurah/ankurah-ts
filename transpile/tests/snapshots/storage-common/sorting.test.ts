@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { LimitedStream, SortedStream, TopKStream } from './sorting';
-import { HashMap, Struct } from '@ankurah/base';
+import { HashMap, Struct, unsupported } from '@ankurah/base';
 import { OrderByComponents } from './types';
 import { OrderByItem, OrderDirection, PathExpr } from '@ankurah/ankql';
 import { Json } from '@ankurah/core';
@@ -86,7 +86,7 @@ class TestItem extends Struct implements Filterable {
 
 describe('sorting unit tests', () => {
   function collectStream(stream: S): Item[] {
-    return futures.executor.blockOn(stream.collect());
+    return futures.executor.blockOn(unsupported('`collect` into `Collect<S, C>` is a `FromIterator` the port has no construction for'));
   }
 
   function streamFrom(items: T[]): Iter<T[]> {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/indexing/encoding.rs
-import { Enum, Result, wrappingSub } from '@ankurah/base';
+import { Enum, Result, unsupported, wrappingSub } from '@ankurah/base';
 import { Json } from '../property/value/json';
 import { Value_castTo } from '../value/cast';
 import { Value_toBytes } from '../value/collatable';
@@ -74,7 +74,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into'));
       }
     }
   } else if ((_v[0].is('F64')) && (_v[1].is('F64'))) {
@@ -83,7 +83,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes);
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into'));
       }
     }
   } else if ((_v[0].is('Bool')) && (_v[1].is('Bool'))) {
@@ -98,7 +98,7 @@ function encodeValueComponent(value: Value, expectedType: ValueType, descending:
       if (!descending) {
         return Result.Ok(bytes.slice());
       } else {
-        return Result.Ok([...bytes].map((b) => wrappingSub((255), b, 'u8')));
+        return Result.Ok(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into'));
       }
     }
   } else if (((_v[0].is('Object')) || (_v[0].is('Binary'))) && ((_v[1].is('Binary')) || (_v[1].is('Object')))) {

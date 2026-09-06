@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/yrs.rs
-import { Struct, Result, Arc, OwnedClosure } from '@ankurah/base';
+import { Struct, Result, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
 import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
 import { MutationError } from '../../error';
@@ -102,7 +102,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
   }
 
   clone(): YrsString<Projected> {
-    return new YrsString(this.propertyName.clone(), this.backend.clone(), this.entity.clone(), this.phantom.clone());
+    return new YrsString(this.propertyName, this.backend.clone(), this.entity.clone(), this.phantom.clone());
   }
 
   debug(): string {
@@ -119,7 +119,11 @@ export function Option_fromActive<Projected, S extends FromActiveType>(active: Y
     const _v1 = _v.unwrapErr();
     if (_v1.is('Missing')) {
       const _v2 = _v1;
-      return Result.Ok(null);
+      try {
+        return Result.Ok(null);
+      } finally {
+        dropOwned(_v2);
+      }
     }
     {
       const err = _v1;

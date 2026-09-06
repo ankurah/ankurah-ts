@@ -73,15 +73,6 @@ pub fn pattern_names(pat: &syn::Pat) -> Vec<String> {
     bound_names(pat)
 }
 
-/// Is this identifier written the way Rust writes a `const`?
-///
-/// At least one letter, and no lowercase one. A binding is `snake_case` and a
-/// const is `SCREAMING_SNAKE_CASE`, and rustc warns on either written the other
-/// way round.
-fn names_a_constant(ident: &str) -> bool {
-    ident.chars().any(|c| c.is_alphabetic()) && !ident.chars().any(|c| c.is_lowercase())
-}
-
 pub(crate) fn bound_names(pat: &syn::Pat) -> Vec<String> {
     let mut out = Vec::new();
     collect_bound(pat, &mut out);
@@ -97,7 +88,9 @@ pub(crate) fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
         // The convention is the one every other path in this file already
         // reads a const by; `names_a_const` asks the registry where it can, and
         // this function has no registry to ask.
-        syn::Pat::Ident(ident) if names_a_constant(&ident.ident.to_string()) => {
+        syn::Pat::Ident(ident)
+            if crate::body::pat_shape::names_a_constant(&ident.ident.to_string()) =>
+        {
             if let Some((_, sub)) = &ident.subpat {
                 collect_bound(sub, out);
             }
@@ -117,7 +110,17 @@ pub(crate) fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
         syn::Pat::Reference(r) => collect_bound(&r.pat, out),
         syn::Pat::Type(t) => collect_bound(&t.pat, out),
         syn::Pat::Paren(p) => collect_bound(&p.pat, out),
-        syn::Pat::Or(or) => or.cases.iter().for_each(|p| collect_bound(p, out)),
+        // Every alternative of an or-pattern binds the SAME names — rustc
+        // refuses one that does not — so the alternatives together introduce
+        // one set of names, and reading all of them listed each name once per
+        // alternative. The scope then claimed `literal` twice and released it
+        // twice, which the strict registry aborts on. One alternative is the
+        // whole answer.
+        syn::Pat::Or(or) => {
+            if let Some(first) = or.cases.first() {
+                collect_bound(first, out);
+            }
+        }
         _ => {}
     }
 }

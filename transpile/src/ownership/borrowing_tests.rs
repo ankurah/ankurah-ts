@@ -200,3 +200,82 @@ fn matching_an_owned_result_still_consumes_it() {
     assert!(ts.contains("v.unwrapErr()"), "{ts}");
     assert!(!ts.contains("okRef"), "{ts}");
 }
+
+/// A TUPLE written to be matched is a tuple of scrutinees, and each element
+/// carries its own `&`.
+///
+/// `if let (Ex::Path(p), Ex::Lit(q)) = (&**left, &**right)` matches two
+/// BORROWED enums, so neither name is the branch's to release. Reading the
+/// tuple's type through `resolve_expr_type` erased both references, and the
+/// branch dropped two payloads their owners still hold — the core watcher set's
+/// `recurse_predicate_watchers` did exactly this.
+#[test]
+fn a_borrowed_tuple_subject_releases_neither_binding() {
+    let mut fixture = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         pub enum Ex { Path(Token), Lit(Token) }\n\
+         pub fn f(l: &Box<Ex>, r: &Box<Ex>) -> u32 { \
+         if let (Ex::Path(p), Ex::Lit(q)) = (&**l, &**r) { p.n + q.n } else { 0 } }",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(!ts.contains("p.drop()"), "the left binding is a borrow:\n{ts}");
+    assert!(!ts.contains("q.drop()"), "the right binding is a borrow:\n{ts}");
+}
+
+/// An OWNED tuple subject still hands its elements to the branch.
+#[test]
+fn an_owned_tuple_subject_releases_both_bindings() {
+    let mut fixture = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         pub fn f(pair: (Token, Token)) -> u32 { \
+         if let (a, b) = pair { a.n + b.n } else { 0 } }",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(ts.contains("a.drop()"), "the first element is the branch's:\n{ts}");
+    assert!(ts.contains("b.drop()"), "the second element is the branch's:\n{ts}");
+}
+
+/// Every alternative of an or-pattern binds the SAME names, so the scope claims
+/// each name ONCE.
+///
+/// Listing the names of every alternative gave `literal` two owners and two
+/// releases, and the strict registry aborts on the second — the core watcher
+/// set's `Predicate::Comparison` arm is the corpus site.
+#[test]
+fn an_or_pattern_claims_each_name_once() {
+    let mut fixture = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         pub enum Ex { Path(Token), Lit(Token) }\n\
+         pub fn f(e: Ex) -> u32 { \
+         if let Ex::Path(t) | Ex::Lit(t) = e { t.n } else { 0 } }",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert_eq!(ts.matches("t.drop()").count(), 1, "one owner, one release:\n{ts}");
+}
+
+/// A `Result` arm owns the payload the side read out, whatever its type turns
+/// out to be.
+///
+/// `T::from_value(v)` behind a type parameter has an error type the engine
+/// cannot name, and the arm that bound it wrote `const _v2 = _v1;` and returned
+/// without releasing anything — a `PropertyError` left for the collector at
+/// four corpus sites. `dropOwned` releases it by its runtime shape.
+#[test]
+fn a_result_arm_releases_a_payload_the_engine_cannot_name() {
+    let mut fixture = crate::testing::Fixture::build(&[(
+        "lib.rs",
+        "pub enum PropertyError { Missing, Bad(String) }\n\
+         pub trait Property { \
+         fn from_value(value: u32) -> Result<Self, PropertyError> where Self: Sized; }\n\
+         pub fn f<T: Property>(value: u32) -> Result<Option<T>, PropertyError> { \
+         match T::from_value(value) { \
+         Ok(v) => Ok(Some(v)), \
+         Err(PropertyError::Missing) => Ok(None), \
+         Err(err) => Err(err) } }",
+    )]);
+    let ts = fixture.translated_method("lib.rs", "f");
+    assert!(ts.contains("dropOwned(_v2)"), "the Missing arm owns the error:\n{ts}");
+}

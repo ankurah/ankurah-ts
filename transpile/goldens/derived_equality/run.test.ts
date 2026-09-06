@@ -6,7 +6,7 @@
 
 import { expect, test } from 'bun:test';
 import { HashMap, HashSet } from '@ankurah/base';
-import { Buffers, Groups, Holder, Marked, Maybe, Nested, Paired, Slot, Sparse, Tag } from './input.ts';
+import { Buffers, Groups, Holder, Marked, Maybe, Nested, Paired, Slot, Sparse, Tag, Sparser, Keyed } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 const bytes = (...ns: number[]) => new Uint8Array(ns);
@@ -138,6 +138,54 @@ test('and the same parameter instantiated with a class still copies deeply', () 
   expect((copy.value as { _0: Tag[] })._0[0]).not.toBe((tags.value as { _0: Tag[] })._0[0]);
   copy.drop();
   tags.drop();
+});
+
+test('an array of nullables guards each element, and an alias is what it stands for', () => {
+  // `(Tag | null)[]` — the parentheses keep `[]` from binding tighter than `|`.
+  // Read off that spelling, the ` | null` suffix matched the whole type and the
+  // element lost its own, so `equals` and `clone` both ran on a `null`.
+  const a = new Sparser([new Tag('x'), null], 'n', [1, 2]);
+  const b = new Sparser([new Tag('x'), null], 'n', [1, 2]);
+  expect(a.equals(b)).toBe(true);
+  const c = new Sparser([null, new Tag('x')], 'n', [1, 2]);
+  expect(a.equals(c)).toBe(false);
+  // A `PropertyName` is a `String`, and a JavaScript string has no `clone()`.
+  // An `Id` is a `u32`, and a number has none either.
+  const copy = a.clone();
+  expect(copy.name).toBe('n');
+  expect(copy.ids).toEqual([1, 2]);
+  expect(copy.slots[1]).toBe(null);
+  expect(copy.slots[0]).not.toBe(a.slots[0]);
+  expect(a.equals(copy)).toBe(true);
+  a.drop();
+  b.drop();
+  c.drop();
+  copy.drop();
+});
+
+test('a derived hash over a type PARAMETER asks the value, not a method it may lack', () => {
+  // `this.key.hash()` on a number is a TypeError, and this is the path a
+  // `HashMap` takes to file a key.
+  const numeric = new Keyed(7, 1);
+  const same = new Keyed(7, 1);
+  const other = new Keyed(8, 1);
+  expect(typeof numeric.hash()).toBe('string');
+  expect(numeric.hash()).toBe(same.hash());
+  expect(numeric.hash()).not.toBe(other.hash());
+  // and a class parameter still hashes with its own `hash()`.
+  const boxed = new Keyed(new Tag('x'), 1);
+  const boxedAgain = new Keyed(new Tag('x'), 1);
+  expect(boxed.hash()).toBe(boxedAgain.hash());
+  const map = new HashMap<Keyed<number>, number>();
+  map.insert(numeric, 3);
+  expect(map.get(same)).toBe(3);
+  // `map` owns `numeric` from the insert; `same` is the lookup key and stays
+  // this test's.
+  map.drop();
+  same.drop();
+  other.drop();
+  boxed.drop();
+  boxedAgain.drop();
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

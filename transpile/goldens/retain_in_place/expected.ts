@@ -93,3 +93,29 @@ export class Gate extends Struct {
   }
 }
 
+export function keepOverByValue(items: Item[], least: number): number {
+  try {
+    ((<T,>($xs: T[], $p: Invocable<[T], boolean>) => {
+      let $at = 0;
+      let $i = 0;
+      try {
+        for (; $i < $xs.length; $i++) {
+          if (invokeRef($p, $xs[$i])) { $xs[$at++] = $xs[$i]; } else { dropOwned($xs[$i]); }
+        }
+      } finally {
+        for (; $i < $xs.length; $i++) $xs[$at++] = $xs[$i];
+        $xs.length = $at;
+        dropOwned($p);
+      }
+    })(items, (item) => {
+      if (item.n === 0) {
+        throw new Error('zero');
+      }
+      return item.n >= least;
+    }));
+    return items.length;
+  } finally {
+    dropOwned(items);
+  }
+}
+

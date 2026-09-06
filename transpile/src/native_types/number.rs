@@ -164,10 +164,11 @@ pub fn translate(
             // negation goes through the width's own helper, because `i64::MIN`
             // has no positive: Rust's debug build panics there, and an
             // unbounded `-$x` answered a number one wider than the type holds
-            // (Z8, R7). The helper says "subtract" where Rust says "negate";
-            // the value it raises at is exactly Rust's.
+            // (Z8, R7). The helper is `checkedNeg`, which raises at the value
+            // Rust raises at AND says what Rust says — "attempt to negate with
+            // overflow", the line a reader greps for.
             (true, Some(prim)) => format!(
-                "(($x) => $x < 0n ? checkedSub(0n, $x, '{}') : $x)({})",
+                "(($x) => $x < 0n ? checkedNeg($x, '{}') : $x)({})",
                 crate::operators::primitives::width_name(prim),
                 receiver
             ),
@@ -401,7 +402,7 @@ mod tests {
         // wider than an `i64` holds where Rust's debug build panics.
         assert_eq!(
             widened("v", "abs", &[], Some(Prim::I64)),
-            "(($x) => $x < 0n ? checkedSub(0n, $x, 'i64') : $x)(v)"
+            "(($x) => $x < 0n ? checkedNeg($x, 'i64') : $x)(v)"
         );
         assert_eq!(
             widened("v", "signum", &[], Some(Prim::I64)),
@@ -409,7 +410,7 @@ mod tests {
         );
         // A width the port writes as a `number` keeps the `Math.*` call.
         assert_eq!(widened("a", "min", &["b"], Some(Prim::I32)), "Math.min(a, b)");
-        assert_eq!(widened("v", "abs", &[], Some(Prim::I128)), "(($x) => $x < 0n ? checkedSub(0n, $x, 'i128') : $x)(v)");
+        assert_eq!(widened("v", "abs", &[], Some(Prim::I128)), "(($x) => $x < 0n ? checkedNeg($x, 'i128') : $x)(v)");
     }
 
     /// Without the width the helper cannot answer, so the call is refused

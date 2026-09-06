@@ -7,7 +7,7 @@ use crate::testing::Fixture;
 
 /// A crate whose types cover the cases the rules turn on: one with drop glue,
 /// one `Copy`, one with `impl Drop`, and a container that hands out a guard.
-const PRELUDE: &str = "\
+pub(super) const PRELUDE: &str = "\
 use std::sync::Mutex;\n\
 pub struct Owned { pub n: u32 }\n\
 #[derive(Clone, Copy)]\n\
@@ -22,7 +22,7 @@ pub fn fallible(n: u32) -> Result<Owned, Oops> { Ok(Owned { n }) }\n\
 pub fn maybe(f: bool) -> Option<Owned> { None }\n\
 ";
 
-fn body(rust: &str, method: &str) -> String {
+pub(super) fn body(rust: &str, method: &str) -> String {
     let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", PRELUDE, rust))]);
     fixture.translated_method("lib.rs", method)
 }
@@ -909,11 +909,8 @@ fn an_arm_whose_guard_failed_hands_the_subject_to_the_arm_below_it() {
          pub fn f(v: u32) -> u32 { match v { k if make().n > k => 1, _ => 2 } }",
         "f",
     );
-    assert!(
-        returning.starts_with("_match"),
-        "the arms are tried in turn inside a block of their own:\n{}",
-        returning
-    );
+    // PREMISE CHANGED (H12): the label is taken only where a branch jumps out.
+    assert!(!returning.contains("break _match"), "no arm jumps:\n{}", returning);
     let guarded = returning.find("if (_c1)").expect("the guarded arm");
     let below = returning.find("return 2;").expect("the arm below it");
     assert!(
@@ -1183,100 +1180,6 @@ fn a_move_closure_over_a_borrowed_receiver_owns_nothing() {
     )]);
     let ts = fixture.translated_method("lib.rs", "peek");
     assert!(!ts.contains("OwnedClosure"), "a `&self` method lends its receiver:\n{}", ts);
-}
-
-// ── Guards on the runtime's own match forms ───────────────────────────
-
-#[test]
-fn a_guarded_option_match_is_tried_arm_by_arm() {
-    let ts = body(
-        "pub fn f(o: Option<u32>) -> u32 { match o { Some(v) if v > 2 => v, Some(_) => 1, None => 0 } }",
-        "f",
-    );
-    assert!(ts.starts_with("_match"), "the arms are tried in turn:\n{}", ts);
-    let guarded = ts.find("if (v > 2)").expect("the guard is tested");
-    let below = ts.find("return 1;").expect("the arm below it");
-    assert!(guarded < below, "and a guard that failed falls through:\n{}", ts);
-}
-
-#[test]
-fn a_guarded_borrowing_enum_match_is_tried_arm_by_arm() {
-    let ts = body(
-        "pub fn f(c: &Choice) -> u32 { \
-           match c { Choice::One(o) if o.n > 2 => 9, Choice::One(o) => look(o), Choice::Two(o) => look(o) } }",
-        "f",
-    );
-    // A match that only READS its subject keeps the if-chain, which has carried
-    // guards since before the arm chain existed: the chain is for a CONSUMING
-    // match, where nothing else can mark the subject moved. Both arms naming
-    // `One` are written, which is what this test is for.
-    assert!(
-        ts.matches("c.is('One')").count() == 2,
-        "both arms naming `One` are written, which one key in a `.match({{}})` cannot \
-         carry:\n{}",
-        ts
-    );
-    let guard = ts.find("if (o.n > 2)").expect(&ts);
-    let below = ts.find("look(o)").expect(&ts);
-    assert!(guard < below, "and a failed guard reaches the arm below it:\n{}", ts);
-}
-
-#[test]
-fn a_guarded_consuming_enum_arm_is_written_by_the_chain() {
-    // PREMISE CHANGED 2026-09-05 (fixpass6 item 2, D8): a guarded consuming
-    // match used to report "a failed guard cannot fall out of" and drop the
-    // guard, so the arm ran for every value its pattern matched — live at
-    // `core/src/node.rs:621`, where an EMPTY event bridge answered the bridge
-    // path. The chain binds the names inside the arrow, tests the guard there,
-    // and falls through to the arm below.
-    let mut fixture = Fixture::build(&[(
-        "lib.rs",
-        &format!(
-            "{}pub fn f(c: Choice) -> u32 {{ \
-               match c {{ Choice::One(o) if o.n > 2 => take(o), Choice::One(o) => take(o), \
-                          Choice::Two(o) => take(o) }} }}\n",
-            PRELUDE
-        ),
-    )]);
-    let ts = fixture.translated_method("lib.rs", "f");
-    assert!(ts.contains("intoMatch"), "the subject is still handed over:\n{}", ts);
-    assert!(!ts.contains("unsupported("), "{}", ts);
-    let guard = ts.find("if (o.n > 2)").expect(&ts);
-    let below = ts.rfind("take(o)").expect(&ts);
-    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
-    let said = fixture.messages();
-    assert!(
-        said.iter().all(|m| !m.contains("guard is dropped")),
-        "and nothing says the guard was dropped: {:?}",
-        said
-    );
-}
-
-#[test]
-fn a_guarded_result_arm_is_written_and_falls_through_to_the_arm_below() {
-    // PREMISE CHANGED 2026-09-05 (fixpass6 item 2, D8): a guarded `Result` arm
-    // used to be reported and dropped, so the arm ran unconditionally — live at
-    // `core/src/context.rs:187`, where `Err(NoDurablePeers) if cached => ()`
-    // vanished entirely and a cached entity with no durable peers answered an
-    // error. The side reads its payload ONCE and tries its arms against it.
-    let mut fixture = Fixture::build(&[(
-        "lib.rs",
-        &format!(
-            "{}pub fn f(r: Result<Owned, Oops>) -> u32 {{ \
-               match r {{ Ok(v) if v.n > 2 => take(v), Ok(v) => take(v), Err(_) => 0 }} }}\n",
-            PRELUDE
-        ),
-    )]);
-    let ts = fixture.translated_method("lib.rs", "f");
-    assert_eq!(ts.matches(".unwrap()").count(), 1, "the payload is read once:\n{}", ts);
-    let guard = ts.find("if (v.n > 2)").expect(&ts);
-    let below = ts.rfind("take(v)").expect(&ts);
-    assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
-    assert!(
-        fixture.messages().iter().all(|m| !m.contains("takes the wrapper apart")),
-        "and nothing says the guard was dropped: {:?}",
-        fixture.messages()
-    );
 }
 
 // ── A macro that is a block's value ───────────────────────────────────

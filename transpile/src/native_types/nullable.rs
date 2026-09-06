@@ -136,6 +136,34 @@ fn callable(once: &Once<'_>, at: usize, written: &str, args: &str) -> Callable {
     }
 }
 
+/// Does this method's lowering INVOKE a closure argument, rather than handing
+/// it on to a callee the emitter cannot see?
+///
+/// For: a `move` closure over something with drop glue is written as an
+/// `OwnedClosure`, which is not a bare callable, and `Placement::Loose` reports
+/// every such closure written anywhere but a `let` or an immediate call —
+/// because the emitter cannot see who will call it, and a hand-written callee
+/// has to reach it through `invoke`. These positions ARE seen: the lowering
+/// writes the `invoke` itself. Reporting them said the port could not do
+/// something it does on the very next line.
+///
+/// `unwrap_or_else` is deliberately NOT here: on a nullable receiver the port
+/// still writes `r ?? (f)()`, which calls an `OwnedClosure` as a function, so
+/// the report at that site is telling the truth.
+pub fn invokes_a_closure_argument(method: &str) -> bool {
+    matches!(
+        method,
+        "map"
+            | "and_then"
+            | "filter"
+            | "is_some_and"
+            | "ok_or_else"
+            | "map_or"
+            | "map_or_else"
+            | "retain"
+    )
+}
+
 /// Which of these read the receiver more than once — the test, and the hand-on.
 ///
 /// Asked from two places: here, to name it once; and by the body translator,

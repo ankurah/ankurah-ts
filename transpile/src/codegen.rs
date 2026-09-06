@@ -316,7 +316,7 @@ fn writes_through(c: &crate::types::ConstInfo) -> bool {
     name.starts_with("Atomic") || name == "Cell"
 }
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 83] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 85] = [
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",
@@ -335,7 +335,7 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 83] = [
     // What a derived `equals` and a derived `clone` ask of a field written as
     // the type's own PARAMETER: `T` is a number in one instantiation and a class
     // in another, so the decision is the value's own surface at run time.
-    "derivedEquals", "derivedClone",
+    "derivedEquals", "derivedClone", "derivedHash",
     // The four float methods whose JavaScript spelling answers something else:
     // half away from zero rather than half up, a signum with no zero, and a
     // `NaN` operand ignored rather than spreading.
@@ -352,7 +352,7 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 83] = [
     // R7: arithmetic on a fixed-width integer PANICS on overflow, as the
     // `debug_assertions = true` build this port mirrors does, and the four
     // families Rust offers for saying what should happen instead.
-    "checkedAdd", "checkedSub", "checkedMul", "checkedDiv", "checkedRem",
+    "checkedAdd", "checkedSub", "checkedNeg", "checkedMul", "checkedDiv", "checkedRem",
     "wrappingAdd", "wrappingSub", "wrappingMul",
     "checkedAddOption", "checkedSubOption", "checkedMulOption", "checkedDivOption", "checkedRemOption",
     "saturatingAdd", "saturatingSub", "saturatingMul",

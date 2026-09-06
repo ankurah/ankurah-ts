@@ -60,16 +60,23 @@ export function sumAmp(map: HashMap<Key, Cell>): number {
 
 export function sumConsuming(map: HashMap<Key, Cell>): number {
   let total = 0;
-  for (const [_key, cell] of map) {
-    try {
+  const _seq0 = map.intoEntries();
+  let _at1 = 0;
+  try {
+    while (_at1 < _seq0.length) {
+      const [_key, cell] = _seq0[_at1++];
       try {
-        total = checkedAdd(total, cell.value, 'u32');
+        try {
+          total = checkedAdd(total, cell.value, 'u32');
+        } finally {
+          cell.drop();
+        }
       } finally {
-        cell.drop();
+        _key.drop();
       }
-    } finally {
-      _key.drop();
     }
+  } finally {
+    dropOwned(_seq0.slice(_at1));
   }
   return total;
 }

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/subscription_state.rs
-import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, checkedSub, HashMap, HashSet, spawn } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, AnyhowError, dropOwned, derivedClone, tracing, checkedSub, HashMap, HashSet, spawn } from '@ankurah/base';
 import { Entity } from '../entity';
 import { ContextData, Node } from '../node';
 import { AbstractEntity, ChangeNotification } from '../reactor';
@@ -343,22 +343,20 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
           for (const queryCandidate of candidates.queryIter()) {
             try {
               const queryId = queryCandidate.queryId;
-              const _m2 = (() => {
+              const _m1 = (() => {
                 const _v1 = state.queries.get(queryId);
-                _match1: {
-                  if (_v1 != null) {
-                    const qs = _v1;
-                    if (!qs.paused) {
-                      return qs;
-                    }
-                  }
-                  {
-                    return { $jump: 'continue' };
+                if (_v1 != null) {
+                  const qs = _v1;
+                  if (!qs.paused) {
+                    return qs;
                   }
                 }
+                {
+                  return { $jump: 'continue' };
+                }
               })();
-              if ((_m2 as any)?.$jump === 'continue') continue;
-              const queryState = (_m2 as any);
+              if ((_m1 as any)?.$jump === 'continue') continue;
+              const queryState = (_m1 as any);
               const selection = queryState.selection.asRef();
               tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
               for (const change of queryCandidate.iter()) {
@@ -392,7 +390,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 })();
                 const entitySubscribed = state.entitySubscriptions.has(entityId);
                 if (matches || didMatch || entitySubscribed) {
-                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().slice(), []));
+                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
                   {
                     const _v4 = membershipChange;
                     if (_v4 != null) {
@@ -410,37 +408,37 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             const entity = change.entity();
             const entityId = AbstractEntity.id(entity);
             if (state.entitySubscriptions.has(entityId)) {
-              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().slice(), []));
+              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
             }
           }
-          let _moved3 = false;
+          let _moved2 = false;
           const gapsToFill = this.collectGapsToFillInternal(state);
           try {
-            let _moved4 = false;
+            let _moved3 = false;
             const broadcast = state.broadcast.clone();
             try {
               stateGuard.drop();
-              let _moved5 = false;
+              let _moved4 = false;
               const updateItems = items.intoValues();
               try {
                 if (!(gapsToFill.length === 0)) {
-                  _moved5 = true;
-                  _moved3 = true;
                   _moved4 = true;
+                  _moved2 = true;
+                  _moved3 = true;
                   spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
                 } else if (!(updateItems.length === 0)) {
-                  _moved5 = true;
+                  _moved4 = true;
                   broadcast.send(new ReactorUpdate(updateItems));
                 }
                 return watcherChanges;
               } finally {
-                if (!_moved5) dropOwned(updateItems);
+                if (!_moved4) dropOwned(updateItems);
               }
             } finally {
-              if (!_moved4) broadcast.drop();
+              if (!_moved3) broadcast.drop();
             }
           } finally {
-            if (!_moved3) dropOwned(gapsToFill);
+            if (!_moved2) dropOwned(gapsToFill);
           }
         } finally {
           state.drop();

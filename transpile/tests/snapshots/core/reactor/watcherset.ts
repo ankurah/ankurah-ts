@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
-import { Struct, Enum, Arc, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Arc, derivedClone, HashMap, HashSet } from '@ankurah/base';
 import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
@@ -35,7 +35,7 @@ export class WatcherSet extends Struct {
           if (_v != null) {
             const value = _v;
             for (const [subscriptionId, queryId] of indexRef.findMatching(value)) {
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
             }
           }
         }
@@ -46,7 +46,7 @@ export class WatcherSet extends Struct {
       if (_v1 != null) {
         const watchers = _v1;
         for (const [subscriptionId, queryId] of [...watchers]) {
-          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
+          candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
         }
       }
     }
@@ -59,11 +59,11 @@ export class WatcherSet extends Struct {
             Predicate: (v) => {
               const subscriptionId = v._0;
               const queryId = v._1;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addQuery(queryId, offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addQuery(queryId, offset);
             },
             Subscription: (v) => {
               const subscriptionId = v._0;
-              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.slice())).value.addEntity(offset);
+              candidatesBySub.entry(subscriptionId).orInsertWith(() => CandidateChanges.new(changesArc.value.map((e) => derivedClone(e)))).value.addEntity(offset);
             },
           });
         }
@@ -176,24 +176,16 @@ export class WatcherSet extends Struct {
           if (((_v[0].is('Path')) && (_v[1].is('Literal'))) || ((_v[0].is('Literal')) && (_v[1].is('Path')))) {
             const path = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[0].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[1].value._0 : undefined;
             const literal = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[1].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[0].value._0 : undefined;
-            try {
-              try {
-                const propertyPath = PropertyPath.fromPath(path);
-                const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
-                return op.match({
-                  Add: () => {
-                    index.value.add((literal).clone(), operator.clone(), watcherId);
-                  },
-                  Remove: () => {
-                    index.value.remove((literal).clone(), operator.clone(), watcherId);
-                  },
-                });
-              } finally {
-                literal.drop();
-              }
-            } finally {
-              literal.drop();
-            }
+            const propertyPath = PropertyPath.fromPath(path);
+            const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
+            return op.match({
+              Add: () => {
+                index.value.add((literal).clone(), operator.clone(), watcherId);
+              },
+              Remove: () => {
+                index.value.remove((literal).clone(), operator.clone(), watcherId);
+              },
+            });
           } else {
         }
         }

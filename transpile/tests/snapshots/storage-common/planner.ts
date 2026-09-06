@@ -206,15 +206,15 @@ export class Planner extends Struct {
             return null;
           }
         });
-        const _r2 = this.buildBounds(equalities, [field, vec], indexKeyparts);
-        if (_r2 == null) return { $jump: 'return', $value: null };
-        const _r3 = this.buildBounds(equalities, null, indexKeyparts);
-        if (_r3 == null) return { $jump: 'return', $value: null };
         const _m4 = (() => {
           if (appliedIneq != null) {
             const [field, vec] = appliedIneq;
+            const _r2 = this.buildBounds(equalities, [field, vec], indexKeyparts);
+            if (_r2 == null) return { $jump: 'return', $value: null };
             return _r2;
           } else {
+            const _r3 = this.buildBounds(equalities, null, indexKeyparts);
+            if (_r3 == null) return { $jump: 'return', $value: null };
             return _r3;
           }
         })();
@@ -533,7 +533,7 @@ export class Planner extends Struct {
               const _v1 = orderBy;
               if (_v1 != null) {
                 const orderByItems = _v1;
-                const coveredFields = [...[...equalities].map(([f, ]) => f.asStr()), ...once(inequalityField)];
+                const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f.asStr()), ...once(inequalityField)]);
                 let presort = [];
                 let spill = [];
                 for (const item of orderByItems) {
@@ -976,31 +976,29 @@ export class Planner extends Struct {
       const _v1 = predicate;
       if (_v1.is('Comparison')) {
         const { left, operator, right } = _v1.value;
-        const _m1 = (() => {
+        const _m0 = (() => {
           const _v = [left.asRef(), right.asRef()];
-          _match0: {
-            if ((_v[0].is('Path')) && (_v[1].is('Literal'))) {
-              const { _0: path } = _v[0].value;
-              const { _0: literal } = _v[1].value;
-              if (path.isSimple() && path.first() === primaryKey) {
-                return Value.fromRefAstLiteral(literal);
-              }
-            }
-            if ((_v[0].is('Literal')) && (_v[1].is('Path'))) {
-              const { _0: literal } = _v[0].value;
-              const { _0: path } = _v[1].value;
-              if (path.isSimple() && path.first() === primaryKey) {
-                return Value.fromRefAstLiteral(literal);
-              }
-            }
-            {
-              return { $jump: 'return', $value: null };
+          if ((_v[0].is('Path')) && (_v[1].is('Literal'))) {
+            const { _0: path } = _v[0].value;
+            const { _0: literal } = _v[1].value;
+            if (path.isSimple() && path.first() === primaryKey) {
+              return Value.fromRefAstLiteral(literal);
             }
           }
+          if ((_v[0].is('Literal')) && (_v[1].is('Path'))) {
+            const { _0: literal } = _v[0].value;
+            const { _0: path } = _v[1].value;
+            if (path.isSimple() && path.first() === primaryKey) {
+              return Value.fromRefAstLiteral(literal);
+            }
+          }
+          {
+            return { $jump: 'return', $value: null };
+          }
         })();
-        if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-        const value = (_m1 as any);
-        const _m2 = (() => {
+        if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
+        const value = (_m0 as any);
+        const _m1 = (() => {
           return operator.match<any>({
             Equal: () => [new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value }), inclusive: true })] as any,
             GreaterThan: () => [new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false }), new Endpoint('UnboundedHigh', { _0: ValueType.of(value) })] as any,
@@ -1018,8 +1016,8 @@ export class Planner extends Struct {
             },
           });
         })();
-        if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
-        const [low, high] = (_m2 as any);
+        if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
+        const [low, high] = (_m1 as any);
         return new KeyBoundComponent(primaryKey, low, high);
       } else {
       return null;
@@ -1108,16 +1106,14 @@ export class Planner extends Struct {
       if (_v1.is('Comparison')) {
         const { left } = _v1.value;
         const _v = left.asRef();
-        _match0: {
-          if (_v.is('Path')) {
-            const { _0: path } = _v.value;
-            if (path.isSimple()) {
-              return path.first() === primaryKey;
-            }
+        if (_v.is('Path')) {
+          const { _0: path } = _v.value;
+          if (path.isSimple()) {
+            return path.first() === primaryKey;
           }
-          {
-            return false;
-          }
+        }
+        {
+          return false;
         }
       } else {
       return false;
@@ -1152,16 +1148,14 @@ export class Planner extends Struct {
             const { left, operator } = _v2.value;
             const isPrimaryKeyField = (() => {
               const _v1 = left.asRef();
-              _match2: {
-                if (_v1.is('Path')) {
-                  const { _0: path } = _v1.value;
-                  if (path.isSimple()) {
-                    return path.first() === primaryKey;
-                  }
+              if (_v1.is('Path')) {
+                const { _0: path } = _v1.value;
+                if (path.isSimple()) {
+                  return path.first() === primaryKey;
                 }
-                {
-                  return false;
-                }
+              }
+              {
+                return false;
               }
             })();
             if (isPrimaryKeyField) {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/node.rs
-import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, tracing, dropUnbound, HashMap, oneshot, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, HashMap, oneshot, spawn } from '@ankurah/base';
 import { Attested, CollectionId, EntityState, Clock, DeltaContent, EntityDelta, EntityId, Event, NodeMessage, NodeRequest, NodeRequestBody, NodeResponse, NodeResponseBody, NodeUpdate, NodeUpdateAck, NodeUpdateAckBody, NodeUpdateBody, Presence, QueryId, RequestId, StateFragment, TransactionId, UpdateId } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { CollectionSet } from './collectionset';
@@ -344,7 +344,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           if (!_moved0) update.drop();
         }
       },
-      UpdateAck: (v) => {
+      UpdateAck: async (v) => {
         const ack = v._0;
         try {
           tracing.debug(`Node(${this.deref().value.id}) received ack notification ${ack.id} ${ack.body}`);
@@ -414,7 +414,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           dropOwned(auth);
         }
       },
-      Response: (v) => {
+      Response: async (v) => {
         const response = v._0;
         try {
           tracing.debug(`Node ${this.deref().value.id} received response ${response}`);
@@ -440,7 +440,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           response.drop();
         }
       },
-      UnsubscribeQuery: (v) => {
+      UnsubscribeQuery: async (v) => {
         const from = v.from;
         const queryId = v.queryId;
         {
@@ -524,7 +524,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                   const expandedStates = _r9.unwrap();
                   try {
                     _moved3 = true;
-                    const knownMap = [...knownMatches].map((k) => [k.entityId, k.takeField('head')]);
+                    const knownMap = HashMap.from([...knownMatches].map((k) => [k.entityId, k.takeField('head')]));
                     let deltas = [];
                     _moved10 = true;
                     const _seq15 = expandedStates;
@@ -969,7 +969,15 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
             const _v1 = _v.unwrap();
             {
               const attestedEvents = _v1;
-              if (!(attestedEvents.length === 0)) {
+              let _g2;
+              try {
+                _g2 = !(attestedEvents.length === 0);
+              } catch (_e) {
+                if (_e instanceof OwnershipFatal || _e instanceof UnsupportedShape) throw _e;
+                dropOwned(attestedEvents);
+                throw _e;
+              }
+              if (_g2) {
                 let _moved1 = false;
                 try {
                   {
@@ -998,13 +1006,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           }
         }
       }
-      let _moved2 = false;
+      let _moved3 = false;
       const stateFragment = new StateFragment(state, attestations);
       try {
-        _moved2 = true;
+        _moved3 = true;
         return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment })));
       } finally {
-        if (!_moved2) stateFragment.drop();
+        if (!_moved3) stateFragment.drop();
       }
     } finally {
       if (!_moved0) currentHead.drop();
@@ -1099,7 +1107,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           if (!_moved4) dropOwned(states);
         }
       },
-      Error: (v) => {
+      Error: async (v) => {
         const e = v._0;
         tracing.debug(`Error from peer fetch: ${e}`);
         return Result.Err(new RetrievalError('Other', { _0: `${JSON.stringify(e)}` }));

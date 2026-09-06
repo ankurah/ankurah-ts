@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
-import { Struct, Result, Weak } from '@ankurah/base';
+import { Struct, Result, Weak, derivedClone } from '@ankurah/base';
 import { NodeAndContext } from '../context';
 import { Entity } from '../entity';
 import { RetrievalError } from '../error';
@@ -88,7 +88,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
   }
 
   clone(): QueryGapFetcher<SE, PA> {
-    return new QueryGapFetcher(this.weakNode.clone(), this.cdata.clone());
+    return new QueryGapFetcher(this.weakNode.clone(), derivedClone(this.cdata));
   }
 }
 

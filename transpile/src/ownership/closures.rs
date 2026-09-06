@@ -202,6 +202,10 @@ impl<'a> BodyTranslator<'a> {
         match placement {
             Placement::Immediate => ownership::closures::immediate(&params, &statements, &owned),
             Placement::Bound => ownership::closures::owned(&names, &arrow, consumes),
+            Placement::Loose if self.own.argument_is_invoked.get() => {
+                // The call site is one the emitter writes itself.
+                ownership::closures::owned(&names, &arrow, consumes)
+            }
             Placement::Loose => {
                 self.fallback(
                     syn::spanned::Spanned::span(closure),

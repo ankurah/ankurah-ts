@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/expand_states.rs
-import { Result, dropOwned } from '@ankurah/base';
+import { Result, dropOwned, HashSet } from '@ankurah/base';
 import { RetrievalError } from '../error';
 import { StorageCollectionWrapper } from '../storage';
 import { Attested, EntityId, EntityState } from '@ankurah/proto';
@@ -7,7 +7,7 @@ import { Attested, EntityId, EntityState } from '@ankurah/proto';
 export async function expandStates(states: Attested<EntityState>[], additionalEntityIds: EntityId[], collection: StorageCollectionWrapper): Promise<Result<Attested<EntityState>[], RetrievalError>> {
   let _moved0 = false;
   try {
-    const entityMap = [...states].map((s) => s.payload.entityId);
+    const entityMap = HashSet.from([...states].map((s) => s.payload.entityId));
     for (const entityId of additionalEntityIds) {
       if (!entityMap.has(entityId)) {
         const _v = await collection.deref().value.getState(entityId);

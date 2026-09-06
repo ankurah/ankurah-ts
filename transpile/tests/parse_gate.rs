@@ -25,7 +25,7 @@ mod common;
 use common::{collect_files_with_ext, crates_in_scope, run_batch, transpile_dir, TempDir};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 #[test]

@@ -29,9 +29,7 @@ export class Presence extends Struct {
   equals(other: Presence): boolean {
     if (!this.nodeId.equals(other.nodeId)) return false;
     if (this.durable !== other.durable) return false;
-    if (this.systemRoot === null && other.systemRoot === null) { /* both null, ok */ }
-    else if (this.systemRoot === null || other.systemRoot === null) return false;
-    else if (!this.systemRoot.equals(other.systemRoot)) return false;
+    { if ((this.systemRoot == null) !== (other.systemRoot == null)) return false; if (this.systemRoot != null) { if (!this.systemRoot!.equals(other.systemRoot!)) return false; } }
     return true;
   }
 

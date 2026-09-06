@@ -18,7 +18,7 @@
 //! A side with exactly one arm and no guard is written as it always was: one
 //! read, bound to the arm's own name.
 
-use crate::body::{indent, BodyTranslator};
+use crate::body::BodyTranslator;
 
 /// Which half of the `Result` a side is, spelled as the two reads it makes.
 pub(super) struct Reader {
@@ -157,54 +157,32 @@ fn side(
         }
     }
 
-    // A label nothing jumps to is noise, and every arm of a side whose bodies
-    // all return by themselves needs none.
-    let needs_break = written.iter().enumerate().any(|(i, (test, arm))| {
-        !arm.leaves && !(test.is_none() && arm.guard.is_none()) && i + 1 < written.len()
-    }) || (open && written.iter().any(|(_, arm)| !arm.leaves));
-    let label = if needs_break { t.fresh_hoist("_arm") } else { String::new() };
-
-    let mut inner = String::new();
-    for (test, arm) in &written {
-        let unconditional = test.is_none() && arm.guard.is_none();
-        let leaving = if arm.leaves || unconditional || label.is_empty() {
-            String::new()
-        } else {
-            format!("break {};\n", label)
-        };
-        let guarded = match &arm.guard {
-            Some(guard) => format!(
-                "{}if ({}) {{\n{}}}\n",
-                arm.bindings,
-                guard,
-                indent(&format!("{}{}", arm.block, leaving))
-            ),
-            None => format!("{}{}{}", arm.bindings, arm.block, leaving),
-        };
-        match test {
-            Some(test) => inner.push_str(&format!("if ({}) {{\n{}}}\n", test, indent(&guarded))),
-            None => inner.push_str(&format!("{{\n{}}}\n", indent(&guarded))),
-        }
-    }
-    if open {
-        // Rust proves the arms of a side exhaustive between them; the port
-        // cannot see that proof, and a chain that fell off its end would leave
-        // the payload to nobody and hand back `undefined`. R12.
-        inner.push_str(&hole_in_a_side(
+    let branches: Vec<super::chain::tried::Branch> = written
+        .into_iter()
+        .map(|(test, arm)| super::chain::tried::Branch {
+            test,
+            bindings: arm.bindings,
+            guard: arm.guard,
+            block: arm.block,
+            leaves: arm.leaves,
+        })
+        .collect();
+    // Rust proves the arms of a side exhaustive between them; the port cannot
+    // see that proof, and a chain that fell off its end would leave the payload
+    // to nobody and hand back `undefined`. R12.
+    let tail = match open {
+        true => hole_in_a_side(
             "every arm of this side of the `Result` match has a test or a guard, and rustc \
              proved between them that one always holds; the port cannot see that proof, so a \
              value that fails all of them arrives here",
             &payload,
             t,
-        ));
-    }
-    let mut out = format!("const {} = {}.{}();\n", payload.expr, subject, read);
-    if label.is_empty() {
-        out.push_str(&inner);
-    } else {
-        out.push_str(&format!("{}: {{\n{}}}\n", label, indent(&inner)));
-    }
-    Some(out)
+        ),
+        false => String::new(),
+    };
+    let inner = super::chain::tried::tried_in_turn(&branches, &tail, "_arm", t);
+
+    Some(format!("const {} = {}.{}();\n{}", payload.expr, subject, read, inner))
 }
 
 /// One arm of a side: what it declares, and what it then does.
@@ -228,19 +206,41 @@ fn one_arm(
     // because a temporary has no declaration to look one up from.
     let name = bound.unwrap_or_else(|| t.fresh_temp());
     let body_stmt = [syn::Stmt::Expr(arm.body.as_ref().clone(), None)];
+    let holds = |looked_up: &str| {
+        t.types
+            .as_ref()
+            .and_then(|tc| tc.borrow().lookup(looked_up))
+            .or_else(|| payload.ty.clone())
+    };
+    // The side READ the payload out of the `Result` — `unwrap()` and
+    // `unwrapErr()` both hand it over and leave nothing behind — so this arm
+    // owns it whether or not the engine can name its type. Skipping the release
+    // where the type did not resolve abandoned the error four corpus sites
+    // take: `const _v2 = _v1; return Result.Ok(null)`.
     let owned = t.claim_bindings_as(
         std::slice::from_ref(&name),
-        &|looked_up| {
-            t.types
-                .as_ref()
-                .and_then(|tc| tc.borrow().lookup(looked_up))
-                .or_else(|| payload.ty.clone())
-        },
+        &holds,
+        crate::ownership::Drops::Cascade,
         &body_stmt,
     );
+    // What the arm owes if its GUARD throws is a different question from what
+    // its BODY owes: the guard is made before a statement of the body has run,
+    // so a payload the body goes on to move is still the arm's here. Asked with
+    // an empty body, which is what has run at that point.
+    let owed_by_the_guard =
+        t.claim_bindings_as(std::slice::from_ref(&name), &holds, crate::ownership::Drops::Cascade, &[]);
     // Inside the pattern's scope, because the guard reads the names the pattern
-    // bound; and before the body, because Rust tests the guard first.
-    let guard = arm.guard.as_ref().map(|(_, guard)| t.expr(guard));
+    // bound; and before the body, because Rust tests the guard first. What the
+    // test lifts out of itself stays with it, and what the arm owes if the test
+    // THROWS is the payload the side already read out of the `Result`.
+    let guard = arm.guard.as_ref().map(|(_, guard)| {
+        let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
+        super::chain::tried::Guard {
+            test,
+            lifted,
+            release: released_payload(&name, &owed_by_the_guard),
+        }
+    });
     let (body, lifted) = t.with_own_hoists(|| super::arm_body(&arm.body, t, position));
     drop(_bindings);
     let flags = t.flag_sets_for(&arm.body);
@@ -273,7 +273,7 @@ struct Arm {
     /// The name the arm binds the payload to.
     bindings: String,
     /// The arm's guard, read against the names above.
-    guard: Option<String>,
+    guard: Option<super::chain::tried::Guard>,
     /// The body and what it owes around it.
     block: String,
     /// Whether the body leaves by itself, so the chain needs no `break`.
@@ -323,11 +323,20 @@ fn link(
                             DROPPABLE name out of it, and the port cannot both take a name out of \
                             a payload and release what is left of it here";
                 t.fallback(syn::spanned::Spanned::span(&arm.pat), what);
+                // The refusal stands where the ARM would have run, so it keeps
+                // the arm's guard: a value whose guard fails belongs to the arm
+                // below, and throwing for it refused a case the port can write.
+                let guard = arm.guard.as_ref().map(|(_, guard)| {
+                    let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
+                    let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
+                    drop(_bindings);
+                    super::chain::tried::Guard { test, lifted, release: payload_release(payload, t) }
+                });
                 return (
                     test,
                     Arm {
                         bindings: String::new(),
-                        guard: None,
+                        guard,
                         block: hole_in_a_side(what, payload, t),
                         leaves: true,
                     },
@@ -355,6 +364,34 @@ fn hole_in_a_side(what: &str, payload: &Read, t: &BodyTranslator) -> String {
         return throw;
     }
     format!("dropOwned({});\n{}", payload.expr, throw)
+}
+
+/// What an arm owes if its GUARD throws: the payload the side already read.
+///
+/// `unwrap()` and `unwrapErr()` take the `Result` apart and hand the payload
+/// over, so from the read onwards it belongs to whichever arm is being tried.
+/// The arm's own `finally` covers its body; a guard is made before that
+/// `finally` is entered, and a guard that panicked left the payload to nobody.
+/// Nothing of the arm has run at that point, so the release is unconditional.
+fn released_payload(name: &str, owed: &[crate::ownership::Owned]) -> String {
+    let mut out = String::new();
+    for value in owed.iter().rev() {
+        if let Some(release) = value.drops.release(name) {
+            out.push_str(&format!("{}\n", release));
+        }
+    }
+    out
+}
+
+/// The same, for a refusal that never bound the payload to a name of its own.
+fn payload_release(payload: &Read, t: &BodyTranslator) -> String {
+    let Some(ty) = payload.ty.as_ref() else { return String::new() };
+    let Some(types) = t.types.as_ref() else { return String::new() };
+    let borrowed = types.borrow();
+    match crate::ownership::drops_of(&borrowed.probe(), ty).release(&payload.expr) {
+        Some(release) => format!("{}\n", release),
+        None => String::new(),
+    }
 }
 
 /// Does this inner pattern take a DROPPABLE name out of the payload?

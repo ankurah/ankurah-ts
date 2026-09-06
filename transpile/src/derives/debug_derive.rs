@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn a_field_with_no_debug_is_reported_and_printed_by_its_toString() {
+    fn a_field_with_no_debug_is_reported_and_printed_by_its_to_string() {
         let f = Fixture::build(&[(
             "lib.rs",
             "pub struct Inner;\n#[derive(Debug)] pub struct S { pub inner: Inner }",

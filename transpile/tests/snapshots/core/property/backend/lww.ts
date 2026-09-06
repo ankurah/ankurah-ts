@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/lww.rs
-import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, UnsupportedShape, HashMap } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, HashMap } from '@ankurah/base';
 import { Operation } from '@ankurah/proto';
 import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
 import { BincodeReader, BincodeWriter } from './codec';
@@ -105,7 +105,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
   propertyValues(): HashMap<PropertyName, Value | null> {
     const values = this.values.read();
     try {
-      return [...values.value].map(([k, v]) => [k.clone(), v.value.clone()]);
+      return HashMap.from([...values.value].map(([k, v]) => [k.clone(), v.value.clone()]));
     } finally {
       values.drop();
     }
@@ -131,7 +131,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
     const _r0 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<PropertyName, Value | null>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(PropertyName.decode(_r), _r.readOption((r) => Value.decode(r))); } return _m; })(); })();
     if (_r0.isErr()) return Result.Err(RetrievalError.fromBincodeError(_r0.unwrapErr()));
     const rawMap = _r0.unwrap();
-    const map = rawMap.intoIter().map(([k, v]) => [k, new ValueEntry(v, true)]);
+    const map = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
     return Result.Ok(new LWWBackend(new RwLock(map), new Mutex(new HashMap<string, Broadcast<void>>())));
   }
 
@@ -179,9 +179,16 @@ export class LWWBackend extends Struct implements PropertyBackend {
           let values = this.values.write();
           try {
             _moved2 = true;
-            for (const [propertyName, newValue] of changes) {
-              values.value.set(propertyName, new ValueEntry(newValue, true));
-              changedFields.push(propertyName);
+            const _seq3 = changes.intoEntries();
+            let _at4 = 0;
+            try {
+              while (_at4 < _seq3.length) {
+                const [propertyName, newValue] = _seq3[_at4++];
+                values.value.set(propertyName, new ValueEntry(newValue, true));
+                changedFields.push(propertyName);
+              }
+            } finally {
+              dropOwned(_seq3.slice(_at4));
             }
           } finally {
             values.drop();

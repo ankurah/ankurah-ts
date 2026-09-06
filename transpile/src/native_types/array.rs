@@ -21,6 +21,9 @@ pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
 pub struct Element {
     /// The type the port writes the element as.
     pub written: String,
+    /// One element copied, written against the name `e`. Asked of the resolved
+    /// type where there is one, because that is what the derive writers ask.
+    pub copy_of_e: String,
     /// Whether the port has a copy for it — either one it writes out, or the
     /// element's own `clone()`.
     pub has_clone: bool,
@@ -30,24 +33,24 @@ impl Element {
     /// Nothing is known about the element: the untyped path, and `Uint8Array`'s
     /// fallback, which never reaches the copier.
     pub fn unknown() -> Element {
-        Element { written: String::new(), has_clone: false }
+        Element { written: String::new(), copy_of_e: "e".to_string(), has_clone: false }
     }
 
     /// What the registry says this element is.
     pub fn of(reg: &crate::registry::TypeRegistry, ty: &crate::ty::Ty) -> Element {
         let written = crate::name_map::map_ty(reg, ty);
+        let copy_of_e = crate::derives::cloning::clone_within(reg, "e", Some(ty));
         // A copy the port writes out — a spread, a `new Uint8Array`, a `map` —
         // asks nothing of the element. One that is only `e.clone()` does, and
         // the registry is what says whether the element has one.
-        let asks_for_clone =
-            crate::derives::cloning::clone_of("e", &written) == "e.clone()";
+        let asks_for_clone = copy_of_e == "e.clone()";
         let has_clone = !asks_for_clone
             || reg
                 .system_type(crate::registry::CLONE_PATH)
                 .is_some_and(|clone| {
                     crate::registry::Probe::new(reg, reg.crate_root()).implements(ty, clone)
                 });
-        Element { written, has_clone }
+        Element { written, copy_of_e, has_clone }
     }
 }
 
@@ -58,7 +61,7 @@ impl Element {
 /// number and a string are copied by being read, so the copy of the array is
 /// the whole copy.
 pub(crate) fn copy(receiver: &str, element: &Element, shallow: &str) -> Result<String, String> {
-    let each = crate::derives::cloning::clone_of("e", &element.written);
+    let each = element.copy_of_e.clone();
     if element.written.is_empty() || each == "e" {
         return Ok(shallow.to_string());
     }
@@ -212,8 +215,15 @@ pub fn translate(
 mod tests {
     use super::*;
 
-    fn holding(written: &str, has_clone: bool) -> Element {
-        Element { written: written.to_string(), has_clone }
+    /// An element of a written Rust type, resolved the way a field of it would
+    /// be — which is what `Element::of` is handed in a real run.
+    fn holding(rust_ty: &str, has_clone: bool) -> Element {
+        let f = crate::testing::Fixture::build(&[(
+            "lib.rs",
+            "pub struct Event { pub n: u32 }\npub struct Opaque { pub n: u32 }\n",
+        )]);
+        let ty = f.ty("lib.rs", rust_ty);
+        Element { has_clone, ..Element::of(&f.reg, &ty) }
     }
 
     fn expr(receiver: &str, method: &str, element: &Element) -> String {
@@ -237,14 +247,14 @@ mod tests {
     fn to_vec_on_an_array_clones_each_element() {
         for method in ["to_vec", "to_owned"] {
             // Nothing inside to copy: the copy of the array is the whole copy.
-            assert_eq!(expr("xs", method, &holding("number", true)), "xs.slice()");
+            assert_eq!(expr("xs", method, &holding("u32", true)), "xs.slice()");
             assert_eq!(
                 expr("xs", method, &holding("Event", true)),
                 "xs.map((e) => e.clone())"
             );
             // The element's own shape decides, at any depth.
             assert_eq!(
-                expr("xs", method, &holding("Uint8Array", true)),
+                expr("xs", method, &holding("Vec<u8>", true)),
                 "xs.map((e) => new Uint8Array(e))"
             );
             // With nothing known about the element the copy is what it was.

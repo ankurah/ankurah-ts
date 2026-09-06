@@ -82,3 +82,36 @@ pub enum Slot<T> {
     One(T),
     Many(Vec<T>),
 }
+
+/// An ARRAY OF NULLABLES, and a type ALIAS.
+///
+/// Both were read wrong while the derive writers parsed their own rendered
+/// TypeScript rather than the resolved type. `Vec<Option<Tag>>` is written
+/// `(Tag | null)[]` — the parentheses are what keep `[]` from binding tighter
+/// than `|` — and stripping a ` | null` suffix off that spelling took the
+/// ELEMENT's nullability, so `equals` and `clone` both ran on a `null`. A
+/// `PropertyName`, which is `String`, kept its own name in the spelling and got
+/// a `.clone()` a JavaScript string has not got — live at core's `LWW` and
+/// `YrsString`.
+pub type PropertyName = String;
+
+#[derive(PartialEq, Clone)]
+pub struct Sparser {
+    pub slots: Vec<Option<Tag>>,
+    pub name: PropertyName,
+    pub ids: Vec<Id>,
+}
+
+pub type Id = u32;
+
+/// `#[derive(Hash)]` over a bare type PARAMETER.
+///
+/// `equals` and `clone` learned in the fourth pass that a `T` is a number in
+/// `Keyed<u32>` and a class in `Keyed<Tag>`; the hash writer did not, and wrote
+/// `this.key.hash()` — a TypeError the moment the parameter was a number, on
+/// the very path a `HashMap` takes to file a key.
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub struct Keyed<T> {
+    pub key: T,
+    pub n: u32,
+}

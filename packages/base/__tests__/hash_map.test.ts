@@ -1,6 +1,6 @@
 // TS-ONLY: Tests for the value-keyed HashMap and HashSet (src/std/hash_map.ts).
 import { describe, test, expect, afterEach } from 'bun:test';
-import { HashMap, HashSet, Struct, Drop, clearFatalLatch, keyHash, derivedEquals, derivedClone } from '../src/index.ts';
+import { HashMap, HashSet, Struct, Drop, clearFatalLatch, keyHash, derivedEquals, derivedClone, derivedHash } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
 installOwnershipTestHooks();
@@ -630,10 +630,26 @@ describe('a field written as a type parameter', () => {
     copy.drop();
   });
 
+  // The third half of the derive. `#[derive(Hash)]` on a generic carries
+  // `T: Hash`, and the emitter cannot know which instantiation is in front of
+  // it: `hash()` on a number is a TypeError, and on the very path a `HashMap`
+  // takes to file a key.
+  test('a value of a type parameter is hashed by its own surface', () => {
+    expect(derivedHash(7)).toBe(keyHash(7));
+    expect(derivedHash('a')).toBe(keyHash('a'));
+    expect(derivedHash([1, 2])).toBe(keyHash([1, 2]));
+    const a = new Id(new Uint8Array([1, 2]));
+    const b = new Id(new Uint8Array([1, 2]));
+    expect(derivedHash(a)).toBe(derivedHash(b));
+    a.drop();
+    b.drop();
+  });
+
   test('and one declaring neither is REFUSED, because Rust\'s bound excludes it', () => {
     class Bare {}
     expect(() => derivedEquals(new Bare(), new Bare())).toThrow('declares no equals()');
     expect(() => derivedClone(new Bare())).toThrow('declares no clone()');
+    expect(() => derivedHash(new Bare())).toThrow('declares no hash()');
   });
 });
 
@@ -641,6 +657,36 @@ describe('a field written as a type parameter', () => {
 // cloned — and, for a map, the half-built destination too — owned by nobody.
 // Nothing in the emitted code ever received them, so nothing releases them and
 // the leak check reports each one.
+// N6: `for (k, v) in map` moves the map into its `IntoIter`, which hands out an
+// owned pair each turn and drops what it never handed out. Nothing in the
+// runtime could do that: emptying a map released what was in it, so the emitted
+// loop released every key and value and left the container to the collector.
+describe('intoEntries hands the pairs over and consumes the map', () => {
+  test('the pairs come out and the map is gone', () => {
+    const map = new HashMap<Id, Id>();
+    const key = new Id(new Uint8Array([1]));
+    const value = new Id(new Uint8Array([2]));
+    map.insert(key, value);
+    const pairs = map.intoEntries();
+    expect(pairs.length).toBe(1);
+    expect(pairs[0]![0]).toBe(key);
+    expect(pairs[0]![1]).toBe(value);
+    // The map is moved: a use after this is the run-time spelling of the move
+    // Rust refuses at compile time, and a second drop is a double drop.
+    expectFatal(() => map.get(key), 'used after being dropped');
+    expectFatal(() => map.drop(), 'dropped twice');
+    // The pairs are the caller's now, and nothing else released them.
+    key.drop();
+    value.drop();
+  });
+
+  test('an empty map is consumed too', () => {
+    const map = new HashMap<Id, Id>();
+    expect(map.intoEntries()).toEqual([]);
+    expectFatal(() => map.drop(), 'dropped twice');
+  });
+});
+
 describe('a container clone that throws leaves nothing behind', () => {
   /** A value whose `clone()` throws once a set number of clones have been made. */
   class Fragile extends Struct {

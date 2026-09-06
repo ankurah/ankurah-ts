@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/collection.rs
-import { Struct, Result, Arc, dropOwned, tracing, checkedAdd, wrappingAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
-import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
+import { Struct, Result, Arc, dropOwned, tracing, unsupported, checkedAdd, wrappingAdd, HashMap, HashSet, AsyncMutex } from '@ankurah/base';
+import { Filterable, MutationError, RetrievalError, StorageCollection, Comparison, Iter, State, Value, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { Attested, EntityState, EventId, State, CollectionId, EntityId, Event } from '@ankurah/proto';
-import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig } from '@ankurah/storage-common';
+import { OrderByComponents, Plan, ValueSetStream, HasEntityId, Planner, PlannerConfig, SortedStream, TopKStream } from '@ankurah/storage-common';
 import { Database } from './database';
 import { IdbValue } from './idb_value';
 import { planBoundsToIdbRange, scanDirectionToCursorDirection } from './planner_integration';
@@ -99,13 +99,9 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const results = await (async () => {
               if (limit != null) {
                 const limitVal = limit;
-                return await topK(futures.stream(rows), orderBySpill.clone(), Number(BigInt.asUintN(32, limitVal))).filterMap((r) => (async () => {
-                  return r.entityState().ok();
-                })()).collect();
+                return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
               } else {
-                return await sortBy(futures.stream(rows), orderBySpill.clone()).filterMap((r) => (async () => {
-                  return r.entityState().ok();
-                })()).collect();
+                return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
               }
             })();
             return Result.Ok(results);
@@ -283,7 +279,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const plan = _r1.unwrap();
             const _m9 = await (async () => {
               return await (plan.match<any>({
-                EmptyScan: () => {
+                EmptyScan: async () => {
                   return { $jump: 'return', $value: Result.Ok([]) };
                 },
                 Index: async (v) => {
@@ -328,7 +324,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                     collectionId.drop();
                   }
                 },
-                TableScan: () => {
+                TableScan: async () => {
                   throw new Error('We should always have an IndexPlan or EmptyScan due to the amendment of the selection to include the collection');
                 },
               }));

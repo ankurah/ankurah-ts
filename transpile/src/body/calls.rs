@@ -207,11 +207,27 @@ impl BodyTranslator<'_> {
     /// method and drops it on the path that does not call it, so its captures
     /// leaked on the other branch. An ordinary arrow owns nothing and is called
     /// where it stands.
+    ///
+    /// A closure written INLINE arrives here as its own text. One the source
+    /// bound to a NAME first — `let f = move |v| ..; opt.map(f)` — arrives as
+    /// that name, and asking the text alone said "an ordinary arrow": the
+    /// emitted `(f)(v)` was a `TypeError` and the branch that skips the call
+    /// abandoned the closure. `owned_closure_locals` is the record of which
+    /// names hold one, kept by the `let` that wrote it.
     pub(crate) fn name_closure(
         &self,
         written: &str,
     ) -> Option<crate::native_types::nullable::Eager> {
         use crate::native_types::nullable::Eager;
+        let name = written.trim();
+        if self.own.owned_closure_locals.borrow().iter().any(|n| n == name) {
+            // Already a name, and one the block does not release: handing it to
+            // the combinator is the move.
+            return Some(Eager {
+                name: name.to_string(),
+                release: Some(format!("dropOwned({})", name)),
+            });
+        }
         if !written.trim_start().starts_with("new OwnedClosure(") {
             return None;
         }

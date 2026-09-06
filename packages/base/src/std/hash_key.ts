@@ -255,7 +255,23 @@ export function derivedClone<T>(value: T): T {
   return cloned(value);
 }
 
-/** The refusal both of the above make, worded from what is missing. */
+/**
+ * One value of a type PARAMETER, hashed the way `#[derive(Hash)]` hashes it.
+ *
+ * `keyHash` is the walk — a tag and the value where the port writes it as a
+ * primitive, its own `hash()` where it has one — and this adds the refusal, for
+ * the same reason its `equals` and `clone` siblings do: `#[derive(Hash)]` on a
+ * generic carries `T: Hash`, so a value standing there that declares no `hash()`
+ * is one the port put there and Rust would not have. Written `place.hash()`, a
+ * field whose type is a bare parameter was a `TypeError` the moment the
+ * parameter was a number.
+ */
+export function derivedHash(value: unknown): string {
+  refuseWithout(value, 'hash', 'Hash');
+  return keyHash(value);
+}
+
+/** The refusal all three of the above make, worded from what is missing. */
 function refuseWithout(value: unknown, member: string, derive: string): void {
   if (value === null || typeof value !== 'object' || isSequence(value)) return;
   if (typeof (value as Record<string, unknown>)[member] === 'function') return;

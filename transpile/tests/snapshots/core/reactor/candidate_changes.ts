@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/candidate_changes.rs
-import { Struct, Arc, HashMap } from '@ankurah/base';
+import { Struct, Arc, derivedClone, HashMap } from '@ankurah/base';
 import { QueryId } from '@ankurah/proto';
 import { IVec } from '../util/ivec';
 
@@ -48,7 +48,7 @@ export class CandidateChanges<C> extends Struct {
   }
 
   clone(): CandidateChanges<C> {
-    return new CandidateChanges(this.changes.value.slice(), this.queryOffsets.clone(), this.entityOffsets.clone());
+    return new CandidateChanges(this.changes.value.map((e) => derivedClone(e)), this.queryOffsets.clone(), this.entityOffsets.clone());
   }
 }
 

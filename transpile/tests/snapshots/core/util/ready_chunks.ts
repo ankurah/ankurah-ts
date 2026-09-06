@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/ready_chunks.rs
-import { Struct } from '@ankurah/base';
+import { Struct, unsupported } from '@ankurah/base';
 import { Context } from '../context';
 import { Item } from '@ankurah/proto';
 
@@ -12,7 +12,7 @@ export class ReadyChunks<F extends Future> extends Struct {
   }
 
   static new<F, I>(futures: I): ReadyChunks<F> {
-    const inner = futures.intoIter().map((f) => Box.pin(f));
+    const inner = unsupported('`collect` into `FuturesUnordered<unknown>` is a `FromIterator` the port has no construction for');
     return new ReadyChunks(inner);
   }
 

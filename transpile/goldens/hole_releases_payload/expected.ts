@@ -40,24 +40,14 @@ export function pick(w: Wrap): number {
         try {
           let _moved0 = false;
           let _moved1 = false;
-          let _moved2 = false;
-          let _moved3 = false;
           try {
             try {
-              try {
-                try {
-                  const n = checkedAdd(a.n, b.n, 'u32');
-                  _moved3 = true;
-                  a.drop();
-                  _moved2 = true;
-                  b.drop();
-                  return n;
-                } finally {
-                  if (!_moved3) a.drop();
-                }
-              } finally {
-                if (!_moved2) b.drop();
-              }
+              const n = checkedAdd(a.n, b.n, 'u32');
+              _moved0 = true;
+              a.drop();
+              _moved1 = true;
+              b.drop();
+              return n;
             } finally {
               if (!_moved1) b.drop();
             }
@@ -70,14 +60,14 @@ export function pick(w: Wrap): number {
       } else {
         const rest = v._1;
         try {
-          let _moved4 = false;
+          let _moved2 = false;
           try {
             const n = rest.n;
-            _moved4 = true;
+            _moved2 = true;
             rest.drop();
             return n;
           } finally {
-            if (!_moved4) rest.drop();
+            if (!_moved2) rest.drop();
           }
         } finally {
           dropUnbound(v, ['_1']);

@@ -91,10 +91,20 @@ pub fn translate(
         // .. } finally { value.drop(); }` — every arm that owned what it bound
         // threw `ReferenceError: value is not defined` on the way out, and then
         // leaked the value it was trying to release.
+        // What the arm's own body lifted out of itself stays INSIDE the arm,
+        // below the binding: the declaration names the payload this arm was
+        // handed, which does not exist outside the branch. Lifted to the
+        // enclosing statement, `Some(value) => Ok(T::into_value(value)?)` read
+        // `value` above the `const value = self;` that declares it — a TDZ
+        // `ReferenceError` on the first call, at `core/property/index.ts:17`.
+        let (written, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
         let body = format!(
             "{}{}",
             bind,
-            t.wrap_bindings(&owned, format!("{}\n", arm_body(&arm.body, t, position)))
+            t.wrap_bindings(
+                &owned,
+                crate::ownership::hoisted(&format!("{}\n", written), &lifted)
+            )
         );
         if test == "true" {
             otherwise = Some(body);

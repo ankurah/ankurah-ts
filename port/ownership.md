@@ -218,6 +218,15 @@ with a single string that happened to spell the join. The derived `hash()` the
 emitter writes length-prefixes its fields for the same reason; this is that rule
 for the sequence a tuple and a `Vec` are written as.
 
+A field whose type is one of the declaring type's own PARAMETERS is one the
+emitter cannot write a member call for: `T` is a number in `Keyed<u32>` and a
+class in `Keyed<Tag>`, and `hash()`, `equals()` and `clone()` on a number are
+all TypeErrors. `derivedHash`, `derivedEquals` and `derivedClone` are the three
+that decide by the value's own surface at run time, and each refuses a value
+that declares neither the member nor a primitive shape — `#[derive(Hash)]` on a
+generic carries `T: Hash`, so such a value is one the port put there and Rust
+would not have.
+
 The map owns its keys and its values, and dropping it releases both. Rust's
 `insert(k, v)` keeps the key it already has and drops the one it was handed, so
 `insert` returns the displaced *value* and releases the surplus *key*; `set(k, v)`
@@ -928,3 +937,38 @@ not already own — the `JsonError` in an `Err` is the caller's, as it is for
 | bytes that are not UTF-8 | `Err(invalid utf-8 sequence)`, not a U+FFFD |
 | a document carrying a lone surrogate, raw or escaped | `Err`, as serde_json answers |
 | a `String` carrying a lone surrogate, written out | `Err`, because Rust could not have held it |
+
+`for (k, v) in map` MOVES the map into Rust's `IntoIter`, which hands out an
+owned pair each turn and drops whatever it has not handed out when the loop
+ends — however it ends. `intoEntries()` is that move: it empties the map, marks
+it dropped and hands the pairs over, releasing nothing, so from there every pair
+belongs to whoever walks the array and the tail nobody reached is that caller's.
+A map used after it reports a use after drop, which is the run-time spelling of
+the move Rust refuses at compile time. A loop over `&map` is none of this: it
+borrows, and `entries()` is what it reads.
+
+| Rust | TypeScript |
+|---|---|
+| `for (k, v) in map` | `const pairs = map.intoEntries();` then the index walk, with `dropOwned(pairs.slice(at))` in its `finally` |
+| `for (k, v) in &map` | `for (const [k, v] of map.entries())`, releasing neither |
+| a `break` out of either | the tail is released by the first, and nothing by the second |
+
+The BINCODE readers owe the same answer, because they read the same bytes: a
+bincode `String` field is a length and a byte run that Rust wrote out of a
+`String`, so a run that is not valid UTF-8 could not have come from one and
+`serde` errors there. `packages/proto/src/codec.ts`,
+`packages/ankql/src/codec.ts` and the `Json` variant of
+`packages/core/src/property/backend/lww.ts` each hold a `TextDecoder` of their
+own, and each is fatal, with the exception turned into that codec's own error.
+A U+FFFD in its place is a different string flowing on as though it had been
+read — a silent corruption where Rust reports.
+
+## An arithmetic panic names the operation Rust names
+
+`checkedAdd`, `checkedSub`, `checkedNeg`, `checkedMul`, `checkedDiv` and
+`checkedRem` each raise where Rust's debug build panics, with the message Rust
+prints — "attempt to negate with overflow", not "attempt to subtract with
+overflow". A signed width has one more negative value than positive, so `MIN`
+has no positive and `i64::MIN.abs()` is that panic: written as a subtraction it
+raised at exactly the right value and named the wrong operation, which is the
+line a reader greps for.

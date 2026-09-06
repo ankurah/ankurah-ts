@@ -15,11 +15,11 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 6
-"proto" = 0
+"core" = 18
+"proto" = 1
 "signals" = 0
-"storage-common" = 0
-"storage-indexeddb" = 0
+"storage-common" = 1
+"storage-indexeddb" = 3
 "storage-sqlite" = 0
 
 [[hole]]
@@ -27,6 +27,30 @@ crate = "core"
 file = "collation.test.ts"
 calls = 2
 refusal = "`i64::from_be_bytes` is a function Rust puts on a primitive type, and the port writes that type as a JavaScript primitive, which has no members and no spelling for this one"
+
+[[hole]]
+crate = "core"
+file = "context.ts"
+calls = 1
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "core"
+file = "indexing/encoding.ts"
+calls = 3
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "core"
+file = "peer_subscription/server.ts"
+calls = 2
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "core"
+file = "property/backend/lww.ts"
+calls = 1
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
 
 [[hole]]
 crate = "core"
@@ -50,4 +74,64 @@ refusal = "an arm of this consuming `Option` match tests inside the payload, and
 crate = "core"
 file = "property/value/json.ts"
 calls = 1
+refusal = "`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "core"
+file = "property/value/json.ts"
+calls = 1
 refusal = "an arm of this consuming `Option` match tests inside the payload, and the port cannot both take a name out of that payload and release what is left of it here"
+
+[[hole]]
+crate = "core"
+file = "reactor.test.ts"
+calls = 1
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "core"
+file = "retrieval.ts"
+calls = 1
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "core"
+file = "util/ready_chunks.ts"
+calls = 1
+refusal = "`collect` into `FuturesUnordered<unknown>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "core"
+file = "value/cast_predicate.ts"
+calls = 1
+refusal = "`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "proto"
+file = "clock.ts"
+calls = 1
+refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
+
+[[hole]]
+crate = "storage-common"
+file = "sorting.test.ts"
+calls = 1
+refusal = "`collect` into `Collect<S, C>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "storage-indexeddb"
+file = "collection.ts"
+calls = 1
+refusal = "`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "storage-indexeddb"
+file = "collection.ts"
+calls = 1
+refusal = "`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for"
+
+[[hole]]
+crate = "storage-indexeddb"
+file = "idb_value.ts"
+calls = 1
+refusal = "`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for"

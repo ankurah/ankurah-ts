@@ -54,6 +54,11 @@ pub struct Lowering {
     /// what transfers the captures and marks the closure moved, so a second
     /// call is the fatal Rust would have refused at compile time.
     pub once_closure_locals: std::cell::RefCell<Vec<String>>,
+    /// Whether the arguments being translated stand in a position whose own
+    /// lowering INVOKES them. `Placement::Loose` reports a closure the emitter
+    /// cannot see the call site of; these are call sites it writes itself, so
+    /// the report there was false.
+    pub argument_is_invoked: std::cell::Cell<bool>,
 }
 
 impl<'a> BodyTranslator<'a> {

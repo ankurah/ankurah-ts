@@ -3,7 +3,7 @@
 // closure, and leaked the closure's captures on the branch that did not.
 
 import { expect, test } from 'bun:test';
-import { Token, andThenCapture, filterCapture, filterOwned, isSomeAndOwned, mapCapture, mapOrCapture, mapOrElseCapture, nested, okOrElseCapture } from './input.ts';
+import { Token, andThenCapture, filterCapture, filterOwned, isSomeAndOwned, mapCapture, mapOrCapture, mapOrElseCapture, nested, okOrElseCapture, namedClosure } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('the receiver is evaluated before the arguments', () => {
@@ -37,6 +37,14 @@ test('a closure that captures nothing droppable is still called where it stands'
   expect(filterCapture(4, token)).toBe(4);
   expect(filterCapture(1, token)).toBe(null);
   token.drop();
+});
+
+test('a closure bound to a NAME is invoked, and released on the branch that skips it', () => {
+  // `(f)(v)` on an `OwnedClosure` is a TypeError; `invoke(f, v)` is the call.
+  expect(namedClosure(4, Token.new(3))).toBe(7);
+  // The branch that never calls it still owns it: the leak check at the end of
+  // this file is the assertion.
+  expect(namedClosure(null, Token.new(3))).toBe(null);
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

@@ -61,3 +61,15 @@ pub fn map_or_else_capture(value: Option<u32>, token: Token, other: Token) -> u3
 pub fn ok_or_else_capture(value: Option<u32>, token: Token) -> Result<u32, u32> {
     value.ok_or_else(move || { let m = token.n; drop(token); m })
 }
+
+/// A closure the source BOUND to a name first, then handed to a combinator.
+///
+/// The port writes a `move` closure over something with drop glue as an
+/// `OwnedClosure`, which is a value and not a bare callable (R10). Asked of the
+/// argument's TEXT, a named one read as an ordinary arrow: the emitted `(f)(v)`
+/// was a `TypeError` on the first value it saw, and the branch that skips the
+/// call walked away from the closure and everything it captured.
+pub fn named_closure(value: Option<u32>, token: Token) -> Option<u32> {
+    let f = move |n: u32| { let m = token.n; drop(token); n + m };
+    value.map(f)
+}

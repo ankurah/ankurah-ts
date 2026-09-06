@@ -179,8 +179,8 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   static newWithAccumulator<G, C extends TClock>(getter: G, subject: C, other: C, budget: number, subjectEventAccumulator: EventAccumulator<Attested<Event>> | null): Comparison<G> {
-    const subjectFrontier = [...[...TClock_dispatch_members(subject)]];
-    const other_1 = [...[...TClock_dispatch_members(other)]];
+    const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]]);
+    const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]]);
     const originalOtherEvents = other_1.clone();
     const initialHeadsEqual = subjectFrontier === other_1;
     const headOverlap = initialHeadsEqual;
@@ -200,7 +200,7 @@ class Comparison<G extends GetEvents> extends Struct {
       return Result.Ok(new Ordering('Equal', {}));
     }
     const ids = [...this.subjectFrontier.union(this.otherFrontier)];
-    const resultChecklist = [...[...ids]];
+    const resultChecklist = HashSet.from([...[...ids]]);
     const _r0 = await this.getter.retrieveEvent(ids);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const [cost, events] = _r0.unwrap();

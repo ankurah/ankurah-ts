@@ -5,7 +5,7 @@
 
 import { expect, test } from 'bun:test';
 import { HashMap } from '@ankurah/base';
-import { Bag, Gate, Item } from './input.ts';
+import { Bag, Gate, Item, keepOverByValue } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a vector keeps what the predicate accepts, in place', () => {
@@ -50,6 +50,15 @@ test('a predicate that throws leaves the vector valid', () => {
   // 5 accepted; 1 rejected and dropped; 0 threw and is kept; 7 never reached.
   expect(bag.items.map((i) => i.n)).toEqual([5, 0, 7]);
   bag.drop();
+});
+
+test('a by-value vector whose predicate panics is released once, compacted', () => {
+  // Nothing panics: three of five kept, and the parameter releases them.
+  expect(keepOverByValue([new Item(5), new Item(1), new Item(7), new Item(2), new Item(9)], 5)).toBe(3);
+  // The predicate panics on the third: `retain`'s own `finally` keeps the
+  // element it threw on and everything after it, and the PARAMETER's releases
+  // what is left — the rejected ones exactly once each, and no other twice.
+  expect(() => keepOverByValue([new Item(5), new Item(1), new Item(0), new Item(2), new Item(9)], 5)).toThrow('zero');
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

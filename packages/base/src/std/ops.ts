@@ -93,6 +93,25 @@ export function checkedSub(a: number | bigint, b: number | bigint, width: string
   return apply('subtract', a, b, width, (x, y) => x - y);
 }
 
+/**
+ * `-a`, panicking on overflow.
+ *
+ * A signed width has one more negative value than positive, so `MIN` has no
+ * positive: `i64::MIN.abs()` panics in Rust's debug build and answers a value
+ * one wider than the type holds if nothing stops it. Written as
+ * `checkedSub(0, a, width)` the value it raises at was exactly right and the
+ * message named the wrong operation — "attempt to subtract with overflow" where
+ * Rust says "attempt to negate with overflow", which is the line a reader
+ * greps for.
+ */
+export function checkedNeg(a: number, width: string): number;
+export function checkedNeg(a: bigint, width: string): bigint;
+export function checkedNeg(a: number | bigint, width: string): number | bigint {
+  // `a` twice: the value is the only operand, and the FIRST one is what says
+  // whether the answer is a `number` or a `bigint`.
+  return apply('negate', a, a, width, (x) => -x);
+}
+
 /** `a * b`, panicking on overflow. */
 export function checkedMul(a: number, b: number, width: string): number;
 export function checkedMul(a: bigint, b: bigint, width: string): bigint;

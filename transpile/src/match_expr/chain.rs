@@ -17,7 +17,11 @@
 
 use super::arms;
 use super::catch_all;
+/// The run of `if`s a chain of arms becomes, and the branch a guard opens.
+pub(super) mod tried;
+
 use crate::body::{indent, BodyTranslator};
+use tried::{tried_in_turn, Branch, Guard};
 
 /// One arm of the chain.
 pub(super) struct Link {
@@ -31,7 +35,7 @@ pub(super) struct Link {
     /// bound are in scope. A guard that fails hands the payload to the arm
     /// below, which is why a chain with one is written as a run of `if`s rather
     /// than an `else if` chain.
-    pub guard: Option<String>,
+    pub guard: Option<Guard>,
     /// Everything that runs when both tests pass: the body and what it owes
     /// around it.
     pub block: String,
@@ -39,9 +43,6 @@ pub(super) struct Link {
     /// after it in the chain would run. A block that does not needs a `break`
     /// out of the chain's label, or the arms below it would be tried after it.
     pub leaves: bool,
-    /// Whether the branch awaits, which makes the key `async` and the match
-    /// around it awaited.
-    pub is_async: bool,
 }
 
 impl Link {
@@ -176,7 +177,7 @@ pub(super) fn write(
                 parts.push((None, fallback.statements(variant, has_payload, param, t)))
             }
             Fallthrough::Unwritable(why) => {
-                parts.push((None, arms::hole_in_an_arm(why, param, has_payload, takes)))
+                parts.push((None, super::owing::hole_in_an_arm(why, param, has_payload, takes)))
             }
             // rustc proved the arms exhaustive between them, so a value that
             // failed every test above matches the last of them.
@@ -242,64 +243,38 @@ fn in_turn(
     takes: crate::ownership::scrutinee::Takes,
     t: &BodyTranslator,
 ) -> String {
-    // An arm with neither a test nor a guard matches every value of the
-    // variant, so Rust never reads past it and neither does this.
-    let unconditional = |link: &Link| link.test.is_none() && link.guard.is_none();
     let mut open = true;
-    let mut kept: Vec<Link> = Vec::new();
+    let mut branches: Vec<Branch> = Vec::new();
     for link in links {
-        let last = unconditional(&link);
-        kept.push(link);
+        let branch = Branch {
+            test: link.test,
+            bindings: link.bindings,
+            guard: link.guard,
+            block: link.block,
+            leaves: link.leaves,
+        };
+        let last = branch.unconditional();
+        branches.push(branch);
         if last {
             open = false;
             break;
         }
     }
-    // A label nothing jumps to is noise: where every arm's body returns or
-    // throws by itself, the chain needs no way out.
-    let needs_break = kept.iter().enumerate().any(|(i, link)| {
-        !link.leaves && !unconditional(link) && (open || i + 1 < kept.len())
-    });
-    let label = if needs_break { t.fresh_hoist("_match") } else { String::new() };
-    let mut inner = String::new();
-    for link in kept {
-        let unconditional = unconditional(&link);
-        let leaving = if link.leaves || unconditional || label.is_empty() {
-            String::new()
-        } else {
-            format!("break {};\n", label)
-        };
-        let guarded = match &link.guard {
-            Some(guard) => format!(
-                "{}if ({}) {{\n{}}}\n",
-                link.bindings,
-                guard,
-                indent(&format!("{}{}", link.block, leaving))
-            ),
-            None => format!("{}{}{}", link.bindings, link.block, leaving),
-        };
-        match &link.test {
-            Some(test) => inner.push_str(&format!("if ({}) {{\n{}}}\n", test, indent(&guarded))),
-            // A pattern that matches every value of the variant still opens a
-            // block of its own: the names it binds belong to this arm and to
-            // no arm written after it.
-            None => inner.push_str(&format!("{{\n{}}}\n", indent(&guarded))),
-        }
-    }
+    let mut tail = String::new();
     if open {
         match fall {
             Fallthrough::CatchAll(fallback) => {
-                inner.push_str(&fallback.statements(variant, has_payload, param, t))
+                tail.push_str(&fallback.statements(variant, has_payload, param, t))
             }
             Fallthrough::Unwritable(why) => {
-                inner.push_str(&arms::hole_in_an_arm(why, param, has_payload, takes))
+                tail.push_str(&super::owing::hole_in_an_arm(why, param, has_payload, takes))
             }
             // Every arm here is conditional — a guard makes even an
             // irrefutable pattern one — so an exhaustive match still needs
             // something written where a failed guard lands. Rust proves it
             // unreachable; the port cannot, and a chain that fell off its end
             // would hand back `undefined`.
-            Fallthrough::Exhaustive => inner.push_str(&arms::hole_in_an_arm(
+            Fallthrough::Exhaustive => tail.push_str(&super::owing::hole_in_an_arm(
                 &format!(
                     "every arm naming `{}` has a guard, and rustc proved between them that one \
                      always holds; the port cannot see that proof, so a value that fails all of \
@@ -312,10 +287,7 @@ fn in_turn(
             )),
         }
     }
-    if label.is_empty() {
-        return inner;
-    }
-    format!("{}: {{\n{}}}\n", label, indent(&inner))
+    tried_in_turn(&branches, &tail, "_match", t)
 }
 
 #[cfg(test)]
@@ -467,7 +439,9 @@ mod tests {
         // block, the guard is tested there, and a guard that fails falls
         // through to the arm below.
         assert!(!ts.contains("unsupported("), "{}", ts);
-        let guard = ts.find("if (n > limit)").expect(&ts);
+        // Amended (step 9a slice 2, G2): the guard of a consuming arm is made
+        // in a `try` of its own, so its test is held in a name.
+        let guard = ts.find("n > limit").expect(&ts);
         let below = ts.find("return 2;").expect(&ts);
         assert!(guard < below, "a failed guard reaches the arm below it:\n{}", ts);
         assert!(

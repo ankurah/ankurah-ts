@@ -312,7 +312,7 @@ export class LiveQuery<R extends View & Clone> extends Struct implements Signal,
   }
 
   ids(): EntityId[] {
-    return this._0._0.value.resultset.keys().collect();
+    return this._0._0.value.resultset.keys();
   }
 
   idsSorted(): EntityId[] {

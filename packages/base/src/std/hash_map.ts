@@ -39,7 +39,7 @@ import { dropContainer } from './guard.ts';
 import { dropOwned, isCopyLike } from '../object.ts';
 import { Table, cloned, type Entry } from './hash_key.ts';
 import { fatalSelfAssignment } from '../drop_registry.ts';
-export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, type Hashable } from './hash_key.ts';
+export { keyHash, keysEqual, cloned, derivedEquals, derivedClone, derivedHash, type Hashable } from './hash_key.ts';
 import { BorrowMut } from './borrow.ts';
 import { invoke, type Invocable } from '../closure.ts';
 
@@ -292,6 +292,28 @@ export class HashMap<K, V> {
   [Symbol.iterator](): IterableIterator<[K, V]> {
     this.#guard.assertNotDropped();
     return this.entries();
+  }
+
+  /**
+   * Every pair, with the map CONSUMED — Rust's `IntoIterator for HashMap`.
+   *
+   * `for (k, v) in map` moves the map into its `IntoIter`, which hands out an
+   * OWNED pair each turn and drops whatever it has not handed out when the loop
+   * ends, however it ends. So this empties the map and marks it dropped without
+   * releasing what was in it: from here every pair belongs to whoever walks the
+   * array, and the tail nobody reached is that caller's to release. The emitted
+   * loop is the same index walk a `Vec` gets, with `dropOwned` over the tail in
+   * its `finally`.
+   *
+   * A map used after this reports a use after drop, which is the run-time
+   * spelling of the move Rust refuses at compile time.
+   */
+  intoEntries(): [K, V][] {
+    this.#guard.assertNotDropped();
+    const pairs = this.#table.all().map((entry): [K, V] => [entry.key, entry.value]);
+    this.#table.reset();
+    this.#guard.markDropped(this);
+    return pairs;
   }
 
   /**

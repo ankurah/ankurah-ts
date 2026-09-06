@@ -214,21 +214,6 @@ impl Fixture {
             .collect()
     }
 
-    /// What the engine could not work out about the declared surface itself.
-    pub fn surface_messages(&self) -> Vec<String> {
-        self.sink
-            .sorted()
-            .into_iter()
-            .filter(|d| crate::diag::is_surface(&d.file))
-            .map(|d| d.message)
-            .collect()
-    }
-
-    /// How many diagnostics this fixture's own Rust produced.
-    pub fn crate_diags(&self) -> usize {
-        self.sink.counts().0
-    }
-
     /// Translate every body in `file` and hand back the TypeScript of one
     /// method, so a fix can be checked where it actually shows: in the output.
     pub fn translated_method(&mut self, file: &str, method: &str) -> String {

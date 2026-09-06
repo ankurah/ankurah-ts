@@ -108,29 +108,3 @@ pub fn struct_members(
     (out, gaps)
 }
 
-/// A written argument list split at the commas that are not inside a nested one.
-///
-/// `HashMap<string, Tag>, number` is two parts, not three: the comma inside the
-/// map's own arguments belongs to it. Splitting on every `", "` made
-/// `[HashMap<string, Tag>, number]` a three-element tuple.
-pub(crate) fn top_level_parts(inner: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for (at, ch) in inner.char_indices() {
-        match ch {
-            '<' | '(' | '[' => depth += 1,
-            '>' | ')' | ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                parts.push(inner[start..at].trim().to_string());
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    let last = inner[start..].trim();
-    if !last.is_empty() {
-        parts.push(last.to_string());
-    }
-    parts
-}

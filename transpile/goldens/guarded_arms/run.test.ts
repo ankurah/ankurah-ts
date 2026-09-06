@@ -6,7 +6,8 @@
 
 import { expect, test } from 'bun:test';
 import { Result } from '@ankurah/base';
-import { Detail, Guarded, Refusal, Rich, Token, Weight, bridge, count, describe, guardedConsuming, heaviest, settle, settleRich } from './input.ts';
+import { Mutex } from '@ankurah/base';
+import { Detail, Guarded, Refusal, Rich, Token, Weight, bridge, count, describe, awaitedGuard, guardTakesALock, guardPanics, guardedCatchAll, guardedConsuming, heaviest, settle, settleRich } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('a guard on a consuming arm decides, and the arm below it takes the rest', () => {
@@ -80,6 +81,45 @@ test('an arm that tests inside the payload AND names part of it refuses, in the 
   // not license abandoning what the branch owns), so the driver owes nothing.
   const empty = new Rich('Empty', { _0: new Detail('empty') });
   expect(() => settleRich(Result.Err(empty), true)).toThrow();
+  // The refusal keeps the arm's GUARD, so a value whose guard fails belongs to
+  // the arm below it and is not refused at all. Without the guard the port
+  // threw for a case Rust answers.
+  const notCached = settleRich(Result.Err(new Rich('Empty', { _0: new Detail('nc') })), false);
+  expect(notCached.isErr()).toBe(true);
+  notCached.unwrapErr().drop();
+});
+
+test('a guard releases its own temporaries before the arm below is tried', () => {
+  const cell = new Mutex(1);
+  expect(guardTakesALock(new Guarded('Same', { _0: Token.new(5), _1: true }), cell)).toBe(1);
+  expect(guardTakesALock(new Guarded('Other', {}), cell)).toBe(0);
+  cell.drop();
+  // The guard's lock fails the test, so the arm below runs and takes the same
+  // lock. Hoisted out of the match, the guard's lock was still held here and
+  // this threw `Mutex already locked` — a deadlock in Rust.
+  const zero = new Mutex(0);
+  expect(guardTakesALock(new Guarded('Same', { _0: Token.new(5), _1: true }), zero)).toBe(2);
+  zero.drop();
+});
+
+test('a guard that panics releases what the pattern took', () => {
+  expect(guardPanics(new Guarded('Same', { _0: Token.new(4), _1: true }))).toBe(1);
+  // The guard throws with the token already handed to the arm: the arm's own
+  // `finally` has not been entered, so the guard's `catch` is what releases it.
+  // The leak check at the end of this file is the assertion.
+  expect(() => guardPanics(new Guarded('Same', { _0: Token.new(0), _1: true }))).toThrow();
+  expect(guardPanics(new Guarded('Other', {}))).toBe(0);
+});
+
+test('a guarded catch-all is a hole that still releases the subject it was handed', () => {
+  const held = new Guarded('Same', { _0: Token.new(2), _1: true });
+  expect(() => guardedCatchAll(held, true)).toThrow();
+});
+
+test('a guard that awaits makes its arm async and the match awaited', async () => {
+  expect(await awaitedGuard(new Guarded('Same', { _0: Token.new(3), _1: true }))).toBe(1);
+  expect(await awaitedGuard(new Guarded('Same', { _0: Token.new(0), _1: true }))).toBe(2);
+  expect(await awaitedGuard(new Guarded('Other', {}))).toBe(0);
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {

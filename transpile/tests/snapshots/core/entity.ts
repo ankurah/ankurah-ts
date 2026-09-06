@@ -787,14 +787,14 @@ export class WeakEntitySet extends Struct {
   async withState<R>(retriever: R, id: EntityId, collectionId: CollectionId, state: State): Promise<Result<[boolean | null, Entity], RetrievalError>> {
     try {
       try {
-        const _r0 = await retriever.getState(id);
-        if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
         const _m4 = await (async () => {
           const _v = this.get(id);
           if (_v != null) {
             const entity = _v;
             return entity;
           } else {
+            const _r0 = await retriever.getState(id);
+            if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
             {
               const _v2 = _r0.unwrap();
               if (_v2 != null) {

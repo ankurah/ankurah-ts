@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Reactor } from './reactor';
-import { AnyhowError, Arc, HashMap, Mutex, Result, Struct, dropOwned } from '@ankurah/base';
+import { AnyhowError, Arc, HashMap, Mutex, Result, Struct, dropOwned, unsupported } from '@ankurah/base';
 import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './reactor/update';
 import { EntityResultSet } from './resultset';
 import { CollectionId, QueryId } from '@ankurah/proto';
@@ -148,7 +148,7 @@ describe('reactor unit tests', () => {
         values.lock().push(value);
       };
     })(values.clone());
-    const check = () => values.lock().drain(undefined /* range .. */);
+    const check = () => unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
     return [accumulate, check];
   }
 

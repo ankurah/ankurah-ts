@@ -99,3 +99,58 @@ pub fn count(w: &Weight, into: &mut Vec<u32>) {
         Weight::Heavy(n) => { into.push(*n * 2); }
     }
 }
+
+use std::sync::Mutex;
+
+/// A guard that takes an owned TEMPORARY. Rust makes this test after the
+/// variant matched and releases the guard's temporaries before the arm below is
+/// tried, so the arm below may take the same lock. Written outside the dispatch
+/// the lock was held for the whole match, and the arm's own `lock()` found it
+/// already taken — a deadlock in Rust, and a throw in the port's `Mutex`.
+pub fn guard_takes_a_lock(input: Guarded, cell: &Mutex<u32>) -> u32 {
+    match input {
+        Guarded::Same(token, _) if *cell.lock().unwrap() > 0 => { drop(token); 1 }
+        Guarded::Same(token, _) => { let seen = *cell.lock().unwrap(); drop(token); seen + 2 }
+        Guarded::Other => 0,
+    }
+}
+
+pub fn refuses(n: u32) -> bool {
+    if n == 0 { panic!("the guard refuses zero") } else { true }
+}
+
+/// A guard that PANICS. `intoMatch` has already handed the payload to the arm,
+/// and the arm's own `finally` has not been entered, so the guard's `catch` is
+/// what releases the token.
+pub fn guard_panics(input: Guarded) -> u32 {
+    match input {
+        Guarded::Same(token, _) if refuses(token.n) => { drop(token); 1 }
+        Guarded::Same(token, _) => { drop(token); 2 }
+        Guarded::Other => 0,
+    }
+}
+
+/// A guarded CATCH-ALL over a consuming match: the chain hangs off a variant
+/// key and a catch-all has none, so no form of this match is written. The hole
+/// still evaluates the subject the source wrote and releases it.
+pub fn guarded_catch_all(input: Guarded, flag: bool) -> u32 {
+    match input {
+        Guarded::Same(token, _) => { drop(token); 1 }
+        rest if flag => { drop(rest); 2 }
+        _ => 0,
+    }
+}
+
+pub async fn slow(n: u32) -> bool { n > 0 }
+
+/// An AWAITED guard. JavaScript's `await` belongs to the nearest function and an
+/// arm is an arrow function, so a guard that awaits makes the arm `async` and
+/// the whole match awaited. Asked of the arm's BODY alone, the arrow stayed
+/// plain and `await` inside it did not parse.
+pub async fn awaited_guard(input: Guarded) -> u32 {
+    match input {
+        Guarded::Same(token, _) if slow(token.n).await => { drop(token); 1 }
+        Guarded::Same(token, _) => { drop(token); 2 }
+        Guarded::Other => 0,
+    }
+}

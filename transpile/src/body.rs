@@ -402,31 +402,11 @@ impl<'a> BodyTranslator<'a> {
                 let (receiver, named_early) = self.name_nullable_receiver_early(call, &rust_method, receiver);
                 let ts_method = name_map::map_fn_name(&rust_method);
 
-                // The callee's signature is what says what each argument has to
-                // be: a closure takes its parameter types from there, an
-                // `.into()` its target, and a literal its width.
-                let want = self.argument_types(call);
-                let args: Vec<String> = call
-                    .args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, a)| {
-                        let wants = want.get(index).and_then(|t| t.as_ref());
-                        // C1: a cell handed to a parameter that is itself a
-                        // `&mut` to a value goes over as the CELL. Rust
-                        // reborrows a `&mut` implicitly — `f(buffer)` where
-                        // `buffer: &mut String` passes the reference — and
-                        // `buffer.value` would hand the callee a copy of the
-                        // string, which is the defect this is all about.
-                        if self.names_a_cell_param(a) {
-                            return Self::path_static(match a {
-                                syn::Expr::Path(path) => &path.path,
-                                _ => unreachable!("names_a_cell answered for a path"),
-                            });
-                        }
-                        self.expecting(a, wants, || self.moved_value(a))
-                    })
-                    .collect();
+                let args = self.method_arguments(call, &rust_method);
+
+                if let Some(written) = self.collected_into(call, &rust_method, &receiver) {
+                    return written;
+                }
 
                 // ── unwrap/expect: single decision point ──
                 // In TS, only Result has a real .unwrap(). All other types
@@ -477,33 +457,10 @@ impl<'a> BodyTranslator<'a> {
                         return receiver.to_string();
                     }
                 }
-                // `??` reads a *value* for null, and a `Result` is an object:
-                // `r ?? d` always takes `r`, whatever it holds. Only the
-                // nullable the port maps `Option` to can be written that way;
-                // a `Result` calls the runtime's own method, which consumes the
-                // receiver as Rust's does.
-                if matches!(rust_method.as_str(), "unwrap_or" | "unwrap_or_else") && args.len() == 1
+                if let Some(written) =
+                    self.nullable_unwrap_or(call, &rust_method, &receiver, &args)
                 {
-                    let nullable = self
-                        .resolve_expr_type(&call.receiver)
-                        .ok()
-                        .is_some_and(|ty| self.is_nullable(&ty));
-                    if nullable {
-                        if rust_method == "unwrap_or" {
-                            // Rust evaluates the default before it knows whether
-                            // it is wanted, and drops it where it is not. `??`
-                            // alone left it to the leak registry.
-                            if let Some(chosen) =
-                                self.nullable_default(&receiver, &call.args[0], &args[0])
-                            {
-                                return chosen;
-                            }
-                        }
-                        return match rust_method.as_str() {
-                            "unwrap_or" => format!("{} ?? {}", receiver, args[0]),
-                            _ => format!("{} ?? ({})()", receiver, args[0]),
-                        };
-                    }
+                    return written;
                 }
 
                 // ── a conversion ──
@@ -1368,23 +1325,6 @@ impl<'a> BodyTranslator<'a> {
         format!("{}\n", release)
     }
 
-    /// Does this pattern take a payload out of the scrutinee that the arm then
-    /// owns, rather than binding the whole value?
-    fn pattern_takes_a_payload(&self, expr: &syn::Expr, pat: &syn::Pat) -> bool {
-        let Some(tc) = &self.types else { return false };
-        let Ok(subject) = self.quietly(|| self.resolve_expr_type(expr)) else {
-            return false;
-        };
-        let tc = tc.borrow();
-        let takes = ownership::scrutinee::takes(&tc.probe(), &subject, &[pat], |path| {
-            let mark = tc.sink.mark();
-            let payload = tc.payload_of(path, Some(&subject));
-            tc.sink.rewind(mark);
-            payload.unwrap_or_default().into_iter().map(|(_, ty)| ty).collect()
-        });
-        takes == ownership::scrutinee::Takes::Payload
-    }
-
     /// `*place`, written as the place an assignment stores into.
     ///
     /// A `*` in a value position may reach through nothing at all — `*x` on a
@@ -1513,9 +1453,15 @@ pub(crate) use values::*;
 /// What the translator knows while it writes: scopes, expectations, reports.
 mod scopes;
 
+/// The type of the value a pattern is pointed at, and the scope it opens.
+mod subject;
+
 /// A call the engine could not resolve, and the free functions an impl with no
 /// class of its own became.
 pub(crate) mod calls;
+
+/// Methods the body translator answers before the native-type dispatch.
+mod pre_dispatch;
 
 /// Reading a field, and the places a value moves out of.
 mod places;
@@ -1527,7 +1473,10 @@ mod paths;
 mod writing;
 pub(crate) use writing::*;
 /// What a pattern asks of a value, and what it takes out of it.
-mod pat_shape;
+/// A name in a pattern that resolves to a `const`.
+mod const_patterns;
+
+pub(crate) mod pat_shape;
 mod patterns;
 #[cfg(test)]
 mod patterns_tests;

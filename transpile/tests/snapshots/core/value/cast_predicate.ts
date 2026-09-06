@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/cast_predicate.rs
-import { Result, dropOwned } from '@ankurah/base';
+import { Result, dropOwned, unsupported } from '@ankurah/base';
 import { Expr, Literal, Predicate } from '@ankurah/ankql';
 import { RetrievalError } from '../error';
 import { Comparison } from '../lineage';
@@ -193,7 +193,7 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
       let _moved3 = false;
       try {
         _moved3 = true;
-        const _r4 = [...exprs].map((e) => castExprTypes(e, schema));
+        const _r4 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
         if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
         const castExprs = _r4.unwrap();
         return Result.Ok(new Expr('ExprList', { _0: castExprs }));

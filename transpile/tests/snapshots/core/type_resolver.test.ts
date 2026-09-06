@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { TypeResolver } from './type_resolver';
-import { dropOwned } from '@ankurah/base';
+import { dropOwned, dropUnbound } from '@ankurah/base';
 import { Comparison } from './lineage';
 import { Json } from './property/value/json';
 import { ValueType } from './value/index';
@@ -118,7 +118,11 @@ describe('type_resolver unit tests', () => {
               Literal: (v) => {
                 if (v._0.is('Json') && (v._0.value._0.is('Number'))) {
                   const { _0: n } = v._0.value._0.value;
-                  expect(n.asI64()).toEqual(9n);
+                  try {
+                    expect(n.asI64()).toEqual(9n);
+                  } finally {
+                    dropUnbound(v, []);
+                  }
                 } else {
                   const other = new Expr('Literal', v);
                   try {
@@ -196,7 +200,11 @@ describe('type_resolver unit tests', () => {
               Literal: (v) => {
                 if (v._0.is('String')) {
                   const { _0: s } = v._0.value;
-                  expect(s).toEqual('test');
+                  try {
+                    expect(s).toEqual('test');
+                  } finally {
+                    dropUnbound(v, []);
+                  }
                 } else {
                   const other = new Expr('Literal', v);
                   try {

@@ -74,14 +74,8 @@ test('a subject that is a call is evaluated once', () => {
 });
 
 test('nothing leaked and nothing was dropped twice', async () => {
-  await expectNoOwnershipReports({
-    // `widen`'s `Ex::Literal(Lit::Count(n))` link takes `n` out of the `Lit`
-    // that sits inside the payload, so the Lit is partially moved and the parts
-    // no name took are nobody's. Rust drops the rest of the wrapper there; the
-    // runtime has no way to release an object minus one field, which is the
-    // nested-payload wrapper defect that has been open since the fourth pass.
-    // Recorded rather than hidden: matched exactly, so the day the wrapper is
-    // released this line fails and comes out.
-    except: ['BUG: Lit was garbage collected without being dropped.'],
-  });
+  // The recorded leak is gone: `widen`'s `Ex::Literal(Lit::Count(n))` link takes
+  // a `u32` out of the `Lit`, so nothing droppable came out of it and the `Lit`
+  // is whole — and `dropUnbound(v, [])` releases it.
+  await expectNoOwnershipReports();
 });

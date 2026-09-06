@@ -19,11 +19,31 @@ use super::Prim;
 /// The TypeScript expression a `<prim>::<CONST>` path is, where the port has
 /// one.
 pub fn written(prim: Prim, konst: &str) -> Option<String> {
-    if matches!(prim, Prim::F32 | Prim::F64) {
-        // A `f32` constant is written at `f64` precision, because the port has
-        // one float type: `f32::EPSILON` really is a different number, and
-        // where a body compares against it the difference is the port's own
-        // float mapping, reported at the type rather than here.
+    // The port has one float type — a JavaScript number, which is an IEEE-754
+    // double — so `f64`'s constants have names there and `f32`'s do not. An
+    // `f32` constant is a DIFFERENT number, and every one of them is exactly
+    // representable as a double, so each is written as its own value rather
+    // than as the `f64` one under an `f32` name. Written at `f64` precision,
+    // `x < f32::EPSILON` compared against a threshold 2^29 times too small and
+    // `x > f32::MAX` was never true.
+    if prim == Prim::F32 {
+        return Some(
+            match konst {
+                // 2^-23, 2^-126, and the largest finite `f32`.
+                "EPSILON" => "1.1920928955078125e-7",
+                "MIN_POSITIVE" => "1.1754943508222875e-38",
+                "MAX" => "3.4028234663852886e+38",
+                "MIN" => "-3.4028234663852886e+38",
+                // A double holds each of these exactly as a float does.
+                "INFINITY" => "Infinity",
+                "NEG_INFINITY" => "-Infinity",
+                "NAN" => "NaN",
+                _ => return None,
+            }
+            .to_string(),
+        );
+    }
+    if prim == Prim::F64 {
         return Some(
             match konst {
                 "EPSILON" => "Number.EPSILON",
@@ -32,7 +52,12 @@ pub fn written(prim: Prim, konst: &str) -> Option<String> {
                 "NAN" => "NaN",
                 "MAX" => "Number.MAX_VALUE",
                 "MIN" => "-Number.MAX_VALUE",
-                "MIN_POSITIVE" => "Number.MIN_VALUE",
+                // `Number.MIN_VALUE` is the smallest SUBNORMAL double,
+                // 5e-324; `f64::MIN_POSITIVE` is the smallest NORMAL one,
+                // 2^-1022, which is 250 orders of magnitude larger. A
+                // subnormal threshold makes `x > f64::MIN_POSITIVE` true for
+                // values Rust says are below it.
+                "MIN_POSITIVE" => "2.2250738585072014e-308",
                 _ => return None,
             }
             .to_string(),
@@ -113,4 +138,36 @@ pub fn written_or_reason(segments: &[String]) -> Option<Result<String, String>> 
             konst
         )),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{written, Prim};
+
+    /// The port has one float type, so an `f32` constant is a DIFFERENT number
+    /// from the `f64` one of the same name — and every one of them is exactly
+    /// representable as a double, so each is written as its own value. Written
+    /// at `f64` precision, `x < f32::EPSILON` compared against a threshold
+    /// 2^29 times too small.
+    #[test]
+    fn an_f32_constant_is_written_at_the_f32_value() {
+        assert_eq!(written(Prim::F32, "EPSILON").as_deref(), Some("1.1920928955078125e-7"));
+        assert_eq!(written(Prim::F32, "MAX").as_deref(), Some("3.4028234663852886e+38"));
+        assert_eq!(written(Prim::F32, "MIN").as_deref(), Some("-3.4028234663852886e+38"));
+        assert_eq!(written(Prim::F32, "MIN_POSITIVE").as_deref(), Some("1.1754943508222875e-38"));
+        // A double holds each of these exactly as a float does.
+        assert_eq!(written(Prim::F32, "NAN").as_deref(), Some("NaN"));
+        assert_eq!(written(Prim::F32, "INFINITY").as_deref(), Some("Infinity"));
+    }
+
+    /// `Number.MIN_VALUE` is the smallest SUBNORMAL double, 5e-324;
+    /// `f64::MIN_POSITIVE` is the smallest NORMAL one, 250 orders of magnitude
+    /// larger. A subnormal threshold makes `x > f64::MIN_POSITIVE` true for
+    /// values Rust says are below it.
+    #[test]
+    fn f64_min_positive_is_the_smallest_normal_and_not_the_smallest_subnormal() {
+        assert_eq!(written(Prim::F64, "MIN_POSITIVE").as_deref(), Some("2.2250738585072014e-308"));
+        assert_eq!(written(Prim::F64, "EPSILON").as_deref(), Some("Number.EPSILON"));
+        assert_eq!(written(Prim::F64, "MAX").as_deref(), Some("Number.MAX_VALUE"));
+    }
 }

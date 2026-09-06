@@ -20,23 +20,19 @@ export function Option_require<T>(self: T | null, err: string): Result<T, Error>
 }
 
 export function Result_Option_JsValue_require<T>(self: Result<T | null, unknown>, err: string): Result<T, Error> {
-  try {
-    if (self.isOk()) {
-      const _v = self.unwrap();
-      if (_v != null) {
-        const res = _v;
-        return Result.Ok(res);
-      }
-      {
-        const _v1 = _v;
-        return Result.Err(AnyhowError.msg(`${err} is None`));
-      }
-    } else {
-      const e = self.unwrapErr();
-      return Result.Err(AnyhowError.msg(`${err} Err: ${e}`));
+  if (self.isOk()) {
+    const _v = self.unwrap();
+    if (_v != null) {
+      const res = _v;
+      return Result.Ok(res);
     }
-  } finally {
-    self.drop();
+    {
+      const _v1 = _v;
+      return Result.Err(AnyhowError.msg(`${err} is None`));
+    }
+  } else {
+    const e = self.unwrapErr();
+    return Result.Err(AnyhowError.msg(`${err} Err: ${e}`));
   }
 }
 

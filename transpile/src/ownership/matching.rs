@@ -91,22 +91,34 @@ impl<'a> BodyTranslator<'a> {
     /// it, exactly as it drops a `let`. The flags are registered here, before
     /// the scope's text is written, because a branch inside it sets them.
     pub fn claim_bindings(&self, names: &[String], body: &[syn::Stmt]) -> Vec<ownership::Owned> {
-        self.claim_bindings_as(names, &|name| {
-            self.types.as_ref().and_then(|tc| tc.borrow().lookup(name))
-        }, body)
+        self.claim_bindings_as(
+            names,
+            &|name| self.types.as_ref().and_then(|tc| tc.borrow().lookup(name)),
+            ownership::Drops::Unknown,
+            body,
+        )
     }
 
-    /// The same, told what each name's type is.
+    /// The same, told what each name's type is, and what to do with a name
+    /// whose type nothing can say.
     ///
     /// For: `for ref item in owned_vec` binds a REFERENCE into the element the
     /// iterator handed out, and the loop still owns that element — Rust's
     /// `IntoIter` drops it at the end of the turn. The BINDING's own type is a
     /// `&T`, which owns nothing, so the loop asks under the element's type
     /// instead and the release lands on the name the loop wrote.
+    ///
+    /// `unresolved` is what a name whose type does not resolve owes. Most
+    /// scopes owe `Drops::Unknown` — nothing, because nothing is known. A
+    /// `Result` arm that BOUND the payload owes `Drops::Cascade`: the arm holds
+    /// a value the side read out of the `Result` whatever its type turns out to
+    /// be, `dropOwned` releases it by its runtime shape, and walking away from
+    /// it left a `PropertyError` for the collector at four corpus sites.
     pub fn claim_bindings_as(
         &self,
         names: &[String],
         type_of: &dyn Fn(&str) -> Option<crate::ty::Ty>,
+        unresolved: ownership::Drops,
         body: &[syn::Stmt],
     ) -> Vec<ownership::Owned> {
         let Some(tc) = &self.types else {
@@ -122,10 +134,10 @@ impl<'a> BodyTranslator<'a> {
             ownership::Dispositions::build(&[(0, names.to_vec())], sites);
         let mut owned = Vec::new();
         for name in names {
-            let Some(ty) = type_of(name) else {
-                continue;
+            let drops = match type_of(name) {
+                Some(ty) => ownership::drops_of(&tc.borrow().probe(), &ty),
+                None => unresolved,
             };
-            let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
             if !drops.is_droppable() {
                 continue;
             }

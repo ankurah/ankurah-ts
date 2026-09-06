@@ -31,12 +31,12 @@ export abstract class PropertyBackend {
 
 export function backendFromString(name: string, buffer: Uint8Array | null): Result<Arc<PropertyBackend>, RetrievalError> {
   if (name === 'yrs') {
-    const _r0 = YrsBackend.fromStateBuffer(buffer);
-    if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
     const _m1 = (() => {
       const _v = buffer;
       if (_v != null) {
         const buffer = _v;
+        const _r0 = YrsBackend.fromStateBuffer(buffer);
+        if (_r0.isErr()) return { $jump: 'return', $value: Result.Err(_r0.unwrapErr()) };
         return _r0.unwrap();
       } else {
         return YrsBackend.new();
@@ -52,12 +52,12 @@ export function backendFromString(name: string, buffer: Uint8Array | null): Resu
       if (!_moved2) backend.drop();
     }
   } else if (name === 'lww') {
-    const _r3 = LWWBackend.fromStateBuffer(buffer);
-    if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
     const _m4 = (() => {
       const _v1 = buffer;
       if (_v1 != null) {
         const buffer = _v1;
+        const _r3 = LWWBackend.fromStateBuffer(buffer);
+        if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
         return _r3.unwrap();
       } else {
         return LWWBackend.new();

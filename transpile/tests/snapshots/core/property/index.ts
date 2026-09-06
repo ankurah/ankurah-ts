@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
-import { Result, Ref, unsupported } from '@ankurah/base';
+import { Result, Ref, dropOwned, unsupported } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { Value } from '../value/index';
 import { PropertyError } from './traits';
@@ -15,10 +15,10 @@ export interface Property {
 export type PropertyName = string;
 
 export function Option_intoValue<T extends Property>(self: T | null): Result<Value | null, PropertyError> {
-  const _r0 = Property.intoValue(value);
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   if (self != null) {
     const value = self;
+    const _r0 = Property.intoValue(value);
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     return Result.Ok(_r0.unwrap());
   } else {
     return Result.Ok(null);
@@ -34,7 +34,11 @@ export function Option_fromValue<T extends Property>(value: Value | null): Resul
     const _v1 = _v.unwrapErr();
     if (_v1.is('Missing')) {
       const _v2 = _v1;
-      return Result.Ok(null);
+      try {
+        return Result.Ok(null);
+      } finally {
+        dropOwned(_v2);
+      }
     }
     {
       const err = _v1;

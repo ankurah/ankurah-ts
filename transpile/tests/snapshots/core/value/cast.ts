@@ -282,56 +282,50 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     });
   } else if ((_v[0].is('Json')) && (_v[1].is('I64'))) {
     const { _0: json } = _v[0].value;
-    _match0: {
-      if (json.is('Number')) {
-        const { _0: n } = json.value;
-        if (n.isI64()) {
-          return Result.Ok(new Value('I64', { _0: (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) }));
-        }
+    if (json.is('Number')) {
+      const { _0: n } = json.value;
+      if (n.isI64()) {
+        return Result.Ok(new Value('I64', { _0: (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })()) }));
       }
-      {
-        return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
-      }
+    }
+    {
+      return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
     }
   } else if ((_v[0].is('Json')) && (_v[1].is('I32'))) {
     const { _0: json } = _v[0].value;
-    _match1: {
-      if (json.is('Number')) {
-        const { _0: n } = json.value;
-        if (n.isI64()) {
-          {
-            const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
-            if (i >= BigInt(-2147483648) && i <= BigInt(2147483647)) {
-              return Result.Ok(new Value('I32', { _0: Number(BigInt.asIntN(32, i)) }));
-            } else {
-              return Result.Err(new CastError('NumericOverflow', { value: i.toString(), targetType: new ValueType('I32', {}) }));
-            }
+    if (json.is('Number')) {
+      const { _0: n } = json.value;
+      if (n.isI64()) {
+        {
+          const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+          if (i >= BigInt(-2147483648) && i <= BigInt(2147483647)) {
+            return Result.Ok(new Value('I32', { _0: Number(BigInt.asIntN(32, i)) }));
+          } else {
+            return Result.Err(new CastError('NumericOverflow', { value: i.toString(), targetType: new ValueType('I32', {}) }));
           }
         }
       }
-      {
-        return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
-      }
+    }
+    {
+      return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
     }
   } else if ((_v[0].is('Json')) && (_v[1].is('I16'))) {
     const { _0: json } = _v[0].value;
-    _match2: {
-      if (json.is('Number')) {
-        const { _0: n } = json.value;
-        if (n.isI64()) {
-          {
-            const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
-            if (i >= BigInt(-32768) && i <= BigInt(32767)) {
-              return Result.Ok(new Value('I16', { _0: Number(BigInt.asIntN(16, i)) }));
-            } else {
-              return Result.Err(new CastError('NumericOverflow', { value: i.toString(), targetType: new ValueType('I16', {}) }));
-            }
+    if (json.is('Number')) {
+      const { _0: n } = json.value;
+      if (n.isI64()) {
+        {
+          const i = (n.asI64() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+          if (i >= BigInt(-32768) && i <= BigInt(32767)) {
+            return Result.Ok(new Value('I16', { _0: Number(BigInt.asIntN(16, i)) }));
+          } else {
+            return Result.Err(new CastError('NumericOverflow', { value: i.toString(), targetType: new ValueType('I16', {}) }));
           }
         }
       }
-      {
-        return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
-      }
+    }
+    {
+      return Result.Err(new CastError('IncompatibleTypes', { from: sourceType, to: targetType }));
     }
   } else if ((_v[0].is('Json')) && (_v[1].is('F64'))) {
     const { _0: json } = _v[0].value;

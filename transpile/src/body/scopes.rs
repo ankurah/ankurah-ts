@@ -10,7 +10,7 @@
 
 use crate::native_types;
 
-use super::{as_move_closure, position_of, span_position, BodyTranslator, PatternScope};
+use super::{as_move_closure, position_of, span_position, BodyTranslator};
 
 impl<'a> BodyTranslator<'a> {
     /// Translate one expression with the type its position wants of it.
@@ -202,50 +202,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// The type of an expression a PATTERN is matched against, with a written
-    /// `&` kept on it.
-    ///
-    /// For: everywhere else the port erases references, because a TypeScript
-    /// object reference is what a Rust reference becomes, so `resolve_expr_type`
-    /// answers what a `&e` points at. Matching is where the difference decides
-    /// who owns what the pattern binds: Rust's default binding mode (RFC 2005)
-    /// says a pattern matched against a reference binds by reference, and the
-    /// binding then owes no release. With the `&` erased, `for v in &map`
-    /// released the borrowed key and value on every turn and the map released
-    /// them again, and `if let Some(order_by) = &self.order_by` released a
-    /// vector the field still holds — both double drops the strict registry
-    /// aborts on.
-    pub fn borrowed_scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
-        match expr {
-            syn::Expr::Reference(r) => Some(crate::ty::Ty::Ref {
-                mutable: r.mutability.is_some(),
-                inner: Box::new(self.borrowed_scrutinee_type(&r.expr)?),
-            }),
-            syn::Expr::Paren(p) => self.borrowed_scrutinee_type(&p.expr),
-            syn::Expr::Group(g) => self.borrowed_scrutinee_type(&g.expr),
-            _ => self.scrutinee_type(expr),
-        }
-    }
-
-    /// The type of the expression a `for` loop iterates.
-    ///
-    /// `IntoIterator for Vec<T>` hands out a `T` the loop has to release, and
-    /// `IntoIterator for &Vec<T>` a `&T` that stays the sequence's, so the
-    /// written `&` decides the form of the whole loop.
-    pub fn iterated_type(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
-        self.borrowed_scrutinee_type(iterated)
-    }
-
-    /// What one turn of a `for` loop over this expression hands out.
-    pub fn iteration_item(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
-        let tc = self.types.as_ref()?;
-        let ty = self.iterated_type(iterated)?;
-        // A sequence the engine cannot name the element of leaves the loop
-        // variable untyped; the uses of that variable are what report it, so
-        // that one gap is counted once per site rather than twice.
-        tc.borrow().iteration_item(&ty)
-    }
-
     /// Note the function a call landed on, for the oracle comparison, without
     /// translating it. A call the engine resolved and the runtime then writes as
     /// nothing is still a resolution, and leaving it unrecorded made the engine
@@ -278,62 +234,6 @@ impl<'a> BodyTranslator<'a> {
         let Some(tc) = &self.types else { return false };
         let tc = tc.borrow();
         tc.is_lock_call(expr)
-    }
-
-    /// The type of the value a `match` or an `if let` takes apart. `None` means
-    /// the engine could not read it, and the fallback has been recorded.
-    pub fn scrutinee_type(&self, expr: &syn::Expr) -> Option<crate::ty::Ty> {
-        let resolved = self.resolve_expr_type(expr);
-        self.or_fallback(resolved, "the pattern's names are bound without types")
-    }
-
-    /// Write `body` with the pattern lowering told what the value being taken
-    /// apart IS, for a site that writes the test after its binding scope has
-    /// closed.
-    ///
-    /// `enter_pattern` sets the same flag, and most sites write the test inside
-    /// the scope it opens; the `if let` lowering writes its branch first and its
-    /// test afterwards, so it says so here instead.
-    pub(crate) fn matching<R>(
-        &self,
-        scrutinee: Option<&crate::ty::Ty>,
-        body: impl FnOnce() -> R,
-    ) -> R {
-        let held = self
-            .borrowed_subject
-            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
-        let written = body();
-        self.borrowed_subject.set(held);
-        written
-    }
-
-    /// Is the value the pattern being written is matched against borrowed?
-    ///
-    /// `enter_pattern` sets it from the scrutinee's type and the scope it opens
-    /// restores it, so it answers for the pattern currently being written.
-    pub(crate) fn matches_a_reference(&self) -> bool {
-        self.borrowed_subject.get()
-    }
-
-    /// Open a scope holding the names a pattern introduces, typed from the value
-    /// being taken apart. The scope closes when the returned guard drops.
-    ///
-    /// A name the engine could not type is still bound, so that it shadows and
-    /// so that a use of it says "bound but untyped" rather than "does not name a
-    /// value". The gap is reported where the name is used, which is where the
-    /// translator has to fall back; reporting it here as well would count one
-    /// gap twice.
-    pub fn enter_pattern<'t>(
-        &'t self,
-        pat: &syn::Pat,
-        scrutinee: Option<&crate::ty::Ty>,
-    ) -> PatternScope<'t, 'a> {
-        self.push_block();
-        let borrowed_before = self
-            .borrowed_subject
-            .replace(matches!(scrutinee, Some(crate::ty::Ty::Ref { .. })));
-        self.bind_pattern_here(pat, scrutinee);
-        PatternScope { translator: self, borrowed_before }
     }
 
     /// Write out what a native-type translation decided, reporting the calls it
@@ -589,13 +489,6 @@ impl<'a> BodyTranslator<'a> {
             pat
         );
         self.or_fallback(resolved, &instead)
-    }
-
-    /// Bind a pattern's names in the scope that is already open. Used where the
-    /// binding outlives the statement, as a `let` does.
-    pub fn bind_pattern_here(&self, pat: &syn::Pat, scrutinee: Option<&crate::ty::Ty>) {
-        let Some(tc) = &self.types else { return };
-        tc.borrow_mut().bind_pattern(pat, scrutinee);
     }
 
 }

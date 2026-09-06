@@ -58,7 +58,11 @@ export class IdbIndexScanner extends Struct {
               return req;
             } else {
               const e = cursorRequest.unwrapErr();
-              return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Failed to open cursor: ${e}` })), null] };
+              try {
+                return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Failed to open cursor: ${e}` })), null] };
+              } finally {
+                dropOwned(e);
+              }
             }
           })();
           if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
@@ -110,7 +114,11 @@ async function getNextRecord(state: ScanState): Promise<[Result<Object, Retrieva
       return val;
     } else {
       const e = result.unwrapErr();
-      return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Cursor error: ${e}` })), null] };
+      try {
+        return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Cursor error: ${e}` })), null] };
+      } finally {
+        dropOwned(e);
+      }
     }
   })();
   if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
@@ -125,7 +133,11 @@ async function getNextRecord(state: ScanState): Promise<[Result<Object, Retrieva
       return c;
     } else {
       const e = _v1.unwrapErr();
-      return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Failed to cast cursor: ${e}` })), null] };
+      try {
+        return { $jump: 'return', $value: [Result.Err(new RetrievalError('StorageError', { _0: `Failed to cast cursor: ${e}` })), null] };
+      } finally {
+        dropOwned(e);
+      }
     }
   })();
   if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;

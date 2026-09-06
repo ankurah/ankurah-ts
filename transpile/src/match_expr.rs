@@ -7,8 +7,17 @@ mod arms;
 mod catch_all;
 mod chain;
 mod option_chain;
+
+/// What a consuming arm owes the payload it was handed.
+mod owing;
 mod payload;
 mod result_arms;
+
+/// A `match` the runtime has no `match` of its own for, as the if-chain the
+/// arms describe.
+mod value_match;
+pub(crate) use value_match::leaves_the_arm;
+use value_match::{subject_of_bound, translate_value_match};
 
 use crate::body::{translate_pat, indent, BodyTranslator};
 use crate::control_flow::sentinel::{jumps_in, jumps_out, leaves_the_function};
@@ -339,253 +348,20 @@ fn guarded(
     {
         return None;
     }
-    // R12 rather than a wrong answer.
+    // R12 rather than a wrong answer — and a hole releases what it was handed.
+    // The subject is an expression the source wrote to be consumed here, so it
+    // is evaluated (its side effects are the program's) into a name, released,
+    // and the throw stands after both.
     let what = "an arm of this `match` has a guard and the match hands its payload to the \
                 arms, and the if-chain a guard needs reads the subject without marking it \
                 moved; no form of this match is written";
     t.report_match_gap(match_expr, what);
-    Some(format!("{};", crate::body::hole_text(what)))
-}
-
-/// A `match` on something the runtime has no `match` of its own for — a number,
-/// a string, a tuple — as the if/else chain the arms describe.
-///
-/// Each arm's pattern becomes a test against the scrutinee plus the names it
-/// binds. Writing the *pattern* where the test belongs emitted
-/// `if (/* pat literal */)`, which does not parse and matched nothing.
-fn translate_value_match(
-    scrutinee: &str,
-    match_expr: &syn::ExprMatch,
-    t: &BodyTranslator,
-    position: Position,
-) -> String {
-    let scrutinee_ty = t.borrowed_scrutinee_type(&match_expr.expr);
-    let binds: Vec<String> = match_expr
-        .arms
-        .iter()
-        .flat_map(|arm| crate::body::pattern_names(&arm.pat))
-        .collect();
-    let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
-    let arms: Vec<Arm> = match_expr
-        .arms
-        .iter()
-        .map(|arm| written_arm(arm, &subject, &match_expr.expr, scrutinee_ty.as_ref(), t, position))
-        .collect();
-    // A guard reads the names its own pattern bound, and a guard that fails
-    // hands the subject to the arm below it. An `else if` chain carries only
-    // one of those two at a time, because an arm's bindings live inside the
-    // block its test opens, so a match with a guard is written the other way.
-    if arms.iter().any(|arm| arm.guard.is_some()) {
-        return format!("{}{}", declaration, tested_in_turn(&arms, t));
-    }
-    let mut out = declaration;
-    let mut everything_matched = false;
-    for (i, arm) in arms.iter().enumerate() {
-        // An arm that matches everything is the end of the chain: Rust never
-        // reaches what is written after it, and an `else` written after a block
-        // that is not an `if` does not parse at all.
-        if everything_matched {
-            t.report_match_gap(
-                match_expr,
-                "an arm above this one matches everything, and Rust tries arms in order, so                  this one never runs and is not written",
-            );
-            break;
-        }
-        let block = indent(&format!("{}{}{}", arm.flags, arm.bind, arm.body));
-        // Rust's match is exhaustive, so the last arm runs whenever nothing
-        // above it matched and its own test is redundant. Writing it as one
-        // more `else if` left the chain able to fall off its end and hand back
-        // `undefined`, which the function's return type does not admit:
-        // `match flag { true => .., false => .. }` needs no `_` arm in Rust and
-        // had no `else` here.
-        // ...but an arm whose test the translator could not write is not one
-        // that matches anything: `false` is what a refused pattern answers, and
-        // reading the LAST arm as a catch-all whatever its test said turned
-        // "written as one that never matches" into the arm that always runs.
-        let catch_all =
-            arm.test == "true" || (i + 1 == arms.len() && arm.test != "false");
-        let head = match (i, catch_all) {
-            // An arm that matches everything and stands first is the whole
-            // match; there is nothing left to test.
-            (0, true) => String::new(),
-            (0, false) => format!("if ({}) ", arm.test),
-            (_, true) => " else ".to_string(),
-            (_, false) => format!(" else if ({}) ", arm.test),
-        };
-        out.push_str(&format!("{}{{\n{}}}", head, block));
-        everything_matched = arm.test == "true";
-    }
-    out
-}
-
-/// One arm of a value match, written out in the pieces the two forms below
-/// arrange differently.
-struct Arm {
-    /// What asks whether the subject matches this arm's pattern, and `"true"`
-    /// where the pattern matches anything.
-    test: String,
-    /// The declarations the names this pattern binds need. A guard reads them,
-    /// so they stand above it.
-    bind: String,
-    /// What runs before the guard is tested: the guard's own temporaries
-    /// declared, and released again once the test has read them.
-    before: String,
-    /// The guard's value, where the arm has a guard.
-    guard: Option<String>,
-    /// The drop flags a local this arm hands away needs set.
-    flags: String,
-    /// The arm's body, with what it lifted out of itself declared inside it.
-    body: String,
-}
-
-/// Write one arm out.
-fn written_arm(
-    arm: &syn::Arm,
-    subject: &str,
-    subject_expr: &syn::Expr,
-    scrutinee_ty: Option<&crate::ty::Ty>,
-    t: &BodyTranslator,
-    position: Position,
-) -> Arm {
-    let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
-    let (test, bind) = t.pattern_test(subject, &arm.pat);
-    // `other => ..` moves the subject into `other` on the path this arm runs,
-    // and on no other path — which is what a drop flag is for. Without the
-    // flag the binding and the block both released the same value, and with a
-    // guard in front of it the flag has to be set INSIDE the guard, because a
-    // guard that fails hands the subject to the arm below.
-    let takes_subject = crate::ownership::scrutinee::binds_whole_subject(&arm.pat);
-    let subject_flag = if takes_subject { t.flag_set_for_subject(subject_expr) } else { String::new() };
-    let owned = if subject_flag.is_empty() {
-        Vec::new()
-    } else {
-        t.claim_bindings(
-            &crate::body::pattern_names(&arm.pat),
-            std::slice::from_ref(&syn::Stmt::Expr(arm.body.as_ref().clone(), None)),
-        )
+    let throw = format!("{};", crate::body::hole_text(what));
+    let held = t.fresh_hoist("_h");
+    let Some(release) = t.release_of(&match_expr.expr, &held) else {
+        return Some(throw);
     };
-    // A guard is its own temporary scope: Rust releases what the guard took to
-    // make its test before the arm's body runs and before the next arm is
-    // tried, exactly as it does for the condition of an `if`.
-    let (before, guard) = match &arm.guard {
-        Some((_, guard)) => {
-            let (written, lifted) = t.with_own_hoists(|| t.expr(guard));
-            let (written, before) = t.settle_condition(written, &lifted);
-            (before, Some(written))
-        }
-        None => (String::new(), None),
-    };
-    let (body, lifted) = t.with_own_hoists(|| arm_body(&arm.body, t, position));
-    drop(_bindings);
-    // A local this arm hands away sets its drop flag here — the same line the
-    // enclosing block would have written had the arm been a statement of it.
-    // Without it the `finally` released a value the arm had already given away.
-    let flags = format!("{}{}", subject_flag, t.flag_sets_for(&arm.body));
-    Arm {
-        test,
-        bind,
-        before,
-        guard,
-        flags,
-        body: t.wrap_bindings(&owned, crate::ownership::hoisted(&format!("{}\n", body), &lifted)),
-    }
-}
-
-/// The arms of a guarded match, tried in turn inside a labelled block that the
-/// arm which matched leaves.
-///
-/// Each arm's bindings and its guard's temporaries stand inside the block its
-/// own test opens, which is what lets the guard read the one and release the
-/// other; leaving the block is what stops the arms below it from being tried.
-fn tested_in_turn(arms: &[Arm], t: &BodyTranslator) -> String {
-    let label = t.fresh_hoist("_match");
-    let mut inner = String::new();
-    let last = arms.len().saturating_sub(1);
-    for (at, arm) in arms.iter().enumerate() {
-        // Leaving the block is what stops the arms below from being tried. A
-        // body that returns or throws has made that jump for itself.
-        // Rust's match is exhaustive, so the LAST arm runs whenever nothing
-        // above it matched and its own test is redundant — the same rule the
-        // non-guarded chain below already states. Written as one more `if`, the
-        // block could fall off its end and the enclosing function hand back
-        // `undefined`, which its return type does not admit; and nothing stands
-        // after it to jump over.
-        let exhausted = at == last && arm.guard.is_none();
-        let leaving = if leaves_the_arm(&arm.body) || exhausted {
-            String::new()
-        } else {
-            format!("break {};\n", label)
-        };
-        let matched = match &arm.guard {
-            Some(guard) => format!(
-                "{}{}if ({}) {{\n{}}}\n",
-                arm.bind,
-                arm.before,
-                guard,
-                indent(&format!("{}{}{}", arm.flags, arm.body, leaving))
-            ),
-            None => format!("{}{}{}{}", arm.flags, arm.bind, arm.body, leaving),
-        };
-        // A pattern that matches anything still opens a block of its own: the
-        // names it binds belong to this arm and to no arm written after it.
-        if arm.test == "true" || exhausted {
-            inner.push_str(&format!("{{\n{}}}\n", indent(&matched)));
-        } else {
-            inner.push_str(&format!("if ({}) {{\n{}}}\n", arm.test, indent(&matched)));
-        }
-    }
-    format!("{}: {{\n{}}}", label, indent(&inner))
-}
-
-/// Does this arm body leave the function by itself, so that nothing after it
-/// in the arm would run?
-///
-/// Read from the END, through the closing braces of whatever groups the body
-/// was written inside: a `}` on its own line closes a block whose last
-/// statement stands above it, so the statement that actually runs last is the
-/// first line that is not one. Reading only the very last line said a body
-/// wrapped in a block or a `try` did not leave, and the chain wrote an
-/// unreachable `break` after it.
-pub(crate) fn leaves_the_arm(body: &str) -> bool {
-    for line in body.trim_end().lines().rev() {
-        let line = line.trim();
-        if line.is_empty() || line == "}" {
-            continue;
-        }
-        // `continue` and `break` leave the arm as surely as a `return` does:
-        // they belong to the loop around the match, and the chain that wrote
-        // them needs no jump of its own after one.
-        return line.starts_with("return ")
-            || line.starts_with("return;")
-            || line.starts_with("throw ")
-            || line.starts_with("continue")
-            || line.starts_with("break");
-    }
-    false
-}
-
-/// A name the arms can test against, and the declaration that gives it one.
-///
-/// A scrutinee that is already a name is tested where it stands; anything else
-/// is read once, because Rust evaluates it once and the arms each test it.
-/// The same, told which names the arms are about to bind.
-///
-/// A pattern may bind the subject's OWN name — `match b { Some(b) => b + 1 }`
-/// is ordinary Rust, and a shadow there is what the source meant. `const b = b`
-/// is a `ReferenceError: Cannot access 'b' before initialization`, so where an
-/// arm binds the name the subject is written as, the subject is read into a
-/// temporary first and the shadow declares against that.
-fn subject_of_bound(scrutinee: &str, binds: &[String], t: &BodyTranslator) -> (String, String) {
-    let is_name = !scrutinee.is_empty()
-        && scrutinee
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.');
-    if is_name && !binds.iter().any(|name| name == scrutinee) {
-        return (scrutinee.to_string(), String::new());
-    }
-    let subject = t.fresh_temp();
-    let declaration = format!("const {} = {};\n", subject, scrutinee);
-    (subject, declaration)
+    Some(format!("const {} = {};\n{}\n{}", held, scrutinee, release, throw))
 }
 
 /// Is this a match on an `Option`?
@@ -623,7 +399,7 @@ fn is_option_match(arms: &[syn::Arm]) -> bool {
     })
 }
 
-fn is_result_match(arms: &[syn::Arm]) -> bool {
+pub(crate) fn is_result_match(arms: &[syn::Arm]) -> bool {
     arms.iter().any(|arm| {
         if let syn::Pat::TupleStruct(ts) = &arm.pat {
             let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
@@ -822,8 +598,23 @@ fn enum_match_over(
     // a chained variant's key stands too — at its FIRST arm. Each arm is
     // translated where the source wrote it, so the temporaries the bodies take
     // are numbered in source order.
+    // One `intoMatch` hands back ONE value, and TypeScript types every key's
+    // result together: an `async` key beside a plain one makes that type
+    // `Promise<T> | T`, which tsc refuses where the match's value is used. Rust's
+    // arms all produce the same type, and awaiting a value that is not a promise
+    // costs a turn and nothing else — so where any arm awaits, every arm is
+    // `async` and the whole match is awaited.
+    //
+    // A guard is part of its arm: asked of the arm's BODY alone, an awaited
+    // guard wrote `await` inside a plain arrow.
+    let any_async = written_arms.iter().any(|arm| {
+        crate::control_flow::awaiting::awaits(&arm.body)
+            || arm
+                .guard
+                .as_ref()
+                .is_some_and(|(_, guard)| crate::control_flow::awaiting::awaits(guard))
+    }) || matches!(fall, chain::Fallthrough::CatchAll(f) if f.is_async);
     let mut keys: Vec<(String, Written)> = Vec::new();
-    let mut any_async = false;
     for arm in written_arms.iter().copied() {
         // An `|` pattern writes one body for several variants; each gets its own
         // arm with the same body, bound through its own payload.
@@ -848,7 +639,7 @@ fn enum_match_over(
                     .expect("every chained variant is given a parameter");
                 let link = arms::translate_link(
                     case, &variant, &param, &fields, arm, t, match_expr, position, produces,
-                    takes, scrutinee_ty.as_ref(), &mut any_async,
+                    takes, scrutinee_ty.as_ref(), any_async,
                 );
                 match keys.iter_mut().find(|(name, _)| *name == variant) {
                     Some((_, Written::Chain { links, .. })) => links.push(link),
@@ -873,7 +664,7 @@ fn enum_match_over(
             }
             let text = arms::translate_arm(
                 case, &variant, &fields, arm, t, match_expr, position, produces, takes,
-                scrutinee_ty.as_ref(), &mut any_async,
+                scrutinee_ty.as_ref(), any_async,
             );
             keys.push((variant, Written::Arm(text)));
         }
@@ -884,12 +675,8 @@ fn enum_match_over(
         match written {
             Written::Arm(text) => out.push_str(&text),
             Written::Chain { links, param, has_payload } => {
-                // A chain awaits where any of its branches does, and the
-                // catch-all's body is one of them.
-                let awaits = links.iter().any(|link| link.is_async)
-                    || matches!(fall, chain::Fallthrough::CatchAll(f) if f.is_async);
                 let body = chain::write(links, fall, &variant, has_payload, &param, takes, t);
-                let keyword = if awaits { "async " } else { "" };
+                let keyword = if any_async { "async " } else { "" };
                 let head = if has_payload {
                     format!("  {}: {}({}) => ", variant, keyword, param)
                 } else {

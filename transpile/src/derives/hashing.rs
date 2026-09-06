@@ -84,10 +84,27 @@ fn fields_hash(
         .map(|(index, field)| {
             let name = field.name.clone().unwrap_or_else(|| format!("_{}", index));
             let place = read(&name);
-            match field.ty.as_ref().map(|ty| js_shape(reg, ty)) {
+            let Some(ty) = field.ty.as_ref() else {
+                // A field the engine could not type is a value of unknown
+                // surface, which is what `derivedHash` answers for.
+                return format!("derivedHash({})", place);
+            };
+            // A bare type PARAMETER is not a class. `T` is a number in
+            // `Keyed<u32>` and a class in `Keyed<Item>`, and `hash()` on a
+            // number is a TypeError — the same question `derivedEquals` and
+            // `derivedClone` answer for their halves of the derive, and the one
+            // this half was written without. A `char` is asked here too: the
+            // port writes it as a string, and the shape table calls it `Plain`.
+            if matches!(ty, crate::ty::Ty::Param(_) | crate::ty::Ty::Assoc { .. } | crate::ty::Ty::Infer) {
+                return format!("derivedHash({})", place);
+            }
+            if matches!(ty, crate::ty::Ty::Prim(_) | crate::ty::Ty::Str | crate::ty::Ty::Unit) {
+                return format!("keyHash({})", place);
+            }
+            match js_shape(reg, ty) {
                 // A value of the port's own hashes with its own derived
                 // `hash()`, exactly as Rust's derive hashes a field with its.
-                Some(JsShape::Plain) => format!("{}.hash()", place),
+                JsShape::Plain => format!("{}.hash()", place),
                 // Everything else is a value `keyHash` already knows how to
                 // read — a number, a string, a boolean, a sequence, a nullable.
                 _ => format!("keyHash({})", place),
@@ -146,5 +163,27 @@ mod tests {
             "every arm that builds parts prefixes them:\n{}",
             ts
         );
+    }
+
+    /// A field whose type is a bare PARAMETER is not a class: `T` is a number
+    /// in `Keyed<u32>` and a class in `Keyed<Tag>`, and `hash()` on a number is
+    /// a TypeError — on the very path a `HashMap` takes to file a key. The
+    /// `equals` and `clone` halves of the derive learned this in the fourth
+    /// pass; this half was written without it.
+    #[test]
+    fn a_field_whose_type_is_a_parameter_hashes_by_its_surface() {
+        let ts = struct_hash_of("pub struct Keyed<T> { pub key: T, pub n: u32 }", "Keyed");
+        assert!(ts.contains("derivedHash(this.key)"), "{}", ts);
+        assert!(!ts.contains("this.key.hash()"), "{}", ts);
+        assert!(ts.contains("keyHash(this.n)"), "{}", ts);
+    }
+
+    /// A `char` is the one width the port writes as a string, and the shape
+    /// table calls it `Plain` for that reason — so asking the shape alone said
+    /// "a class of the port's own" and wrote `.hash()` on a string.
+    #[test]
+    fn a_char_field_hashes_as_the_string_it_is_written_as() {
+        let ts = struct_hash_of("pub struct Ch { pub c: char }", "Ch");
+        assert!(ts.contains("keyHash(this.c)"), "{}", ts);
     }
 }

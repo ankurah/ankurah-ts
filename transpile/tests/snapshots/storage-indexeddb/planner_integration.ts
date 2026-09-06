@@ -72,20 +72,12 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
           if ((_v[0].is('Val')) && (_v[1].is('Val'))) {
             const { _0: lowVal } = _v[0].value;
             const { _0: highVal } = _v[1].value;
-            try {
-              try {
-                if (lowVal.equals(highVal) && lowIncl && highIncl) {
-                  lowerTuple.push(lowVal.clone());
-                  upperTuple.push(highVal.clone());
-                  eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
-                  eqPrefixValues.push(lowVal.clone());
-                  continue;
-                }
-              } finally {
-                highVal.drop();
-              }
-            } finally {
-              lowVal.drop();
+            if (lowVal.equals(highVal) && lowIncl && highIncl) {
+              lowerTuple.push(lowVal.clone());
+              upperTuple.push(highVal.clone());
+              eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
+              eqPrefixValues.push(lowVal.clone());
+              continue;
             }
           }
         }

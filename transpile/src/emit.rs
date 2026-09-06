@@ -165,12 +165,7 @@ pub fn emit_enum(
 
     // Enum-specific derive handling (clone needs variant-aware logic)
     if e.derives.iter().any(|d| d == "Clone") && emitted.insert("clone".to_string()) {
-        out.push_str(&crate::derives::cloning::enum_clone(
-            reg,
-            e,
-            &self_type,
-            &declared_parameters(&e.generics),
-        ));
+        out.push_str(&crate::derives::cloning::enum_clone(reg, e, &self_type));
     }
 
     // Handle remaining derives (PartialEq, Default, etc.) — pass empty fields for enums
@@ -186,7 +181,6 @@ pub fn emit_enum(
             reg,
             e,
             &format!("{}{}", e.name, strip_generic_defaults(&e.generics)),
-            &declared_parameters(&e.generics),
         )),
     );
     // `emitted` already holds every method a written impl put on the class, so a
@@ -621,11 +615,6 @@ fn emit_derive_methods(
     equality_of: Option<String>,
 ) {
     let full_type = format!("{}{}", type_name, strip_generic_defaults(generics));
-    // The type's own parameters. A field written as one of these is a field
-    // whose comparison and whose copy emission cannot fix — `T` is a number in
-    // `Holder<u32>` and a class in `Holder<Item>` — so those go to the runtime
-    // helpers that decide by the value's own surface.
-    let params = declared_parameters(generics);
     let field_names: Vec<&str> = fields.iter()
         .filter_map(|f| f.name.as_deref())
         .collect();
@@ -643,22 +632,18 @@ fn emit_derive_methods(
             } else {
                 // Generate field-by-field equality with null safety
                 out.push_str(&format!("\n  equals(other: {}): boolean {{\n", full_type));
+                // The nullable case is `compare`'s own, written once. Written a
+                // second time here it was spelled `=== null`, which a field
+                // holding `undefined` slips past where `compare`'s `== null`
+                // does not — and it stripped ` | null` off the RENDERED type, so
+                // `(Token | null)[]` lost its ELEMENT's nullability rather than
+                // its own and compared two nulls with `equals`.
                 for f in fields {
                     let n = match f.name.as_deref() {
                         Some(n) => n,
                         None => continue,
                     };
-                    let field_ty = f.ts_ty(reg);
-                    let base_ty = field_ty.trim_end_matches(" | null");
-                    let is_nullable = field_ty.ends_with(" | null");
-
-                    if is_nullable {
-                        out.push_str(&format!("    if (this.{} === null && other.{} === null) {{ /* both null, ok */ }}\n", n, n));
-                        out.push_str(&format!("    else if (this.{} === null || other.{} === null) return false;\n", n, n));
-                        out.push_str(&format!("    else {}\n", emit_field_eq(n, base_ty, &params)));
-                    } else {
-                        out.push_str(&format!("    {}\n", emit_field_eq(n, base_ty, &params)));
-                    }
+                    out.push_str(&format!("    {}\n", emit_field_eq(reg, n, f.ty.as_ref())));
                 }
                 out.push_str("    return true;\n  }\n");
             }
@@ -704,8 +689,11 @@ fn emit_derive_methods(
                         let clone_fields: Vec<String> = fields.iter()
                             .filter_map(|f| {
                                 let n = f.name.as_deref()?;
-                                let ty = f.ts_ty(reg);
-                                Some(crate::derives::cloning::clone_within(&format!("this.{}", n), &ty, &params))
+                                Some(crate::derives::cloning::clone_within(
+                                    reg,
+                                    &format!("this.{}", n),
+                                    f.ty.as_ref(),
+                                ))
                             })
                             .collect();
                         out.push_str(&format!("\n  clone(): {} {{\n    return new {}({});\n  }}\n",
@@ -760,32 +748,19 @@ fn emit_derive_methods(
     }
 }
 
-pub(crate) fn is_primitive_ts_type(ty: &str) -> bool {
-    matches!(ty, "string" | "boolean" | "number" | "bigint")
-}
-
-fn emit_field_eq(name: &str, ty: &str, params: &[String]) -> String {
+fn emit_field_eq(
+    reg: &crate::registry::TypeRegistry,
+    name: &str,
+    ty: Option<&crate::ty::Ty>,
+) -> String {
     crate::derives::equality::field_eq_within(
+        reg,
         &format!("this.{}", name),
         &format!("other.{}", name),
         ty,
-        params,
     )
 }
 
-/// The parameter names a written generic list declares: `<T extends Clone, E>`
-/// is `T` and `E`. Read from the written list rather than from the declaration,
-/// because that is what the field types were written against.
-fn declared_parameters(generics: &str) -> Vec<String> {
-    let Some(inner) = generics.trim().strip_prefix('<').and_then(|g| g.strip_suffix('>')) else {
-        return Vec::new();
-    };
-    crate::derives::top_level_parts(inner)
-        .into_iter()
-        .filter_map(|part| part.split_whitespace().next().map(str::to_string))
-        .filter(|name| !name.is_empty())
-        .collect()
-}
 
 fn emit_struct_bincode(
     out: &mut String,

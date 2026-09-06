@@ -59,3 +59,19 @@ impl Bag {
         });
     }
 }
+
+/// A vector the function owns BY VALUE, retained in place, with a predicate
+/// that panics.
+///
+/// Two `finally`s have to agree: `retain`'s own moves the tail the loop never
+/// reached down over the gap, cuts the array to what is left and releases the
+/// predicate; the PARAMETER's then releases what is left, exactly once each.
+pub fn keep_over_by_value(mut items: Vec<Item>, least: u32) -> usize {
+    items.retain(|item| {
+        if item.n == 0 {
+            panic!("zero");
+        }
+        item.n >= least
+    });
+    items.len()
+}

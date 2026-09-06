@@ -23,8 +23,12 @@ pub enum Iterate {
     /// The sequence is a JavaScript array the loop owns, so it is walked by
     /// index and the tail it never reached is released at the end.
     OwnedArray,
+    /// The loop owns a MAP, which the runtime writes as a keyed container
+    /// rather than an array: `intoEntries()` empties it, marks it moved and
+    /// hands the pairs over, and from there the loop is the array walk.
+    OwnedMap,
     /// The loop owns the sequence, but the runtime does not write it as an
-    /// array — a `HashMap`, an iterator adapter — so there is no way to name
+    /// array or a map — an iterator adapter, a set — so there is no way to name
     /// the elements the loop did not reach. Reported.
     OwnedOpaque,
 }
@@ -63,6 +67,7 @@ pub fn iterate(probe: &Probe, sequence: Option<&Ty>, item: Option<&Ty>) -> Itera
     }
     match sequence {
         Some(ty) if is_array(probe, ty) => Iterate::OwnedArray,
+        Some(ty) if is_map(probe, ty) => Iterate::OwnedMap,
         _ => Iterate::OwnedOpaque,
     }
 }
@@ -78,6 +83,14 @@ fn is_array(probe: &Probe, ty: &Ty) -> bool {
             .is_some_and(|vec| vec == *id),
         _ => false,
     }
+}
+
+/// Is this a container the runtime writes as a keyed MAP?
+fn is_map(probe: &Probe, ty: &Ty) -> bool {
+    matches!(
+        crate::name_map::shape::js_shape(probe.reg, ty),
+        crate::name_map::shape::JsShape::Map(..)
+    )
 }
 
 /// The owned-array loop: one element out per turn, and the tail released when
@@ -171,6 +184,7 @@ impl<'a> BodyTranslator<'a> {
                             self.types.as_ref().and_then(|tc| tc.borrow().lookup(name))
                         }
                     },
+                    crate::ownership::Drops::Unknown,
                     &for_loop.body.stmts,
                 )
             }
@@ -191,6 +205,22 @@ impl<'a> BodyTranslator<'a> {
                 let loop_ts =
                     ownership::iteration::owned_array_loop(&held, &at, &pat, &body, &label);
                 format!("const {} = {};\n{}", held, sequence, loop_ts)
+            }
+            // `for (k, v) in map` moves the map into its `IntoIter`, which
+            // hands out an owned pair each turn and drops what it never handed
+            // out. `intoEntries()` is that move: it empties the map, marks it
+            // dropped and hands the pairs over, and from there this is the
+            // array walk — so the tail release covers the pairs the loop never
+            // reached, and the container is nobody's to release afterwards.
+            // Written as a plain `for … of`, the loop released every key and
+            // value and left the container to the collector, which is the leak
+            // `goldens/borrowed_iteration` recorded.
+            Iterate::OwnedMap => {
+                let held = self.fresh_hoist("_seq");
+                let at = self.fresh_hoist("_at");
+                let loop_ts =
+                    ownership::iteration::owned_array_loop(&held, &at, &pat, &body, &label);
+                format!("const {} = {}.intoEntries();\n{}", held, sequence, loop_ts)
             }
             Iterate::OwnedOpaque => {
                 self.fallback(

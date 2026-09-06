@@ -150,12 +150,8 @@ export class Selection extends Struct {
 
   equals(other: Selection): boolean {
     if (!this.predicate.equals(other.predicate)) return false;
-    if (this.orderBy === null && other.orderBy === null) { /* both null, ok */ }
-    else if (this.orderBy === null || other.orderBy === null) return false;
-    else { if (this.orderBy.length !== other.orderBy.length) return false; for (let i = 0; i < this.orderBy.length; i++) { if (!this.orderBy[i].equals(other.orderBy[i])) return false; } }
-    if (this.limit === null && other.limit === null) { /* both null, ok */ }
-    else if (this.limit === null || other.limit === null) return false;
-    else if (this.limit !== other.limit) return false;
+    { if ((this.orderBy == null) !== (other.orderBy == null)) return false; if (this.orderBy != null) { { if (this.orderBy!.length !== other.orderBy!.length) return false; for (let i = 0; i < this.orderBy!.length; i++) { if (!this.orderBy![i].equals(other.orderBy![i])) return false; } } } }
+    { if ((this.limit == null) !== (other.limit == null)) return false; if (this.limit != null) { if (this.limit! !== other.limit!) return false; } }
     return true;
   }
 
@@ -275,11 +271,11 @@ export class Expr extends Enum<ExprV> {
   populateRecursive<I, V, E>(values: I): Result<Expr, ParseError> {
     return this.intoMatch({
       Placeholder: () => {
-        const _r0 = value.tryInto().mapErr((e) => e);
-        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
         const _v = values.next();
         if (_v != null) {
           const value = _v;
+          const _r0 = value.tryInto().mapErr((e) => e);
+          if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
           Result.Ok(_r0.unwrap())
         } else {
           Result.Err(new ParseError('InvalidPredicate', { _0: 'Not enough values provided for placeholders' }))

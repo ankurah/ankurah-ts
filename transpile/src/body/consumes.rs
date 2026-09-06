@@ -50,6 +50,27 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
     }
 
     fn consumes_scrutinee(&self, m: &syn::ExprMatch) -> bool {
+        // A `Result` match reads its payload with `unwrap()` or `unwrapErr()`,
+        // each of which takes the wrapper apart and hands back what it held —
+        // so the match MOVES its subject whatever the arms go on to bind, and
+        // the block that owned it owes no release afterwards. Asked only
+        // through `match_takes`, which reads the arms' patterns, this answered
+        // "nothing taken" and `storage-sqlite/engine.ts:493` wrote
+        // `finally { result.drop() }` under both reads: a use after move on
+        // every path. Only a BORROWED `Result` is read through, and that one is
+        // `okRef()`/`errRef()`.
+        //
+        // Asking is not translating: the scan asks this of every match several
+        // times, and the subject's own gaps are reported where the match is
+        // written out.
+        if crate::match_expr::is_result_match(&m.arms)
+            && !matches!(
+                self.quietly(|| self.borrowed_scrutinee_type(&m.expr)),
+                Some(crate::ty::Ty::Ref { .. })
+            )
+        {
+            return true;
+        }
         self.match_takes(m) == ownership::scrutinee::Takes::Payload
     }
 

@@ -233,12 +233,22 @@ export class NodeApplier extends Struct {
             }
             {
               const _v1 = _v;
+              try {
 
+              } finally {
+                dropOwned(_v1);
+              }
             }
           }
         } else {
           const errorItem = result.unwrapErr();
-          allErrors.push(errorItem);
+          let _moved1 = false;
+          try {
+            _moved1 = true;
+            allErrors.push(errorItem);
+          } finally {
+            if (!_moved1) dropOwned(errorItem);
+          }
         }
       }
       if (!(batch.length === 0)) {
@@ -334,7 +344,7 @@ export class NodeApplier extends Struct {
               if (!_moved6) dropOwned(events);
             }
           },
-          StateAndRelation: (v) => {
+          StateAndRelation: async (v) => {
             try {
               throw new Error('unimplemented');
             } finally {

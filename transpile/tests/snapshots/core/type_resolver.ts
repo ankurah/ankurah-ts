@@ -45,7 +45,11 @@ export class TypeResolver extends Struct {
       return jsonValue;
     } else {
       const _v1 = _v.unwrapErr();
-      return literal.clone();
+      try {
+        return literal.clone();
+      } finally {
+        dropOwned(_v1);
+      }
     }
   }
 
@@ -79,7 +83,11 @@ export class TypeResolver extends Struct {
           return new Expr('Literal', { _0: casted });
         } else {
           const _v2 = _v1.unwrapErr();
-          return new Expr('Literal', { _0: lit });
+          try {
+            return new Expr('Literal', { _0: lit });
+          } finally {
+            dropOwned(_v2);
+          }
         }
       }
     } else {

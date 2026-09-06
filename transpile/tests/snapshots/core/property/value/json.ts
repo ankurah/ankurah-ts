@@ -22,7 +22,7 @@ export class Json extends Struct implements Property {
   }
 
   static object(pairs: [string, unknown][]): Json {
-    const map = [...pairs].map(([k, v]) => [k, v]);
+    const map = unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for');
     return new Json(serdeJson.Value.Object(map));
   }
 

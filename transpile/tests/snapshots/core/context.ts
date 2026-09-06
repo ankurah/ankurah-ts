@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/context.rs
-import { Struct, Result, Arc, dropOwned, tracing, dropUnbound } from '@ankurah/base';
-import { Attested, Clock, CollectionId, EntityState, EntityId, KnownEntity, NodeRequestBody } from '@ankurah/proto';
+import { Struct, Result, Arc, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, unsupported } from '@ankurah/base';
+import { Attested, Clock, CollectionId, EntityState, EntityId, NodeRequestBody } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
 import { MutationError, RetrievalError } from './error';
@@ -151,7 +151,15 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         _arm1: {
           if (_v2.is('NoDurablePeers')) {
             const _v3 = _v2;
-            if (cached) {
+            let _g2;
+            try {
+              _g2 = cached;
+            } catch (_e) {
+              if (_e instanceof OwnershipFatal || _e instanceof UnsupportedShape) throw _e;
+              _v3.drop();
+              throw _e;
+            }
+            if (_g2) {
               try {
                 [];
               } finally {
@@ -184,9 +192,9 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
       }
     }
     tracing.debug(`${this.node}.get_entity fetching from storage`);
-    const _r2 = await this.node.deref().value.collections.get(collectionId);
-    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-    const collection = _r2.unwrap();
+    const _r3 = await this.node.deref().value.collections.get(collectionId);
+    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+    const collection = _r3.unwrap();
     try {
       const _v5 = await collection.deref().value.getState(id);
       if (_v5.isOk()) {
@@ -194,9 +202,9 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         try {
           {
             const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-            const _r3 = await this.node.deref().value.entities.withState(retriever, id, collectionId.clone(), entityState.payload.takeField('state'));
-            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-            const [_changed, entity] = _r3.unwrap();
+            const _r4 = await this.node.deref().value.entities.withState(retriever, id, collectionId.clone(), entityState.payload.takeField('state'));
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            const [_changed, entity] = _r4.unwrap();
             return Result.Ok(entity);
           }
         } finally {
@@ -381,7 +389,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
                   _r13.drop();
                   return upstream.clone();
                 },
-                Primary: () => entity,
+                Primary: async () => entity,
               }));
             })();
             if ((_m14 as any)?.$jump === 'return') return (_m14 as any).$value;
@@ -437,14 +445,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
       if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
       const knownMatchedEntities = _r4.unwrap();
       try {
-        const knownMatches = [...knownMatchedEntities].map((entity) => {
-          const _t5 = entity.head();
-          try {
-            return new KnownEntity(entity.id(), _t5.clone());
-          } finally {
-            _t5.drop();
-          }
-        });
+        const knownMatches = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
         const selectionClone = selection.clone();
         try {
           _moved0 = true;
@@ -465,7 +466,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
                 if (!_moved7) dropOwned(deltas);
               }
             },
-            Error: (v) => {
+            Error: async (v) => {
               const e = v._0;
               tracing.debug(`Error from peer fetch: ${e}`);
               return Result.Err(new RetrievalError('Other', { _0: `${JSON.stringify(e)}` }));

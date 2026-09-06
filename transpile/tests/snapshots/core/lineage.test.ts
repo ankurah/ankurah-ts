@@ -17,7 +17,7 @@ class TestClock extends Struct implements TClock {
   }
 
   clone(): TestClock {
-    return new TestClock(this.members.map(e => e.clone()));
+    return new TestClock([...this.members]);
   }
 }
 
@@ -44,7 +44,7 @@ class TestEvent extends Struct implements TEvent {
   }
 
   clone(): TestEvent {
-    return new TestEvent(this.id.clone(), this.parentClock.clone());
+    return new TestEvent(this.id, this.parentClock.clone());
   }
 }
 

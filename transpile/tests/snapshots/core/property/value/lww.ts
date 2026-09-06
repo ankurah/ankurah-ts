@@ -88,7 +88,7 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
   }
 
   clone(): LWW<T> {
-    return new LWW(this.propertyName.clone(), this.backend.clone(), this.entity.clone(), this.phantom.clone());
+    return new LWW(this.propertyName, this.backend.clone(), this.entity.clone(), this.phantom.clone());
   }
 }
 

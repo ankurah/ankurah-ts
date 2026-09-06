@@ -1,0 +1,8 @@
+# How many ownership reports each golden driver RECORDS: one line per
+# `expectNoOwnershipReports({ except: [..] })` entry, each of which names
+# the addendum item that owes the fix. This ledger may only SHRINK.
+#
+# Generated: do not hand-edit. Refresh with:
+#     cd transpile && UPDATE_RECORDED_REPORTS=1 cargo test --test recorded_reports
+
+[records]

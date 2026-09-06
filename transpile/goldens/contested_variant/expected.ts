@@ -137,7 +137,11 @@ export function widen(e: Expr, source: Expr): Result<number, string> {
         }
       } else if (v._0.is('Count')) {
         const { _0: n } = v._0.value;
-        return Result.Ok(n);
+        try {
+          return Result.Ok(n);
+        } finally {
+          dropUnbound(v, []);
+        }
       } else {
         try {
           return Result.Err('no');

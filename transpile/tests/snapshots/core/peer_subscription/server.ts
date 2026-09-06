@@ -1,12 +1,12 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
-import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing } from '@ankurah/base';
+import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, HashMap } from '@ankurah/base';
 import { Attested, CollectionId, EntityId, EntityState, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
 import { Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../entity';
 import { SubscriptionError } from '../error';
 import { ContextData, Node } from '../node';
 import { ReactorSubscription, ReactorSubscriptionId } from '../reactor/subscription';
-import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from '../reactor/update';
+import { ReactorUpdate, ReactorUpdateItem } from '../reactor/update';
 import { expandStates } from '../util/expand_states';
 import { Selection } from '@ankurah/ankql';
 
@@ -33,7 +33,7 @@ export class SubscriptionHandler extends Struct {
           const node = _v;
           try {
             tracing.debug(`SubscriptionHandler[${peerId}] sending update to peer ${peerId}`);
-            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: [...update.items].filterMap((item) => convertItem(node, peerId, item)) }));
+            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into') }));
           } finally {
             node.drop();
           }
@@ -109,7 +109,7 @@ export class SubscriptionHandler extends Struct {
               const expandedStates = _r10.unwrap();
               try {
                 _moved0 = true;
-                const knownMap = [...knownMatches].map((k) => [k.entityId, k.takeField('head')]);
+                const knownMap = HashMap.from([...knownMatches].map((k) => [k.entityId, k.takeField('head')]));
                 let deltas = [];
                 _moved11 = true;
                 const _seq13 = expandedStates;
@@ -185,14 +185,7 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
         let _moved3 = false;
         const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
         try {
-          const predicateRelevance = [...item.predicateRelevance].map(([predId, membership]) => {
-            const protoMembership = membership.match({
-              Initial: () => new MembershipChange('Initial', {}),
-              Add: () => new MembershipChange('Add', {}),
-              Remove: () => new MembershipChange('Remove', {}),
-            });
-            return [predId, protoMembership];
-          });
+          const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
           _moved3 = true;
           return new SubscriptionUpdateItem(item.entity.id(), item.entity.collection().clone(), content, predicateRelevance);
         } finally {

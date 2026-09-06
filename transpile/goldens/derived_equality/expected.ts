@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/derived_equality/src/input.rs
-import { Struct, Enum, derivedEquals, derivedClone, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, Enum, derivedEquals, derivedClone, derivedHash, HashMap, HashSet, keyHash } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly name: string;
@@ -89,12 +89,8 @@ export class Maybe extends Struct {
   }
 
   equals(other: Maybe): boolean {
-    if (this.tag === null && other.tag === null) { /* both null, ok */ }
-    else if (this.tag === null || other.tag === null) return false;
-    else if (!this.tag.equals(other.tag)) return false;
-    if (this.count === null && other.count === null) { /* both null, ok */ }
-    else if (this.count === null || other.count === null) return false;
-    else if (this.count !== other.count) return false;
+    { if ((this.tag == null) !== (other.tag == null)) return false; if (this.tag != null) { if (!this.tag!.equals(other.tag!)) return false; } }
+    { if ((this.count == null) !== (other.count == null)) return false; if (this.count != null) { if (this.count! !== other.count!) return false; } }
     return true;
   }
 
@@ -130,7 +126,7 @@ export class Sparse extends Struct {
   }
 
   equals(other: Sparse): boolean {
-    { if (this.slots.size !== other.slots.size) return false; for (const [k, v] of this.slots) { if (!other.slots.has(k)) return false; const _w = other.slots.get(k)!; { if ((v == null) !== (_w == null)) return false; if (v != null) { if (!v.equals(_w)) return false; } } } }
+    { if (this.slots.size !== other.slots.size) return false; for (const [k, v] of this.slots) { if (!other.slots.has(k)) return false; const _w = other.slots.get(k)!; { if ((v == null) !== (_w == null)) return false; if (v != null) { if (!v!.equals(_w!)) return false; } } } }
     return true;
   }
 
@@ -156,9 +152,7 @@ export class Paired extends Struct {
   equals(other: Paired): boolean {
     { if (this.one[0] !== other.one[0]) return false; if (!this.one[1].equals(other.one[1])) return false; }
     { if (this.many.length !== other.many.length) return false; for (let i = 0; i < this.many.length; i++) { { if (this.many[i][0] !== other.many[i][0]) return false; if (!this.many[i][1].equals(other.many[i][1])) return false; } } }
-    if (this.maybe === null && other.maybe === null) { /* both null, ok */ }
-    else if (this.maybe === null || other.maybe === null) return false;
-    else { { if (this.maybe[0].length !== other.maybe[0].length) return false; for (let i1 = 0; i1 < this.maybe[0].length; i1++) { if (!this.maybe[0][i1].equals(other.maybe[0][i1])) return false; } } if (this.maybe[1] !== other.maybe[1]) return false; }
+    { if ((this.maybe == null) !== (other.maybe == null)) return false; if (this.maybe != null) { { { if (this.maybe![0].length !== other.maybe![0].length) return false; for (let i1 = 0; i1 < this.maybe![0].length; i1++) { if (!this.maybe![0][i1].equals(other.maybe![0][i1])) return false; } } if (this.maybe![1] !== other.maybe![1]) return false; } } }
     { if (!this.single[0].equals(other.single[0])) return false; }
     return true;
   }
@@ -186,6 +180,56 @@ export class Holder<T> extends Struct {
 
   clone(): Holder<T> {
     return new Holder(derivedClone(this.one), this.many.map(e => derivedClone(e)));
+  }
+}
+
+export class Sparser extends Struct {
+  readonly slots: (Tag | null)[];
+  readonly name: PropertyName;
+  readonly ids: Id[];
+
+  constructor(slots: (Tag | null)[], name: PropertyName, ids: Id[]) {
+    super();
+    this.slots = slots;
+    this.name = name;
+    this.ids = ids;
+  }
+
+  equals(other: Sparser): boolean {
+    { if (this.slots.length !== other.slots.length) return false; for (let i = 0; i < this.slots.length; i++) { { if ((this.slots[i] == null) !== (other.slots[i] == null)) return false; if (this.slots[i] != null) { if (!this.slots[i]!.equals(other.slots[i]!)) return false; } } } }
+    if (this.name !== other.name) return false;
+    { if (this.ids.length !== other.ids.length) return false; for (let i = 0; i < this.ids.length; i++) { if (this.ids[i] !== other.ids[i]) return false; } }
+    return true;
+  }
+
+  clone(): Sparser {
+    return new Sparser(this.slots.map(e => e?.clone() ?? null), this.name, [...this.ids]);
+  }
+}
+
+export class Keyed<T> extends Struct {
+  readonly key: T;
+  readonly n: number;
+
+  constructor(key: T, n: number) {
+    super();
+    this.key = key;
+    this.n = n;
+  }
+
+  equals(other: Keyed<T>): boolean {
+    if (!derivedEquals(this.key, other.key)) return false;
+    if (this.n !== other.n) return false;
+    return true;
+  }
+
+  /** The key hash `HashMap` and `HashSet` file this under. */
+  hash(): string {
+    return [derivedHash(this.key), keyHash(this.n)].map((p) => p.length + ':' + p).join('');
+  }
+
+  clone(): Keyed<T> {
+    return new Keyed(derivedClone(this.key), this.n);
   }
 }
 
@@ -220,4 +264,8 @@ export class Slot<T> extends Enum<SlotV<T>> {
     return true;
   }
 }
+
+export type PropertyName = string;
+
+export type Id = number;
 

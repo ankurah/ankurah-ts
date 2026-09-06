@@ -51,7 +51,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   fork(): PropertyBackend {
     const values = this.values.value.read();
     try {
-      const snapshotted = [...values.value].map(([key, value]) => [key.clone(), value.snapshot()]);
+      const snapshotted = HashMap.from([...values.value].map(([key, value]) => [key.clone(), value.snapshot()]));
       return new PNBackend(Arc.new(new RwLock(snapshotted)));
     } finally {
       values.drop();
@@ -87,7 +87,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   toStateBuffer(): Result<Uint8Array, StateError> {
     const values = this.values.value.read();
     try {
-      const serializable = [...values.value].map(([key, value]) => [key, value.value]);
+      const serializable = HashMap.from([...values.value].map(([key, value]) => [key, value.value]));
       const _r0 = (() => { const _w = new BincodeWriter(); serializable.encode(_w); return _w.finish(); })();
       if (_r0.isErr()) return Result.Err(StateError.fromError(_r0.unwrapErr()));
       const serialized = _r0.unwrap();
@@ -107,7 +107,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   toOperations(): Result<Operation[], MutationError> {
     const values = this.values.value.read();
     try {
-      const diffs = [...values.value].map(([key, value]) => [key, value.diff()]);
+      const diffs = HashMap.from([...values.value].map(([key, value]) => [key, value.diff()]));
       const _r0 = (() => { const _w = new BincodeWriter(); diffs.encode(_w); return _w.finish(); })();
       if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
       const serializedDiffs = _r0.unwrap();

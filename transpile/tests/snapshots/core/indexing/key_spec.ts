@@ -211,17 +211,11 @@ export class IndexKeyPart extends Struct {
 
   equals(other: IndexKeyPart): boolean {
     if (this.column !== other.column) return false;
-    if (this.subPath === null && other.subPath === null) { /* both null, ok */ }
-    else if (this.subPath === null || other.subPath === null) return false;
-    else { if (this.subPath.length !== other.subPath.length) return false; for (let i = 0; i < this.subPath.length; i++) { if (this.subPath[i] !== other.subPath[i]) return false; } }
+    { if ((this.subPath == null) !== (other.subPath == null)) return false; if (this.subPath != null) { { if (this.subPath!.length !== other.subPath!.length) return false; for (let i = 0; i < this.subPath!.length; i++) { if (this.subPath![i] !== other.subPath![i]) return false; } } } }
     if (!this.direction.equals(other.direction)) return false;
     if (!this.valueType.equals(other.valueType)) return false;
-    if (this.nulls === null && other.nulls === null) { /* both null, ok */ }
-    else if (this.nulls === null || other.nulls === null) return false;
-    else if (!this.nulls.equals(other.nulls)) return false;
-    if (this.collation === null && other.collation === null) { /* both null, ok */ }
-    else if (this.collation === null || other.collation === null) return false;
-    else if (this.collation !== other.collation) return false;
+    { if ((this.nulls == null) !== (other.nulls == null)) return false; if (this.nulls != null) { if (!this.nulls!.equals(other.nulls!)) return false; } }
+    { if ((this.collation == null) !== (other.collation == null)) return false; if (this.collation != null) { if (this.collation! !== other.collation!) return false; } }
     return true;
   }
 

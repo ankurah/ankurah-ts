@@ -92,7 +92,13 @@ pub(super) fn payload_walk(
                 // releases itself. A subpattern that only tests — `Lit::Flag(_)`
                 // — takes nothing, so listing its member here excluded the only
                 // key there was and the link released nothing at all.
-                if !BodyTranslator::binds_nothing(sub) {
+                // ... and a subpattern that reaches INSIDE the member without
+                // taking anything droppable out of it takes nothing either:
+                // `Expr::Literal(Lit::Count(n))` binds a `u32` and leaves the
+                // `Lit` whole, so listing `_0` here excluded the one member
+                // nobody owned. That is the nested-payload wrapper leak.
+                if !BodyTranslator::binds_nothing(sub) && !super::owing::member_is_left_whole(sub, t)
+                {
                     out.bound_keys.push(accessor.clone());
                 }
                 out.names.extend(crate::body::pattern_names(sub));

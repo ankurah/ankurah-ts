@@ -177,7 +177,12 @@ export class BincodeWriter {
 
 // ─── BincodeReader ──────────────────────────────────────────────────────────
 
-const dec = new TextDecoder();
+// A Rust `String` is UTF-8 by construction, so a byte run that is not valid
+// UTF-8 could not have come from one: `serde`'s own decoder errors there. A
+// non-fatal `TextDecoder` answers U+FFFD instead, which is a different string
+// that then flows on as though it had been read — a silent corruption where
+// Rust reports. Fatal, and the exception is turned into this codec's own error.
+const dec = new TextDecoder('utf-8', { fatal: true });
 
 export class BincodeReader {
   private buf: Uint8Array;
@@ -298,7 +303,11 @@ export class BincodeReader {
     this.checkAvailable(len);
     const bytes = this.buf.subarray(this.pos, this.pos + len);
     this.pos += len;
-    return dec.decode(bytes);
+    try {
+      return dec.decode(bytes);
+    } catch {
+      throw new Error(`BincodeReader: ${len} bytes at offset ${this.pos - len} are not valid UTF-8`);
+    }
   }
 
   /** Read exactly n raw bytes (no length prefix). For fixed-size arrays. */

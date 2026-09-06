@@ -9,6 +9,7 @@
 
 use crate::body::{indent, BodyTranslator};
 use crate::name_map;
+use super::owing::{guard_release, hole_in_an_arm, release_before_a_hole_in_the_bindings, release_of};
 use super::{is_statements, translate_pat};
 
 /// A name for the arm's parameter that nothing else in the arm answers to.
@@ -200,77 +201,12 @@ pub(super) fn arm_block_parts(parts: ArmParts<'_>, t: &BodyTranslator) -> (Strin
     (bindings, inner)
 }
 
-/// A HOLE written where an arm holds the payload, with what it owes first.
-///
-/// R12 says a hole throws where the branch would have run. It does not say the
-/// branch may abandon what it was handed: `intoMatch` marks the subject moved
-/// and gives the payload to the arm, and releases nothing of its own on any path
-/// out — so an arm that throws still owns the whole payload, and a refusal that
-/// walked away from it turned a reported gap into a leak. The release stands
-/// BEFORE the throw rather than in a `finally`, because there is no other path
-/// out of a block whose only statement throws.
-pub(super) fn hole_in_an_arm(
-    what: &str,
-    param: &str,
-    has_payload: bool,
-    takes: crate::ownership::scrutinee::Takes,
-) -> String {
-    let throw = format!("{};\n", crate::body::hole_text(what));
-    if !has_payload || takes != crate::ownership::scrutinee::Takes::Payload {
-        return throw;
-    }
-    format!("dropUnbound({}, []);\n{}", param, throw)
-}
-
-/// What an arm owes when its own DECLARATIONS carry a hole.
-///
-/// A refusal written into the bindings — `const path = unsupported(..)`, which
-/// is what an or-pattern the translator cannot read back comes out as — throws
-/// before the `try` around the body is entered, so the `finally` that would
-/// have released the rest of the payload never runs. The release goes first,
-/// for the same reason `hole_in_an_arm` puts it first: `intoMatch` releases
-/// nothing of its own, and the arm is the owner from the moment it is called.
-pub(super) fn release_before_a_hole_in_the_bindings(
-    bindings: &str,
-    param: &str,
-    has_payload: bool,
-    takes: crate::ownership::scrutinee::Takes,
-) -> String {
-    if !has_payload
-        || takes != crate::ownership::scrutinee::Takes::Payload
-        || !bindings.contains("unsupported(")
-    {
-        return String::new();
-    }
-    format!("dropUnbound({}, []);\n", param)
-}
-
 /// A pattern's alternatives: an `|` pattern writes one body for several
 /// variants, and each of them is an arm of its own with the same body.
 pub(super) fn cases_of(pat: &syn::Pat) -> Vec<&syn::Pat> {
     match pat {
         syn::Pat::Or(or_pat) => or_pat.cases.iter().collect(),
         other => vec![other],
-    }
-}
-
-/// Does this pattern leave part of the variant's payload with no name?
-///
-/// Rust makes a tuple or struct pattern name every slot unless it writes `..`,
-/// so the only unnamed parts are the ones the source wrote `_` for and the ones
-/// a `..` stands in for. A consuming arm owes those a release, because nothing
-/// else holds them any more.
-pub(super) fn leaves_payload_unbound(pat: &syn::Pat) -> bool {
-    match pat {
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().any(|p| {
-            matches!(p, syn::Pat::Rest(_)) || BodyTranslator::binds_nothing(p)
-        }),
-        syn::Pat::Struct(st) => {
-            st.rest.is_some() || st.fields.iter().any(|f| BodyTranslator::binds_nothing(&f.pat))
-        }
-        // `E::Unit` names a variant with no payload: Rust rejects the path form
-        // for a variant that carries one.
-        _ => false,
     }
 }
 
@@ -357,19 +293,19 @@ pub(super) fn translate_arm(
     produces: bool,
     takes: crate::ownership::scrutinee::Takes,
     scrutinee_ty: Option<&crate::ty::Ty>,
-    any_async: &mut bool,
+    is_async: bool,
 ) -> String {
     let param = arm_parameter(fields, &arm.body);
     let _bindings = t.enter_pattern(case, scrutinee_ty);
     let (payload, bound, declared) = arm_declarations(case, &param, fields, t, match_expr);
-    let Body { body, lifted, owned, flags, is_async } =
-        translate_body(arm, &declared, takes, t, match_expr, position);
-    *any_async |= is_async;
-    drop(_bindings);
     // A consuming arm owns every part of the payload, including the parts its
     // pattern wrote `_` for: `intoMatch` releases nothing of its own on any path
-    // out, so an unowned part is a leak.
-    let release_rest = release_of(case, &param, &bound, takes);
+    // out, so an unowned part is a leak. Asked inside the pattern's own scope,
+    // because the answer turns on what the names it bound are.
+    let release_rest = release_of(case, &param, &bound, takes, t);
+    let Body { body, lifted, owned, flags } =
+        translate_body(arm, &declared, takes, t, match_expr, position);
+    drop(_bindings);
     let refusing = release_before_a_hole_in_the_bindings(&payload, &param, !fields.is_empty(), takes);
     render_arm(
         ArmParts {
@@ -401,7 +337,7 @@ pub(super) fn translate_link(
     produces: bool,
     takes: crate::ownership::scrutinee::Takes,
     scrutinee_ty: Option<&crate::ty::Ty>,
-    any_async: &mut bool,
+    is_async: bool,
 ) -> super::chain::Link {
     let _bindings = t.enter_pattern(case, scrutinee_ty);
     let Some(super::payload::Payload { test, text: payload, bound_keys: bound, names: declared }) =
@@ -423,18 +359,26 @@ pub(super) fn translate_link(
             guard: None,
             block: hole_in_an_arm(&what, param, !fields.is_empty(), takes),
             leaves: true,
-            is_async: false,
         };
     };
     // The guard is translated inside the pattern's scope, because it reads the
     // names the pattern bound — and it is written before the body, so its
-    // temporaries are numbered where Rust evaluates them.
-    let guard = arm.guard.as_ref().map(|(_, guard)| t.expr(guard));
-    let Body { body, lifted, owned, flags, is_async } =
+    // temporaries are numbered where Rust evaluates them. Its own declarations
+    // are held here rather than lifted out of the match: Rust makes this test
+    // after the variant dispatch, so a guard that takes a lock takes it only on
+    // the path where the variant matched.
+    let release_rest = release_of(case, param, &bound, takes, t);
+    let guard = arm.guard.as_ref().map(|(_, guard)| {
+        let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
+        super::chain::tried::Guard {
+            test,
+            lifted,
+            release: guard_release(&declared, &release_rest, takes, t),
+        }
+    });
+    let Body { body, lifted, owned, flags } =
         translate_body(arm, &declared, takes, t, match_expr, position);
-    *any_async |= is_async;
     drop(_bindings);
-    let release_rest = release_of(case, param, &bound, takes);
     let refusing = release_before_a_hole_in_the_bindings(&payload, param, !fields.is_empty(), takes);
     let (bindings, block) = arm_block_parts(
         ArmParts {
@@ -456,7 +400,6 @@ pub(super) fn translate_link(
         guard,
         block,
         leaves: leaves_by_itself(&body, produces),
-        is_async,
     }
 }
 
@@ -475,7 +418,6 @@ struct Body {
     lifted: Vec<crate::ownership::Hoist>,
     owned: Vec<crate::ownership::Owned>,
     flags: String,
-    is_async: bool,
 }
 
 /// The body both forms of arm share: what it declares, what it owns, and what
@@ -527,24 +469,6 @@ fn translate_body(
     // flag here — the same line the enclosing block would have written had the
     // arm been a statement of it.
     let flags = t.flag_sets_for(&arm.body);
-    let is_async = crate::control_flow::awaiting::awaits(&arm.body);
-    Body { body, lifted, owned, flags, is_async }
+    Body { body, lifted, owned, flags }
 }
 
-/// What a consuming arm's outermost `finally` says about the parts of the
-/// payload no name took.
-fn release_of(
-    case: &syn::Pat,
-    param: &str,
-    bound: &[String],
-    takes: crate::ownership::scrutinee::Takes,
-) -> String {
-    match takes {
-        crate::ownership::scrutinee::Takes::Payload if leaves_payload_unbound(case) => format!(
-            "dropUnbound({}, [{}]);\n",
-            param,
-            bound.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(", ")
-        ),
-        _ => String::new(),
-    }
-}

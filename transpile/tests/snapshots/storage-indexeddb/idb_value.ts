@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/idb_value.rs
-import { Struct, Result, tracing } from '@ankurah/base';
+import { Struct, Result, tracing, unsupported } from '@ankurah/base';
 import { Value, Json } from '@ankurah/core';
 import { Object } from './util/object';
 import { EntityId } from '@ankurah/proto';
@@ -63,7 +63,7 @@ function convertJsonBoolsToNumbers(json: unknown): unknown {
     },
     Object: (v) => {
       const obj = v._0;
-      return serdeJson.Value.Object(obj.iter().map(([k, v]) => [k.clone(), convertJsonBoolsToNumbers(v)]));
+      return serdeJson.Value.Object(unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for'));
     },
     Null: () => {
       const other = json;

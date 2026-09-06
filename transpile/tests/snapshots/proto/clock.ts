@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/proto/src/clock.rs
-import { Result, dropOwned } from '@ankurah/base';
+import { Result, dropOwned, unsupported } from '@ankurah/base';
 import { Clock } from './clock.provided';
 import { EventId } from './data';
 import { DecodeError } from './error';
@@ -23,7 +23,7 @@ export function Vec_Vec_U8_tryInto(self: Uint8Array[]): Result<Clock, DecodeErro
       }
     }
     _moved0 = true;
-    return Result.Ok(new Clock([...ids]));
+    return Result.Ok(new Clock(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into')));
   } finally {
     if (!_moved0) dropOwned(ids);
   }

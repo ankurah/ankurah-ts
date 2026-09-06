@@ -102,3 +102,12 @@ export function okOrElseCapture(value: number | null, token: Token): Result<numb
   return (value != null ? (dropOwned(_m0), Result.Ok(value!)) : Result.Err(invoke(_m0)));
 }
 
+export function namedClosure(value: number | null, token: Token): number | null {
+  const f = new OwnedClosure([token], (n: number) => {
+    const m = token.n;
+    token.drop();
+    return checkedAdd(n, m, 'u32');
+  }, undefined, true);
+  return (value != null ? invoke(f, value!) : (dropOwned(f), null));
+}
+

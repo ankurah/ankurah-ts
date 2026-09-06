@@ -437,8 +437,6 @@ mod tests {
         assert_eq!(map_fn_name("fetch_from_peer"), "fetchFromPeer");
     }
 
-    use super::*;
-
     #[test]
     fn a_name_javascript_reserves_is_written_with_a_suffix() {
         // The ones a Rust identifier can be and JavaScript cannot.

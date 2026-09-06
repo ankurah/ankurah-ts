@@ -49,7 +49,12 @@ function cloneValueEntry(entry: ValueEntry): ValueEntry {
 // 0=I16, 1=I32, 2=I64, 3=F64, 4=Bool, 5=String, 6=EntityId, 7=Object, 8=Binary, 9=Json
 
 const enc = new TextEncoder();
-const dec = new TextDecoder();
+// A Rust `String` is UTF-8 by construction, so a byte run that is not valid
+// UTF-8 could not have come from one: `serde`'s own decoder errors there. A
+// non-fatal `TextDecoder` answers U+FFFD instead, which is a different string
+// that then flows on as though it had been read — a silent corruption where
+// Rust reports. Fatal, and the exception is turned into this codec's own error.
+const dec = new TextDecoder('utf-8', { fatal: true });
 
 function writeValue(writer: BincodeWriter, value: Value): void {
   switch (value.type) {
@@ -123,7 +128,12 @@ function readValue(reader: BincodeReader): Value {
       return { type: 'Binary', value: reader.readByteVec() };
     case 9: { // Json — json_as_bytes: bincode Vec<u8> -> serde_json::from_slice
       const jsonBytes = reader.readByteVec();
-      const jsonStr = dec.decode(jsonBytes);
+      let jsonStr: string;
+      try {
+        jsonStr = dec.decode(jsonBytes);
+      } catch {
+        throw new Error('LWW Json value: the bytes are not valid UTF-8');
+      }
       return { type: 'Json', value: JSON.parse(jsonStr) };
     }
     default:
