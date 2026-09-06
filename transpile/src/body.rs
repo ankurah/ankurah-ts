@@ -434,9 +434,8 @@ impl<'a> BodyTranslator<'a> {
                             bind_eager: &bind_eager,
                             bind_closure: &bind_closure,
                         };
-                        let translated = native_types::translate_method_using(
-                            tc_ref.registry,
-                            found.receiver_type(),
+                        let shape = calls::receiver_shape(&tc_ref, found.receiver_type());
+                        let translated = native_types::translate_method_using(tc_ref.registry, &shape,
                             &recv,
                             &rust_method,
                             &args,
@@ -988,13 +987,7 @@ impl<'a> BodyTranslator<'a> {
                 // `let id: EntityId = s.parse()?` is the only thing that says
                 // which type the parse produces.
                 let want = self.try_operand_expectation(expected.as_ref());
-                let lowered =
-                    self.expecting(&try_expr.expr, want.as_ref(), || self.lower_try(try_expr));
-                self.own.prelude.borrow_mut().push(ownership::Hoist {
-                    declaration: lowered.declaration,
-                    owned: None,
-                });
-                lowered.value
+                refusal::hoist_a_try(self, try_expr, want)
             }
             // What is awaited is read for its value, so a `match` or an `if`
             // written there is a value and not a statement: `.await` on a
@@ -1263,6 +1256,8 @@ mod consumes;
 
 /// A block, and the statements in it.
 mod blocks;
+/// What a statement still owns when its own lowering refused.
+pub(crate) mod refusal;
 
 /// An expression written where a VALUE belongs, and the jump one may carry out
 /// of that position.

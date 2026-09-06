@@ -119,27 +119,13 @@ const OPTION_ADAPTORS: &[(&str, &str, usize, bool)] = &[
     ("copied", "$spread", 0, false),
 ];
 
-/// Did the port BUILD this array on the spot, so that nobody else holds it?
-///
-/// The emitted text is what will run, and these are the shapes the emitter
-/// writes for "a new array": a materialised range, a spread, and the helpers
-/// that answer a fresh list. `reverse` mutates, so a copy stands in front of it
-/// for every other receiver — and copying one of these copies what was built a
-/// character earlier.
-fn builds_a_fresh_array(receiver: &str) -> bool {
-    let text = receiver.trim().trim_start_matches('(').trim_end_matches(')').trim();
-    text.starts_with("[...")
-        || ["range(", "rangeIncl(", "stepBy(", "iterFilterMap("]
-            .iter()
-            .any(|helper| text.starts_with(helper))
-}
-
 pub fn translate(
     receiver: &str,
     method: &str,
     args: &[String],
     of: Receiver,
     elements: Elements,
+    fresh: bool,
 ) -> Option<String> {
     for (rust, helper, arity, on_unknown) in OPTION_ADAPTORS {
         if *rust == method && args.len() == *arity && (*on_unknown || of == Receiver::Sequence) {
@@ -187,8 +173,12 @@ pub fn translate(
         // E17: unless the receiver is an array the port BUILT on this line —
         // `range(0, n)`, a spread, a `filter_map` — which nobody else holds, so
         // there is nothing for `reverse` to mutate out from under. Ten emitted
-        // sites copied a range the line above had just allocated.
-        "rev" if args.is_empty() => match builds_a_fresh_array(receiver) {
+        // sites copied a range the line above had just allocated. J1: which
+        // shapes those are is a question about the RECEIVER's own lowering, and
+        // `Position::fresh_receiver` is that lowering's answer — read off the
+        // emitted text, a user function named `range` returning a shared array
+        // would have had `rev` reverse the caller's array in place.
+        "rev" if args.is_empty() => match fresh {
             true => format!("{}.reverse()", receiver),
             false => format!("{}.slice().reverse()", receiver),
         },
@@ -226,17 +216,17 @@ mod tests {
 
     fn wrote(method: &str, args: &[&str]) -> Option<String> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        translate("xs", method, &args, Receiver::Sequence, Elements::Borrowed)
+        translate("xs", method, &args, Receiver::Sequence, Elements::Borrowed, false)
     }
 
     fn wrote_owned(method: &str, args: &[&str]) -> Option<String> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        translate("xs", method, &args, Receiver::Sequence, Elements::Owned)
+        translate("xs", method, &args, Receiver::Sequence, Elements::Owned, false)
     }
 
     fn wrote_untyped(method: &str, args: &[&str]) -> Option<String> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        translate("xs", method, &args, Receiver::Unknown, Elements::Borrowed)
+        translate("xs", method, &args, Receiver::Unknown, Elements::Borrowed, false)
     }
 
     /// J1's live case: `entries.iter().position(..)` answered `-1` for a
@@ -284,7 +274,7 @@ mod tests {
     #[test]
     fn the_receiver_is_written_once() {
         let written =
-            translate("takeOne()", "position", &["p".into()], Receiver::Sequence, Elements::Borrowed).unwrap();
+            translate("takeOne()", "position", &["p".into()], Receiver::Sequence, Elements::Borrowed, false).unwrap();
         assert_eq!(written.matches("takeOne()").count(), 1, "{}", written);
     }
 
@@ -355,19 +345,21 @@ mod tests {
     /// E17: `reverse` mutates, so a copy stands in front of it — unless the
     /// receiver is an array the port BUILT on the spot, which nobody else
     /// holds. Ten emitted sites copied a range the line above had allocated.
+    ///
+    /// J1: WHICH receivers those are is the lowering's answer and no longer the
+    /// emitted text's. Read off the text, `range(0, n)` was any call to
+    /// anything spelled `range`, and a user function of that name answering a
+    /// shared array would have had `rev` reverse the caller's array under them.
+    /// The same two answers, told rather than guessed:
     #[test]
     fn a_freshly_built_array_is_reversed_in_place() {
-        assert_eq!(wrote("rev", &[]).unwrap(), "xs.slice().reverse()");
-        for fresh in ["range(0, n)", "(range(0, n))", "rangeIncl(0, n)", "[...ys]", "stepBy(xs, 2)"] {
-            let written =
-                translate(fresh, "rev", &[], Receiver::Sequence, Elements::Borrowed).unwrap();
-            assert_eq!(written, format!("{}.reverse()", fresh), "{}", fresh);
-        }
-        // A name, a field and a call the port did not write stay copied.
-        for held in ["xs", "this.steps", "read()"] {
-            let written =
-                translate(held, "rev", &[], Receiver::Sequence, Elements::Borrowed).unwrap();
-            assert_eq!(written, format!("{}.slice().reverse()", held), "{}", held);
+        for held in ["xs", "this.steps", "range(0, n)", "[...ys]"] {
+            let copied =
+                translate(held, "rev", &[], Receiver::Sequence, Elements::Borrowed, false).unwrap();
+            assert_eq!(copied, format!("{}.slice().reverse()", held), "{}", held);
+            let fresh =
+                translate(held, "rev", &[], Receiver::Sequence, Elements::Borrowed, true).unwrap();
+            assert_eq!(fresh, format!("{}.reverse()", held), "{}", held);
         }
     }
 

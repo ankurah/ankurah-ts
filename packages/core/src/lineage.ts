@@ -211,7 +211,7 @@ class Comparison<G extends GetEvents> extends Struct {
       while (_at2 < _seq1.length) {
         const event = _seq1[_at2++];
         try {
-          if (resultChecklist.remove(event.payload.id())) {
+          if (resultChecklist.remove(TEvent_dispatch_id(event.payload))) {
             this.processEvent(event);
           }
         } finally {
@@ -235,8 +235,8 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   processEvent(event: Attested<Event>): void {
-    const id = event.payload.id();
-    const parents = event.payload.parent().members();
+    const id = TEvent_dispatch_id(event.payload);
+    const parents = TClock_dispatch_members(TEvent_dispatch_parent(event.payload));
     const fromSubject = this.subjectFrontier.remove(id);
     const fromOther = this.otherFrontier.remove(id);
     const [isCommon, origins] = (() => {

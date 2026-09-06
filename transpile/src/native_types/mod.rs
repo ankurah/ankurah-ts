@@ -93,11 +93,21 @@ pub struct Position {
     /// back (F1). The call's own text cannot say — `xs.find(p)` looks the same
     /// either way — so the translator that resolved the method says instead.
     pub elements: iterator::Elements,
+    /// Did the RECEIVER's own lowering build the sequence, so that nobody else
+    /// holds it? `rev` reverses in place where it did and copies first where it
+    /// did not, and the call's own text cannot say — J1: this is the lowering
+    /// saying instead.
+    pub fresh_receiver: bool,
 }
 
 /// The position a caller with nothing to say about it stands in.
 pub fn used_and_read() -> Position {
-    Position { used: true, reads_as_value: true, elements: iterator::Elements::Borrowed }
+    Position {
+        used: true,
+        reads_as_value: true,
+        elements: iterator::Elements::Borrowed,
+        fresh_receiver: false,
+    }
 }
 
 /// The same, told what the position the call stands in wants of its answer.
@@ -155,9 +165,13 @@ pub fn translate_method_using(
     // The shape a value takes in JavaScript decides which module knows how to
     // translate a call on it — the same table emission writes the type from.
     match js_shape(reg, receiver_ty) {
-        JsShape::Array(inner) => {
-            array::translate(receiver, rust_method, args, &array::Element::of(reg, &inner), at.elements)
-        }
+        JsShape::Array(inner) => array::translate(
+            receiver,
+            rust_method,
+            args,
+            &array::Element::of(reg, &inner),
+            at,
+        ),
         // A `Vec<u8>` is a `Uint8Array`, which is fixed-length and shares only
         // the reading half of an array's surface.
         JsShape::Bytes => bytes::translate(receiver, rust_method, args),
@@ -283,7 +297,14 @@ pub fn translate_untyped(receiver: &str, rust_method: &str, args: &[String]) -> 
     // reading helpers are what is written and the site is already reported for
     // being untyped.
     if let Some(result) =
-        iterator::translate(receiver, rust_method, args, iterator::Receiver::Unknown, iterator::Elements::Borrowed)
+        iterator::translate(
+            receiver,
+            rust_method,
+            args,
+            iterator::Receiver::Unknown,
+            iterator::Elements::Borrowed,
+            false,
+        )
     {
         return MethodTranslation::Expr(result);
     }

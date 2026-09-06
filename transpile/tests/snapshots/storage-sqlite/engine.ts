@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/engine.rs
-import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, iterFilterMap, range, HashSet, AsyncMutex, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, checkedAdd, iterFilterMap, range, HashSet, AsyncMutex, tokio } from '@ankurah/base';
 import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, State, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { Attested, CollectionId, EntityId, EntityState, Event, EventId, State, StateBuffers } from '@ankurah/proto';
 import { PooledConnection, SqliteConnectionManager } from './connection';
@@ -336,7 +336,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           }
           const BASE_COLUMNS = ['id', 'state_buffer', 'head', 'attestations'];
           const tableName = this.stateTable();
-          const numColumns = BASE_COLUMNS.length + materialized.length;
+          const numColumns = checkedAdd(BASE_COLUMNS.length, materialized.length, 'usize');
           let columns = [];
           columns.extendFromSlice(BASE_COLUMNS);
           let values = [];

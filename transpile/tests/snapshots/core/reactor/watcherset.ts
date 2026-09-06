@@ -1,13 +1,11 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
 import { Struct, Enum, Arc, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
-import { Comparison } from '../lineage';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
 import { ComparisonIndex } from './comparison_index';
 import { PropertyPath } from './property_path';
 import { ReactorSubscriptionId } from './subscription';
-import { Subscription } from './subscription_state';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
 
 export class WatcherSet extends Struct {

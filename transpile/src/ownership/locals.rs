@@ -49,6 +49,7 @@ impl<'a> BodyTranslator<'a> {
         let dispositions = ownership::Dispositions::build(&[(0, names)], sites.collect());
         let mut owned = Vec::new();
         for (name, ty) in params {
+            self.own.by_value_params.borrow_mut().insert(name.clone());
             let drops = ownership::drops_of(&tc.borrow().probe(), ty);
             let drops = if drops.is_droppable() { drops } else { self.callable_by_value(ty) };
             if !drops.is_droppable() {
@@ -63,6 +64,7 @@ impl<'a> BodyTranslator<'a> {
                     Some(flag)
                 }
             };
+            self.own.claimed_params.borrow_mut().insert(name.clone());
             owned.push(ownership::Owned {
                 name: name.clone(),
                 source: Some(name.clone()),
@@ -332,6 +334,59 @@ impl<'a> BodyTranslator<'a> {
     /// nothing released it on any path. A `Flagged` local is left alone: the
     /// block's own `finally` releases it once the flag is not written (which
     /// is the other half of this rule, in `blocks.rs`).
+    /// What a statement owes for the SOURCE values it named, on the path where
+    /// it refused.
+    ///
+    /// The same question `released_by_a_refusal` answers, asked where the
+    /// statement's own prefix may already have run: a `?` operand standing
+    /// before the refusal is evaluated, and whatever it consumed is gone. So
+    /// each release is guarded by the runtime's own answer, and it stands in a
+    /// `finally` around the statement rather than above it.
+    ///
+    /// A by-value PARAMETER is here too, which `released_by_a_refusal` cannot
+    /// reach: it is not a local of any block, so it has no ordinal and no
+    /// disposition — the function's own claim decided it, and where that claim
+    /// said "handed on" and the statement that would have handed it on refused,
+    /// nothing releases it at all.
+    pub(crate) fn released_after_a_refusal(
+        &self,
+        stmt: &syn::Stmt,
+        dispositions: &ownership::Dispositions,
+        ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
+    ) -> String {
+        let scan = ownership::Scan::new(self);
+        let mut out = String::new();
+        let mut written: Vec<String> = Vec::new();
+        for site in scan.shallow(stmt) {
+            if written.contains(&site.name) || self.own.flags.borrow().contains_key(&site.name) {
+                continue;
+            }
+            let ordinal = ordinals.borrow().get(&site.name).copied().unwrap_or(0);
+            let owed = if ordinal == 0 {
+                // Not a local of any block here: a parameter the function's own
+                // claim let go of, or a name from further out that this body
+                // does not own at all. Only the first is owed, and the claim is
+                // what tells them apart.
+                self.own.by_value_params.borrow().contains(&site.name)
+                    && !self.own.claimed_params.borrow().contains(&site.name)
+            } else {
+                dispositions.of(&site.name, ordinal) == ownership::Disposition::Moved
+            };
+            if !owed {
+                continue;
+            }
+            let Some(tc) = &self.types else { continue };
+            let Some(ty) = tc.borrow().lookup(&site.name) else { continue };
+            if !ownership::drops_of(&tc.borrow().probe(), &ty).is_droppable() {
+                continue;
+            }
+            let name = self.emitted_name(&site.name).unwrap_or_else(|| site.name.clone());
+            written.push(site.name.clone());
+            out.push_str(&ownership::guarded_release(&name));
+        }
+        out
+    }
+
     pub(crate) fn released_by_a_refusal(
         &self,
         stmt: &syn::Stmt,

@@ -131,7 +131,12 @@ pub(crate) fn collect_bound(pat: &syn::Pat, out: &mut Vec<String>) {
 pub(crate) struct Lowered {
     pub(crate) declaration: String,
     pub(crate) value: String,
+    /// The `Result` this `?` tested, where there is one to release. An
+    /// `Option` has none: the port writes it as a nullable.
     pub(crate) wrapper: Option<String>,
+    /// The identifier the declaration introduced, whatever it holds. Read on
+    /// the path where the statement refused, where nothing consumed it (I4).
+    pub(crate) temp: Option<String>,
 }
 
 /// The type a call's turbofish names: `from_str::<EntityId>(s)` says which

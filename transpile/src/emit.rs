@@ -231,11 +231,11 @@ fn async_return(is_async: bool, ret: &str) -> String {
     }
 }
 
-pub fn emit_trait(out: &mut String, t: &TraitInfo) {
+pub fn emit_trait(out: &mut String, reg: &TypeRegistry, here: Option<crate::registry::ModuleId>, t: &TraitInfo) {
     let export = if t.is_pub { "export " } else { "" };
     let keyword = if t.has_default_impls { "abstract class" } else { "interface" };
-
-    out.push_str(&format!("{}{} {}{} {{\n", export, keyword, t.name, t.generics));
+    let head = crate::emit_traits::declare_supertraits(out, reg, here, t, export);
+    out.push_str(&format!("{}{} {}{}{} {{\n", export, keyword, t.name, t.generics, head));
 
     for method in &t.methods {
         let params = format_params(&method.params);

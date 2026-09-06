@@ -573,7 +573,7 @@ fn extract_trait(t: &syn::ItemTrait, cfg: ExtractCfg) -> TraitInfo {
             if !excluded_assoc(&ty.ident.to_string())
                 && !is_skipped_cfg_with(&ty.attrs, cfg.features) =>
         {
-            Some(ty.ident.to_string())
+            Some((ty.ident.to_string(), ty.bounds.iter().cloned().collect()))
         }
         _ => None,
     }).collect();

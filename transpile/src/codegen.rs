@@ -2,7 +2,7 @@
 
 mod base_symbols;
 mod paths;
-use paths::{crate_path_to_fqn_prefix, relative_import_path};
+use paths::{codec_import, crate_path_to_fqn_prefix, relative_import_path};
 mod const_order;
 mod surface;
 mod written;
@@ -25,7 +25,7 @@ pub fn generate_ts_with_imports_configured(
     current_module: &str,
     config: Option<&crate::config::Config>,
 ) -> String {
-    let base = generate_ts_inner(reg, file, rust_crate_path, config);
+    let base = generate_ts_inner(reg, file, rust_crate_path, config, Some(current_module));
 
     let mut local_types: HashSet<String> = HashSet::new();
     for s in &file.structs { local_types.insert(s.name.clone()); }
@@ -48,10 +48,9 @@ pub fn generate_ts_with_imports_configured(
         for f in &s.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); }
     }
     for e in &file.enums {
-        for v in &e.variants {
-            for f in &v.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); }
-        }
+        for v in &e.variants { for f in &v.fields { imports::collect_type_refs(&f.ts_ty(reg), &mut referenced); } }
     }
+    imports::collect_supertrait_names(file, &mut referenced); // I8: `extends X` names X
     // An impl whose target this file does not declare has its methods emitted
     // onto that type's class, which is written where the type is — so nothing
     // of it reaches this file and importing what its signature names would
@@ -343,10 +342,10 @@ fn writes_through(c: &crate::types::ConstInfo) -> bool {
 pub(crate) use base_symbols::BASE_RUNTIME_SYMBOLS;
 
 pub fn generate_ts(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str) -> String {
-    generate_ts_inner(reg, file, rust_crate_path, None)
+    generate_ts_inner(reg, file, rust_crate_path, None, None)
 }
 
-fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: Option<&crate::config::Config>) -> String {
+fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str, config: Option<&crate::config::Config>, current_module: Option<&str>) -> String {
     let mut out = String::new();
 
     // Line 1: MIRRORS annotation
@@ -459,7 +458,7 @@ fn generate_ts_inner(reg: &TypeRegistry, file: &RustFile, rust_crate_path: &str,
         || file.enums.iter().any(|e|
             !provided_set.contains(&e.name) && crate::bincode_module::has_serde_derive(&e.derives));
     if needs_bincode {
-        out.push_str("import { BincodeReader, BincodeWriter } from './codec';\n");
+        out.push_str(&codec_import("BincodeReader, BincodeWriter", current_module));
     }
 
     // Remaining unresolved external type references — scan everything
@@ -967,7 +966,7 @@ fn generate_declarations(
         emit::emit_enum(&mut out, reg, here, e, &inherent_methods, &trait_impls, &trait_methods);
     }
     for t in &file.traits {
-        emit::emit_trait(&mut out, t);
+        emit::emit_trait(&mut out, reg, here, t);
     }
     for f in &file.functions {
         // A test module's functions are written inside the `describe` of the
@@ -1256,7 +1255,7 @@ pub fn generate_test_ts_with_imports(
         .filter_map(|f| f.body_ts.as_deref())
         .collect::<Vec<_>>().join(" ");
     if all_test_body.contains("BincodeWriter") || all_test_body.contains("BincodeReader") {
-        out.push_str("import { BincodeWriter, BincodeReader } from './codec';\n");
+        out.push_str(&codec_import("BincodeWriter, BincodeReader", Some(current_module)));
     }
     out.push('\n');
 

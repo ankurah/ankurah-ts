@@ -1,5 +1,10 @@
-//! An or-pattern whose alternatives bind their names in a form the translator
-//! cannot read back, as the R12 hole it is.
+//! The one shape an or-pattern can take that the port has no branch for.
+//!
+//! Rust makes every alternative of an `|` bind the same names, so where they
+//! also read them out of the same place — which two variants of one enum do —
+//! the test is the disjunction and the binding is what they agree on. Where
+//! they do NOT, which name came from which alternative is a question this
+//! cannot answer, and the function below writes the refusal.
 
 use super::BodyTranslator;
 

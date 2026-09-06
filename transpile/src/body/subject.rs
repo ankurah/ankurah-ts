@@ -165,7 +165,9 @@ impl<'a> BodyTranslator<'a> {
             let mark = tc.sink.mark();
             let payload = tc.payload_of(path, Some(&subject));
             tc.sink.rewind(mark);
-            payload.unwrap_or_default().into_iter().map(|(_, ty)| ty).collect()
+            // The names travel with the types: a struct pattern names its
+            // members, and the payload's order is the declaration's (I2).
+            payload.unwrap_or_default()
         });
         takes == crate::ownership::scrutinee::Takes::Payload
     }

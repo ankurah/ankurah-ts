@@ -1,6 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/property_path.rs
-import { Struct, Result, keyHash } from '@ankurah/base';
-import { Json } from '../property/value/json';
+import { Struct, Result, serde_json, keyHash } from '@ankurah/base';
 import { AbstractEntity } from '../reactor';
 import { Value } from '../value/index';
 import { PathExpr } from '@ankurah/ankql';
@@ -48,7 +47,7 @@ export class PropertyPath extends Struct {
         },
         Binary: (v) => {
           const bytes = v._0;
-          const _r2 = serdeJson.fromSlice(bytes).ok();
+          const _r2 = serde_json.fromSlice(bytes).ok();
           if (_r2 == null) return null;
           const json = _r2;
           let current = json;

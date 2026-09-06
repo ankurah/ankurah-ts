@@ -21,14 +21,34 @@
 //! import is written, so an entry point failing on something three modules
 //! away is recorded where the defect is rather than where the walk started.
 //!
-//! Two ledgers, each matched exactly in both directions like the diagnostics
+//! What the tool delivers, exactly. `bun build` answers for an import whose
+//! names are USED as values, and for no other: an import all of whose names are
+//! used in type position is erased before resolution, so bun never opens the
+//! module and never checks the export (`import { Nothing } from
+//! './does-not-exist'; export function f(x: Nothing): void {}` builds clean).
+//! Ten of the port's twenty dead specifiers and most of its unexported names
+//! were type-only, and the ledger recorded none of them. So `tsc --noEmit` runs
+//! over the SAME laid-out root and its import diagnostics join bun's in the same
+//! two lists, in one canonical row shape, deduplicated: see
+//! `tests/common/imports.rs` for which diagnostic codes count and why a
+//! non-`@ankurah`, non-relative specifier is out of scope.
+//!
+//! And a third question neither tool asks: the layout links every package into
+//! ONE `node_modules`, so a cross-package import resolves whether or not the
+//! importing package DECLARES that dependency — while Expo installs by
+//! manifest, where it does not resolve at all. `undeclared_dependencies` is that
+//! list.
+//!
+//! Four ledgers, each matched exactly in both directions like the diagnostics
 //! budget: an import that starts naming nothing fails, and one that stops
-//! fails until its line comes out.
+//! fails until its line comes out. The lists are a RATCHET — they may shrink
+//! and never grow — and the counts in `[summary]` are what a review reads.
 //!
 //!     cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate
 
 mod common;
 
+use common::imports::{self, Kind};
 use common::{collect_files_with_ext, crates_in_scope, run_batch, transpile_dir, TempDir};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -51,18 +71,28 @@ fn every_emitted_import_resolves_against_the_emitted_packages() {
 
     let mut unresolved: BTreeSet<String> = BTreeSet::new();
     let mut unexported: BTreeSet<String> = BTreeSet::new();
+    let mut other: BTreeSet<String> = BTreeSet::new();
+    let mut file = |kind: Kind, text: String| {
+        match kind {
+            Kind::Unresolved => unresolved.insert(text),
+            Kind::Unexported => unexported.insert(text),
+            Kind::Other => other.insert(text),
+        };
+    };
     for module in &modules {
-        for row in build(root.path(), module) {
-            match row {
-                Complaint::Unresolved(text) => unresolved.insert(text),
-                Complaint::Unexported(text) => unexported.insert(text),
-            };
+        for (kind, text) in build(root.path(), module) {
+            file(kind, text);
         }
     }
+    // The same lists, asked of the tool that can see a type-only import.
+    for (kind, text) in imports::tsc_rows(root.path(), &repo()) {
+        file(kind, text);
+    }
+    let undeclared = imports::undeclared_dependencies(root.path(), &modules, &repo());
 
     let ledger = transpile_dir().join("tests/import_gate.toml");
     if std::env::var_os("UPDATE_IMPORT_GATE").is_some() {
-        std::fs::write(&ledger, render(&unresolved, &unexported))
+        std::fs::write(&ledger, render(&unresolved, &unexported, &other, &undeclared))
             .unwrap_or_else(|e| panic!("cannot write {}: {e}", ledger.display()));
         eprintln!("updated {}", ledger.display());
         return;
@@ -76,17 +106,49 @@ fn every_emitted_import_resolves_against_the_emitted_packages() {
     });
     let recorded: toml::Table = text.parse().expect("the import ledger is not valid TOML");
 
+    // A `[summary]` that disagrees with the lists below it is a ledger lying
+    // about its own size, which is the one thing a ratchet is read for.
+    for (key, found) in [
+        ("unresolved", unresolved.len()),
+        ("unexported", unexported.len()),
+        ("other", other.len()),
+        ("undeclared_dependencies", undeclared.len()),
+    ] {
+        let recorded_rows = listed(&recorded, key).len();
+        let summarised = recorded
+            .get("summary")
+            .and_then(|v| v.as_table())
+            .and_then(|s| s.get(key))
+            .and_then(|v| v.as_integer())
+            .unwrap_or(-1);
+        assert_eq!(
+            summarised, recorded_rows as i64,
+            "the ledger's [summary] says {key} = {summarised} and lists {recorded_rows} row(s) \
+             (the gate found {found})"
+        );
+    }
+
     let mut moved = String::new();
     compare("a specifier that names nothing", &unresolved, listed(&recorded, "unresolved"), &mut moved);
     compare("a name its module does not export", &unexported, listed(&recorded, "unexported"), &mut moved);
+    compare("something else a tool said about an import", &other, listed(&recorded, "other"), &mut moved);
+    compare(
+        "a cross-package import the manifest does not declare",
+        &undeclared,
+        listed(&recorded, "undeclared_dependencies"),
+        &mut moved,
+    );
     assert!(
         moved.is_empty(),
         "which emitted imports resolve has moved ({} unresolved specifier(s), {} unexported \
-         name(s), over {} modules):\n{moved}\nFix the emitter, or — once every line above has \
-         been read and accepted — refresh with:\n    \
+         name(s), {} other complaint(s), {} undeclared dependency/ies, over {} modules):\n\
+         {moved}\nFix the emitter, or — once every line above has been read and accepted — \
+         refresh with:\n    \
          cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate",
         unresolved.len(),
         unexported.len(),
+        other.len(),
+        undeclared.len(),
         modules.len()
     );
 }
@@ -104,12 +166,10 @@ fn the_indexeddb_collection_imports_only_names_that_exist() {
     let module = PathBuf::from("pkg/storage-indexeddb/src/collection.ts");
     let complaints: Vec<String> = build(root.path(), &module)
         .into_iter()
-        .filter_map(|c| match c {
-            Complaint::Unexported(text) => Some(text),
-            // A `[[provided]]` module the port has not written yet is the
-            // ledger's business, not this test's.
-            Complaint::Unresolved(_) => None,
-        })
+        // A `[[provided]]` module the port has not written yet is the ledger's
+        // business, not this test's.
+        .filter(|(kind, _)| *kind == Kind::Unexported)
+        .map(|(_, text)| text)
         .collect();
     assert!(
         complaints.is_empty(),
@@ -119,10 +179,6 @@ fn the_indexeddb_collection_imports_only_names_that_exist() {
     );
 }
 
-enum Complaint {
-    Unresolved(String),
-    Unexported(String),
-}
 
 /// Emit every crate in scope into `<root>/pkg/<crate>/src`, over the
 /// hand-written half each package already carries, and link every package
@@ -130,7 +186,7 @@ enum Complaint {
 /// resolves to the emitted core. Answers the modules to check, each relative
 /// to `root`.
 fn lay_out_packages(root: &Path) -> Vec<PathBuf> {
-    let repo = transpile_dir().parent().expect("the transpiler sits in the repo").to_path_buf();
+    let repo = repo();
     let links = root.join("node_modules/@ankurah");
     std::fs::create_dir_all(&links).expect("the node_modules layout is writable");
     let mut modules = Vec::new();
@@ -155,7 +211,13 @@ fn lay_out_packages(root: &Path) -> Vec<PathBuf> {
         run_batch(&src, &out, &package);
         std::fs::write(
             dir.join("package.json"),
-            format!("{{\n  \"name\": \"@ankurah/{package}\",\n  \"main\": \"src/index.ts\"\n}}\n"),
+            // `types` as well as `main`: tsc reads `types` to find a package's
+            // entry point, and without it `@ankurah/core` resolves to nothing
+            // for the tool that can see the type-only imports.
+            format!(
+                "{{\n  \"name\": \"@ankurah/{package}\",\n  \"main\": \"src/index.ts\",\n  \
+                 \"types\": \"src/index.ts\"\n}}\n"
+            ),
         )
         .expect("the package manifest is writable");
         link(&dir, &links.join(&package));
@@ -225,6 +287,12 @@ fn collect_provided_files(root: &Path, dir: &Path, into: &mut Vec<PathBuf>) {
     }
 }
 
+/// The checkout the emitted port's hand-written halves, its runtime and its
+/// package manifests come from.
+fn repo() -> PathBuf {
+    transpile_dir().parent().expect("the transpiler sits in the repo").to_path_buf()
+}
+
 fn link(target: &Path, at: &Path) {
     if at.exists() {
         return;
@@ -242,7 +310,7 @@ fn link(target: &Path, at: &Path) {
 
 /// What `bun build` says about one module, as the file and line each complaint
 /// names rather than the entry point the walk started at.
-fn build(root: &Path, module: &Path) -> Vec<Complaint> {
+fn build(root: &Path, module: &Path) -> Vec<(Kind, String)> {
     let output = Command::new("bun")
         .arg("build")
         .arg(module)
@@ -271,11 +339,8 @@ fn build(root: &Path, module: &Path) -> Vec<Complaint> {
             .and_then(|l| l.strip_prefix("at "))
             .map(|l| where_in_the_port(root, l))
             .unwrap_or_else(|| "(bun named no file)".to_string());
-        let row = format!("{site}: {complaint}");
-        if complaint.starts_with("Could not resolve") {
-            out.push(Complaint::Unresolved(row));
-        } else {
-            out.push(Complaint::Unexported(row));
+        if let Some(row) = imports::from_bun(&site, complaint) {
+            out.push(row);
         }
     }
     out
@@ -316,17 +381,38 @@ fn compare(what: &str, found: &BTreeSet<String>, listed: BTreeSet<String>, into:
     }
 }
 
-fn render(unresolved: &BTreeSet<String>, unexported: &BTreeSet<String>) -> String {
+fn render(
+    unresolved: &BTreeSet<String>,
+    unexported: &BTreeSet<String>,
+    other: &BTreeSet<String>,
+    undeclared: &BTreeSet<String>,
+) -> String {
     let mut out = String::from(
         "# Imports the emitted port writes that do not resolve, written by\n\
-         # transpile/tests/import_gate.rs. `unresolved` is a specifier naming no module —\n\
-         # every one of these is a `[[provided]]` module the port has not written yet.\n\
-         # `unexported` is a name its module does not offer, which is a defect in the\n\
-         # import list. Matched EXACTLY in both directions. Generated: do not hand-edit.\n\
-         # Refresh with:\n\
+         # transpile/tests/import_gate.rs, from `bun build` AND `tsc --noEmit` over the same\n\
+         # laid-out port: bun erases a type-only import before it resolves anything, so it\n\
+         # sees about half of these.\n\
+         #\n\
+         # `unresolved` is a specifier naming no module. Most are a `[[provided]]` module the\n\
+         # port has not written yet; a relative specifier the EMITTER built wrongly is a\n\
+         # defect and is marked as one when it is read. `unexported` is a name its module\n\
+         # does not offer, which is a defect in the import list. `other` is any further\n\
+         # complaint a tool makes about an import, listed rather than filed under one of the\n\
+         # first two. `undeclared_dependencies` is a cross-package import whose package.json\n\
+         # declares neither a dependency nor a peerDependency on the package it names — which\n\
+         # resolves in this workspace and does not resolve when Expo installs by manifest.\n\
+         #\n\
+         # Matched EXACTLY in both directions, and a RATCHET: these lists may shrink, and a\n\
+         # row that appears is a defect to fix rather than a line to record. Generated: do\n\
+         # not hand-edit. Refresh with:\n\
          #     cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate\n\n",
     );
-    for (key, rows) in [("unresolved", unresolved), ("unexported", unexported)] {
+    for (key, rows) in [
+        ("unresolved", unresolved),
+        ("unexported", unexported),
+        ("other", other),
+        ("undeclared_dependencies", undeclared),
+    ] {
         let _ = writeln!(out, "# {}: {}", key, rows.len());
         if rows.is_empty() {
             let _ = writeln!(out, "{key} = []\n");
@@ -338,6 +424,16 @@ fn render(unresolved: &BTreeSet<String>, unexported: &BTreeSet<String>) -> Strin
         }
         out.push_str("]\n\n");
     }
+    // Last, because a TOML table header owns everything below it: the counts a
+    // review reads, checked against the lists above them.
+    let _ = writeln!(
+        out,
+        "[summary]\nunresolved = {}\nunexported = {}\nother = {}\nundeclared_dependencies = {}",
+        unresolved.len(),
+        unexported.len(),
+        other.len(),
+        undeclared.len()
+    );
     out
 }
 
@@ -350,4 +446,99 @@ fn require_bun() {
              imports resolve, so bun has to be on PATH."
         ),
     }
+}
+
+// How a tool's complaint becomes a ledger row. These live here rather than
+// beside the code they exercise because `tests/common` is compiled into every
+// test binary, and a unit test there would run fourteen times.
+#[test]
+fn a_bun_complaint_becomes_a_row() {
+    assert_eq!(
+        imports::from_bun("core/context.ts:7", "Could not resolve: \"./indexel\""),
+        Some((Kind::Unresolved, "core/context.ts:7: \"./indexel\" names no module".into()))
+    );
+    assert_eq!(
+        imports::from_bun(
+            "core/lineage.test.ts:4",
+            "No matching export in \"pkg/core/src/lineage.ts\" for import \"Comparison\""
+        ),
+        Some((Kind::Unexported, "core/lineage.test.ts:4: \"Comparison\" is not exported".into()))
+    );
+    // A third kind of complaint gets its own list rather than being filed
+    // under `unexported`, which is where every non-resolution error used to
+    // go.
+    assert_eq!(
+        imports::from_bun("core/x.ts:1", "Unexpected end of file").map(|(k, _)| k),
+        Some(Kind::Other)
+    );
+    // A specifier the port does not own is the environment's business.
+    assert_eq!(imports::from_bun("core/x.test.ts:1", "Could not resolve: \"bun:test\""), None);
+}
+
+#[test]
+fn a_tsc_diagnostic_becomes_the_same_row() {
+    let bun = imports::from_bun("core/context.ts:7", "Could not resolve: \"./indexel\"").unwrap();
+    let line = "pkg/core/src/context.ts(7,22): error TS2307: Cannot find module './indexel' \
+                or its corresponding type declarations.";
+    let (site, complaint) = imports::split_tsc_line(line).unwrap();
+    assert_eq!(site, "core/context.ts:7");
+    // The same file reached a second time along a node_modules symlink, which
+    // tsc spells as a walk out of the real temporary directory: one site, so
+    // one row.
+    let through_the_link = "../../../../../var/folders/dm/T/import-gate-1/pkg/core/src/\
+                            context.ts(7,22): error TS2307: Cannot find module './indexel' or \
+                            its corresponding type declarations.";
+    assert_eq!(imports::split_tsc_line(through_the_link).unwrap().0, site);
+    let (kind, subject) = imports::tsc_subject(&complaint).unwrap();
+    assert_eq!(imports::row(&site, kind, &subject), bun, "one defect, one row, whichever tool saw it");
+}
+
+#[test]
+fn the_four_unexported_shapes_name_the_missing_name() {
+    let cases = [
+        (
+            "pkg/core/src/util/iterable.ts(3,10): error TS2305: Module '\"./ivec\"' has no \
+             exported member 'Iter'.",
+            "core/util/iterable.ts:3: \"Iter\" is not exported",
+        ),
+        (
+            "pkg/core/src/node.ts(10,10): error TS2459: Module '\"./lineage\"' declares \
+             'Comparison' locally, but it is not exported.",
+            "core/node.ts:10: \"Comparison\" is not exported",
+        ),
+        (
+            "pkg/storage-indexeddb/src/collection.ts(4,10): error TS2724: '\"@ankurah/core\"' \
+             has no exported member named 'Iter'. Did you mean 'IVec'?",
+            "storage-indexeddb/collection.ts:4: \"Iter\" is not exported",
+        ),
+        (
+            "pkg/ankql/src/parser.ts(2,10): error TS2614: Module '\"./ast\"' has no exported \
+             member 'Expr'. Did you mean to use 'import Expr from \"./ast\"' instead?",
+            "ankql/parser.ts:2: \"Expr\" is not exported",
+        ),
+    ];
+    for (line, expected) in cases {
+        let (site, complaint) = imports::split_tsc_line(line).unwrap_or_else(|| panic!("{line}"));
+        let (kind, subject) = imports::tsc_subject(&complaint).unwrap_or_else(|| panic!("{line}"));
+        assert_eq!(kind, Kind::Unexported);
+        assert_eq!(imports::row(&site, kind, &subject).1, expected);
+    }
+}
+
+#[test]
+fn a_type_error_is_not_an_import_diagnostic() {
+    let line = "pkg/core/src/node.ts(88,7): error TS2339: Property 'x' does not exist on \
+                type 'Y'.";
+    let (_, complaint) = imports::split_tsc_line(line).unwrap();
+    assert_eq!(imports::tsc_subject(&complaint), None);
+}
+
+#[test]
+fn an_import_line_names_its_cross_package_specifiers() {
+    let text = "import { Enum } from '@ankurah/base';\n\
+                export { x } from '@ankurah/proto';\n\
+                const message = `see '@ankurah/nothing'`;\n";
+    let found = imports::bare_ankurah_specifiers(text);
+    assert!(found.contains("@ankurah/base") && found.contains("@ankurah/proto"));
+    assert!(!found.contains("@ankurah/nothing"), "a name inside a message is not an import");
 }

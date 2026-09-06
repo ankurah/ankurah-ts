@@ -45,6 +45,11 @@ fn a_guarded_borrowing_enum_match_is_tried_arm_by_arm() {
     );
     let guard = ts.find("if (o.n > 2)").expect(&ts);
     let below = ts.find("look(o)").expect(&ts);
+    // H9: the ORDER as well as the structure. The nesting assertion says the
+    // arm below is not inside the guard's branch; this says it is written after
+    // the guard at all, which is what Rust's arm order means and what an
+    // if-chain that dropped the guard would also fail.
+    assert!(guard < below, "the guard is tested before the arm below it:\n{}", ts);
     assert!(
         !inside_the_branch(&ts, guard, below),
         "the arm below stands inside the guard's own branch, so a failed guard never \
@@ -134,9 +139,10 @@ fn a_guarded_result_arm_is_written_and_falls_through_to_the_arm_below() {
 /// K14: three tests asserted `guard < below` — that the guard's test is written
 /// before the arm below it — which is true of a chain that works and equally
 /// true of one whose fall-through is broken, because both arms are written
-/// either way. What has to hold is the STRUCTURE: the guarded body stands
-/// inside the branch the guard's `if` opens, and the arm below it stands after
-/// that branch has closed.
+/// either way. What has to hold as WELL is the STRUCTURE: the guarded body
+/// stands inside the branch the guard's `if` opens, and the arm below it stands
+/// after that branch has closed. H9: both, because they say different things
+/// and neither implies the other.
 fn inside_the_branch(ts: &str, opens: usize, at: usize) -> bool {
     let mut depth = 0i32;
     let mut entered = false;

@@ -30,10 +30,12 @@ use crate::body::BodyTranslator;
 /// Does the lowering write this expression as a run of STATEMENTS, rather than
 /// as one expression whose value the position may take?
 ///
-/// A `match` is the one shape whose form is not settled by the shape alone:
-/// the runtime's keyed `.match({..})` is a value and every other strategy is an
-/// if-chain. `translate_match` records which it took, so this must be asked
-/// straight after the expression was written — the same call, the same `t`.
+/// A `match` and a `select!` are the two shapes whose form is not settled by
+/// the shape alone: the runtime's keyed `.match({..})` is a value and every
+/// other strategy is an if-chain, and a `select!` that produces a value is one
+/// expression while an escaping one opens `const _bN = [`. Each lowering
+/// records which it took, so this must be asked straight after the expression
+/// was written — the same call, the same `t`.
 pub(crate) fn writes_statements(expr: &syn::Expr, t: &BodyTranslator) -> bool {
     match expr {
         syn::Expr::Block(_)
@@ -47,7 +49,9 @@ pub(crate) fn writes_statements(expr: &syn::Expr, t: &BodyTranslator) -> bool {
         | syn::Expr::Break(_)
         | syn::Expr::Continue(_) => true,
         syn::Expr::Match(_) => t.last_match_wrote_statements.get(),
-        syn::Expr::Macro(mac) => crate::macros::items::writes_statements(&mac.mac.path),
+        syn::Expr::Macro(mac) => crate::macros::items::writes_statements(&mac.mac.path)
+            || (crate::macros::items::is_select(&mac.mac.path)
+                && t.own.select_wrote_statements.get()),
         syn::Expr::Group(group) => writes_statements(&group.expr, t),
         syn::Expr::Paren(paren) => writes_statements(&paren.expr, t),
         _ => false,

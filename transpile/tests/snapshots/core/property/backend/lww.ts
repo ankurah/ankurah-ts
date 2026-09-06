@@ -2,7 +2,7 @@
 import { Struct, Result, Arc, Mutex, RwLock, AnyhowError, JsonError, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, HashMap } from '@ankurah/base';
 import { Operation } from '@ankurah/proto';
 import { Listener, Broadcast, BroadcastId, ListenerGuard } from '@ankurah/signals';
-import { BincodeReader, BincodeWriter } from './codec';
+import { BincodeReader, BincodeWriter } from '../../codec';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Value } from '../../value/index';
 import { PropertyBackend } from './index';

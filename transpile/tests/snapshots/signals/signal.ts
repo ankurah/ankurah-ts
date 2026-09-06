@@ -33,7 +33,7 @@ export interface Signal {
   broadcastId(): BroadcastId;
 }
 
-export interface Get<T> {
+export interface Get<T> extends Signal {
   get(): T;
 }
 

@@ -17,16 +17,21 @@ impl BodyTranslator<'_> {
     /// `fn`, a `struct` — is a declaration the port emits at module
     /// level or not at all.
     pub(crate) fn body_const(&self, c: &syn::ItemConst) -> String {
-        let value = self.expecting(
-            &c.expr,
-            self.types
-                .as_ref()
-                .and_then(|tc| {
-                    self.quietly(|| tc.borrow().resolve_written_type(&c.ty).ok())
-                })
-                .as_ref(),
-            || self.expr_value(&c.expr),
-        );
+        let annotated = self
+            .types
+            .as_ref()
+            .and_then(|tc| self.quietly(|| tc.borrow().resolve_written_type(&c.ty).ok()));
+        let value = self.expecting(&c.expr, annotated.as_ref(), || self.expr_value(&c.expr));
+        // J2: the annotation types the NAME too, not only the literal beside
+        // it. Left unbound, `const MAX_RETRIES: usize = 3;` was a name nothing
+        // could type, so `for attempt in 0..MAX_RETRIES` reached the range rule
+        // with an endpoint it could not name — and the rule let an endpoint it
+        // could not name through, because refusing one would have taken out
+        // that very loop. With the annotation read, the endpoint has a width
+        // and the rule can hold for every one it CAN name.
+        if let (Some(ty), Some(tc)) = (annotated, self.types.as_ref()) {
+            tc.borrow_mut().bind(&c.ident.to_string(), ty);
+        }
         format!("const {} = {};\n", c.ident, value)
     }
 }

@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/core/src/selection/filter.rs
 import { Struct, Enum, Result, invokeRef, dropOwned, derivedEquals, derivedClone } from '@ankurah/base';
-import { Expr, Predicate, Literal } from '@ankurah/ankql';
-import { Comparison } from '../lineage';
+import { Expr, Predicate } from '@ankurah/ankql';
 import { Value_castTo } from '../value/cast';
 import { Value, ValueType } from '../value/index';
 

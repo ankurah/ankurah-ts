@@ -10,6 +10,7 @@
 //! The question is answered from the subject's resolved type and the arms'
 //! patterns, because that is what Rust answers it from.
 
+use crate::ownership::arm_takes::{binds_by_value, members_of};
 use crate::ownership::drops_of;
 use crate::registry::Probe;
 use crate::ty::Ty;
@@ -33,7 +34,7 @@ pub fn takes(
     probe: &Probe,
     subject: &Ty,
     patterns: &[&syn::Pat],
-    payload_of: impl Fn(&syn::Path) -> Vec<Ty>,
+    payload_of: impl Fn(&syn::Path) -> Vec<(String, Ty)>,
 ) -> Takes {
     // A `&T` subject cannot be moved out of, whatever the arms say.
     if matches!(subject, Ty::Ref { .. }) {
@@ -57,25 +58,35 @@ fn binds_owned_payload(
     probe: &Probe,
     pat: &syn::Pat,
     subject: &Ty,
-    payload_of: &impl Fn(&syn::Path) -> Vec<Ty>,
+    payload_of: &impl Fn(&syn::Path) -> Vec<(String, Ty)>,
 ) -> bool {
     match pat {
-        syn::Pat::TupleStruct(ts) => {
-            let fields = payload_of(&ts.path);
-            ts.elems
-                .iter()
-                .zip(fields)
-                .any(|(sub, ty)| binds_by_value(sub) && drops_of(probe, &ty).is_droppable())
-        }
-        syn::Pat::Struct(s) => {
-            let fields = payload_of(&s.path);
-            // A named-field variant is matched by name, so the arm's order says
-            // nothing; the payload list is in declaration order and the pattern
-            // reads as many of them as it names.
-            s.fields
-                .iter()
-                .zip(fields)
-                .any(|(f, ty)| binds_by_value(&f.pat) && drops_of(probe, &ty).is_droppable())
+        // A member is paired with its DECLARED type by `members_of`: by
+        // position for a tuple-struct pattern and BY NAME for a struct one.
+        // Zipped positionally, `Named::V { held, .. }` over
+        // `V { copy: u32, held: Token }` paired `held` with the `u32`, said the
+        // arm took nothing droppable, and the borrowing form left the token
+        // owned by the binding AND by the enum's cascade (I2).
+        syn::Pat::TupleStruct(_) | syn::Pat::Struct(_) => {
+            let path = match pat {
+                syn::Pat::TupleStruct(ts) => &ts.path,
+                syn::Pat::Struct(s) => &s.path,
+                _ => unreachable!("the arm above matched one of these two"),
+            };
+            let fields = payload_of(path);
+            members_of(pat, &fields).into_iter().any(|(sub, ty)| match ty {
+                Some(ty) => binds_by_value(sub) && drops_of(probe, ty).is_droppable(),
+                // A member the payload could not name is not counted, which is
+                // where this has always stood: `payload_of` is asked with the
+                // SUBJECT's own type, so a pattern nested inside an element —
+                // `(RangeBound::Included(l), ..)` over a tuple — comes back
+                // with nothing at all. Reading that as "takes something" made
+                // `core/collation.rs`'s `is_in_range` consuming and released
+                // two bounds the caller still owned. Answering "takes nothing"
+                // leaves the subject's own release standing, which is what the
+                // block already writes.
+                None => false,
+            })
         }
         // K15: `match (a, b) { (Some(x), _) => .. }` takes `x` out of the
         // tuple's FIRST element, and a tuple has no path for `payload_of` to
@@ -112,35 +123,13 @@ fn element_binds_owned(
     probe: &Probe,
     pat: &syn::Pat,
     ty: &Ty,
-    payload_of: &impl Fn(&syn::Path) -> Vec<Ty>,
+    payload_of: &impl Fn(&syn::Path) -> Vec<(String, Ty)>,
 ) -> bool {
     match pat {
         syn::Pat::TupleStruct(_) | syn::Pat::Struct(_) | syn::Pat::Tuple(_) | syn::Pat::Or(_) => {
             binds_owned_payload(probe, pat, ty, payload_of)
         }
         _ => binds_by_value(pat) && drops_of(probe, ty).is_droppable(),
-    }
-}
-
-/// A name bound with neither `ref` nor `&`, which is Rust's by-value binding.
-///
-/// A pattern that goes further into the payload before it binds still moves out
-/// of it: `Ex::Literal(Lit::I(i))` takes `i` by value out of the `Lit` the
-/// `Literal` variant holds, so Rust moves the whole subject just as
-/// `Ex::Path(i)` does. Reading only the outermost pattern said this match
-/// borrowed, so the arm took the value AND the subject's owner released it —
-/// the same double drop the borrowing form was written to avoid.
-fn binds_by_value(pat: &syn::Pat) -> bool {
-    match pat {
-        syn::Pat::Ident(ident) => ident.by_ref.is_none(),
-        syn::Pat::Paren(p) => binds_by_value(&p.pat),
-        syn::Pat::TupleStruct(ts) => ts.elems.iter().any(binds_by_value),
-        syn::Pat::Struct(st) => st.fields.iter().any(|f| binds_by_value(&f.pat)),
-        syn::Pat::Tuple(tuple) => tuple.elems.iter().any(binds_by_value),
-        syn::Pat::Or(or) => or.cases.iter().any(binds_by_value),
-        // `&x` matches through a reference and binds one.
-        syn::Pat::Reference(_) => false,
-        _ => false,
     }
 }
 

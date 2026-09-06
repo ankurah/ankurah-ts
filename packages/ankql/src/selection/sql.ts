@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/ankql/src/selection/sql.rs
-import { Result, BorrowMut, checkedAdd } from '@ankurah/base';
-import { ComparisonOperator, Expr, Literal, Predicate } from '../ast';
+import { decodeUtf8Lossy, Result, BorrowMut, checkedAdd } from '@ankurah/base';
+import { ComparisonOperator, Expr, Predicate } from '../ast';
 import { SqlGenerationError } from '../error';
 
 function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>, foundPlaceholders: BorrowMut<number>, buffer: BorrowMut<string>): Result<void, SqlGenerationError> {
@@ -64,13 +64,13 @@ function generateExprSql(expr: Expr, placeholderCount: BorrowMut<number | null>,
         Object: (v) => {
           const bytes = v._0;
           buffer.value += '\'';
-          buffer.value += String.fromUtf8Lossy(bytes);
+          buffer.value += decodeUtf8Lossy(bytes);
           buffer.value += '\'';
         },
         Binary: (v) => {
           const bytes = v._0;
           buffer.value += '\'';
-          buffer.value += String.fromUtf8Lossy(bytes);
+          buffer.value += decodeUtf8Lossy(bytes);
           buffer.value += '\'';
         },
         Json: (v) => {

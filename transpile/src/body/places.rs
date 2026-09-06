@@ -173,7 +173,56 @@ impl BodyTranslator<'_> {
             used: !self.discards(call),
             reads_as_value: !self.is_written_through(call),
             elements: self.element_ownership(call),
+            fresh_receiver: self.builds_its_own_sequence(&call.receiver),
         }
+    }
+
+    /// Did this receiver's own lowering BUILD the sequence, so that nobody
+    /// else holds it?
+    ///
+    /// J1: `rev` reverses in place where it did and copies first where it did
+    /// not, and reading that off the emitted text — `range(`, `[...`,
+    /// `stepBy(`, `iterFilterMap(` — asked a question about a NAME. A user
+    /// function called `range` answering a shared array would have had `rev`
+    /// reverse the caller's array under them. These are the Rust shapes whose
+    /// lowering allocates: a range expression the port materialises, and the
+    /// adaptors that answer a new list.
+    pub(crate) fn builds_its_own_sequence(&self, receiver: &syn::Expr) -> bool {
+        match receiver {
+            syn::Expr::Paren(p) => self.builds_its_own_sequence(&p.expr),
+            syn::Expr::Group(g) => self.builds_its_own_sequence(&g.expr),
+            syn::Expr::Reference(r) => self.builds_its_own_sequence(&r.expr),
+            // `(0..n)` and `(0..=n)` are written out as arrays.
+            syn::Expr::Range(_) => true,
+            syn::Expr::MethodCall(call) => {
+                let method = call.method.to_string();
+                match method.as_str() {
+                    // Each of these answers a list of its own, whatever the
+                    // sequence under it belongs to.
+                    "step_by" | "filter_map" | "cloned" | "copied" | "to_vec" | "collect" => true,
+                    // `iter`, `into_iter` and `values` are written as a spread,
+                    // which allocates — but only where the receiver really is a
+                    // sequence; on anything else they are somebody's method.
+                    "iter" | "into_iter" | "values" | "keys" | "chars" | "bytes" => {
+                        self.receiver_is_a_sequence(&call.receiver)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Is this expression one the port writes as a JavaScript array?
+    fn receiver_is_a_sequence(&self, expr: &syn::Expr) -> bool {
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(expr)) else { return false };
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        matches!(
+            crate::name_map::shape::js_shape(tc.registry, ty.peel_refs()),
+            crate::name_map::shape::JsShape::Array(_) | crate::name_map::shape::JsShape::Map(..)
+                | crate::name_map::shape::JsShape::Set(_) | crate::name_map::shape::JsShape::Str
+        )
     }
 
     /// What a `let` initialiser that finishes a `map.entry(..)` DID.
@@ -282,7 +331,7 @@ impl BodyTranslator<'_> {
         tc: &crate::infer::TypeContext<'_>,
         found: &crate::registry::MethodResolution,
     ) -> Option<String> {
-        let crate::registry::Callee::TraitObject(trait_id, method) = &found.callee else {
+        let crate::registry::Callee::TraitObject(trait_id, method, _) = &found.callee else {
             return None;
         };
         if !matches!(method.as_str(), "deref" | "deref_mut") {

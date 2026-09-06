@@ -27,11 +27,14 @@ pub enum Inner { A((Token, Token)), B((Token, Token)) }
 
 pub enum Wrap { Held(Inner, Token), Empty }
 
-/// The alternatives take their names out of a tuple, whose destructuring is not
-/// a name or a field list, so the translator cannot read the binding back. The
-/// TEST is still written — a value neither alternative matches reaches the arm
-/// below, which is D2's rule — and the branch releases the payload before it
-/// refuses.
+/// The alternatives take a DROPPABLE name out of the payload member they test
+/// inside, and the port cannot both take a name out of a member and release
+/// what is left of it: K4's refusal, which is what this arm gets. (It used to
+/// be refused for a different reason — the tuple destructuring being one the
+/// translator could not read back — and the reason in the emitted message is
+/// the one that holds.) The TEST is still written, so a value neither
+/// alternative matches reaches the arm below, which is D2's rule; and the
+/// branch releases the payload before it refuses.
 pub fn pick(w: Wrap) -> u32 {
     match w {
         Wrap::Held(Inner::A((a, b)) | Inner::B((b, a)), _) => {

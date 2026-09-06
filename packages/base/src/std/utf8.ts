@@ -23,11 +23,38 @@
  */
 export function decodeUtf8(bytes: Uint8Array): string | null {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return fatalDecoder.decode(bytes);
   } catch {
     return null;
   }
 }
+
+// One decoder per module, not one per call. The three readers that used to
+// build their own each carried a copy of the `fatal` flag with it, and one of
+// them written without it would have answered U+FFFD and said nothing; here the
+// flag is stated once, and constructing a decoder for every byte run read is
+// work nobody asked for.
+const fatalDecoder = new TextDecoder('utf-8', { fatal: true });
+
+/**
+ * The bytes as UTF-8 text, with every byte run that is not UTF-8 replaced by
+ * U+FFFD — Rust's `String::from_utf8_lossy`.
+ *
+ * The OTHER answer, and a deliberate one: where `decodeUtf8` refuses because
+ * Rust's reader refuses, this one substitutes because Rust's `from_utf8_lossy`
+ * substitutes. Rust has both, and which one a site takes is the source's
+ * choice, not the port's. `core/src/value/mod.rs:266` writes an arbitrary byte
+ * value out as a query literal this way, where refusing would take the whole
+ * query down.
+ *
+ * The host's default decoder already substitutes, which is exactly this
+ * behaviour and exactly why `decodeUtf8` has to ask for `fatal`.
+ */
+export function decodeUtf8Lossy(bytes: Uint8Array): string {
+  return lossyDecoder.decode(bytes);
+}
+
+const lossyDecoder = new TextDecoder('utf-8');
 
 /**
  * The index of a surrogate code unit that is not half of a pair, or `null`.

@@ -25,11 +25,24 @@ pub(super) fn hole_in_an_arm(
     has_payload: bool,
     takes: crate::ownership::scrutinee::Takes,
 ) -> String {
-    let throw = format!("{};\n", crate::body::hole_text(what));
-    if !has_payload || takes != crate::ownership::scrutinee::Takes::Payload {
-        return throw;
+    format!("{}{};\n", whole_payload_release(param, has_payload, takes), crate::body::hole_text(what))
+}
+
+/// What a REFUSED arm owes the payload: all of it, because nothing was bound.
+///
+/// The hole writes this before its throw, and a guard on the same link writes
+/// it on the path where the guard itself throws — the arm owns the payload from
+/// the moment `intoMatch` calls it, and a refused link has no bindings to
+/// release instead.
+pub(super) fn whole_payload_release(
+    param: &str,
+    has_payload: bool,
+    takes: crate::ownership::scrutinee::Takes,
+) -> String {
+    match has_payload && takes == crate::ownership::scrutinee::Takes::Payload {
+        true => format!("dropUnbound({}, []);\n", param),
+        false => String::new(),
     }
-    format!("dropUnbound({}, []);\n{}", param, throw)
 }
 
 /// What an arm owes when its own DECLARATIONS carry a hole.

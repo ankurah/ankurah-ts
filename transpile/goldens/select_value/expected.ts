@@ -106,11 +106,40 @@ export async function answer(left: Receiver<number>, right: Receiver<number>): P
           return 7;
         } else if (_v1.tag === '_1') {
           return 8;
+        } else {
+          throw new Error('select: the arbiter answered with a tag no arm wrote');
         }
       } finally {
         for (const _v2 of _v) dropOwned(_v2.promise);
       }
       return 0;
+    } finally {
+      right.drop();
+    }
+  } finally {
+    left.drop();
+  }
+}
+
+export async function answerAtTheTail(left: Receiver<number>, right: Receiver<number>): Promise<number> {
+  try {
+    try {
+      const _v = [
+        { tag: '_0', promise: left.recv() },
+        { tag: '_1', promise: right.recv() },
+      ];
+      try {
+        const _v1 = await select(_v);
+        if (_v1.tag === '_0') {
+          return 9;
+        } else if (_v1.tag === '_1') {
+          return 10;
+        } else {
+          throw new Error('select: the arbiter answered with a tag no arm wrote');
+        }
+      } finally {
+        for (const _v2 of _v) dropOwned(_v2.promise);
+      }
     } finally {
       right.drop();
     }

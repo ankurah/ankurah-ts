@@ -200,6 +200,25 @@ mod tests {
         let tokens: TokenStream = syn::parse_str("Vec<u8>").expect("tokens");
         assert_eq!(stringify_macro(&tokens), "'Vec < u8 >'");
     }
+
+    /// H1: `select` is deliberately NOT on the statement list, because half of its
+    /// lowerings are one expression. A name-based answer would put a `return` in
+    /// front of `const _v = [` for every escaping select and take a `return` off
+    /// every value-producing one.
+    #[test]
+    fn select_is_not_answered_from_its_name() {
+        let path: syn::Path = syn::parse_str("tokio::select").expect("a path");
+        assert!(is_select(&path));
+        assert!(!writes_statements(&path));
+        assert!(!never_comes_back(&path));
+        let bare: syn::Path = syn::parse_str("select").expect("a path");
+        assert!(is_select(&bare));
+        // And the macros whose name DOES answer still do.
+        for name in ["assert", "debug_assert", "bail"] {
+            let p: syn::Path = syn::parse_str(name).expect("a path");
+            assert!(writes_statements(&p) && !is_select(&p), "{}", name);
+        }
+    }
 }
 
 /// Does this macro's lowering write a run of STATEMENTS rather than one value?
@@ -211,6 +230,14 @@ mod tests {
 /// of the text it produced.
 pub(crate) fn writes_statements(path: &syn::Path) -> bool {
     matches!(leaf(path).as_str(), "assert" | "debug_assert" | "bail")
+}
+
+/// Is this `select!`? Its lowering writes one of two forms and RECORDS which
+/// (`BodyTranslator::last_select_wrote_statements`), so it cannot be answered
+/// from the name alone the way the list above is — adding "select" there would
+/// be wrong for every `select!` that produces a value.
+pub(crate) fn is_select(path: &syn::Path) -> bool {
+    leaf(path) == "select"
 }
 
 /// Does this macro's lowering never come back — a `throw` on every path?

@@ -63,7 +63,9 @@ pub(super) fn taken(pat: &syn::Pat, t: &BodyTranslator) -> Takes {
             // it refused three live `Poll::Ready(Some(item))` arms in
             // storage-common. (The same shape `result_arms::inner_test` calls
             // `TestsAndTakesAll`.)
-            if takes_the_whole_nullable(pat) {
+            if crate::ownership::arm_takes::takes_the_whole_nullable(pat, &|path| {
+                t.names_option_variant(path)
+            }) {
                 return Takes::Whole;
             }
             if takes_something_droppable(pat, t) {
@@ -72,11 +74,21 @@ pub(super) fn taken(pat: &syn::Pat, t: &BodyTranslator) -> Takes {
                 Takes::Inside
             }
         }
-        // A tuple is an ARRAY in the port with no drop glue of its own, so an
-        // element named by a tuple pattern is answered the way it always was:
-        // the names the pattern binds are what the arm releases. (A pattern
-        // naming only SOME of a tuple's elements leaves the rest with no owner
-        // and no array to release them; no corpus site writes one.)
+        // A tuple is an ARRAY in the port with no drop glue of its own, so the
+        // names a tuple pattern binds are what the arm releases — as long as it
+        // names EVERY element. `Holder::Pair((a, _))` names one of two, and the
+        // emitter wrote `const [a, ] = v._0;` and left the second element with
+        // no owner at all (H2). Whether that element is droppable is a question
+        // about the member's own type, which the payload walk does not carry
+        // here, so the partial tuple is refused: R12, loudly, rather than a
+        // leak. A tuple SUBJECT is the same shape with the type in hand, and
+        // `value_match` releases its unnamed positions by index.
+        syn::Pat::Tuple(_) | syn::Pat::Slice(_)
+            if crate::ownership::arm_takes::unowned_positions(pat, elements_in(pat))
+                .is_none_or(|unowned| !unowned.is_empty()) =>
+        {
+            Takes::Part
+        }
         // Anything else that binds takes the element whole, which is what the
         // emitter writes for it.
         _ => Takes::Whole,
@@ -107,15 +119,15 @@ fn takes_something_droppable(pat: &syn::Pat, t: &BodyTranslator) -> bool {
     })
 }
 
-/// `Some(x)` with `x` a plain name: the one shape whose test leaves no wrapper,
-/// because the port writes `Option<T>` as `T | null` and `x` IS the value.
-fn takes_the_whole_nullable(pat: &syn::Pat) -> bool {
-    let syn::Pat::TupleStruct(ts) = pat else { return false };
-    let Some(leaf) = ts.path.segments.last() else { return false };
-    if leaf.ident != "Some" || ts.elems.len() != 1 {
-        return false;
+/// How many elements a tuple or slice pattern writes, which is how many the
+/// value has: Rust makes a tuple pattern name every element unless it writes a
+/// `..`, and `unowned_positions` answers `None` for a `..`.
+fn elements_in(pat: &syn::Pat) -> usize {
+    match pat {
+        syn::Pat::Tuple(tuple) => tuple.elems.len(),
+        syn::Pat::Slice(slice) => slice.elems.len(),
+        _ => 0,
     }
-    matches!(ts.elems.first(), Some(syn::Pat::Ident(ident)) if ident.subpat.is_none())
 }
 
 /// The stronger of two answers, so that one alternative reaching inside is not

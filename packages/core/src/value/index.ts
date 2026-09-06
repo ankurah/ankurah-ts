@@ -1,8 +1,7 @@
 // MIRRORS: ankurah/core/src/value/mod.rs
-import { Enum, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals } from '@ankurah/base';
-import { BincodeReader, BincodeWriter } from './codec';
+import { Enum, decodeUtf8Lossy, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, valueEquals } from '@ankurah/base';
+import { BincodeReader, BincodeWriter } from '../codec';
 import { PropertyError } from '../property/traits';
-import { Json } from '../property/value/json';
 import { Literal } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 export * from './cast_predicate';
@@ -24,7 +23,7 @@ export type ValueV = {
 export class Value extends Enum<ValueV> {
 
   static json<T extends Serialize>(value: T): Result<Value, Error> {
-    const _r0 = serdeJson.toValue(value);
+    const _r0 = serde_json.toValue(value);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     return Result.Ok(new Value('Json', { _0: _r0.unwrap() }));
   }
@@ -33,19 +32,19 @@ export class Value extends Enum<ValueV> {
     return this.match({
       Json: (v) => {
         const json = v._0;
-        const _r0 = serdeJson.fromValue(structuredClone(json));
+        const _r0 = serde_json.fromValue(structuredClone(json));
         if (_r0.isErr()) return Result.Err(PropertyError.fromError(_r0.unwrapErr()));
         return Result.Ok(_r0.unwrap());
       },
       Object: (v) => {
         const bytes = v._0;
-        const _r1 = serdeJson.fromSlice(bytes);
+        const _r1 = serde_json.fromSlice(bytes);
         if (_r1.isErr()) return Result.Err(PropertyError.fromError(_r1.unwrapErr()));
         return Result.Ok(_r1.unwrap());
       },
       Binary: (v) => {
         const bytes = v._0;
-        const _r2 = serdeJson.fromSlice(bytes);
+        const _r2 = serde_json.fromSlice(bytes);
         if (_r2.isErr()) return Result.Err(PropertyError.fromError(_r2.unwrapErr()));
         return Result.Ok(_r2.unwrap());
       },
@@ -144,7 +143,7 @@ export class Value extends Enum<ValueV> {
       },
       Binary: (v) => {
         const bytes = v._0;
-        const _r1 = serdeJson.fromSlice(bytes).ok();
+        const _r1 = serde_json.fromSlice(bytes).ok();
         if (_r1 == null) return null;
         const json = _r1;
         let current = json;
@@ -732,7 +731,7 @@ export class ValueType extends Enum<ValueTypeV> {
 
 function jsonValueToValue(json: unknown): Value {
   return json.match({
-    Null: () => new Value('Json', { _0: serdeJson.Value.Null }),
+    Null: () => new Value('Json', { _0: serde_json.Value.Null }),
     Bool: (v) => {
       const b = v._0;
       return new Value('Bool', { _0: b });
@@ -797,11 +796,11 @@ export function Literal_fromValue(value: Value): Literal {
       },
       Object: (v) => {
         const bytes = v._0;
-        return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
+        return new Literal('String', { _0: decodeUtf8Lossy(bytes) });
       },
       Binary: (v) => {
         const bytes = v._0;
-        return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
+        return new Literal('String', { _0: decodeUtf8Lossy(bytes) });
       },
       Json: (v) => {
         const json = v._0;
@@ -845,11 +844,11 @@ export function Literal_fromRefValue(value: Value): Literal {
     },
     Object: (v) => {
       const bytes = v._0;
-      return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
+      return new Literal('String', { _0: decodeUtf8Lossy(bytes) });
     },
     Binary: (v) => {
       const bytes = v._0;
-      return new Literal('String', { _0: String.fromUtf8Lossy(bytes) });
+      return new Literal('String', { _0: decodeUtf8Lossy(bytes) });
     },
     Json: (v) => {
       const json = v._0;

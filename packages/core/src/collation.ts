@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/core/src/collation.rs
-import { Enum, derivedEquals, derivedClone, checkedAdd, checkedSub, range } from '@ankurah/base';
+import { Enum, serde_json, derivedEquals, derivedClone, checkedAdd, checkedSub, range } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
-import { Json } from './property/value/json';
 
 export type RangeBoundV<T> = {
   Included: { _0: T };
@@ -140,7 +139,7 @@ export function Literal_toBytes(self: Literal): Uint8Array {
     },
     Json: (v) => {
       const json = v._0;
-      return serdeJson.toVec(json).unwrapOrDefault();
+      return serde_json.toVec(json).unwrapOrDefault();
     },
   });
 }

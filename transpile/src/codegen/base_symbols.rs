@@ -6,7 +6,10 @@
 //! means adding a runtime helper is a one-line edit to a list, not a line added
 //! to a file that is already long.
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 116] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 117] = [
+    // Rust's two byte-to-text answers: the fatal decode every reader goes
+    // through, and the lossy one `String::from_utf8_lossy` asks for.
+    "decodeUtf8Lossy",
     "Result", "Arc", "Weak", "Mutex", "MutexGuard",
     "RwLock", "RwLockReadGuard", "RwLockWriteGuard",
     "RefCell", "Ref", "RefMut", "ThreadLocal",

@@ -113,3 +113,45 @@ pub(super) fn relative_import_path(current_module: &str, target_module: &str) ->
     parts.join("/")
 }
 
+
+/// The specifier one emitted module imports the crate's bincode codec by.
+///
+/// For: the codec is ONE hand-written module at the crate's root
+/// (`packages/<crate>/src/codec.ts`), and every emitted module that derives
+/// `Serialize`/`Deserialize` reads its `BincodeReader`/`BincodeWriter` from
+/// there. Written as the literal `./codec` it asked for a codec beside itself,
+/// so `core/property/backend/lww.ts` named a module five directories name and
+/// none of them has: the import gate recorded five such rows as modules the
+/// port owed, which writing one `codec.ts` would never have satisfied.
+///
+/// `current_module` is the importing module's own specifier (`./property/
+/// backend/lww`); a caller that does not know it — the single-file `generate_ts`
+/// used by the unit tests — gets the crate root's spelling.
+pub(crate) fn codec_import_path(current_module: Option<&str>) -> String {
+    relative_import_path(current_module.unwrap_or("./index"), "./codec")
+}
+
+/// The whole import line, so the module that writes it needs one line for it.
+pub(crate) fn codec_import(names: &str, current_module: Option<&str>) -> String {
+    format!("import {{ {} }} from '{}';\n", names, codec_import_path(current_module))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codec_import_path;
+
+    /// H4: the codec is at the crate root, so a module in a subdirectory walks
+    /// up to it. Written as a literal `./codec` these five directories each
+    /// asked for a codec of their own.
+    #[test]
+    fn the_codec_is_imported_from_the_crate_root() {
+        assert_eq!(codec_import_path(Some("./index")), "./codec");
+        assert_eq!(codec_import_path(Some("./human_id")), "./codec");
+        assert_eq!(codec_import_path(Some("./value/index")), "../codec");
+        assert_eq!(codec_import_path(Some("./indexing/key_spec")), "../codec");
+        assert_eq!(codec_import_path(Some("./property/backend/lww")), "../../codec");
+        assert_eq!(codec_import_path(Some("./property/value/json")), "../../codec");
+        // A caller with no module of its own is at the root.
+        assert_eq!(codec_import_path(None), "./codec");
+    }
+}

@@ -153,6 +153,8 @@ impl<'a> BodyTranslator<'a> {
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: format!("const {} = {};\n", name, written),
             owned: None,
+            temp: None,
+            refused: false,
         });
         name
     }
@@ -171,6 +173,8 @@ impl<'a> BodyTranslator<'a> {
                 flag: None,
                 statement_scoped: true,
             }),
+            temp: None,
+            refused: false,
         });
         name
     }

@@ -54,17 +54,18 @@ impl BodyTranslator<'_> {
     /// meaningful, which is lowered from the BOUNDS and never reaches this; a
     /// `char` range is a sequence of code points and the port has no helper for
     /// it. An endpoint the engine could not TYPE is left alone: that is the
-    /// engine's own gap, reported where the name is, and refusing it would take
-    /// out `for attempt in 0..MAX_RETRIES` over a function-local `const` —
-    /// which is the loop the materialisation was written for.
+    /// engine's own gap and is reported where the name is. J2: the case that
+    /// used to be behind that door — `for attempt in 0..MAX_RETRIES` over a
+    /// function-local `const` — is not one any more, because an annotated
+    /// body-level `const` types its name; so a width the engine CAN name is now
+    /// refused wherever it appears, including behind such a const.
     fn range_endpoint_refusal(&self, start: &syn::Expr, end: &syn::Expr) -> Option<String> {
         use crate::ty::{Prim, Ty};
         for e in [start, end] {
             // An endpoint the engine could not type is its own gap and is
-            // reported where the name is: `for attempt in 0..MAX_RETRIES` over
-            // a function-local `const` is one, and it is the very loop the
-            // materialisation was written for. What is refused here is a width
-            // the engine CAN name and `n++` cannot step.
+            // reported where the name is. What is refused here is a width the
+            // engine CAN name and `n++` cannot step — which now includes an
+            // annotated body-level `const` (J2).
             let Ok(ty) = self.quietly(|| self.resolve_expr_type(e)) else { continue };
             match ty.peel_refs() {
                 Ty::Prim(
@@ -152,20 +153,37 @@ mod tests {
 
     /// An endpoint the engine could not TYPE is its own gap, reported where the
     /// name is. `for attempt in 0..MAX_RETRIES` over a function-local `const`
-    /// is that shape, and it is the loop the materialisation was written for.
+    /// 3.12, revisited by J2: an ANNOTATED body-level `const` is typed by its
+    /// annotation, so `for attempt in 0..MAX_RETRIES` no longer reaches the
+    /// rule with an endpoint nothing can name — and a width the engine can name
+    /// is refused wherever it stands, including behind such a const.
     #[test]
-    fn an_endpoint_the_engine_cannot_type_is_still_built() {
-        let ts = body(
+    fn an_annotated_body_const_gives_its_endpoint_a_width() {
+        let whitelisted = body(
             "pub fn retries() -> usize {\n\
-               const MAX_RETRIES: usize = 5;\n\
-               let mut n = 0;\n\
-               for _attempt in 0..MAX_RETRIES { n += 1; }\n\
+               const MAX_RETRIES: usize = 3;\n\
+               let mut n = 0usize;\n\
+               for _a in 0..MAX_RETRIES { n += 1; }\n\
                n\n\
              }",
             "retries",
         );
-        assert!(ts.contains("range(0, MAX_RETRIES)"), "{}", ts);
-        assert!(!ts.contains("unsupported("), "{}", ts);
+        assert!(whitelisted.contains("range(0, MAX_RETRIES)"), "{}", whitelisted);
+        assert!(!whitelisted.contains("unsupported("), "{}", whitelisted);
+
+        // The same loop over a width `n++` does not step is refused now, where
+        // before the const had no type and the endpoint was let through.
+        let wide = body(
+            "pub fn wide() -> usize {\n\
+               const LIMIT: u64 = 3;\n\
+               let mut n = 0usize;\n\
+               for _a in 0..LIMIT { n += 1; }\n\
+               n\n\
+             }",
+            "wide",
+        );
+        assert!(wide.contains("unsupported("), "{}", wide);
+        assert!(wide.contains("bigint"), "{}", wide);
     }
 
     /// `Range::contains` is a comparison against the two ends, and is the one

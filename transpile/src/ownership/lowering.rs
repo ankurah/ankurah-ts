@@ -72,6 +72,20 @@ pub struct Lowering {
     /// what transfers the captures and marks the closure moved, so a second
     /// call is the fatal Rust would have refused at compile time.
     pub once_closure_locals: std::cell::RefCell<Vec<String>>,
+    /// The by-value parameters the function's own `finally` releases. A
+    /// statement that REFUSES releases what it named and did not consume, and
+    /// a parameter already on this list is not one of those: releasing it a
+    /// second time is the double drop, not the leak (I4).
+    pub claimed_params: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Every by-value parameter the function takes, claimed or not — the names
+    /// a refusal may owe a release for.
+    pub by_value_params: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Which FORM the `select!` just written took: the value-producing one is
+    /// one expression and the escaping one opens `const _bN = [`, which a
+    /// `return` in front of does not parse. Recorded by the lowering, as
+    /// `last_match_wrote_statements` is, because the macro's NAME cannot say —
+    /// a name-based answer is wrong for every select that produces a value (H1).
+    pub select_wrote_statements: std::cell::Cell<bool>,
     /// Whether the arguments being translated stand in a position whose own
     /// lowering INVOKES them. `Placement::Loose` reports a closure the emitter
     /// cannot see the call site of; these are call sites it writes itself, so

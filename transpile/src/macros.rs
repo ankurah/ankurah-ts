@@ -440,14 +440,13 @@ fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> St
     }
     // The arbiter answers with one of the tags it was handed, so the chain
     // above covers every outcome — but only the code here knows that, and the
-    // arrow function has to produce a value on every path or the caller reads
-    // it as possibly undefined. The last branch says so in the one way a reader
-    // and a type checker both understand.
-    if produces_value {
-        body.push_str(
-            "} else {\n  throw new Error('select: the arbiter answered with a tag no arm wrote');\n",
-        );
-    }
+    // enclosing function has to produce a value on every path or the caller
+    // reads it as possibly undefined. The last branch says so in the one way a
+    // reader and a type checker both understand. H1: written for the escaping
+    // form too, whose arms leave the function around the select — as the last
+    // expression of a body that returns something, the chain fell off its end
+    // and `tsc` said so.
+    body.push_str("} else {\n  throw new Error('select: the arbiter answered with a tag no arm wrote');\n");
     body.push_str("}\n");
     let held = t.fresh_temp();
     let raced = format!(
@@ -458,6 +457,7 @@ fn translate_select(tokens: &proc_macro2::TokenStream, t: &BodyTranslator) -> St
         body = indent(&body),
         held = held,
     );
+    t.own.select_wrote_statements.set(!produces_value);
     if produces_value {
         format!("await (async () => {{\n{}}})()", indent(&ensure_newline(&raced)))
     } else {

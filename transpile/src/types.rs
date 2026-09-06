@@ -219,7 +219,11 @@ pub struct TraitInfo {
     /// these rather than on `Signal` itself.
     pub supertraits: Vec<syn::TraitBound>,
     /// `type Item;` — the associated types each impl has to supply.
-    pub assoc_types: Vec<String>,
+    /// `type IntoIter: Iterator<Item = Self::Item>;` — the names each impl has
+    /// to supply a type for, each with what the trait says that type is good
+    /// for. A projection no impl settles is still a type, and its declared
+    /// bounds are the only thing that says what can be done with it (4.4a).
+    pub assoc_types: Vec<(String, Vec<syn::TypeParamBound>)>,
 }
 
 /// How a method takes its receiver. Method resolution picks the borrow it needs

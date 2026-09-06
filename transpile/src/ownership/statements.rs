@@ -64,6 +64,8 @@ impl<'a> BodyTranslator<'a> {
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: format!("const {} = {};\n{}\n", held, right, release),
             owned: None,
+            temp: None,
+            refused: false,
         });
         format!("{} = {}", left, held)
     }
@@ -141,6 +143,8 @@ impl<'a> BodyTranslator<'a> {
                 release = release,
             ),
             owned: None,
+            temp: None,
+            refused: false,
         });
         Some(chosen)
     }

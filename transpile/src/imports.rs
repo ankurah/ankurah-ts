@@ -181,3 +181,19 @@ pub fn names_this_module_declares(
         }
     }
 }
+
+/// The traits this file's own trait declarations EXTEND.
+///
+/// I8: a supertrait is written into the emitted interface's head, and one
+/// declared in another module of this crate has to be imported for it —
+/// `signals`' `GetAndDynSubscribe` extends three traits `signal.ts` declares,
+/// and naming one without importing it is a `no-undef`. The emitted text is
+/// what decides whether it is written at all (`emit_traits`), and a name this
+/// file does not declare is filtered where every other referenced type is.
+pub fn collect_supertrait_names(file: &crate::types::RustFile, into: &mut HashSet<String>) {
+    for t in &file.traits {
+        for seg in t.supertraits.iter().filter_map(|b| b.path.segments.last()) {
+            into.insert(seg.ident.to_string());
+        }
+    }
+}

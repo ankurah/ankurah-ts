@@ -4,7 +4,6 @@ import { Attested, Clock, EntityId, EntityState, Event, EventId, CollectionId, N
 import { MutationError, RetrievalError } from './error';
 import { Node } from './node';
 import { StorageCollectionWrapper } from './storage';
-import { Get } from '@ankurah/signals';
 
 export class LocalRetriever extends Struct implements GetEvents, Retrieve {
   _0: Arc<LocalRetrieverInner>;
@@ -417,7 +416,7 @@ export abstract class GetEvents {
   abstract markEventUsed(eventId: Id): void;
 }
 
-export interface Retrieve {
+export interface Retrieve extends GetEvents {
   getState(entityId: EntityId): Promise<Result<Attested<EntityState> | null, RetrievalError>>;
 }
 

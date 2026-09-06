@@ -507,3 +507,14 @@ mod tests {
         assert_eq!(*line, 5, "the receiver's own line: {:?}", filed);
     }
 }
+
+/// The type the native tables are asked about for a receiver.
+///
+/// Spec 4.4a: a projection DECLARED to be an `Iterator` is written by the port
+/// as the sequence it built for it — `values.into_iter()` comes out as
+/// `[...values]` — so a call on it is a call on an array, and the array's own
+/// table is what knows how to write it. Everything else is the type the engine
+/// resolved.
+pub(crate) fn receiver_shape(tc: &crate::infer::TypeContext, resolved: &crate::ty::Ty) -> crate::ty::Ty {
+    tc.probe().written_as_sequence(resolved).unwrap_or_else(|| resolved.clone())
+}

@@ -416,6 +416,46 @@ every `impl Trait for T` the corpus relies on from std.
   test, not a runtime guess. Adding a std method is a declared fact plus a
   translation, both reviewed.
 
+### 4.4a A projection that no impl settles is still a type
+
+For: a generic body reaches values whose type is written as a projection and
+nothing in that body says what the projection IS. `Predicate::populate<I: IntoIterator>`
+calls `values.into_iter()`, whose return type Rust spells
+`<I as IntoIterator>::IntoIter`, and then calls `.next()` on it. There is no
+instantiation in sight and no impl to select, so 4.4's rule — "a projection that
+does not normalize is a diagnostic" — reported the receiver and stopped. But Rust
+does not need the impl here either: `IntoIterator` DECLARES what its `IntoIter`
+is good for, `type IntoIter: Iterator<Item = Self::Item>`, and that declaration
+is what makes `.next()` legal in a body that never learns which iterator it is.
+
+So a projection is a type in its own right, and it carries the bounds its
+declaration gives it.
+
+- **What it is.** `Assoc{base, trait_, name}` normalizes through the impl table
+  where the table can answer (4.4). Where it cannot, the projection STANDS —
+  which is the truth about it — and its bounds are the bounds the declaring
+  trait wrote on that associated type, instantiated for this projection:
+  `Self` is the projection's own base, and the trait's parameters are the
+  arguments the bound at the use site was written with. `<I as IntoIterator>::IntoIter`
+  where `I: IntoIterator<Item = V>` therefore carries `Iterator<Item = V>`.
+- **What can be done with it.** Exactly what its bounds declare, which is the
+  same rule a bounded type parameter already follows (4.2): a method call on it
+  resolves through the trait method the bound names, and its return type is that
+  signature's, substituted. Nothing else: a projection with no bounds answers no
+  method, and the site says so as it does today.
+- **Where it resolves.** At an instantiation site the engine sees the concrete
+  type, the impl table answers, and the projection is replaced before any of
+  this is reached. This section is about the body that is compiled ONCE for
+  every instantiation, which is the only body the port emits.
+- **What it does not do.** A bound written with a `where` clause on the impl
+  rather than on the associated type's declaration is not read here, and neither
+  is a bound a supertrait puts on the same name; both are recorded in 7a rather
+  than guessed at. An associated CONST is not a type and is not covered.
+
+The declared std surface is where this is written down for std: the stubs
+already say `type IntoIter: Iterator<Item = Self::Item>;`, and the extractor now
+keeps that bound instead of keeping only the name.
+
 ### 4.5 Closures
 
 For: 256 closures with a non-unit return, and closure parameters typed by the

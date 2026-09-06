@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/storage/sqlite/src/value.rs
 import { Enum } from '@ankurah/base';
-import { Value, Json } from '@ankurah/core';
-import { EntityId } from '@ankurah/proto';
+import { Value } from '@ankurah/core';
 
 export type SqliteValueV = {
   Text: { _0: string };

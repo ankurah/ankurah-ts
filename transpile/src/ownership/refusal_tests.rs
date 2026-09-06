@@ -91,3 +91,40 @@ fn a_self_method_on_a_field_takes_the_field_out() {
     assert!(read.contains("pair.one.width()"), "{}", read);
     assert!(!read.contains("takeField"), "a borrow takes nothing:\n{}", read);
 }
+
+/// H7: a chain link whose PATTERN is refused still has its GUARD.
+///
+/// Rust tries the arm below when a guard fails, so a value the guard rejects
+/// was never this arm's to refuse. Dropped, the hole ran for every value the
+/// variant matched — including the ones the arm would never have run for — and
+/// the comment beside it claimed the opposite.
+#[test]
+fn a_refused_link_keeps_its_guard() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) { } }\n\
+         pub enum Inner { X(Token), Y }\n\
+         impl Drop for Inner { fn drop(&mut self) { } }\n\
+         pub enum Held { One(Inner), Two(u32), Nothing }\n\
+         pub struct Picker;\n\
+         impl Picker {\n\
+           pub fn pick(&self, h: Held, odd: bool) -> u32 {\n\
+             match h {\n\
+               Held::One(Inner::X(t)) if odd => t.n,\n\
+               Held::Two(n) => n,\n\
+               _ => 0,\n\
+             }\n\
+           }\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "pick");
+    assert!(ts.contains("unsupported("), "the pattern is still refused:\n{}", ts);
+    let hole = ts.find("unsupported(").expect("refused");
+    let guard = ts.find("odd").expect("the guard is written");
+    assert!(guard < hole, "the guard stands before the hole it opens:\n{}", ts);
+    // And what it owes on its own throw path is the whole payload, because a
+    // refused link declared none of the pattern's names: naming one would be a
+    // `ReferenceError` in the `catch`.
+    assert!(!ts.contains("t.drop()"), "nothing declared `t` here:\n{}", ts);
+}

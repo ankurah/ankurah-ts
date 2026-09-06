@@ -832,7 +832,7 @@ fn resolve_trait(
         id,
         generics: t.type_params.clone(),
         supertraits,
-        assoc_types: t.assoc_types.clone(),
+        assoc_types: super::assoc::resolve_declared_bounds(&t.assoc_types, &env, sink),
         methods,
         is_auto: t.is_auto,
     })

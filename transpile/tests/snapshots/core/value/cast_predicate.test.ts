@@ -24,7 +24,7 @@ describe('cast_predicate unit tests', () => {
     const entityId = EntityId.new();
     const base64Str = entityId.toBase64();
     const predicate = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('id') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: base64Str }) }) });
-    const schema = TestSchema;
+    const schema = new TestSchema();
     const castPredicate = castPredicateTypes(predicate, schema).unwrap();
     {
       const _v1 = castPredicate;
@@ -55,7 +55,7 @@ describe('cast_predicate unit tests', () => {
     const entityId = EntityId.new();
     const base64Str = entityId.toBase64();
     const predicate = new Predicate('Comparison', { left: new Expr('Literal', { _0: new Literal('String', { _0: base64Str }) }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Path', { _0: PathExpr.simple('id') }) });
-    const schema = TestSchema;
+    const schema = new TestSchema();
     const castPredicate = castPredicateTypes(predicate, schema).unwrap();
     {
       const _v1 = castPredicate;
@@ -86,7 +86,7 @@ describe('cast_predicate unit tests', () => {
     const entityId = EntityId.new();
     const base64Str = entityId.toBase64();
     const predicate = new Predicate('And', { _0: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('id') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: base64Str }) }) }), _1: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'test' }) }) }) });
-    const schema = TestSchema;
+    const schema = new TestSchema();
     const castPredicate = castPredicateTypes(predicate, schema).unwrap();
     {
       const _v4 = castPredicate;

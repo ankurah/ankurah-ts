@@ -573,7 +573,10 @@ impl BodyTranslator<'_> {
     /// wrapper by the `unwrapErr` that rebuilds it, so neither is left for the
     /// leak registry to find.
     pub(crate) fn lower_try(&self, try_expr: &syn::ExprTry) -> Lowered {
-        let inner = self.expr(&try_expr.expr);
+        let inner = match crate::body::refusal::try_operand(self, &try_expr.expr) {
+            Ok(inner) => inner,
+            Err(refused) => return refused,
+        };
         let span = syn::spanned::Spanned::span(try_expr);
         let ty = self.resolve_expr_type(&try_expr.expr).ok();
         let temp = self.fresh_hoist("_r");
@@ -595,16 +598,14 @@ impl BodyTranslator<'_> {
                      the exit is written as `return null` all the same",
                 );
             }
+            let exit = self.leaving_with("null");
             return Lowered {
-                declaration: format!(
-                    "const {} = {};\nif ({} == null) {};\n",
-                    temp,
-                    inner,
-                    temp,
-                    self.leaving_with("null")
-                ),
-                value: temp,
+                declaration: format!("const {temp} = {inner};\nif ({temp} == null) {exit};\n"),
+                value: temp.clone(),
+                // No wrapper: `Option<T>` is `T | null`, so the temporary IS
+                // the payload — and still what a refusal leaves unowned (I4).
                 wrapper: None,
+                temp: Some(temp),
             };
         }
 
@@ -618,16 +619,12 @@ impl BodyTranslator<'_> {
             Some(call) => format!("{}({}.unwrapErr())", call, temp),
             None => format!("{}.unwrapErr()", temp),
         };
+        let exit = self.leaving_with(&format!("Result.Err({})", error));
         Lowered {
-            declaration: format!(
-                "const {} = {};\nif ({}.isErr()) {};\n",
-                temp,
-                inner,
-                temp,
-                self.leaving_with(&format!("Result.Err({})", error))
-            ),
+            declaration: format!("const {temp} = {inner};\nif ({temp}.isErr()) {exit};\n"),
             value: format!("{}.unwrap()", temp),
-            wrapper: Some(temp),
+            wrapper: Some(temp.clone()),
+            temp: Some(temp),
         }
     }
 

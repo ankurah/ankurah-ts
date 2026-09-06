@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/core/src/property/value/entity_ref.rs
 import { Struct, Result, unsupported } from '@ankurah/base';
 import { EntityId, DecodeError } from '@ankurah/proto';
-import { BincodeReader, BincodeWriter } from './codec';
+import { BincodeReader, BincodeWriter } from '../../codec';
 import { Context } from '../../context';
 import { RetrievalError } from '../../error';
 import { Model, View } from '../../indexel';

@@ -1,16 +1,13 @@
 // MIRRORS: ankurah/core/src/type_resolver.rs
 import { Struct, dropOwned, dropUnbound } from '@ankurah/base';
 import { Expr, Literal, PathExpr, Predicate, Selection } from '@ankurah/ankql';
-import { Comparison } from './lineage';
-import { Json } from './property/value/json';
 import { Value_castTo } from './value/cast';
 import { Value, ValueType } from './value/index';
-import { EntityId } from '@ankurah/proto';
 
 export class TypeResolver extends Struct {
 
   static new(): TypeResolver {
-    return TypeResolver;
+    return new TypeResolver();
   }
 
   resolvePath(path: PathExpr): ValueType | null {

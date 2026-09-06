@@ -1,17 +1,13 @@
 // MIRRORS: ankurah/core/src/peer_subscription/client_relay.rs
 import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFilterMap, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
-import { CollectionId, DecodeError, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
-import { SendError } from '../connector';
-import { ApplyError, MutationError, RequestError, RetrievalError, StateError } from '../error';
+import { CollectionId, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
+import { RequestError, RetrievalError } from '../error';
 import { ContextData } from '../node';
 import { NodeApplier } from '../node_applier';
-import { AccessDenied } from '../policy';
-import { PropertyError } from '../property/traits';
-import { EphemeralNodeRetriever, GetEvents } from '../retrieval';
+import { EphemeralNodeRetriever } from '../retrieval';
 import { spawn } from '../task';
 import { SafeSet } from '../util/safeset';
-import { ParseError, Selection } from '@ankurah/ankql';
-import { Get } from '@ankurah/signals';
+import { Selection } from '@ankurah/ankql';
 
 export class Content<CD extends ContextData> extends Struct {
   readonly queryId: QueryId;
@@ -500,6 +496,8 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
               } else if (_v1.tag === '_1') {
                 tracing.debug('Retry task shutting down - SubscriptionRelay dropped');
                 break;
+              } else {
+                throw new Error('select: the arbiter answered with a tag no arm wrote');
               }
             } finally {
               for (const _v2 of _v) dropOwned(_v2.promise);

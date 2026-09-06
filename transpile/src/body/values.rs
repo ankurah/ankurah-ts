@@ -42,6 +42,8 @@ impl BodyTranslator<'_> {
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: tests,
             owned: None,
+            temp: None,
+            refused: false,
         });
         // The value's type is the union of what the arms produced and the
         // sentinel, and the jump above is what rules the sentinel out.
@@ -77,6 +79,8 @@ impl BodyTranslator<'_> {
                 body = indent(&body)
             ),
             owned: None,
+            temp: None,
+            refused: false,
         });
         held
     }

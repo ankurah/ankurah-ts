@@ -132,7 +132,12 @@ pub fn in_value_position(expr: &syn::Expr, t: &BodyTranslator) -> (String, Wrote
             // `return if (..) throw ..` does not parse. Answered from the macro
             // the source NAMED, not from the first word of the text.
             if let syn::Expr::Macro(mac) = expr {
-                if crate::macros::items::writes_statements(&mac.mac.path) {
+                // H1: `select!` is the one whose answer the NAME cannot give —
+                // its lowering writes one of two forms and records which.
+                if crate::macros::items::writes_statements(&mac.mac.path)
+                    || (crate::macros::items::is_select(&mac.mac.path)
+                        && t.own.select_wrote_statements.get())
+                {
                     return statements(ts);
                 }
             }

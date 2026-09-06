@@ -1204,6 +1204,16 @@ the bad bytes were read from. What "fatal" has to mean, case by case, is
 `TextDecoder` carried a copy of the reason with it, and one written without the
 `fatal` flag answers U+FFFD and says nothing.
 
+`decodeUtf8Lossy(bytes)` is the OTHER answer, and a deliberate one: Rust has
+both, and which one a site takes is the source's choice rather than the port's.
+`String::from_utf8_lossy` substitutes U+FFFD for every byte run that is not
+UTF-8, which is what the host's default decoder already does and exactly why
+`decodeUtf8` has to ask for `fatal`. Six emitted sites take it —
+`core/src/value/mod.rs` writes an arbitrary byte value out as a query literal
+that way, where refusing would take the whole query down — and written from its
+name it was `String.fromUtf8Lossy(bytes)`, a static the JavaScript `String` has
+not got.
+
 `serde_json.fromSlice(bytes)` is `serde_json::from_slice`: the bytes are decoded
 fatally and an invalid sequence answers `Err`, where the host's decoder answered
 a document with a replacement character in it. It owns nothing the caller does

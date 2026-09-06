@@ -150,6 +150,24 @@ pub(super) fn payload_walk(
                 {
                     continue;
                 }
+                // An irrefutable pattern still has to say whether it took the
+                // whole member. `Holder::Pair((a, _))` destructures as
+                // `const [a, ] = v._0;` — nothing to test, and the member was
+                // listed as bound, so `dropUnbound` skipped it and the element
+                // the pattern did not name was released by nobody (H2). A tuple
+                // that names every element does take the member whole.
+                if let Some(sub) = subpats.get(i) {
+                    if super::taking::taken(sub, t) == super::taking::Takes::Part {
+                        let what = format!(
+                            "this arm takes only SOME of the elements of `{}` and leaves a \
+                             droppable one unnamed, and the port cannot release a tuple minus \
+                             the elements a name has taken",
+                            accessor
+                        );
+                        t.fallback(syn::spanned::Spanned::span(*sub), what.clone());
+                        out.refused = Some(what);
+                    }
+                }
                 out.text.push_str(&format!("const {} = {};\n", local, place));
                 out.bound_keys.push(accessor.clone());
                 out.names.push(local.clone());

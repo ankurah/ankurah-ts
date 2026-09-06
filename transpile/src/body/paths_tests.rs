@@ -139,3 +139,51 @@ fn a_self_qualified_static_is_the_class_and_the_method() {
     assert!(ts.contains("Conn.setupReceiver(1)"), "{}", ts);
     assert!(!ts.contains("Self"), "{}", ts);
 }
+
+/// I5: a unit struct used as a VALUE, reached under a `use` alias.
+///
+/// Every single-segment path answered before the aliasing rule could be
+/// reached, so `use crate::value::Unit as OuterUnit;` then `OuterUnit` emitted
+/// a name nothing declares while the import list named `Unit`: a
+/// `ReferenceError` on the line that runs it. The port writes a type under the
+/// name it is DECLARED with — that is what its class is called — and a unit
+/// struct written as a value is a VALUE of that type, not the class object.
+#[test]
+fn an_aliased_unit_struct_is_written_under_its_declared_name() {
+    let mut f = Fixture::build(&[
+        ("value.rs", "pub struct Unit;
+pub struct Marked { pub n: u32 }"),
+        (
+            "lib.rs",
+            "pub mod value;
+             use crate::value::Unit as OuterUnit;
+             pub struct Maker;
+             impl Maker {
+               pub fn make(&self) -> crate::value::Unit { OuterUnit }
+             }",
+        ),
+    ]);
+    let ts = f.translated_method("lib.rs", "make");
+    assert!(!ts.contains("OuterUnit"), "the alias names nothing here:
+{}", ts);
+    assert!(ts.contains("new Unit()"), "a unit struct as a value is a value:
+{}", ts);
+}
+
+/// The same shape with no alias: a unit struct written as a value is still a
+/// value, and the class object has none of the members the arms around it call.
+/// Nine live sites in `core/peer_subscription/client_relay.test.ts` handed
+/// `MockLiveQuery` — the class — to a parameter that calls its trait methods.
+#[test]
+fn a_unit_struct_written_as_a_value_is_an_instance() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Mock;
+         pub struct Maker;
+         impl Maker {
+           pub fn make(&self) -> Mock { Mock }
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "make");
+    assert!(ts.contains("new Mock()"), "{}", ts);
+}

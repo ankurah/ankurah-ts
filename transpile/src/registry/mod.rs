@@ -14,13 +14,12 @@ mod bounds;
 mod build;
 pub mod convert;
 mod describe;
-#[cfg(test)]
-mod engine_tests;
+#[cfg(test)] mod engine_tests;
 pub mod impls;
 mod lookup;
 pub mod method;
-#[cfg(test)]
-mod method_tests;
+#[cfg(test)] mod assoc_tests;
+#[cfg(test)] mod method_tests;
 mod module;
 mod resolve_type;
 pub mod std_surface;

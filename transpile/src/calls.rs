@@ -143,7 +143,7 @@ impl BodyTranslator<'_> {
             // on one and tsc refused it. And `JSON.stringify` throws on a
             // `bigint` and rounds a wide integer, where serde_json writes the
             // token exactly (R3).
-            "serde_json.to_string" | "serde_json::to_string" | "serdeJson.toString"
+            "serde_json.to_string" | "serde_json::to_string" | "serde_json.toString"
                 if args.len() == 1 =>
             {
                 return format!("serde_json.stringify(({}).toJSON())", args[0])
@@ -151,7 +151,7 @@ impl BodyTranslator<'_> {
             // `from_str::<T>(s)` parses the text and then asks `T` to read
             // itself out of it, which is what `Deserialize` does. Parsing alone
             // hands back a plain object where a `T` was wanted.
-            "serde_json.from_str" | "serde_json::from_str" | "serdeJson.fromStr"
+            "serde_json.from_str" | "serde_json::from_str" | "serde_json.fromStr"
                 if args.len() == 1 =>
             {
                 // Only where the type really has the static. `T.fromJson(..)`

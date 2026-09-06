@@ -29,7 +29,7 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
                 method,
                 args,
                 &super::array::Element::unknown(),
-                super::iterator::Elements::Borrowed,
+                super::used_and_read(),
             )),
         };
     }
@@ -79,6 +79,7 @@ pub fn translate(receiver: &str, method: &str, args: &[String]) -> MethodTransla
             args,
             super::iterator::Receiver::Sequence,
             super::iterator::Elements::Borrowed,
+            false,
         ) {
             Some(written) => written,
             None => return MethodTranslation::Passthrough,

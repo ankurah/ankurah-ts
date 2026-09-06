@@ -70,11 +70,10 @@ impl<'a> BodyTranslator<'a> {
             let mark = tc.sink.mark();
             let payload = tc.payload_of(path, Some(&subject));
             tc.sink.rewind(mark);
-            payload
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, ty)| ty)
-                .collect()
+            // The NAMES travel with the types: a struct pattern pairs its
+            // fields with the payload by name, and the two lists are not in the
+            // same order (I2).
+            payload.unwrap_or_default()
         })
     }
 

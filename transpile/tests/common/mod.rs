@@ -14,6 +14,10 @@ use std::process::Command;
 /// `[provided_impls]` claim honest.
 pub mod members;
 
+/// Whether an import the port writes can be followed: the two tools that
+/// answer, and the manifest question neither of them asks.
+pub mod imports;
+
 /// The transpiler's own package directory. `transpile.toml` is read relative to
 /// the current directory, so every `batch` run below starts here — the same
 /// place a person stands when they run `cargo run -- batch ...` by hand.

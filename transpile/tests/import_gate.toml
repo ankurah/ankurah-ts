@@ -1,28 +1,81 @@
 # Imports the emitted port writes that do not resolve, written by
-# transpile/tests/import_gate.rs. `unresolved` is a specifier naming no module —
-# every one of these is a `[[provided]]` module the port has not written yet.
-# `unexported` is a name its module does not offer, which is a defect in the
-# import list. Matched EXACTLY in both directions. Generated: do not hand-edit.
-# Refresh with:
+# transpile/tests/import_gate.rs, from `bun build` AND `tsc --noEmit` over the same
+# laid-out port: bun erases a type-only import before it resolves anything, so it
+# sees about half of these.
+#
+# `unresolved` is a specifier naming no module. Most are a `[[provided]]` module the
+# port has not written yet; a relative specifier the EMITTER built wrongly is a
+# defect and is marked as one when it is read. `unexported` is a name its module
+# does not offer, which is a defect in the import list. `other` is any further
+# complaint a tool makes about an import, listed rather than filed under one of the
+# first two. `undeclared_dependencies` is a cross-package import whose package.json
+# declares neither a dependency nor a peerDependency on the package it names — which
+# resolves in this workspace and does not resolve when Expo installs by manifest.
+#
+# Matched EXACTLY in both directions, and a RATCHET: these lists may shrink, and a
+# row that appears is a defect to fix rather than a line to record. Generated: do
+# not hand-edit. Refresh with:
 #     cd transpile && UPDATE_IMPORT_GATE=1 cargo test --test import_gate
 
-# unresolved: 10
+# unresolved: 20
 unresolved = [
-  "connector-websocket/client.ts:4: Could not resolve: \"./connection\"",
-  "connector-websocket/client.ts:5: Could not resolve: \"./connection_state\"",
-  "core/property/backend/index.ts:6: Could not resolve: \"./yrs\"",
-  "core/property/backend/index.ts:8: Could not resolve: \"./yrs\"",
-  "core/property/backend/lww.ts:5: Could not resolve: \"./codec\"",
-  "core/property/value/index.ts:5: Could not resolve: \"./yrs\"",
-  "core/transaction.ts:7: Could not resolve: \"./indexel\"",
-  "core/value/index.test.ts:4: Could not resolve: \"./mod\"",
-  "storage-sqlite/engine.ts:5: Could not resolve: \"./connection\"",
-  "storage-sqlite/index.ts:3: Could not resolve: \"./connection\"",
+  "connector-websocket/client.ts:4: \"./connection\" names no module",
+  "connector-websocket/client.ts:5: \"./connection_state\" names no module",
+  "core/context.ts:7: \"./indexel\" names no module",
+  "core/entity.ts:5: \"./indexel\" names no module",
+  "core/indexing/key_spec.ts:3: \"../codec\" names no module",
+  "core/livequery.ts:8: \"./indexel\" names no module",
+  "core/property/backend/index.ts:6: \"./yrs\" names no module",
+  "core/property/backend/index.ts:8: \"./yrs\" names no module",
+  "core/property/backend/lww.ts:5: \"../../codec\" names no module",
+  "core/property/value/entity_ref.ts:4: \"../../codec\" names no module",
+  "core/property/value/entity_ref.ts:7: \"../../indexel\" names no module",
+  "core/property/value/index.ts:5: \"./yrs\" names no module",
+  "core/property/value/json.ts:3: \"../../codec\" names no module",
+  "core/property/value/yjs.ts:6: \"../backend/yrs\" names no module",
+  "core/resultset.ts:5: \"./indexel\" names no module",
+  "core/transaction.ts:7: \"./indexel\" names no module",
+  "core/value/index.test.ts:4: \"./mod\" names no module",
+  "core/value/index.ts:3: \"../codec\" names no module",
+  "storage-sqlite/engine.ts:5: \"./connection\" names no module",
+  "storage-sqlite/index.ts:3: \"./connection\" names no module",
 ]
 
-# unexported: 2
+# unexported: 18
 unexported = [
-  "core/lineage.test.ts:4: No matching export in \"pkg/core/src/lineage.ts\" for import \"Comparison\"",
-  "core/reactor/comparison_index.test.ts:4: No matching export in \"pkg/core/src/reactor/comparison_index.ts\" for import \"ComparisonIndex\"",
+  "core/entity.ts:9: \"State\" is not exported",
+  "core/lineage.test.ts:4: \"Comparison\" is not exported",
+  "core/node.ts:10: \"Comparison\" is not exported",
+  "core/policy.ts:9: \"State\" is not exported",
+  "core/reactor.ts:10: \"Subscription\" is not exported",
+  "core/reactor.ts:9: \"ReactorSubInner\" is not exported",
+  "core/reactor/comparison_index.test.ts:4: \"ComparisonIndex\" is not exported",
+  "core/reactor/watcherset.ts:6: \"ComparisonIndex\" is not exported",
+  "core/resultset.test.ts:4: \"IVec\" is not exported",
+  "core/type_resolver.test.ts:6: \"Comparison\" is not exported",
+  "core/util/iterable.ts:3: \"Iter\" is not exported",
+  "core/value/cast_predicate.test.ts:6: \"Comparison\" is not exported",
+  "signals/signal/calculated.test.ts:4: \"trigger\" is not exported",
+  "storage-indexeddb/collection.ts:4: \"State\" is not exported",
+  "storage-indexeddb/database.ts:8: \"indexKeyPartFullPath\" is not exported",
+  "storage-indexeddb/database.ts:8: \"keySpecNameWith\" is not exported",
+  "storage-indexeddb/scanner.ts:5: \"CBStream\" is not exported",
+  "storage-sqlite/engine.ts:3: \"State\" is not exported",
 ]
 
+# other: 0
+other = []
+
+# undeclared_dependencies: 4
+undeclared_dependencies = [
+  "connector-local: connector-local/index.ts imports \"@ankurah/base\", which packages/connector-local/package.json declares in neither dependencies nor peerDependencies",
+  "connector-websocket: connector-websocket/client.ts imports \"@ankurah/base\", which packages/connector-websocket/package.json declares in neither dependencies nor peerDependencies",
+  "storage-indexeddb: storage-indexeddb/collection.ts imports \"@ankurah/base\", which packages/storage-indexeddb/package.json declares in neither dependencies nor peerDependencies",
+  "storage-sqlite: storage-sqlite/engine.test.ts imports \"@ankurah/base\", which packages/storage-sqlite/package.json declares in neither dependencies nor peerDependencies",
+]
+
+[summary]
+unresolved = 20
+unexported = 18
+other = 0
+undeclared_dependencies = 4

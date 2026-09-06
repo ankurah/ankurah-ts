@@ -13,7 +13,7 @@ import { NodeApplier } from './node_applier';
 import { SubscriptionRelay } from './peer_subscription/client_relay';
 import { SubscriptionHandler } from './peer_subscription/server';
 import { Reactor } from './reactor';
-import { GetEvents, LocalRetriever } from './retrieval';
+import { LocalRetriever } from './retrieval';
 import { StorageCollectionWrapper } from './storage';
 import { SystemManager } from './system';
 import { spawn } from './task';
@@ -23,7 +23,6 @@ import { Iterable_dispatch_iterable } from './util/iterable';
 import { SafeMap } from './util/safemap';
 import { SafeSet } from './util/safeset';
 import { ParseError, Predicate, Selection, parseSelection } from '@ankurah/ankql';
-import { Get } from '@ankurah/signals';
 
 export class PeerState extends Struct {
   sender: PeerSender;

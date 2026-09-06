@@ -213,11 +213,19 @@ impl BodyTranslator<'_> {
         let before_flags =
             std::mem::replace(&mut *self.own.before_flags.borrow_mut(), previous_before).join("");
         out.push_str(&before_flags);
-        if refused {
+        let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
+        // I4: where the refusal is in a HOIST, part of the statement RAN before
+        // it — a `?` operand standing to its left is evaluated, and its
+        // temporary holds what it took. Releasing the statement's source values
+        // above it would then drop a value the prefix is about to read, so
+        // those releases go in a `finally` around the statement instead, with
+        // the temporaries the prefix produced. Every other refusal keeps the
+        // release above the statement, where nothing of it has run.
+        let refused_in_a_hoist = refused && prelude.iter().any(|hoist| hoist.refused);
+        if refused && !refused_in_a_hoist {
             out.push_str(&self.released_by_a_refusal(stmt, dispositions, ordinals));
         }
         out.push_str(&flags);
-        let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         let owned = std::mem::replace(&mut *self.own.pending.borrow_mut(), previous_pending);
 
         let rest = self.emit_from_at(stmts, i + 1, dispositions, ordinals, tail_is_value);
@@ -237,6 +245,14 @@ impl BodyTranslator<'_> {
         // over, and Rust drops its temporaries there — which is what keeps a
         // lock taken in an argument from being held for the rest of the block.
         let declares = matches!(stmt, syn::Stmt::Local(_));
+        // The statement threw: what it lifted and did not consume is released
+        // in a `finally` around it, and what follows it is never reached.
+        if refused_in_a_hoist {
+            out.push_str(&super::refusal::statement_that_refused(
+                self, stmt, text, rest, &prelude, dispositions, ordinals,
+            ));
+            return out;
+        }
         let mut inner = text;
         if declares {
             // Releasing a guard at the end of its statement is what keeps the

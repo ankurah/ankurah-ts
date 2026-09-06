@@ -26,16 +26,14 @@ impl Probe<'_> {
         name: &str,
         explicit: &[Ty],
     ) -> Vec<Pick> {
-        let bounds: Vec<TraitRef> = match candidate {
-            Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => traits.clone(),
-            Ty::Param(param) => self
-                .param_bounds
-                .iter()
-                .filter(|(p, _)| p == param)
-                .map(|(_, t)| t.clone())
-                .collect(),
-            _ => return Vec::new(),
-        };
+        // One question, asked in one place: what is this receiver DECLARED to
+        // implement. A projection is answered too (spec 4.4a) — `<I as
+        // IntoIterator>::IntoIter` is an `Iterator` by its own declaration, and
+        // `values_iter.next()` dispatches through that.
+        let bounds: Vec<TraitRef> = self.bounds_of(candidate);
+        if bounds.is_empty() {
+            return Vec::new();
+        }
 
         let mut picks = Vec::new();
         for bound in &bounds {
@@ -67,7 +65,7 @@ impl Probe<'_> {
             // on an `I: Iterator` said nothing about `Vec` without this.
             self.bind_explicit(&method.sig, explicit, &mut subst);
             picks.push(Pick {
-                callee: Callee::TraitObject(owner.id, name.to_string()),
+                callee: Callee::TraitObject(owner.id, name.to_string(), DeclaredBound(())),
                 ret: method.sig.ret.substitute(&subst),
                 subst,
                 obligations: Vec::new(),
@@ -111,7 +109,7 @@ mod tests {
             .resolve_method(&Ty::Param("T".into()), "ping")
             .expect("the declared bound answers");
         assert!(
-            matches!(found.callee, Callee::TraitObject(id, _) if id == ping),
+            matches!(found.callee, Callee::TraitObject(id, ..) if id == ping),
             "the blanket answered instead of the bound: {:?}",
             found.callee
         );
@@ -135,5 +133,48 @@ mod tests {
             "the impl is what answers for a definite type: {:?}",
             found.callee
         );
+    }
+}
+
+/// A witness that a `Callee::TraitObject` came from `declared_picks`.
+///
+/// H13: `trait_in_scope` exempts every `TraitObject` from the module's `use`
+/// map — a trait the receiver's own type NAMES is in scope for the methods it
+/// declares, whatever the module imported — and the comment asserting that only
+/// this function produces one was enforced by nothing. Its field is private to
+/// this module, so no other can build the variant at all: the claim is now the
+/// type system's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredBound(pub(self) ());
+
+impl DeclaredBound {
+    /// For a test that builds the callee it expects to compare against. A test
+    /// is not a second producer: it never reaches `trait_in_scope`.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> DeclaredBound {
+        DeclaredBound(())
+    }
+}
+
+#[cfg(test)]
+mod witness_tests {
+    use super::DeclaredBound;
+
+    /// H13: `trait_in_scope` exempts every `Callee::TraitObject` from the
+    /// module's `use` map, on the ground that `declared_picks` is the only
+    /// thing that produces one. Nothing enforced that, so a second producer
+    /// added anywhere would have silently taken the exemption with it. The
+    /// witness's field is private to this module, so the claim is the type
+    /// system's now: this test says what the compiler is checking, because a
+    /// test cannot check a thing that will not compile.
+    #[test]
+    fn the_witness_is_this_modules_to_build() {
+        // Buildable here, by the one function that answers a bound.
+        let _here = DeclaredBound(());
+        // And `DeclaredBound(())` written in any other module of the crate is a
+        // compile error (E0603 on the private field), which is the enforcement.
+        // What a test CAN say is that the test constructor is not the ordinary
+        // one: it is behind `#[cfg(test)]` and never reaches `trait_in_scope`.
+        assert_eq!(DeclaredBound::for_tests(), _here);
     }
 }

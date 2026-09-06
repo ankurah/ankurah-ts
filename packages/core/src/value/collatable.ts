@@ -1,8 +1,6 @@
 // MIRRORS: ankurah/core/src/value/collatable.rs
-import { valueEquals, checkedAdd, checkedSub, range } from '@ankurah/base';
+import { serde_json, valueEquals, checkedAdd, checkedSub, range } from '@ankurah/base';
 import { Collatable } from '../collation';
-import { Json } from '../property/value/json';
-import { EntityId } from '@ankurah/proto';
 
 export function Value_toBytes(self: Value): Uint8Array {
   return self.match({
@@ -56,7 +54,7 @@ export function Value_toBytes(self: Value): Uint8Array {
     },
     Json: (v) => {
       const json = v._0;
-      return serdeJson.toVec(json).unwrapOrDefault();
+      return serde_json.toVec(json).unwrapOrDefault();
     },
   });
 }

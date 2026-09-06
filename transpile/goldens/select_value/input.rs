@@ -50,3 +50,14 @@ pub async fn answer(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32
     }
     0
 }
+
+/// H1: the same escaping select as the block's LAST expression. The tail
+/// position asks what form the lowering wrote, and a `select!` is the one macro
+/// whose name cannot answer — `return const _v = [` is what a guess writes, and
+/// no engine reads it.
+pub async fn answer_at_the_tail(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) -> u32 {
+    tokio::select! {
+        _ = left.recv() => { return 9; }
+        _ = right.recv() => { return 10; }
+    }
+}

@@ -3,9 +3,19 @@
 use super::MethodTranslation;
 
 /// Translate String static/associated function calls
-pub fn translate_static(func: &str, _args: &[String]) -> Option<String> {
+pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
     match func {
         "String::new" | "String.new" => Some("''".to_string()),
+        // Rust has TWO byte-to-text answers and which one a site takes is the
+        // source's choice: `from_utf8` refuses an invalid run and
+        // `from_utf8_lossy` substitutes U+FFFD for it. Written from its name
+        // this was `String.fromUtf8Lossy(bytes)`, a static the JavaScript
+        // `String` has not got — a `TypeError` at four emitted sites in
+        // `core/value/index.ts`, each of them writing an arbitrary byte value
+        // out as a query literal.
+        "String::from_utf8_lossy" | "String.fromUtf8Lossy" if args.len() == 1 => {
+            Some(format!("decodeUtf8Lossy({})", args[0]))
+        }
         _ => None,
     }
 }

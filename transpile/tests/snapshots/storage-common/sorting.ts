@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/sorting.rs
-import { Struct, dropOwned, valueEquals, checkedAdd } from '@ankurah/base';
+import { Struct, dropOwned, valueEquals, unsupported, checkedAdd } from '@ankurah/base';
 import { Filterable, Value, Context } from '@ankurah/core';
 import { OrderByComponents } from './types';
 import { OrderByItem } from '@ankurah/ankql';
@@ -35,7 +35,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
         if (_v1 != null) {
           const sorted = _v1;
           {
-            const _v = sorted.next();
+            const _v = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
             if (_v != null) {
               const item = _v;
               return new Poll('Ready', { _0: item });
@@ -69,7 +69,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
               this_.sortedPartition = items.intoIter();
               this_.inner = null;
               const _m1 = new Poll('Ready', { _0: null });
-              return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => new Poll('Ready', { _0: iter.next() }))(this_.sortedPartition!) : _m1) };
+              return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => new Poll('Ready', { _0: unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') }))(this_.sortedPartition!) : _m1) };
             }
           },
           Pending: () => {
@@ -86,7 +86,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
         if (_v4 != null) {
           const sortedIter = _v4;
           {
-            const _v3 = sortedIter.next();
+            const _v3 = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
             if (_v3 != null) {
               const item = _v3;
               return new Poll('Ready', { _0: item });
@@ -237,13 +237,29 @@ class HeapItem<T extends Filterable> extends Struct {
         if ((_v1[0] == null) && (_v1[1] == null)) {
           return 0;
         } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
-          return -1;
+          try {
+            return -1;
+          } finally {
+            dropOwned(_v1[1]);
+          }
         } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Asc'))) {
-          return 1;
+          try {
+            return 1;
+          } finally {
+            dropOwned(_v1[0]);
+          }
         } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Desc'))) {
-          return 1;
+          try {
+            return 1;
+          } finally {
+            dropOwned(_v1[1]);
+          }
         } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Desc'))) {
-          return -1;
+          try {
+            return -1;
+          } finally {
+            dropOwned(_v1[0]);
+          }
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const s = _v1[0];
           const o = _v1[1];
@@ -299,7 +315,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
         if (_v1 != null) {
           const sorted = _v1;
           {
-            const _v = sorted.next();
+            const _v = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
             if (_v != null) {
               const item = _v;
               this_.emittedCount = checkedAdd(this_.emittedCount, 1, 'usize');
@@ -352,7 +368,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                 const _m2 = new Poll('Ready', { _0: null });
                 return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => {
                   {
-                    const _v4 = iter.next();
+                    const _v4 = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
                     if (_v4 != null) {
                       const item = _v4;
                       this_.emittedCount = checkedAdd(this_.emittedCount, 1, 'usize');
@@ -384,7 +400,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
         if (_v6 != null) {
           const sortedIter = _v6;
           {
-            const _v5 = sortedIter.next();
+            const _v5 = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
             if (_v5 != null) {
               const item = _v5;
               this_.emittedCount = checkedAdd(this_.emittedCount, 1, 'usize');
@@ -482,9 +498,17 @@ function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem
         if ((_v1[0] == null) && (_v1[1] == null)) {
           return 0;
         } else if ((_v1[0] == null) && (_v1[1] != null)) {
-          return -1;
+          try {
+            return -1;
+          } finally {
+            dropOwned(_v1[1]);
+          }
         } else if ((_v1[0] != null) && (_v1[1] == null)) {
-          return 1;
+          try {
+            return 1;
+          } finally {
+            dropOwned(_v1[0]);
+          }
         } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
           const a = _v1[0];
           const b = _v1[1];

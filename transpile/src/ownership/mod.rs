@@ -18,6 +18,9 @@
 //! releases at its end, and `places`, `closures` and `iteration` for the three
 //! shapes with rules of their own. `lowering` holds the state they all share.
 
+/// What an arm's pattern takes out of the value it is written for, for both
+/// questions the port asks about a match.
+pub mod arm_takes;
 pub mod closures;
 pub mod glue;
 pub mod iteration;
@@ -127,6 +130,15 @@ pub struct Hoist {
     /// What it owes a release for, where it owes one. A `?` wrapper is
     /// consumed by the `unwrap` that follows and owes nothing.
     pub owned: Option<Owned>,
+    /// The identifier this declaration introduced, where it introduced one.
+    /// Read only on the path where the statement REFUSED: the `unwrap` that
+    /// would have consumed a `?` wrapper never runs there, so the wrapper and
+    /// everything it holds have no owner at all (I4).
+    pub temp: Option<String>,
+    /// Did this hoist's OWN lowering write a hole? Everything the statement
+    /// lifted before it ran; its declaration is where the throw stands, so
+    /// nothing after it is reached.
+    pub refused: bool,
 }
 
 /// `body`, with everything lifted out of it declared before it and released
@@ -136,6 +148,69 @@ pub struct Hoist {
 /// value it declared has to be released however that text is left — which is
 /// the same `try`/`finally` a block writes for its own locals, scoped to
 /// whatever asked for the hoist.
+/// The same, for a statement one of whose HOISTS refused.
+///
+/// The `unwrap` that consumes a `?` wrapper stands in the statement's own text,
+/// and on this path that text is never reached: the hole in a later hoist's
+/// declaration throws first. So every temporary the statement lifted is left
+/// with no owner, along with whatever it holds — two Tokens and a Result in the
+/// shape the review found. Each is released however the statement is left, and
+/// each release ASKS the runtime whether the value still has an owner, because
+/// a hoist standing before the refusal may have been consumed by another that
+/// also ran (`f(g()?)?`): `isMoved` and `isDropped` are the runtime's own answer
+/// and are the only honest test the emitter has.
+///
+/// `after` is what the statement owes for the source values it named and did
+/// not consume; it goes in the outermost `finally`, below the temporaries,
+/// which is the order Rust unwinds in.
+pub fn hoisted_when_refused(body: &str, hoists: &[Hoist], after: &str) -> String {
+    let mut inner = body.to_string();
+    for hoist in hoists.iter().rev() {
+        let wrapped = match (&hoist.owned, &hoist.temp) {
+            (Some(owned), _) => wrap(&inner, owned),
+            // The hoist that REFUSED declared nothing that ran: its own
+            // declaration is where the throw stands.
+            (None, Some(temp)) if !hoist.refused => wrap_guarded(&inner, temp),
+            (None, _) => inner,
+        };
+        inner = format!("{}{}", hoist.declaration, wrapped);
+    }
+    if after.trim().is_empty() {
+        return inner;
+    }
+    format!(
+        "try {{\n{}}} finally {{\n{}}}\n",
+        crate::body::indent(&inner),
+        crate::body::indent(after)
+    )
+}
+
+/// Release `temp` however `body` is left, unless the runtime says somebody else
+/// already owns it or has released it.
+pub fn wrap_guarded(body: &str, temp: &str) -> String {
+    let release = guarded_release(temp);
+    if body.trim().is_empty() {
+        return release;
+    }
+    format!(
+        "try {{\n{}}} finally {{\n{}}}\n",
+        crate::body::indent(body),
+        crate::body::indent(&release)
+    )
+}
+
+/// `dropOwned(x)`, asked of the runtime first.
+///
+/// The cast is load-bearing: a `?` on an `Option<T>` leaves the PAYLOAD in the
+/// temporary, and `T` is whatever the source said — a number has no `isMoved`.
+/// Reading it off an untyped view answers `undefined`, which is "nobody has
+/// taken it", and `dropOwned` lets a primitive go.
+pub fn guarded_release(name: &str) -> String {
+    format!(
+        "if ({name} != null && !({name} as any).isMoved && !({name} as any).isDropped) dropOwned({name});\n"
+    )
+}
+
 pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
     let mut inner = body.to_string();
     for hoist in hoists.iter().rev() {

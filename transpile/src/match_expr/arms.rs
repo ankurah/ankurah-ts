@@ -396,26 +396,38 @@ pub(super) fn translate_link(
     // after the variant dispatch, so a guard that takes a lock takes it only on
     // the path where the variant matched.
     let release_rest = release_of(case, param, &bound, takes, t);
-    if let Some(what) = refused {
-        // K4, and fixpass4's D2: the TEST still decides, so the refusal stands
-        // in the branch and a value it does not match reaches the arm below.
-        drop(_bindings);
-        return super::chain::Link {
-            test,
-            bindings: String::new(),
-            guard: None,
-            block: hole_in_an_arm(&what, param, !fields.is_empty(), takes),
-            leaves: true,
-        };
-    }
     let guard = arm.guard.as_ref().map(|(_, guard)| {
         let (test, lifted) = t.with_own_hoists(|| t.expr(guard));
         super::chain::tried::Guard {
             test,
             lifted,
-            release: guard_release(&declared, &release_rest, takes, t),
+            // A refused link declared none of the pattern's names, so there is
+            // nothing to release through them and naming one would be a
+            // `ReferenceError` on the guard's own throw path. What it owes is
+            // the whole payload, which is what the hole below owes too.
+            release: match refused.is_some() {
+                true => super::owing::whole_payload_release(param, !fields.is_empty(), takes),
+                false => guard_release(&declared, &release_rest, takes, t),
+            },
         }
     });
+    if let Some(what) = refused {
+        // K4, and fixpass4's D2: the TEST still decides, so the refusal stands
+        // in the branch and a value it does not match reaches the arm below.
+        // H7: and so does a value the GUARD rejects — Rust tries the arm below
+        // when a guard fails, and dropping the guard here sent every value the
+        // variant matched into the hole, including the ones the arm would never
+        // have run for. The guard is kept for exactly the reason the test is:
+        // this arm's refusal is not the arms below it.
+        drop(_bindings);
+        return super::chain::Link {
+            test,
+            bindings: String::new(),
+            guard,
+            block: hole_in_an_arm(&what, param, !fields.is_empty(), takes),
+            leaves: true,
+        };
+    }
     let Body { body, lifted, owned, flags, value, leaves } =
         translate_body(arm, &declared, takes, t, match_expr, position, produces);
     drop(_bindings);

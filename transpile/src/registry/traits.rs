@@ -27,10 +27,15 @@ pub struct TraitDef {
     /// `trait Signal: Debug` — an implementor implements these too, so a method
     /// reached on a `dyn Signal` may be declared on one of them.
     pub supertraits: Vec<TraitRef>,
-    /// `type Item;` — the names each impl has to supply a type for. A
-    /// projection on a `dyn Trait` or a bounded parameter is only meaningful
-    /// when the trait declares that name, which is what this answers.
-    pub assoc_types: Vec<String>,
+    /// `type Item;` — the names each impl has to supply a type for, each with
+    /// the bounds the trait DECLARED on it (`type IntoIter: Iterator<Item =
+    /// Self::Item>`), written in terms of the trait's own parameters and
+    /// `Self`. A projection on a `dyn Trait` or a bounded parameter is only
+    /// meaningful when the trait declares that name, which is what the names
+    /// answer; and a projection the impl table cannot settle carries the
+    /// bounds, which are the only thing that says which methods it answers
+    /// (spec 4.4a).
+    pub assoc_types: Vec<(String, Vec<TraitRef>)>,
     pub methods: HashMap<String, TraitMethod>,
     /// `auto trait Send {}`. Rust works these out from a type's fields rather
     /// than from an impl, so there is nothing in the impl table to find and a
@@ -129,7 +134,7 @@ impl TypeRegistry {
     pub fn method_trait(&self, found: &MethodResolution) -> Option<TypeId> {
         match &found.callee {
             Callee::Inherent(..) => None,
-            Callee::TraitObject(id, _) => Some(*id),
+            Callee::TraitObject(id, ..) => Some(*id),
             Callee::TraitImpl(id, _) | Callee::Blanket(id, _) => {
                 self.impl_def(*id).trait_ref.as_ref().map(|tr| tr.id)
             }

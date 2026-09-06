@@ -99,9 +99,16 @@ impl Probe<'_> {
             .collect()
     }
 
-    /// The traits a `dyn Trait`, an `impl Trait` or a bounded parameter is
-    /// required to implement here.
-    fn bounds_of(&self, base: &Ty) -> Vec<TraitRef> {
+    /// The traits a `dyn Trait`, an `impl Trait`, a bounded parameter or a
+    /// PROJECTION is required to implement here.
+    pub(super) fn bounds_of(&self, base: &Ty) -> Vec<TraitRef> {
+        self.bounds_of_within(base, 0)
+    }
+
+    fn bounds_of_within(&self, base: &Ty, depth: usize) -> Vec<TraitRef> {
+        if depth >= MAX_BOUND_DEPTH {
+            return Vec::new();
+        }
         match base {
             Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => traits.clone(),
             Ty::Param(param) => self
@@ -110,8 +117,78 @@ impl Probe<'_> {
                 .filter(|(p, _)| p == param)
                 .map(|(_, t)| t.clone())
                 .collect(),
+            // Spec 4.4a: a projection no impl settles is still a type, and what
+            // can be done with it is what its DECLARATION says. `IntoIterator`
+            // writes `type IntoIter: Iterator<Item = Self::Item>`, which is what
+            // makes `values.into_iter().next()` legal in a body that never
+            // learns which iterator it is.
+            Ty::Assoc { base: inner, trait_, name } => {
+                self.declared_assoc_bounds(inner, trait_.as_deref(), name, depth)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The bounds the DECLARING trait wrote on this associated type,
+    /// instantiated for this projection: `Self` is the projection's own base,
+    /// and the trait's parameters are the arguments the use site named it with.
+    fn declared_assoc_bounds(
+        &self,
+        base: &Ty,
+        written: Option<&TraitRef>,
+        name: &str,
+        depth: usize,
+    ) -> Vec<TraitRef> {
+        let Some(owner) = self.trait_declaring(base, written, name, depth) else {
+            return Vec::new();
+        };
+        let Some(def) = self.reg.trait_def(owner.id) else { return Vec::new() };
+        let Some((_, bounds)) = def.assoc_types.iter().find(|(n, _)| n == name) else {
+            return Vec::new();
+        };
+        let mut subst = crate::ty::bind_params(&def.generics, &owner.args);
+        subst.insert("Self".to_string(), base.clone());
+        bounds
+            .iter()
+            .map(|bound| self.normalize_trait_ref(&bound.substitute(&subst)))
+            .collect()
+    }
+
+    /// Which trait declares this associated name for this base — the one the
+    /// source wrote, or the first bound in the chain that declares it.
+    fn trait_declaring(
+        &self,
+        base: &Ty,
+        written: Option<&TraitRef>,
+        name: &str,
+        depth: usize,
+    ) -> Option<TraitRef> {
+        if let Some(tr) = written {
+            return Some(tr.clone());
+        }
+        self.bounds_of_within(base, depth + 1)
+            .iter()
+            .find_map(|bound| self.declaring_through(bound, name, &mut Vec::new()))
+    }
+
+    fn declaring_through(
+        &self,
+        of: &TraitRef,
+        name: &str,
+        seen: &mut Vec<crate::ty::TypeId>,
+    ) -> Option<TraitRef> {
+        if seen.contains(&of.id) {
+            return None;
+        }
+        seen.push(of.id);
+        let def = self.reg.trait_def(of.id)?;
+        if def.assoc_types.iter().any(|(a, _)| a == name) {
+            return Some(of.clone());
+        }
+        let subst = crate::ty::bind_params(&def.generics, &of.args);
+        def.supertraits
+            .iter()
+            .find_map(|s| self.declaring_through(&s.substitute(&subst), name, seen))
     }
 
     /// What a bound on a `dyn Trait` or a bounded parameter says about one
@@ -157,7 +234,7 @@ impl Probe<'_> {
             return Some(BoundAssoc::Bound(ty.clone()));
         }
         let def = self.reg.trait_def(of.id)?;
-        let declares = def.assoc_types.iter().any(|a| a == name);
+        let declares = def.assoc_types.iter().any(|(a, _)| a == name);
         // The supertraits are written in terms of this trait's parameters, so
         // they are instantiated with what stood at them before the search goes
         // on — the same walk `trait_method_of` takes for a method.
@@ -176,6 +253,28 @@ impl Probe<'_> {
             }
         }
         declares.then_some(BoundAssoc::Open)
+    }
+
+    /// The type the PORT writes for a value, where that differs from the type
+    /// Rust gives it.
+    ///
+    /// A projection declared to be an `Iterator` is the one case: the port
+    /// writes an iterator as the whole sequence — `values.into_iter()` comes
+    /// out as `[...values]` — so a call on a `<I as IntoIterator>::IntoIter` is
+    /// a call on an array, and the array's own table is what knows how to write
+    /// it (spec 4.4a). Answered from the DECLARED bound, so it holds in a
+    /// generic body that never learns which iterator it is.
+    pub fn written_as_sequence(&self, ty: &Ty) -> Option<Ty> {
+        if !matches!(ty.peel_refs(), Ty::Assoc { .. }) {
+            return None;
+        }
+        let iterator = self.reg.system_type("std::iter::Iterator")?;
+        let item = self.bounds_of(ty.peel_refs()).into_iter().find_map(|bound| {
+            (bound.id == iterator)
+                .then(|| bound.bindings.iter().find(|(n, _)| n == "Item").map(|(_, t)| t.clone()))
+                .flatten()
+        })?;
+        Some(Ty::Slice(Box::new(item)))
     }
 
     /// The type an impl supplies for one associated name.
@@ -281,4 +380,40 @@ mod i10_tests {
         );
         assert!(ts.contains(".n"), "{}", ts);
     }
+}
+
+/// The bounds a trait declared on each of its associated types, resolved.
+///
+/// Written in the trait's own terms — its parameters and `Self` — exactly as
+/// its supertraits are, and resolved in the same environment. A bound the
+/// engine cannot name says nothing and is reported; a projection with no bounds
+/// answers no method, which is where every projection stood before the bounds
+/// were kept at all (spec 4.4a).
+pub(super) fn resolve_declared_bounds(
+    declared: &[(String, Vec<syn::TypeParamBound>)],
+    env: &super::resolve_type::TypeEnv<'_>,
+    sink: &crate::diag::DiagSink,
+) -> Vec<(String, Vec<TraitRef>)> {
+    declared
+        .iter()
+        .map(|(name, bounds)| {
+            let resolved = bounds
+                .iter()
+                .filter_map(|bound| match bound {
+                    // Only a trait bound says anything here; a lifetime does not.
+                    syn::TypeParamBound::Trait(bound) => {
+                        match super::resolve_type::trait_ref(bound, env) {
+                            Ok(tr) => Some(tr),
+                            Err(diag) => {
+                                sink.push(diag);
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            (name.clone(), resolved)
+        })
+        .collect()
 }

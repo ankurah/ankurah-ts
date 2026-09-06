@@ -75,7 +75,7 @@ impl<'a> BodyTranslator<'a> {
         found: &crate::registry::MethodResolution,
         call: &syn::ExprMethodCall,
     ) -> Option<String> {
-        let crate::registry::Callee::TraitObject(trait_id, method) = &found.callee else {
+        let crate::registry::Callee::TraitObject(trait_id, method, _) = &found.callee else {
             return None;
         };
         let reg = tc.registry;

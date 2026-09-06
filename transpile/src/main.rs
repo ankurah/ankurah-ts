@@ -15,6 +15,7 @@ mod derives;
 mod diag;
 mod emit;
 mod emit_impls;
+mod emit_traits; // I8: what a trait passes on to its implementors
 mod extract;
 mod imports;
 mod infer;
@@ -28,8 +29,7 @@ mod ownership;
 mod provided_types;
 mod registry;
 mod siblings;
-#[cfg(test)]
-mod testing;
+#[cfg(test)] mod testing;
 mod trace;
 mod ty;
 mod types;

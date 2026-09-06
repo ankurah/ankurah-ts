@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/property/value/json.rs
-import { Struct, Result, JsonError, OwnershipFatal, UnsupportedShape, unsupported } from '@ankurah/base';
-import { BincodeReader, BincodeWriter } from './codec';
+import { Struct, Result, JsonError, serde_json, OwnershipFatal, UnsupportedShape, unsupported } from '@ankurah/base';
+import { BincodeReader, BincodeWriter } from '../../codec';
 import { Value } from '../../value/index';
 import { Property } from '../index';
 import { PropertyError } from '../traits';
@@ -18,16 +18,16 @@ export class Json extends Struct implements Property {
   }
 
   static null(): Json {
-    return new Json(serdeJson.Value.Null);
+    return new Json(serde_json.Value.Null);
   }
 
   static object(pairs: [string, unknown][]): Json {
     const map = unsupported('`collect` into `Map<string, unknown>` is a `FromIterator` the port has no construction for');
-    return new Json(serdeJson.Value.Object(map));
+    return new Json(new serde_json.Value('Object', { _0: map }));
   }
 
   static array(items: unknown[]): Json {
-    return new Json(serdeJson.Value.Array([...items]));
+    return new Json(new serde_json.Value('Array', { _0: [...items] }));
   }
 
   inner(): unknown {

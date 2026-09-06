@@ -13,7 +13,7 @@
 
 import { expect, test } from 'bun:test';
 import { dropOwned, mpsc } from '@ankurah/base';
-import { answer, doubled, firstOf, lastWord, twice } from './input.ts';
+import { answer, answerAtTheTail, doubled, firstOf, lastWord, twice } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('twice is an ordinary function that owns nothing', () => {
@@ -74,6 +74,19 @@ test('the other returning arm leaves the same way', async () => {
   const [rightTx, rightRx] = mpsc.channel<number>(1);
   dropOwned(await rightTx.send(5));
   expect(await answer(leftRx, rightRx)).toBe(8);
+  leftTx.drop();
+  rightTx.drop();
+});
+
+// H1: the same escaping select as the block's LAST expression. The tail
+// position asks the lowering which form it wrote; guessed from the macro's
+// name, this came out `return const _v = [`, which no engine parses — the
+// module would not have loaded at all.
+test('an escaping select at the tail leaves through its own arm', async () => {
+  const [leftTx, leftRx] = mpsc.channel<number>(1);
+  const [rightTx, rightRx] = mpsc.channel<number>(1);
+  dropOwned(await leftTx.send(1));
+  expect(await answerAtTheTail(leftRx, rightRx)).toBe(9);
   leftTx.drop();
   rightTx.drop();
 });

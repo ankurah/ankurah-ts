@@ -28,9 +28,8 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
     let _moved1 = false;
     const value_1 = _r0.unwrap();
     try {
-      const _b2 = this.propertyName;
       _moved1 = true;
-      this.backend.value.set(_b2, value_1);
+      this.backend.value.set(this.propertyName, value_1);
       return Result.Ok([]);
     } finally {
       if (!_moved1) dropOwned(value_1);

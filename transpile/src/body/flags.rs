@@ -114,14 +114,63 @@ impl BodyTranslator<'_> {
             .into_iter()
             .enumerate()
             .map(|(index, text)| match exprs.get(index) {
-                // What is lifted is the emitted TEXT, so text that is a bare
-                // name is nothing to lift: a `String::clone` is the identity in
-                // the port and `name.clone()` comes out as `name`, which
-                // evaluating cannot throw however the Rust was written.
-                Some(e) if lifts(&e) && !is_a_name(&text) => self.name_above_the_flag(text),
+                // A `String::clone` is the identity in the port, so
+                // `name.clone()` comes out as `name` and evaluating it cannot
+                // throw however the Rust was written — nothing to lift. J1:
+                // asked of the EXPRESSION and what the port writes for it,
+                // rather than of the emitted text, because whether an operand
+                // is a place is a fact the lowering has.
+                Some(e) if lifts(&e) && !self.writes_a_place(e.expect("filtered"))
+                    => self.name_above_the_flag(text),
                 _ => text,
             })
             .collect()
+    }
+
+    /// Does the port write this expression as a PLACE — a name or a member
+    /// read — whatever Rust's own expression is?
+    ///
+    /// `evaluates_quietly` answers the Rust question: a path, a field, an
+    /// index, a literal, a closure. This answers the port's, which is wider by
+    /// exactly the calls the port writes as the identity: `String::clone`,
+    /// `to_owned` and `to_string` on a value the port holds as a JavaScript
+    /// value are the receiver itself, so `name.clone()` IS `name`. Reading one
+    /// cannot throw, so there is nothing to lift above a move flag.
+    fn writes_a_place(&self, expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Paren(p) => self.writes_a_place(&p.expr),
+            syn::Expr::Group(g) => self.writes_a_place(&g.expr),
+            syn::Expr::Reference(r) => self.writes_a_place(&r.expr),
+            syn::Expr::Unary(syn::ExprUnary { op: syn::UnOp::Deref(_), expr, .. }) => {
+                self.writes_a_place(expr)
+            }
+            syn::Expr::MethodCall(call)
+                if call.args.is_empty()
+                    && matches!(
+                        call.method.to_string().as_str(),
+                        "clone" | "to_owned" | "to_string"
+                    ) =>
+            {
+                self.writes_a_place(&call.receiver) && self.copies_by_reading(&call.receiver)
+            }
+            other => evaluates_quietly(other),
+        }
+    }
+
+    /// Is this receiver a value the port holds as a JavaScript VALUE, so that
+    /// copying it is reading it? A `string`, a number, a boolean and a `bigint`
+    /// are; everything with a class of its own has a `clone()` that builds.
+    fn copies_by_reading(&self, receiver: &syn::Expr) -> bool {
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(receiver)) else { return false };
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        matches!(
+            crate::name_map::shape::js_shape(tc.registry, ty.peel_refs()),
+            crate::name_map::shape::JsShape::Str
+                | crate::name_map::shape::JsShape::Number
+                | crate::name_map::shape::JsShape::Boolean
+                | crate::name_map::shape::JsShape::BigInt
+        )
     }
 
     /// The statement's own outermost expression, for the placement rule above.
@@ -185,12 +234,7 @@ fn evaluates_quietly(expr: &syn::Expr) -> bool {
     matches!(expr, syn::Expr::Lit(_) | syn::Expr::Closure(_)) || crate::body::is_place(expr)
 }
 
-/// Is this emitted text a bare identifier — something evaluating cannot throw?
-fn is_a_name(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -274,5 +318,47 @@ mod tests {
             "f",
         );
         assert!(!ts.contains("const _b"), "an argument was lifted out of an arm:\n{}", ts);
+    }
+
+    /// J1: what is lifted above a move flag is decided from the EXPRESSION and
+    /// what the port writes for it, not from the emitted text.
+    ///
+    /// Read off the text, only a bare NAME was left alone — so
+    /// `self.property_name.clone()`, which the port writes as the place
+    /// `this.propertyName`, was lifted into a temporary that says nothing.
+    /// Live at `core/property/value/lww.ts`.
+    #[test]
+    fn a_place_the_port_writes_as_itself_is_not_lifted() {
+        let ts = body(
+            "pub struct Named { pub name: String }\n\
+             impl Named {\n\
+               pub fn take(&self, s: String, t: Token) -> u32 { 0 }\n\
+               pub fn give(&self, t: Token) -> u32 {\n\
+                 if true { return self.take(self.name.clone(), t); }\n\
+                 0\n\
+               }\n\
+             }",
+            "give",
+        );
+        assert!(ts.contains("_moved"), "the call really does hand a flagged local away:\n{}", ts);
+        assert!(
+            !ts.contains("const _b"),
+            "`String::clone` is the identity here, so `this.name` is a place and there is \
+             nothing to lift:\n{}",
+            ts
+        );
+        // And an argument that CAN throw is still lifted above the flag.
+        let throws = body(
+            "pub struct Sink2;\n\
+             impl Sink2 {\n\
+               pub fn take(&self, n: u32, t: Token) -> u32 { n }\n\
+               pub fn give(&self, o: Option<u32>, t: Token) -> u32 {\n\
+                 if true { return self.take(o.unwrap(), t); }\n\
+                 0\n\
+               }\n\
+             }",
+            "give",
+        );
+        assert!(throws.contains("const _b"), "an `unwrap` can throw:\n{}", throws);
     }
 }

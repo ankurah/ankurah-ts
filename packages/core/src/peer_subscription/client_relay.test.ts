@@ -150,7 +150,7 @@ describe('client_relay unit tests', () => {
       try {
         const peerId = EntityId.new();
         relay.notifyPeerConnected(peerId);
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
+        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
         if (!(((_v) => {
           if (!(_v != null && (_v.is('Requested')))) return false;
           return true;
@@ -184,7 +184,7 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       const peerId = EntityId.new();
       relay.notifyPeerConnected(peerId);
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, MockLiveQuery);
+      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
       await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
       if (!(((_v) => {
         if (!(_v != null && (_v.is('Established')))) return false;
@@ -211,7 +211,7 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
+        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
         if (!(((_v) => {
           if (!(_v != null && (_v.is('PendingRemote')))) return false;
           return true;
@@ -247,7 +247,7 @@ describe('client_relay unit tests', () => {
       try {
         const peerId = EntityId.new();
         relay.notifyPeerConnected(peerId);
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
+        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
         if (!(((_v) => {
           if (!(_v != null && (_v.is('Established')))) return false;
@@ -288,8 +288,8 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(retryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
-        relay.subscribeQuery(nonRetryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
+        relay.subscribeQuery(retryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        relay.subscribeQuery(nonRetryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
         (() => {
           let subscriptions = relay.inner.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
           {
@@ -339,7 +339,7 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       const peerId = EntityId.new();
       relay.notifyPeerConnected(peerId);
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, MockLiveQuery);
+      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
       await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
       if (!(((_v) => {
         if (!(_v != null && (_v.is('Established')))) return false;
@@ -371,7 +371,7 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, MockLiveQuery);
+        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
         if (!(((_v) => {
           if (!(_v != null && (_v.is('PendingRemote')))) return false;
@@ -408,7 +408,7 @@ describe('client_relay unit tests', () => {
     const collectionId = createTestCollectionId();
     try {
       const predicate = createTestSelection();
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, MockLiveQuery);
+      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
       if (!(((_v) => {
         if (!(_v != null && (_v.is('PendingRemote')))) return false;
         return true;

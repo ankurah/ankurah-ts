@@ -116,7 +116,7 @@ pub fn translate(
     method: &str,
     args: &[String],
     element: &Element,
-    elements: super::iterator::Elements,
+    at: super::Position,
 ) -> MethodTranslation {
     // E13: `Option<T>` is `T | null` here, so a reader answering
     // `Option<Element>` over a `Vec<Option<T>>` has ONE `null` for two
@@ -285,6 +285,24 @@ pub fn translate(
             format!("[...{}]", receiver)
         }
 
+        // `Iterator::next` advances a CURSOR and answers the element it moved
+        // past. The port writes an iterator as the whole sequence and keeps no
+        // cursor at all, so there is nothing here to advance: written from its
+        // name it was `xs.next()`, a method no array declares. Refused (R12),
+        // which is the same answer §3.5 gives a consuming terminal on a named
+        // iterator and for the same reason — the port cannot say which elements
+        // are still the caller's. A `next` on a stream or on a hand-written
+        // iterator is not this arm: it never reaches the sequence table.
+        "next" if args.is_empty() => {
+            let message = "`next` advances an iterator's cursor, and the port writes an \
+                           iterator as the whole sequence with no cursor to advance"
+                .to_string();
+            return MethodTranslation::Refused {
+                fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+                message,
+            };
+        }
+
         // Everything else an iterator declares is an array operation, and the
         // table for those is shared with the untyped path rather than copied:
         // a `Cloned<Values<'_, K, V>>` is a JavaScript array, so `collect` and
@@ -294,7 +312,8 @@ pub fn translate(
             method,
             args,
             super::iterator::Receiver::Sequence,
-            elements,
+            at.elements,
+            at.fresh_receiver,
         ) {
             Some(result) => result,
             None => return MethodTranslation::Passthrough,
@@ -320,13 +339,13 @@ mod tests {
         assert!(!plain.nullable, "a u32 element is not");
         for (method, args) in [("first", 0usize), ("last", 0), ("get", 1), ("find", 1), ("pop", 0)] {
             let args: Vec<String> = (0..args).map(|n| format!("a{n}")).collect();
-            let refused = translate("xs", method, &args, &nullable, super::super::iterator::Elements::Borrowed);
+            let refused = translate("xs", method, &args, &nullable, super::super::used_and_read());
             assert!(
                 matches!(refused, MethodTranslation::Refused { .. }),
                 "`{}` over a nullable element was written anyway",
                 method
             );
-            let written = translate("xs", method, &args, &plain, super::super::iterator::Elements::Borrowed);
+            let written = translate("xs", method, &args, &plain, super::super::used_and_read());
             assert!(
                 !matches!(written, MethodTranslation::Refused { .. }),
                 "`{}` over a plain element must be unchanged",
@@ -347,7 +366,7 @@ mod tests {
     }
 
     fn expr(receiver: &str, method: &str, element: &Element) -> String {
-        match translate(receiver, method, &[], element, super::super::iterator::Elements::Borrowed) {
+        match translate(receiver, method, &[], element, super::super::used_and_read()) {
             MethodTranslation::Expr(ts) => ts,
             MethodTranslation::Refused { fallback, .. } => match *fallback {
                 MethodTranslation::Expr(ts) => ts,
@@ -387,7 +406,7 @@ mod tests {
     /// do.
     #[test]
     fn an_element_with_no_clone_is_reported() {
-        match translate("xs", "to_vec", &[], &holding("Opaque", false), super::super::iterator::Elements::Borrowed) {
+        match translate("xs", "to_vec", &[], &holding("Opaque", false), super::super::used_and_read()) {
             MethodTranslation::Refused { message, .. } => {
                 assert!(message.contains("has no `clone()`"), "{}", message)
             }

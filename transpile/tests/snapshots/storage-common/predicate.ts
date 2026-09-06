@@ -1,7 +1,6 @@
 // MIRRORS: ankurah/storage/common/src/predicate.rs
 import { Struct } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
-import { Comparison } from '@ankurah/core';
 
 export class ConjunctFinder extends Struct {
 

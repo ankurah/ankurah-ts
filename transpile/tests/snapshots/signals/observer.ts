@@ -5,7 +5,7 @@ export * from './observer/callback_observer';
 export interface ObserverBounds {
 }
 
-export interface Observer {
+export interface Observer extends ObserverBounds {
   observe(signal: Signal): void;
   observerId(): number;
   asAny(): Any;

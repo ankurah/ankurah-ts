@@ -33,10 +33,28 @@ pub(super) fn translate_value_match(
         .flat_map(|arm| crate::body::pattern_names(&arm.pat))
         .collect();
     let (subject, declaration) = subject_of_bound(scrutinee, &binds, t);
+    // What the subject's OWN release no longer covers. A consuming match marks
+    // the subject moved and writes no release for it, so a tuple pattern that
+    // names only some of its elements left the rest with no owner at all
+    // (H2/I1): `match pair { (a, _) => .. }` released `a` and let `pair[1]`
+    // reach the collector. The port writes a tuple as an array and knows every
+    // position of it, so the arm releases the positions its pattern did not
+    // name.
+    let consumes = t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload;
     let arms: Vec<Arm> = match_expr
         .arms
         .iter()
-        .map(|arm| written_arm(arm, &subject, &match_expr.expr, scrutinee_ty.as_ref(), t, position))
+        .map(|arm| {
+            written_arm(
+                arm,
+                &subject,
+                &match_expr.expr,
+                scrutinee_ty.as_ref(),
+                t,
+                position,
+                consumes.then(|| unowned_elements(&arm.pat, scrutinee_ty.as_ref(), t)).unwrap_or_default(),
+            )
+        })
         .collect();
     // A guard reads the names its own pattern bound, and a guard that fails
     // hands the subject to the arm below it. An `else if` chain carries only
@@ -110,6 +128,7 @@ struct Arm {
 }
 
 /// Write one arm out.
+#[allow(clippy::too_many_arguments)]
 fn written_arm(
     arm: &syn::Arm,
     subject: &str,
@@ -117,6 +136,7 @@ fn written_arm(
     scrutinee_ty: Option<&crate::ty::Ty>,
     t: &BodyTranslator,
     position: Position,
+    unowned: Vec<usize>,
 ) -> Arm {
     let _bindings = t.enter_pattern(&arm.pat, scrutinee_ty);
     let (test, bind) = t.pattern_test(subject, &arm.pat);
@@ -158,9 +178,47 @@ fn written_arm(
         before,
         guard,
         flags,
-        body: t.wrap_bindings(&owned, crate::ownership::hoisted(&format!("{}\n", body), &lifted)),
+        body: releasing_unowned_elements(
+            t.wrap_bindings(&owned, crate::ownership::hoisted(&format!("{}\n", body), &lifted)),
+            subject,
+            &unowned,
+        ),
         leaves,
     }
+}
+
+/// Which positions of a tuple subject this arm's pattern left with no owner.
+///
+/// Answered from the SUBJECT's type, which is where the port knows what each
+/// position holds. A subject it could not read as a tuple, and a pattern with a
+/// `..` in it, answer nothing — `taking::taken` refuses the same shapes where
+/// the type is not in hand.
+fn unowned_elements(
+    pat: &syn::Pat,
+    scrutinee_ty: Option<&crate::ty::Ty>,
+    t: &BodyTranslator,
+) -> Vec<usize> {
+    let Some(crate::ty::Ty::Tuple(elements)) = scrutinee_ty.map(|ty| ty.peel_refs()) else {
+        return Vec::new();
+    };
+    let Some(tc) = &t.types else { return Vec::new() };
+    let tc = tc.borrow();
+    crate::ownership::arm_takes::unowned_droppable_positions(pat, elements, &tc.probe())
+        .unwrap_or_default()
+}
+
+/// The arm's body with the positions nothing named released on every path out
+/// of it, which is where Rust drops them: at the end of the match, however the
+/// arm leaves.
+fn releasing_unowned_elements(body: String, subject: &str, unowned: &[usize]) -> String {
+    if unowned.is_empty() {
+        return body;
+    }
+    let releases: String = unowned
+        .iter()
+        .map(|at| format!("  dropOwned({}[{}]);\n", subject, at))
+        .collect();
+    format!("try {{\n{}}} finally {{\n{}}}\n", super::indent(&body), releases)
 }
 
 /// The arms of a guarded match, tried in turn inside a labelled block that the

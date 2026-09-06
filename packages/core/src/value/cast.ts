@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/value/cast.rs
-import { Enum, Result } from '@ankurah/base';
+import { Enum, Result, serde_json } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
 import { PropertyError } from '../property/traits';
 import { Error } from '../selection/filter';
@@ -250,7 +250,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Bool', { _0: f !== 0.0 }));
   } else if ((_v[0].is('String')) && (_v[1].is('Json'))) {
     const { _0: s } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: serdeJson.Value.String(s) }));
+    return Result.Ok(new Value('Json', { _0: new serde_json.Value('String', { _0: s }) }));
   } else if ((_v[0].is('I64')) && (_v[1].is('Json'))) {
     const { _0: n } = _v[0].value;
     return Result.Ok(new Value('Json', { _0: n }));
@@ -265,7 +265,7 @@ export function Value_castTo(self: Value, targetType: ValueType): Result<Value, 
     return Result.Ok(new Value('Json', { _0: n }));
   } else if ((_v[0].is('Bool')) && (_v[1].is('Json'))) {
     const { _0: b } = _v[0].value;
-    return Result.Ok(new Value('Json', { _0: serdeJson.Value.Bool(b) }));
+    return Result.Ok(new Value('Json', { _0: new serde_json.Value('Bool', { _0: b }) }));
   } else if ((_v[0].is('Json')) && (_v[1].is('String'))) {
     const { _0: json } = _v[0].value;
     return json.match({

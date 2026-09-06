@@ -1,8 +1,6 @@
 // MIRRORS: ankurah/core/src/value/wasm.rs
 import { Result } from '@ankurah/base';
-import { Json } from '../property/value/json';
 import { Value } from './index';
-import { EntityId } from '@ankurah/proto';
 
 export function JsValue_fromValue(value: Value): unknown {
   try {

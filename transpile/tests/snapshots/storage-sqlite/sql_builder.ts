@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
 import { Struct, Enum, Result } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
-import { EntityId, Comparison, Json, Value } from '@ankurah/core';
+import { EntityId, Value } from '@ankurah/core';
 import { SqliteError } from './error';
 import { EntityId } from '@ankurah/proto';
 

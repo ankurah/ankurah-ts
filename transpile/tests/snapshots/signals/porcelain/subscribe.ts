@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
 import { Struct, OwnedClosure, Sender, UnboundedSender } from '@ankurah/base';
-import { ListenerGuard } from '../signal';
+import { Get, ListenerGuard, Peek } from '../signal';
 
 export class SubscriptionGuard extends Struct {
   _listenerguard: Any;
@@ -27,7 +27,7 @@ export interface DynSubscribe<T> {
   dynSubscribe(listener: (arg0: T) => void): SubscriptionGuard;
 }
 
-export interface GetAndDynSubscribe<T> {
+export interface GetAndDynSubscribe<T> extends Get<T>, Peek<T>, DynSubscribe<T> {
 }
 
 export type SubscribeListener = (arg0: T) => void;

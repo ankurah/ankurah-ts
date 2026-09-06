@@ -9,11 +9,10 @@ import { EntityLiveQuery, LiveQuery } from './livequery';
 import { ContextData, MatchArgs, Node } from './node';
 import { NodeApplier } from './node_applier';
 import { AccessDenied, PolicyAgent } from './policy';
-import { EphemeralNodeRetriever, GetEvents } from './retrieval';
+import { EphemeralNodeRetriever } from './retrieval';
 import { StorageCollectionWrapper, StorageEngine } from './storage';
 import { Transaction } from './transaction';
 import { Selection } from '@ankurah/ankql';
-import { Get } from '@ankurah/signals';
 
 export class Context extends Struct {
   _0: Arc<TContext>;
@@ -88,7 +87,7 @@ export class Context extends Struct {
     const _r0 = await this.fetch(args);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const views = _r0.unwrap();
-    return Result.Ok([...views].next());
+    return Result.Ok(unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance'));
   }
 
   query<R>(args: TryInto): Result<LiveQuery<R>, RetrievalError> {

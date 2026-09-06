@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { EntityResultSet, IVec } from './resultset';
-import { HashMap, Struct, range, valueEquals } from '@ankurah/base';
+import { HashMap, Struct, range, unsupported, valueEquals } from '@ankurah/base';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
 import { Value, ValueType } from './value/index';
 
@@ -177,7 +177,7 @@ describe('resultset unit tests', () => {
           expect(resultset.len()).toEqual(1);
           const _t0 = resultset.read();
           try {
-            expect((_t0.iterEntities().next() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
+            expect((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
           } finally {
             _t0.drop();
           }

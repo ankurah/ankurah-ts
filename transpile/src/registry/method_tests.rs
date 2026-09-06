@@ -6,7 +6,7 @@
 //! the same reason as the positive ones: refusing is an answer the translator
 //! depends on.
 
-use super::method::{Callee, DerefKind, Undecided};
+use super::method::{declared::DeclaredBound, Callee, DerefKind, Undecided};
 use super::method::MethodError;
 use super::method::AutoRef;
 use crate::testing::Fixture;
@@ -328,7 +328,7 @@ fn a_dyn_receiver_dispatches_to_the_traits_own_declaration() {
     let found = probe.resolve_method(&object, "node_id").expect("resolves");
     assert_eq!(
         found.callee,
-        Callee::TraitObject(trait_id, "node_id".to_string())
+        Callee::TraitObject(trait_id, "node_id".to_string(), DeclaredBound::for_tests())
     );
     assert_eq!(found.ret, Ty::Prim(Prim::U32));
 

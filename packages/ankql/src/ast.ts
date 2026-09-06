@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, iterLast } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, unsupported, iterLast } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -970,7 +970,7 @@ export class Predicate extends Enum<PredicateV> {
     let _moved1 = false;
     const result = _r0.unwrap();
     try {
-      if ((valuesIter.next() != null)) {
+      if ((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') != null)) {
         return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
       }
       _moved1 = true;

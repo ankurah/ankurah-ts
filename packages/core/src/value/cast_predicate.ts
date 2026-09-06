@@ -2,7 +2,6 @@
 import { Result, dropOwned, unsupported } from '@ankurah/base';
 import { Expr, Literal, Predicate } from '@ankurah/ankql';
 import { RetrievalError } from '../error';
-import { Comparison } from '../lineage';
 import { CollectionSchema } from '../schema';
 import { Value_castTo } from './cast';
 import { Value, ValueType } from './index';
@@ -192,8 +191,7 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
       const exprs = v._0;
       try {
         const _r4 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-        const castExprs = _r4.unwrap();
+        const castExprs = _r4;
         return Result.Ok(new Expr('ExprList', { _0: castExprs }));
       } finally {
         dropOwned(exprs);

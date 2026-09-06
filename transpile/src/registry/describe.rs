@@ -77,7 +77,7 @@ impl TypeRegistry {
                     .unwrap_or_default();
                 format!("<{} as {}>::{}", self.describe(&def.self_ty), trait_name, m)
             }
-            Callee::TraitObject(id, m) => format!("{}::{}", self.name_of(*id), m),
+            Callee::TraitObject(id, m, _) => format!("{}::{}", self.name_of(*id), m),
         }
     }
 }

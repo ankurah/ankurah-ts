@@ -1,7 +1,7 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
-import { Struct, dropOwned, iterFind, iterFindMap, iterFirst, HashSet } from '@ankurah/base';
-import { ComparisonOperator, Predicate, Literal, OrderByItem, Selection } from '@ankurah/ankql';
-import { IndexKeyPart, KeySpec, Value, ValueType, Comparison } from '@ankurah/core';
+import { Struct, dropOwned, unsupported, iterFind, iterFindMap, iterFirst, HashSet } from '@ankurah/base';
+import { ComparisonOperator, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
+import { IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
 import { Endpoint, KeyBoundComponent, KeyBounds, KeyDatum, OrderByComponents, Plan, ScanDirection } from './types';
 
@@ -265,10 +265,9 @@ export class Planner extends Struct {
         return null;
       }
     }).orElse(() => {
-      const _m0 = inequalities.iter().next();
+      const _m0 = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
       return (_m0 != null ? (([k, v]) => [k, v])(_m0!) : null);
     });
-    if (_r1 == null) return null;
     const primary = _r1;
     let _moved2 = false;
     let indexKeyparts = [...equalities].map(([f, v]) => IndexKeyPart.ascPath(f, ValueType.of(v)));

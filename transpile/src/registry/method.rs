@@ -11,7 +11,7 @@
 //! reported, naming what was tried.
 
 /// The method a BOUND declares, as a candidate in its own right.
-mod declared;
+pub(crate) mod declared;
 
 use super::impls::{head_of, Bound, Head, ImplId};
 use super::{ModuleId, TypeRegistry};
@@ -117,8 +117,9 @@ pub enum Callee {
     /// type.
     TraitImpl(ImplId, String),
     /// A method reached through `dyn Trait`, or through a bound on a generic
-    /// parameter: the trait's own declaration is all there is.
-    TraitObject(TypeId, String),
+    /// parameter: the trait's own declaration is all there is. H13: the witness
+    /// is what makes `declared_picks` the only producer of one.
+    TraitObject(TypeId, String, declared::DeclaredBound),
     /// A method on an impl written for one of its own parameters, such as
     /// `impl<T: Display> ToString for T`.
     Blanket(ImplId, String),
@@ -489,7 +490,7 @@ impl<'a> Probe<'a> {
                     .impl_id()
                     .and_then(|id| self.reg.impl_def(id).trait_ref.as_ref().map(|t| t.id))
                     == match &declared.callee {
-                        Callee::TraitObject(id, _) => Some(id.clone()),
+                        Callee::TraitObject(id, ..) => Some(id.clone()),
                         _ => None,
                     }
             };
@@ -556,7 +557,7 @@ impl<'a> Probe<'a> {
     pub(super) fn trait_of(&self, callee: &Callee) -> Option<TypeId> {
         match callee {
             Callee::Inherent(..) => None,
-            Callee::TraitObject(id, _) => Some(*id),
+            Callee::TraitObject(id, ..) => Some(*id),
             Callee::TraitImpl(id, _) | Callee::Blanket(id, _) => {
                 self.reg.impl_def(*id).trait_ref.as_ref().map(|tr| tr.id)
             }
@@ -864,7 +865,7 @@ impl TypeRegistry {
                 let trait_id = def.trait_ref.as_ref()?.id;
                 self.trait_method(trait_id, name)?.1.sig.self_kind
             }
-            Callee::TraitObject(trait_id, name) => {
+            Callee::TraitObject(trait_id, name, _) => {
                 self.trait_method(*trait_id, name)?.1.sig.self_kind
             }
         }
@@ -894,7 +895,7 @@ impl TypeRegistry {
                         .map(|(_, m)| m.sig.clone()),
                 }
             }
-            Callee::TraitObject(trait_id, name) => self
+            Callee::TraitObject(trait_id, name, _) => self
                 .trait_method(*trait_id, name)
                 .map(|(_, m)| m.sig.clone()),
         };

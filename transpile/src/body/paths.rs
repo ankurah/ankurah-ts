@@ -195,6 +195,29 @@ impl BodyTranslator<'_> {
             if self.names_a_fresh_const(std::slice::from_ref(&ident)) {
                 return format!("{}()", written);
             }
+            // I5: a unit struct used as a VALUE — `use crate::value::Unit as
+            // OuterUnit; fn f() -> value::Unit { OuterUnit }` — is a single
+            // segment, and every single segment returned here before the
+            // aliasing rule below could be reached. The port writes a type
+            // under the name it is DECLARED with, which is what its class is
+            // called and what the import list names, so the alias reached the
+            // output as a `ReferenceError`. Asked LAST, and only where nothing
+            // in scope answers to the name: a local shadowing a type's name is
+            // the local.
+            if !self.names_a_local(&ident) {
+                let declared = self.declared_under(&ident).unwrap_or(written.clone());
+                // A unit STRUCT written as a value is a VALUE of that type, and
+                // the port writes such a type as a class: the name on its own
+                // is the constructor, which has none of the instance members
+                // the arms around it call. `Unit` is `new Unit()`, the way
+                // `E::Unit` is already `new E('Unit', {})`.
+                if self.names_a_unit_struct(&ident) {
+                    return format!("new {}()", declared);
+                }
+                if declared != written {
+                    return declared;
+                }
+            }
             return written;
         }
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
@@ -213,6 +236,34 @@ impl BodyTranslator<'_> {
             return renamed.join(".");
         }
         Self::path_static(path)
+    }
+
+    /// Does this name resolve to a struct with no fields — a type whose only
+    /// value is written by naming it?
+    fn names_a_unit_struct(&self, name: &str) -> bool {
+        let Some(tc) = self.types.as_ref() else { return false };
+        let tc = tc.borrow();
+        let Ok(Some(crate::registry::Def::Type(id))) =
+            tc.registry.lookup_type(tc.module, &[name.to_string()])
+        else {
+            return false;
+        };
+        // A type the DECLARED SURFACE writes is not one of these: `PhantomData`
+        // has no fields either, and the port writes it `undefined` — putting
+        // `new` in front of that spelling makes it `new undefined()`.
+        if tc.registry.is_system(id) {
+            return false;
+        }
+        tc.registry.def(id).is_some_and(|def| {
+            matches!(def.kind, crate::registry::TypeKind::Struct) && def.field_order.is_empty()
+        })
+    }
+
+    /// Does anything in scope answer to this name — a local, a parameter, or a
+    /// name a closure opened? A type's name is only a type's name where nothing
+    /// nearer has taken it.
+    fn names_a_local(&self, name: &str) -> bool {
+        self.types.as_ref().is_some_and(|tc| tc.borrow().lookup(name).is_some())
     }
 
     /// The name a type is DECLARED under, where a `use` bound it in this module
@@ -492,6 +543,14 @@ impl BodyTranslator<'_> {
                 "true" | "false" => name,
                 "Ok" | "Some" | "Err" => name,
                 "std" | "core" | "alloc" | "crate" | "super" | "marker" => name,
+                // `@ankurah/base` re-exports serde_json under the name Rust
+                // writes (`export * as serde_json`), so the QUALIFIER keeps its
+                // underscore while everything after it is camel-cased the way
+                // base spells it. Camel-cased, it wrote `serdeJson.fromSlice(..)`
+                // — twenty-one emitted sites across ankql, core and
+                // storage-indexeddb, every one of them a `ReferenceError`, and
+                // every one already on the lint gate's undefined-name ledger.
+                "serde_json" => name,
                 "PhantomData" => return "undefined /* PhantomData */".to_string(),
                 _ => {
                     if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
