@@ -175,9 +175,23 @@ export class SqliteBucket extends Struct implements StorageCollection {
   }
 
   static new(pool: Pool<SqliteConnectionManager>, collectionId: CollectionId): SqliteBucket {
-    const stateTableName = collectionId.asStr();
-    const eventTableName = `${collectionId.asStr()}_event`;
-    return new SqliteBucket(pool, collectionId, stateTableName, eventTableName, Arc.new(new RwLock([])), Arc.new(tokio.sync.Mutex.new([])));
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        const stateTableName = collectionId.asStr();
+        const eventTableName = `${collectionId.asStr()}_event`;
+        const _b2 = Arc.new(new RwLock([]));
+        const _b3 = Arc.new(tokio.sync.Mutex.new([]));
+        _moved0 = true;
+        _moved1 = true;
+        return new SqliteBucket(pool, collectionId, stateTableName, eventTableName, _b2, _b3);
+      } finally {
+        if (!_moved1) collectionId.drop();
+      }
+    } finally {
+      if (!_moved0) dropOwned(pool);
+    }
   }
 
   stateTable(): string {

@@ -9,7 +9,7 @@ export function Predicate_tryFrom(value: string): Result<Predicate, ParseError> 
   if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
   const _t1 = _r0.unwrap();
   try {
-    return Result.Ok(_t1.predicate);
+    return Result.Ok(_t1.takeField('predicate'));
   } finally {
     _t1.drop();
   }

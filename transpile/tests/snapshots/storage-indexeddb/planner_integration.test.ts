@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { normalize, planBoundsToIdbRange, planBoundsToIdbRangeSyntax, scanDirectionToCursorDirection } from './planner_integration';
-import { dropOwned } from '@ankurah/base';
+import { dropOwned, dropUnbound } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
 import { IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
 import { Endpoint, KeyBoundComponent, KeyBounds, OrderByComponents, Plan, ScanDirection } from '@ankurah/storage-common';
@@ -10,20 +10,28 @@ import { Endpoint, KeyBoundComponent, KeyBounds, OrderByComponents, Plan, ScanDi
 describe('planner_integration unit tests', () => {
   test('test_plan_index_spec_name', () => {
     const plan = new Plan('Index', { indexSpec: KeySpec.new([IndexKeyPart.asc('__collection', new ValueType('String', {})), IndexKeyPart.asc('age', new ValueType('I32', {})), IndexKeyPart.asc('score', new ValueType('I32', {}))]), scanDirection: new ScanDirection('Forward', {}), bounds: KeyBounds.new([]), remainingPredicate: new Predicate('True', {}), orderBySpill: OrderByComponents.default() });
-    {
-      const _v = plan;
-      if (_v.is('Index')) {
-        const { indexSpec } = _v.value;
+    return plan.intoMatch({
+      Index: (v) => {
+        const indexSpec = v.indexSpec;
         try {
-          const indexName = indexSpec.nameWith('', '__');
-          expect(indexName).toEqual('__collection asc__age asc__score asc');
+          try {
+            const indexName = indexSpec.nameWith('', '__');
+            expect(indexName).toEqual('__collection asc__age asc__score asc');
+          } finally {
+            indexSpec.drop();
+          }
         } finally {
-          indexSpec.drop();
+          dropUnbound(v, ['indexSpec']);
         }
-      } else {
-      _v.drop();
-    }
-    }
+      },
+      TableScan: (v) => {
+        try {
+        } finally {
+          dropUnbound(v, []);
+        }
+      },
+      EmptyScan: () => {},
+    });
   });
 
   test('test_scan_direction_to_cursor_direction', () => {

@@ -7,6 +7,7 @@ import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
 import { LocalProcessConnection } from '@ankurah/connector-local';
 import { CollectionId } from '@ankurah/proto';
+import { Selection_tryFrom } from '@ankurah/ankql';
 import { Node, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
@@ -53,7 +54,7 @@ describe('rt106', () => {
     expect((await clientCollection.dumpEntityEvents(albumId)).length).toBe(0); // before subscribe
 
     // Subscribe on the client
-    const clientQuery = await clientCtx.queryWait(Album, nocache("name = 'Test Album'"));
+    const clientQuery = await clientCtx.queryWait(Album, nocache("name = 'Test Album'", Selection_tryFrom));
 
     // But the livequery should have the album
     expect(clientQuery.peek().map((p: any) => p.id())).toEqual([albumId]);
@@ -91,7 +92,7 @@ describe('rt106', () => {
     await new Promise(resolve => setTimeout(resolve, 200));
 
     // Resubscribe on the client
-    const clientQuery2 = await clientCtx.queryWait(Album, nocache("name = 'Test Album'"));
+    const clientQuery2 = await clientCtx.queryWait(Album, nocache("name = 'Test Album'", Selection_tryFrom));
 
     // The client should have the correct, up-to-date state (year = "2022") in the LiveQuery
     const albums = clientQuery2.peek();

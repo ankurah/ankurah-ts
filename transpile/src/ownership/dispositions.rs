@@ -54,7 +54,7 @@ impl Dispositions {
             let key = (site.name.clone(), ordinal);
             let disposition = match site.at {
                 Where::Straight | Where::Closure => Disposition::Moved,
-                Where::Branch => Disposition::Flagged,
+                Where::Branch | Where::Evaluated => Disposition::Flagged,
                 Where::Unwritable => Disposition::Unsure,
             };
             if site.at == Where::Closure {

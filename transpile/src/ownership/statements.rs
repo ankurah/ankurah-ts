@@ -69,6 +69,7 @@ impl<'a> BodyTranslator<'a> {
             released_if_unreached: false,
             wrapper: false,
             sets: String::new(),
+            droppable: false,
             flag: None,
         });
         format!("{} = {}", left, held)
@@ -152,6 +153,7 @@ impl<'a> BodyTranslator<'a> {
             released_if_unreached: false,
             wrapper: false,
             sets: String::new(),
+            droppable: false,
             flag: None,
         });
         Some(chosen)

@@ -104,18 +104,20 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             const results = await (async () => {
               if (limit != null) {
                 const limitVal = limit;
-                let _moved11 = false;
                 const _b10 = orderBySpill.clone();
                 try {
                   const _b12 = Number(BigInt.asUintN(32, limitVal));
-                  _moved11 = true;
                   return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
                 } finally {
-                  if (!_moved11) dropOwned(_b10);
+                  dropOwned(_b10);
                 }
               } else {
                 const _b13 = orderBySpill.clone();
-                return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                try {
+                  return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                } finally {
+                  dropOwned(_b13);
+                }
               }
             })();
             return Result.Ok(results);

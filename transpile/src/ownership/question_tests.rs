@@ -5,8 +5,7 @@
 //! say what stands around that temporary. They were split out of `tests.rs`,
 //! which was over the 600-line rule.
 
-use super::tests::{body, PRELUDE};
-use crate::testing::Fixture;
+use super::tests::body;
 
 // ── Result values, not throws ─────────────────────────────────────────
 

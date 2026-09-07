@@ -55,15 +55,13 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
                 let _moved11 = false;
                 const _b10 = tokio.sync.Notify.new();
                 try {
-                  const _b12 = 0;
-                  const _b13 = 1;
-                  const _b14 = Mut.new([args.selection.clone(), 1]);
-                  const _b15 = collectionId.clone();
+                  const _b12 = Mut.new([args.selection.clone(), 1]);
+                  const _b13 = collectionId.clone();
                   _moved8 = true;
                   _moved11 = true;
                   _moved4 = true;
                   _moved5 = true;
-                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b9, _b10, _b12, _b13, _b14, _b15, gapFetcher)));
+                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b9, _b10, 0, 1, _b12, _b13, gapFetcher)));
                   const hasRelay = (node.deref().value.subscriptionRelay != null);
                   if (args.cached || !hasRelay) {
                     const me2 = me.clone();

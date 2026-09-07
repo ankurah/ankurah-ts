@@ -120,27 +120,6 @@ pub(crate) fn declare_supertraits(
     String::new()
 }
 
-/// What goes in the trait's own head, having written whatever has to stand
-/// BEFORE it.
-///
-/// An interface says its supertraits directly; a trait with default bodies is
-/// an abstract CLASS, which cannot extend an interface — so they are declared
-/// on an interface of the same name, which TypeScript merges into the class
-/// type. That gives `this.tell()` inside a default body a declaration without a
-/// body, which is what the trait promised its implementors.
-///
-/// R13(f), the CONDITION this shape rests on, written down where it is relied
-/// on: `export interface Retrieve extends GetEvents`, with `GetEvents` emitted
-/// as an abstract class, is legal only while that class has no private or
-/// protected member. TypeScript gives a class with one a nominal type an
-/// interface cannot restate, and every implementor would then fail TS2420.
-///
-/// It is stated rather than checked because the condition cannot arise from
-/// this emitter: a trait's members are its declared methods, `TraitMethod` is
-/// `{ sig }` and carries no visibility at all, and the port writes no private
-/// member on a trait's class. A check here would be reading a field that does
-/// not exist. Whatever gives a trait's emitted class a private member is what
-/// has to add the refusal, and this is the line that says so.
 #[cfg(test)]
 mod tests {
     use crate::testing::Fixture;

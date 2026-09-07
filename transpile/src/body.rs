@@ -1120,7 +1120,7 @@ impl<'a> BodyTranslator<'a> {
 }
 
 mod holes;
-pub use holes::{hole_text, holes_written, value_is_a_hole};
+pub use holes::{hole_at, hole_text, holds_a_hole, holes_written, lowered_a_hole, value_is_a_hole};
 mod consumes;
 mod defaults;
 #[cfg(test)]

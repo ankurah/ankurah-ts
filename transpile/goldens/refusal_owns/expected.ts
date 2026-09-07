@@ -86,11 +86,19 @@ export function take2(a: Token, b: Result<Token[], string>): number {
 
 export function refusedInTheText(held: Token, rest: Token[]): number {
   try {
-    const _v = take2(held, unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for'));
-    return _v;
+    try {
+      const _b1 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+      try {
+        const _v = take2(held, _b1);
+        return _v;
+      } finally {
+        dropOwned(_b1);
+      }
+    } finally {
+      dropOwned(rest);
+    }
   } finally {
     held.drop();
-    dropOwned(rest);
   }
 }
 

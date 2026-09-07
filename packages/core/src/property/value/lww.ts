@@ -50,8 +50,15 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
   }
 
   static fromEntity<T>(propertyName: PropertyName, entity: Entity): LWW<T> {
+    let _moved0 = false;
     const backend = entity.getBackend().expect('LWW Backend should exist');
-    return new LWW(propertyName, backend, entity.clone(), undefined /* PhantomData */);
+    try {
+      const _b1 = entity.clone();
+      _moved0 = true;
+      return new LWW(propertyName, backend, _b1, undefined /* PhantomData */);
+    } finally {
+      if (!_moved0) backend.drop();
+    }
   }
 
   static initializeWith<T>(entity: Entity, propertyName: PropertyName, value: T): LWW<T> {

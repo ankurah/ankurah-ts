@@ -369,22 +369,15 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           let _moved6 = false;
           const _b5 = collectionId.clone();
           try {
-            let _moved8 = false;
             const _b7 = selection.clone();
-            try {
-              const _b9 = [];
-              _moved4 = true;
-              const _r10 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, _b9);
-              if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-              _moved6 = true;
-              _moved8 = true;
-              let allEntities = _r10.unwrap();
-              await subscription.fillGapsForQueryEntities(queryId, allEntities);
-              resultset.setLoaded(true);
-              return Result.Ok(allEntities);
-            } finally {
-              if (!_moved8) dropOwned(_b7);
-            }
+            _moved4 = true;
+            const _r8 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, []);
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            _moved6 = true;
+            let allEntities = _r8.unwrap();
+            await subscription.fillGapsForQueryEntities(queryId, allEntities);
+            resultset.setLoaded(true);
+            return Result.Ok(allEntities);
           } finally {
             if (!_moved6) dropOwned(_b5);
           }

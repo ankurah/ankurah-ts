@@ -17,9 +17,8 @@
 //! the program; a value that was kept and is not dropped is a leak the
 //! registry reports. The first is worse, and the memo's rule follows.
 
-use super::dispositions::collect_pattern_names;
+pub(super) use super::dispositions::collect_pattern_names;
 
-use syn::parse::Parser;
 
 /// What the block should do with a local when it ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +45,16 @@ pub(super) enum Where {
     /// Inside a nested block — a branch, a loop body, a match arm. The block
     /// that holds it emits the flag as one of its own statements.
     Branch,
+    /// In THIS statement, with something the statement has still to evaluate
+    /// standing between the move and the call that performs it.
+    ///
+    /// X5: `take2(token, o.unwrap())` moves `token` on every path the SOURCE
+    /// has, so the site read as straight-line and the block wrote no release at
+    /// all — and `unwrap` on a `None` throws with the token handed to nobody,
+    /// which Rust drops while it unwinds. It is a conditional move like any
+    /// other, and it is one the statement itself writes the flag for, which is
+    /// what separates it from `Branch`.
+    Evaluated,
     /// Inside a closure. Rust captures by value to make the move possible, so
     /// the closure owns the value from here.
     Closure,
@@ -98,11 +107,22 @@ pub trait Consumes {
     /// `callOnce` marks it moved before the body runs.
     fn consumes_callee(&self, call: &syn::ExprCall) -> bool;
 
+    /// Is `*expr` a deref that MOVES — the `Box` deref-move — rather than the
+    /// `Deref` trait's borrow?
+    ///
+    /// `*boxed` takes the value out of the box and the box goes with it;
+    /// `*guard` on a `MutexGuard` reads through it and takes nothing. Only a
+    /// `Box` has the first, and the port erases it, so the emitted text is the
+    /// same either way and the syntax alone cannot tell them apart.
+    fn derefs_by_value(&self, expr: &syn::Expr) -> bool;
+
     /// Does the impl behind a unary operator take its operand by value?
     /// `impl Neg for Weight` is `fn neg(self) -> Weight`, so `-weight` releases
     /// the weight exactly as `a + b` releases both of its operands.
     fn consumes_unary_operand(&self, unary: &syn::ExprUnary) -> bool;
 }
+
+mod walk;
 
 pub struct Scan<'c> {
     pub consumes: &'c dyn Consumes,
@@ -146,7 +166,7 @@ impl<'c> Scan<'c> {
 
     /// Walk a nested block's statements in a scope of their own, so that a name
     /// it declares stops standing for the one outside it.
-    fn nested_block(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
+    pub(super) fn nested_block(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
         self.shadowed.borrow_mut().push(Vec::new());
         self.statements(stmts, nested(at), out);
         self.shadowed.borrow_mut().pop();
@@ -159,7 +179,7 @@ impl<'c> Scan<'c> {
     /// the statements below it are conditional, and a move there needs the drop
     /// flag a branch would get — otherwise the early exit leaves the value with
     /// nothing to release it.
-    fn statements(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
+    pub(super) fn statements(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
         let mut reachable = at;
         for stmt in stmts {
             self.stmt(stmt, reachable, out);
@@ -170,7 +190,7 @@ impl<'c> Scan<'c> {
     }
 
     /// Is this name one a nested scope declared for itself?
-    fn is_shadowed(&self, name: &str) -> bool {
+    pub(super) fn is_shadowed(&self, name: &str) -> bool {
         self.shadowed
             .borrow()
             .iter()
@@ -183,11 +203,13 @@ impl<'c> Scan<'c> {
     pub fn shallow(&self, stmt: &syn::Stmt) -> Vec<Site> {
         let mut out = Vec::new();
         self.stmt(stmt, Where::Straight, &mut out);
-        out.retain(|s| s.at == Where::Straight || s.at == Where::Closure);
+        out.retain(|s| {
+            matches!(s.at, Where::Straight | Where::Closure | Where::Evaluated)
+        });
         out
     }
 
-    fn stmt(&self, stmt: &syn::Stmt, at: Where, out: &mut Vec<Site>) {
+    pub(super) fn stmt(&self, stmt: &syn::Stmt, at: Where, out: &mut Vec<Site>) {
         match stmt {
             syn::Stmt::Local(local) => {
                 if let Some(init) = &local.init {
@@ -218,7 +240,7 @@ impl<'c> Scan<'c> {
     }
 
     /// A block's value.
-    fn tail(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
+    pub(super) fn tail(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
         self.moved(expr, at, out);
         self.walk(expr, at, out);
     }
@@ -227,7 +249,7 @@ impl<'c> Scan<'c> {
     ///
     /// Only a *name* moves. `&x` borrows, `x.field` is a partial move the
     /// caller reports separately, and a call's result is a fresh value.
-    fn moved(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
+    pub(super) fn moved(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
         match expr {
             syn::Expr::Path(path) => {
                 if let Some(name) = local_name(path) {
@@ -241,282 +263,48 @@ impl<'c> Scan<'c> {
                     });
                 }
             }
-            // `(x, y)`, `[x]` and `Foo { a: x }` each take their parts by value.
+            // `(x, y)`, `[x]` and `Foo { a: x }` each take their parts by
+            // value — left to right, so a part with something after it that
+            // can throw is moved under that (X5).
             syn::Expr::Tuple(tuple) => {
-                for elem in &tuple.elems {
-                    self.moved(elem, at, out);
+                let elems: Vec<&syn::Expr> = tuple.elems.iter().collect();
+                for (index, elem) in elems.iter().enumerate() {
+                    self.moved(elem, evaluating(at, &elems, index + 1), out);
                 }
             }
             syn::Expr::Array(array) => {
-                for elem in &array.elems {
-                    self.moved(elem, at, out);
+                let elems: Vec<&syn::Expr> = array.elems.iter().collect();
+                for (index, elem) in elems.iter().enumerate() {
+                    self.moved(elem, evaluating(at, &elems, index + 1), out);
                 }
             }
             syn::Expr::Struct(s) => {
-                for field in &s.fields {
-                    self.moved(&field.expr, at, out);
+                let fields: Vec<&syn::Expr> = s.fields.iter().map(|f| &f.expr).collect();
+                for (index, field) in fields.iter().enumerate() {
+                    self.moved(field, evaluating(at, &fields, index + 1), out);
                 }
             }
             syn::Expr::Paren(p) => self.moved(&p.expr, at, out),
             syn::Expr::Group(g) => self.moved(&g.expr, at, out),
+            // Y3: `*boxed` MOVES what the box held, and the box with it —
+            // Rust's deref-move, which only a `Box` has — so
+            // `if let Predicate::And(l, r) = *left` takes `left`. Without this,
+            // the arm that consumed `left` released it again on the way out and
+            // the runtime reported it used after being moved.
+            //
+            // Only a `Box`. `*guard` on a `MutexGuard`, a `Ref` or an `Arc` is
+            // the `Deref` trait, which BORROWS: reading through one takes
+            // nothing, and counting it as a move left
+            // `let g = self.inner.lock().await; *g` with the guard released by
+            // nobody.
+            syn::Expr::Unary(syn::ExprUnary { op: syn::UnOp::Deref(_), expr, .. })
+                if self.consumes.derefs_by_value(expr) =>
+            {
+                self.moved(expr, at, out)
+            }
             // `Some(x)`, `Foo::Bar(x)` and every other call take their
             // arguments by value; the argument walk records those.
             _ => {}
-        }
-    }
-
-    /// Walk an expression for moves, in the positions that take a value.
-    fn walk(&self, expr: &syn::Expr, at: Where, out: &mut Vec<Site>) {
-        match expr {
-            syn::Expr::Call(call) => {
-                if self.consumes.consumes_callee(call) {
-                    self.moved(&call.func, at, out);
-                }
-                for arg in &call.args {
-                    self.moved(arg, at, out);
-                    self.walk(arg, at, out);
-                }
-                self.walk(&call.func, at, out);
-            }
-
-            syn::Expr::MethodCall(call) => {
-                // J4: a call the engine refuses takes NOTHING: the hole that
-                // replaces it throws, and the receiver and arguments are still
-                // the block's to release. The sub-expressions are still walked,
-                // because a move written INSIDE an argument — `f(g(x))` — is
-                // one the hole does not undo... but nothing inside a refused
-                // call is emitted at all, so the walk stops here too.
-                if self.consumes.refuses_call(call) {
-                    return;
-                }
-                // A method taking `self` consumes the receiver: `r.unwrap()`,
-                // `v.into_iter()`, `opt.take()`.
-                if self.consumes.consumes_receiver(call) {
-                    self.moved(&call.receiver, at, out);
-                }
-                self.walk(&call.receiver, at, out);
-                for arg in &call.args {
-                    self.moved(arg, at, out);
-                    self.walk(arg, at, out);
-                }
-            }
-
-            // Awaiting a named future takes it by value, exactly as a
-            // self-taking method does, and the emitter releases nothing after.
-            syn::Expr::Await(await_expr) => {
-                self.moved(&await_expr.base, at, out);
-                self.walk(&await_expr.base, at, out);
-            }
-
-            syn::Expr::Assign(assign) => {
-                self.moved(&assign.right, at, out);
-                self.walk(&assign.right, at, out);
-                self.walk(&assign.left, at, out);
-            }
-
-            syn::Expr::Return(ret) => {
-                if let Some(value) = &ret.expr {
-                    self.moved(value, at, out);
-                    self.walk(value, at, out);
-                }
-            }
-
-            syn::Expr::Break(brk) => {
-                if let Some(value) = &brk.expr {
-                    self.moved(value, at, out);
-                    self.walk(value, at, out);
-                }
-            }
-
-            syn::Expr::Struct(s) => {
-                for field in &s.fields {
-                    self.moved(&field.expr, at, out);
-                    self.walk(&field.expr, at, out);
-                }
-                if let Some(rest) = &s.rest {
-                    self.walk(rest, at, out);
-                }
-            }
-
-            syn::Expr::Tuple(tuple) => {
-                for elem in &tuple.elems {
-                    self.moved(elem, at, out);
-                    self.walk(elem, at, out);
-                }
-            }
-
-            syn::Expr::Array(array) => {
-                for elem in &array.elems {
-                    self.moved(elem, at, out);
-                    self.walk(elem, at, out);
-                }
-            }
-
-            // A closure that moves a value out of its environment captured it
-            // by value, `move` written or not — Rust has no other way to
-            // compile the body. A `move` closure claims everything it mentions.
-            syn::Expr::Closure(closure) => {
-                let mut params = Vec::new();
-                for input in &closure.inputs {
-                    collect_pattern_names(input, &mut params);
-                }
-                self.shadowed.borrow_mut().push(params);
-                if closure.capture.is_some() {
-                    self.mentions(&closure.body, out);
-                }
-                self.walk(&closure.body, Where::Closure, out);
-                self.tail(&closure.body, Where::Closure, out);
-                self.shadowed.borrow_mut().pop();
-            }
-
-            // The branches of a `?:` and the operands of `&&`/`||` have nowhere
-            // to put a statement. A move there is reported rather than flagged.
-            syn::Expr::Binary(bin) => {
-                let short_circuit =
-                    matches!(bin.op, syn::BinOp::And(_) | syn::BinOp::Or(_));
-                let operand = if short_circuit { Where::Unwritable } else { at };
-                // An overloaded operator is a method call whose impl takes its
-                // operands by value, and the call releases them.
-                let (left, right) = self.consumes.consumes_operands(bin);
-                if left {
-                    self.moved(&bin.left, at, out);
-                }
-                if right {
-                    self.moved(&bin.right, operand, out);
-                }
-                self.walk(&bin.left, at, out);
-                self.walk(&bin.right, operand, out);
-            }
-
-            syn::Expr::Unary(unary) => {
-                if self.consumes.consumes_unary_operand(unary) {
-                    self.moved(&unary.expr, at, out);
-                }
-                self.walk(&unary.expr, at, out);
-            }
-
-            syn::Expr::If(if_expr) => {
-                self.walk(&if_expr.cond, at, out);
-                self.nested_block(&if_expr.then_branch.stmts, at, out);
-                if let Some((_, else_expr)) = &if_expr.else_branch {
-                    self.walk(else_expr, nested(at), out);
-                    self.tail(else_expr, nested(at), out);
-                }
-            }
-
-            syn::Expr::Match(m) => {
-                if self.consumes.consumes_scrutinee(m) {
-                    self.moved(&m.expr, at, out);
-                }
-                self.walk(&m.expr, at, out);
-                for arm in &m.arms {
-                    if let Some((_, guard)) = &arm.guard {
-                        self.walk(guard, Where::Unwritable, out);
-                    }
-                    // `other => ..` takes the whole subject into its own name,
-                    // and only where that arm runs: the block keeps a flag and
-                    // releases the subject on the paths the other arms took.
-                    if crate::ownership::scrutinee::binds_whole_subject(&arm.pat) {
-                        self.moved(&m.expr, nested(at), out);
-                    }
-                    self.walk(&arm.body, nested(at), out);
-                    self.tail(&arm.body, nested(at), out);
-                }
-            }
-
-            syn::Expr::Block(block) => self.nested_block(&block.block.stmts, at, out),
-
-            syn::Expr::ForLoop(for_loop) => {
-                self.moved(&for_loop.expr, at, out);
-                self.walk(&for_loop.expr, at, out);
-                self.nested_block(&for_loop.body.stmts, at, out);
-            }
-
-            syn::Expr::While(w) => {
-                self.walk(&w.cond, at, out);
-                self.nested_block(&w.body.stmts, at, out);
-            }
-
-            syn::Expr::Loop(l) => self.nested_block(&l.body.stmts, at, out),
-
-            // `if let Some(payload) = value` moves out of `value` exactly as
-            // a `match` arm does, and the block that owned it stops owning it.
-            syn::Expr::Let(let_expr) => {
-                if self.consumes.consumes_let_scrutinee(let_expr) {
-                    self.moved(&let_expr.expr, at, out);
-                }
-                self.walk(&let_expr.expr, at, out)
-            }
-            syn::Expr::Async(block) => self.nested_block(&block.block.stmts, at, out),
-            syn::Expr::Unsafe(block) => self.nested_block(&block.block.stmts, at, out),
-
-            syn::Expr::Try(t) => self.walk(&t.expr, at, out),
-            syn::Expr::Paren(p) => self.walk(&p.expr, at, out),
-            syn::Expr::Group(g) => self.walk(&g.expr, at, out),
-            syn::Expr::Reference(r) => self.walk(&r.expr, at, out),
-            syn::Expr::Cast(c) => self.walk(&c.expr, at, out),
-            syn::Expr::Field(f) => self.walk(&f.base, at, out),
-            syn::Expr::Index(i) => {
-                self.walk(&i.expr, at, out);
-                self.walk(&i.index, at, out);
-            }
-            syn::Expr::Range(r) => {
-                if let Some(from) = &r.start {
-                    self.walk(from, at, out);
-                }
-                if let Some(to) = &r.end {
-                    self.walk(to, at, out);
-                }
-            }
-            syn::Expr::Repeat(r) => self.walk(&r.expr, at, out),
-
-            // A macro's arguments are Rust written in this body, and the
-            // supported ones each take theirs the way an ordinary call would:
-            // `vec![a, b]` by value, `format!`/`assert!`/`write!` by reference.
-            // Leaving them out of the scan let `Bag { items: vec![value] }`
-            // release `value` here and in the `Bag` that now held it.
-            syn::Expr::Macro(mac) => self.macro_args(&mac.mac, at, out),
-
-            _ => {}
-        }
-    }
-
-    /// The moves a supported macro's arguments write.
-    ///
-    /// An unsupported macro's tokens are not Rust the emitter reads, so nothing
-    /// is claimed about them; the translation of the macro is what reports it.
-    fn macro_args(&self, mac: &syn::Macro, at: Where, out: &mut Vec<Site>) {
-        let name = mac
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .unwrap_or_default();
-        // `select!` takes each arm's future by value and drops every one of
-        // them when it returns, so the block that named one must not release it
-        // as well.
-        if name == "select" {
-            for future in crate::macros::select_futures(&mac.tokens) {
-                self.moved(&future, at, out);
-                self.walk(&future, at, out);
-            }
-            return;
-        }
-        let by_value = match name.as_str() {
-            "vec" => true,
-            "format" | "println" | "eprintln" | "write" | "writeln" | "panic" | "unreachable"
-            | "assert" | "debug_assert" | "assert_eq" | "assert_ne" => false,
-            _ => return,
-        };
-        let parse = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
-        let Ok(args) = parse.parse2(mac.tokens.clone()) else {
-            return;
-        };
-        for arg in &args {
-            if by_value {
-                self.moved(arg, at, out);
-            }
-            self.walk(arg, at, out);
         }
     }
 
@@ -586,9 +374,32 @@ impl<'c> Scan<'c> {
 
 /// Everything under a branch, a loop or an arm is one step further from
 /// straight-line, and stays there.
-fn nested(at: Where) -> Where {
+/// Where a move stands when something the call still has to EVALUATE can leave
+/// the frame first.
+///
+/// X5: `take2(token, o.unwrap())` moves `token` on every path the source has,
+/// so the disposition was `Moved` and the block wrote no release at all — and
+/// `unwrap` on a `None` throws with `token` handed to nobody, which Rust drops
+/// while it unwinds. The same holds for a `?` standing in a later field of the
+/// struct literal that moves the value: ankql's
+/// `Predicate::Comparison { left: Box::new(left.populate_recursive(values)?),
+/// operator, .. }` left `operator` unreleased on the error path.
+///
+/// So a move with anything after it that can throw is a move under a BRANCH:
+/// the block declares a flag, `lifted_above_the_flag` lifts those later
+/// operands above it, and the flag stands immediately before the call.
+/// `rest` is what is still to be evaluated after this position.
+pub(super) fn evaluating(at: Where, rest: &[&syn::Expr], from: usize) -> Where {
+    let can_throw = rest.iter().skip(from).any(|e| !crate::body::flags::evaluates_quietly(e));
+    match (at, can_throw) {
+        (Where::Straight, true) => Where::Evaluated,
+        _ => at,
+    }
+}
+
+pub(super) fn nested(at: Where) -> Where {
     match at {
-        Where::Straight | Where::Branch => Where::Branch,
+        Where::Straight | Where::Branch | Where::Evaluated => Where::Branch,
         other => other,
     }
 }

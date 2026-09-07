@@ -64,13 +64,13 @@ export function tieBreak(order: Order, fallback: Order): Order {
           return fallback;
         },
         Less: () => {
-          _moved0 = true;
           const other = order;
+          _moved0 = true;
           return other;
         },
         Greater: () => {
-          _moved0 = true;
           const other = order;
+          _moved0 = true;
           return other;
         },
       });

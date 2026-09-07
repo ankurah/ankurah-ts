@@ -540,7 +540,20 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
   }
 
   query(collectionId: CollectionId, args: MatchArgs): Result<EntityLiveQuery, RetrievalError> {
-    return EntityLiveQuery.new(this.node, collectionId, args, this.cdata.clone());
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        const _b2 = this.cdata.clone();
+        _moved0 = true;
+        _moved1 = true;
+        return EntityLiveQuery.new(this.node, collectionId, args, _b2);
+      } finally {
+        if (!_moved1) args.drop();
+      }
+    } finally {
+      if (!_moved0) collectionId.drop();
+    }
   }
 
   async collection(id: CollectionId): Promise<Result<StorageCollectionWrapper, RetrievalError>> {

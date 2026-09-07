@@ -113,6 +113,20 @@ impl<'a> BodyTranslator<'a> {
     /// Only the owner can. A `&self` method lends its receiver, a local bound
     /// to a `&T` lends what it points at, and Rust refuses a move out of
     /// either — so a read there is a borrow, whatever the position looks like.
+    /// Does the port hold this expression's value in a temporary with a
+    /// release of its own?
+    ///
+    /// That is what `hoist_temporary` writes for any value a statement builds
+    /// and does not name, and it is exactly the condition under which the
+    /// emitted base of a field read is a NAME whose cascade can reach the
+    /// field. A base that is already a place is somebody's; this asks about the
+    /// ones that are not.
+    fn holds_a_temporary(&self, base: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(base)) else { return false };
+        ownership::drops_of(&tc.borrow().probe(), &ty) == ownership::Drops::Own
+    }
+
     pub(crate) fn owns_place(&self, expr: &syn::Expr) -> bool {
         match ownership::places::root_of(expr) {
             syn::Expr::Path(path) if path.path.is_ident("self") => self.owns_self,
@@ -170,7 +184,18 @@ impl<'a> BodyTranslator<'a> {
         let syn::Expr::Field(field) = expr else {
             return None;
         };
-        if !ownership::places::is_field_of_place(expr) {
+        // Rust leaves the rest of a PLACE behind for whoever owns it, and
+        // leaves nothing behind for a temporary: `h.clone().inner` moves the
+        // field out of a value that dies on the same line, and Rust's drop glue
+        // for that temporary knows the field is gone.
+        //
+        // Y3: the port's does not. It holds the temporary in a `_tN` with a
+        // `finally` of its own, and that release cascades into the field the
+        // new owner has already taken — `selection.clone().predicate.populate(..)`
+        // was ankql's last failing test, reported as `Predicate was used after
+        // being moved`. So a field read out of a temporary the port HOLDS is a
+        // partial move too, and the temporary is the place it comes out of.
+        if !ownership::places::is_field_of_place(expr) && !self.holds_a_temporary(&field.base) {
             return None;
         }
         if !self.owns_place(expr) {
@@ -179,7 +204,15 @@ impl<'a> BodyTranslator<'a> {
         let tc = self.types.as_ref()?;
         let ty = self.quietly(|| self.resolve_expr_type(expr)).ok()?;
         let drops = ownership::drops_of(&tc.borrow().probe(), &ty);
-        let (receiver, member) = self.field_parts(field);
+        // The member is read from the SOURCE, and the receiver is lowered only
+        // once this answers yes. Lowering it to ask the question wrote the base
+        // twice wherever the answer turned out to be no and the caller lowered
+        // it again for the plain read: `(await getHolder()).items` awaited the
+        // holder twice, which the `await_postfix` golden caught.
+        let member = match &field.member {
+            syn::Member::Named(ident) => crate::name_map::to_camel_case(&ident.to_string()),
+            syn::Member::Unnamed(index) => format!("_{}", index.index),
+        };
         // A field the port cannot take OUT is one Rust moved and the emitted
         // text still reads in place, so the struct's cascade reaches it as well
         // as the new owner. `Drops::Nothing` is not that — a `Copy` field, a
@@ -193,6 +226,9 @@ impl<'a> BodyTranslator<'a> {
             if let Some(root) = ownership::places::root_name(expr) {
                 self.own.partial_moves_written_as_reads.borrow_mut().push(root);
             }
+        }
+        if !drops.is_droppable() {
+            return None;
         }
         if drops == ownership::Drops::Cascade {
             // `takeField` is `AkObject`'s, and a field the runtime writes as a
@@ -208,6 +244,7 @@ impl<'a> BodyTranslator<'a> {
             );
             return None;
         }
+        let (receiver, member) = self.field_parts(field);
         ownership::places::take_field(&receiver, &member, drops)
     }
 }

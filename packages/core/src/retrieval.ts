@@ -14,7 +14,14 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
   }
 
   static new(collection: StorageCollectionWrapper): LocalRetriever {
-    return new LocalRetriever(Arc.new(new LocalRetrieverInner(collection, new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>()))));
+    let _moved0 = false;
+    try {
+      const _b1 = new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>());
+      _moved0 = true;
+      return new LocalRetriever(Arc.new(new LocalRetrieverInner(collection, _b1)));
+    } finally {
+      if (!_moved0) collection.drop();
+    }
   }
 
   async storeUsedEvents(): Promise<Result<void, RetrievalError>> {
@@ -178,7 +185,14 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
   }
 
   static new<SE, PA, C>(collection: CollectionId, node: Node<SE, PA>, cdata: C): EphemeralNodeRetriever<SE, PA, C> {
-    return new EphemeralNodeRetriever(collection, node, cdata, new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>()));
+    let _moved0 = false;
+    try {
+      const _b1 = new Mutex(new HashMap<EventId, [Attested<Event>, boolean]>());
+      _moved0 = true;
+      return new EphemeralNodeRetriever(collection, node, cdata, _b1);
+    } finally {
+      if (!_moved0) collection.drop();
+    }
   }
 
   async storeUsedEvents(): Promise<Result<void, MutationError>> {

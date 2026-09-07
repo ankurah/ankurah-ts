@@ -7,6 +7,9 @@
 
 use super::BodyTranslator;
 
+mod operands;
+pub(crate) use operands::{evaluates_quietly, text_calls, writes_a_literal};
+
 impl BodyTranslator<'_> {
     /// What a body's own `let`s declare before its first statement: the
     /// formatter's accumulator, and one move FLAG per parameter that has a live
@@ -89,7 +92,7 @@ impl BodyTranslator<'_> {
     /// produced. The release asks the runtime whether the value still has an
     /// owner, exactly as slice 6's refusal-owned prelude does, because the
     /// call may have consumed it.
-    fn name_above_the_flag(&self, written: String, owes_a_release: bool) -> String {
+    fn name_above_the_flag(&self, written: String, owes_a_release: bool, droppable: bool) -> String {
         let name = self.fresh_hoist("_b");
         // S1: the release is read from a flag this frame declares, not from a
         // mark on the value. `markMoved` is protected on `AkObject` and only
@@ -110,6 +113,7 @@ impl BodyTranslator<'_> {
             released_if_unreached: owes_a_release,
             wrapper: false,
             sets: String::new(),
+            droppable,
             flag,
         });
         name
@@ -162,28 +166,62 @@ impl BodyTranslator<'_> {
         // lifting some and not others would also reorder the evaluation Rust
         // wrote, which reading a PLACE cannot observe and evaluating an
         // expression can.
-        let lifts = |e: &&Option<&syn::Expr>| e.is_some_and(|e| !evaluates_quietly(e));
-        if exprs.iter().filter(lifts).any(|e| self.moves_a_flagged_local(e.expect("filtered"))) {
+        // W2: what has to stand above the flag is everything that EVALUATES
+        // between the flag and the call — asked of the Rust expression and of
+        // the text the port wrote for it, because the port writes calls the
+        // source does not have. `Event { entity_id: self.id, .. }` reads a
+        // field, which cannot panic in Rust, and the port writes
+        // `this.deref().id` because the entity is behind a `Deref`: `deref()`
+        // on a value somebody dropped throws, and the flag above it said the
+        // constructor had already taken the collection clone.
+        //
+        // A `String::clone` is the identity in the port, so `name.clone()`
+        // comes out as `name` and evaluating it cannot throw however the Rust
+        // was written — nothing to lift. J1: the EXPRESSION decides first,
+        // because whether an operand is a place is a fact the lowering has;
+        // the text is read only to catch what the port itself added, and a
+        // closure is exempt because its parentheses hold PARAMETERS and call
+        // nothing where they stand.
+        let evaluates = |index: usize, e: &Option<&syn::Expr>| {
+            e.is_some_and(|e| {
+                let text = written.get(index).map(String::as_str).unwrap_or("");
+                // V5: a value the port writes as a LITERAL builds nothing that
+                // can throw, so it does not have to stand above the flag — and
+                // lifting it takes it OUT of the position that typed it.
+                // `Vec::new()` in a struct-literal field is `[]`, and
+                // `const _b2 = [];` is `any[]`, which `noImplicitAny` reports
+                // twice at every such site.
+                if writes_a_literal(text) {
+                    return false;
+                }
+                !self.writes_a_place(e) || text_calls(e, text)
+            })
+        };
+        if exprs
+            .iter()
+            .enumerate()
+            .filter(|(index, e)| evaluates(*index, e))
+            .any(|(_, e)| self.moves_a_flagged_local(e.expect("filtered")))
+        {
             return written;
         }
-        // Only a lift with something AFTER it that can throw needs a release:
-        // the flag assignment cannot throw, and neither can a place, a literal
-        // or a closure left where it stands. The LAST lift is therefore free.
-        let last_lift = exprs.iter().rposition(|e| lifts(&e));
+        // Only a lift with something AFTER it that can throw needs a FLAG: the
+        // flag assignment cannot throw, and neither can a place, a literal or a
+        // closure left where it stands. The LAST lift is therefore free of one
+        // — but not of the release itself, which X2 keeps until a transfer the
+        // port really wrote discharges it.
+        let last_lift = (0..exprs.len()).rev().find(|index| evaluates(*index, &exprs[*index]));
+        let lift: Vec<bool> = (0..written.len()).map(|i| evaluates(i, exprs.get(i).unwrap_or(&None))).collect();
         written
+            .clone()
             .into_iter()
             .enumerate()
-            .map(|(index, text)| match exprs.get(index) {
-                // A `String::clone` is the identity in the port, so
-                // `name.clone()` comes out as `name` and evaluating it cannot
-                // throw however the Rust was written — nothing to lift. J1:
-                // asked of the EXPRESSION and what the port writes for it,
-                // rather than of the emitted text, because whether an operand
-                // is a place is a fact the lowering has.
-                Some(e) if lifts(&e) && !self.writes_a_place(e.expect("filtered")) => {
-                    let owes = Some(index) != last_lift
-                        && self.lift_owes_a_release(e.expect("filtered"));
-                    self.name_above_the_flag(text, owes)
+            .map(|(index, text)| match lift.get(index) {
+                Some(true) => {
+                    let expr = exprs[index].expect("evaluates answered on a Some");
+                    let droppable = self.lift_owes_a_release(expr);
+                    let owes = Some(index) != last_lift && droppable;
+                    self.name_above_the_flag(text, owes, droppable)
                 }
                 _ => text,
             })
@@ -230,9 +268,6 @@ impl BodyTranslator<'_> {
         }
     }
 
-    /// Is this receiver a value the port holds as a JavaScript VALUE, so that
-    /// copying it is reading it? A `string`, a number, a boolean and a `bigint`
-    /// are; everything with a class of its own has a `clone()` that builds.
     /// Is this receiver ALREADY a JavaScript string, so that `to_string` on it
     /// writes the receiver and builds nothing?
     fn is_already_a_string(&self, receiver: &syn::Expr) -> bool {
@@ -245,6 +280,9 @@ impl BodyTranslator<'_> {
         )
     }
 
+    /// Is this receiver a value the port holds as a JavaScript VALUE, so that
+    /// copying it is reading it? A `string`, a number, a boolean and a `bigint`
+    /// are; everything with a class of its own has a `clone()` that builds.
     fn copies_by_reading(&self, receiver: &syn::Expr) -> bool {
         let Ok(ty) = self.quietly(|| self.resolve_expr_type(receiver)) else { return false };
         let Some(tc) = &self.types else { return false };
@@ -282,40 +320,6 @@ impl BodyTranslator<'_> {
             .any(|site| self.own.flags.borrow().contains_key(&site.name))
     }
 }
-
-/// Can this argument be left where it stands, because evaluating it cannot
-/// throw?
-///
-/// A name is the original answer: reading one cannot fail, and naming it would
-/// only add noise. A LITERAL and a CLOSURE are the same — `f(c, false)` and
-/// `opt.map(|v| v)` build a value out of nothing, and lifting them wrote
-/// `const _b2 = false;` and `const _b6 = (v) => v;` above two live statements.
-///
-/// N1: a FIELD and an INDEX are quiet only if what they are read OUT of is.
-/// This asked `is_place`, which answers "does this name existing storage" and
-/// says yes to any `Expr::Field` and any `Expr::Index` without looking at the
-/// base or at the index — so `eat(c, maybe().n)` and `eat(c, xs[which()])` set
-/// the flag before `maybe()` and `which()` ran, and on their throw path the
-/// block released nothing. Reused as "can evaluating this throw", `is_place`
-/// was answering a different question.
-fn evaluates_quietly(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Lit(_) | syn::Expr::Closure(_) | syn::Expr::Path(_) => true,
-        syn::Expr::Paren(p) => evaluates_quietly(&p.expr),
-        syn::Expr::Group(g) => evaluates_quietly(&g.expr),
-        syn::Expr::Reference(r) => evaluates_quietly(&r.expr),
-        syn::Expr::Unary(syn::ExprUnary { op: syn::UnOp::Deref(_), expr, .. }) => {
-            evaluates_quietly(expr)
-        }
-        syn::Expr::Field(field) => evaluates_quietly(&field.base),
-        syn::Expr::Index(index) => {
-            evaluates_quietly(&index.expr) && evaluates_quietly(&index.index)
-        }
-        other => crate::body::is_place(other),
-    }
-}
-
-
 
 /// The operand of every `?` this statement writes at its own level.
 ///

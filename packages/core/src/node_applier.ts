@@ -26,21 +26,27 @@ export class NodeApplier extends Struct {
       }
       let changes = [];
       _moved0 = true;
-      const _seq3 = items;
-      let _at4 = 0;
+      const _seq4 = items;
+      let _at5 = 0;
       try {
-        while (_at4 < _seq3.length) {
-          const update = _seq3[_at4++];
-          const retriever = EphemeralNodeRetriever.new(update.collection.clone(), node, cdata);
-          const _r1 = await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, []);
-          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-          _r1.drop();
-          const _r2 = await retriever.storeUsedEvents();
-          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-          _r2.drop();
+        while (_at5 < _seq4.length) {
+          const update = _seq4[_at5++];
+          let _moved1 = false;
+          try {
+            const retriever = EphemeralNodeRetriever.new(update.collection.clone(), node, cdata);
+            _moved1 = true;
+            const _r2 = await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, []);
+            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+            _r2.drop();
+            const _r3 = await retriever.storeUsedEvents();
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            _r3.drop();
+          } finally {
+            if (!_moved1) update.drop();
+          }
         }
       } finally {
-        dropOwned(_seq3.slice(_at4));
+        dropOwned(_seq4.slice(_at5));
       }
       await node.deref().value.reactor.notifyChange(changes);
       return Result.Ok([]);
@@ -328,11 +334,10 @@ export class NodeApplier extends Struct {
                   const _r12 = await NodeApplier.saveState(node, entity, collection);
                   if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
                   _r12.drop();
-                  const _b13 = [];
                   _moved9 = true;
-                  const _r14 = EntityChange.new(entity, _b13);
-                  if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
-                  return Result.Ok(_r14.unwrap());
+                  const _r13 = EntityChange.new(entity, []);
+                  if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+                  return Result.Ok(_r13.unwrap());
                 } finally {
                   if (!_moved9) entity.drop();
                 }

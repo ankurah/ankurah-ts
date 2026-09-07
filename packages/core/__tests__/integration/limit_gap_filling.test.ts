@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
 import { LocalProcessConnection } from '@ankurah/connector-local';
 import type { EntityId } from '@ankurah/proto';
+import { Selection_tryFrom } from '@ankurah/ankql';
 import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
@@ -200,7 +201,7 @@ describe('limit_gap_filling', () => {
     const ids = await createAlbums(serverCtx, 2020, 2025);
 
     const watcher = new ChangesetWatcher();
-    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year ASC LIMIT 3"));
+    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year ASC LIMIT 3", Selection_tryFrom));
     const _handle = query.subscribe(watcher.listener());
 
     // Initial state should have the first 3 albums (2020, 2021, 2022)
@@ -250,7 +251,7 @@ describe('limit_gap_filling', () => {
     const ids = await createAlbums(serverCtx, 2020, 2027);
 
     const watcher = new ChangesetWatcher();
-    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year DESC LIMIT 4"));
+    const query = await clientCtx.queryWait(Album, nocache("year >= '2020' ORDER BY year DESC LIMIT 4", Selection_tryFrom));
     const _handle = query.subscribe(watcher.listener());
 
     expect(await watcher.quiesce()).toBe(0);

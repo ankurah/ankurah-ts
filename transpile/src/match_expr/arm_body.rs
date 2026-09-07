@@ -112,7 +112,7 @@ pub(super) fn translate_body(
     // An arm is an arrow function, so a local this arm hands away sets its drop
     // flag here — the same line the enclosing block would have written had the
     // arm been a statement of it.
-    let flags = t.flag_sets_for(&arm.body);
+    let flags = t.flag_sets_that_run(t.flag_sets_for(&arm.body), &body);
     Body { body, lifted, owned, flags, value, leaves }
 }
 

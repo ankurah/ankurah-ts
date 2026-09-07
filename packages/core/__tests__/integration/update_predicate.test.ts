@@ -5,6 +5,7 @@ import { EntityId } from '@ankurah/proto';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
 import { LocalProcessConnection } from '@ankurah/connector-local';
 
+import { Selection_tryFrom } from '@ankurah/ankql';
 import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
@@ -278,7 +279,7 @@ describe('test_predicate_update_inter_node', () => {
     }
 
     // Create LiveQuery on client with initial predicate
-    const albums = clientCtx.query(Album, nocache("year > '2020'"));
+    const albums = clientCtx.query(Album, nocache("year > '2020'", Selection_tryFrom));
     await albums.waitInitialized();
     guards.push(albums);
 

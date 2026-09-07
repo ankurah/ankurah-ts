@@ -52,7 +52,6 @@ use common::gate_ledger::{compare, listed, render};
 use common::imports::{self, Kind};
 use common::{collect_files_with_ext, crates_in_scope, run_batch, transpile_dir, TempDir};
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

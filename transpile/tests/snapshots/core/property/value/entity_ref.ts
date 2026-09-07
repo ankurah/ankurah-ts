@@ -95,35 +95,83 @@ export class Ref<T extends Model> extends Struct implements Property {
         },
         I16: (v) => {
           const other = new Value('I16', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         I32: (v) => {
           const other = new Value('I32', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         I64: (v) => {
           const other = new Value('I64', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         F64: (v) => {
           const other = new Value('F64', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         Bool: (v) => {
           const other = new Value('Bool', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         Object: (v) => {
           const other = new Value('Object', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         Binary: (v) => {
           const other = new Value('Binary', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
         Json: (v) => {
           const other = new Value('Json', v);
-          return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          let _moved0 = false;
+          try {
+            _moved0 = true;
+            return Result.Err(new PropertyError('InvalidVariant', { given: other, ty: 'Ref' }));
+          } finally {
+            if (!_moved0) other.drop();
+          }
         },
       });
     } else {

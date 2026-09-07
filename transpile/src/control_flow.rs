@@ -279,10 +279,78 @@ pub(crate) fn branch(block: &syn::Block, t: &BodyTranslator, position: Position)
                 });
                 // O6: and the flag stands IMMEDIATELY BEFORE the transfer,
                 // which is below everything the branch lifted out of itself.
+                let flags = t.flag_sets_that_run(flags, &body);
                 return crate::ownership::hoisted(&format!("{}{}\n", flags, body), &lifted);
             }
             t.translate_block(block)
         }
+    }
+}
+
+/// `if let PAT = e { A } else { B }` written as `match e { PAT => A, _ => B }`.
+///
+/// For: a pattern that takes the payload OUT of an enum CONSUMES the enum, and
+/// the port has exactly one construct that consumes one — `intoMatch`, which
+/// marks the value moved and hands the arm every part of the payload. An `if`
+/// can only read the payload out and leave the enum standing, so the block that
+/// owned it released it a second time with the taken binding still inside, and
+/// the fields the pattern did not name were released by nobody. Rust's own
+/// desugaring of `if let` is this `match`, so this is what the port writes.
+///
+/// The `else` becomes the wildcard arm — an absent one is the unit `()`, which
+/// is what Rust supplies — and a let-chain's guard becomes the arm's guard,
+/// which is where a `match` puts it.
+fn as_a_match(
+    let_expr: &syn::ExprLet,
+    then_branch: &syn::Block,
+    else_branch: &Option<(syn::token::Else, Box<syn::Expr>)>,
+    guard: Option<&syn::Expr>,
+    t: &BodyTranslator,
+    position: Position,
+) -> String {
+    let taken = syn::Arm {
+        attrs: Vec::new(),
+        pat: (*let_expr.pat).clone(),
+        guard: guard.map(|g| (syn::token::If::default(), Box::new(g.clone()))),
+        fat_arrow_token: syn::token::FatArrow::default(),
+        body: Box::new(syn::Expr::Block(syn::ExprBlock {
+            attrs: Vec::new(),
+            label: None,
+            block: then_branch.clone(),
+        })),
+        comma: None,
+    };
+    let otherwise = syn::Arm {
+        attrs: Vec::new(),
+        pat: syn::Pat::Wild(syn::PatWild {
+            attrs: Vec::new(),
+            underscore_token: syn::token::Underscore::default(),
+        }),
+        guard: None,
+        fat_arrow_token: syn::token::FatArrow::default(),
+        body: match else_branch {
+            Some((_, body)) => body.clone(),
+            // An EMPTY BLOCK, not the unit tuple `()`: the port writes `()` as
+            // the empty array it is in a value position, and an arm that runs
+            // nothing should write nothing.
+            None => Box::new(syn::Expr::Block(syn::ExprBlock {
+                attrs: Vec::new(),
+                label: None,
+                block: syn::Block { brace_token: syn::token::Brace::default(), stmts: Vec::new() },
+            })),
+        },
+        comma: None,
+    };
+    let written = syn::ExprMatch {
+        attrs: Vec::new(),
+        match_token: syn::token::Match::default(),
+        expr: let_expr.expr.clone(),
+        brace_token: syn::token::Brace::default(),
+        arms: vec![taken, otherwise],
+    };
+    match position {
+        Position::Statement => match_expr::translate_match(&written, t),
+        Position::Returning => match_expr::translate_match_returning(&written, t),
     }
 }
 
@@ -312,6 +380,47 @@ fn translate_if_let(
     t: &BodyTranslator,
     position: Position,
 ) -> String {
+    // Y3: an `if let` whose pattern takes the payload OUT of the value it tests
+    // is a two-arm `match`, which is what Rust's own desugaring says it is —
+    // and the match writer is where the port already knows how to consume an
+    // enum: `intoMatch` marks the value moved and hands the arm the payload,
+    // the arm releases what the pattern did not take, and the block that owned
+    // the subject reads a flag instead of releasing it a second time. Written
+    // as an `if`, `if let Predicate::Comparison { right: val, .. } = *inner_left`
+    // took `val` out, released it, and then let the block release `inner_left`
+    // as well — with `val` inside it, dropped twice — while `left` and
+    // `operator`, which Rust drops where the pattern moves out, were released
+    // by nobody. Five of ankql's tests died on that pair.
+    //
+    // Asked before anything is written, because writing the scrutinee pushes
+    // hoists into the prelude and the match writer writes its own.
+    //
+    // Where the scrutinee is a wrapper the port builds rather than the payload
+    // itself: `Option<T>` is `T | null` and has no wrapper, an enum is an
+    // object of its own and does.
+    let wrapper = t.let_takes(let_expr) == crate::ownership::scrutinee::Takes::Payload
+        && !t
+            .scrutinee_type(&let_expr.expr)
+            .is_some_and(|ty| t.is_nullable(&ty));
+    // A `Result` is not one of these. It is the runtime's own wrapper, tested
+    // with `isOk()` and opened by the `unwrap` that takes it, and an `if let
+    // Ok(v) = ..` already released the wrapper on the path that did not match.
+    // Sent through the match writer it grew a second arm that opened the OTHER
+    // side and dropped nothing — `const _v1 = _v.unwrapErr();` with no release
+    // under it in `storage-indexeddb/idb_value.ts`.
+    let a_result = matches!(&*let_expr.pat, syn::Pat::TupleStruct(ts)
+        if ts.path.segments.last().is_some_and(|s| s.ident == "Ok" || s.ident == "Err"));
+    // And only where the subject really is one of the port's own enums, which
+    // is what carries `intoMatch`. `map.entry(k)` answers base's `MapEntry`,
+    // which has `orInsert` and no variants at all: routing it through the match
+    // writer wrote `.intoMatch({ Vacant: .. })` on a class that has no such
+    // method. That site is broken either way — the `if` before it wrote
+    // `_v.is('Vacant')`, which `MapEntry` has not got either — and making it
+    // worse is not this item's business, so it keeps the shape it had.
+    let an_emitted_enum = t.scrutinee_type(&let_expr.expr).is_some_and(|ty| t.is_an_enum(&ty));
+    if wrapper && !a_result && an_emitted_enum {
+        return as_a_match(let_expr, then_branch, else_branch, guard, t, position);
+    }
     let scrutinee = t.expr(&let_expr.expr);
     // The names the pattern introduces are in scope for the branch it guards,
     // and for the guard expression written after it.
@@ -320,15 +429,6 @@ fn translate_if_let(
     // Where the pattern took a value out of the scrutinee, the branch owns it
     // and releases it however the branch is left.
     let owned = t.claim_bindings(&crate::body::pattern_names(&let_expr.pat), &then_branch.stmts);
-    // Taking the payload out means the scrutinee stops being the block's to
-    // release — otherwise the payload is dropped twice. Where the scrutinee is
-    // a wrapper the port builds rather than the payload itself, that leaves the
-    // wrapper for this construct to release: `Option<T>` is `T | null` and has
-    // no wrapper, an enum is an object of its own and does.
-    let wrapper = t.let_takes(let_expr) == crate::ownership::scrutinee::Takes::Payload
-        && !t
-            .scrutinee_type(&let_expr.expr)
-            .is_some_and(|ty| t.is_nullable(&ty));
     let then_body = t.wrap_bindings(&owned, branch(then_branch, t, position));
     let guard_str = guard.map(|g| t.expr(g)).unwrap_or_default();
     drop(bound);
@@ -336,22 +436,25 @@ fn translate_if_let(
     let else_part = else_part(else_branch, t, position);
 
     let subject = t.fresh_temp();
-    // The path where the pattern did not match took nothing out, so the value
-    // this construct read is still whole and nobody else owns it: it is
-    // released here, the way a `while let` releases the turn it did not take.
-    // The path that *did* match is the reported one — the payload belongs to
-    // the branch from there, and marking the wrapper moved is what `intoMatch`
-    // does and an `if` cannot.
+    // A `Result` reaches here with `wrapper` still true: it is the runtime's
+    // own wrapper, and the path where the pattern did not match took nothing
+    // out of it, so the value is still whole and nobody else owns it. The
+    // release stands on that path, the way a `while let` releases the turn it
+    // did not take. The path that DID match opened it with `unwrap`, which
+    // takes the wrapper.
     let abandoned = match wrapper {
         true => t.release_of(&let_expr.expr, &subject).unwrap_or_default(),
         false => String::new(),
     };
-    if wrapper {
+    // What is left on this path with a payload taken out of it and no
+    // `intoMatch` to take it: a Rust enum the port writes as a runtime class of
+    // its own. `map.entry(k)` answers base's `MapEntry`, which has `orInsert`
+    // and no variants, so the `is('Vacant')` written below reaches nothing.
+    if wrapper && !a_result {
         t.fallback(
             syn::spanned::Spanned::span(let_expr),
-            "this pattern takes the payload out of the value it tests, and the wrapper it came \
-             out of is not marked moved, so nothing releases the rest of it on the path that \
-             matched",
+            "this pattern takes a payload out of a value the runtime writes as a class \
+             with no variants, so the test below it reads a method that class has not got",
         );
     }
     let else_part = if abandoned.is_empty() {

@@ -61,7 +61,7 @@ pub(super) fn release_before_a_hole_in_the_bindings(
 ) -> String {
     if !has_payload
         || takes != crate::ownership::scrutinee::Takes::Payload
-        || !bindings.contains("unsupported(")
+        || !crate::body::holds_a_hole(bindings)
     {
         return String::new();
     }

@@ -61,9 +61,16 @@ class MockEventStore extends Struct implements GetEvents {
   }
 
   add(id: TestId, parentIds: TestId[]): void {
+    let _moved0 = false;
     const event = new TestEvent(id, new TestClock(parentIds.slice()));
-    const attested = new Attested(event, AttestationSet.default());
-    this.events.set(id, attested);
+    try {
+      const _b1 = AttestationSet.default();
+      _moved0 = true;
+      const attested = new Attested(event, _b1);
+      this.events.set(id, attested);
+    } finally {
+      if (!_moved0) event.drop();
+    }
   }
 
   async retrieveEvent(eventIds: number[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {

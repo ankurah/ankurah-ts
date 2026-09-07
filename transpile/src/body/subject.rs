@@ -79,6 +79,29 @@ impl<'a> BodyTranslator<'a> {
         self.or_fallback(resolved, "the pattern's names are bound without types")
     }
 
+    /// Is this type one of the port's own ENUMS — a class extending base's
+    /// `Enum`, with `is`, `value` and `intoMatch` on it?
+    ///
+    /// Asked where a lowering is only correct for one: base's `MapEntry` is a
+    /// Rust enum in the source and a plain class in the runtime, with
+    /// `orInsert` and no variants, so neither `is('Vacant')` nor
+    /// `intoMatch({ Vacant: .. })` reaches anything there.
+    pub fn is_an_enum(&self, ty: &crate::ty::Ty) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let crate::ty::Ty::Named { id, .. } = ty.peel_refs() else { return false };
+        let tc = tc.borrow();
+        // `Entry` is an enum in the source and `MapEntry` in the runtime — a
+        // plain class with `orInsert` on it — so it is an enum by declaration
+        // and not one by emission.
+        if crate::native_types::map::is_entry_type(tc.probe().reg, ty) {
+            return false;
+        }
+        matches!(
+            tc.probe().reg.def(*id).map(|def| &def.kind),
+            Some(crate::registry::TypeKind::Enum { .. })
+        )
+    }
+
     /// Write `body` with the pattern lowering told what the value being taken
     /// apart IS, for a site that writes the test after its binding scope has
     /// closed.

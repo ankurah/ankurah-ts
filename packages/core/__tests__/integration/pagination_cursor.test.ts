@@ -8,6 +8,7 @@ import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
 import { LocalProcessConnection } from '@ankurah/connector-local';
 import type { EntityId } from '@ankurah/proto';
+import { Selection_tryFrom } from '@ankurah/ankql';
 import { Node, matchArgs, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, lww, yrsText } from '../../src/define-model.ts';
@@ -220,7 +221,7 @@ describe('pagination_cursor', () => {
 
     // Client queries with nocache to force server fetch
     const q = `room = '${roomId.toBase64()}' AND deleted = false ORDER BY timestamp DESC LIMIT 33`;
-    const lq = await clientCtx.queryWait(TestMessage, nocache(q));
+    const lq = await clientCtx.queryWait(TestMessage, nocache(q, Selection_tryFrom));
 
     const items = lq.peek();
     expect(items.length).toBe(33);

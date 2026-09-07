@@ -61,11 +61,13 @@ export function castPredicateTypes<S extends CollectionSchema>(predicate: Predic
               }
             } else {
               {
+                _moved0 = true;
                 const _r9 = castExprTypes(left, schema);
                 if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
                 let _moved10 = false;
                 const castLeft = _r9.unwrap();
                 try {
+                  _moved2 = true;
                   const _r11 = castExprTypes(right, schema);
                   if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
                   let _moved12 = false;
@@ -95,51 +97,26 @@ export function castPredicateTypes<S extends CollectionSchema>(predicate: Predic
     },
     IsNull: (v) => {
       const expr = v._0;
-      try {
-        const _r13 = castExprTypes(expr, schema);
-        if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
-        return Result.Ok(new Predicate('IsNull', { _0: _r13.unwrap() }));
-      } finally {
-        dropOwned(expr);
-      }
+      const _r13 = castExprTypes(expr, schema);
+      if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+      return Result.Ok(new Predicate('IsNull', { _0: _r13.unwrap() }));
     },
     And: (v) => {
       const left = v._0;
       const right = v._1;
+      let _moved14 = false;
+      let _moved15 = false;
       try {
         try {
-          const _r14 = castPredicateTypes(left, schema);
-          if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
-          try {
-            const _r15 = castPredicateTypes(right, schema);
-            if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
-            try {
-              return Result.Ok(new Predicate('And', { _0: _r14.unwrap(), _1: _r15.unwrap() }));
-            } finally {
-              if (_r15 != null && !(_r15 as any).isMoved && !(_r15 as any).isDropped) dropOwned(_r15);
-            }
-          } finally {
-            if (_r14 != null && !(_r14 as any).isMoved && !(_r14 as any).isDropped) dropOwned(_r14);
-          }
-        } finally {
-          dropOwned(right);
-        }
-      } finally {
-        dropOwned(left);
-      }
-    },
-    Or: (v) => {
-      const left = v._0;
-      const right = v._1;
-      try {
-        try {
+          _moved14 = true;
           const _r16 = castPredicateTypes(left, schema);
           if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
           try {
+            _moved15 = true;
             const _r17 = castPredicateTypes(right, schema);
             if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
             try {
-              return Result.Ok(new Predicate('Or', { _0: _r16.unwrap(), _1: _r17.unwrap() }));
+              return Result.Ok(new Predicate('And', { _0: _r16.unwrap(), _1: _r17.unwrap() }));
             } finally {
               if (_r17 != null && !(_r17 as any).isMoved && !(_r17 as any).isDropped) dropOwned(_r17);
             }
@@ -147,21 +124,46 @@ export function castPredicateTypes<S extends CollectionSchema>(predicate: Predic
             if (_r16 != null && !(_r16 as any).isMoved && !(_r16 as any).isDropped) dropOwned(_r16);
           }
         } finally {
-          dropOwned(right);
+          if (!_moved15) dropOwned(right);
         }
       } finally {
-        dropOwned(left);
+        if (!_moved14) dropOwned(left);
+      }
+    },
+    Or: (v) => {
+      const left = v._0;
+      const right = v._1;
+      let _moved18 = false;
+      let _moved19 = false;
+      try {
+        try {
+          _moved18 = true;
+          const _r20 = castPredicateTypes(left, schema);
+          if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
+          try {
+            _moved19 = true;
+            const _r21 = castPredicateTypes(right, schema);
+            if (_r21.isErr()) return Result.Err(_r21.unwrapErr());
+            try {
+              return Result.Ok(new Predicate('Or', { _0: _r20.unwrap(), _1: _r21.unwrap() }));
+            } finally {
+              if (_r21 != null && !(_r21 as any).isMoved && !(_r21 as any).isDropped) dropOwned(_r21);
+            }
+          } finally {
+            if (_r20 != null && !(_r20 as any).isMoved && !(_r20 as any).isDropped) dropOwned(_r20);
+          }
+        } finally {
+          if (!_moved19) dropOwned(right);
+        }
+      } finally {
+        if (!_moved18) dropOwned(left);
       }
     },
     Not: (v) => {
       const pred = v._0;
-      try {
-        const _r18 = castPredicateTypes(pred, schema);
-        if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
-        return Result.Ok(new Predicate('Not', { _0: _r18.unwrap() }));
-      } finally {
-        dropOwned(pred);
-      }
+      const _r22 = castPredicateTypes(pred, schema);
+      if (_r22.isErr()) return Result.Err(_r22.unwrapErr());
+      return Result.Ok(new Predicate('Not', { _0: _r22.unwrap() }));
     },
     True: () => Result.Ok(predicate),
     False: () => Result.Ok(predicate),
@@ -189,33 +191,31 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
       const left = v.left;
       const operator = v.operator;
       const right = v.right;
+      let _moved1 = false;
       try {
+        const _r2 = castExprTypes(left, schema);
+        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
         try {
-          const _r1 = castExprTypes(left, schema);
-          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+          const _r3 = castExprTypes(right, schema);
+          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
           try {
-            const _r2 = castExprTypes(right, schema);
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-            try {
-              return Result.Ok(new Expr('InfixExpr', { left: _r1.unwrap(), operator: operator, right: _r2.unwrap() }));
-            } finally {
-              if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
-            }
+            _moved1 = true;
+            return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
           } finally {
-            if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+            if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
           }
         } finally {
-          dropOwned(right);
+          if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
         }
       } finally {
-        dropOwned(left);
+        if (!_moved1) operator.drop();
       }
     },
     ExprList: (v) => {
       const exprs = v._0;
       try {
-        const _r4 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-        const castExprs = _r4;
+        const _r5 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+        const castExprs = _r5;
         return Result.Ok(new Expr('ExprList', { _0: castExprs }));
       } finally {
         dropOwned(exprs);

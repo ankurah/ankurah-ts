@@ -161,26 +161,45 @@ describe('reactor unit tests', () => {
         const _guard = rsub.subscribe(w);
         try {
           const queryId = QueryId.new();
+          let _moved0 = false;
           const collectionId = CollectionId.fixedName('album');
-          const selection = 'status = \'pending\''.tryInto();
-          const entity1 = TestEntity.new('Test Album', 'pending');
           try {
-            const resultset = EntityResultSet.empty();
-            const mockGapFetcher = Arc.new(MockGapFetcher.new());
-            const mockNode = new MockNode([entity1.clone()]);
+            let _moved1 = false;
+            const selection = 'status = \'pending\''.tryInto();
             try {
-              (await reactor.addQueryAndNotify(rsub.id(), queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
-              const _t0 = [new ReactorUpdate([new ReactorUpdateItem(entity1.clone(), [], [[queryId, new MembershipChange('Initial', {})]])])];
+              const entity1 = TestEntity.new('Test Album', 'pending');
               try {
-                expect(check()).toEqual(_t0);
+                let _moved2 = false;
+                const resultset = EntityResultSet.empty();
+                try {
+                  const mockGapFetcher = Arc.new(MockGapFetcher.new());
+                  const mockNode = new MockNode([entity1.clone()]);
+                  try {
+                    const _b3 = rsub.id();
+                    _moved0 = true;
+                    _moved1 = true;
+                    _moved2 = true;
+                    (await reactor.addQueryAndNotify(_b3, queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
+                    const _t4 = [new ReactorUpdate([new ReactorUpdateItem(entity1.clone(), [], [[queryId, new MembershipChange('Initial', {})]])])];
+                    try {
+                      expect(check()).toEqual(_t4);
+                    } finally {
+                      dropOwned(_t4);
+                    }
+                  } finally {
+                    mockNode.drop();
+                  }
+                } finally {
+                  if (!_moved2) resultset.drop();
+                }
               } finally {
-                dropOwned(_t0);
+                entity1.drop();
               }
             } finally {
-              mockNode.drop();
+              if (!_moved1) selection.drop();
             }
           } finally {
-            entity1.drop();
+            if (!_moved0) collectionId.drop();
           }
         } finally {
           _guard.drop();

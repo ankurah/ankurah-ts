@@ -13,7 +13,14 @@ export class CollectionSet<SE extends StorageEngine> extends Struct {
   }
 
   static new<SE>(storageEngine: Arc<SE>): CollectionSet<SE> {
-    return new CollectionSet(Arc.new(new Inner(storageEngine, new RwLock(new HashMap()))));
+    let _moved0 = false;
+    try {
+      const _b1 = new RwLock(new HashMap());
+      _moved0 = true;
+      return new CollectionSet(Arc.new(new Inner(storageEngine, _b1)));
+    } finally {
+      if (!_moved0) storageEngine.drop();
+    }
   }
 
   async get(id: CollectionId): Promise<Result<StorageCollectionWrapper, RetrievalError>> {
@@ -41,7 +48,14 @@ export class CollectionSet<SE extends StorageEngine> extends Struct {
             const _v1 = collections_1.value.entry(id.clone());
             if (_v1.is('Vacant')) {
               const { _0: entry } = _v1.value;
-              entry.insert(collection.clone());
+              let _moved4 = false;
+              try {
+                const _b5 = collection.clone();
+                _moved4 = true;
+                entry.insert(_b5);
+              } finally {
+                if (!_moved4) dropOwned(entry);
+              }
             } else {
             dropOwned(_v1);
           }

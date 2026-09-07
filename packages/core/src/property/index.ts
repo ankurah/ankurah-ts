@@ -60,39 +60,93 @@ export function Cow_Str_fromValue(value: Value | null): Result<Cow<string>, Prop
       },
       I16: (v) => {
         const variant = new Value('I16', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       I32: (v) => {
         const variant = new Value('I32', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       I64: (v) => {
         const variant = new Value('I64', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       F64: (v) => {
         const variant = new Value('F64', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       Bool: (v) => {
         const variant = new Value('Bool', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       EntityId: (v) => {
         const variant = new Value('EntityId', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       Object: (v) => {
         const variant = new Value('Object', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       Binary: (v) => {
         const variant = new Value('Binary', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
       Json: (v) => {
         const variant = new Value('Json', v);
-        return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return Result.Err(new PropertyError('InvalidVariant', { given: variant, ty: '$ ty' }));
+        } finally {
+          if (!_moved0) variant.drop();
+        }
       },
     });
   } else {

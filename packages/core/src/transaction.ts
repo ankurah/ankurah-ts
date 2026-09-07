@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/transaction.rs
-import { Struct, Drop, Result, Arc, RwLock, HashSet } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, RwLock, dropOwned, HashSet } from '@ankurah/base';
 import { EntityId, TransactionId } from '@ankurah/proto';
 import { TContext } from './context';
 import { Entity } from './entity';
@@ -24,7 +24,23 @@ export class Transaction extends Drop {
   }
 
   static new(dyncontext: Arc<TContext>): Transaction {
-    return new Transaction(dyncontext, TransactionId.new(), AppendOnlyVec.new(), Arc.new(true), new RwLock(new HashSet<EntityId>()));
+    let _moved0 = false;
+    try {
+      let _moved2 = false;
+      const _b1 = TransactionId.new();
+      try {
+        const _b3 = AppendOnlyVec.new();
+        const _b4 = Arc.new(true);
+        const _b5 = new RwLock(new HashSet<EntityId>());
+        _moved2 = true;
+        _moved0 = true;
+        return new Transaction(dyncontext, _b1, _b3, _b4, _b5);
+      } finally {
+        if (!_moved2) dropOwned(_b1);
+      }
+    } finally {
+      if (!_moved0) dyncontext.drop();
+    }
   }
 
   addEntity(entity: Entity): Entity {

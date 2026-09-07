@@ -149,9 +149,6 @@ pub fn unowned_positions(pat: &syn::Pat, len: usize) -> Option<Vec<usize>> {
     )
 }
 
-
-
-
 /// The PATHS into a tuple subject that a droppable value sits at and no name
 /// owns — what a consuming arm has to release itself, one index per level.
 ///

@@ -109,78 +109,117 @@ describe('type_resolver unit tests', () => {
     try {
       const predicate = new Predicate('Comparison', { left: new Expr('Path', { _0: new PathExpr(['data', 'number']) }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('I64', { _0: 9n }) }) });
       const resolved = resolver.resolveTypes(predicate);
-      {
-        const _v = resolved;
-        if (_v.is('Comparison')) {
-          const { right } = _v.value;
+      return resolved.intoMatch({
+        Comparison: (v) => {
+          const right = v.right;
           try {
-            return right.intoMatch({
-              Literal: (v) => {
-                if (v._0.is('Json') && (v._0.value._0.is('Number'))) {
-                  const { _0: n } = v._0.value._0.value;
-                  try {
-                    expect(n.asI64()).toEqual(9n);
-                  } finally {
-                    dropUnbound(v, []);
+            let _moved0 = false;
+            try {
+              _moved0 = true;
+              return right.intoMatch({
+                Literal: (v) => {
+                  if (v._0.is('Json') && (v._0.value._0.is('Number'))) {
+                    const { _0: n } = v._0.value._0.value;
+                    try {
+                      expect(n.asI64()).toEqual(9n);
+                    } finally {
+                      dropUnbound(v, []);
+                    }
+                  } else {
+                    const other = new Expr('Literal', v);
+                    try {
+                      throw new Error(`Expected Json(Number), got ${other.debug()}`);
+                    } finally {
+                      other.drop();
+                    }
                   }
-                } else {
-                  const other = new Expr('Literal', v);
+                },
+                Path: (v) => {
+                  const other = new Expr('Path', v);
                   try {
                     throw new Error(`Expected Json(Number), got ${other.debug()}`);
                   } finally {
                     other.drop();
                   }
-                }
-              },
-              Path: (v) => {
-                const other = new Expr('Path', v);
-                try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              Predicate: (v) => {
-                const other = new Expr('Predicate', v);
-                try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              InfixExpr: (v) => {
-                const other = new Expr('InfixExpr', v);
-                try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              ExprList: (v) => {
-                const other = new Expr('ExprList', v);
-                try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              Placeholder: (v) => {
-                const other = new Expr('Placeholder', v);
-                try {
-                  throw new Error(`Expected Json(Number), got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-            });
+                },
+                Predicate: (v) => {
+                  const other = new Expr('Predicate', v);
+                  try {
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                InfixExpr: (v) => {
+                  const other = new Expr('InfixExpr', v);
+                  try {
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                ExprList: (v) => {
+                  const other = new Expr('ExprList', v);
+                  try {
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                Placeholder: (v) => {
+                  const other = new Expr('Placeholder', v);
+                  try {
+                    throw new Error(`Expected Json(Number), got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+              });
+            } finally {
+              if (!_moved0) dropOwned(right);
+            }
           } finally {
-            dropOwned(right);
+            dropUnbound(v, ['right']);
           }
-        } else {
-        _v.drop();
-        throw new Error('Expected Comparison predicate');
-      }
-      }
+        },
+        IsNull: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        And: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Or: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Not: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        True: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+        False: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+        Placeholder: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+      });
     } finally {
       resolver.drop();
     }
@@ -191,78 +230,117 @@ describe('type_resolver unit tests', () => {
     try {
       const predicate = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'test' }) }) });
       const resolved = resolver.resolveTypes(predicate);
-      {
-        const _v = resolved;
-        if (_v.is('Comparison')) {
-          const { right } = _v.value;
+      return resolved.intoMatch({
+        Comparison: (v) => {
+          const right = v.right;
           try {
-            return right.intoMatch({
-              Literal: (v) => {
-                if (v._0.is('String')) {
-                  const { _0: s } = v._0.value;
-                  try {
-                    expect(s).toEqual('test');
-                  } finally {
-                    dropUnbound(v, []);
+            let _moved0 = false;
+            try {
+              _moved0 = true;
+              return right.intoMatch({
+                Literal: (v) => {
+                  if (v._0.is('String')) {
+                    const { _0: s } = v._0.value;
+                    try {
+                      expect(s).toEqual('test');
+                    } finally {
+                      dropUnbound(v, []);
+                    }
+                  } else {
+                    const other = new Expr('Literal', v);
+                    try {
+                      throw new Error(`Expected String literal, got ${other.debug()}`);
+                    } finally {
+                      other.drop();
+                    }
                   }
-                } else {
-                  const other = new Expr('Literal', v);
+                },
+                Path: (v) => {
+                  const other = new Expr('Path', v);
                   try {
                     throw new Error(`Expected String literal, got ${other.debug()}`);
                   } finally {
                     other.drop();
                   }
-                }
-              },
-              Path: (v) => {
-                const other = new Expr('Path', v);
-                try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              Predicate: (v) => {
-                const other = new Expr('Predicate', v);
-                try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              InfixExpr: (v) => {
-                const other = new Expr('InfixExpr', v);
-                try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              ExprList: (v) => {
-                const other = new Expr('ExprList', v);
-                try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-              Placeholder: (v) => {
-                const other = new Expr('Placeholder', v);
-                try {
-                  throw new Error(`Expected String literal, got ${other.debug()}`);
-                } finally {
-                  other.drop();
-                }
-              },
-            });
+                },
+                Predicate: (v) => {
+                  const other = new Expr('Predicate', v);
+                  try {
+                    throw new Error(`Expected String literal, got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                InfixExpr: (v) => {
+                  const other = new Expr('InfixExpr', v);
+                  try {
+                    throw new Error(`Expected String literal, got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                ExprList: (v) => {
+                  const other = new Expr('ExprList', v);
+                  try {
+                    throw new Error(`Expected String literal, got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+                Placeholder: (v) => {
+                  const other = new Expr('Placeholder', v);
+                  try {
+                    throw new Error(`Expected String literal, got ${other.debug()}`);
+                  } finally {
+                    other.drop();
+                  }
+                },
+              });
+            } finally {
+              if (!_moved0) dropOwned(right);
+            }
           } finally {
-            dropOwned(right);
+            dropUnbound(v, ['right']);
           }
-        } else {
-        _v.drop();
-        throw new Error('Expected Comparison predicate');
-      }
-      }
+        },
+        IsNull: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        And: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Or: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Not: (v) => {
+          try {
+            throw new Error('Expected Comparison predicate');
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        True: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+        False: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+        Placeholder: () => {
+          throw new Error('Expected Comparison predicate');
+        },
+      });
     } finally {
       resolver.drop();
     }

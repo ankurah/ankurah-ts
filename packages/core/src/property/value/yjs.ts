@@ -67,8 +67,15 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
   }
 
   static fromEntity<Projected>(propertyName: PropertyName, entity: Entity): YrsString<Projected> {
+    let _moved0 = false;
     const backend = entity.getBackend().expect('YrsBackend should exist');
-    return YrsString.new(propertyName, backend, entity.clone());
+    try {
+      const _b1 = entity.clone();
+      _moved0 = true;
+      return YrsString.new(propertyName, backend, _b1);
+    } finally {
+      if (!_moved0) backend.drop();
+    }
   }
 
   static initializeWith<Projected>(entity: Entity, propertyName: PropertyName, value: string): YrsString<Projected> {

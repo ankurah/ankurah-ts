@@ -23,7 +23,6 @@
 "src/infer/context.rs" = 1261
 "src/main.rs" = 1230
 "src/match_expr.rs" = 751
-"src/ownership/moves.rs" = 671
 "src/ownership/tests.rs" = 1204
 "src/registry/build.rs" = 1137
 "src/registry/engine_tests.rs" = 1289

@@ -295,6 +295,38 @@ impl<'a> BodyTranslator<'a> {
         self.flag_sets(&syn::Stmt::Expr(expr.clone(), None))
     }
 
+    /// The same, less the sets a REFUSAL in the arm's own text aborts.
+    ///
+    /// K3 says a statement that refused hands nothing away, so it sets no move
+    /// flag. That rule was written into `statement_that_refused`, which is the
+    /// path a BLOCK takes; each arm writer computes its own flag line, so an
+    /// arm still wrote `_moved0 = true;` immediately above a hole and the
+    /// block's `finally` believed it. `match limit { Some(k) =>
+    /// tally(rows.top_k(spill.clone(), k).collect()), .. }` reported `rows`
+    /// handed to a `top_k` the port never wrote at all.
+    ///
+    /// Two conditions, both required, because dropping a flag WRONGLY releases
+    /// a value the callee owns, which is fatal, while keeping one wrongly
+    /// leaks and the collector reports it: the text has to refuse, and it has
+    /// to not name the local anywhere. A local the text still names may have
+    /// been handed to a call that completed before the hole.
+    pub fn flag_sets_that_run(&self, flags: String, written: &str) -> String {
+        if !crate::body::holds_a_hole(written) {
+            return flags;
+        }
+        let claimed = self.own.flags.borrow();
+        flags
+            .lines()
+            .filter(|line| {
+                claimed
+                    .iter()
+                    .find(|(_, flag)| line.trim_start().starts_with(&format!("{} =", flag)))
+                    .map_or(true, |(name, _)| crate::body::refusal::mentions(written, name))
+            })
+            .map(|line| format!("{}\n", line))
+            .collect()
+    }
+
     /// Record what the block owes this `let`, and declare its drop flag where
     /// the local is handed away on some paths and not others.
     ///

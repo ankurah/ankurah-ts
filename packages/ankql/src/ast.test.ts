@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { ComparisonOperator, Expr, Literal, PathExpr, Predicate } from './ast';
-import { Result, dropOwned } from '@ankurah/base';
+import { Result, dropOwned, dropUnbound } from '@ankurah/base';
 import { ParseError } from './error';
 import { parseSelection } from './parser';
 import { generateSelectionSql } from './selection/sql';
@@ -111,92 +111,234 @@ describe('ast unit tests', () => {
     try {
       const values = [Expr.fromBool(true), Expr.fromF64((95.5)), Expr.fromString('Charlie')];
       const populated = selection.takeField('predicate').populate(values, (value: Expr) => Result.Ok(value)).unwrap();
-      {
-        const _v4 = populated;
-        if (_v4.is('And')) {
-          const { _0: left, _1: right } = _v4.value;
+      return populated.intoMatch({
+        And: (v) => {
+          const left = v._0;
+          const right = v._1;
+          let _moved0 = false;
+          let _moved1 = false;
           try {
             try {
-              {
-                const _v2 = left;
-                if (_v2.is('And')) {
-                  const { _0: innerLeft, _1: innerRight } = _v2.value;
+              _moved0 = true;
+              left.intoMatch({
+                And: (v) => {
+                  const innerLeft = v._0;
+                  const innerRight = v._1;
+                  let _moved2 = false;
+                  let _moved3 = false;
                   try {
                     try {
-                      {
-                        const _v = innerLeft;
-                        if (_v.is('Comparison')) {
-                          const { right: val } = _v.value;
+                      _moved2 = true;
+                      innerLeft.intoMatch({
+                        Comparison: (v) => {
+                          const val = v.right;
                           try {
-                            const _t0 = new Expr('Literal', { _0: new Literal('Bool', { _0: true }) });
                             try {
-                              expect(val).toEqual(_t0);
+                              const _t4 = new Expr('Literal', { _0: new Literal('Bool', { _0: true }) });
+                              try {
+                                expect(val).toEqual(_t4);
+                              } finally {
+                                _t4.drop();
+                              }
                             } finally {
-                              _t0.drop();
+                              dropOwned(val);
                             }
                           } finally {
-                            dropOwned(val);
+                            dropUnbound(v, ['right']);
                           }
-                        } else {
-                        _v.drop();
-                      }
-                      }
-                      {
-                        const _v1 = innerRight;
-                        if (_v1.is('Comparison')) {
-                          const { right: val } = _v1.value;
+                        },
+                        IsNull: (v) => {
                           try {
-                            const _t1 = new Expr('Literal', { _0: new Literal('F64', { _0: 95.5 }) });
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        And: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        Or: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        Not: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        True: () => {},
+                        False: () => {},
+                        Placeholder: () => {},
+                      });
+                      _moved3 = true;
+                      return innerRight.intoMatch({
+                        Comparison: (v) => {
+                          const val = v.right;
+                          try {
                             try {
-                              expect(val).toEqual(_t1);
+                              const _t5 = new Expr('Literal', { _0: new Literal('F64', { _0: 95.5 }) });
+                              try {
+                                expect(val).toEqual(_t5);
+                              } finally {
+                                _t5.drop();
+                              }
                             } finally {
-                              _t1.drop();
+                              dropOwned(val);
                             }
                           } finally {
-                            dropOwned(val);
+                            dropUnbound(v, ['right']);
                           }
-                        } else {
-                        _v1.drop();
-                      }
-                      }
+                        },
+                        IsNull: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        And: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        Or: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        Not: (v) => {
+                          try {
+                          } finally {
+                            dropUnbound(v, []);
+                          }
+                        },
+                        True: () => {},
+                        False: () => {},
+                        Placeholder: () => {},
+                      });
                     } finally {
-                      dropOwned(innerRight);
+                      if (!_moved3) dropOwned(innerRight);
                     }
                   } finally {
-                    dropOwned(innerLeft);
+                    if (!_moved2) dropOwned(innerLeft);
                   }
-                } else {
-                _v2.drop();
-              }
-              }
-              {
-                const _v3 = right;
-                if (_v3.is('Comparison')) {
-                  const { right: val } = _v3.value;
+                },
+                Comparison: (v) => {
                   try {
-                    const _t2 = new Expr('Literal', { _0: new Literal('String', { _0: 'Charlie' }) });
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                IsNull: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                Or: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                Not: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                True: () => {},
+                False: () => {},
+                Placeholder: () => {},
+              });
+              _moved1 = true;
+              return right.intoMatch({
+                Comparison: (v) => {
+                  const val = v.right;
+                  try {
                     try {
-                      expect(val).toEqual(_t2);
+                      const _t6 = new Expr('Literal', { _0: new Literal('String', { _0: 'Charlie' }) });
+                      try {
+                        expect(val).toEqual(_t6);
+                      } finally {
+                        _t6.drop();
+                      }
                     } finally {
-                      _t2.drop();
+                      dropOwned(val);
                     }
                   } finally {
-                    dropOwned(val);
+                    dropUnbound(v, ['right']);
                   }
-                } else {
-                _v3.drop();
-              }
-              }
+                },
+                IsNull: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                And: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                Or: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                Not: (v) => {
+                  try {
+                  } finally {
+                    dropUnbound(v, []);
+                  }
+                },
+                True: () => {},
+                False: () => {},
+                Placeholder: () => {},
+              });
             } finally {
-              dropOwned(right);
+              if (!_moved1) dropOwned(right);
             }
           } finally {
-            dropOwned(left);
+            if (!_moved0) dropOwned(left);
           }
-        } else {
-        _v4.drop();
-      }
-      }
+        },
+        Comparison: (v) => {
+          try {
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        IsNull: (v) => {
+          try {
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Or: (v) => {
+          try {
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        Not: (v) => {
+          try {
+          } finally {
+            dropUnbound(v, []);
+          }
+        },
+        True: () => {},
+        False: () => {},
+        Placeholder: () => {},
+      });
     } finally {
       selection.drop();
     }
@@ -239,7 +381,7 @@ describe('ast unit tests', () => {
     try {
       const _t0 = selection.clone();
       try {
-        const populated = _t0.predicate.populate([], (value: string) => Result.Ok(Expr.fromString(value))).unwrap();
+        const populated = _t0.takeField('predicate').populate([], (value: string) => Result.Ok(Expr.fromString(value))).unwrap();
         try {
           expect(populated).toEqual(selection.predicate);
         } finally {

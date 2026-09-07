@@ -104,6 +104,13 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
         self.let_takes(let_expr) == ownership::scrutinee::Takes::Payload
     }
 
+    fn derefs_by_value(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(expr)) else { return false };
+        let crate::ty::Ty::Named { id, .. } = ty else { return false };
+        tc.borrow().probe().reg.system_type("std::boxed::Box") == Some(id)
+    }
+
     fn consumes_operands(&self, bin: &syn::ExprBinary) -> (bool, bool) {
         self.operator_takes(bin)
     }

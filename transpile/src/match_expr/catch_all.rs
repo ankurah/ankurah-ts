@@ -289,7 +289,7 @@ pub(super) fn lower(
     drop(_bindings);
 
     let mut flags = if declares { subject_flag } else { String::new() };
-    flags.push_str(&t.flag_sets_for(&split.rest.body));
+    flags.push_str(&t.flag_sets_that_run(t.flag_sets_for(&split.rest.body), &body));
     let is_async = crate::control_flow::awaiting::awaits(&split.rest.body);
     // A consuming arm owns the whole payload from the moment it is called:
     // `intoMatch` releases nothing of its own on any path out. An arm that
@@ -371,6 +371,7 @@ pub(super) fn lower(
             super::ArmParts {
                 variant,
                 bindings,
+                flags: flags.clone(),
                 param: takes_payload.then(|| "v".to_string()),
                 body: &body,
                 owned: &owned,

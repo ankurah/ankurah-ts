@@ -244,7 +244,7 @@ fn one_arm(
     });
     let ((body, leaves), lifted) = t.with_own_hoists(|| super::arms::arm_body(&arm.body, t, position));
     drop(_bindings);
-    let flags = t.flag_sets_for(&arm.body);
+    let flags = t.flag_sets_that_run(t.flag_sets_for(&arm.body), &body);
     let inner = crate::ownership::hoisted(&format!("{}\n", body), &lifted);
     let statements = format!("{}{}", flags, inner);
     // K14: a `_` arm binds nothing the body can read, so its temporary is a
@@ -307,7 +307,8 @@ fn link(
 ) -> (Option<String>, Arm) {
     let written = |inner: &syn::Pat| {
         let (test, reads) = t.pattern_test(&payload.expr, inner);
-        let test = (test.trim() != "true" && !test.starts_with("unsupported(")).then_some(test);
+        let test =
+            (test.trim() != "true" && !crate::body::value_is_a_hole(&test)).then_some(test);
         (test, reads)
     };
     match inner_test(arm) {

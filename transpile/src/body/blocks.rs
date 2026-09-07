@@ -459,7 +459,7 @@ mod formatter_tests {
 /// Does the first hole in this rendered statement stand inside a callable the
 /// statement passes, rather than in the statement's own evaluation?
 fn hole_stands_inside_a_callable(text: &str) -> bool {
-    match text.find("unsupported(") {
+    match crate::body::hole_at(text) {
         Some(at) => text[..at].contains("=>"),
         None => false,
     }

@@ -8,6 +8,7 @@ import { describe, expect, test } from 'bun:test';
 import { MemoryStorageEngine } from '@ankurah/storage-memory';
 import { LocalProcessConnection } from '@ankurah/connector-local';
 import { CollectionId } from '@ankurah/proto';
+import { Selection_tryFrom } from '@ankurah/ankql';
 import { Node, nocache } from '../../src/node.ts';
 import { PermissiveAgent } from '../../src/policy.ts';
 import { defineModel, yrsText } from '../../src/define-model.ts';
@@ -57,7 +58,7 @@ describe('rt114', () => {
     expect((await clientCollection.dumpEntityEvents(album2Id)).length).toBe(0); // before subscribe
 
     // Subscribe on the client with predicate year >= 2020
-    const clientQuery = await clientCtx.queryWait(Album, nocache("year >= '2020'"));
+    const clientQuery = await clientCtx.queryWait(Album, nocache("year >= '2020'", Selection_tryFrom));
     expect(clientQuery.peek().map((p: any) => p.year()).sort()).toEqual(['2020', '2020']);
 
     // actually zero events because we receive a state from ItemChange::Initial
@@ -87,7 +88,7 @@ describe('rt114', () => {
     await new Promise(resolve => setTimeout(resolve, 200));
 
     // Resubscribe on the client
-    const clientQuery2 = await clientCtx.queryWait(Album, nocache("year >= '2020'"));
+    const clientQuery2 = await clientCtx.queryWait(Album, nocache("year >= '2020'", Selection_tryFrom));
 
     // The client should receive only album1 with the correct state (year = "2020")
     // Album2 should not be returned since it no longer matches (year = "2019")
@@ -135,7 +136,7 @@ describe('rt114', () => {
     expect((await clientCollection.dumpEntityEvents(album2Id)).length).toBe(0); // before fetch
 
     // Fetch on the client with predicate year >= 2020
-    const initialFetch = await clientCtx.fetch(Album, nocache("year >= '2020'"));
+    const initialFetch = await clientCtx.fetch(Album, nocache("year >= '2020'", Selection_tryFrom));
     const initialYears = initialFetch.map((album: any) => album.year()).sort();
     expect(initialYears).toEqual(['2020', '2020']);
 
@@ -161,7 +162,7 @@ describe('rt114', () => {
     await new Promise(resolve => setTimeout(resolve, 200));
 
     // Fetch again on the client
-    const refetch = await clientCtx.fetch(Album, nocache("year >= '2020'"));
+    const refetch = await clientCtx.fetch(Album, nocache("year >= '2020'", Selection_tryFrom));
     const refetchYears = refetch.map((album: any) => album.year());
 
     // The client should receive only album1 with the correct state (year = "2020")

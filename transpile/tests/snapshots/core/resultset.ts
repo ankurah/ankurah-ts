@@ -543,9 +543,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
                 } finally {
                   keySpec.drop();
                 }
-              } else {
-              dropOwned(_v);
-            }
+              }
             }
             guard.value.order[i].dirty = false;
             i = checkedAdd(i, 1, 'i32');

@@ -38,7 +38,7 @@ total = 68
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 144
+total = 139
 
 [ankql.by_cause]
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 48
@@ -48,7 +48,6 @@ total = 144
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 6
 "no method X on X" = 6
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 5
-"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 5
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 4
 "X has a type the engine cannot say owns anything, so nothing releases it" = 3
@@ -93,7 +92,7 @@ total = 246
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1991
+total = 1974
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 582
@@ -113,7 +112,6 @@ total = 1991
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 22
 "X is lowered as a X without the engine having named what it tests" = 20
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 19
-"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 18
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 16
 "the engine could not say what awaiting this produces, so the value the statement threw away is not released" = 16
 "X does not name a value here" = 15
@@ -214,9 +212,10 @@ total = 1991
 "path qualifiers std, iter are dropped by name" = 1
 "this closure was handed X by value and moved a field out of it that the port writes as a plain read, so releasing X here would release that field a second time" = 1
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
+"this pattern takes a payload out of a value the runtime writes as a class with no variants, so the test below it reads a method that class has not got" = 1
 
 [storage-common]
-total = 984
+total = 983
 
 [storage-common.by_cause]
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 463
@@ -249,7 +248,6 @@ total = 984
 "path qualifiers std, iter are dropped by name" = 1
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 "this closure was handed X by value and moved a field out of it that the port writes as a plain read, so releasing X here would release that field a second time" = 1
-"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 1
 
 [storage-sqlite]
 total = 209
@@ -286,7 +284,7 @@ total = 209
 "path qualifiers std, sync are dropped by name" = 1
 
 [storage-indexeddb]
-total = 315
+total = 311
 
 [storage-indexeddb.by_cause]
 "X is bound here but the engine could not type it" = 70
@@ -307,7 +305,6 @@ total = 315
 "path qualifiers std, sync, atomic are dropped by name" = 5
 "no declaration for trait X" = 4
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 4
-"this pattern takes the payload out of the value it tests, and the wrapper it came out of is not marked moved, so nothing releases the rest of it on the path that matched" = 4
 "X into X is a X the port has no construction for" = 3
 "X is declared with 1 type argument(s) but 0 written here" = 3
 "X is printed with X, and it prints as whatever its X says, because the engine could not type it" = 3

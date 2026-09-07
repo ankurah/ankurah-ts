@@ -83,7 +83,22 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   }
 
   static create(id: EntityId, collection: CollectionId): Entity {
-    return new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(Clock.default(), new HashMap<string, Arc<PropertyBackend>>())), new EntityKind('Primary', {}), Broadcast.new())));
+    let _moved0 = false;
+    try {
+      const _b1 = new RwLock(new EntityInnerState(Clock.default(), new HashMap<string, Arc<PropertyBackend>>()));
+      let _moved3 = false;
+      const _b2 = new EntityKind('Primary', {});
+      try {
+        const _b4 = Broadcast.new();
+        _moved3 = true;
+        _moved0 = true;
+        return new Entity(Arc.new(new EntityInner(id, collection, _b1, _b2, _b4)));
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved0) collection.drop();
+    }
   }
 
   static fromState(id: EntityId, collection: CollectionId, state: State): Result<Entity, RetrievalError> {
@@ -103,9 +118,16 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         }
       }
       const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
-      const _b4 = Broadcast.new();
-      _moved0 = true;
-      return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, _b3, new EntityKind('Primary', {}), _b4))));
+      let _moved5 = false;
+      const _b4 = new EntityKind('Primary', {});
+      try {
+        const _b6 = Broadcast.new();
+        _moved5 = true;
+        _moved0 = true;
+        return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, _b3, _b4, _b6))));
+      } finally {
+        if (!_moved5) dropOwned(_b4);
+      }
     } finally {
       if (!_moved0) collection.drop();
     }
@@ -136,10 +158,11 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           let _moved3 = false;
           const _b2 = this.deref().collection.clone();
           try {
-            const _b4 = state.value.head.clone();
+            const _b4 = this.deref().id;
+            const _b5 = state.value.head.clone();
             _moved3 = true;
             _moved0 = true;
-            const event = new Event(_b2, this.deref().id, operations_1, _b4);
+            const event = new Event(_b2, _b4, operations_1, _b5);
             return Result.Ok(event);
           } finally {
             if (!_moved3) dropOwned(_b2);
@@ -394,15 +417,21 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   }
 
   snapshot(trxAlive: Arc<boolean>): Entity {
-    const state = this.deref().state.read();
+    let _moved0 = false;
     try {
-      let forked = new HashMap();
-      for (const [name, backend] of state.value.backends) {
-        forked.insert(name, backend.value.fork());
+      const state = this.deref().state.read();
+      try {
+        let forked = new HashMap();
+        for (const [name, backend] of state.value.backends) {
+          forked.insert(name, backend.value.fork());
+        }
+        _moved0 = true;
+        return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
+      } finally {
+        state.drop();
       }
-      return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
     } finally {
-      state.drop();
+      if (!_moved0) trxAlive.drop();
     }
   }
 
@@ -526,9 +555,16 @@ export class TemporaryEntity extends Struct implements Filterable {
         }
       }
       const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
-      const _b4 = Broadcast.new();
-      _moved0 = true;
-      return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, _b3, new EntityKind('Primary', {}), _b4))));
+      let _moved5 = false;
+      const _b4 = new EntityKind('Primary', {});
+      try {
+        const _b6 = Broadcast.new();
+        _moved5 = true;
+        _moved0 = true;
+        return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, _b3, _b4, _b6))));
+      } finally {
+        if (!_moved5) dropOwned(_b4);
+      }
     } finally {
       if (!_moved0) collection.drop();
     }

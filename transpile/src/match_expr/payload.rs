@@ -100,7 +100,7 @@ pub(super) fn payload_walk(
                 let (test, bind) = t.pattern_test(&place, sub);
                 match tests {
                     Tests::Kept => {
-                        if test.starts_with("unsupported(") {
+                        if crate::body::value_is_a_hole(&test) {
                             return None;
                         }
                         if test.trim() != "true" {

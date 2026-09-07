@@ -16,7 +16,15 @@ export class CandidateChanges<C> extends Struct {
   }
 
   static new<C>(changes: Arc<C[]>): CandidateChanges<C> {
-    return new CandidateChanges(changes, new HashMap<QueryId, IVec<number>>(), IVec.new());
+    let _moved0 = false;
+    try {
+      const _b1 = new HashMap<QueryId, IVec<number>>();
+      const _b2 = IVec.new();
+      _moved0 = true;
+      return new CandidateChanges(changes, _b1, _b2);
+    } finally {
+      if (!_moved0) changes.drop();
+    }
   }
 
   addEntity(offset: number): void {

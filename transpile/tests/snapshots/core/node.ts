@@ -81,24 +81,40 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   static new<SE, PA>(engine: Arc<SE>, policyAgent: PA): Node<SE, PA> {
     try {
       const collections = CollectionSet.new(engine.clone());
+      let _moved0 = false;
       const entityset = Default.default();
-      const id = EntityId.new();
-      const reactor = Reactor.new();
-      undefined /* notice_info!("Node {id:#} created as ephemeral") */;
-      const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), false);
-      const subscriptionRelay = SubscriptionRelay.new();
-      const node = new Node(Arc.new(new NodeInner(id, false, collections, entityset, SafeMap.new(), SafeSet.new(), SafeMap.new(), reactor, policyAgent, systemManager, subscriptionRelay, TypeResolver.new())));
-      {
-        const _v = node.subscriptionRelay;
-        if (_v != null) {
-          const relay = _v;
-          const weakNode = node.weak();
-          if (relay.setNode(Arc.new(weakNode)).isErr()) {
-            tracing.warn('Failed to set message sender for subscription relay');
+      try {
+        const id = EntityId.new();
+        let _moved1 = false;
+        const reactor = Reactor.new();
+        try {
+          undefined /* notice_info!("Node {id:#} created as ephemeral") */;
+          const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), false);
+          const subscriptionRelay = SubscriptionRelay.new();
+          const _b2 = SafeMap.new();
+          const _b3 = SafeSet.new();
+          const _b4 = SafeMap.new();
+          const _b5 = TypeResolver.new();
+          _moved0 = true;
+          _moved1 = true;
+          const node = new Node(Arc.new(new NodeInner(id, false, collections, entityset, _b2, _b3, _b4, reactor, policyAgent, systemManager, subscriptionRelay, _b5)));
+          {
+            const _v = node.subscriptionRelay;
+            if (_v != null) {
+              const relay = _v;
+              const weakNode = node.weak();
+              if (relay.setNode(Arc.new(weakNode)).isErr()) {
+                tracing.warn('Failed to set message sender for subscription relay');
+              }
+            }
           }
+          return node;
+        } finally {
+          if (!_moved1) reactor.drop();
         }
+      } finally {
+        if (!_moved0) entityset.drop();
       }
-      return node;
     } finally {
       engine.drop();
     }
@@ -106,12 +122,28 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
 
   static newDurable<SE, PA>(engine: Arc<SE>, policyAgent: PA): Node<SE, PA> {
     const collections = CollectionSet.new(engine);
+    let _moved0 = false;
     const entityset = Default.default();
-    const id = EntityId.new();
-    const reactor = Reactor.new();
-    undefined /* notice_info!("Node {id:#} created as durable") */;
-    const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), true);
-    return new Node(Arc.new(new NodeInner(id, true, collections, entityset, SafeMap.new(), SafeSet.new(), SafeMap.new(), reactor, policyAgent, systemManager, null, TypeResolver.new())));
+    try {
+      const id = EntityId.new();
+      let _moved1 = false;
+      const reactor = Reactor.new();
+      try {
+        undefined /* notice_info!("Node {id:#} created as durable") */;
+        const systemManager = SystemManager.new(collections.clone(), entityset.clone(), reactor.clone(), true);
+        const _b2 = SafeMap.new();
+        const _b3 = SafeSet.new();
+        const _b4 = SafeMap.new();
+        const _b5 = TypeResolver.new();
+        _moved0 = true;
+        _moved1 = true;
+        return new Node(Arc.new(new NodeInner(id, true, collections, entityset, _b2, _b3, _b4, reactor, policyAgent, systemManager, null, _b5)));
+      } finally {
+        if (!_moved1) reactor.drop();
+      }
+    } finally {
+      if (!_moved0) entityset.drop();
+    }
   }
 
   weak(): WeakNode<SE, PA> {
@@ -119,57 +151,71 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   registerPeer(presence: Presence, sender: PeerSender): void {
+    let _moved0 = false;
     try {
-      undefined /* action_info!(self , "register_peer" , "{}" , & presence) */;
-      const subscriptionHandler = SubscriptionHandler.new(presence.nodeId, this);
-      this.deref().value.peerConnections.insert(presence.nodeId, Arc.new(new PeerState(sender, presence.durable, subscriptionHandler, SafeMap.new(), SafeMap.new())));
-      if (presence.durable) {
-        this.deref().value.durablePeers.insert(presence.nodeId);
-        {
-          const _v = this.deref().value.subscriptionRelay;
-          if (_v != null) {
-            const relay = _v;
-            relay.notifyPeerConnected(presence.nodeId);
-          }
-        }
-        if (!this.deref().value.durable) {
-          {
-            const _v2 = presence.systemRoot;
-            if (_v2 != null) {
-              const systemRoot = _v2;
-              let _moved0 = false;
-              try {
-                undefined /* action_info!(self , "received system root" , "{}" , & system_root . payload) */;
-                const me = this.clone();
-                try {
-                  spawn((async () => {
-                    _moved0 = true;
-                    {
-                      const _v1 = await me.deref().value.system.joinSystem(systemRoot);
-                      if (_v1.isErr()) {
-                        const e = _v1.unwrapErr();
-                        try {
-                          undefined /* action_error!(me , "failed to join system" , "{}" , & e) */;
-                        } finally {
-                          e.drop();
-                        }
-                      } else {
-                      _v1.drop();
-                      undefined /* action_info!(me , "successfully joined system") */;
-                    }
-                    }
-                  })());
-                } finally {
-                  me.drop();
-                }
-              } finally {
-                if (!_moved0) systemRoot.drop();
+      try {
+        undefined /* action_info!(self , "register_peer" , "{}" , & presence) */;
+        let _moved1 = false;
+        const subscriptionHandler = SubscriptionHandler.new(presence.nodeId, this);
+        try {
+          const _b2 = SafeMap.new();
+          const _b3 = SafeMap.new();
+          _moved0 = true;
+          _moved1 = true;
+          this.deref().value.peerConnections.insert(presence.nodeId, Arc.new(new PeerState(sender, presence.durable, subscriptionHandler, _b2, _b3)));
+          if (presence.durable) {
+            this.deref().value.durablePeers.insert(presence.nodeId);
+            {
+              const _v = this.deref().value.subscriptionRelay;
+              if (_v != null) {
+                const relay = _v;
+                relay.notifyPeerConnected(presence.nodeId);
               }
-            } else {
-            tracing.error(`Node(${this.deref().value.id}) durable peer ${presence.nodeId} has no system root`);
+            }
+            if (!this.deref().value.durable) {
+              {
+                const _v2 = presence.systemRoot;
+                if (_v2 != null) {
+                  const systemRoot = _v2;
+                  let _moved4 = false;
+                  try {
+                    undefined /* action_info!(self , "received system root" , "{}" , & system_root . payload) */;
+                    const me = this.clone();
+                    try {
+                      spawn((async () => {
+                        _moved4 = true;
+                        {
+                          const _v1 = await me.deref().value.system.joinSystem(systemRoot);
+                          if (_v1.isErr()) {
+                            const e = _v1.unwrapErr();
+                            try {
+                              undefined /* action_error!(me , "failed to join system" , "{}" , & e) */;
+                            } finally {
+                              e.drop();
+                            }
+                          } else {
+                          _v1.drop();
+                          undefined /* action_info!(me , "successfully joined system") */;
+                        }
+                        }
+                      })());
+                    } finally {
+                      me.drop();
+                    }
+                  } finally {
+                    if (!_moved4) systemRoot.drop();
+                  }
+                } else {
+                tracing.error(`Node(${this.deref().value.id}) durable peer ${presence.nodeId} has no system root`);
+              }
+              }
+            }
           }
-          }
+        } finally {
+          if (!_moved1) subscriptionHandler.drop();
         }
+      } finally {
+        if (!_moved0) dropOwned(sender);
       }
     } finally {
       presence.drop();
@@ -257,12 +303,13 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         }
         const connection = _v;
         connection.value.pendingUpdates.insert(id.clone(), responseTx);
+        const _b2 = this.deref().value.id;
         _moved1 = true;
         _moved0 = true;
-        let _moved2 = false;
-        const notification_1 = new NodeMessage('Update', { _0: new NodeUpdate(id, this.deref().value.id, nodeId, notification) });
+        let _moved3 = false;
+        const notification_1 = new NodeMessage('Update', { _0: new NodeUpdate(id, _b2, nodeId, notification) });
         try {
-          _moved2 = true;
+          _moved3 = true;
           const _v1 = connection.value.sendMessage(notification_1);
           if (_v1.isOk()) {
             const _v2 = _v1.unwrap();
@@ -276,7 +323,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
             }
           };
         } finally {
-          if (!_moved2) notification_1.drop();
+          if (!_moved3) notification_1.drop();
         }
       } finally {
         if (!_moved1) id.drop();
@@ -287,7 +334,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
   }
 
   async handleMessage(message: NodeMessage): Promise<Result<void, Error>> {
-    const _m14 = await (message.intoMatch<any>({
+    const _m17 = await (message.intoMatch<any>({
       Update: async (v) => {
         const update = v._0;
         let _moved0 = false;
@@ -407,9 +454,10 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                     }
                   })();
                   try {
+                    const _b9 = this.deref().value.id;
                     _moved7 = true;
                     _moved8 = true;
-                    const _result = sender.sendMessage(new NodeMessage('Response', { _0: new NodeResponse(requestId, this.deref().value.id, from, body) }));
+                    const _result = sender.sendMessage(new NodeMessage('Response', { _0: new NodeResponse(requestId, _b9, from, body) }));
                   } finally {
                     if (!_moved8) body.drop();
                   }
@@ -429,25 +477,32 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         const response = v._0;
         try {
           tracing.debug(`Node ${this.deref().value.id} received response ${response}`);
-          const _m9 = this.deref().value.peerConnections.get(response.from);
-          const _m10 = new RequestError('PeerNotConnected', {});
-          const _r11 = (_m9 != null ? (_m10.drop(), Result.Ok(_m9!)) : Result.Err(_m10));
-          if (_r11.isErr()) return { $jump: 'return', $value: Result.Err(_r11.unwrapErr()) };
-          const connection = _r11.unwrap();
+          const _m10 = this.deref().value.peerConnections.get(response.from);
+          const _m11 = new RequestError('PeerNotConnected', {});
+          const _r12 = (_m10 != null ? (_m11.drop(), Result.Ok(_m10!)) : Result.Err(_m11));
+          if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
+          const connection = _r12.unwrap();
           try {
             {
               const _v10 = connection.value.pendingRequests.remove(response.requestId);
               if (_v10 != null) {
                 const tx = _v10;
-                const _r12 = tx.send(Result.Ok(response.takeField('body'))).mapErr((e) => {
-                  try {
-                    return AnyhowError.msg(`Failed to send response: ${e}`);
-                  } finally {
-                    e.drop();
-                  }
-                });
-                if (_r12.isErr()) return { $jump: 'return', $value: Result.Err(_r12.unwrapErr()) };
-                _r12.drop();
+                let _moved13 = false;
+                try {
+                  _moved13 = true;
+                  const _b14 = Result.Ok(response.takeField('body'));
+                  const _r15 = tx.send(_b14).mapErr((e) => {
+                    try {
+                      return AnyhowError.msg(`Failed to send response: ${e}`);
+                    } finally {
+                      e.drop();
+                    }
+                  });
+                  if (_r15.isErr()) return { $jump: 'return', $value: Result.Err(_r15.unwrapErr()) };
+                  _r15.drop();
+                } finally {
+                  if (!_moved13) tx.drop();
+                }
               }
             }
           } finally {
@@ -465,9 +520,9 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           if (_v11 != null) {
             const peerState = _v11;
             try {
-              const _r13 = peerState.value.subscriptionHandler.removePredicate(queryId);
-              if (_r13.isErr()) return { $jump: 'return', $value: Result.Err(_r13.unwrapErr()) };
-              _r13.drop();
+              const _r16 = peerState.value.subscriptionHandler.removePredicate(queryId);
+              if (_r16.isErr()) return { $jump: 'return', $value: Result.Err(_r16.unwrapErr()) };
+              _r16.drop();
             } finally {
               peerState.drop();
             }
@@ -475,7 +530,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
         }
       },
     }));
-    if ((_m14 as any)?.$jump === 'return') return (_m14 as any).$value;
+    if ((_m17 as any)?.$jump === 'return') return (_m17 as any).$value;
     return Result.Ok([]);
   }
 

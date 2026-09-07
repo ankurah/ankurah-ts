@@ -123,58 +123,42 @@ export class TypeResolver extends Struct {
         const operator = v.operator;
         const right = v.right;
         let _moved0 = false;
+        let _moved1 = false;
+        let _moved2 = false;
         try {
           try {
             try {
               const leftType = this.resolveExprType(left);
               const rightType = this.resolveExprType(right);
-              const newLeft = this.convertExpr(left, rightType);
-              const newRight = this.convertExpr(right, leftType);
               _moved0 = true;
+              const newLeft = this.convertExpr(left, rightType);
+              _moved2 = true;
+              const newRight = this.convertExpr(right, leftType);
+              _moved1 = true;
               return new Predicate('Comparison', { left: newLeft, operator: operator, right: newRight });
             } finally {
-              dropOwned(right);
+              if (!_moved2) dropOwned(right);
             }
           } finally {
-            if (!_moved0) operator.drop();
+            if (!_moved1) operator.drop();
           }
         } finally {
-          dropOwned(left);
+          if (!_moved0) dropOwned(left);
         }
       },
       And: (v) => {
         const left = v._0;
         const right = v._1;
-        try {
-          try {
-            return new Predicate('And', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
-          } finally {
-            dropOwned(right);
-          }
-        } finally {
-          dropOwned(left);
-        }
+        return new Predicate('And', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
       },
       Or: (v) => {
         const left = v._0;
         const right = v._1;
-        try {
-          try {
-            return new Predicate('Or', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
-          } finally {
-            dropOwned(right);
-          }
-        } finally {
-          dropOwned(left);
-        }
+        return new Predicate('Or', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
       },
       Not: (v) => {
         const inner = v._0;
-        try {
-          return new Predicate('Not', { _0: this.resolveTypes(inner) });
-        } finally {
-          dropOwned(inner);
-        }
+        return new Predicate('Not', { _0: this.resolveTypes(inner) });
       },
       IsNull: (v) => {
         try {

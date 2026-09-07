@@ -184,7 +184,8 @@ fn written_arm(
     // A local this arm hands away sets its drop flag here — the same line the
     // enclosing block would have written had the arm been a statement of it.
     // Without it the `finally` released a value the arm had already given away.
-    let flags = format!("{}{}", subject_flag, t.flag_sets_for(&arm.body));
+    let flags =
+        format!("{}{}", subject_flag, t.flag_sets_that_run(t.flag_sets_for(&arm.body), &body));
     Arm {
         test,
         bind,

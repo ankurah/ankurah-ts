@@ -198,27 +198,40 @@ impl<'a> BodyTranslator<'a> {
         // A statement inside the body that REFUSES hands nothing away, so a
         // binding the claim wrote off as moved is still the turn's — and the
         // tail release starts after the current index and cannot reach it.
+        // X4/X7: a FRAME, pushed here and popped when the loop's body ends.
+        // These three sets used to be body-global and keyed by spelling, so a
+        // `let xs = replacement;` AFTER the loop still read `xs` as "some other
+        // frame releases it" and nothing released the replacement, and a second
+        // loop reusing an element name inherited the first loop's answer for it.
+        // Only what THIS frame added comes out again, so a nested loop over the
+        // same name leaves the outer frame's entry where it was.
+        let mut frame = LoopFrame::default();
         if !matches!(form, Iterate::Borrowed) {
             // The sequence itself is the loop's from here: it is aliased into
             // `_seqN` and its tail is released by the loop's own `finally`.
             if let syn::Expr::Path(path) = &*for_loop.expr {
                 if let Some(name) = ownership::moves::local_name(path) {
-                    self.own.released_elsewhere.borrow_mut().insert(name);
+                    if self.own.released_elsewhere.borrow_mut().insert(name.clone()) {
+                        frame.elsewhere.push(name);
+                    }
                 }
             }
             let claimed: Vec<String> = owned.iter().map(|o| o.name.clone()).collect();
             let mut all = self.own.loop_bindings.borrow_mut();
             let mut done = self.own.claimed_loop_bindings.borrow_mut();
             for name in crate::body::pattern_names(&for_loop.pat) {
-                all.insert(name.clone());
-                if claimed.contains(&name) {
-                    done.insert(name);
+                if all.insert(name.clone()) {
+                    frame.bindings.push(name.clone());
+                }
+                if claimed.contains(&name) && done.insert(name.clone()) {
+                    frame.claimed.push(name);
                 }
             }
         }
         let body = crate::control_flow::sentinel::inside_a_loop(self, &for_loop.label, || {
             self.translate_loop_block(&for_loop.body)
         });
+        frame.pop(self);
         drop(_bindings);
         let body = self.wrap_bindings(&owned, body);
         let label = ownership::iteration::label_of(&for_loop.label);
@@ -260,5 +273,92 @@ impl<'a> BodyTranslator<'a> {
                 format!("{}for (const {} of {}) {{\n{}}}", label, pat, sequence, indent(&body))
             }
         }
+    }
+}
+
+/// What one loop's turn added to the body's ownership state, so that the state
+/// can be put back when the turn's body has been written.
+///
+/// X4/X7: three body-global `HashSet<String>`s answered questions about a name
+/// long after the loop that put it there had ended — for a `let` of the same
+/// name below the loop, and for the next loop that reused an element's
+/// spelling. A frame is the scope the answers really have.
+#[derive(Default)]
+struct LoopFrame {
+    elsewhere: Vec<String>,
+    bindings: Vec<String>,
+    claimed: Vec<String>,
+}
+
+impl LoopFrame {
+    fn pop(&mut self, t: &crate::body::BodyTranslator) {
+        for name in self.elsewhere.drain(..) {
+            t.own.released_elsewhere.borrow_mut().remove(&name);
+        }
+        for name in self.bindings.drain(..) {
+            t.own.loop_bindings.borrow_mut().remove(&name);
+        }
+        for name in self.claimed.drain(..) {
+            t.own.claimed_loop_bindings.borrow_mut().remove(&name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    /// X4: the three sets a consuming loop writes are a FRAME, not a body-global
+    /// record keyed by spelling. `for item in xs { .. }` says "some other frame
+    /// releases `xs`", which is true of the sequence the loop took and not of a
+    /// `let xs = ..` written below it.
+    #[test]
+    fn a_shadow_below_a_loop_is_not_the_sequence_the_loop_took() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: u32 }\n\
+             pub fn look(t: &Token) -> u32 { t.n }\n\
+             pub fn shadowed(xs: Vec<Token>, replacement: Vec<Token>) -> u32 {\n\
+               let xs = xs;\n\
+               let mut total = 0;\n\
+               for item in xs { total += look(&item); }\n\
+               let xs = replacement;\n\
+               let built: std::collections::BinaryHeap<u32> = \
+                 xs.into_iter().map(|t| t.n).collect();\n\
+               total + built.len() as u32\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "shadowed");
+        assert!(ts.contains("unsupported("), "the collect was expected to refuse:\n{}", ts);
+        assert!(
+            ts.contains("dropOwned(xs_2);"),
+            "the replacement is the block's, and the loop above it took a different \
+             sequence:\n{}",
+            ts
+        );
+    }
+
+    /// And the frame really is popped rather than the name simply being fresh:
+    /// two loops over the same spelling each get their own answer.
+    #[test]
+    fn two_loops_over_one_spelling_each_answer_for_themselves() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: u32 }\n\
+             pub fn look(t: &Token) -> u32 { t.n }\n\
+             pub fn twice(a: Vec<Token>, b: Vec<Token>) -> u32 {\n\
+               let mut total = 0;\n\
+               for rest in a { total += look(&rest); }\n\
+               for rest in b { total += look(&rest); }\n\
+               total\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "twice");
+        assert_eq!(
+            ts.matches("rest.drop();").count(),
+            2,
+            "each turn of each loop releases its own element:\n{}",
+            ts
+        );
     }
 }

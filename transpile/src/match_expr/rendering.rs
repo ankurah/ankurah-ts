@@ -22,9 +22,17 @@ use crate::body::{indent, BodyTranslator};
 pub(super) struct ArmParts<'a> {
     /// The key the runtime's match dispatches on.
     pub variant: &'a str,
-    /// What the arm declares before its body: the drop flags a hand-away owes,
-    /// and the names the arm takes out of the value it was given.
+    /// The names the arm takes out of the value it was given.
     pub bindings: String,
+    /// The drop flags a hand-away this arm performs owes.
+    ///
+    /// U3/X5: BELOW everything the arm lifted out of itself and immediately
+    /// above the statement that performs the transfer, which is where every
+    /// other flag stands. Written above the arm's bindings instead, a `?` in
+    /// the arm's own prelude left with the flag already saying the value had
+    /// been handed over — and `ownership::wrap`, handed a body the set was not
+    /// in, struck the flag as dead and released the value the callee had taken.
+    pub flags: String,
     /// The payload parameter, where the arm takes one.
     pub param: Option<String>,
     pub body: &'a str,
@@ -58,7 +66,7 @@ pub(super) struct ArmParts<'a> {
 /// its characters, which could not tell a binding from the same word inside a
 /// string literal or a comment, and knew nothing of a name shadowed further in.
 pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
-    let ArmParts { variant, bindings, param, body, owned, lifted, produces, value, is_async, release_rest, tuple } =
+    let ArmParts { variant, bindings, flags, param, body, owned, lifted, produces, value, is_async, release_rest, tuple } =
         parts;
     // An arm is an arrow function, and JavaScript's `await` belongs to the
     // nearest one — so an arm that awaits is `async`, and the whole `.match`
@@ -69,14 +77,18 @@ pub(super) fn render_arm(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
         None => format!("  {}: {}() => ", variant, keyword),
     };
     if owned.is_empty() && lifted.is_empty() && release_rest.is_empty() {
-        return format!("{}{},\n", head, as_arm_value(body, &bindings, produces, value, tuple));
+        // Nothing was lifted, so "below the prelude" and "above the body" are
+        // the same place: the flags stand between the names the arm took and
+        // the transfer it performs.
+        let declared = format!("{}{}", bindings, flags);
+        return format!("{}{},\n", head, as_arm_value(body, &declared, produces, value, tuple));
     }
     // An arm that owns what it was handed, that lifted a declaration out of its
     // own body, or that owes the payload a release, is always a block: the
     // release goes in a `finally`, so the arm cannot be the bare expression
     // form.
     let inner = arm_block(
-        ArmParts { variant, bindings, param: None, body, owned, lifted, produces, value, is_async, release_rest, tuple },
+        ArmParts { variant, bindings, flags, param: None, body, owned, lifted, produces, value, is_async, release_rest, tuple },
         t,
     );
     format!("{}{{\n{}  }},\n", head, indent(&indent(&inner)))
@@ -97,10 +109,13 @@ pub(super) fn arm_block(parts: ArmParts<'_>, t: &BodyTranslator) -> String {
 /// stand before the guard, because the guard reads them, and the body has to
 /// stand inside the `if` the guard opens.
 pub(super) fn arm_block_parts(parts: ArmParts<'_>, t: &BodyTranslator) -> (String, String) {
-    let ArmParts { bindings, body, owned, lifted, produces, value, release_rest, .. } = parts;
+    let ArmParts { bindings, flags, body, owned, lifted, produces, value, release_rest, .. } = parts;
     let mut inner = t.wrap_bindings(
         owned,
-        crate::ownership::hoisted(&arm_statements(body, produces, value), lifted),
+        crate::ownership::hoisted(
+            &format!("{}{}", flags, arm_statements(body, produces, value)),
+            lifted,
+        ),
     );
     if !release_rest.is_empty() {
         inner = format!("try {{\n{}}} finally {{\n{}}}\n", indent(&inner), indent(&release_rest));

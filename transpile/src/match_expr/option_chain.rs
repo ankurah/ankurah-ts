@@ -115,7 +115,7 @@ pub fn translate(
         // a double drop, from valid Rust, with nothing said. O6: it stands
         // below what the arm lifted out of itself and immediately above the
         // transfer.
-        let flags = t.flag_sets_for(&arm.body);
+        let flags = t.flag_sets_that_run(t.flag_sets_for(&arm.body), &written);
         let body = format!(
             "{}{}",
             bind,

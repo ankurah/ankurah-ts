@@ -378,28 +378,28 @@ export async function compareUnstoredEvent<G, E, C>(getter: G, subject: E, other
     return Result.Ok(result.match({
       Equal: () => new Ordering('Descends', {}),
       Descends: () => {
-        _moved1 = true;
         const other = result;
+        _moved1 = true;
         return other;
       },
       NotDescends: () => {
-        _moved1 = true;
         const other = result;
+        _moved1 = true;
         return other;
       },
       Incomparable: () => {
-        _moved1 = true;
         const other = result;
+        _moved1 = true;
         return other;
       },
       PartiallyDescends: () => {
-        _moved1 = true;
         const other = result;
+        _moved1 = true;
         return other;
       },
       BudgetExceeded: () => {
-        _moved1 = true;
         const other = result;
+        _moved1 = true;
         return other;
       },
     }));

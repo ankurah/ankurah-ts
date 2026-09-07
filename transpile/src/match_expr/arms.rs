@@ -308,7 +308,8 @@ pub(super) fn translate_arm(
     render_arm(
         ArmParts {
             variant,
-            bindings: format!("{}{}{}", refusing, flags, payload),
+            bindings: format!("{}{}", refusing, payload),
+            flags,
             param: (!fields.is_empty() || !release_rest.is_empty()).then(|| param.clone()),
             body: &body,
             owned: &owned,
@@ -465,7 +466,8 @@ pub(super) fn translate_link(
     let (bindings, block) = arm_block_parts(
         ArmParts {
             variant,
-            bindings: format!("{}{}{}", refusing, flags, payload),
+            bindings: format!("{}{}", refusing, payload),
+            flags,
             param: None,
             body: &body,
             owned: &owned,

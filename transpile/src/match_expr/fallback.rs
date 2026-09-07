@@ -63,9 +63,12 @@ impl<'a> Fallback<'a> {
         } else {
             self.scrutinee.to_string()
         };
+        // U3/X5: the flags travel with `ArmParts::flags` now, which puts them
+        // below what the arm lifted and above the transfer; the bindings are
+        // the names alone.
         let bindings = match (self.bound, self.declares) {
-            (Some(name), true) => format!("{}const {} = {};\n", self.flags, name, whole),
-            _ => self.flags.to_string(),
+            (Some(name), true) => format!("const {} = {};\n", name, whole),
+            _ => String::new(),
         };
         // A unit variant's payload is empty, so there is nothing in it to own.
         let release = if has_payload && self.owes_payload {
@@ -103,6 +106,7 @@ impl<'a> Fallback<'a> {
             super::ArmParts {
                 variant,
                 bindings,
+                flags: self.flags.to_string(),
                 param: None,
                 body: self.body,
                 owned: self.owned,

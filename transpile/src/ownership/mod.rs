@@ -40,6 +40,10 @@ mod callable_tests;
 #[cfg(test)]
 mod guard_tests;
 #[cfg(test)]
+mod if_let_tests;
+#[cfg(test)]
+mod lift_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod question_tests;
@@ -217,6 +221,15 @@ pub struct Hoist {
     /// on that call's throw path nobody released `args`. The flag belongs to
     /// the transfer, so it travels with the hoist the transfer is written in.
     pub sets: String,
+    /// Does the value this hoist built owe a release if nothing takes it?
+    ///
+    /// W1/X2: separate from `flag`, which is only written where something
+    /// AFTER the lift can throw before the call runs. The last lift of a call
+    /// needs no flag — nothing between it and the call can throw — but it
+    /// still owes a release where the call is never written at all: the port
+    /// refused `top_k`, so `const _b13 = orderBySpill.clone();` stands above a
+    /// hole with no transfer below it and nobody to release the clone.
+    pub droppable: bool,
     /// The flag that says whether the call this temporary was lifted FOR took
     /// it, for a lift that owes a release (N3).
     ///
@@ -366,12 +379,31 @@ pub fn guarded_release(name: &str) -> String {
 ///
 /// A wrapper the text never mentions is never consumed, so it is released.
 fn may_leave_before_reading(body: &str, temp: &str) -> bool {
-    let Some(at) = body.find(temp) else { return true };
+    // W10: as a WHOLE identifier. A bare `find` made `_r1` a prefix of `_r12`,
+    // so the wrapper's own first mention could be somebody else's name.
+    let Some(at) = crate::body::refusal::mentions_at(body, temp) else { return true };
     let before = &body[..at];
     before.contains(')') || before.contains("throw")
 }
 
 pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
+    // W1/X1: a lift's flag says "the call this was lifted for took it", and
+    // that is a claim about text the port actually WROTE. Where the call is a
+    // hole — `top_k` in `storage-indexeddb/collection.ts`, which the port
+    // refused — nothing below the lift names the temporary at all, so the flag
+    // is a lie the `finally` believes and the clone is released by nobody.
+    // Asked of the temporary rather than of the hole, because a transfer that
+    // is not written is a transfer that does not happen however the text
+    // failed to be written.
+    let takes = |index: usize| -> bool {
+        let Some(temp) = hoists[index].temp.as_deref() else { return false };
+        let below: String = hoists[index + 1..]
+            .iter()
+            .map(|hoist| hoist.declaration.as_str())
+            .chain(std::iter::once(body))
+            .collect();
+        crate::body::refusal::mentions(&below, temp)
+    };
     // Every lift that owes a release is consumed by the same call — the one the
     // statement's own text writes — so all their flags are set in one place,
     // immediately above that text and below every declaration the statement
@@ -380,24 +412,38 @@ pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
     // callee has the value.
     let sets: String = hoists
         .iter()
-        .filter_map(|hoist| hoist.flag.as_ref())
+        .enumerate()
+        .filter(|(index, hoist)| hoist.flag.is_some() && takes(*index))
+        .filter_map(|(_, hoist)| hoist.flag.as_ref())
         .map(|flag| format!("{} = true;\n", flag))
         .collect();
     let mut inner = format!("{}{}", sets, body);
-    for hoist in hoists.iter().rev() {
+    for (index, hoist) in hoists.iter().enumerate().rev() {
         let wrapped = match (&hoist.owned, &hoist.temp) {
             (Some(owned), _) => wrap(&inner, owned),
-            (None, Some(temp)) if hoist.flag.is_some() => wrap_flagged(&inner, temp, hoist),
+            (None, Some(temp)) if hoist.flag.is_some() && takes(index) => {
+                wrap_flagged(&inner, temp, hoist)
+            }
+            // W1/X2: nothing below takes it, so the release is unconditional
+            // and the flag — if this lift declared one — is a `let` nothing
+            // assigns, which E15 already strikes for a block's own locals.
+            (None, Some(temp)) if !takes(index) && (hoist.flag.is_some() || hoist.droppable) => {
+                wrap_release(&inner, temp)
+            }
             (None, Some(temp)) if hoist.wrapper && may_leave_before_reading(&inner, temp) => {
                 wrap_guarded(&inner, temp)
             }
             (None, Some(temp)) if hoist.released_if_unreached => wrap_guarded(&inner, temp),
             (None, _) => inner,
         };
+        let declaration = match &hoist.flag {
+            Some(flag) if !takes(index) => without_declaration(&hoist.declaration, flag),
+            _ => hoist.declaration.clone(),
+        };
         // U3: the flag stands immediately above the declaration whose call
         // performs the transfer, which is below everything the statement
         // lifted out of itself.
-        inner = format!("{}{}{}", hoist.sets, hoist.declaration, wrapped);
+        inner = format!("{}{}{}", hoist.sets, declaration, wrapped);
     }
     inner
 }

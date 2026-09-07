@@ -60,6 +60,7 @@ pub(crate) fn hoist_a_try(
         released_if_unreached: false,
         wrapper,
         sets,
+        droppable: false,
         flag: None,
     });
     lowered.value
@@ -112,9 +113,11 @@ pub(crate) fn statement_that_refused(
             .map(|h| h.declaration.as_str())
             .chain(std::iter::once(text.as_str()))
             .collect();
-        let hole_below = prelude[i].declaration.contains("unsupported(");
+        // W13: the hole is in THIS hoist's own declaration, which is where
+        // the throw stands; nothing below it ran.
+        let refused_here = crate::body::holds_a_hole(&prelude[i].declaration);
         if let Some(temp) = prelude[i].temp.clone() {
-            if !hole_below && handed_over_before_the_hole(&below, &temp) {
+            if !refused_here && handed_over_before_the_hole(&below, &temp) {
                 prelude[i].temp = None;
             }
         }
@@ -185,7 +188,7 @@ pub(crate) fn statement_that_refused(
 /// wrongly drops a value the callee owns, which is fatal. This leans to the
 /// report.
 fn handed_over_before_the_hole(rendered: &str, name: &str) -> bool {
-    let Some(hole) = rendered.find("unsupported(") else { return false };
+    let Some(hole) = crate::body::hole_at(rendered) else { return false };
     let before = &rendered[..hole];
     let mut from = 0;
     while let Some(at) = mentions_at(&before[from..], name) {
@@ -199,7 +202,7 @@ fn handed_over_before_the_hole(rendered: &str, name: &str) -> bool {
 }
 
 /// Where this emitted text names `what` as a whole identifier, if it does.
-fn mentions_at(text: &str, what: &str) -> Option<usize> {
+pub(crate) fn mentions_at(text: &str, what: &str) -> Option<usize> {
     let is_part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
     let mut from = 0;
     while let Some(at) = text[from..].find(what) {
@@ -218,7 +221,7 @@ fn mentions_at(text: &str, what: &str) -> Option<usize> {
 ///
 /// Substring alone said `rest` of `restore(x)`, and the flag would then have
 /// been set by a hoist that consumed nothing.
-fn mentions(text: &str, what: &str) -> bool {
+pub(crate) fn mentions(text: &str, what: &str) -> bool {
     mentions_at(text, what).is_some()
 }
 
@@ -234,6 +237,7 @@ pub(crate) fn try_operand(
     t: &BodyTranslator,
     operand: &syn::Expr,
 ) -> Result<String, crate::body::Lowered> {
+    let before = crate::body::holes_written();
     let inner = t.expr(operand);
     // R1: the question is whether THIS OPERAND has a value to test, so it is
     // asked of the operand's own value. Asked of the global hole counter it
@@ -241,7 +245,7 @@ pub(crate) fn try_operand(
     // operand passes, in one branch of an `if`, in an argument beside it — and
     // `a.or_else(|| xs.into_iter().next())?` lost `if (_r0 == null) return
     // null;` and computed on null where Rust answers `None`.
-    if !crate::body::value_is_a_hole(&inner) {
+    if !crate::body::lowered_a_hole(before, &inner) {
         return Ok(inner);
     }
     let temp = t.fresh_hoist("_r");

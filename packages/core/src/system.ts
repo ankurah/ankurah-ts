@@ -22,19 +22,44 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
   }
 
   static new<SE, PA>(collections: CollectionSet<SE>, entities: WeakEntitySet, reactor: Reactor<Entity, Attested<Event>>, durable: boolean): SystemManager<SE, PA> {
-    const me = new SystemManager(Arc.new(new Inner(collections, new RwLock(new HashMap()), entities, durable, new RwLock(null), new RwLock([]), OnceLock.new(), Notify.new(), new RwLock(false), Notify.new(), reactor, undefined /* PhantomData */)));
-    ((me) => {
-      spawn((async () => {
-        {
-          const _v = await me.loadSystemCatalog();
-          if (_v.isErr()) {
-            const e = _v.unwrapErr();
-            tracing.error(`Failed to load system catalog: ${e}`);
-          }
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        const _b2 = new RwLock(new HashMap());
+        const _b3 = new RwLock(null);
+        const _b4 = new RwLock([]);
+        const _b5 = OnceLock.new();
+        let _moved7 = false;
+        const _b6 = Notify.new();
+        try {
+          const _b8 = new RwLock(false);
+          const _b9 = Notify.new();
+          _moved7 = true;
+          _moved0 = true;
+          _moved1 = true;
+          const me = new SystemManager(Arc.new(new Inner(collections, _b2, entities, durable, _b3, _b4, _b5, _b6, _b8, _b9, reactor, undefined /* PhantomData */)));
+          ((me) => {
+            spawn((async () => {
+              {
+                const _v = await me.loadSystemCatalog();
+                if (_v.isErr()) {
+                  const e = _v.unwrapErr();
+                  tracing.error(`Failed to load system catalog: ${e}`);
+                }
+              }
+            })());
+          })(me.clone());
+          return me;
+        } finally {
+          if (!_moved7) dropOwned(_b6);
         }
-      })());
-    })(me.clone());
-    return me;
+      } finally {
+        if (!_moved1) entities.drop();
+      }
+    } finally {
+      if (!_moved0) collections.drop();
+    }
   }
 
   root(): Attested<EntityState> | null {

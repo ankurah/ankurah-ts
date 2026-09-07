@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Status, SubscriptionRelay } from './client_relay';
-import { AnyhowError, Arc, Mutex, Result, Struct, valueEquals } from '@ankurah/base';
+import { AnyhowError, Arc, Mutex, Result, Struct, dropOwned, valueEquals } from '@ankurah/base';
 import { RequestError } from '../error';
 import { Predicate, Selection } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
@@ -181,21 +181,42 @@ describe('client_relay unit tests', () => {
     const queryId = proto.QueryId.new();
     const collectionId = createTestCollectionId();
     try {
+      let _moved0 = false;
       const predicate = createTestSelection();
-      const peerId = EntityId.new();
-      relay.notifyPeerConnected(peerId);
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
-      await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-      if (!(((_v) => {
-        if (!(_v != null && (_v.is('Established')))) return false;
-        const { _0: establishedPeerId } = _v.value;
-        return valueEquals(establishedPeerId, peerId);
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-      relay.notifyPeerDisconnected(peerId);
-      if (!(((_v1) => {
-        if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
-        return true;
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      try {
+        const peerId = EntityId.new();
+        relay.notifyPeerConnected(peerId);
+        let _moved2 = false;
+        const _b1 = collectionId.clone();
+        try {
+          let _moved4 = false;
+          const _b3 = collectionId.clone();
+          try {
+            const _b5 = new MockLiveQuery();
+            _moved2 = true;
+            _moved4 = true;
+            _moved0 = true;
+            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+          } finally {
+            if (!_moved4) dropOwned(_b3);
+          }
+        } finally {
+          if (!_moved2) dropOwned(_b1);
+        }
+        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+        if (!(((_v) => {
+          if (!(_v != null && (_v.is('Established')))) return false;
+          const { _0: establishedPeerId } = _v.value;
+          return valueEquals(establishedPeerId, peerId);
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+        relay.notifyPeerDisconnected(peerId);
+        if (!(((_v1) => {
+          if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
+          return true;
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      } finally {
+        if (!_moved0) predicate.drop();
+      }
     } finally {
       collectionId.drop();
     }
@@ -336,27 +357,48 @@ describe('client_relay unit tests', () => {
     const queryId = proto.QueryId.new();
     const collectionId = createTestCollectionId();
     try {
+      let _moved0 = false;
       const predicate = createTestSelection();
-      const peerId = EntityId.new();
-      relay.notifyPeerConnected(peerId);
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
-      await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-      if (!(((_v) => {
-        if (!(_v != null && (_v.is('Established')))) return false;
-        const { _0: establishedPeerId } = _v.value;
-        return valueEquals(establishedPeerId, peerId);
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-      mockSender.clearSentRequests();
-      relay.unsubscribePredicate(queryId);
-      await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-      const sentRequests = mockSender.getSentRequests();
-      expect(sentRequests.length).toEqual(1);
-      expect(sentRequests[0]._0).toEqual(peerId);
-      expect(sentRequests[0]._1).toEqual(queryId);
-      if (!(((_v1) => {
-        if (!(_v1 == null)) return false;
-        return true;
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      try {
+        const peerId = EntityId.new();
+        relay.notifyPeerConnected(peerId);
+        let _moved2 = false;
+        const _b1 = collectionId.clone();
+        try {
+          let _moved4 = false;
+          const _b3 = collectionId.clone();
+          try {
+            const _b5 = new MockLiveQuery();
+            _moved2 = true;
+            _moved4 = true;
+            _moved0 = true;
+            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+          } finally {
+            if (!_moved4) dropOwned(_b3);
+          }
+        } finally {
+          if (!_moved2) dropOwned(_b1);
+        }
+        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+        if (!(((_v) => {
+          if (!(_v != null && (_v.is('Established')))) return false;
+          const { _0: establishedPeerId } = _v.value;
+          return valueEquals(establishedPeerId, peerId);
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+        mockSender.clearSentRequests();
+        relay.unsubscribePredicate(queryId);
+        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+        const sentRequests = mockSender.getSentRequests();
+        expect(sentRequests.length).toEqual(1);
+        expect(sentRequests[0]._0).toEqual(peerId);
+        expect(sentRequests[0]._1).toEqual(queryId);
+        if (!(((_v1) => {
+          if (!(_v1 == null)) return false;
+          return true;
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      } finally {
+        if (!_moved0) predicate.drop();
+      }
     } finally {
       collectionId.drop();
     }
@@ -407,20 +449,41 @@ describe('client_relay unit tests', () => {
     const queryId = proto.QueryId.new();
     const collectionId = createTestCollectionId();
     try {
+      let _moved0 = false;
       const predicate = createTestSelection();
-      relay.subscribeQuery(queryId, collectionId.clone(), predicate, collectionId.clone(), 0, new MockLiveQuery());
-      if (!(((_v) => {
-        if (!(_v != null && (_v.is('PendingRemote')))) return false;
-        return true;
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-      relay.unsubscribePredicate(queryId);
-      await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-      const sentRequests = mockSender.getSentRequests();
-      expect(sentRequests.length).toEqual(0);
-      if (!(((_v1) => {
-        if (!(_v1 == null)) return false;
-        return true;
-      })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      try {
+        let _moved2 = false;
+        const _b1 = collectionId.clone();
+        try {
+          let _moved4 = false;
+          const _b3 = collectionId.clone();
+          try {
+            const _b5 = new MockLiveQuery();
+            _moved2 = true;
+            _moved4 = true;
+            _moved0 = true;
+            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+          } finally {
+            if (!_moved4) dropOwned(_b3);
+          }
+        } finally {
+          if (!_moved2) dropOwned(_b1);
+        }
+        if (!(((_v) => {
+          if (!(_v != null && (_v.is('PendingRemote')))) return false;
+          return true;
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+        relay.unsubscribePredicate(queryId);
+        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+        const sentRequests = mockSender.getSentRequests();
+        expect(sentRequests.length).toEqual(0);
+        if (!(((_v1) => {
+          if (!(_v1 == null)) return false;
+          return true;
+        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+      } finally {
+        if (!_moved0) predicate.drop();
+      }
     } finally {
       collectionId.drop();
     }
