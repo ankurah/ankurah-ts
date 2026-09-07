@@ -21,6 +21,8 @@ use super::unreadable_alternatives::unreadable_alternatives;
 
 use super::{translate_lit, BodyTranslator};
 
+pub(crate) mod pattern_members;
+
 impl BodyTranslator<'_> {
     // ── Pattern translation (static — no self_type needed) ──────────
 
@@ -89,52 +91,6 @@ impl BodyTranslator<'_> {
     fn pat_slot_with(pat: &syn::Pat, rename: &dyn Fn(&str) -> String) -> String {
         if Self::binds_nothing(pat) { String::new() } else { Self::pat_render(pat, rename) }
     }
-    /// What a variant's payload contributes to the arm: the tests its members
-    /// ask, the names the destructuring takes out of `subject.value`, and the
-    /// bindings that live inside a member which asks a question of its own.
-    ///
-    /// A member that only binds is a name in the destructuring, which is what
-    /// the port has always written. A member that tests — `Expr::Literal(
-    /// Literal::String(s))`, `Op::Eq(0, b)` — needs its test written against the
-    /// place the value sits in, or the arm runs for values it does not match;
-    /// its own names then come out of that place rather than out of the
-    /// destructuring, so they arrive here as statements instead.
-    pub(crate) fn payload_parts<'p>(
-        &self,
-        subject: &str,
-        members: impl Iterator<Item = (String, &'p syn::Pat)>,
-    ) -> (Vec<String>, Vec<String>, String) {
-        let mut tests = Vec::new();
-        let mut names = Vec::new();
-        let mut nested = String::new();
-        for (member, pat) in members {
-            // `Comparison { left, operator: _, .. }` asks nothing of `operator`
-            // and takes no name out of it, so the destructuring does not name
-            // it either.
-            //
-            // Binding nothing is not the same as asking nothing:
-            // `Wrap::Inner(Status::Requested(_, _))` takes no name and still
-            // tests the variant. Skipped on the binding alone, the TEST went
-            // with it and the arm ran for every `Wrap::Inner` — live in core's
-            // `client_relay`.
-            if Self::binds_nothing(pat) && Self::is_irrefutable(pat) {
-                continue;
-            }
-            if Self::is_irrefutable(pat) {
-                let local = Self::pat_static(pat);
-                names.push(if local == member { member } else { format!("{}: {}", member, local) });
-                continue;
-            }
-            let place = format!("{}.value.{}", subject, member);
-            let (test, bind) = self.pattern_test(&place, pat);
-            if test != "true" {
-                tests.push(test);
-            }
-            nested.push_str(&bind);
-        }
-        (tests, names, nested)
-    }
-
     /// How TypeScript asks whether a value matches a pattern, and what it writes
     /// to take the pattern's names out of it.
     ///
@@ -187,14 +143,30 @@ impl BodyTranslator<'_> {
                                 format!("const {} = {};\n", Self::pat_static(inner), subject),
                             );
                         }
-                        let (inner_test, bind) = self.pattern_test(subject, inner);
+                        // The payload's own type goes down with the pattern:
+                        // a nullable IS its payload here, and a nested
+                        // `Some(Ok(i))` asks the `Result`'s question of the
+                        // `Result`, not of the `Option` around it.
+                        let inner_ty = pattern_members::member_type(
+                            self.payload_member_types(&ts.path).as_deref(),
+                            "_0",
+                        );
+                        let (inner_test, bind) =
+                            self.matching(inner_ty.as_ref(), || self.pattern_test(subject, inner));
                         (format!("{} != null && ({})", subject, inner_test), bind)
                     }
                     // A `Result`'s payload is behind `unwrap`, which the runtime
                     // counts as a read, so it is written once — into the
                     // binding. A pattern that would have to be *tested* there
                     // cannot be, and is reported rather than dropped.
-                    "Ok" | "Err" => {
+                    //
+                    // Asked of the value, not of the spelling: a crate that
+                    // declares `enum Outcome { Ok(Token), Other }` writes
+                    // `Outcome::Ok(token)` with the same leaf, and the leaf
+                    // alone sent it here — `o.isOk()` and `o.unwrap()` on a
+                    // class carrying `is`, `value` and `intoMatch` and neither
+                    // of those, so the call threw and the enum stayed live.
+                    "Ok" | "Err" if self.matches_a_result() => {
                         let inner = ts.elems.first();
                         if let Some(pat) = inner.filter(|p| !Self::is_irrefutable(p)) {
                             self.fallback(
@@ -243,7 +215,7 @@ impl BodyTranslator<'_> {
                     }
                     _ => {
                         let (payload_tests, names, nested) =
-                            self.payload_parts(subject, ts.elems.iter().enumerate().map(|(i, p)| {
+                            self.payload_parts(subject, &ts.path, ts.elems.iter().enumerate().map(|(i, p)| {
                                 (format!("_{}", i), p)
                             }));
                         let mut test = format!("{}.is('{}')", subject, name);
@@ -282,8 +254,17 @@ impl BodyTranslator<'_> {
             }
             syn::Pat::Struct(st) => {
                 let name = st.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                // A struct is not a variant: its fields stand on the object
+                // itself, and it carries neither `is` nor `value`. Written as a
+                // variant test, `if let Duo::A(Token { n }) = value` emitted
+                // `v._0.is('Token')` — a method no struct has — so the branch
+                // threw and the value it had opened stayed live.
+                if self.pattern_names_a_struct(&st.path) {
+                    return self.struct_fields_of(subject, st);
+                }
                 let (payload_tests, names, nested) = self.payload_parts(
                     subject,
+                    &st.path,
                     st.fields.iter().map(|f| {
                         let member = match &f.member {
                             syn::Member::Named(ident) => name_map::to_camel_case(&ident.to_string()),

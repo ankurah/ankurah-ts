@@ -277,3 +277,202 @@ fn a_literal_operand_is_not_lifted_out_of_the_position_that_types_it() {
         ts
     );
 }
+
+/// A `?` LEAVES THE FRAME, so a move written before one is conditional.
+///
+/// `is_place` answers yes for a `syn::Expr::Try` — right for "does this leave a
+/// value to release", wrong for "can this leave the frame" — so
+/// `Some(take2(t, o?))` emitted `const _r0 = o; if (_r0 == null) return null;
+/// return take2(t, _r0);` and returned with `t` moved into an argument list the
+/// call never reached.
+#[test]
+fn a_question_mark_after_a_move_makes_the_move_conditional() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take2(a: Token, b: u32) -> u32 { a.n + b }\n\
+         pub fn f(t: Token, o: Option<u32>) -> Option<u32> { Some(take2(t, o?)) }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("t.drop();"), "the frame still owns it:\n{}", ts);
+    let flag = ts.find("= true;").expect("a flag is set");
+    let leave = ts.find("return null;").expect("the `?` leaves");
+    assert!(leave < flag, "and the flag stands below the `?`:\n{}", ts);
+}
+
+/// A tuple or array ELEMENT is on the same lift and flag plan as a call's
+/// argument.
+///
+/// `(token, o.unwrap())` set the flag, handed `token` to the array literal, and
+/// then threw: the token was in a literal nothing finished building, and the
+/// flag said somebody else owned it.
+#[test]
+fn an_aggregate_lifts_a_throwing_element_above_the_flag() {
+    for built in ["(token, o.unwrap())", "[token, mk(o.unwrap())]"] {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "pub struct Token {{ pub n: u32 }}\n\
+                 impl Drop for Token {{ fn drop(&mut self) {{}} }}\n\
+                 pub fn mk(n: u32) -> Token {{ Token {{ n }} }}\n\
+                 pub fn f(token: Token, o: Option<u32>) -> u32 {{ let _p = {}; 0 }}",
+                built
+            ),
+        )]);
+        let ts = f.translated_method("lib.rs", "f");
+        let flag = ts.find("= true;").expect("a flag is set");
+        let throw = ts.find("unwrap()").expect("the throw is written");
+        assert!(throw < flag, "the throw stands above the flag:\n{}", ts);
+        assert!(ts.contains("token.drop()"), "and the frame still owns it:\n{}", ts);
+    }
+}
+
+/// A move NESTED inside an operand is reached by the same rule.
+///
+/// The aggregate arms of the move walk recursed with a plain position, so
+/// `Box3 { a: Some(x), k, c: o.unwrap() }` covered `k` and not `x`: `x` was
+/// handed over unconditionally and released by nobody when the `unwrap` threw.
+#[test]
+fn a_move_nested_in_an_operand_is_conditional_too() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub struct Box3 { pub a: Option<Token>, pub k: Token, pub c: u32 }\n\
+         pub fn f(x: Token, k: Token, o: Option<u32>) -> Box3 { \
+         Box3 { a: Some(x), k, c: o.unwrap() } }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("x.drop();"), "the nested move is the frame's:\n{}", ts);
+    assert!(ts.contains("k.drop();"), "and so is the one written as a field:\n{}", ts);
+}
+
+/// A droppable TEMPORARY built before a throwing operand is the frame's, with
+/// no flagged local anywhere in the statement.
+///
+/// `Box4 { a: mk(x), b: mk(k), c: o.unwrap() }` emitted
+/// `new Box4(mk(x), mk(k), (o ?? throw))`, and both `mk` results were owned by
+/// nobody when the `unwrap` threw — which Rust drops while it unwinds. The
+/// sibling with `b: k` was right only because `k` is a flagged local.
+#[test]
+fn a_temporary_built_before_a_throw_is_released() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub struct Box4 { pub a: Token, pub b: Token, pub c: u32 }\n\
+         pub fn mk(n: u32) -> Token { Token { n } }\n\
+         pub fn f(o: Option<u32>) -> Box4 { Box4 { a: mk(1), b: mk(2), c: o.unwrap() } }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert_eq!(
+        ts.matches("dropOwned(_b").count(),
+        2,
+        "both temporaries are released if the throw is reached:\n{}",
+        ts
+    );
+}
+
+/// And a name is never lifted into another name.
+///
+/// CC6: `evaluating` asks `evaluates_quietly` of the RUST expression while the
+/// placement asks the TEXT, so `Vec::new()` in a later field was "can throw"
+/// for one and "a literal, do not lift" for the other — a flag with nothing
+/// between it and the call, and `const _b1 = inner;`, a name aliasing a name.
+#[test]
+fn a_bare_name_is_not_lifted_into_another_name() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take2(a: Token, b: u32) -> u32 { a.n + b }\n\
+         pub fn f(t: Token, inner: u32, o: Option<u32>) -> u32 { \
+         let _x = take2(t, inner); o.unwrap() }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(!ts.contains("= inner;"), "a name already has a name:\n{}", ts);
+}
+
+/// A place the PORT writes as a CALL makes a move beside it conditional.
+///
+/// `handle.n` on a value behind a `Deref` is emitted as `handle.deref().n`, and
+/// `deref()` on a value somebody dropped throws. Rust cannot panic reading a
+/// field, so the disposition called the move unconditional and
+/// `Event { t: token, n: handle.n }` left the token released by nobody. The
+/// placement rule has asked the emitted text this since W2; the disposition
+/// asks it now too, before the text exists.
+#[test]
+fn an_auto_deref_beside_a_move_makes_the_move_conditional() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::Arc;\n\
+         pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub struct Inner { pub n: u32 }\n\
+         pub struct Handle { inner: Arc<Inner> }\n\
+         impl std::ops::Deref for Handle { type Target = Inner; \
+         fn deref(&self) -> &Inner { &self.inner } }\n\
+         pub struct Event { pub t: Token, pub n: u32 }\n\
+         pub fn f(token: Token, handle: Handle) -> Event { \
+         Event { t: token, n: handle.n } }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("token.drop()"), "the frame still owns it:\n{}", ts);
+    let flag = ts.find("_moved0 = true;").expect("a flag is set");
+    let deref = ts.find("handle.deref()").expect("the port writes the deref");
+    assert!(deref < flag, "and the flag stands below it:\n{}", ts);
+}
+
+/// A struct literal's fields are EVALUATED in the order the literal writes
+/// them, and handed to the constructor in declaration order.
+///
+/// `Reordered { n: value.unwrap(), token }` was translated in declaration
+/// order, so `token` was handed over before the `unwrap` Rust runs first and a
+/// `None` left it owned by nobody.
+#[test]
+fn a_struct_literal_evaluates_its_fields_in_source_order() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub struct Reordered { pub token: Token, pub n: u32 }\n\
+         pub fn f(token: Token, value: Option<u32>) -> Reordered { \
+         Reordered { n: value.unwrap(), token } }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    let throw = ts.find("throw new Error").expect("the unwrap is written");
+    let build = ts.find("new Reordered(").expect("the constructor is written");
+    assert!(throw < build, "the first field is evaluated first:\n{}", ts);
+    assert!(
+        ts.contains("new Reordered(token, _b"),
+        "and the values reach the constructor in declaration order:\n{}",
+        ts
+    );
+    assert!(ts.contains("token.drop()"), "the frame owns the token until then:\n{}", ts);
+}
+
+/// An assignment to a local that a branch may already have handed away
+/// releases the old value under its flag, and puts the flag back.
+///
+/// The assignment gives the local a value nobody has taken. Reported instead of
+/// written, six of `storage-common/planner.rs`'s `low = candidate` sites left
+/// the value the local held released by nobody.
+#[test]
+fn an_assignment_to_a_flagged_local_releases_and_resets() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub struct Pair { pub a: Token, pub b: u32 }\n\
+         pub fn mk(n: u32) -> Token { Token { n } }\n\
+         pub fn f(mut low: Token, o: Option<u32>, again: bool) -> u32 {\n\
+             if again { low = mk(2); }\n\
+             let p = Pair { b: o.unwrap(), a: low };\n\
+             p.b\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains(") low.drop();"), "the old value is released:\n{}", ts);
+    assert!(ts.contains(" = false;\n"), "and the flag goes back:\n{}", ts);
+}

@@ -325,6 +325,27 @@ pub(super) fn of_type(
                     class
                 ));
             }
+            // G2: a class the port did not write and that carries a payload of
+            // its own — `Attested<T>` — cannot have one `fromJson` for every
+            // `T`. Rust reads its payload through the `Deserialize` the
+            // instantiation supplies, and the port passes that reader in, one
+            // callback per type argument, the way the bincode half already
+            // does. Without it every wire type transitively holding an
+            // `Attested` was refused a JSON half: seven of them.
+            if let Some(carried) = payload_arguments(reg, class, t, ty) {
+                let mut writes = Vec::new();
+                let mut reads = Vec::new();
+                for (index, (spelling, argument)) in carried.iter().enumerate() {
+                    let shape = of_type(reg, spelling, *argument)?;
+                    writes.push(format!("($p{i}: {spelling}) => {w}", i = index, spelling = spelling, w = shape.write(&format!("$p{}", index))));
+                    reads.push(format!("(v: unknown) => {}", shape.read()));
+                }
+                return Ok(Shape {
+                    write: format!("$V.toJSON({})", writes.join(", ")),
+                    read: format!("{}.fromJson(v, {})", class, reads.join(", ")),
+                    owns: true,
+                });
+            }
             Ok(Shape {
                 write: "$V.toJSON()".to_string(),
                 read: format!("{}.fromJson(v)", class),
@@ -467,4 +488,36 @@ fn tuple_parts(inner: &str) -> Option<Vec<String>> {
         return None;
     }
     Some(out)
+}
+
+/// The type arguments a PROVIDED generic class reads its payload through, with
+/// the TypeScript spelling of each.
+///
+/// `None` for every class the port emits itself: those have one `fromJson` per
+/// declaration and read their fields by name. A provided class is different —
+/// its members are whatever the person who wrote it wrote — and a generic one
+/// cannot have a reader for a payload it has never seen, so the reader is
+/// passed in. The registry's own type parameters are what say how many.
+fn payload_arguments<'t>(
+    reg: &TypeRegistry,
+    class: &str,
+    spelled: &str,
+    ty: Option<&'t crate::ty::Ty>,
+) -> Option<Vec<(String, Option<&'t crate::ty::Ty>)>> {
+    let id = ty.and_then(|ty| ty.peel_refs().id()).or_else(|| reg.type_by_leaf(class))?;
+    if !reg.is_hand_written(id) {
+        return None;
+    }
+    let inner = spelled.strip_prefix(class)?.strip_prefix('<')?.strip_suffix('>')?;
+    let parts = tuple_parts(inner)?;
+    if parts.is_empty() {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .enumerate()
+            .map(|(index, spelling)| (spelling, argument_of(ty, index)))
+            .collect(),
+    )
 }

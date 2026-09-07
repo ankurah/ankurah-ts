@@ -98,7 +98,17 @@ pub(super) fn of_struct(reg: &TypeRegistry, info: &StructInfo) -> Result<StructS
         });
     }
     if kept.is_empty() {
-        return Ok(StructSchema { body: Body::Unit });
+        // serde tells the two empty structs apart by their SYNTAX: `struct
+        // Unit;` is written `null` and `struct Principal {}` is written `{}`.
+        // Both reach here with no fields, and the port wrote `null` for both —
+        // `principal.bin`'s one item says `{}`, which is what G2's oracle
+        // caught the first time it ran.
+        return Ok(StructSchema {
+            body: match info.braced {
+                true => Body::Named(Vec::new()),
+                false => Body::Unit,
+            },
+        });
     }
     Ok(StructSchema {
         body: body_of(reg, &kept)?,

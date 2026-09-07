@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/mutable.rs
-import { Struct, Arc, OwnedClosure } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
 import { Broadcast, BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -18,8 +18,15 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   }
 
   static new<T>(value: T): Mut<T> {
+    let _moved0 = false;
     const broadcast = Broadcast.new();
-    return new Mut(ValueCell.new(value), broadcast);
+    try {
+      const _b1 = ValueCell.new(value);
+      _moved0 = true;
+      return new Mut(_b1, broadcast);
+    } finally {
+      if (!_moved0) broadcast.drop();
+    }
   }
 
   set(value: T): void {
@@ -32,7 +39,15 @@ export class Mut<T extends Clone> extends Struct implements Get<T>, Peek<T>, Wit
   }
 
   read(): Read<T> {
-    return new Read(this.value.clone(), this.broadcast.clone());
+    let _moved1 = false;
+    const _b0 = this.value.clone();
+    try {
+      const _b2 = this.broadcast.clone();
+      _moved1 = true;
+      return new Read(_b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   value(): T {

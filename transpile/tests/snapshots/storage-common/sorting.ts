@@ -26,9 +26,8 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
   static new<S>(inner: S, orderBy: OrderByComponents): SortedStream<S> {
     let _moved0 = false;
     try {
-      const _b1 = inner;
       _moved0 = true;
-      return new SortedStream(_b1, orderBy, [], null, null, false);
+      return new SortedStream(inner, orderBy, [], null, null, false);
     } finally {
       if (!_moved0) orderBy.drop();
     }
@@ -326,9 +325,8 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
   static new<S>(inner: S, orderBy: OrderByComponents, k: number): TopKStream<S> {
     let _moved0 = false;
     try {
-      const _b1 = inner;
       _moved0 = true;
-      return new TopKStream(_b1, orderBy, k, 0, [], null, null, false);
+      return new TopKStream(inner, orderBy, k, 0, [], null, null, false);
     } finally {
       if (!_moved0) orderBy.drop();
     }

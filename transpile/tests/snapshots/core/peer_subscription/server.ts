@@ -78,74 +78,83 @@ export class SubscriptionHandler extends Struct {
           if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
           const storageCollection = _r4.unwrap();
           try {
-            const _r5 = await node.deref().value.reactor.upsertQuery(this.subscription.id(), queryId, collectionId.clone(), selection.clone(), node, cdata, version);
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            let _moved6 = false;
-            const matchingEntities = _r5.unwrap();
+            const _b5 = this.subscription.id();
+            let _moved7 = false;
+            const _b6 = collectionId.clone();
             try {
-              _moved6 = true;
-              const initialStates = iterFilterMap([...matchingEntities], (e) => {
-                try {
-                  const _r7 = e.toEntityState().ok();
-                  if (_r7 == null) return null;
-                  let _moved8 = false;
-                  const entityState = _r7;
+              const _b8 = selection.clone();
+              const _r9 = await node.deref().value.reactor.upsertQuery(_b5, queryId, _b6, _b8, node, cdata, version);
+              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              _moved7 = true;
+              let _moved10 = false;
+              const matchingEntities = _r9.unwrap();
+              try {
+                _moved10 = true;
+                const initialStates = iterFilterMap([...matchingEntities], (e) => {
                   try {
-                    let _moved9 = false;
-                    const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+                    const _r11 = e.toEntityState().ok();
+                    if (_r11 == null) return null;
+                    let _moved12 = false;
+                    const entityState = _r11;
                     try {
-                      _moved8 = true;
-                      _moved9 = true;
-                      return Attested.opt(entityState, attestation);
+                      let _moved13 = false;
+                      const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+                      try {
+                        _moved12 = true;
+                        _moved13 = true;
+                        return Attested.opt(entityState, attestation);
+                      } finally {
+                        if (!_moved13) dropOwned(attestation);
+                      }
                     } finally {
-                      if (!_moved9) dropOwned(attestation);
+                      if (!_moved12) entityState.drop();
                     }
                   } finally {
-                    if (!_moved8) entityState.drop();
+                    e.drop();
                   }
-                } finally {
-                  e.drop();
-                }
-              });
-              const _r10 = await expandStates(initialStates, [...knownMatches].map((k) => k.entityId), storageCollection);
-              if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-              let _moved11 = false;
-              const expandedStates = _r10.unwrap();
-              try {
-                _moved0 = true;
-                const knownMap = HashMap.from([...knownMatches].map((k) => {
-                  try {
-                    return [k.entityId, k.takeField('head')];
-                  } finally {
-                    k.drop();
-                  }
-                }));
-                let deltas = [];
-                _moved11 = true;
-                const _seq13 = expandedStates;
-                let _at14 = 0;
+                });
+                const _r14 = await expandStates(initialStates, [...knownMatches].map((k) => k.entityId), storageCollection);
+                if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+                let _moved15 = false;
+                const expandedStates = _r14.unwrap();
                 try {
-                  while (_at14 < _seq13.length) {
-                    const state = _seq13[_at14++];
-                    const _r12 = await node.generateEntityDelta(knownMap, state, storageCollection);
-                    if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-                    {
-                      const _v = _r12.unwrap();
-                      if (_v != null) {
-                        const delta = _v;
-                        deltas.push(delta);
+                  _moved0 = true;
+                  const knownMap = HashMap.from([...knownMatches].map((k) => {
+                    try {
+                      return [k.entityId, k.takeField('head')];
+                    } finally {
+                      k.drop();
+                    }
+                  }));
+                  let deltas = [];
+                  _moved15 = true;
+                  const _seq17 = expandedStates;
+                  let _at18 = 0;
+                  try {
+                    while (_at18 < _seq17.length) {
+                      const state = _seq17[_at18++];
+                      const _r16 = await node.generateEntityDelta(knownMap, state, storageCollection);
+                      if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
+                      {
+                        const _v = _r16.unwrap();
+                        if (_v != null) {
+                          const delta = _v;
+                          deltas.push(delta);
+                        }
                       }
                     }
+                  } finally {
+                    dropOwned(_seq17.slice(_at18));
                   }
+                  return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas }));
                 } finally {
-                  dropOwned(_seq13.slice(_at14));
+                  if (!_moved15) dropOwned(expandedStates);
                 }
-                return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas }));
               } finally {
-                if (!_moved11) dropOwned(expandedStates);
+                if (!_moved10) dropOwned(matchingEntities);
               }
             } finally {
-              if (!_moved6) dropOwned(matchingEntities);
+              if (!_moved7) dropOwned(_b6);
             }
           } finally {
             storageCollection.drop();

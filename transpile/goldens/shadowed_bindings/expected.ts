@@ -54,23 +54,31 @@ export function shadowInAClosure(): bigint {
 }
 
 export function shadowInAnArm(): bigint {
-  const pair = [new Token(1n), new Token(2n)];
-  {
-    const a = pair[0];
-    const b = pair[1];
-    try {
+  let _moved1 = false;
+  const _b0 = new Token(1n);
+  try {
+    const _b2 = new Token(2n);
+    _moved1 = true;
+    const pair = [_b0, _b2];
+    {
+      const a = pair[0];
+      const b = pair[1];
       try {
-        {
-          const a_1 = new Token(3n);
-          a_1.drop();
-          return b.n;
+        try {
+          {
+            const a_1 = new Token(3n);
+            a_1.drop();
+            return b.n;
+          }
+        } finally {
+          b.drop();
         }
       } finally {
-        b.drop();
+        a.drop();
       }
-    } finally {
-      a.drop();
     }
+  } finally {
+    if (!_moved1) dropOwned(_b0);
   }
 }
 

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/connectors/websocket-client-wasm/src/client.rs
-import { Struct, Drop, Result, Arc, RefCell, AnyhowError, tracing, checkedAdd, sleep } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, RefCell, AnyhowError, dropOwned, tracing, checkedAdd, sleep } from '@ankurah/base';
 import { Node, NodeComms, Context } from '@ankurah/core';
 import { Connection } from './connection';
 import { ConnectionState } from './connection_state';
@@ -14,12 +14,22 @@ export class WebsocketClient extends Struct {
   }
 
   static new<SE, PA>(node: Node<SE, PA>, serverUrl: string): Result<WebsocketClient, Error> {
-    undefined /* notice_info!("Created new websocket client") */;
-    const inner = Arc.new(new ClientInner(serverUrl, new RefCell(null), Mut.new(new ConnectionState('None', {})), node, new RefCell(0n), new RefCell([])));
-    const _r0 = inner.connect();
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-    _r0.drop();
-    return Result.Ok(new WebsocketClient(inner));
+    let _moved0 = false;
+    try {
+      undefined /* notice_info!("Created new websocket client") */;
+      const _b1 = new RefCell(null);
+      const _b2 = Mut.new(new ConnectionState('None', {}));
+      const _b3 = new RefCell(0n);
+      const _b4 = new RefCell([]);
+      _moved0 = true;
+      const inner = Arc.new(new ClientInner(serverUrl, _b1, _b2, node, _b3, _b4));
+      const _r5 = inner.connect();
+      if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+      _r5.drop();
+      return Result.Ok(new WebsocketClient(inner));
+    } finally {
+      if (!_moved0) node.drop();
+    }
   }
 
   connectionState(): Read<ConnectionState> {
@@ -165,23 +175,31 @@ class ClientInner extends Drop {
   }
 
   connect(): Result<void, Error> {
-    const _r0 = Connection.new(Node_cloned(this.node), this.serverUrl, this.downgrade()).mapErr((e) => AnyhowError.msg(`${e}`));
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     let _moved1 = false;
-    const connection = _r0.unwrap();
+    const _b0 = Node_cloned(this.node);
     try {
-      undefined /* action_info!(self , "connecting to" , "{}" , & self . server_url) */;
-      const _t2 = this.connection.borrowMut();
+      const _b2 = this.downgrade();
+      const _r3 = Connection.new(_b0, this.serverUrl, _b2).mapErr((e) => AnyhowError.msg(`${e}`));
+      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      _moved1 = true;
+      let _moved4 = false;
+      const connection = _r3.unwrap();
       try {
-        _moved1 = true;
-        _t2.value = connection;
+        undefined /* action_info!(self , "connecting to" , "{}" , & self . server_url) */;
+        const _t5 = this.connection.borrowMut();
+        try {
+          _moved4 = true;
+          _t5.value = connection;
+        } finally {
+          _t5.drop();
+        }
+        this.state.set(new ConnectionState('Connecting', { url: this.serverUrl }));
+        return Result.Ok([]);
       } finally {
-        _t2.drop();
+        if (!_moved4) connection.drop();
       }
-      this.state.set(new ConnectionState('Connecting', { url: this.serverUrl }));
-      return Result.Ok([]);
     } finally {
-      if (!_moved1) connection.drop();
+      if (!_moved1) dropOwned(_b0);
     }
   }
 

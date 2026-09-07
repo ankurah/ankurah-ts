@@ -30,68 +30,73 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
   }
 
   async executePlanQuery(index: IdbIndex, keyRange: IdbKeyRange | null, predicate: Predicate, cursorDirection: IdbCursorDirection, limit: bigint | null, collectionId: CollectionId, upperOpenEnded: boolean, eqPrefixLen: number, eqPrefixValues: Value[], orderBySpill: OrderByComponents): Promise<Result<Attested<EntityState>[], RetrievalError>> {
-    const needsSpillSort = !(orderBySpill.spill.length === 0);
-    const effectivePrefixLen = (upperOpenEnded && eqPrefixLen > 0 && !this.prefixGuardDisabled.value ? eqPrefixLen : 0);
-    const scanner = IdbIndexScanner.new(index.clone(), keyRange, cursorDirection, effectivePrefixLen, eqPrefixValues);
+    let _moved0 = false;
     try {
-      let stream = undefined /* pin!(scanner . scan ()) */;
-      let count = 0n;
-      let rows = [];
+      const needsSpillSort = !(orderBySpill.spill.length === 0);
+      const effectivePrefixLen = (upperOpenEnded && eqPrefixLen > 0 && !this.prefixGuardDisabled.value ? eqPrefixLen : 0);
+      const _b1 = index.clone();
+      _moved0 = true;
+      const scanner = IdbIndexScanner.new(_b1, keyRange, cursorDirection, effectivePrefixLen, eqPrefixValues);
       try {
-        let _moved1 = false;
-        let directResults = [];
+        let stream = undefined /* pin!(scanner . scan ()) */;
+        let count = 0n;
+        let rows = [];
         try {
-          for (;;) {
-            const _v6 = await stream.next();
-            if (!(_v6 != null)) {
-              break;
-            }
-            const result = _v6;
-            const _r2 = result;
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-            const entityObj = _r2.unwrap();
-            const _m3 = (() => {
-              const _v2 = IdbRecord.new(entityObj, collectionId.clone());
-              if (_v2.isOk()) {
-                const r = _v2.unwrap();
-                return r;
-              } else {
-                const _v3 = _v2.unwrapErr();
-                try {
-                  return { $jump: 'continue' };
-                } finally {
-                  _v3.drop();
+          let _moved3 = false;
+          let directResults = [];
+          try {
+            for (;;) {
+              const _v6 = await stream.next();
+              if (!(_v6 != null)) {
+                break;
+              }
+              const result = _v6;
+              const _r4 = result;
+              if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+              const entityObj = _r4.unwrap();
+              const _m5 = (() => {
+                const _v2 = IdbRecord.new(entityObj, collectionId.clone());
+                if (_v2.isOk()) {
+                  const r = _v2.unwrap();
+                  return r;
+                } else {
+                  const _v3 = _v2.unwrapErr();
+                  try {
+                    return { $jump: 'continue' };
+                  } finally {
+                    _v3.drop();
+                  }
                 }
-              }
-            })();
-            if ((_m3 as any)?.$jump === 'continue') continue;
-            const record = (_m3 as any);
-            let _c5;
-            const _r4 = evaluatePredicate(record, predicate).mapErr((e) => {
-              try {
-                return new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` });
-              } finally {
-                e.drop();
-              }
-            });
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            _c5 = _r4.unwrap();
-            if (_c5) {
-              if (needsSpillSort) {
-                rows.push(record);
-              } else {
-                {
-                  const _v5 = record.entityState();
-                  if (_v5.isOk()) {
-                    const entityState = _v5.unwrap();
-                    directResults.push(entityState);
-                    count = checkedAdd(count, 1n, 'u64');
-                    {
-                      const _v4 = limit;
-                      if (_v4 != null) {
-                        const limitVal = _v4;
-                        if (count >= limitVal) {
-                          break;
+              })();
+              if ((_m5 as any)?.$jump === 'continue') continue;
+              const record = (_m5 as any);
+              let _c7;
+              const _r6 = evaluatePredicate(record, predicate).mapErr((e) => {
+                try {
+                  return new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` });
+                } finally {
+                  e.drop();
+                }
+              });
+              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+              _c7 = _r6.unwrap();
+              if (_c7) {
+                if (needsSpillSort) {
+                  rows.push(record);
+                } else {
+                  {
+                    const _v5 = record.entityState();
+                    if (_v5.isOk()) {
+                      const entityState = _v5.unwrap();
+                      directResults.push(entityState);
+                      count = checkedAdd(count, 1n, 'u64');
+                      {
+                        const _v4 = limit;
+                        if (_v4 != null) {
+                          const limitVal = _v4;
+                          if (count >= limitVal) {
+                            break;
+                          }
                         }
                       }
                     }
@@ -99,40 +104,42 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 }
               }
             }
-          }
-          if (needsSpillSort) {
-            const results = await (async () => {
-              if (limit != null) {
-                const limitVal = limit;
-                const _b10 = orderBySpill.clone();
-                try {
-                  const _b12 = Number(BigInt.asUintN(32, limitVal));
-                  return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
-                } finally {
-                  dropOwned(_b10);
+            if (needsSpillSort) {
+              const results = await (async () => {
+                if (limit != null) {
+                  const limitVal = limit;
+                  const _b12 = orderBySpill.clone();
+                  try {
+                    const _b14 = Number(BigInt.asUintN(32, limitVal));
+                    return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                  } finally {
+                    dropOwned(_b12);
+                  }
+                } else {
+                  const _b15 = orderBySpill.clone();
+                  try {
+                    return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
+                  } finally {
+                    dropOwned(_b15);
+                  }
                 }
-              } else {
-                const _b13 = orderBySpill.clone();
-                try {
-                  return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
-                } finally {
-                  dropOwned(_b13);
-                }
-              }
-            })();
-            return Result.Ok(results);
-          } else {
-            _moved1 = true;
-            return Result.Ok(directResults);
+              })();
+              return Result.Ok(results);
+            } else {
+              _moved3 = true;
+              return Result.Ok(directResults);
+            }
+          } finally {
+            if (!_moved3) dropOwned(directResults);
           }
         } finally {
-          if (!_moved1) dropOwned(directResults);
+          dropOwned(rows);
         }
       } finally {
-        dropOwned(rows);
+        scanner.drop();
       }
     } finally {
-      scanner.drop();
+      if (!_moved0) dropOwned(eqPrefixValues);
     }
   }
 
@@ -272,12 +279,28 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
           const _r7 = entity.get(HEAD_KEY);
           if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
           try {
-            const _r8 = entity.get(ATTESTATIONS_KEY);
-            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            let _moved9 = false;
+            const _b8 = this.collectionId.clone();
             try {
-              return Result.Ok(new Attested(new EntityState(id, this.collectionId.clone(), new State(_r6.unwrap(), _r7.unwrap())), _r8.unwrap()));
+              const _b10 = new State(_r6.unwrap(), _r7.unwrap());
+              const _r11 = entity.get(ATTESTATIONS_KEY);
+              if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+              try {
+                let _moved13 = false;
+                const _b12 = new EntityState(id, _b8, _b10);
+                try {
+                  const _b14 = _r11.unwrap();
+                  _moved9 = true;
+                  _moved13 = true;
+                  return Result.Ok(new Attested(_b12, _b14));
+                } finally {
+                  if (!_moved13) dropOwned(_b12);
+                }
+              } finally {
+                if (_r11 != null && !(_r11 as any).isMoved && !(_r11 as any).isDropped) dropOwned(_r11);
+              }
             } finally {
-              if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
+              if (!_moved9) dropOwned(_b8);
             }
           } finally {
             if (_r7 != null && !(_r7 as any).isMoved && !(_r7 as any).isDropped) dropOwned(_r7);
@@ -470,11 +493,11 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         const store = _r2.unwrap();
         let events = [];
         _moved0 = true;
-        const _seq11 = eventIds;
-        let _at12 = 0;
+        const _seq19 = eventIds;
+        let _at20 = 0;
         try {
-          while (_at12 < _seq11.length) {
-            const eventId = _seq11[_at12++];
+          while (_at20 < _seq19.length) {
+            const eventId = _seq19[_at20++];
             try {
               const _r3 = Result_JsValue_require(store.get(eventId.toBase64()), 'get event');
               if (_r3.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r3.unwrapErr()));
@@ -504,13 +527,31 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                     const _r9 = eventObj.get(PARENT_KEY);
                     if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
                     try {
-                      const _r10 = eventObj.get(ATTESTATIONS_KEY);
-                      if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+                      let _moved11 = false;
+                      const _b10 = this.collectionId.clone();
                       try {
-                        const event = new Attested(new Event(this.collectionId.clone(), _r7.unwrap(), _r8.unwrap(), _r9.unwrap()), _r10.unwrap());
-                        events.push(event);
+                        const _b12 = _r7.unwrap();
+                        const _b13 = _r8.unwrap();
+                        const _b14 = _r9.unwrap();
+                        const _r15 = eventObj.get(ATTESTATIONS_KEY);
+                        if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
+                        try {
+                          let _moved17 = false;
+                          const _b16 = new Event(_b10, _b12, _b13, _b14);
+                          try {
+                            const _b18 = _r15.unwrap();
+                            _moved11 = true;
+                            _moved17 = true;
+                            const event = new Attested(_b16, _b18);
+                            events.push(event);
+                          } finally {
+                            if (!_moved17) dropOwned(_b16);
+                          }
+                        } finally {
+                          if (_r15 != null && !(_r15 as any).isMoved && !(_r15 as any).isDropped) dropOwned(_r15);
+                        }
                       } finally {
-                        if (_r10 != null && !(_r10 as any).isMoved && !(_r10 as any).isDropped) dropOwned(_r10);
+                        if (!_moved11) dropOwned(_b10);
                       }
                     } finally {
                       if (_r9 != null && !(_r9 as any).isMoved && !(_r9 as any).isDropped) dropOwned(_r9);
@@ -529,7 +570,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             }
           }
         } finally {
-          dropOwned(_seq11.slice(_at12));
+          dropOwned(_seq19.slice(_at20));
         }
         return Result.Ok(events);
       })());
@@ -587,16 +628,34 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 const _r10 = eventObj.get(PARENT_KEY);
                 if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
                 try {
-                  const _r11 = eventObj.get(ATTESTATIONS_KEY);
-                  if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+                  let _moved12 = false;
+                  const _b11 = this.collectionId.clone();
                   try {
-                    const event = new Attested(new Event(this.collectionId.clone(), _r8.unwrap(), _r9.unwrap(), _r10.unwrap()), _r11.unwrap());
-                    events.push(event);
-                    const _r12 = cursor.continue().require('Failed to advance cursor');
-                    if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-                    _r12.drop();
+                    const _b13 = _r8.unwrap();
+                    const _b14 = _r9.unwrap();
+                    const _b15 = _r10.unwrap();
+                    const _r16 = eventObj.get(ATTESTATIONS_KEY);
+                    if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
+                    try {
+                      let _moved18 = false;
+                      const _b17 = new Event(_b11, _b13, _b14, _b15);
+                      try {
+                        const _b19 = _r16.unwrap();
+                        _moved12 = true;
+                        _moved18 = true;
+                        const event = new Attested(_b17, _b19);
+                        events.push(event);
+                        const _r20 = cursor.continue().require('Failed to advance cursor');
+                        if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
+                        _r20.drop();
+                      } finally {
+                        if (!_moved18) dropOwned(_b17);
+                      }
+                    } finally {
+                      if (_r16 != null && !(_r16 as any).isMoved && !(_r16 as any).isDropped) dropOwned(_r16);
+                    }
                   } finally {
-                    if (_r11 != null && !(_r11 as any).isMoved && !(_r11 as any).isDropped) dropOwned(_r11);
+                    if (!_moved12) dropOwned(_b11);
                   }
                 } finally {
                   if (_r10 != null && !(_r10 as any).isMoved && !(_r10 as any).isDropped) dropOwned(_r10);
@@ -725,17 +784,25 @@ function jsObjectToEntityState(entityObj: Object, collectionId: CollectionId): R
     const _r2 = entityObj.get(HEAD_KEY);
     if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
     try {
-      let _moved3 = false;
-      const entityState = new EntityState(id, collectionId.clone(), new State(_r1.unwrap(), _r2.unwrap()));
+      let _moved4 = false;
+      const _b3 = collectionId.clone();
       try {
-        const _r4 = entityObj.get(ATTESTATIONS_KEY);
-        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-        const attestations = _r4.unwrap();
-        _moved3 = true;
-        const attestedState = new Attested(entityState, attestations);
-        return Result.Ok(attestedState);
+        const _b5 = new State(_r1.unwrap(), _r2.unwrap());
+        _moved4 = true;
+        let _moved6 = false;
+        const entityState = new EntityState(id, _b3, _b5);
+        try {
+          const _r7 = entityObj.get(ATTESTATIONS_KEY);
+          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+          const attestations = _r7.unwrap();
+          _moved6 = true;
+          const attestedState = new Attested(entityState, attestations);
+          return Result.Ok(attestedState);
+        } finally {
+          if (!_moved6) entityState.drop();
+        }
       } finally {
-        if (!_moved3) entityState.drop();
+        if (!_moved4) dropOwned(_b3);
       }
     } finally {
       if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
@@ -787,7 +854,14 @@ function extractAllFields(entityObj: Object, entityState: EntityState): Result<v
 }
 
 export function addCollection(selection: Selection, collectionId: CollectionId): Selection {
+  let _moved0 = false;
   const collectionComparison = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('__collection') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: collectionId.toString() }) }) });
-  return new Selection(new Predicate('And', { _0: collectionComparison, _1: selection.predicate.clone() }), selection.orderBy.clone(), selection.limit);
+  try {
+    const _b1 = selection.predicate.clone();
+    _moved0 = true;
+    return new Selection(new Predicate('And', { _0: collectionComparison, _1: _b1 }), selection.orderBy.clone(), selection.limit);
+  } finally {
+    if (!_moved0) collectionComparison.drop();
+  }
 }
 

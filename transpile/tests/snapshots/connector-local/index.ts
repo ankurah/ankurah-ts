@@ -60,11 +60,55 @@ export class LocalProcessConnection<SE1 extends StorageEngine, PA1 extends Polic
   static async new<SE1, PA1, SE2, PA2>(node1: Node<SE1, PA1>, node2: Node<SE2, PA2>): Promise<Result<LocalProcessConnection<SE1, PA1, SE2, PA2>, Error>> {
     const [node1Tx, node1Rx] = mpsc.channel(1024);
     const [node2Tx, node2Rx] = mpsc.channel(1024);
-    node1.registerPeer(new Presence(node2.deref().value.id, node2.deref().value.durable, node2.deref().value.system.root()), new LocalProcessSender(node2Tx, node2.deref().value.id));
-    node2.registerPeer(new Presence(node1.deref().value.id, node1.deref().value.durable, node1.deref().value.system.root()), new LocalProcessSender(node1Tx, node1.deref().value.id));
+    let _moved1 = false;
+    const _b0 = new Presence(node2.deref().value.id, node2.deref().value.durable, node2.deref().value.system.root());
+    try {
+      const _b2 = new LocalProcessSender(node2Tx, node2.deref().value.id);
+      _moved1 = true;
+      node1.registerPeer(_b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
+    let _moved4 = false;
+    const _b3 = new Presence(node1.deref().value.id, node1.deref().value.durable, node1.deref().value.system.root());
+    try {
+      const _b5 = new LocalProcessSender(node1Tx, node1.deref().value.id);
+      _moved4 = true;
+      node2.registerPeer(_b3, _b5);
+    } finally {
+      if (!_moved4) dropOwned(_b3);
+    }
+    let _moved6 = false;
     const receiver1Task = LocalProcessConnection.setupReceiver(node1.clone(), node1Rx);
-    const receiver2Task = LocalProcessConnection.setupReceiver(node2.clone(), node2Rx);
-    return Result.Ok(new LocalProcessConnection(receiver1Task, receiver2Task, node1.weak(), node2.weak(), node1.deref().value.id, node2.deref().value.id));
+    try {
+      let _moved7 = false;
+      const receiver2Task = LocalProcessConnection.setupReceiver(node2.clone(), node2Rx);
+      try {
+        let _moved9 = false;
+        const _b8 = node1.weak();
+        try {
+          let _moved11 = false;
+          const _b10 = node2.weak();
+          try {
+            const _b12 = node1.deref().value.id;
+            const _b13 = node2.deref().value.id;
+            _moved9 = true;
+            _moved11 = true;
+            _moved6 = true;
+            _moved7 = true;
+            return Result.Ok(new LocalProcessConnection(receiver1Task, receiver2Task, _b8, _b10, _b12, _b13));
+          } finally {
+            if (!_moved11) dropOwned(_b10);
+          }
+        } finally {
+          if (!_moved9) dropOwned(_b8);
+        }
+      } finally {
+        if (!_moved7) receiver2Task.drop();
+      }
+    } finally {
+      if (!_moved6) receiver1Task.drop();
+    }
   }
 
   static setupReceiver<SE1, PA1, SE2, PA2, SE, PA>(node: Node<SE, PA>, rx: Receiver<NodeMessage>): JoinHandle<void> {

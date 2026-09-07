@@ -71,10 +71,18 @@ impl<'a> BodyTranslator<'a> {
         if !self.owns_place(subject_expr) {
             return ownership::scrutinee::Takes::Nothing;
         }
+        // The same written `&`, one level down. `match (&bound.low,
+        // &bound.high)` is a tuple of references and not itself a reference, so
+        // the guard above does not see it; the resolved element type does not
+        // always come back as one either, and `payload_of` peels the `&` off to
+        // name the variant's fields. The elements the SOURCE wrote with an `&`
+        // are marked as such, which is what stops a borrowed pair from being
+        // read as a consuming match.
+        let subject = borrowed_elements(subject_expr, subject);
         let tc = self.types.as_ref().expect("just borrowed").borrow();
-        ownership::scrutinee::takes(&tc.probe(), &subject, patterns, |path| {
+        ownership::scrutinee::takes(&tc.probe(), &subject, patterns, |path, looking_at| {
             let mark = tc.sink.mark();
-            let payload = tc.payload_of(path, Some(&subject));
+            let payload = tc.payload_of(path, Some(looking_at));
             tc.sink.rewind(mark);
             // The NAMES travel with the types: a struct pattern pairs its
             // fields with the payload by name, and the two lists are not in the
@@ -84,6 +92,7 @@ impl<'a> BodyTranslator<'a> {
     }
 
     /// Say so where a `match` has a shape the emitter has no lowering for.
+
     pub fn report_match_gap(&self, m: &syn::ExprMatch, what: impl Into<String>) {
         self.fallback(syn::spanned::Spanned::span(m), what);
     }
@@ -184,4 +193,33 @@ impl<'a> BodyTranslator<'a> {
         }
         format!("{}{}", declarations, out)
     }
+}
+
+/// A tuple subject's type, with every element the source wrote as `&e` marked
+/// as the reference it is.
+fn borrowed_elements(expr: &syn::Expr, ty: crate::ty::Ty) -> crate::ty::Ty {
+    let (syn::Expr::Tuple(written), crate::ty::Ty::Tuple(elements)) = (expr, &ty) else {
+        return ty;
+    };
+    if written.elems.len() != elements.len() {
+        return ty;
+    }
+    crate::ty::Ty::Tuple(
+        written
+            .elems
+            .iter()
+            .zip(elements)
+            .map(|(element, element_ty)| {
+                match matches!(element, syn::Expr::Reference(_))
+                    && !matches!(element_ty, crate::ty::Ty::Ref { .. })
+                {
+                    true => crate::ty::Ty::Ref {
+                        mutable: false,
+                        inner: Box::new(element_ty.clone()),
+                    },
+                    false => element_ty.clone(),
+                }
+            })
+            .collect(),
+    )
 }

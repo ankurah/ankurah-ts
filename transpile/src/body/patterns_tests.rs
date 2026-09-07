@@ -87,8 +87,39 @@ mod or_pattern_tests {
         );
     }
 
-    /// D2's other half: where the alternatives really cannot be read back, the
-    /// hole stands in the BRANCH and the test is still written — so a value the
+    /// Over one of the port's own enums there is nothing left to read back:
+    /// each alternative is its OWN arm, and destructures its own way.
+    ///
+    /// This shape used to be refused — one test, one binding, and two
+    /// alternatives that take their names out of different positions — and the
+    /// refusal's premise is repealed for this route by the arm-per-alternative
+    /// lowering. It still stands for a subject the keyed match cannot dispatch,
+    /// which the case below it holds.
+    #[test]
+    fn an_or_pattern_over_an_enum_destructures_each_alternative_its_own_way() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "pub struct Token { pub n: u32 }\n\
+             pub enum Inner { A((Token, Token)), B((Token, Token)) }\n\
+             pub fn pick(i: Inner) -> u32 {\n\
+               if let Inner::A((a, b)) | Inner::B((b, a)) = i { a.n + b.n } else { 0 }\n\
+             }",
+        )]);
+        let ts = f.translated_method("lib.rs", "pick");
+        assert!(!ts.contains("unsupported("), "nothing is refused:\n{}", ts);
+        assert!(ts.contains("const [a, b] = v._0;"), "A reads its own way:\n{}", ts);
+        assert!(ts.contains("const [b, a] = v._0;"), "B reads its own way:\n{}", ts);
+        assert!(
+            f.messages().iter().all(|m| !m.contains("cannot read back")),
+            "and nothing is reported: {:?}",
+            f.messages()
+        );
+    }
+
+    /// D2's other half, where it still stands: a TUPLE subject has no keyed
+    /// match to be written as arms, so the alternatives share one test and one
+    /// binding — and where they cannot be read back from one place, the hole
+    /// stands in the BRANCH and the test is still written, so a value the
     /// pattern does not match runs the `else`, which is what Rust does.
     #[test]
     fn an_unreadable_or_pattern_refuses_in_the_branch_and_still_tests() {
@@ -96,8 +127,12 @@ mod or_pattern_tests {
             "lib.rs",
             "pub struct Token { pub n: u32 }\n\
              pub enum Inner { A((Token, Token)), B((Token, Token)) }\n\
-             pub fn pick(i: Inner) -> u32 {\n\
-               if let Inner::A((a, b)) | Inner::B((b, a)) = i { a.n + b.n } else { 0 }\n\
+             pub fn pick(x: Inner, y: u32) -> u32 {\n\
+               if let (Inner::A((a, b)), 1) | (Inner::B((b, a)), 2) = (x, y) {\n\
+                 a.n + b.n\n\
+               } else {\n\
+                 0\n\
+               }\n\
              }",
         )]);
         let ts = f.translated_method("lib.rs", "pick");

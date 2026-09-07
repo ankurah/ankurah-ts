@@ -116,14 +116,18 @@ export class ChangeSet<R extends View & Clone> extends Struct {
   }
 
   appeared(): R[] {
-    return iterFilterMap([...this.changes], (change) => (() => {
-      if ((change.is('Add')) || (change.is('Initial'))) {
-        const { item } = change.value;
+    return iterFilterMap([...this.changes], (change) => change.match({
+      Add: (v) => {
+        const item = v.item;
         return item.clone();
-      } else {
-        return null;
-      }
-    })());
+      },
+      Initial: (v) => {
+        const item = v.item;
+        return item.clone();
+      },
+      Update: () => null,
+      Remove: () => null,
+    }));
   }
 
   adds(): R[] {
@@ -188,19 +192,42 @@ export type ItemChangeV<I> = {
 export class ItemChange<I> extends Enum<ItemChangeV<I>> {
 
   entity(): I {
-    {
-      const { item } = this.value;
-      return item;
-    }
+    return this.match({
+      Initial: (v) => {
+        const item = v.item;
+        return item;
+      },
+      Add: (v) => {
+        const item = v.item;
+        return item;
+      },
+      Update: (v) => {
+        const item = v.item;
+        return item;
+      },
+      Remove: (v) => {
+        const item = v.item;
+        return item;
+      },
+    });
   }
 
   events(): Attested<Event>[] {
-    if ((this.is('Add')) || (this.is('Update')) || (this.is('Remove'))) {
-      const { events } = this.value;
-      return events;
-    } else {
-      return [];
-    }
+    return this.match({
+      Add: (v) => {
+        const events = v.events;
+        return events;
+      },
+      Update: (v) => {
+        const events = v.events;
+        return events;
+      },
+      Remove: (v) => {
+        const events = v.events;
+        return events;
+      },
+      Initial: () => [],
+    });
   }
 
   kind(): ChangeKind {
@@ -237,17 +264,35 @@ export class ItemChange<I> extends Enum<ItemChangeV<I>> {
       Add: (v) => {
         const item = v.item;
         const events = v.events;
-        return new ItemChange('Add', { item: I.fromEntity(item), events: events });
+        let _moved0 = false;
+        try {
+          _moved0 = true;
+          return new ItemChange('Add', { item: I.fromEntity(item), events: events });
+        } finally {
+          if (!_moved0) dropOwned(events);
+        }
       },
       Update: (v) => {
         const item = v.item;
         const events = v.events;
-        return new ItemChange('Update', { item: I.fromEntity(item), events: events });
+        let _moved1 = false;
+        try {
+          _moved1 = true;
+          return new ItemChange('Update', { item: I.fromEntity(item), events: events });
+        } finally {
+          if (!_moved1) dropOwned(events);
+        }
       },
       Remove: (v) => {
         const item = v.item;
         const events = v.events;
-        return new ItemChange('Remove', { item: I.fromEntity(item), events: events });
+        let _moved2 = false;
+        try {
+          _moved2 = true;
+          return new ItemChange('Remove', { item: I.fromEntity(item), events: events });
+        } finally {
+          if (!_moved2) dropOwned(events);
+        }
       },
     });
   }

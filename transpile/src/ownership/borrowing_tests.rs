@@ -238,11 +238,13 @@ fn an_owned_tuple_subject_releases_both_bindings() {
 }
 
 /// Every alternative of an or-pattern binds the SAME names, so the scope claims
-/// each name ONCE.
+/// each name ONCE — and an or-pattern over one of the port's enums is now one
+/// ARM per alternative, so "the scope" is each arm.
 ///
 /// Listing the names of every alternative gave `literal` two owners and two
 /// releases, and the strict registry aborts on the second — the core watcher
-/// set's `Predicate::Comparison` arm is the corpus site.
+/// set's `Predicate::Comparison` arm is the corpus site. The two releases below
+/// are one per arm, and Rust runs exactly one of them.
 #[test]
 fn an_or_pattern_claims_each_name_once() {
     let mut fixture = crate::testing::Fixture::build(&[(
@@ -253,7 +255,11 @@ fn an_or_pattern_claims_each_name_once() {
          if let Ex::Path(t) | Ex::Lit(t) = e { t.n } else { 0 } }",
     )]);
     let ts = fixture.translated_method("lib.rs", "f");
-    assert_eq!(ts.matches("t.drop()").count(), 1, "one owner, one release:\n{ts}");
+    let arms: Vec<&str> = ts.split("  Lit: ").collect();
+    assert_eq!(arms.len(), 2, "one arm per alternative:\n{ts}");
+    for arm in &arms {
+        assert_eq!(arm.matches("t.drop()").count(), 1, "one owner, one release:\n{ts}");
+    }
 }
 
 /// A `Result` arm owns the payload the side read out, whatever its type turns

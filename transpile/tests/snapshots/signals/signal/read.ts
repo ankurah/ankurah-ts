@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/read.rs
-import { Struct, Arc, OwnedClosure, Invocable, valueEquals } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, Invocable, dropOwned, valueEquals } from '@ankurah/base';
 import { Broadcast, BroadcastId, BroadcastListener } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -22,15 +22,37 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   }
 
   map<Output, Transform extends Invocable<[T], Output>>(transform: Transform): Map<Read<T>, T, Output, Transform> {
-    return Map.new(this.clone(), transform);
+    let _moved0 = false;
+    try {
+      const _b1 = this.clone();
+      _moved0 = true;
+      return Map.new(_b1, transform);
+    } finally {
+      if (!_moved0) dropOwned(transform);
+    }
   }
 
   memo<Output, Transform extends Invocable<[T], Output>>(transform: Transform): Memo<Read<T>, T, Output, Transform> {
-    return Memo.new(this.clone(), transform);
+    let _moved0 = false;
+    try {
+      const _b1 = this.clone();
+      _moved0 = true;
+      return Memo.new(_b1, transform);
+    } finally {
+      if (!_moved0) dropOwned(transform);
+    }
   }
 
   clone(): Read<T> {
-    return new Read(this.value.clone(), this.broadcast.clone());
+    let _moved1 = false;
+    const _b0 = this.value.clone();
+    try {
+      const _b2 = this.broadcast.clone();
+      _moved1 = true;
+      return new Read(_b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   get(): T {

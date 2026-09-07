@@ -57,14 +57,22 @@ class MockMessageSender<CD extends ContextData> extends Struct implements TNode<
       try {
         const _t0 = this.sentRequests.value.lock();
         try {
-          _t0.value.push([peerId, queryId, collectionId.clone(), selection.clone()]);
+          let _moved2 = false;
+          const _b1 = collectionId.clone();
+          try {
+            const _b3 = selection.clone();
+            _moved2 = true;
+            _t0.value.push([peerId, queryId, _b1, _b3]);
+          } finally {
+            if (!_moved2) dropOwned(_b1);
+          }
         } finally {
           _t0.drop();
         }
-        const _t1 = this.nextError.value.lock();
+        const _t4 = this.nextError.value.lock();
         try {
           {
-            const _v = _t1.value.take();
+            const _v = _t4.value.take();
             if (_v != null) {
               const error = _v;
               return Result.Err(new RetrievalError('RequestError', { _0: error }));
@@ -73,7 +81,7 @@ class MockMessageSender<CD extends ContextData> extends Struct implements TNode<
           }
           }
         } finally {
-          _t1.drop();
+          _t4.drop();
         }
       } finally {
         selection.drop();
@@ -150,7 +158,29 @@ describe('client_relay unit tests', () => {
       try {
         const peerId = EntityId.new();
         relay.notifyPeerConnected(peerId);
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        let _moved1 = false;
+        const _b0 = collectionId.clone();
+        try {
+          let _moved3 = false;
+          const _b2 = predicate.clone();
+          try {
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = new MockLiveQuery();
+              _moved1 = true;
+              _moved3 = true;
+              _moved5 = true;
+              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
+          } finally {
+            if (!_moved3) dropOwned(_b2);
+          }
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
         if (!(((_v) => {
           if (!(_v != null && (_v.is('Requested')))) return false;
           return true;
@@ -232,7 +262,29 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        let _moved1 = false;
+        const _b0 = collectionId.clone();
+        try {
+          let _moved3 = false;
+          const _b2 = predicate.clone();
+          try {
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = new MockLiveQuery();
+              _moved1 = true;
+              _moved3 = true;
+              _moved5 = true;
+              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
+          } finally {
+            if (!_moved3) dropOwned(_b2);
+          }
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
         if (!(((_v) => {
           if (!(_v != null && (_v.is('PendingRemote')))) return false;
           return true;
@@ -268,7 +320,29 @@ describe('client_relay unit tests', () => {
       try {
         const peerId = EntityId.new();
         relay.notifyPeerConnected(peerId);
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        let _moved1 = false;
+        const _b0 = collectionId.clone();
+        try {
+          let _moved3 = false;
+          const _b2 = predicate.clone();
+          try {
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = new MockLiveQuery();
+              _moved1 = true;
+              _moved3 = true;
+              _moved5 = true;
+              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
+          } finally {
+            if (!_moved3) dropOwned(_b2);
+          }
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
         if (!(((_v) => {
           if (!(_v != null && (_v.is('Established')))) return false;
@@ -309,8 +383,52 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(retryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
-        relay.subscribeQuery(nonRetryableQueryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        let _moved1 = false;
+        const _b0 = collectionId.clone();
+        try {
+          let _moved3 = false;
+          const _b2 = predicate.clone();
+          try {
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = new MockLiveQuery();
+              _moved1 = true;
+              _moved3 = true;
+              _moved5 = true;
+              relay.subscribeQuery(retryableQueryId, _b0, _b2, _b4, 0, _b6);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
+          } finally {
+            if (!_moved3) dropOwned(_b2);
+          }
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
+        let _moved8 = false;
+        const _b7 = collectionId.clone();
+        try {
+          let _moved10 = false;
+          const _b9 = predicate.clone();
+          try {
+            let _moved12 = false;
+            const _b11 = collectionId.clone();
+            try {
+              const _b13 = new MockLiveQuery();
+              _moved8 = true;
+              _moved10 = true;
+              _moved12 = true;
+              relay.subscribeQuery(nonRetryableQueryId, _b7, _b9, _b11, 0, _b13);
+            } finally {
+              if (!_moved12) dropOwned(_b11);
+            }
+          } finally {
+            if (!_moved10) dropOwned(_b9);
+          }
+        } finally {
+          if (!_moved8) dropOwned(_b7);
+        }
         (() => {
           let subscriptions = relay.inner.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
           {
@@ -413,7 +531,29 @@ describe('client_relay unit tests', () => {
       const predicate = createTestSelection();
       try {
         const peerId = EntityId.new();
-        relay.subscribeQuery(queryId, collectionId.clone(), predicate.clone(), collectionId.clone(), 0, new MockLiveQuery());
+        let _moved1 = false;
+        const _b0 = collectionId.clone();
+        try {
+          let _moved3 = false;
+          const _b2 = predicate.clone();
+          try {
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = new MockLiveQuery();
+              _moved1 = true;
+              _moved3 = true;
+              _moved5 = true;
+              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
+          } finally {
+            if (!_moved3) dropOwned(_b2);
+          }
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
         await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
         if (!(((_v) => {
           if (!(_v != null && (_v.is('PendingRemote')))) return false;

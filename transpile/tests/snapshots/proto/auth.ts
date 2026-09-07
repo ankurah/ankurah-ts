@@ -193,11 +193,14 @@ export class Principal extends Struct {
   }
 
   toJSON(): unknown {
-    return null;
+    return {};
   }
 
   static fromJson(value: unknown): Result<Principal, JsonError> {
     try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `Principal`'));
+      }
       return Result.Ok(new Principal());
     } catch (e) {
       if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;

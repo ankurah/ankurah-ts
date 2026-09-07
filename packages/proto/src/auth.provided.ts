@@ -1,13 +1,15 @@
 // PROVIDED: Hand-written Attested<T> — generic type requires callback-based encode/decode.
 // The transpiler never overwrites this file. Generated auth.ts re-exports this type.
 //
-// No toJSON here on purpose: Rust derives serde for Attested, and a derived struct with
-// named fields writes `{"payload":…,"attestations":…}` — which is what JSON.stringify
-// already produces from these two fields, in this declaration order. Whether that JSON
-// matches Rust end to end depends on AttestationSet, a generated newtype that serde sees
-// through and JSON.stringify does not; that belongs to the emitter, not to this file.
+// The JSON halves take the payload's reader and writer, one callback each, the way
+// `encode`/`decode` already take the payload's codec: `Attested<T>` cannot have one
+// `fromJson` for every `T`, and Rust reads the payload through the `Deserialize` the
+// instantiation supplies. Rust derives serde for `Attested`, and a derived struct with
+// named fields writes `{"payload":…,"attestations":…}`; `AttestationSet` is a newtype,
+// which serde sees through and writes as the array inside it, so its own `toJSON` is
+// what says that rather than `JSON.stringify` of the object.
 
-import { Struct, debugValue } from '@ankurah/base';
+import { JsonError, OwnershipFatal, Result, Struct, UnsupportedShape, debugValue, dropOwned } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { Attestation, AttestationSet } from './auth';
 
@@ -66,5 +68,47 @@ export class Attested<T> extends Struct {
     const payload = decodePayload(reader);
     const attestations = AttestationSet.decode(reader);
     return new Attested(payload, attestations);
+  }
+
+  // ── JSON: derived serde on a struct with named fields ──
+
+  toJSON(writePayload: (p: T) => unknown): unknown {
+    return { payload: writePayload(this.payload), attestations: this.attestations.toJSON() };
+  }
+
+  static fromJson<T>(
+    value: unknown,
+    readPayload: (v: unknown) => Result<T, JsonError>,
+  ): Result<Attested<T>, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
+    try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `Attested`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('payload' in _o)) {
+        return Result.Err(JsonError.custom('missing field `payload`'));
+      }
+      const _rpayload = readPayload(_o['payload']);
+      if (_rpayload.isErr()) return Result.Err(_rpayload.unwrapErr());
+      const payload = _rpayload.unwrap();
+      $built.push(payload);
+      if (!('attestations' in _o)) {
+        return Result.Err(JsonError.custom('missing field `attestations`'));
+      }
+      const _rattestations = AttestationSet.fromJson(_o['attestations']);
+      if (_rattestations.isErr()) return Result.Err(_rattestations.unwrapErr());
+      const attestations = _rattestations.unwrap();
+      $built.push(attestations);
+      const $out = new Attested(payload, attestations);
+      $kept = true;
+      return Result.Ok($out);
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
+    }
   }
 }

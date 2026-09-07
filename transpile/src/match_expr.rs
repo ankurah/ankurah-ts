@@ -16,6 +16,10 @@ mod rendering;
 mod taking;
 mod result_arms;
 
+mod routing;
+use routing::looks_like_enum_match;
+pub(crate) use routing::{is_result_match, pattern_opens_a_result};
+
 mod value_match;
 use value_match::{subject_of_bound, translate_value_match};
 
@@ -42,7 +46,7 @@ fn returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
     if is_option_match_typed(match_expr, t) {
         return option_chain::translate(&scrutinee, match_expr, t, Position::Returning);
     }
-    if is_result_match(&match_expr.arms) {
+    if is_result_match(match_expr, t) {
         return translate_result_match(&scrutinee, match_expr, t, Position::Returning);
     }
     // An ordering is a number, so a `match` on one is a chain of comparisons.
@@ -51,7 +55,7 @@ fn returning(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> String {
     if t.is_ordering_value(&match_expr.expr) {
         return translate_value_match(&scrutinee, match_expr, t, Position::Returning);
     }
-    if looks_like_enum_match(&match_expr.arms) {
+    if looks_like_enum_match(match_expr, t) {
         if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Returning) {
             return written;
         }
@@ -111,7 +115,7 @@ fn statement_position(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> (Strin
     if is_option_match_typed(match_expr, t) {
         return (option_chain::translate(&scrutinee, match_expr, t, Position::Statement), true);
     }
-    if is_result_match(&match_expr.arms) {
+    if is_result_match(match_expr, t) {
         return (translate_result_match(&scrutinee, match_expr, t, Position::Statement), true);
     }
     // An ordering is a number, so a `match` on one is a chain of comparisons.
@@ -120,7 +124,7 @@ fn statement_position(match_expr: &syn::ExprMatch, t: &BodyTranslator) -> (Strin
     if t.is_ordering_value(&match_expr.expr) {
         return (translate_value_match(&scrutinee, match_expr, t, Position::Statement), true);
     }
-    if looks_like_enum_match(&match_expr.arms) {
+    if looks_like_enum_match(match_expr, t) {
         if let Some(written) = leaves_the_loop(&scrutinee, match_expr, t, Position::Statement) {
             return (written, true);
         }
@@ -324,7 +328,7 @@ fn guarded(
     }
     // A `Result` match carries its guards itself: each side reads its payload
     // once and tries the arms that name its variant against it.
-    if is_result_match(&match_expr.arms) {
+    if is_result_match(match_expr, t) {
         return None;
     }
     // A match that only READS its subject is written here, whatever its subject
@@ -347,7 +351,7 @@ fn guarded(
         .filter(|arm| arm.guard.is_some())
         .all(|arm| arms::cases_of(&arm.pat).iter().all(|case| payload_of(case).is_some()));
     if !is_option_match_typed(match_expr, t)
-        && looks_like_enum_match(&match_expr.arms)
+        && looks_like_enum_match(match_expr, t)
         && every_guard_names_a_variant
     {
         return None;
@@ -399,17 +403,6 @@ fn is_option_match(arms: &[syn::Arm]) -> bool {
                 path.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default() == "None"
             }
             _ => false,
-        }
-    })
-}
-
-pub(crate) fn is_result_match(arms: &[syn::Arm]) -> bool {
-    arms.iter().any(|arm| {
-        if let syn::Pat::TupleStruct(ts) = &arm.pat {
-            let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-            name == "Ok" || name == "Err"
-        } else {
-            false
         }
     })
 }
@@ -477,24 +470,6 @@ fn variant_named(pat: &syn::Pat) -> Option<String> {
         return None;
     };
     Some(ts.path.segments.last()?.ident.to_string())
-}
-
-fn looks_like_enum_match(arms: &[syn::Arm]) -> bool {
-    arms.iter().any(|arm| {
-        match &arm.pat {
-            syn::Pat::TupleStruct(ts) => {
-                let name = ts.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                name != "Some" && name != "None" && name != "Ok" && name != "Err"
-                    && name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-            }
-            syn::Pat::Struct(s) => {
-                let name = s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
-                name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-            }
-            syn::Pat::Path(p) => p.path.segments.len() >= 2,
-            _ => false,
-        }
-    })
 }
 
 /// `match e { Variant(x) => .. }` as the runtime's own match.

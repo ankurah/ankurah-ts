@@ -271,7 +271,7 @@ impl BodyTranslator<'_> {
         // in a `finally` around it, and what follows it is never reached.
         if refused {
             out.push_str(&super::refusal::statement_that_refused(
-                self, stmt, text, rest, &prelude, dispositions, ordinals,
+                self, stmt, text, rest, &stmts[i + 1..], &prelude, dispositions, ordinals,
             ));
             return out;
         }

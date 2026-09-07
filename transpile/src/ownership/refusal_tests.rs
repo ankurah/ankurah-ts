@@ -375,3 +375,52 @@ pub fn apply<F>(f: F) -> u32 where F: Fn(u32) -> u32 { f(1) }\n\
         assert!(!ts.contains("held.drop()"), "and nothing releases what `take2` took:\n{}", ts);
     }
 }
+
+/// BB4: a refusal releases what the statements BELOW it were going to hand
+/// away, not only what it was going to hand away itself.
+///
+/// The throw stands above them, so the value one of them would have moved is
+/// still this frame's. `for rest in b { let h = <refused>; take(rest); }` took
+/// the element out of the sequence — the loop's tail release starts after the
+/// current index and cannot reach it — and nothing released it.
+#[test]
+fn a_loop_element_moved_below_a_refusal_is_still_the_turns() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "use std::collections::BinaryHeap;\n\
+         pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take(t: Token) -> u32 { t.n }\n\
+         pub fn f(b: Vec<Token>) -> u32 {\n\
+             let mut total = 0u32;\n\
+             for rest in b {\n\
+                 let h: BinaryHeap<u32> = vec![1u32].into_iter().collect();\n\
+                 let _ = h;\n\
+                 total += take(rest);\n\
+             }\n\
+             total\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("rest.drop();"), "the turn still owns the element:\n{}", ts);
+    assert_eq!(ts.matches("rest.drop();").count(), 1, "and releases it once:\n{}", ts);
+}
+
+/// The same for a by-value PARAMETER a later statement would have moved.
+#[test]
+fn a_parameter_moved_below_a_refusal_is_still_the_frames() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "use std::collections::BinaryHeap;\n\
+         pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take(t: Token) -> u32 { t.n }\n\
+         pub fn f(t: Token) -> u32 {\n\
+             let h: BinaryHeap<u32> = vec![1u32].into_iter().collect();\n\
+             let _ = h;\n\
+             take(t)\n\
+         }",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("t.drop();"), "the frame still owns the parameter:\n{}", ts);
+}

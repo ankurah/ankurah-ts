@@ -109,7 +109,6 @@ export function refusedCallee(rows: Rows, spill: Spill, limit: number | null, le
         const k = limit;
         const _b1 = spill.clone();
         try {
-          const _b3 = k;
           return tally(unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into'));
         } finally {
           dropOwned(_b1);

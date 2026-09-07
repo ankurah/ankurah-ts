@@ -47,7 +47,22 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
   }
 
   static new<E, Ev>(broadcast: Broadcast<ReactorUpdate<E, Ev>>, watcherSet: Arc<Mutex<WatcherSet>>): Subscription<E, Ev> {
-    return new Subscription(Arc.new(new Inner(ReactorSubscriptionId.new(), new Mutex(new State(new HashMap(), new HashSet(), new HashMap(), broadcast)), watcherSet)));
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        const _b2 = new HashMap();
+        const _b3 = new HashSet();
+        const _b4 = new HashMap();
+        _moved1 = true;
+        _moved0 = true;
+        return new Subscription(Arc.new(new Inner(ReactorSubscriptionId.new(), new Mutex(new State(_b2, _b3, _b4, broadcast)), watcherSet)));
+      } finally {
+        if (!_moved1) watcherSet.drop();
+      }
+    } finally {
+      if (!_moved0) broadcast.drop();
+    }
   }
 
   addEntitySubscription(entityId: EntityId): void {
@@ -621,8 +636,23 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
       let _moved1 = false;
       const selection = (queryState.selection.clone() ?? (() => { throw new Error('extract_gap_data called before update_query'); })());
       try {
-        _moved1 = true;
-        return [queryId, queryState.gapFetcher.clone(), queryState.collectionId.clone(), selection, resultset.clone(), lastEntity, gapSize];
+        let _moved3 = false;
+        const _b2 = queryState.gapFetcher.clone();
+        try {
+          let _moved5 = false;
+          const _b4 = queryState.collectionId.clone();
+          try {
+            const _b6 = resultset.clone();
+            _moved3 = true;
+            _moved5 = true;
+            _moved1 = true;
+            return [queryId, _b2, _b4, selection, _b6, lastEntity, gapSize];
+          } finally {
+            if (!_moved5) dropOwned(_b4);
+          }
+        } finally {
+          if (!_moved3) dropOwned(_b2);
+        }
       } finally {
         if (!_moved1) selection.drop();
       }

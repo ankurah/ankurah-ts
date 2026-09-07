@@ -129,7 +129,22 @@ export class EventFragment extends Struct {
 
   static from(attested: Attested<Event>): EventFragment {
     try {
-      return new EventFragment(attested.payload.takeField('operations'), attested.payload.takeField('parent'), attested.takeField('attestations'));
+      let _moved1 = false;
+      const _b0 = attested.payload.takeField('operations');
+      try {
+        let _moved3 = false;
+        const _b2 = attested.payload.takeField('parent');
+        try {
+          const _b4 = attested.takeField('attestations');
+          _moved1 = true;
+          _moved3 = true;
+          return new EventFragment(_b0, _b2, _b4);
+        } finally {
+          if (!_moved3) dropOwned(_b2);
+        }
+      } finally {
+        if (!_moved1) dropOwned(_b0);
+      }
     } finally {
       attested.drop();
     }
@@ -224,7 +239,15 @@ export class StateFragment extends Struct {
 
   static from(attested: Attested<EntityState>): StateFragment {
     try {
-      return new StateFragment(attested.payload.takeField('state'), attested.takeField('attestations'));
+      let _moved1 = false;
+      const _b0 = attested.payload.takeField('state');
+      try {
+        const _b2 = attested.takeField('attestations');
+        _moved1 = true;
+        return new StateFragment(_b0, _b2);
+      } finally {
+        if (!_moved1) dropOwned(_b0);
+      }
     } finally {
       attested.drop();
     }

@@ -610,80 +610,104 @@ export class Planner extends Struct {
         const _v1 = equalityValue;
         if (_v1 != null) {
           const value = _v1;
-          keypartBounds.push(new KeyBoundComponent(fullPath, Endpoint.incl(value.clone()), Endpoint.incl(value.clone())));
+          let _moved2 = false;
+          const _b1 = Endpoint.incl(value.clone());
+          try {
+            const _b3 = Endpoint.incl(value.clone());
+            _moved2 = true;
+            keypartBounds.push(new KeyBoundComponent(fullPath, _b1, _b3));
+          } finally {
+            if (!_moved2) dropOwned(_b1);
+          }
         } else {
         const _v = inequality;
         if (_v != null) {
           const [ineqField, inequalities] = _v;
           if (ineqField === fullPath) {
+            let _moved4 = false;
             let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0][1]) });
-            let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0][1]) });
-            for (const [op, value] of inequalities) {
-              op.match({
-                GreaterThan: () => {
-                  let _moved1 = false;
-                  const candidate = Endpoint.excl(value.clone());
-                  try {
-                    if (this.isMoreRestrictiveLower(candidate, low)) {
-                      const _a2 = candidate;
-                      low.drop();
-                      _moved1 = true;
-                      low = _a2;
-                    }
-                  } finally {
-                    if (!_moved1) candidate.drop();
-                  }
-                },
-                GreaterThanOrEqual: () => {
-                  let _moved3 = false;
-                  const candidate = Endpoint.incl(value.clone());
-                  try {
-                    if (this.isMoreRestrictiveLower(candidate, low)) {
-                      const _a4 = candidate;
-                      low.drop();
-                      _moved3 = true;
-                      low = _a4;
-                    }
-                  } finally {
-                    if (!_moved3) candidate.drop();
-                  }
-                },
-                LessThan: () => {
-                  let _moved5 = false;
-                  const candidate = Endpoint.excl(value.clone());
-                  try {
-                    if (this.isMoreRestrictiveUpper(candidate, high)) {
-                      const _a6 = candidate;
-                      high.drop();
-                      _moved5 = true;
-                      high = _a6;
-                    }
-                  } finally {
-                    if (!_moved5) candidate.drop();
-                  }
-                },
-                LessThanOrEqual: () => {
-                  let _moved7 = false;
-                  const candidate = Endpoint.incl(value.clone());
-                  try {
-                    if (this.isMoreRestrictiveUpper(candidate, high)) {
-                      const _a8 = candidate;
-                      high.drop();
-                      _moved7 = true;
-                      high = _a8;
-                    }
-                  } finally {
-                    if (!_moved7) candidate.drop();
-                  }
-                },
-                Equal: () => {},
-                NotEqual: () => {},
-                In: () => {},
-                Between: () => {},
-              });
+            try {
+              let _moved5 = false;
+              let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0][1]) });
+              try {
+                for (const [op, value] of inequalities) {
+                  op.match({
+                    GreaterThan: () => {
+                      let _moved6 = false;
+                      const candidate = Endpoint.excl(value.clone());
+                      try {
+                        if (this.isMoreRestrictiveLower(candidate, low)) {
+                          const _a7 = candidate;
+                          if (!_moved4) low.drop();
+                          _moved4 = false;
+                          _moved6 = true;
+                          low = _a7;
+                        }
+                      } finally {
+                        if (!_moved6) candidate.drop();
+                      }
+                    },
+                    GreaterThanOrEqual: () => {
+                      let _moved8 = false;
+                      const candidate = Endpoint.incl(value.clone());
+                      try {
+                        if (this.isMoreRestrictiveLower(candidate, low)) {
+                          const _a9 = candidate;
+                          if (!_moved4) low.drop();
+                          _moved4 = false;
+                          _moved8 = true;
+                          low = _a9;
+                        }
+                      } finally {
+                        if (!_moved8) candidate.drop();
+                      }
+                    },
+                    LessThan: () => {
+                      let _moved10 = false;
+                      const candidate = Endpoint.excl(value.clone());
+                      try {
+                        if (this.isMoreRestrictiveUpper(candidate, high)) {
+                          const _a11 = candidate;
+                          if (!_moved5) high.drop();
+                          _moved5 = false;
+                          _moved10 = true;
+                          high = _a11;
+                        }
+                      } finally {
+                        if (!_moved10) candidate.drop();
+                      }
+                    },
+                    LessThanOrEqual: () => {
+                      let _moved12 = false;
+                      const candidate = Endpoint.incl(value.clone());
+                      try {
+                        if (this.isMoreRestrictiveUpper(candidate, high)) {
+                          const _a13 = candidate;
+                          if (!_moved5) high.drop();
+                          _moved5 = false;
+                          _moved12 = true;
+                          high = _a13;
+                        }
+                      } finally {
+                        if (!_moved12) candidate.drop();
+                      }
+                    },
+                    Equal: () => {},
+                    NotEqual: () => {},
+                    In: () => {},
+                    Between: () => {},
+                  });
+                }
+                _moved4 = true;
+                _moved5 = true;
+                keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
+                break;
+              } finally {
+                if (!_moved5) high.drop();
+              }
+            } finally {
+              if (!_moved4) low.drop();
             }
-            keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
-            break;
           } else {
             break;
           }
@@ -964,13 +988,63 @@ export class Planner extends Struct {
         })();
         if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
         const value = (_m0 as any);
-        const _m1 = (() => {
+        const _m16 = (() => {
           return operator.match<any>({
-            Equal: () => [new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value }), inclusive: true })] as any,
-            GreaterThan: () => [new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false }), new Endpoint('UnboundedHigh', { _0: ValueType.of(value) })] as any,
-            GreaterThanOrEqual: () => [new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true }), new Endpoint('UnboundedHigh', { _0: ValueType.of(value) })] as any,
-            LessThan: () => [new Endpoint('UnboundedLow', { _0: ValueType.of(value) }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false })] as any,
-            LessThanOrEqual: () => [new Endpoint('UnboundedLow', { _0: ValueType.of(value) }), new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true })] as any,
+            Equal: () => {
+              let _moved2 = false;
+              const _b1 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true });
+              try {
+                const _b3 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value }), inclusive: true });
+                _moved2 = true;
+                return [_b1, _b3];
+              } finally {
+                if (!_moved2) dropOwned(_b1);
+              }
+            },
+            GreaterThan: () => {
+              let _moved5 = false;
+              const _b4 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false });
+              try {
+                const _b6 = new Endpoint('UnboundedHigh', { _0: ValueType.of(value) });
+                _moved5 = true;
+                return [_b4, _b6];
+              } finally {
+                if (!_moved5) dropOwned(_b4);
+              }
+            },
+            GreaterThanOrEqual: () => {
+              let _moved8 = false;
+              const _b7 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true });
+              try {
+                const _b9 = new Endpoint('UnboundedHigh', { _0: ValueType.of(value) });
+                _moved8 = true;
+                return [_b7, _b9];
+              } finally {
+                if (!_moved8) dropOwned(_b7);
+              }
+            },
+            LessThan: () => {
+              let _moved11 = false;
+              const _b10 = new Endpoint('UnboundedLow', { _0: ValueType.of(value) });
+              try {
+                const _b12 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: false });
+                _moved11 = true;
+                return [_b10, _b12];
+              } finally {
+                if (!_moved11) dropOwned(_b10);
+              }
+            },
+            LessThanOrEqual: () => {
+              let _moved14 = false;
+              const _b13 = new Endpoint('UnboundedLow', { _0: ValueType.of(value) });
+              try {
+                const _b15 = new Endpoint('Value', { datum: new KeyDatum('Val', { _0: value.clone() }), inclusive: true });
+                _moved14 = true;
+                return [_b13, _b15];
+              } finally {
+                if (!_moved14) dropOwned(_b13);
+              }
+            },
             NotEqual: () => {
               return { $jump: 'return', $value: null };
             },
@@ -982,8 +1056,8 @@ export class Planner extends Struct {
             },
           });
         })();
-        if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-        const [low, high] = (_m1 as any);
+        if ((_m16 as any)?.$jump === 'return') return (_m16 as any).$value;
+        const [low, high] = (_m16 as any);
         return new KeyBoundComponent(primaryKey, low, high);
       } else {
       return null;
@@ -992,28 +1066,42 @@ export class Planner extends Struct {
   }
 
   intersectPrimaryKeyBounds(bounds: KeyBoundComponent[], primaryKey: string): KeyBoundComponent {
+    let _moved0 = false;
     let resultLow = new Endpoint('UnboundedLow', { _0: new ValueType('String', {}) });
-    let resultHigh = new Endpoint('UnboundedHigh', { _0: new ValueType('String', {}) });
-    const _seq2 = bounds;
-    let _at3 = 0;
     try {
-      while (_at3 < _seq2.length) {
-        const bound = _seq2[_at3++];
+      let _moved1 = false;
+      let resultHigh = new Endpoint('UnboundedHigh', { _0: new ValueType('String', {}) });
+      try {
+        const _seq4 = bounds;
+        let _at5 = 0;
         try {
-          const _a0 = this.intersectLowerBounds(resultLow, bound.low);
-          resultLow.drop();
-          resultLow = _a0;
-          const _a1 = this.intersectUpperBounds(resultHigh, bound.high);
-          resultHigh.drop();
-          resultHigh = _a1;
+          while (_at5 < _seq4.length) {
+            const bound = _seq4[_at5++];
+            try {
+              const _a2 = this.intersectLowerBounds(resultLow, bound.low);
+              if (!_moved0) resultLow.drop();
+              _moved0 = false;
+              resultLow = _a2;
+              const _a3 = this.intersectUpperBounds(resultHigh, bound.high);
+              if (!_moved1) resultHigh.drop();
+              _moved1 = false;
+              resultHigh = _a3;
+            } finally {
+              bound.drop();
+            }
+          }
         } finally {
-          bound.drop();
+          dropOwned(_seq4.slice(_at5));
         }
+        _moved0 = true;
+        _moved1 = true;
+        return new KeyBoundComponent(primaryKey, resultLow, resultHigh);
+      } finally {
+        if (!_moved1) resultHigh.drop();
       }
     } finally {
-      dropOwned(_seq2.slice(_at3));
+      if (!_moved0) resultLow.drop();
     }
-    return new KeyBoundComponent(primaryKey, resultLow, resultHigh);
   }
 
   intersectLowerBounds(left: Endpoint, right: Endpoint): Endpoint {

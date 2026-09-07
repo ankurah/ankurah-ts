@@ -300,46 +300,60 @@ export class Expr extends Enum<ExprV> {
         const operator = v.operator;
         const right = v.right;
         let _moved2 = false;
+        let _moved3 = false;
+        let _moved4 = false;
         try {
-          const _r3 = left.populateRecursive(values, _convV);
-          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
           try {
-            const _r4 = right.populateRecursive(values, _convV);
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
             try {
               _moved2 = true;
-              return Result.Ok(new Expr('InfixExpr', { left: _r3.unwrap(), operator: operator, right: _r4.unwrap() }));
+              const _r5 = left.populateRecursive(values, _convV);
+              if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+              try {
+                _moved4 = true;
+                const _r6 = right.populateRecursive(values, _convV);
+                if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+                try {
+                  _moved3 = true;
+                  _moved2 = true;
+                  _moved4 = true;
+                  return Result.Ok(new Expr('InfixExpr', { left: _r5.unwrap(), operator: operator, right: _r6.unwrap() }));
+                } finally {
+                  if (_r6 != null && !(_r6 as any).isMoved && !(_r6 as any).isDropped) dropOwned(_r6);
+                }
+              } finally {
+                if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);
+              }
             } finally {
-              if (_r4 != null && !(_r4 as any).isMoved && !(_r4 as any).isDropped) dropOwned(_r4);
+              if (!_moved4) dropOwned(right);
             }
           } finally {
-            if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
+            if (!_moved3) operator.drop();
           }
         } finally {
-          if (!_moved2) operator.drop();
+          if (!_moved2) dropOwned(left);
         }
       },
       ExprList: (v) => {
         const exprs = v._0;
-        let _moved5 = false;
+        let _moved7 = false;
         try {
           let populatedExprs = [];
-          _moved5 = true;
-          const _seq7 = exprs;
-          let _at8 = 0;
+          _moved7 = true;
+          const _seq9 = exprs;
+          let _at10 = 0;
           try {
-            while (_at8 < _seq7.length) {
-              const expr = _seq7[_at8++];
-              const _r6 = expr.populateRecursive(values, _convV);
-              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-              populatedExprs.push(_r6.unwrap());
+            while (_at10 < _seq9.length) {
+              const expr = _seq9[_at10++];
+              const _r8 = expr.populateRecursive(values, _convV);
+              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+              populatedExprs.push(_r8.unwrap());
             }
           } finally {
-            dropOwned(_seq7.slice(_at8));
+            dropOwned(_seq9.slice(_at10));
           }
           return Result.Ok(new Expr('ExprList', { _0: populatedExprs }));
         } finally {
-          if (!_moved5) dropOwned(exprs);
+          if (!_moved7) dropOwned(exprs);
         }
       },
     });
@@ -1005,94 +1019,108 @@ export class Predicate extends Enum<PredicateV> {
         const operator = v.operator;
         const right = v.right;
         let _moved0 = false;
+        let _moved1 = false;
+        let _moved2 = false;
         try {
-          const _r1 = left.populateRecursive(values, _convV);
-          if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
           try {
-            const _r2 = right.populateRecursive(values, _convV);
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
             try {
               _moved0 = true;
-              return Result.Ok(new Predicate('Comparison', { left: _r1.unwrap(), operator: operator, right: _r2.unwrap() }));
+              const _r3 = left.populateRecursive(values, _convV);
+              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              try {
+                _moved2 = true;
+                const _r4 = right.populateRecursive(values, _convV);
+                if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+                try {
+                  _moved1 = true;
+                  _moved0 = true;
+                  _moved2 = true;
+                  return Result.Ok(new Predicate('Comparison', { left: _r3.unwrap(), operator: operator, right: _r4.unwrap() }));
+                } finally {
+                  if (_r4 != null && !(_r4 as any).isMoved && !(_r4 as any).isDropped) dropOwned(_r4);
+                }
+              } finally {
+                if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
+              }
             } finally {
-              if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+              if (!_moved2) dropOwned(right);
             }
           } finally {
-            if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+            if (!_moved1) operator.drop();
           }
         } finally {
-          if (!_moved0) operator.drop();
+          if (!_moved0) dropOwned(left);
         }
       },
       And: (v) => {
         const left = v._0;
         const right = v._1;
-        let _moved3 = false;
-        let _moved4 = false;
+        let _moved5 = false;
+        let _moved6 = false;
         try {
           try {
-            _moved3 = true;
-            const _r5 = left.populateRecursive(values, _convV);
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+            _moved5 = true;
+            const _r7 = left.populateRecursive(values, _convV);
+            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
             try {
-              _moved4 = true;
-              const _r6 = right.populateRecursive(values, _convV);
-              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+              _moved6 = true;
+              const _r8 = right.populateRecursive(values, _convV);
+              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
               try {
-                return Result.Ok(new Predicate('And', { _0: _r5.unwrap(), _1: _r6.unwrap() }));
+                return Result.Ok(new Predicate('And', { _0: _r7.unwrap(), _1: _r8.unwrap() }));
               } finally {
-                if (_r6 != null && !(_r6 as any).isMoved && !(_r6 as any).isDropped) dropOwned(_r6);
+                if (_r8 != null && !(_r8 as any).isMoved && !(_r8 as any).isDropped) dropOwned(_r8);
               }
             } finally {
-              if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);
+              if (_r7 != null && !(_r7 as any).isMoved && !(_r7 as any).isDropped) dropOwned(_r7);
             }
           } finally {
-            if (!_moved4) dropOwned(right);
+            if (!_moved6) dropOwned(right);
           }
         } finally {
-          if (!_moved3) dropOwned(left);
+          if (!_moved5) dropOwned(left);
         }
       },
       Or: (v) => {
         const left = v._0;
         const right = v._1;
-        let _moved7 = false;
-        let _moved8 = false;
+        let _moved9 = false;
+        let _moved10 = false;
         try {
           try {
-            _moved7 = true;
-            const _r9 = left.populateRecursive(values, _convV);
-            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+            _moved9 = true;
+            const _r11 = left.populateRecursive(values, _convV);
+            if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
             try {
-              _moved8 = true;
-              const _r10 = right.populateRecursive(values, _convV);
-              if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+              _moved10 = true;
+              const _r12 = right.populateRecursive(values, _convV);
+              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
               try {
-                return Result.Ok(new Predicate('Or', { _0: _r9.unwrap(), _1: _r10.unwrap() }));
+                return Result.Ok(new Predicate('Or', { _0: _r11.unwrap(), _1: _r12.unwrap() }));
               } finally {
-                if (_r10 != null && !(_r10 as any).isMoved && !(_r10 as any).isDropped) dropOwned(_r10);
+                if (_r12 != null && !(_r12 as any).isMoved && !(_r12 as any).isDropped) dropOwned(_r12);
               }
             } finally {
-              if (_r9 != null && !(_r9 as any).isMoved && !(_r9 as any).isDropped) dropOwned(_r9);
+              if (_r11 != null && !(_r11 as any).isMoved && !(_r11 as any).isDropped) dropOwned(_r11);
             }
           } finally {
-            if (!_moved8) dropOwned(right);
+            if (!_moved10) dropOwned(right);
           }
         } finally {
-          if (!_moved7) dropOwned(left);
+          if (!_moved9) dropOwned(left);
         }
       },
       Not: (v) => {
         const pred = v._0;
-        const _r11 = pred.populateRecursive(values, _convV);
-        if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
-        return Result.Ok(new Predicate('Not', { _0: _r11.unwrap() }));
+        const _r13 = pred.populateRecursive(values, _convV);
+        if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+        return Result.Ok(new Predicate('Not', { _0: _r13.unwrap() }));
       },
       IsNull: (v) => {
         const expr = v._0;
-        const _r12 = expr.populateRecursive(values, _convV);
-        if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-        return Result.Ok(new Predicate('IsNull', { _0: _r12.unwrap() }));
+        const _r14 = expr.populateRecursive(values, _convV);
+        if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
+        return Result.Ok(new Predicate('IsNull', { _0: _r14.unwrap() }));
       },
       True: () => Result.Ok(new Predicate('True', {})),
       False: () => Result.Ok(new Predicate('False', {})),

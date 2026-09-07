@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { LimitedStream, SortedStream, TopKStream } from './sorting';
-import { HashMap, Struct, debugString, unsupported } from '@ankurah/base';
+import { HashMap, Struct, debugString, dropOwned, unsupported } from '@ankurah/base';
 import { OrderByComponents } from './types';
 import { OrderByItem, OrderDirection, PathExpr } from '@ankurah/ankql';
 import { Json } from '@ankurah/core';
@@ -166,7 +166,14 @@ describe('sorting unit tests', () => {
   }
 
   function oby(col: string, dir: OrderDirection): OrderByItem {
-    return new OrderByItem(PathExpr.simple(col), dir);
+    let _moved0 = false;
+    try {
+      const _b1 = PathExpr.simple(col);
+      _moved0 = true;
+      return new OrderByItem(_b1, dir);
+    } finally {
+      if (!_moved0) dir.drop();
+    }
   }
 
   function obyAsc(col: string): OrderByItem {
@@ -209,173 +216,391 @@ describe('sorting unit tests', () => {
 
   test('test_sorted_stream_global_sort_asc', () => {
     const items = [TestItem.int([['x', 3]]), TestItem.int([['x', 1]]), TestItem.int([['x', 2]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const values = [...sorted].map((i) => extractI32(i.value('x')));
-    expect(values).toEqual([1, 2, 3]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const values = [...sorted].map((i) => extractI32(i.value('x')));
+      expect(values).toEqual([1, 2, 3]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_global_sort_desc', () => {
     const items = [TestItem.int([['x', 1]]), TestItem.int([['x', 3]]), TestItem.int([['x', 2]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyDesc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const values = [...sorted].map((i) => extractI32(i.value('x')));
-    expect(values).toEqual([3, 2, 1]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const values = [...sorted].map((i) => extractI32(i.value('x')));
+      expect(values).toEqual([3, 2, 1]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_global_sort_multi_column', () => {
     const items = [TestItem.mixed('B', 'Z'), TestItem.mixed('A', 'Y'), TestItem.mixed('A', 'X'), TestItem.mixed('B', 'W')];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('cat'), obyAsc('name')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['X', 'Y', 'W', 'Z']);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const names = [...sorted].map((i) => extractString(i.value('name')));
+      expect(names).toEqual(['X', 'Y', 'W', 'Z']);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_empty_input', () => {
     const items = [];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    if (!(sorted.length === 0)) throw new Error('assertion failed');
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      if (!(sorted.length === 0)) throw new Error('assertion failed');
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_single_item', () => {
     const items = [TestItem.int([['x', 42]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    expect(sorted.length).toEqual(1);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      expect(sorted.length).toEqual(1);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_partition_aware_basic', () => {
     const items = [TestItem.mixed('A', 'Z'), TestItem.mixed('A', 'X'), TestItem.mixed('B', 'Y'), TestItem.mixed('B', 'W')];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyAsc('name')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['X', 'Z', 'W', 'Y']);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyAsc('name')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const sorted = collectStream(SortedStream.new(_b4, orderBy));
+        const names = [...sorted].map((i) => extractString(i.value('name')));
+        expect(names).toEqual(['X', 'Z', 'W', 'Y']);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_sorted_stream_partition_aware_mixed_directions', () => {
     const items = [TestItem.mixed('A', 'X'), TestItem.mixed('A', 'Z'), TestItem.mixed('B', 'W'), TestItem.mixed('B', 'Y')];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyDesc('name')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['Z', 'X', 'Y', 'W']);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyDesc('name')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const sorted = collectStream(SortedStream.new(_b4, orderBy));
+        const names = [...sorted].map((i) => extractString(i.value('name')));
+        expect(names).toEqual(['Z', 'X', 'Y', 'W']);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_sorted_stream_partition_aware_single_partition', () => {
     const items = [TestItem.mixed('A', 'Z'), TestItem.mixed('A', 'X'), TestItem.mixed('A', 'Y')];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyAsc('name')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['X', 'Y', 'Z']);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyAsc('name')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const sorted = collectStream(SortedStream.new(_b4, orderBy));
+        const names = [...sorted].map((i) => extractString(i.value('name')));
+        expect(names).toEqual(['X', 'Y', 'Z']);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_sorted_stream_partition_aware_single_item_partitions', () => {
     const items = [TestItem.mixed('A', 'X'), TestItem.mixed('B', 'Y'), TestItem.mixed('C', 'Z')];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyAsc('name')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['X', 'Y', 'Z']);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyAsc('name')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const sorted = collectStream(SortedStream.new(_b4, orderBy));
+        const names = [...sorted].map((i) => extractString(i.value('name')));
+        expect(names).toEqual(['X', 'Y', 'Z']);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_sorted_stream_partition_aware_empty_spill', () => {
     const items = [TestItem.mixed('A', 'X'), TestItem.mixed('A', 'Z'), TestItem.mixed('B', 'Y')];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([obyAsc('cat')], []);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const names = [...sorted].map((i) => extractString(i.value('name')));
-    expect(names).toEqual(['X', 'Z', 'Y']);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const names = [...sorted].map((i) => extractString(i.value('name')));
+      expect(names).toEqual(['X', 'Z', 'Y']);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_global_basic', () => {
     const items = [TestItem.int([['x', 5]]), TestItem.int([['x', 1]]), TestItem.int([['x', 3]]), TestItem.int([['x', 4]]), TestItem.int([['x', 2]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 3));
-    const values = [...topk].map((i) => extractI32(i.value('x')));
-    expect(values).toEqual([1, 2, 3]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const topk = collectStream(TopKStream.new(_b1, orderBy, 3));
+      const values = [...topk].map((i) => extractI32(i.value('x')));
+      expect(values).toEqual([1, 2, 3]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_global_desc', () => {
     const items = [TestItem.int([['x', 5]]), TestItem.int([['x', 1]]), TestItem.int([['x', 3]]), TestItem.int([['x', 4]]), TestItem.int([['x', 2]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyDesc('x')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 3));
-    const values = [...topk].map((i) => extractI32(i.value('x')));
-    expect(values).toEqual([5, 4, 3]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const topk = collectStream(TopKStream.new(_b1, orderBy, 3));
+      const values = [...topk].map((i) => extractI32(i.value('x')));
+      expect(values).toEqual([5, 4, 3]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_global_k_exceeds_items', () => {
     const items = [TestItem.int([['x', 3]]), TestItem.int([['x', 1]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 10));
-    const values = [...topk].map((i) => extractI32(i.value('x')));
-    expect(values).toEqual([1, 3]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const topk = collectStream(TopKStream.new(_b1, orderBy, 10));
+      const values = [...topk].map((i) => extractI32(i.value('x')));
+      expect(values).toEqual([1, 3]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_global_k_zero', () => {
     const items = [TestItem.int([['x', 1]]), TestItem.int([['x', 2]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 0));
-    if (!(topk.length === 0)) throw new Error('assertion failed');
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const topk = collectStream(TopKStream.new(_b1, orderBy, 0));
+      if (!(topk.length === 0)) throw new Error('assertion failed');
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_global_empty_input', () => {
     const items = [];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 5));
-    if (!(topk.length === 0)) throw new Error('assertion failed');
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const topk = collectStream(TopKStream.new(_b1, orderBy, 5));
+      if (!(topk.length === 0)) throw new Error('assertion failed');
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_topk_stream_partition_aware_basic', () => {
     const items = [TestItem.catVal('A', 3), TestItem.catVal('A', 1), TestItem.catVal('A', 2), TestItem.catVal('B', 6), TestItem.catVal('B', 4), TestItem.catVal('B', 5)];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyAsc('val')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 4));
-    const values = [...topk].map((i) => extractI32(i.value('val')));
-    expect(values).toEqual([1, 2, 3, 4]);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyAsc('val')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const topk = collectStream(TopKStream.new(_b4, orderBy, 4));
+        const values = [...topk].map((i) => extractI32(i.value('val')));
+        expect(values).toEqual([1, 2, 3, 4]);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_topk_stream_partition_aware_limit_within_partition', () => {
     const items = [TestItem.catVal('A', 5), TestItem.catVal('A', 1), TestItem.catVal('A', 3), TestItem.catVal('A', 2), TestItem.catVal('A', 4), TestItem.catVal('B', 10)];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyAsc('val')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 3));
-    const values = [...topk].map((i) => extractI32(i.value('val')));
-    expect(values).toEqual([1, 2, 3]);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyAsc('val')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const topk = collectStream(TopKStream.new(_b4, orderBy, 3));
+        const values = [...topk].map((i) => extractI32(i.value('val')));
+        expect(values).toEqual([1, 2, 3]);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_topk_stream_partition_aware_mixed_directions', () => {
     const items = [TestItem.catVal('A', 1), TestItem.catVal('A', 3), TestItem.catVal('A', 2), TestItem.catVal('B', 4), TestItem.catVal('B', 6)];
-    const orderBy = OrderByComponents.new([obyAsc('cat')], [obyDesc('val')]);
-    const topk = collectStream(TopKStream.new(streamFrom(items), orderBy, 4));
-    const values = [...topk].map((i) => extractI32(i.value('val')));
-    expect(values).toEqual([3, 2, 1, 6]);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat')];
+    try {
+      const _b2 = [obyDesc('val')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const topk = collectStream(TopKStream.new(_b4, orderBy, 4));
+        const values = [...topk].map((i) => extractI32(i.value('val')));
+        expect(values).toEqual([3, 2, 1, 6]);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
   test('test_sorted_stream_null_sorts_first_asc', () => {
     const items = [TestItem.int([['x', 2]]), TestItem.new([]), TestItem.int([['x', 1]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const values = [...sorted].map((i) => i.value('x').map((v) => extractI32(v)));
-    expect(values).toEqual([null, 1, 2]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const values = [...sorted].map((i) => i.value('x').map((v) => extractI32(v)));
+      expect(values).toEqual([null, 1, 2]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_null_sorts_first_desc', () => {
     const items = [TestItem.int([['x', 2]]), TestItem.new([]), TestItem.int([['x', 1]])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyDesc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const values = [...sorted].map((i) => i.value('x').map((v) => extractI32(v)));
-    expect(values).toEqual([null, 2, 1]);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      const values = [...sorted].map((i) => i.value('x').map((v) => extractI32(v)));
+      expect(values).toEqual([null, 2, 1]);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_all_nulls', () => {
     const items = [TestItem.new([]), TestItem.new([]), TestItem.new([])];
+    let _moved0 = false;
     const orderBy = OrderByComponents.new([], [obyAsc('x')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    expect(sorted.length).toEqual(3);
+    try {
+      const _b1 = streamFrom(items);
+      _moved0 = true;
+      const sorted = collectStream(SortedStream.new(_b1, orderBy));
+      expect(sorted.length).toEqual(3);
+    } finally {
+      if (!_moved0) orderBy.drop();
+    }
   });
 
   test('test_sorted_stream_multi_column_presort', () => {
     const items = [TestItem.catSubcatVal('A', 'X', 3), TestItem.catSubcatVal('A', 'X', 1), TestItem.catSubcatVal('A', 'Y', 5), TestItem.catSubcatVal('A', 'Y', 4), TestItem.catSubcatVal('B', 'X', 7), TestItem.catSubcatVal('B', 'X', 6)];
-    const orderBy = OrderByComponents.new([obyAsc('cat'), obyAsc('subcat')], [obyAsc('val')]);
-    const sorted = collectStream(SortedStream.new(streamFrom(items), orderBy));
-    const values = [...sorted].map((i) => extractI32(i.value('val')));
-    expect(values).toEqual([1, 3, 4, 5, 6, 7]);
+    let _moved1 = false;
+    const _b0 = [obyAsc('cat'), obyAsc('subcat')];
+    try {
+      const _b2 = [obyAsc('val')];
+      _moved1 = true;
+      let _moved3 = false;
+      const orderBy = OrderByComponents.new(_b0, _b2);
+      try {
+        const _b4 = streamFrom(items);
+        _moved3 = true;
+        const sorted = collectStream(SortedStream.new(_b4, orderBy));
+        const values = [...sorted].map((i) => extractI32(i.value('val')));
+        expect(values).toEqual([1, 3, 4, 5, 6, 7]);
+      } finally {
+        if (!_moved3) orderBy.drop();
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   });
 
 });

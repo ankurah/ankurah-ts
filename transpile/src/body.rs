@@ -880,12 +880,11 @@ impl<'a> BodyTranslator<'a> {
             ),
 
             syn::Expr::Tuple(tuple) => {
-                let parts: Vec<String> = tuple.elems.iter().map(|e| self.moved_value(e)).collect();
-                format!("[{}]", parts.join(", "))
+                format!("[{}]", self.aggregate_operands(expr, &tuple.elems).join(", "))
             }
 
             syn::Expr::Array(arr) => {
-                let items: Vec<String> = arr.elems.iter().map(|e| self.moved_value(e)).collect();
+                let items = self.aggregate_operands(expr, &arr.elems);
                 self.sequence_literal(items, expected.as_ref())
             }
 

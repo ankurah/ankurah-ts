@@ -81,7 +81,23 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
                     })());
                   }
                   if (hasRelay) {
-                    node.subscribeRemoteQuery(queryId, collectionId.clone(), args.selection.clone(), cdata.clone(), 1, me.weak());
+                    let _moved15 = false;
+                    const _b14 = collectionId.clone();
+                    try {
+                      let _moved17 = false;
+                      const _b16 = args.selection.clone();
+                      try {
+                        const _b18 = cdata.clone();
+                        const _b19 = me.weak();
+                        _moved15 = true;
+                        _moved17 = true;
+                        node.subscribeRemoteQuery(queryId, _b14, _b16, _b18, 1, _b19);
+                      } finally {
+                        if (!_moved17) dropOwned(_b16);
+                      }
+                    } finally {
+                      if (!_moved15) dropOwned(_b14);
+                    }
                   }
                   return Result.Ok(me);
                 } finally {
@@ -175,13 +191,29 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     const reactor = this._0.value.node.reactor();
     const initializedVersion = this._0.value.initializedVersion;
     if (initializedVersion === 0) {
-      const _r0 = await reactor.addQueryAndNotify(this._0.value.subscription.id(), this._0.value.queryId, this._0.value.collectionId.clone(), selection, this._0.value.node, this._0.value.resultset.clone(), this._0.value.gapFetcher.clone(), this);
-      if (_r0.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r0.unwrapErr()));
-      _r0.unwrap();
+      const _b0 = this._0.value.subscription.id();
+      let _moved2 = false;
+      const _b1 = this._0.value.collectionId.clone();
+      try {
+        let _moved4 = false;
+        const _b3 = this._0.value.resultset.clone();
+        try {
+          const _b5 = this._0.value.gapFetcher.clone();
+          const _r6 = await reactor.addQueryAndNotify(_b0, this._0.value.queryId, _b1, selection, this._0.value.node, _b3, _b5, this);
+          if (_r6.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r6.unwrapErr()));
+          _moved2 = true;
+          _moved4 = true;
+          _r6.unwrap();
+        } finally {
+          if (!_moved4) dropOwned(_b3);
+        }
+      } finally {
+        if (!_moved2) dropOwned(_b1);
+      }
     } else {
-      const _r1 = await reactor.updateQueryAndNotify(this._0.value.subscription.id(), this._0.value.queryId, this._0.value.collectionId.clone(), selection, this._0.value.node, version, this);
-      if (_r1.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r1.unwrapErr()));
-      _r1.drop();
+      const _r7 = await reactor.updateQueryAndNotify(this._0.value.subscription.id(), this._0.value.queryId, this._0.value.collectionId.clone(), selection, this._0.value.node, version, this);
+      if (_r7.isErr()) return Result.Err(RetrievalError.fromAnyhowError(_r7.unwrapErr()));
+      _r7.drop();
     };
     return Result.Ok([]);
   }
@@ -375,8 +407,15 @@ export class LiveQuery<R extends View & Clone> extends Struct implements Signal,
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const me = this.clone();
     return this._0._0.value.subscription.subscribe(new OwnedClosure([me, listener_1], (reactorUpdate: ReactorUpdate<Entity, Attested<Event>>) => {
-      const changeset = livequeryChangeSetFrom(me._0._0.value.resultset.wrap(), reactorUpdate);
-      listener_1(changeset);
+      let _moved0 = false;
+      try {
+        const _b1 = me._0._0.value.resultset.wrap();
+        _moved0 = true;
+        const changeset = livequeryChangeSetFrom(_b1, reactorUpdate);
+        listener_1(changeset);
+      } finally {
+        if (!_moved0) reactorUpdate.drop();
+      }
     }));
   }
 

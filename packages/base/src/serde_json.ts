@@ -15,6 +15,7 @@
 
 import { Struct } from './struct.ts';
 import { Result as ResultValue } from './result.ts';
+import { dropOwned } from './object.ts';
 import { decodeUtf8, unpairedEscapedSurrogate, unpairedSurrogateAt } from './std/utf8.ts';
 
 /**
@@ -217,12 +218,63 @@ export function fromSlice(bytes: Uint8Array): ResultValue<unknown, JsonError> {
  * write `T.fromJson(..)`, and until it does the site is a hole rather than a
  * function that answers the JSON value unchanged.
  */
-export function toValue(value: unknown): ResultValue<unknown, JsonError> {
-  const written = value as { toJSON?: () => unknown } | null;
-  if (written != null && typeof written.toJSON === 'function') {
-    return ResultValue.Ok(written.toJSON());
+export function toValue(
+  value: unknown,
+  mode: 'own' | 'borrow' = 'borrow',
+): ResultValue<unknown, JsonError> {
+  try {
+    return ResultValue.Ok(jsonValueOf(value));
+  } finally {
+    // `to_value<T>(value: T)` takes its argument BY VALUE, so where the source
+    // handed one over the document is all that is left of it and this is what
+    // drops it. Where the source wrote `&T` — which is what
+    // `core/src/value/mod.rs`'s `Value::json` writes, the one corpus site — the
+    // caller still owns it and nothing is released here. The `finally` is what
+    // makes the release exception-safe; nothing below can throw, but a nested
+    // `toJSON` can.
+    if (mode === 'own') dropOwned(value);
   }
-  return ResultValue.Ok(value);
+}
+
+/**
+ * The JSON data a value IS, all the way down.
+ *
+ * `serde_json::to_value` runs the whole `Serialize` — every nested field
+ * through its own — and answers a `Value` that shares nothing with the input.
+ * Calling `toJSON` on the ROOT alone and handing back everything else
+ * unchanged answered `[Serializable {}]` for `toValue([new Serializable()])`:
+ * a live port object inside what the caller was told is a JSON document, which
+ * `JSON.stringify` then wrote through the object's own `toJSON` at some later
+ * point, or not at all.
+ *
+ * A `toJSON` the value declares is asked FIRST and its answer normalised in
+ * turn, which is what serde does with a hand-written `Serialize`.
+ */
+function jsonValueOf(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  const written = value as { toJSON?: () => unknown };
+  if (typeof written.toJSON === 'function') {
+    return jsonValueOf(written.toJSON());
+  }
+  if (Array.isArray(value)) {
+    return value.map(jsonValueOf);
+  }
+  // A `Map` and a `Set` are what the port writes a `HashMap` and a `HashSet`
+  // as, and serde writes them as an object and an array. Neither declares a
+  // `toJSON`, so JSON.stringify used to write `{}` for both.
+  if (value instanceof Map) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of value) out[String(k)] = jsonValueOf(v);
+    return out;
+  }
+  if (value instanceof Set) {
+    return [...value].map(jsonValueOf);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = jsonValueOf(v);
+  return out;
 }
 
 /**

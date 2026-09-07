@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/planner_integration.rs
-import { Result, AnyhowError, floatMax, tracing, checkedAdd, saturatingAdd, iterLast, range } from '@ankurah/base';
+import { Result, AnyhowError, dropOwned, floatMax, tracing, checkedAdd, saturatingAdd, iterLast, range } from '@ankurah/base';
 import { Value } from '@ankurah/core';
 import { CanonicalRange, KeyBounds, ScanDirection } from '@ankurah/storage-common';
 import { IdbValue } from './idb_value';
@@ -218,18 +218,24 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
             const [nextValue, isOpen] = _v1;
             let _moved0 = false;
             try {
+              let _moved1 = false;
               let upperTuple = eqPrefixValues.slice(0, eqPrefixLen).map((e) => e.clone());
-              {
-                const _v = upperTuple.lastMut();
-                if (_v != null) {
-                  const slot = _v;
-                  const _a1 = nextValue;
-                  slot.value.drop();
-                  _moved0 = true;
-                  slot.value = _a1;
+              try {
+                {
+                  const _v = upperTuple.lastMut();
+                  if (_v != null) {
+                    const slot = _v;
+                    const _a2 = nextValue;
+                    slot.value.drop();
+                    _moved0 = true;
+                    slot.value = _a2;
+                  }
                 }
+                _moved1 = true;
+                return new CanonicalRange(canonicalRange.lower.clone(), [upperTuple, isOpen]);
+              } finally {
+                if (!_moved1) dropOwned(upperTuple);
               }
-              return new CanonicalRange(canonicalRange.lower.clone(), [upperTuple, isOpen]);
             } finally {
               if (!_moved0) nextValue.drop();
             }
@@ -243,9 +249,9 @@ export function planBoundsToIdbRange(bounds: KeyBounds, scanDirection: ScanDirec
     }
   })() : canonicalRange);
   try {
-    const _r2 = toIdbKeyrange(adjustedRange);
-    if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-    const [idbRange, upperOpenEnded] = _r2.unwrap();
+    const _r3 = toIdbKeyrange(adjustedRange);
+    if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+    const [idbRange, upperOpenEnded] = _r3.unwrap();
     return Result.Ok([idbRange, upperOpenEnded, eqPrefixLen, eqPrefixValues]);
   } finally {
     adjustedRange.drop();

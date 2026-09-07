@@ -13,16 +13,16 @@
 
 [over]
 "src/bincode_module.rs" = 913
-"src/body.rs" = 1154
+"src/body.rs" = 1153
 "src/cfg.rs" = 742
 "src/codegen.rs" = 1153
 "src/config.rs" = 890
 "src/convert.rs" = 655
 "src/emit.rs" = 1355
-"src/extract.rs" = 906
+"src/extract.rs" = 892
 "src/infer/context.rs" = 1261
 "src/main.rs" = 1230
-"src/match_expr.rs" = 751
+"src/match_expr.rs" = 726
 "src/ownership/tests.rs" = 1204
 "src/registry/build.rs" = 1137
 "src/registry/engine_tests.rs" = 1289

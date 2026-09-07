@@ -151,19 +151,36 @@ pub fn value_is_a_hole(value: &str) -> bool {
 }
 
 /// Does this text never close more parentheses than it has opened?
+///
+/// DD9: a parenthesis inside the QUOTED diagnostic is a character, not a
+/// bracket. Counted as one, `(unsupported('`try_into` on `Vec<u8>` (ambiguous)`
+/// ..'))` came back unbalanced, the wrapper was not peeled, the value was not
+/// recognised as a hole, and a `?` above it wrote its wrapper handling below a
+/// throw. No corpus diagnostic has an unbalanced parenthesis today, which is
+/// why this was latent; the quotes are what decide, not the count.
 fn balanced(text: &str) -> bool {
     let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
     for c in text.chars() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => {}
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, c) {
+            (Some(_), '\\') => escaped = true,
+            (Some(open), c) if c == open => quote = None,
+            (Some(_), _) => {}
+            (None, '\'') | (None, '"') | (None, '`') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => depth -= 1,
+            (None, _) => {}
         }
         if depth < 0 {
             return false;
         }
     }
-    depth == 0
+    depth == 0 && quote.is_none()
 }
 
 #[cfg(test)]
@@ -240,5 +257,18 @@ mod tests {
             "the hole throws where it stands, so nothing below it is reached:\n{}",
             ts
         );
+    }
+
+    /// DD9: a parenthesis inside the quoted diagnostic is a character.
+    #[test]
+    fn a_wrapped_hole_is_recognised_through_an_unbalanced_quote() {
+        assert!(super::value_is_a_hole(
+            "(unsupported('`try_into` is ambiguous (two impls) here'))"
+        ));
+        assert!(super::value_is_a_hole(
+            "(await unsupported('a paren ) inside the message'))"
+        ));
+        // And a value that is not a hole is still not one.
+        assert!(!super::value_is_a_hole("(unsupported(what))"));
     }
 }

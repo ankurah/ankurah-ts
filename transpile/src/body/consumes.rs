@@ -17,6 +17,32 @@ use super::BodyTranslator;
 /// `Option::take` and the `into_*` family all take `self`, and a receiver they
 /// took is not the block's to release any more.
 impl ownership::moves::Consumes for BodyTranslator<'_> {
+    /// Does the port write a CALL where the source wrote a place?
+    ///
+    /// Only the accessors the field resolution supplies: `handle.n` on a value
+    /// behind a `Deref` is `handle.deref().n`, and `deref()` on a value
+    /// somebody dropped throws. Asked of the whole operand, because the field
+    /// read can be nested inside it.
+    ///
+    /// Asking is not translating: the resolution files what it deferred, and
+    /// the field read reports it once where it is written.
+    fn place_is_written_as_a_call(&self, expr: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let mut found = false;
+        crate::body::each_field_read(expr, &mut |field: &syn::ExprField| {
+            if found {
+                return;
+            }
+            let member = crate::infer::member_name(&field.member);
+            let tc = tc.borrow();
+            let mark = tc.sink.mark();
+            let read = tc.resolve_field_access(&field.base, &member);
+            tc.sink.rewind(mark);
+            found = read.is_ok_and(|read| !read.accessors().is_empty());
+        });
+        found
+    }
+
     /// J4: the whole-call refusals are the `map.entry(..)` finisher family and
     /// nothing else today — a receiver the engine could not type says nothing
     /// `or_insert` can be written from, and a value type with no default says
@@ -89,7 +115,7 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
         // Asking is not translating: the scan asks this of every match several
         // times, and the subject's own gaps are reported where the match is
         // written out.
-        if crate::match_expr::is_result_match(&m.arms)
+        if crate::match_expr::is_result_match(m, self)
             && !matches!(
                 self.quietly(|| self.borrowed_scrutinee_type(&m.expr)),
                 Some(crate::ty::Ty::Ref { .. })

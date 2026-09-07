@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/watcherset.rs
-import { Struct, Enum, Arc, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Enum, Arc, dropOwned, derivedClone, valueEquals, HashMap, HashSet } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
 import { AbstractEntity } from '../reactor';
 import { CandidateChanges } from './candidate_changes';
@@ -174,16 +174,39 @@ export class WatcherSet extends Struct {
           if (((_v[0].is('Path')) && (_v[1].is('Literal'))) || ((_v[0].is('Literal')) && (_v[1].is('Path')))) {
             const path = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[0].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[1].value._0 : undefined;
             const literal = (((_v[0].is('Path')) && (_v[1].is('Literal')))) ? _v[1].value._0 : (((_v[0].is('Literal')) && (_v[1].is('Path')))) ? _v[0].value._0 : undefined;
+            let _moved0 = false;
             const propertyPath = PropertyPath.fromPath(path);
-            const index = this.indexWatchers.entry([collectionId.clone(), propertyPath]).orDefault(() => ComparisonIndex.default());
-            return op.match({
-              Add: () => {
-                index.value.add((literal).clone(), operator.clone(), watcherId);
-              },
-              Remove: () => {
-                index.value.remove((literal).clone(), operator.clone(), watcherId);
-              },
-            });
+            try {
+              const _b1 = collectionId.clone();
+              _moved0 = true;
+              const index = this.indexWatchers.entry([_b1, propertyPath]).orDefault(() => ComparisonIndex.default());
+              return op.match({
+                Add: () => {
+                  let _moved3 = false;
+                  const _b2 = (literal).clone();
+                  try {
+                    const _b4 = operator.clone();
+                    _moved3 = true;
+                    index.value.add(_b2, _b4, watcherId);
+                  } finally {
+                    if (!_moved3) dropOwned(_b2);
+                  }
+                },
+                Remove: () => {
+                  let _moved6 = false;
+                  const _b5 = (literal).clone();
+                  try {
+                    const _b7 = operator.clone();
+                    _moved6 = true;
+                    index.value.remove(_b5, _b7, watcherId);
+                  } finally {
+                    if (!_moved6) dropOwned(_b5);
+                  }
+                },
+              });
+            } finally {
+              if (!_moved0) propertyPath.drop();
+            }
           } else {
         }
         }

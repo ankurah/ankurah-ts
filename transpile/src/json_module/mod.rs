@@ -272,7 +272,12 @@ fn write_value(body: &Body, receiver: &str) -> String {
                     )
                 })
                 .collect();
-            format!("{{ {} }}", parts.join(", "))
+            match parts.is_empty() {
+                // `struct Principal {}` — serde writes the empty object, and
+                // `{  }` with nothing between the braces is two spaces.
+                true => "{}".to_string(),
+                false => format!("{{ {} }}", parts.join(", ")),
+            }
         }
         Body::Positional(members) => {
             let parts: Vec<String> = members
@@ -302,10 +307,15 @@ fn read_body(body: &Body, owner: &str, source: &str, record: &str) -> Read {
                 e = ERROR_TYPE,
                 o = owner
             ));
-            out.statements.push_str(&format!(
-                "const {} = {} as Record<string, unknown>;\n",
-                record, source
-            ));
+            // An empty braced struct has no member to read out of the record,
+            // so it declares no name for one: `noUnusedLocals` reports a `_o`
+            // nothing reads.
+            if !members.is_empty() {
+                out.statements.push_str(&format!(
+                    "const {} = {} as Record<string, unknown>;\n",
+                    record, source
+                ));
+            }
             for member in members {
                 // serde reads a missing key as `None` for an `Option` and
                 // refuses it for anything else. `{}` used to answer `Ok` with

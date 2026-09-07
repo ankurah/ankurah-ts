@@ -154,11 +154,7 @@ impl BodyTranslator<'_> {
         exprs: &[Option<&syn::Expr>],
         written: Vec<String>,
     ) -> Vec<String> {
-        // Only a call that really hands a flagged local away has a flag to
-        // stand after; lifting anywhere else would add a name and say nothing.
-        if !self.moves_a_flagged_local(whole) {
-            return written;
-        }
+        let moves_a_local = self.moves_a_flagged_local(whole);
         // §3.9: the arguments go above the flag only where the LIST cannot
         // contain the move. An argument that is not a place is evaluated where
         // it is lifted to, so one that performs the move itself would move
@@ -198,12 +194,33 @@ impl BodyTranslator<'_> {
                 !self.writes_a_place(e) || text_calls(e, text)
             })
         };
-        if exprs
-            .iter()
-            .enumerate()
-            .filter(|(index, e)| evaluates(*index, e))
-            .any(|(_, e)| self.moves_a_flagged_local(e.expect("filtered")))
+        if moves_a_local
+            && exprs
+                .iter()
+                .enumerate()
+                .filter(|(index, e)| evaluates(*index, e))
+                .any(|(_, e)| self.moves_a_flagged_local(e.expect("filtered")))
         {
+            return written;
+        }
+        // CC5: a droppable TEMPORARY built before an operand that can throw is
+        // the frame's too, flagged local or not. Rust drops what a statement
+        // has built while it unwinds; the port only ever wrote that release
+        // for a statement that also moved a NAME, so
+        // `Box4 { a: mk(x), b: mk(k), c: o.unwrap() }` emitted
+        // `new Box4(mk(x), mk(k), (o ?? throw))` and both `mk` results were
+        // owned by nobody when the `unwrap` threw. The sibling with `b: k` was
+        // right only because `k` is a flagged local.
+        //
+        // The lift is what makes the release writable: a value with no name
+        // has nothing for a `finally` to say.
+        let builds_a_temporary = (0..exprs.len()).any(|index| {
+            evaluates(index, &exprs[index])
+                && exprs[index].is_some_and(|e| self.lift_owes_a_release(e))
+                && (index + 1..exprs.len()).any(|later| evaluates(later, &exprs[later]))
+        });
+        // Lifting anywhere else would add a name and say nothing.
+        if !moves_a_local && !builds_a_temporary {
             return written;
         }
         // Only a lift with something AFTER it that can throw needs a FLAG: the

@@ -42,9 +42,24 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   }
 
   static new<T>(compute: Invocable<[], T>): Calculated<T> {
-    const inner = Arc.new(new Inner(compute, ValueCell.new(null), Broadcast.new(), new RwLock(new HashMap())));
-    trigger(inner);
-    return new Calculated(inner);
+    let _moved0 = false;
+    try {
+      const _b1 = ValueCell.new(null);
+      let _moved3 = false;
+      const _b2 = Broadcast.new();
+      try {
+        const _b4 = new RwLock(new HashMap());
+        _moved3 = true;
+        _moved0 = true;
+        const inner = Arc.new(new Inner(compute, _b1, _b2, _b4));
+        trigger(inner);
+        return new Calculated(inner);
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved0) dropOwned(compute);
+    }
   }
 
   clone(): Calculated<T> {

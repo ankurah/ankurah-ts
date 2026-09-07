@@ -1218,7 +1218,10 @@ nine sites would have handed `stringify` an object serde_json never wrote.
 
 `to_vec` is the JSON text encoded, which is what serde_json's own is; `to_value`
 is the serialisable form, which for the port is a type's own `toJSON` and for
-anything else is the value itself. `from_value` is NOT here: it answers a `T`
+anything else is the value NORMALISED — arrays, objects, `Map`s and `Set`s
+element by element, each nested `toJSON` asked in turn. "The value itself" was
+the old answer and it was wrong: `toValue([new Serializable()])` handed back a
+live port object inside what the caller was told is a JSON document. `from_value` is NOT here: it answers a `T`
 the caller names and the port reads a JSON value back through that type's own
 `fromJson`, so a free function has no way to be told which type it is — the site
 is a hole until the emitter writes the type out.
@@ -1519,3 +1522,14 @@ What the dictionary CONVERTS is owned in the ordinary way: the arrow takes the
 value the caller passed at that position and answers a new one, and whichever
 side of the conversion the emitted impl consumes is the impl's own business, as
 it is at any other call to it.
+
+### `serde_json::to_value` takes its argument by value
+
+`to_value<T>(value: T)` is declared by value, so where the source hands one
+over the JSON document is all that is left of it and `toValue` is what drops it.
+The call takes a mode for exactly that reason: `'own'` releases the argument in
+a `finally` once the document is built, and `'borrow'` — the default, and what
+`core/src/value/mod.rs`'s `Value::json(&T)` needs — leaves it with its caller.
+The document itself shares nothing with the input: every nested value is
+normalised through its own `toJSON`, so nothing live is left inside what the
+caller was told is JSON data.

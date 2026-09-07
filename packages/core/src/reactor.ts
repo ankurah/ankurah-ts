@@ -29,16 +29,31 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   subscribe(): ReactorSubscription<E, Ev> {
+    let _moved0 = false;
     const broadcast = Broadcast.new();
-    const subscription = Subscription.new(broadcast.clone(), this._0.value.watcherSet.clone());
-    const subscriptionId = subscription.id();
-    const _t0 = this._0.value.subscriptions.lock();
     try {
-      _t0.value.set(subscriptionId, subscription);
+      let _moved2 = false;
+      const _b1 = broadcast.clone();
+      try {
+        const _b3 = this._0.value.watcherSet.clone();
+        _moved2 = true;
+        const subscription = Subscription.new(_b1, _b3);
+        const subscriptionId = subscription.id();
+        const _t4 = this._0.value.subscriptions.lock();
+        try {
+          _t4.value.set(subscriptionId, subscription);
+        } finally {
+          _t4.drop();
+        }
+        const _b5 = this.clone();
+        _moved0 = true;
+        return new ReactorSubscription(Arc.new(new ReactorSubInner(subscriptionId, _b5, broadcast)));
+      } finally {
+        if (!_moved2) dropOwned(_b1);
+      }
     } finally {
-      _t0.drop();
+      if (!_moved0) broadcast.drop();
     }
-    return new ReactorSubscription(Arc.new(new ReactorSubInner(subscriptionId, this.clone(), broadcast)));
   }
 
   unsubscribe(subId: ReactorSubscriptionId): Result<void, SubscriptionError> {
@@ -203,14 +218,22 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
               if (!_moved6) dropOwned(_b5);
             }
             let reactorUpdateItems = [];
-            const _r9 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, 1, reactorUpdateItems);
-            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-            const _newlyAdded = _r9.unwrap();
-            await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
-            resultset.setLoaded(true);
-            preNotifyHook.preNotify(1);
-            subscription.sendUpdate(reactorUpdateItems);
-            return Result.Ok([]);
+            let _moved10 = false;
+            const _b9 = collectionId.clone();
+            try {
+              const _b11 = selection.clone();
+              const _r12 = subscription.updateQuery(queryId, _b9, _b11, includedEntities, 1, reactorUpdateItems);
+              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+              _moved10 = true;
+              const _newlyAdded = _r12.unwrap();
+              await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
+              resultset.setLoaded(true);
+              preNotifyHook.preNotify(1);
+              subscription.sendUpdate(reactorUpdateItems);
+              return Result.Ok([]);
+            } finally {
+              if (!_moved10) dropOwned(_b9);
+            }
           } finally {
             if (!_moved0) gapFetcher.drop();
           }
@@ -247,15 +270,23 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
         const subscription = (_m3 as any);
         let reactorUpdateItems = [];
-        const _r4 = subscription.updateQuery(queryId, collectionId.clone(), selection.clone(), includedEntities, version, reactorUpdateItems);
-        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-        const _newlyAdded = _r4.unwrap();
-        await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
-        preNotifyHook.preNotify(version);
-        if (!(reactorUpdateItems.length === 0)) {
-          subscription.sendUpdate(reactorUpdateItems);
+        let _moved5 = false;
+        const _b4 = collectionId.clone();
+        try {
+          const _b6 = selection.clone();
+          const _r7 = subscription.updateQuery(queryId, _b4, _b6, includedEntities, version, reactorUpdateItems);
+          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+          _moved5 = true;
+          const _newlyAdded = _r7.unwrap();
+          await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
+          preNotifyHook.preNotify(version);
+          if (!(reactorUpdateItems.length === 0)) {
+            subscription.sendUpdate(reactorUpdateItems);
+          }
+          return Result.Ok([]);
+        } finally {
+          if (!_moved5) dropOwned(_b4);
         }
-        return Result.Ok([]);
       } finally {
         selection.drop();
       }

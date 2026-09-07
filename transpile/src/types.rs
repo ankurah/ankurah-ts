@@ -125,6 +125,10 @@ pub struct StructInfo {
     /// it and the emitted JSON carried an `id` key and a `_phantom` beside it
     /// where serde writes the `EntityId` alone.
     pub serde_transparent: bool,
+    /// Written with BRACES — `struct Principal {}` rather than `struct Unit;`.
+    /// serde writes the first as `{}` and the second as `null`, and the port
+    /// wrote `null` for both.
+    pub braced: bool,
     /// Where the type's name is written, so a derive hook that cannot carry
     /// something over reports it at the declaration a reader has to open.
     pub span: proc_macro2::Span,

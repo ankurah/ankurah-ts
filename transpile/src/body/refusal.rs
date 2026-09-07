@@ -107,6 +107,7 @@ pub(crate) fn statement_that_refused(
     stmt: &syn::Stmt,
     text: String,
     rest: String,
+    below: &[syn::Stmt],
     prelude: &[ownership::Hoist],
     dispositions: &ownership::Dispositions,
     ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
@@ -118,7 +119,7 @@ pub(crate) fn statement_that_refused(
         .map(|h| h.declaration.as_str())
         .chain(std::iter::once(text.as_str()))
         .collect();
-    let owed = t.released_after_a_refusal(stmt, dispositions, ordinals);
+    let owed = t.released_after_a_refusal(stmt, below, dispositions, ordinals);
     let mut prelude: Vec<ownership::Hoist> = prelude.to_vec();
     // A temporary a completed call took before the hole is that call's now, so
     // it owes nothing here. The question is asked of what stands AFTER the

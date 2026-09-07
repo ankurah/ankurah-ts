@@ -468,16 +468,34 @@ impl<'a> BodyTranslator<'a> {
     /// disposition — the function's own claim decided it, and where that claim
     /// said "handed on" and the statement that would have handed it on refused,
     /// nothing releases it at all.
+    ///
+    /// BB4: and what the statements BELOW it were going to hand away. The throw
+    /// stands above them, so a value one of them would have moved is still this
+    /// frame's — `for rest in b { let h = <refused>; take(rest); }` took the
+    /// element out of the sequence, and the loop's tail release starts after the
+    /// current index and cannot reach it. Only the two kinds with no ordinal are
+    /// read from below: a by-value PARAMETER and a consuming loop's ELEMENT,
+    /// both declared outside the block. A local declared below the refusal has
+    /// an ordinal and a disposition, and releasing one would name something no
+    /// declaration has reached.
     pub(crate) fn released_after_a_refusal(
         &self,
         stmt: &syn::Stmt,
+        below: &[syn::Stmt],
         dispositions: &ownership::Dispositions,
         ordinals: &std::cell::RefCell<std::collections::HashMap<String, usize>>,
     ) -> Vec<ownership::RefusalRelease> {
         let scan = ownership::Scan::new(self);
         let mut out: Vec<ownership::RefusalRelease> = Vec::new();
         let mut written: Vec<String> = Vec::new();
-        for site in scan.shallow(stmt) {
+        let here: Vec<(bool, ownership::moves::Site)> =
+            scan.shallow(stmt).into_iter().map(|site| (true, site)).collect();
+        let after: Vec<(bool, ownership::moves::Site)> = below
+            .iter()
+            .flat_map(|stmt| scan.shallow(stmt))
+            .map(|site| (false, site))
+            .collect();
+        for (in_this_statement, site) in here.into_iter().chain(after) {
             if written.contains(&site.name)
                 || self.own.flags.borrow().contains_key(&site.name)
                 || self.own.released_elsewhere.borrow().contains(&site.name)
@@ -485,6 +503,9 @@ impl<'a> BodyTranslator<'a> {
                 continue;
             }
             let ordinal = ordinals.borrow().get(&site.name).copied().unwrap_or(0);
+            if ordinal != 0 && !in_this_statement {
+                continue;
+            }
             let owed = if ordinal == 0 {
                 // Not a local of any block here: a by-value PARAMETER the
                 // function's own claim let go of, a consuming LOOP's current

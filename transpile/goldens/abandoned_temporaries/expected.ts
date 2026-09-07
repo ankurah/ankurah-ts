@@ -27,7 +27,15 @@ export function both(a: number, b: number): Result<[Token, Token], Refused> {
     const _r1 = take(b);
     if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
     try {
-      return Result.Ok([_r0.unwrap(), _r1.unwrap()]);
+      let _moved3 = false;
+      const _b2 = _r0.unwrap();
+      try {
+        const _b4 = _r1.unwrap();
+        _moved3 = true;
+        return Result.Ok([_b2, _b4]);
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
     } finally {
       if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
     }
@@ -69,7 +77,15 @@ export function bothOrPanic(a: number, b: number): Result<[Token, Token], Refuse
     const _r1 = exploding(b);
     if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
     try {
-      return Result.Ok([_r0.unwrap(), _r1.unwrap()]);
+      let _moved3 = false;
+      const _b2 = _r0.unwrap();
+      try {
+        const _b4 = _r1.unwrap();
+        _moved3 = true;
+        return Result.Ok([_b2, _b4]);
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
     } finally {
       if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
     }

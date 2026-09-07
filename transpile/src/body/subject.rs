@@ -196,9 +196,9 @@ impl<'a> BodyTranslator<'a> {
             return false;
         };
         let tc = tc.borrow();
-        let takes = crate::ownership::scrutinee::takes(&tc.probe(), &subject, &[pat], |path| {
+        let takes = crate::ownership::scrutinee::takes(&tc.probe(), &subject, &[pat], |path, looking_at| {
             let mark = tc.sink.mark();
-            let payload = tc.payload_of(path, Some(&subject));
+            let payload = tc.payload_of(path, Some(looking_at));
             tc.sink.rewind(mark);
             // The names travel with the types: a struct pattern names its
             // members, and the payload's order is the declaration's (I2).

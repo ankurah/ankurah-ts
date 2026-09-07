@@ -41,6 +41,9 @@ pub(super) fn translate_value_match(
     // position of it, so the arm releases the positions its pattern did not
     // name.
     let consumes = t.match_takes(match_expr) == crate::ownership::scrutinee::Takes::Payload;
+    if consumes {
+        report_a_payload_taken_from_an_element(match_expr, scrutinee_ty.as_ref(), t);
+    }
     let arms: Vec<Arm> = match_expr
         .arms
         .iter()
@@ -301,3 +304,41 @@ pub(super) fn subject_of_bound(scrutinee: &str, binds: &[String], t: &BodyTransl
     (subject, declaration)
 }
 
+/// Say so where an arm reaches INSIDE a tuple element to take a variant's
+/// payload out of it.
+///
+/// For: the port has one construct that consumes an enum — `intoMatch`, which
+/// marks it moved and hands the payload to the arm — and the if-chain has no
+/// form for it. `if let (Duo::A(token), _) = pair` takes `token` out of
+/// `pair[0]` by reading `.value`, which marks nothing: the tuple's own release
+/// used to run underneath and drop the payload a SECOND time, and now that the
+/// match is consuming, the `Duo` wrapper is released by nobody at all. Neither
+/// is what Rust does, and the release the engine cannot write is what this
+/// says out loud until the consuming writer can reach one level down.
+fn report_a_payload_taken_from_an_element(
+    match_expr: &syn::ExprMatch,
+    scrutinee_ty: Option<&crate::ty::Ty>,
+    t: &BodyTranslator,
+) {
+    let Some(crate::ty::Ty::Tuple(elements)) = scrutinee_ty.map(|ty| ty.peel_refs()) else {
+        return;
+    };
+    let reaches_in = match_expr.arms.iter().any(|arm| {
+        super::arms::cases_of(&arm.pat).into_iter().any(|case| {
+            let syn::Pat::Tuple(tuple) = case else { return false };
+            tuple.elems.iter().zip(elements).any(|(sub, ty)| {
+                matches!(sub, syn::Pat::TupleStruct(_) | syn::Pat::Struct(_))
+                    && crate::ownership::arm_takes::binds_by_value(sub)
+                    && t.declares_its_own_variants(ty)
+            })
+        })
+    });
+    if reaches_in {
+        t.report_match_gap(
+            match_expr,
+            "an arm reaches inside a tuple element to take a variant's payload, and the \
+             chain written for a tuple subject cannot mark that element moved, so what the \
+             pattern did not name is released by nobody",
+        );
+    }
+}

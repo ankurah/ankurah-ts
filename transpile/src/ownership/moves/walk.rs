@@ -11,7 +11,7 @@
 
 use syn::parse::Parser as _;
 
-use super::{collect_pattern_names, evaluating, nested, Scan, Site, Where};
+use super::{collect_pattern_names, nested, Scan, Site, Where};
 
 impl Scan<'_> {
     /// Walk an expression for moves, in the positions that take a value.
@@ -20,10 +20,10 @@ impl Scan<'_> {
             syn::Expr::Call(call) => {
                 let args: Vec<&syn::Expr> = call.args.iter().collect();
                 if self.consumes.consumes_callee(call) {
-                    self.moved(&call.func, evaluating(at, &args, 0), out);
+                    self.moved(&call.func, self.evaluating(at, &args, 0), out);
                 }
                 for (index, arg) in args.iter().enumerate() {
-                    self.moved(arg, evaluating(at, &args, index + 1), out);
+                    self.moved(arg, self.evaluating(at, &args, index + 1), out);
                     self.walk(arg, at, out);
                 }
                 self.walk(&call.func, at, out);
@@ -43,11 +43,11 @@ impl Scan<'_> {
                 // `v.into_iter()`, `opt.take()`.
                 let args: Vec<&syn::Expr> = call.args.iter().collect();
                 if self.consumes.consumes_receiver(call) {
-                    self.moved(&call.receiver, evaluating(at, &args, 0), out);
+                    self.moved(&call.receiver, self.evaluating(at, &args, 0), out);
                 }
                 self.walk(&call.receiver, at, out);
                 for (index, arg) in args.iter().enumerate() {
-                    self.moved(arg, evaluating(at, &args, index + 1), out);
+                    self.moved(arg, self.evaluating(at, &args, index + 1), out);
                     self.walk(arg, at, out);
                 }
             }
@@ -79,27 +79,56 @@ impl Scan<'_> {
                 }
             }
 
+            // CC4: a move NESTED inside a field is conditional on every later
+            // field's evaluation finishing, exactly as a move written as the
+            // field itself is. Recursed with a plain `at`, the walk covered
+            // `Box3 { a: Some(x), k, c: o.unwrap() }`'s `k` and not its `x` —
+            // `x` was handed over unconditionally and released by nobody when
+            // the `unwrap` threw.
             syn::Expr::Struct(s) => {
                 let fields: Vec<&syn::Expr> = s.fields.iter().map(|f| &f.expr).collect();
                 for (index, field) in fields.iter().enumerate() {
-                    self.moved(field, evaluating(at, &fields, index + 1), out);
-                    self.walk(field, at, out);
+                    let position = self.evaluating(at, &fields, index + 1);
+                    self.moved(field, position, out);
+                    self.walk(field, position, out);
                 }
                 if let Some(rest) = &s.rest {
                     self.walk(rest, at, out);
                 }
             }
 
+            // CC3/DD2: an element WRITTEN as the move — a bare name handed to
+            // the literal — is conditional on every later element's evaluation
+            // finishing, the same as a call's argument. Recorded here with a
+            // plain `at`, it got two sites, Evaluated from `moves.rs`'s own
+            // walk and Straight from this one, and `stronger` ranks Moved above
+            // Flagged: `(token, o.unwrap())` handed `token` to an array literal
+            // the throw never finished building, with no flag and no release.
+            //
+            // The RECURSION keeps the plain `at`, and the difference is the
+            // point. A move nested inside an element is performed by that
+            // element's own evaluation — `(count(rest)?, collect()?)` hands
+            // `rest` to `count` where the element stands — so its flag belongs
+            // at that transfer, which is what the Straight site written by the
+            // walk of the element itself asks for. Given the Evaluated
+            // position instead, the flag went above the whole statement and
+            // `lifted_above_the_flag` refused to lift (an operand that both
+            // evaluates and performs the move cannot be reordered), leaving an
+            // unconditional release on top of the `count` that had already
+            // taken it — `ownership::refusal_tests::
+            // a_vec_handed_over_before_the_refusal_is_not_released_again`.
             syn::Expr::Tuple(tuple) => {
-                for elem in &tuple.elems {
-                    self.moved(elem, at, out);
+                let elems: Vec<&syn::Expr> = tuple.elems.iter().collect();
+                for (index, elem) in elems.iter().enumerate() {
+                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
                     self.walk(elem, at, out);
                 }
             }
 
             syn::Expr::Array(array) => {
-                for elem in &array.elems {
-                    self.moved(elem, at, out);
+                let elems: Vec<&syn::Expr> = array.elems.iter().collect();
+                for (index, elem) in elems.iter().enumerate() {
+                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
                     self.walk(elem, at, out);
                 }
             }

@@ -408,17 +408,27 @@ fn translate_if_let(
     // Sent through the match writer it grew a second arm that opened the OTHER
     // side and dropped nothing — `const _v1 = _v.unwrapErr();` with no release
     // under it in `storage-indexeddb/idb_value.ts`.
-    let a_result = matches!(&*let_expr.pat, syn::Pat::TupleStruct(ts)
-        if ts.path.segments.last().is_some_and(|s| s.ident == "Ok" || s.ident == "Err"));
-    // And only where the subject really is one of the port's own enums, which
-    // is what carries `intoMatch`. `map.entry(k)` answers base's `MapEntry`,
-    // which has `orInsert` and no variants at all: routing it through the match
-    // writer wrote `.intoMatch({ Vacant: .. })` on a class that has no such
-    // method. That site is broken either way — the `if` before it wrote
-    // `_v.is('Vacant')`, which `MapEntry` has not got either — and making it
-    // worse is not this item's business, so it keeps the shape it had.
-    let an_emitted_enum = t.scrutinee_type(&let_expr.expr).is_some_and(|ty| t.is_an_enum(&ty));
-    if wrapper && !a_result && an_emitted_enum {
+    // Asked of the ALTERNATIVES and of the subject's identity: `if let Ok(t) |
+    // Err(t) = r` is a `syn::Pat::Or` and not a tuple struct at all, and a
+    // crate enum spelling a variant `Ok` is not the runtime's wrapper.
+    let a_result = crate::match_expr::pattern_opens_a_result(&let_expr.pat, &let_expr.expr, t);
+    // And not where the subject is a Rust enum the runtime writes as a plain
+    // CLASS. `map.entry(k)` answers base's `MapEntry`, which has `orInsert` and
+    // no variants at all: routing it through the match writer wrote
+    // `.intoMatch({ Vacant: .. })` on a class that has no such method. That
+    // site is broken either way — the `if` before it wrote `_v.is('Vacant')`,
+    // which `MapEntry` has not got either — and making it worse is not this
+    // item's business, so it keeps the shape it had.
+    //
+    // Everything else the pattern can take a payload out of goes to the match
+    // writer, whatever the outer type is. Routed on "the subject is one of the
+    // port's own enums", `if let (Duo::A(token), _) = pair` took `token` out of
+    // `pair[0]` on the `if` path and let the block release the whole tuple
+    // underneath it — the payload dropped twice.
+    let a_class_with_no_variants = t
+        .scrutinee_type(&let_expr.expr)
+        .is_some_and(|ty| t.declares_variants(&ty) && !t.is_an_enum(&ty));
+    if wrapper && !a_result && !a_class_with_no_variants {
         return as_a_match(let_expr, then_branch, else_branch, guard, t, position);
     }
     let scrutinee = t.expr(&let_expr.expr);
@@ -434,6 +444,18 @@ fn translate_if_let(
     drop(bound);
 
     let else_part = else_part(else_branch, t, position);
+    // What the source's `else` RUNS, without the braces the chain puts round
+    // it. A guard that fails reaches the same statements, from inside the
+    // branch the pattern's test opened.
+    let else_body: String = else_part
+        .strip_prefix(" else {\n")
+        .and_then(|s| s.strip_suffix("}"))
+        .unwrap_or("")
+        .lines()
+        // The chain indented these to sit inside its own braces, and the
+        // guard's `else` indents them again from where IT sits.
+        .map(|line| format!("{}\n", line.strip_prefix("  ").unwrap_or(line)))
+        .collect();
 
     let subject = t.fresh_temp();
     // A `Result` reaches here with `wrapper` still true: it is the runtime's
@@ -483,11 +505,43 @@ fn translate_if_let(
         // `Result` is READ, not unwrapped.
         _ => t.matching(scrutinee_ty.as_ref(), || t.pattern_test(&subject, &let_expr.pat)),
     };
-    // A guard is written after the pattern's names, because it reads them.
+    // A guard is written after the pattern's names, because it reads them —
+    // and it needs an `else` of its own.
+    //
+    // Rust's `if let PAT = e && guard { A } else { B }` runs B when the guard
+    // is false, and drops what the pattern took on the way. Written as a
+    // nested `if` with no `else`, the guard-false path fell out of BOTH
+    // branches: `if let Ok(token) = r && allow` returned `undefined` where the
+    // source returns the `else`'s value, with the payload `unwrap()` had
+    // already taken owned by nobody. So the guard's `else` releases the
+    // pattern's bindings and runs the same `else` body.
+    //
+    // The release is unconditional: the body never ran, so no flag it might
+    // have set is even declared. The names are not in scope in Rust's `else`,
+    // so the body cannot have moved them.
     let body = if guard_str.is_empty() {
         format!("{}{}", bind, then_body)
     } else {
-        format!("{}if ({}) {{\n{}}}\n", bind, guard_str, indent(&then_body))
+        let mut refused = String::new();
+        for value in owned.iter().rev() {
+            if let Some(release) = value.drops.release(&value.name) {
+                refused.push_str(&format!("{}\n", release));
+            }
+        }
+        refused.push_str(&else_body);
+        // A guard whose failure has nothing to release and nothing to run —
+        // borrowed bindings and no source `else` — writes no `else` at all,
+        // rather than an empty one.
+        match refused.trim().is_empty() {
+            true => format!("{}if ({}) {{\n{}}}\n", bind, guard_str, indent(&then_body)),
+            false => format!(
+                "{}if ({}) {{\n{}}} else {{\n{}}}\n",
+                bind,
+                guard_str,
+                indent(&then_body),
+                indent(&refused)
+            ),
+        }
     };
     // The temporary is scoped to the statement, so an `if let` beside another
     // does not see the first one's subject.

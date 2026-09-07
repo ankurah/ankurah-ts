@@ -1,6 +1,6 @@
 // TS-ONLY: Tests for the serde_json::Error stand-in (src/serde_json.ts).
 import { describe, test, expect } from 'bun:test';
-import { JsonError, serde_json, Result, clearFatalLatch } from '../src/index.ts';
+import { JsonError, serde_json, Result, Struct, clearFatalLatch } from '../src/index.ts';
 import { installOwnershipTestHooks } from '../src/testing.ts';
 
 installOwnershipTestHooks();
@@ -407,5 +407,54 @@ describe('to_vec and to_value', () => {
     expect(toValue([1, 2]).unwrap()).toEqual([1, 2]);
     const written = { toJSON: () => ({ kept: true }) };
     expect(toValue(written).unwrap()).toEqual({ kept: true });
+  });
+});
+
+// ── U9: to_value runs the WHOLE Serialize, and takes its argument by value ───
+
+describe('toValue', () => {
+  class Wrapped extends Struct {
+    constructor(readonly n: number) {
+      super();
+    }
+    toJSON(): unknown {
+      return { n: this.n };
+    }
+  }
+
+  test('a nested value is normalised through its own toJSON', () => {
+    using one = new Wrapped(1);
+    using two = new Wrapped(2);
+    expect(serde_json.toValue([one, two]).unwrap()).toEqual([{ n: 1 }, { n: 2 }]);
+  });
+
+  test('so is one inside a plain object, at any depth', () => {
+    using held = new Wrapped(3);
+    expect(serde_json.toValue({ a: { b: [held] } }).unwrap()).toEqual({ a: { b: [{ n: 3 }] } });
+  });
+
+  test('a Map is an object and a Set is an array, as serde writes them', () => {
+    using held = new Wrapped(4);
+    const value = serde_json.toValue({ m: new Map([['k', held]]), s: new Set([5]) }).unwrap();
+    expect(value).toEqual({ m: { k: { n: 4 } }, s: [5] });
+  });
+
+  test('a document shares nothing with the value it came from', () => {
+    const source = { list: [1, 2] };
+    const value = serde_json.toValue(source).unwrap() as { list: number[] };
+    value.list.push(3);
+    expect(source.list).toEqual([1, 2]);
+  });
+
+  test("a borrowed source is the caller's afterwards", () => {
+    using held = new Wrapped(6);
+    expect(serde_json.toValue(held).unwrap()).toEqual({ n: 6 });
+    expect(held.isDropped).toBe(false);
+  });
+
+  test('an owned one is released by the call that took it', () => {
+    const held = new Wrapped(7);
+    expect(serde_json.toValue(held, 'own').unwrap()).toEqual({ n: 7 });
+    expect(held.isDropped).toBe(true);
   });
 });

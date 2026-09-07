@@ -179,12 +179,22 @@ class Comparison<G extends GetEvents> extends Struct {
   }
 
   static newWithAccumulator<G, C extends TClock>(getter: G, subject: C, other: C, budget: number, subjectEventAccumulator: EventAccumulator<Attested<Event>> | null): Comparison<G> {
-    const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]]);
-    const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]]);
-    const originalOtherEvents = other_1.clone();
-    const initialHeadsEqual = valueEquals(subjectFrontier, other_1);
-    const headOverlap = initialHeadsEqual;
-    return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, other_1.clone(), new HashMap<Id, State<Id>>(), new HashSet<Id>(), other_1.size, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
+    let _moved0 = false;
+    try {
+      const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]]);
+      const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]]);
+      const originalOtherEvents = other_1.clone();
+      const initialHeadsEqual = valueEquals(subjectFrontier, other_1);
+      const headOverlap = initialHeadsEqual;
+      const _b1 = other_1.size;
+      const _b2 = other_1.clone();
+      const _b3 = new HashMap<Id, State<Id>>();
+      const _b4 = new HashSet<Id>();
+      _moved0 = true;
+      return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, _b2, _b3, _b4, _b1, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
+    } finally {
+      if (!_moved0) dropOwned(subjectEventAccumulator);
+    }
   }
 
   takeAccumulatedEvents(): Attested<Event>[] | null {

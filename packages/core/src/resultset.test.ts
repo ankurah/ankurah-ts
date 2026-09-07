@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { EntityResultSet, IVec } from './resultset';
-import { HashMap, Struct, debugString, range, unsupported, valueEquals } from '@ankurah/base';
+import { HashMap, Struct, debugString, dropOwned, range, unsupported, valueEquals } from '@ankurah/base';
 import { IndexDirection, IndexKeyPart, KeySpec, NullsOrder } from './indexing/key_spec';
 import { Value, ValueType } from './value/index';
 
@@ -19,9 +19,17 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   static new(id: number, properties: HashMap<string, Value>): TestEntity {
-    let idBytes = Array(16).fill(0);
-    idBytes[15] = id;
-    return new TestEntity(EntityId.fromBytes(idBytes), CollectionId.fixedName('test'), properties);
+    let _moved0 = false;
+    try {
+      let idBytes = Array(16).fill(0);
+      idBytes[15] = id;
+      const _b1 = EntityId.fromBytes(idBytes);
+      const _b2 = CollectionId.fixedName('test');
+      _moved0 = true;
+      return new TestEntity(_b1, _b2, properties);
+    } finally {
+      if (!_moved0) dropOwned(properties);
+    }
   }
 
   collection(): CollectionId {

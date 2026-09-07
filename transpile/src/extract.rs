@@ -11,6 +11,8 @@ pub(crate) use generics::{callable_only_params, callable_only_params_of, peel_wr
 mod inline;
 use inline::inline_module_path;
 use attrs::{has_from_attr, has_source_attr, serde_with_attr};
+mod structs;
+use structs::extract_struct;
 mod uses;
 use uses::{body_uses, extract_use};
 pub(crate) use uses::UseInfo;
@@ -456,22 +458,6 @@ fn is_test_fn(attrs: &[syn::Attribute]) -> bool {
         a.path().is_ident("test") ||
         a.meta.to_token_stream().to_string().contains("tokio :: test")
     })
-}
-
-fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::CfgFeatures>) -> StructInfo {
-    let attrs = expanded_attrs(&s.attrs, features, s.ident.span());
-    StructInfo {
-        name: s.ident.to_string(),
-        is_pub: is_public(&s.vis),
-        vis: visibility(&s.vis),
-        fields: extract_fields(&s.fields, features),
-        generics: extract_generics(&s.generics),
-        type_params: type_param_names(&s.generics),
-        param_defaults: type_param_defaults(&s.generics),
-        derives: extract_derives(&attrs),
-        serde_transparent: has_serde_flag(&attrs, "transparent"),
-        span: s.ident.span(),
-    }
 }
 
 /// The item's attributes, with `#[cfg_attr(P, ..)]` expanded where `P` holds.

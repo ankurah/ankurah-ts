@@ -19,9 +19,15 @@ class TestEntity extends Struct implements AbstractEntity {
   }
 
   static new(id: number, data: HashMap<string, Value>): TestEntity {
-    let idBytes = Array(16).fill(0);
-    idBytes[15] = id;
-    return new TestEntity(EntityId.fromBytes(idBytes), CollectionId.fixedName('test'), Arc.new(new Mutex(data)));
+    let _moved0 = false;
+    try {
+      let idBytes = Array(16).fill(0);
+      idBytes[15] = id;
+      _moved0 = true;
+      return new TestEntity(EntityId.fromBytes(idBytes), CollectionId.fixedName('test'), Arc.new(new Mutex(data)));
+    } finally {
+      if (!_moved0) dropOwned(data);
+    }
   }
 
   collection(): CollectionId {
@@ -56,17 +62,25 @@ describe('fetch_gap unit tests', () => {
     try {
       const originalPredicate = new Predicate('True', {});
       try {
-        const orderBy = [new OrderByItem(PathExpr.simple('name'), new OrderDirection('Asc', {}))];
+        let _moved1 = false;
+        const _b0 = PathExpr.simple('name');
         try {
-          const gapPredicate = buildContinuationPredicate(originalPredicate, orderBy, entity).unwrap();
+          const _b2 = new OrderDirection('Asc', {});
+          _moved1 = true;
+          const orderBy = [new OrderByItem(_b0, _b2)];
           try {
-            const expected = undefined /* selection!("true AND name >= 'John' AND id != {}" , entity . id ()) */.predicate;
-            expect(gapPredicate).toEqual(expected);
+            const gapPredicate = buildContinuationPredicate(originalPredicate, orderBy, entity).unwrap();
+            try {
+              const expected = undefined /* selection!("true AND name >= 'John' AND id != {}" , entity . id ()) */.predicate;
+              expect(gapPredicate).toEqual(expected);
+            } finally {
+              gapPredicate.drop();
+            }
           } finally {
-            gapPredicate.drop();
+            dropOwned(orderBy);
           }
         } finally {
-          dropOwned(orderBy);
+          if (!_moved1) dropOwned(_b0);
         }
       } finally {
         originalPredicate.drop();
@@ -81,17 +95,33 @@ describe('fetch_gap unit tests', () => {
     try {
       const originalPredicate = new Predicate('True', {});
       try {
-        const orderBy = [new OrderByItem(PathExpr.simple('name'), new OrderDirection('Asc', {})), new OrderByItem(PathExpr.simple('age'), new OrderDirection('Desc', {}))];
+        let _moved1 = false;
+        const _b0 = PathExpr.simple('name');
         try {
-          const gapPredicate = buildContinuationPredicate(originalPredicate, orderBy, entity).unwrap();
+          const _b2 = new OrderDirection('Asc', {});
+          let _moved4 = false;
+          const _b3 = PathExpr.simple('age');
           try {
-            const expected = undefined /* selection!("true AND name >= 'John' AND age <= 30 AND id != {}" , entity . id ()) */.predicate;
-            expect(gapPredicate).toEqual(expected);
+            const _b5 = new OrderDirection('Desc', {});
+            _moved1 = true;
+            _moved4 = true;
+            const orderBy = [new OrderByItem(_b0, _b2), new OrderByItem(_b3, _b5)];
+            try {
+              const gapPredicate = buildContinuationPredicate(originalPredicate, orderBy, entity).unwrap();
+              try {
+                const expected = undefined /* selection!("true AND name >= 'John' AND age <= 30 AND id != {}" , entity . id ()) */.predicate;
+                expect(gapPredicate).toEqual(expected);
+              } finally {
+                gapPredicate.drop();
+              }
+            } finally {
+              dropOwned(orderBy);
+            }
           } finally {
-            gapPredicate.drop();
+            if (!_moved4) dropOwned(_b3);
           }
         } finally {
-          dropOwned(orderBy);
+          if (!_moved1) dropOwned(_b0);
         }
       } finally {
         originalPredicate.drop();

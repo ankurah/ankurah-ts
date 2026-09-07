@@ -35,16 +35,43 @@ pub(crate) fn evaluates_quietly(expr: &syn::Expr) -> bool {
         syn::Expr::Index(index) => {
             evaluates_quietly(&index.expr) && evaluates_quietly(&index.index)
         }
+        // A `?` LEAVES THE FRAME. `is_place` is right that it hands back what
+        // was inside a wrapper the lowering already consumed, so there is no
+        // value left for the statement to release — and that is a different
+        // question from this one. `Some(take2(t, o?))` emitted
+        // `const _r0 = o; if (_r0 == null) return null; return take2(t, _r0);`
+        // and returned with `t` moved into an argument list the call never
+        // reached, released by nobody. A `?` on a CALL was always right here,
+        // because a call is not a place.
+        syn::Expr::Try(_) => false,
         other => crate::body::is_place(other),
     }
 }
 
 /// Is the text the port wrote for this operand a JavaScript LITERAL — a value
 /// built out of nothing, which cannot throw and needs no name of its own?
+///
+/// A bare IDENTIFIER is one of these for this purpose, and CC6 is why. The two
+/// halves of the rule disagreed about one operand: `evaluating` asks
+/// `evaluates_quietly` of the RUST expression, which says `Vec::new()` can
+/// throw, while this asks the TEXT, which the port wrote as `[]`. The
+/// disagreement wrote a flag with nothing between it and the call — and
+/// `const _b1 = inner;`, a name aliasing a name, which is the one thing the
+/// lift rule set out never to write. Reading a name cannot throw whatever the
+/// Rust was, so nothing has to stand above the flag for it, and it needs no
+/// name of its own because it already has one.
 pub(crate) fn writes_a_literal(text: &str) -> bool {
     let text = text.trim();
     matches!(text, "[]" | "null" | "undefined" | "true" | "false" | "{}")
         || text.parse::<f64>().is_ok()
+        || names_a_value(text)
+}
+
+/// Is this text a bare JavaScript identifier — a name and nothing else?
+fn names_a_value(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Does the text the port wrote for this operand CALL something?

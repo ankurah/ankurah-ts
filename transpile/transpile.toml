@@ -388,7 +388,7 @@ reason = "the bincode reader and writer; `bincode` is a crate in Rust and a modu
 # Generic type requires callback-based encode/decode
 # TODO: transpilable if transpiler detects generic type params in Serialize/Deserialize
 # derives and generates callback-based encode/decode automatically.
-"ankurah_proto::auth::Attested" = { path = "auth.provided", has_debug = true }
+"ankurah_proto::auth::Attested" = { path = "auth.provided", reads_json = true, has_debug = true }
 
 [provided_redirect.yrs]
 source_crate = "yrs"

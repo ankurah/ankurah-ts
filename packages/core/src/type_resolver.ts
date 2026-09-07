@@ -131,11 +131,23 @@ export class TypeResolver extends Struct {
               const leftType = this.resolveExprType(left);
               const rightType = this.resolveExprType(right);
               _moved0 = true;
+              let _moved3 = false;
               const newLeft = this.convertExpr(left, rightType);
-              _moved2 = true;
-              const newRight = this.convertExpr(right, leftType);
-              _moved1 = true;
-              return new Predicate('Comparison', { left: newLeft, operator: operator, right: newRight });
+              try {
+                _moved2 = true;
+                let _moved4 = false;
+                const newRight = this.convertExpr(right, leftType);
+                try {
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved4 = true;
+                  return new Predicate('Comparison', { left: newLeft, operator: operator, right: newRight });
+                } finally {
+                  if (!_moved4) newRight.drop();
+                }
+              } finally {
+                if (!_moved3) newLeft.drop();
+              }
             } finally {
               if (!_moved2) dropOwned(right);
             }

@@ -202,10 +202,18 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         try {
           {
             const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-            const _r4 = await this.node.deref().value.entities.withState(retriever, id, collectionId.clone(), entityState.payload.takeField('state'));
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            const [_changed, entity] = _r4.unwrap();
-            return Result.Ok(entity);
+            let _moved5 = false;
+            const _b4 = collectionId.clone();
+            try {
+              const _b6 = entityState.payload.takeField('state');
+              const _r7 = await this.node.deref().value.entities.withState(retriever, id, _b4, _b6);
+              if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+              _moved5 = true;
+              const [_changed, entity] = _r7.unwrap();
+              return Result.Ok(entity);
+            } finally {
+              if (!_moved5) dropOwned(_b4);
+            }
           }
         } finally {
           entityState.drop();
@@ -248,23 +256,31 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
           try {
             let entities = [];
             _moved7 = true;
-            const _seq9 = states;
-            let _at10 = 0;
+            const _seq12 = states;
+            let _at13 = 0;
             try {
-              while (_at10 < _seq9.length) {
-                const state = _seq9[_at10++];
+              while (_at13 < _seq12.length) {
+                const state = _seq12[_at13++];
                 try {
                   const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-                  const _r8 = await this.node.deref().value.entities.withState(retriever, state.payload.entityId, collectionId.clone(), state.payload.takeField('state'));
-                  if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-                  const [, entity] = _r8.unwrap();
-                  entities.push(entity);
+                  let _moved9 = false;
+                  const _b8 = collectionId.clone();
+                  try {
+                    const _b10 = state.payload.takeField('state');
+                    const _r11 = await this.node.deref().value.entities.withState(retriever, state.payload.entityId, _b8, _b10);
+                    if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+                    _moved9 = true;
+                    const [, entity] = _r11.unwrap();
+                    entities.push(entity);
+                  } finally {
+                    if (!_moved9) dropOwned(_b8);
+                  }
                 } finally {
                   state.drop();
                 }
               }
             } finally {
-              dropOwned(_seq9.slice(_at10));
+              dropOwned(_seq12.slice(_at13));
             }
             return Result.Ok(entities);
           } finally {
@@ -313,8 +329,9 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
                   createdIds.drop();
                 }
               }
+              const _b5 = entity.clone();
               _moved4 = true;
-              entityEvents.push([entity.clone(), event]);
+              entityEvents.push([_b5, event]);
             } finally {
               if (!_moved4) event.drop();
             }
@@ -335,97 +352,97 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
         });
         const collectionId = event.collection;
         const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-        const _r5 = await forked.applyEvent(retriever, event);
-        if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-        _r5.drop();
-        const _r6 = this.node.deref().value.policyAgent.checkEvent(this.node, this.cdata, entityBefore, forked, event);
-        if (_r6.isErr()) return Result.Err(MutationError.fromAccessDenied(_r6.unwrapErr()));
-        let _moved7 = false;
-        const attestation = _r6.unwrap();
+        const _r6 = await forked.applyEvent(retriever, event);
+        if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+        _r6.drop();
+        const _r7 = this.node.deref().value.policyAgent.checkEvent(this.node, this.cdata, entityBefore, forked, event);
+        if (_r7.isErr()) return Result.Err(MutationError.fromAccessDenied(_r7.unwrapErr()));
+        let _moved8 = false;
+        const attestation = _r7.unwrap();
         try {
-          const _b8 = event.clone();
-          _moved7 = true;
-          const attested = Attested.opt(_b8, attestation);
+          const _b9 = event.clone();
+          _moved8 = true;
+          const attested = Attested.opt(_b9, attestation);
           attestedEvents.push(attested.clone());
           entityAttestedEvents.push([entity, attested]);
         } finally {
-          if (!_moved7) dropOwned(attestation);
+          if (!_moved8) dropOwned(attestation);
         }
       }
       for (const [entity, attestedEvent] of entityAttestedEvents) {
-        const _r9 = await this.node.deref().value.collections.get(attestedEvent.payload.collection);
-        if (_r9.isErr()) return Result.Err(MutationError.fromRetrievalError(_r9.unwrapErr()));
-        const collection = _r9.unwrap();
+        const _r10 = await this.node.deref().value.collections.get(attestedEvent.payload.collection);
+        if (_r10.isErr()) return Result.Err(MutationError.fromRetrievalError(_r10.unwrapErr()));
+        const collection = _r10.unwrap();
         try {
-          const _r10 = await collection.deref().value.addEvent(attestedEvent);
-          if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-          _r10.drop();
+          const _r11 = await collection.deref().value.addEvent(attestedEvent);
+          if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+          _r11.drop();
           entity.commitHead(Clock.new([attestedEvent.payload.id()]));
         } finally {
           collection.drop();
         }
       }
       _moved2 = true;
-      const _r11 = await this.node.relayToRequiredPeers(this.cdata, trxId, attestedEvents);
-      if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
-      _r11.drop();
-      let _moved12 = false;
+      const _r12 = await this.node.relayToRequiredPeers(this.cdata, trxId, attestedEvents);
+      if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
+      _r12.drop();
+      let _moved13 = false;
       let changes = [];
       try {
         for (const [entity, attestedEvent] of entityAttestedEvents) {
           const collectionId = attestedEvent.payload.collection;
-          const _r13 = await this.node.deref().value.collections.get(collectionId);
-          if (_r13.isErr()) return Result.Err(MutationError.fromRetrievalError(_r13.unwrapErr()));
-          const collection = _r13.unwrap();
+          const _r14 = await this.node.deref().value.collections.get(collectionId);
+          if (_r14.isErr()) return Result.Err(MutationError.fromRetrievalError(_r14.unwrapErr()));
+          const collection = _r14.unwrap();
           try {
-            const _m15 = await (async () => {
+            const _m16 = await (async () => {
               return await (entity.kind.match<any>({
                 Transacted: async (v) => {
                   const upstream = v.upstream;
                   const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
-                  const _r14 = await upstream.applyEvent(retriever, attestedEvent.payload);
-                  if (_r14.isErr()) return { $jump: 'return', $value: Result.Err(_r14.unwrapErr()) };
-                  _r14.drop();
+                  const _r15 = await upstream.applyEvent(retriever, attestedEvent.payload);
+                  if (_r15.isErr()) return { $jump: 'return', $value: Result.Err(_r15.unwrapErr()) };
+                  _r15.drop();
                   return upstream.clone();
                 },
                 Primary: async () => entity,
               }));
             })();
-            if ((_m15 as any)?.$jump === 'return') return (_m15 as any).$value;
-            const canonicalEntity = (_m15 as any);
-            const _r16 = canonicalEntity.toState();
-            if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-            const state = _r16.unwrap();
-            let _moved17 = false;
+            if ((_m16 as any)?.$jump === 'return') return (_m16 as any).$value;
+            const canonicalEntity = (_m16 as any);
+            const _r17 = canonicalEntity.toState();
+            if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+            const state = _r17.unwrap();
+            let _moved18 = false;
             const entityState = new EntityState(canonicalEntity.id(), canonicalEntity.collection().clone(), state);
             try {
-              let _moved18 = false;
+              let _moved19 = false;
               const attestation = this.node.deref().value.policyAgent.attestState(this.node, entityState);
               try {
-                _moved17 = true;
                 _moved18 = true;
+                _moved19 = true;
                 const attested = Attested.opt(entityState, attestation);
-                const _r19 = await collection.deref().value.setState(attested);
-                if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
-                _r19.drop();
-                const _r20 = EntityChange.new(canonicalEntity, [attestedEvent]);
+                const _r20 = await collection.deref().value.setState(attested);
                 if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
-                changes.push(_r20.unwrap());
+                _r20.drop();
+                const _r21 = EntityChange.new(canonicalEntity, [attestedEvent]);
+                if (_r21.isErr()) return Result.Err(_r21.unwrapErr());
+                changes.push(_r21.unwrap());
               } finally {
-                if (!_moved18) dropOwned(attestation);
+                if (!_moved19) dropOwned(attestation);
               }
             } finally {
-              if (!_moved17) entityState.drop();
+              if (!_moved18) entityState.drop();
             }
           } finally {
             collection.drop();
           }
         }
-        _moved12 = true;
+        _moved13 = true;
         await this.node.deref().value.reactor.notifyChange(changes);
         return Result.Ok([]);
       } finally {
-        if (!_moved12) dropOwned(changes);
+        if (!_moved13) dropOwned(changes);
       }
     } finally {
       if (!_moved2) trxId.drop();

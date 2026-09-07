@@ -192,30 +192,44 @@ function castExprTypes<S extends CollectionSchema>(expr: Expr, schema: S): Resul
       const operator = v.operator;
       const right = v.right;
       let _moved1 = false;
+      let _moved2 = false;
+      let _moved3 = false;
       try {
-        const _r2 = castExprTypes(left, schema);
-        if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
         try {
-          const _r3 = castExprTypes(right, schema);
-          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
           try {
             _moved1 = true;
-            return Result.Ok(new Expr('InfixExpr', { left: _r2.unwrap(), operator: operator, right: _r3.unwrap() }));
+            const _r4 = castExprTypes(left, schema);
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            try {
+              _moved3 = true;
+              const _r5 = castExprTypes(right, schema);
+              if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+              try {
+                _moved2 = true;
+                _moved1 = true;
+                _moved3 = true;
+                return Result.Ok(new Expr('InfixExpr', { left: _r4.unwrap(), operator: operator, right: _r5.unwrap() }));
+              } finally {
+                if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);
+              }
+            } finally {
+              if (_r4 != null && !(_r4 as any).isMoved && !(_r4 as any).isDropped) dropOwned(_r4);
+            }
           } finally {
-            if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
+            if (!_moved3) dropOwned(right);
           }
         } finally {
-          if (_r2 != null && !(_r2 as any).isMoved && !(_r2 as any).isDropped) dropOwned(_r2);
+          if (!_moved2) operator.drop();
         }
       } finally {
-        if (!_moved1) operator.drop();
+        if (!_moved1) dropOwned(left);
       }
     },
     ExprList: (v) => {
       const exprs = v._0;
       try {
-        const _r5 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-        const castExprs = _r5;
+        const _r7 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+        const castExprs = _r7;
         return Result.Ok(new Expr('ExprList', { _0: castExprs }));
       } finally {
         dropOwned(exprs);

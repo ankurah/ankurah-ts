@@ -391,6 +391,57 @@ export class NodeResponse extends Struct {
     const body = NodeResponseBody.decode(reader);
     return new NodeResponse(requestId, from, to, body);
   }
+
+  toJSON(): unknown {
+    return { 'request_id': this.requestId.toJSON(), 'from': this.from.toJSON(), 'to': this.to.toJSON(), 'body': this.body.toJSON() };
+  }
+
+  static fromJson(value: unknown): Result<NodeResponse, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
+    try {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected an object for `NodeResponse`'));
+      }
+      const _o = value as Record<string, unknown>;
+      if (!('request_id' in _o)) {
+        return Result.Err(JsonError.custom('missing field `request_id`'));
+      }
+      const _rrequestId = ((v: unknown) => RequestId.fromJson(v))(_o['request_id']);
+      if (_rrequestId.isErr()) return Result.Err(_rrequestId.unwrapErr());
+      const requestId = _rrequestId.unwrap();
+      $built.push(requestId);
+      if (!('from' in _o)) {
+        return Result.Err(JsonError.custom('missing field `from`'));
+      }
+      const _rfrom = ((v: unknown) => EntityId.fromJson(v))(_o['from']);
+      if (_rfrom.isErr()) return Result.Err(_rfrom.unwrapErr());
+      const from = _rfrom.unwrap();
+      $built.push(from);
+      if (!('to' in _o)) {
+        return Result.Err(JsonError.custom('missing field `to`'));
+      }
+      const _rto = ((v: unknown) => EntityId.fromJson(v))(_o['to']);
+      if (_rto.isErr()) return Result.Err(_rto.unwrapErr());
+      const to = _rto.unwrap();
+      $built.push(to);
+      if (!('body' in _o)) {
+        return Result.Err(JsonError.custom('missing field `body`'));
+      }
+      const _rbody = ((v: unknown) => NodeResponseBody.fromJson(v))(_o['body']);
+      if (_rbody.isErr()) return Result.Err(_rbody.unwrapErr());
+      const body = _rbody.unwrap();
+      $built.push(body);
+      const $out = new NodeResponse(requestId, from, to, body);
+      $kept = true;
+      return Result.Ok($out);
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
+    }
+  }
 }
 
 export type CausalRelationV = {
@@ -1000,6 +1051,118 @@ export class NodeResponseBody extends Enum<NodeResponseBodyV> {
         return new NodeResponseBody('Error', { _0 });
       }
       default: throw new Error(`Unknown NodeResponseBody variant: ${variant}`);
+    }
+  }
+
+  toJSON(): unknown {
+    return this.match<unknown>({
+      CommitComplete: (v) => ({ 'CommitComplete': { 'id': v.id.toJSON() } }),
+      Fetch: (v) => ({ 'Fetch': v._0.map((x) => x.toJSON()) }),
+      Get: (v) => ({ 'Get': v._0.map((x) => x.toJSON(($p0: EntityState) => $p0.toJSON())) }),
+      GetEvents: (v) => ({ 'GetEvents': v._0.map((x) => x.toJSON(($p0: Event) => $p0.toJSON())) }),
+      QuerySubscribed: (v) => ({ 'QuerySubscribed': { 'query_id': v.queryId.toJSON(), 'deltas': v.deltas.map((x) => x.toJSON()) } }),
+      Success: () => 'Success',
+      Error: (v) => ({ 'Error': v._0 }),
+    });
+  }
+
+  static fromJson(value: unknown): Result<NodeResponseBody, JsonError> {
+    const $built: unknown[] = [];
+    let $kept = false;
+    try {
+      if (typeof value === 'string') {
+        switch (value) {
+          case 'Success': return Result.Ok(new NodeResponseBody('Success', {}));
+        }
+      }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return Result.Err(JsonError.custom('expected a variant of `NodeResponseBody`'));
+      }
+      const o = value as Record<string, unknown>;
+      if ('CommitComplete' in o) {
+        if (o['CommitComplete'] === null || typeof o['CommitComplete'] !== 'object' || Array.isArray(o['CommitComplete'])) {
+          return Result.Err(JsonError.custom('expected an object for `NodeResponseBody`'));
+        }
+        const _o = o['CommitComplete'] as Record<string, unknown>;
+        if (!('id' in _o)) {
+          return Result.Err(JsonError.custom('missing field `id`'));
+        }
+        const _rid = ((v: unknown) => TransactionId.fromJson(v))(_o['id']);
+        if (_rid.isErr()) return Result.Err(_rid.unwrapErr());
+        const id = _rid.unwrap();
+        $built.push(id);
+        
+        const $out = new NodeResponseBody('CommitComplete', { id: id });
+        $kept = true;
+        return Result.Ok($out);
+      }
+      if ('Fetch' in o) {
+        const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EntityDelta.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(o['Fetch']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        $built.push(_0);
+        
+        const $out = new NodeResponseBody('Fetch', { _0: _0 });
+        $kept = true;
+        return Result.Ok($out);
+      }
+      if ('Get' in o) {
+        const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => Attested.fromJson(v, (v: unknown) => EntityState.fromJson(v)))) : Result.Err(JsonError.custom('expected an array'))))(o['Get']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        $built.push(_0);
+        
+        const $out = new NodeResponseBody('Get', { _0: _0 });
+        $kept = true;
+        return Result.Ok($out);
+      }
+      if ('GetEvents' in o) {
+        const _r_0 = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => Attested.fromJson(v, (v: unknown) => Event.fromJson(v)))) : Result.Err(JsonError.custom('expected an array'))))(o['GetEvents']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        $built.push(_0);
+        
+        const $out = new NodeResponseBody('GetEvents', { _0: _0 });
+        $kept = true;
+        return Result.Ok($out);
+      }
+      if ('QuerySubscribed' in o) {
+        if (o['QuerySubscribed'] === null || typeof o['QuerySubscribed'] !== 'object' || Array.isArray(o['QuerySubscribed'])) {
+          return Result.Err(JsonError.custom('expected an object for `NodeResponseBody`'));
+        }
+        const _o = o['QuerySubscribed'] as Record<string, unknown>;
+        if (!('query_id' in _o)) {
+          return Result.Err(JsonError.custom('missing field `query_id`'));
+        }
+        const _rqueryId = ((v: unknown) => QueryId.fromJson(v))(_o['query_id']);
+        if (_rqueryId.isErr()) return Result.Err(_rqueryId.unwrapErr());
+        const queryId = _rqueryId.unwrap();
+        $built.push(queryId);
+        if (!('deltas' in _o)) {
+          return Result.Err(JsonError.custom('missing field `deltas`'));
+        }
+        const _rdeltas = ((v: unknown) => (Array.isArray(v) ? jsonAll(v.map((v) => EntityDelta.fromJson(v))) : Result.Err(JsonError.custom('expected an array'))))(_o['deltas']);
+        if (_rdeltas.isErr()) return Result.Err(_rdeltas.unwrapErr());
+        const deltas = _rdeltas.unwrap();
+        $built.push(deltas);
+        
+        const $out = new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas });
+        $kept = true;
+        return Result.Ok($out);
+      }
+      if ('Error' in o) {
+        const _r_0 = ((v: unknown) => (typeof v === 'string' ? Result.Ok(v as string) : Result.Err(JsonError.custom('expected a string'))))(o['Error']);
+        if (_r_0.isErr()) return Result.Err(_r_0.unwrapErr());
+        const _0 = _r_0.unwrap();
+        
+        return Result.Ok(new NodeResponseBody('Error', { _0: _0 }));
+      }
+      return Result.Err(JsonError.custom('no variant of `NodeResponseBody` matches this JSON'));
+    } catch (e) {
+      if (e instanceof OwnershipFatal || e instanceof UnsupportedShape) throw e;
+      return Result.Err(JsonError.fromException(e));
+    } finally {
+      if (!$kept) dropOwned($built);
     }
   }
 }

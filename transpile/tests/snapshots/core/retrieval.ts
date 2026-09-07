@@ -106,7 +106,15 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
     try {
       const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
       for (const event of [...events]) {
-        staged_1.set(event.payload.id(), [event, false]);
+        let _moved1 = false;
+        const _b0 = event.payload.id();
+        try {
+          const _b2 = [event, false];
+          _moved1 = true;
+          staged_1.set(_b0, _b2);
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
       }
     } finally {
       staged.drop();
@@ -362,7 +370,15 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
     try {
       const staged_1 = staged.value.getOrInsertWith(() => new HashMap());
       for (const event of [...events]) {
-        staged_1.set(event.payload.id(), [event, false]);
+        let _moved1 = false;
+        const _b0 = event.payload.id();
+        try {
+          const _b2 = [event, false];
+          _moved1 = true;
+          staged_1.set(_b0, _b2);
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
       }
     } finally {
       staged.drop();

@@ -146,7 +146,13 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
             const _v = _r1.unwrap();
             if (_v != null) {
               const ops = _v;
-              operations.set(name, ops);
+              let _moved2 = false;
+              try {
+                _moved2 = true;
+                operations.set(name, ops);
+              } finally {
+                if (!_moved2) dropOwned(ops);
+              }
             }
           }
         }
@@ -155,17 +161,17 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         } else {
           _moved0 = true;
           const operations_1 = new OperationSet(operations);
-          let _moved3 = false;
-          const _b2 = this.deref().collection.clone();
+          const _b3 = this.deref().id;
+          let _moved5 = false;
+          const _b4 = this.deref().collection.clone();
           try {
-            const _b4 = this.deref().id;
-            const _b5 = state.value.head.clone();
-            _moved3 = true;
+            const _b6 = state.value.head.clone();
+            _moved5 = true;
             _moved0 = true;
-            const event = new Event(_b2, _b4, operations_1, _b5);
+            const event = new Event(_b4, _b3, operations_1, _b6);
             return Result.Ok(event);
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            if (!_moved5) dropOwned(_b4);
           }
         }
       } finally {
@@ -733,10 +739,18 @@ export class WeakEntitySet extends Struct {
           const state = _v2;
           try {
             {
-              const _r0 = await this.withState(retriever, id, collectionId.clone(), state.payload.takeField('state'));
-              if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-              const [, entity] = _r0.unwrap();
-              return Result.Ok(entity);
+              let _moved1 = false;
+              const _b0 = collectionId.clone();
+              try {
+                const _b2 = state.payload.takeField('state');
+                const _r3 = await this.withState(retriever, id, _b0, _b2);
+                if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+                _moved1 = true;
+                const [, entity] = _r3.unwrap();
+                return Result.Ok(entity);
+              } finally {
+                if (!_moved1) dropOwned(_b0);
+              }
             }
           } finally {
             state.drop();

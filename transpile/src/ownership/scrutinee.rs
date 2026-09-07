@@ -28,13 +28,15 @@ pub enum Takes {
 
 /// Whether this match hands its subject's payload to an arm.
 ///
-/// `payload_of` answers "what does the variant this pattern names hold", which
-/// only the type context can say; the rest is the pattern.
+/// `payload_of` answers "what does the variant this pattern names hold, in the
+/// value this pattern is looking at", which only the type context can say; the
+/// rest is the pattern. It is handed that VALUE's type, not the whole subject's
+/// — a pattern nested inside a tuple element names a variant of the element.
 pub fn takes(
     probe: &Probe,
     subject: &Ty,
     patterns: &[&syn::Pat],
-    payload_of: impl Fn(&syn::Path) -> Vec<(String, Ty)>,
+    payload_of: impl Fn(&syn::Path, &Ty) -> Vec<(String, Ty)>,
 ) -> Takes {
     // A `&T` subject cannot be moved out of, whatever the arms say.
     if matches!(subject, Ty::Ref { .. }) {
@@ -58,8 +60,19 @@ fn binds_owned_payload(
     probe: &Probe,
     pat: &syn::Pat,
     subject: &Ty,
-    payload_of: &impl Fn(&syn::Path) -> Vec<(String, Ty)>,
+    payload_of: &impl Fn(&syn::Path, &Ty) -> Vec<(String, Ty)>,
 ) -> bool {
+    // Match ergonomics, one level down: nothing can be moved out of a `&`, and
+    // every binding under one is a borrow. `takes` asks this of the whole
+    // subject; a tuple of references — `(&bound.low, &bound.high)` — is not
+    // itself a reference, so each ELEMENT has to be asked in its own right.
+    // `payload_of` peels the `&` off to name the variant's fields, and reading
+    // those declared types as by-value bindings made
+    // `storage-indexeddb/planner_integration.rs`'s borrowed pair a consuming
+    // match.
+    if matches!(subject, Ty::Ref { .. }) {
+        return false;
+    }
     match pat {
         // A member is paired with its DECLARED type by `members_of`: by
         // position for a tuple-struct pattern and BY NAME for a struct one.
@@ -73,18 +86,18 @@ fn binds_owned_payload(
                 syn::Pat::Struct(s) => &s.path,
                 _ => unreachable!("the arm above matched one of these two"),
             };
-            let fields = payload_of(path);
+            let fields = payload_of(path, subject);
             members_of(pat, &fields).into_iter().any(|(sub, ty)| match ty {
                 Some(ty) => binds_by_value(sub) && drops_of(probe, ty).is_droppable(),
-                // A member the payload could not name is not counted, which is
-                // where this has always stood: `payload_of` is asked with the
-                // SUBJECT's own type, so a pattern nested inside an element —
-                // `(RangeBound::Included(l), ..)` over a tuple — comes back
-                // with nothing at all. Reading that as "takes something" made
-                // `core/collation.rs`'s `is_in_range` consuming and released
-                // two bounds the caller still owned. Answering "takes nothing"
-                // leaves the subject's own release standing, which is what the
-                // block already writes.
+                // A member the payload could not name is not counted: the
+                // pattern named a variant this value has not got, or the engine
+                // could not read the value at all, and neither says the arm
+                // takes anything. `payload_of` is now asked with the type the
+                // pattern is LOOKING AT, so `(RangeBound::Included(l), ..)`
+                // over a tuple answers for the element rather than coming back
+                // empty — which is what left `if let (Duo::A(token), _) = pair`
+                // on the reading path with the tuple's own release still
+                // standing under the payload it had taken out.
                 None => false,
             })
         }
@@ -123,7 +136,7 @@ fn element_binds_owned(
     probe: &Probe,
     pat: &syn::Pat,
     ty: &Ty,
-    payload_of: &impl Fn(&syn::Path) -> Vec<(String, Ty)>,
+    payload_of: &impl Fn(&syn::Path, &Ty) -> Vec<(String, Ty)>,
 ) -> bool {
     match pat {
         syn::Pat::TupleStruct(_) | syn::Pat::Struct(_) | syn::Pat::Tuple(_) | syn::Pat::Or(_) => {

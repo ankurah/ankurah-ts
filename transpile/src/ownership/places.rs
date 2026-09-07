@@ -108,11 +108,6 @@ pub fn borrows_only(reg: &crate::registry::TypeRegistry, ty: &crate::ty::Ty) -> 
 }
 
 impl<'a> BodyTranslator<'a> {
-    /// Can this scope hand away what lives at this place?
-    ///
-    /// Only the owner can. A `&self` method lends its receiver, a local bound
-    /// to a `&T` lends what it points at, and Rust refuses a move out of
-    /// either — so a read there is a borrow, whatever the position looks like.
     /// Does the port hold this expression's value in a temporary with a
     /// release of its own?
     ///
@@ -127,6 +122,11 @@ impl<'a> BodyTranslator<'a> {
         ownership::drops_of(&tc.borrow().probe(), &ty) == ownership::Drops::Own
     }
 
+    /// Can this scope hand away what lives at this place?
+    ///
+    /// Only the owner can. A `&self` method lends its receiver, a local bound
+    /// to a `&T` lends what it points at, and Rust refuses a move out of
+    /// either — so a read there is a borrow, whatever the position looks like.
     pub(crate) fn owns_place(&self, expr: &syn::Expr) -> bool {
         match ownership::places::root_of(expr) {
             syn::Expr::Path(path) if path.path.is_ident("self") => self.owns_self,

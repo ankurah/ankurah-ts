@@ -327,3 +327,47 @@ fn a_string_keyed_map_and_a_tuple_have_json_spellings() {
     assert!(ts.contains("new HashMap<string, number>"), "{}", ts);
     assert!(ts.contains("v.length === 2"), "a tuple's length is checked:\n{}", ts);
 }
+
+/// G2: a class the port did not write and that carries a payload of its own
+/// reads its payload through a callback the site supplies.
+///
+/// `Attested<T>` cannot have one `fromJson` for every `T`. Refused a JSON half
+/// altogether, every proto wire type transitively holding one was refused too —
+/// seven of them, which is what `Presence`, `NodeResponse` and
+/// `NodeResponseBody` getting one back means.
+///
+/// Read off the corpus SNAPSHOT rather than a fixture, because the shape needs
+/// a class the engine did not write, and only the real `[provided_impls]` entry
+/// makes one.
+#[test]
+fn a_provided_generic_reads_its_payload_through_a_callback() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/proto");
+    let request = std::fs::read_to_string(root.join("request.ts")).expect("the snapshot is there");
+    assert!(
+        request.contains("Attested.fromJson(v, (v: unknown) => Event.fromJson(v))"),
+        "the payload's reader is passed in"
+    );
+    assert!(
+        request.contains("x.toJSON(($p0: Event) => $p0.toJSON())"),
+        "and so is its writer"
+    );
+    let peering = std::fs::read_to_string(root.join("peering.ts")).expect("the snapshot is there");
+    assert!(
+        peering.contains("static fromJson"),
+        "`Presence` gets its JSON half back, which the `Attested` inside it had refused"
+    );
+}
+
+/// serde tells the two empty structs apart by their SYNTAX: `struct Unit;` is
+/// written `null` and `struct Principal {}` is written `{}`. The port wrote
+/// `null` for both, which `proto/test_fixtures/principal.json` says is wrong.
+#[test]
+fn an_empty_braced_struct_is_written_as_an_object() {
+    let mut f = built(&format!(
+        "{d}pub struct Principal {{}}\n{d}pub struct Marker;",
+        d = DERIVE
+    ));
+    let ts = f.emitted("lib.rs");
+    assert!(ts.contains("return {};"), "the braced one is an object:\n{}", ts);
+    assert!(ts.contains("return null;"), "and the unit one is null:\n{}", ts);
+}

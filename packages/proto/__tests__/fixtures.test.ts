@@ -78,6 +78,8 @@ import {
   Selection,
 } from '@ankurah/ankql';
 
+import { JsonError, Result } from '@ankurah/base';
+
 import { fixturePath, listFixtureDir, readFixtureBytes, readSidecar, toHex } from './support/fixtures';
 import { toSerde } from './support/serde';
 
@@ -108,6 +110,9 @@ const FIXTURE_DIR = 'proto/test_fixtures';
 interface Codec {
   decode(reader: BincodeReader): unknown;
   encode(writer: BincodeWriter, value: unknown): void;
+  /** The JSON half, where the port has one for this type. */
+  fromJson?(value: unknown): Result<unknown, JsonError>;
+  toJSON?(value: unknown): unknown;
 }
 
 function codecFor(name: string, T: any): Codec {
@@ -121,6 +126,14 @@ function codecFor(name: string, T: any): Codec {
       if (typeof v?.encode !== 'function') throw new Error(`${name}: the decoded value has no encode()`);
       v.encode(writer);
     },
+    // A type the port gave no JSON half leaves these off, and the JSON check
+    // below skips it and says so in the count.
+    ...(typeof T?.fromJson === 'function'
+      ? {
+          fromJson: (value: unknown) => T.fromJson(value) as Result<unknown, JsonError>,
+          toJSON: (value: unknown) => (value as { toJSON(): unknown }).toJSON(),
+        }
+      : {}),
   };
 }
 
@@ -134,6 +147,16 @@ function attestedCodec(name: string, T: any): Codec {
     encode(writer, value) {
       (value as Attested<any>).encode(writer, (w: BincodeWriter, p: any) => p.encode(w));
     },
+    // G2: the JSON half takes the payload's reader and writer the same way,
+    // because `Attested<T>` cannot have one `fromJson` for every `T`.
+    ...(typeof T?.fromJson === 'function'
+      ? {
+          fromJson: (value: unknown) =>
+            Attested.fromJson(value, (v: unknown) => T.fromJson(v)) as Result<unknown, JsonError>,
+          toJSON: (value: unknown) =>
+            (value as Attested<any>).toJSON((p: any) => p.toJSON()),
+        }
+      : {}),
   };
 }
 
@@ -238,6 +261,15 @@ interface Sidecar {
   items: SidecarItem[];
 }
 
+// How many sidecar items the JSON half was checked against, and which types it
+// could not reach. Reported by the last test in the file, so a type that loses
+// its JSON half shows up as a number rather than as silence.
+let jsonChecked = 0;
+const jsonSkipped = new Set<string>();
+
+/** How many sidecar items the JSON half is expected to reach. */
+const JSON_CHECKED = 131;
+
 const fixtures = listFixtureDir(FIXTURE_DIR)
   .filter((f) => f.endsWith('.bin'))
   .filter((f) => existsSync(fixturePath(FIXTURE_DIR, f.replace(/\.bin$/, '.json'))));
@@ -281,6 +313,30 @@ for (const binName of fixtures) {
         const writer = new BincodeWriter();
         codec.encode(writer, value);
         expect(toHex(writer.finish())).toBe(toHex(slice));
+
+        // 5. G2: the JSON half, against the same oracle. `json` is
+        // `serde_json::to_value` of the value the bytes decode to, so reading
+        // it back has to produce the value the bytes produced, and writing
+        // either of them has to produce it again. An item carrying `debug`
+        // instead of `json` — the three non-finite `f64` cases — is not
+        // checked here, and neither is a type the port gave no JSON half.
+        if ('json' in item && codec.fromJson && codec.toJSON) {
+          jsonChecked += 1;
+          const read = codec.fromJson(item.json);
+          if (read.isErr()) {
+            const why = read.unwrapErr();
+            throw new Error(`${item.type}: fromJson refused the sidecar's json: ${why}`);
+          }
+          const fromJson = read.unwrap();
+          try {
+            expect(codec.toJSON(fromJson)).toEqual(item.json as any);
+            expect(codec.toJSON(value)).toEqual(item.json as any);
+          } finally {
+            dropIfOwned(fromJson);
+          }
+        } else if ('json' in item) {
+          jsonSkipped.add(item.type);
+        }
 
         // The decoded value is this test's, so this test releases it. Without
         // this the suite leaks one tracked value per item, which the registry
@@ -337,4 +393,40 @@ describe('event_id_derivation.bin — Event::id() derivation', () => {
 // run long enough afterwards to trigger the collector.
 afterAll(() => {
   Bun.gc(true);
+});
+
+// ── What the JSON half reached ───────────────────────────────────────────────
+//
+// G2's oracle is every sidecar item's `json`, which is `serde_json::to_value` of
+// the value its bytes decode to. This says how many items that came to and which
+// types it could not reach, so a JSON half that disappears is a number that
+// moved rather than a check that quietly stopped running.
+describe('the JSON half', () => {
+  test('reached the sidecar items of every type that has one', () => {
+    // The types it does NOT reach, and why each is here: every `ankql` shape —
+    // `Selection` and what it holds — has no JSON half in the port, and the two
+    // proto types that transitively hold one (`NodeMessage`, and the
+    // `NodeRequestBody` inside it) are refused for that reason and no other.
+    expect([...jsonSkipped].sort()).toEqual([
+      'Expr',
+      'Literal',
+      'Literal (json_as_bytes)',
+      'Literal::I16',
+      'Literal::I32',
+      'Literal::I64',
+      'Message',
+      'NodeMessage',
+      'NodeRequest',
+      'NodeRequestBody',
+      'NodeRequestBody::SubscribeQuery.version',
+      'Predicate',
+      'Predicate::Comparison',
+      'Selection',
+      'Selection.limit: Option<u64>',
+      'ankql::ast::Selection',
+    ]);
+    // And how many items it did reach. A number rather than "more than zero",
+    // so a JSON half that disappears shows up here.
+    expect(jsonChecked).toBe(JSON_CHECKED);
+  });
 });

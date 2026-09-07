@@ -114,7 +114,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
     let _moved0 = false;
     try {
       tracing.debug(`SubscriptionRelay.update_query() - New query ${queryId} needs remote registration`);
-      const _m5 = (() => {
+      const _m13 = (() => {
         {
           let subscriptions = this.inner.value.subscriptions.lock();
           try {
@@ -124,35 +124,58 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
               {
                 const oldContent = state.content;
                 try {
-                  const _a1 = Arc.new(new Content(oldContent.value.queryId, oldContent.value.collectionId.clone(), selection.clone(), oldContent.value.contextData.clone(), version));
-                  state.content.drop();
-                  state.content = _a1;
-                  const _m3 = () => {
-                    const _a2 = new Status('PendingRemote', {});
+                  let _moved3 = false;
+                  const _b2 = oldContent.value.collectionId.clone();
+                  try {
+                    let _moved5 = false;
+                    const _b4 = selection.clone();
+                    try {
+                      const _b6 = oldContent.value.contextData.clone();
+                      const _a1 = Arc.new(new Content(oldContent.value.queryId, _b2, _b4, _b6, version));
+                      state.content.drop();
+                      _moved3 = true;
+                      _moved5 = true;
+                      state.content = _a1;
+                    } finally {
+                      if (!_moved5) dropOwned(_b4);
+                    }
+                  } finally {
+                    if (!_moved3) dropOwned(_b2);
+                  }
+                  const _m8 = () => {
+                    const _a7 = new Status('PendingRemote', {});
                     state.status.drop();
-                    state.status = _a2;
+                    state.status = _a7;
                     return null;
                   };
                   return state.status.match<any>({
                     Established: (v) => {
                       const peerId = v._0;
                       const _oldVersion = v._1;
-                      const _a4 = new Status('Requested', { _0: peerId, _1: version });
+                      const _a9 = new Status('Requested', { _0: peerId, _1: version });
                       state.status.drop();
-                      state.status = _a4;
-                      return [peerId, state.content.value.collectionId.clone(), state.content.value.contextData.clone()];
+                      state.status = _a9;
+                      let _moved11 = false;
+                      const _b10 = state.content.value.collectionId.clone();
+                      try {
+                        const _b12 = state.content.value.contextData.clone();
+                        _moved11 = true;
+                        return [peerId, _b10, _b12];
+                      } finally {
+                        if (!_moved11) dropOwned(_b10);
+                      }
                     },
                     PendingRemote: () => {
-                      return _m3();
+                      return _m8();
                     },
                     Requested: () => {
-                      return _m3();
+                      return _m8();
                     },
                     PendingUpdate: () => {
-                      return _m3();
+                      return _m8();
                     },
                     Failed: () => {
-                      return _m3();
+                      return _m8();
                     },
                   });
                 } finally {
@@ -167,8 +190,8 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           }
         }
       })();
-      if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
-      const update = (_m5 as any);
+      if ((_m13 as any)?.$jump === 'return') return (_m13 as any).$value;
+      const update = (_m13 as any);
       if (update != null) {
         const [peerId, collectionId, contextData] = update;
         _moved0 = true;
@@ -354,14 +377,23 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
     try {
       let contexts = new HashSet();
       for (const [, state] of [...subscriptions.value]) {
-        if ((state.status.is('Established')) || (state.status.is('Requested'))) {
-          const { _0: establishedPeer } = state.status.value;
-          if (establishedPeer.equals(peerId)) {
-            contexts.insert(state.content.value.contextData.clone());
-          }
-        } else {
-
-        }
+        state.status.match({
+          Established: (v) => {
+            const establishedPeer = v._0;
+            if (establishedPeer.equals(peerId)) {
+              contexts.insert(state.content.value.contextData.clone());
+            }
+          },
+          Requested: (v) => {
+            const establishedPeer = v._0;
+            if (establishedPeer.equals(peerId)) {
+              contexts.insert(state.content.value.contextData.clone());
+            }
+          },
+          PendingRemote: () => {},
+          PendingUpdate: () => {},
+          Failed: () => {},
+        });
       }
       return contexts;
     } finally {
@@ -423,55 +455,62 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
       try {
         try {
           const queryId = content.value.queryId;
+          let _moved0 = false;
           const predicate = content.value.selection.clone();
-          const contextData = content.value.contextData.clone();
-          const version = content.value.version;
-          const _t0 = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
           try {
-            const _m1 = _t0.value.get(queryId);
-            const livequery = (_m1 != null ? ((state) => state.livequery.clone())(_m1!) : null);
-            _t0.drop();
-            const _v = await TNode_dispatch_remoteSubscribe(node.value, targetPeer, queryId, content.value.collectionId.clone(), predicate, contextData, version);
-            if (_v.isOk()) {
-              const _v1 = _v.unwrap();
-              {
+            const contextData = content.value.contextData.clone();
+            const version = content.value.version;
+            const _t1 = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+            try {
+              const _m2 = _t1.value.get(queryId);
+              const livequery = (_m2 != null ? ((state) => state.livequery.clone())(_m2!) : null);
+              _t1.drop();
+              const _b3 = content.value.collectionId.clone();
+              _moved0 = true;
+              const _v = await TNode_dispatch_remoteSubscribe(node.value, targetPeer, queryId, _b3, predicate, contextData, version);
+              if (_v.isOk()) {
+                const _v1 = _v.unwrap();
                 {
-                  const _v2 = livequery;
-                  if (_v2 != null) {
-                    const lq = _v2;
-                    await lq.subscriptionEstablished(version);
-                  }
-                }
-                let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
-                try {
                   {
-                    const _v3 = subscriptions.value.get(queryId);
-                    if (_v3 != null) {
-                      const info = _v3;
-                      const _a2 = new Status('Established', { _0: targetPeer, _1: version });
-                      info.status.drop();
-                      info.status = _a2;
+                    const _v2 = livequery;
+                    if (_v2 != null) {
+                      const lq = _v2;
+                      await lq.subscriptionEstablished(version);
                     }
                   }
-                  tracing.debug(`Successfully registered predicate ${queryId} on peer ${targetPeer} subscription`);
+                  let subscriptions = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+                  try {
+                    {
+                      const _v3 = subscriptions.value.get(queryId);
+                      if (_v3 != null) {
+                        const info = _v3;
+                        const _a4 = new Status('Established', { _0: targetPeer, _1: version });
+                        info.status.drop();
+                        info.status = _a4;
+                      }
+                    }
+                    tracing.debug(`Successfully registered predicate ${queryId} on peer ${targetPeer} subscription`);
+                  } finally {
+                    subscriptions.drop();
+                  }
+                }
+              } else {
+                const e = _v.unwrapErr();
+                let _moved5 = false;
+                try {
+                  {
+                    _moved5 = true;
+                    await this.handleError(queryId, targetPeer, e, livequery);
+                  }
                 } finally {
-                  subscriptions.drop();
+                  if (!_moved5) e.drop();
                 }
               }
-            } else {
-              const e = _v.unwrapErr();
-              let _moved3 = false;
-              try {
-                {
-                  _moved3 = true;
-                  await this.handleError(queryId, targetPeer, e, livequery);
-                }
-              } finally {
-                if (!_moved3) e.drop();
-              }
+            } finally {
+              _t1.drop();
             }
           } finally {
-            _t0.drop();
+            if (!_moved0) predicate.drop();
           }
         } finally {
           content.drop();

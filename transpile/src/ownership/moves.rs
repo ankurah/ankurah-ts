@@ -116,6 +116,17 @@ pub trait Consumes {
     /// same either way and the syntax alone cannot tell them apart.
     fn derefs_by_value(&self, expr: &syn::Expr) -> bool;
 
+    /// Does the PORT write a call where the source wrote a place?
+    ///
+    /// DD3: `handle.n` on a value behind a `Deref` is emitted as
+    /// `handle.deref().n`, and `deref()` on a value somebody has dropped
+    /// throws. Rust cannot panic reading a field, so the scan called the move
+    /// beside it unconditional — `Event { t: token, n: handle.n }` emitted
+    /// `new Event(token, handle.deref().n)` with the token released by nobody.
+    /// The placement rule has asked the emitted TEXT this question since W2;
+    /// the disposition has to ask it too, before the text exists.
+    fn place_is_written_as_a_call(&self, expr: &syn::Expr) -> bool;
+
     /// Does the impl behind a unary operator take its operand by value?
     /// `impl Neg for Weight` is `fn neg(self) -> Weight`, so `-weight` releases
     /// the weight exactly as `a + b` releases both of its operands.
@@ -263,19 +274,19 @@ impl<'c> Scan<'c> {
             syn::Expr::Tuple(tuple) => {
                 let elems: Vec<&syn::Expr> = tuple.elems.iter().collect();
                 for (index, elem) in elems.iter().enumerate() {
-                    self.moved(elem, evaluating(at, &elems, index + 1), out);
+                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
                 }
             }
             syn::Expr::Array(array) => {
                 let elems: Vec<&syn::Expr> = array.elems.iter().collect();
                 for (index, elem) in elems.iter().enumerate() {
-                    self.moved(elem, evaluating(at, &elems, index + 1), out);
+                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
                 }
             }
             syn::Expr::Struct(s) => {
                 let fields: Vec<&syn::Expr> = s.fields.iter().map(|f| &f.expr).collect();
                 for (index, field) in fields.iter().enumerate() {
-                    self.moved(field, evaluating(at, &fields, index + 1), out);
+                    self.moved(field, self.evaluating(at, &fields, index + 1), out);
                 }
             }
             syn::Expr::Paren(p) => self.moved(&p.expr, at, out),
@@ -382,12 +393,32 @@ impl<'c> Scan<'c> {
 /// So a move with anything after it that can throw is a move under a BRANCH:
 /// the block declares a flag, `lifted_above_the_flag` lifts those later
 /// operands above it, and the flag stands immediately before the call.
-/// `rest` is what is still to be evaluated after this position.
-pub(super) fn evaluating(at: Where, rest: &[&syn::Expr], from: usize) -> Where {
-    let can_throw = rest.iter().skip(from).any(|e| !crate::body::flags::evaluates_quietly(e));
-    match (at, can_throw) {
-        (Where::Straight, true) => Where::Evaluated,
-        _ => at,
+/// DD4: and a move with something BEFORE it that can throw is under a branch
+/// too. Rust evaluates a struct literal's fields in the order the literal
+/// writes them, so `Reordered { n: value.unwrap(), token }` runs the `unwrap`
+/// first and moves `token` only if it returned — which means the frame still
+/// owns the token on the throw path, and `Moved` writes no release at all.
+/// Reading only what came AFTER, the port called the move unconditional and
+/// the token was owned by nobody.
+///
+/// `operands` is the whole list and `from` is one past the operand this move
+/// was written in; that operand is skipped, because a move performed by the
+/// operand's OWN evaluation belongs at that transfer and cannot be lifted
+/// anywhere (`moves/walk.rs` says the rest).
+impl Scan<'_> {
+    pub(super) fn evaluating(&self, at: Where, operands: &[&syn::Expr], from: usize) -> Where {
+        let can_throw = operands
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index + 1 != from)
+            .any(|(_, e)| {
+                !crate::body::flags::evaluates_quietly(e)
+                    || self.consumes.place_is_written_as_a_call(e)
+            });
+        match (at, can_throw) {
+            (Where::Straight, true) => Where::Evaluated,
+            _ => at,
+        }
     }
 }
 

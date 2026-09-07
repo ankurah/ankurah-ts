@@ -14,13 +14,13 @@
 total = 66
 
 [proto]
-total = 68
+total = 65
 
 [proto.by_cause]
 "obligation deferred: X (the subject is still a type parameter)" = 22
 "X on X is ambiguous between <Vec<u8> as TryInto>::try_into and <T as TryInto>::try_into" = 8
-"X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 7
 "X is lowered as a X without the engine having named what it tests" = 6
+"X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 4
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 4
 "X does not name a function here" = 3
 "no method X on X" = 3
@@ -92,7 +92,7 @@ total = 246
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1971
+total = 1972
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 582
@@ -206,6 +206,7 @@ total = 1971
 "X's X prints under Debug as whatever its X says, because XEventX has no Debug rendering in the port" = 1
 "X's derived X has no value for this field, because X" = 1
 "an arm of this match names no variant, and the arms it stands for cannot be listed because the engine could not type the subject, so it is not written and the emitted match is not exhaustive" = 1
+"an arm reaches inside a tuple element to take a variant's payload, and the chain written for a tuple subject cannot mark that element moved, so what the pattern did not name is released by nobody" = 1
 "an empty X has no element type, and the position it stands in does not say one" = 1
 "path qualifiers iter are dropped by name" = 1
 "path qualifiers std, fmt are dropped by name" = 1

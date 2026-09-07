@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/sql_builder.rs
-import { Struct, Enum, Result, debugString } from '@ankurah/base';
+import { Struct, Enum, Result, dropOwned, debugString } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, OrderByItem, Predicate, Selection } from '@ankurah/ankql';
 import { EntityId, Value } from '@ankurah/core';
 import { SqliteError } from './error';
@@ -386,9 +386,25 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
       const left = v.left;
       const right = v.right;
       if (canPushdownComparison(left, right)) {
-        return [predicate.clone(), new Predicate('True', {})];
+        let _moved1 = false;
+        const _b0 = predicate.clone();
+        try {
+          const _b2 = new Predicate('True', {});
+          _moved1 = true;
+          return [_b0, _b2];
+        } finally {
+          if (!_moved1) dropOwned(_b0);
+        }
       } else {
-        return [new Predicate('True', {}), predicate.clone()];
+        let _moved4 = false;
+        const _b3 = new Predicate('True', {});
+        try {
+          const _b5 = predicate.clone();
+          _moved4 = true;
+          return [_b3, _b5];
+        } finally {
+          if (!_moved4) dropOwned(_b3);
+        }
       }
     },
     And: (v) => {
@@ -428,8 +444,17 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
       const [leftSql, leftRemaining] = splitPredicateRecursive(left);
       const [rightSql, rightRemaining] = splitPredicateRecursive(right);
       if (leftRemaining.is('True') && rightRemaining.is('True')) {
-        return [predicate.clone(), new Predicate('True', {})];
+        let _moved7 = false;
+        const _b6 = predicate.clone();
+        try {
+          const _b8 = new Predicate('True', {});
+          _moved7 = true;
+          return [_b6, _b8];
+        } finally {
+          if (!_moved7) dropOwned(_b6);
+        }
       } else {
+        let _moved9 = false;
         const sqlPred = (() => {
           const _v5 = [leftSql, rightSql];
           if ((_v5[0].is('True')) && (_v5[1].is('True'))) {
@@ -442,29 +467,97 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
             return new Predicate('Or', { _0: leftSql, _1: rightSql });
           }
         })();
-        return [sqlPred, predicate.clone()];
+        try {
+          const _b10 = predicate.clone();
+          _moved9 = true;
+          return [sqlPred, _b10];
+        } finally {
+          if (!_moved9) sqlPred.drop();
+        }
       }
     },
     Not: (v) => {
       const inner = v._0;
       const [innerSql, innerRemaining] = splitPredicateRecursive(inner);
       if (innerRemaining.is('True')) {
-        return [new Predicate('Not', { _0: innerSql }), new Predicate('True', {})];
+        let _moved12 = false;
+        const _b11 = new Predicate('Not', { _0: innerSql });
+        try {
+          const _b13 = new Predicate('True', {});
+          _moved12 = true;
+          return [_b11, _b13];
+        } finally {
+          if (!_moved12) dropOwned(_b11);
+        }
       } else {
-        return [new Predicate('True', {}), predicate.clone()];
+        let _moved15 = false;
+        const _b14 = new Predicate('True', {});
+        try {
+          const _b16 = predicate.clone();
+          _moved15 = true;
+          return [_b14, _b16];
+        } finally {
+          if (!_moved15) dropOwned(_b14);
+        }
       }
     },
     IsNull: (v) => {
       const expr = v._0;
       if (canPushdownExpr(expr)) {
-        return [predicate.clone(), new Predicate('True', {})];
+        let _moved18 = false;
+        const _b17 = predicate.clone();
+        try {
+          const _b19 = new Predicate('True', {});
+          _moved18 = true;
+          return [_b17, _b19];
+        } finally {
+          if (!_moved18) dropOwned(_b17);
+        }
       } else {
-        return [new Predicate('True', {}), predicate.clone()];
+        let _moved21 = false;
+        const _b20 = new Predicate('True', {});
+        try {
+          const _b22 = predicate.clone();
+          _moved21 = true;
+          return [_b20, _b22];
+        } finally {
+          if (!_moved21) dropOwned(_b20);
+        }
       }
     },
-    True: () => [new Predicate('True', {}), new Predicate('True', {})] as any,
-    False: () => [new Predicate('False', {}), new Predicate('True', {})] as any,
-    Placeholder: () => [new Predicate('True', {}), predicate.clone()] as any,
+    True: () => {
+      let _moved24 = false;
+      const _b23 = new Predicate('True', {});
+      try {
+        const _b25 = new Predicate('True', {});
+        _moved24 = true;
+        return [_b23, _b25];
+      } finally {
+        if (!_moved24) dropOwned(_b23);
+      }
+    },
+    False: () => {
+      let _moved27 = false;
+      const _b26 = new Predicate('False', {});
+      try {
+        const _b28 = new Predicate('True', {});
+        _moved27 = true;
+        return [_b26, _b28];
+      } finally {
+        if (!_moved27) dropOwned(_b26);
+      }
+    },
+    Placeholder: () => {
+      let _moved30 = false;
+      const _b29 = new Predicate('True', {});
+      try {
+        const _b31 = predicate.clone();
+        _moved30 = true;
+        return [_b29, _b31];
+      } finally {
+        if (!_moved30) dropOwned(_b29);
+      }
+    },
   });
 }
 

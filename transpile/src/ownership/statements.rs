@@ -46,21 +46,33 @@ impl<'a> BodyTranslator<'a> {
             return format!("{} = {}", left, self.assigned_value(assign));
         };
         // Where a branch already handed the old value away, whether there is
-        // anything left to release is what the drop flag answers, and a flag
-        // reset is not a thing this emitter writes.
-        if self.own.flags.borrow().contains_key(&left) {
-            self.fallback(
-                syn::spanned::Spanned::span(assign),
-                format!(
-                    "`{}` is handed away on some path and assigned on another; the value it \
-                     held at the assignment is not released",
-                    left
-                ),
-            );
-            return format!("{} = {}", left, self.assigned_value(assign));
-        }
+        // anything left to release is what the drop flag answers — and the
+        // assignment puts a value NOBODY has taken into the local, so the flag
+        // goes back to false with it. Reported instead of written, the old
+        // value was released by nobody at six of `storage-common/planner.rs`'s
+        // `low = candidate` sites, which Rust drops where the assignment
+        // stands.
+        let flag = self.own.flags.borrow().get(&left).cloned();
         let held = self.fresh_hoist("_a");
         let right = self.assigned_value(assign);
+        if let Some(flag) = flag {
+            self.own.prelude.borrow_mut().push(ownership::Hoist {
+                declaration: format!(
+                    "const {} = {};\nif (!{}) {}\n{} = false;\n",
+                    held, right, flag, release, flag
+                ),
+                owned: None,
+                temp: None,
+                refused: false,
+                released_if_unreached: false,
+                wrapper: false,
+                sets: String::new(),
+                payload: false,
+                droppable: false,
+                flag: None,
+            });
+            return format!("{} = {}", left, held);
+        }
         self.own.prelude.borrow_mut().push(ownership::Hoist {
             declaration: format!("const {} = {};\n{}\n", held, right, release),
             owned: None,

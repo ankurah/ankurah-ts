@@ -367,3 +367,67 @@ pub(crate) fn single_block_expr(block: &syn::Block) -> Option<&syn::Expr> {
     None
 }
 
+
+impl BodyTranslator<'_> {
+    /// The operands of a tuple or an array literal, on the same lift and flag
+    /// plan a call's arguments are on.
+    ///
+    /// An aggregate is built operand by operand exactly as a call is invoked
+    /// argument by argument, and a move flag says "somebody else owns this
+    /// now": `(token, o.unwrap())` set the flag, moved `token` into the array
+    /// literal, and then threw, leaving the token in a literal nothing
+    /// finished building and released by nobody. Everything that can throw
+    /// stands above the flag here for the same reason it does at a call.
+    pub(crate) fn aggregate_operands(
+        &self,
+        whole: &syn::Expr,
+        elems: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
+    ) -> Vec<String> {
+        let written: Vec<String> = elems.iter().map(|e| self.moved_value(e)).collect();
+        let each: Vec<Option<&syn::Expr>> = elems.iter().map(Some).collect();
+        self.lifted_above_the_flag(whole, &each, written)
+    }
+}
+
+/// Every field read written anywhere inside an expression.
+///
+/// A walk shallow enough to be cheap and deep enough for the question DD3
+/// asks: which operands the PORT writes a call for. It looks through the
+/// wrappers a value can be written behind and into the operands of the
+/// aggregates and calls, and stops at a closure, whose body runs where the
+/// callee calls it and not here.
+pub(crate) fn each_field_read(expr: &syn::Expr, found: &mut impl FnMut(&syn::ExprField)) {
+    match expr {
+        syn::Expr::Field(field) => {
+            found(field);
+            each_field_read(&field.base, found);
+        }
+        syn::Expr::Paren(p) => each_field_read(&p.expr, found),
+        syn::Expr::Group(g) => each_field_read(&g.expr, found),
+        syn::Expr::Reference(r) => each_field_read(&r.expr, found),
+        syn::Expr::Unary(u) => each_field_read(&u.expr, found),
+        syn::Expr::Try(t) => each_field_read(&t.expr, found),
+        syn::Expr::Await(a) => each_field_read(&a.base, found),
+        syn::Expr::Cast(c) => each_field_read(&c.expr, found),
+        syn::Expr::Index(index) => {
+            each_field_read(&index.expr, found);
+            each_field_read(&index.index, found);
+        }
+        syn::Expr::Binary(bin) => {
+            each_field_read(&bin.left, found);
+            each_field_read(&bin.right, found);
+        }
+        syn::Expr::Call(call) => {
+            each_field_read(&call.func, found);
+            call.args.iter().for_each(|arg| each_field_read(arg, found));
+        }
+        syn::Expr::MethodCall(call) => {
+            each_field_read(&call.receiver, found);
+            call.args.iter().for_each(|arg| each_field_read(arg, found));
+        }
+        syn::Expr::Tuple(tuple) => tuple.elems.iter().for_each(|e| each_field_read(e, found)),
+        syn::Expr::Array(array) => array.elems.iter().for_each(|e| each_field_read(e, found)),
+        syn::Expr::Struct(s) => s.fields.iter().for_each(|f| each_field_read(&f.expr, found)),
+        _ => {}
+    }
+}

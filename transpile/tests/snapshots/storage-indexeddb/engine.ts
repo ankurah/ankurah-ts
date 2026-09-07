@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/engine.rs
-import { Struct, Result, Arc, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, tokio } from '@ankurah/base';
 import { MutationError, RetrievalError, StorageCollection, StorageEngine } from '@ankurah/core';
 import { IndexedDBBucket } from './collection';
 import { Database } from './database';
@@ -44,7 +44,23 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
   }
 
   async collection(collectionId: CollectionId): Promise<Result<Arc<StorageCollection>, RetrievalError>> {
-    return Result.Ok(Arc.new(new IndexedDBBucket(this.db.clone(), collectionId.clone(), tokio.sync.Mutex.new([]), 0, this.prefixGuardDisabled.clone())));
+    let _moved1 = false;
+    const _b0 = this.db.clone();
+    try {
+      let _moved3 = false;
+      const _b2 = collectionId.clone();
+      try {
+        const _b4 = tokio.sync.Mutex.new([]);
+        const _b5 = this.prefixGuardDisabled.clone();
+        _moved1 = true;
+        _moved3 = true;
+        return Result.Ok(Arc.new(new IndexedDBBucket(_b0, _b2, _b4, 0, _b5)));
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   async deleteAllCollections(): Promise<Result<boolean, MutationError>> {

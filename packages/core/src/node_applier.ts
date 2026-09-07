@@ -61,7 +61,7 @@ export class NodeApplier extends Struct {
     if (_r0.isErr()) return Result.Err(MutationError.fromRetrievalError(_r0.unwrapErr()));
     const collection = _r0.unwrap();
     try {
-      const _m19 = await (content.intoMatch<any>({
+      const _m22 = await (content.intoMatch<any>({
         EventOnly: async (v) => {
           const eventFragments = v._0;
           let _moved1 = false;
@@ -130,22 +130,30 @@ export class NodeApplier extends Struct {
               let _moved14 = false;
               const events = _r13.unwrap();
               try {
-                const state = [entityId, collectionId.clone(), stateFragment.clone()];
-                const _r15 = node.deref().value.policyAgent.validateReceivedState(node, fromPeerId, state);
-                if (_r15.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromAccessDenied(_r15.unwrapErr())) };
-                _r15.drop();
-                const _r16 = await node.deref().value.entities.withState(retriever, entityId, collectionId, state.payload.state);
-                if (_r16.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r16.unwrapErr())) };
-                const [changed, entity] = _r16.unwrap();
-                entities.push(entity.clone());
-                if ((changed != null && (changed === true)) || (changed == null)) {
-                  const _r17 = await NodeApplier.saveState(node, entity, collection);
-                  if (_r17.isErr()) return { $jump: 'return', $value: Result.Err(_r17.unwrapErr()) };
-                  _r17.drop();
-                  _moved14 = true;
-                  const _r18 = EntityChange.new(entity, events);
-                  if (_r18.isErr()) return { $jump: 'return', $value: Result.Err(_r18.unwrapErr()) };
-                  changes.push(_r18.unwrap());
+                let _moved16 = false;
+                const _b15 = collectionId.clone();
+                try {
+                  const _b17 = stateFragment.clone();
+                  _moved16 = true;
+                  const state = [entityId, _b15, _b17];
+                  const _r18 = node.deref().value.policyAgent.validateReceivedState(node, fromPeerId, state);
+                  if (_r18.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromAccessDenied(_r18.unwrapErr())) };
+                  _r18.drop();
+                  const _r19 = await node.deref().value.entities.withState(retriever, entityId, collectionId, state.payload.state);
+                  if (_r19.isErr()) return { $jump: 'return', $value: Result.Err(MutationError.fromRetrievalError(_r19.unwrapErr())) };
+                  const [changed, entity] = _r19.unwrap();
+                  entities.push(entity.clone());
+                  if ((changed != null && (changed === true)) || (changed == null)) {
+                    const _r20 = await NodeApplier.saveState(node, entity, collection);
+                    if (_r20.isErr()) return { $jump: 'return', $value: Result.Err(_r20.unwrapErr()) };
+                    _r20.drop();
+                    _moved14 = true;
+                    const _r21 = EntityChange.new(entity, events);
+                    if (_r21.isErr()) return { $jump: 'return', $value: Result.Err(_r21.unwrapErr()) };
+                    changes.push(_r21.unwrap());
+                  }
+                } finally {
+                  if (!_moved16) dropOwned(_b15);
                 }
               } finally {
                 if (!_moved14) dropOwned(events);
@@ -158,7 +166,7 @@ export class NodeApplier extends Struct {
           }
         },
       }));
-      if ((_m19 as any)?.$jump === 'return') return (_m19 as any).$value;
+      if ((_m22 as any)?.$jump === 'return') return (_m22 as any).$value;
       return Result.Ok([]);
     } finally {
       collection.drop();
@@ -167,22 +175,29 @@ export class NodeApplier extends Struct {
 
   static async saveEvents<SE, PA>(node: Node<SE, PA>, fromPeerId: EntityId, entityId: EntityId, collectionId: CollectionId, fragments: EventFragment[], collection: StorageCollectionWrapper): Promise<Result<Attested<Event>[], MutationError>> {
     let attestedEvents = [];
-    const _seq2 = fragments;
-    let _at3 = 0;
+    const _seq4 = fragments;
+    let _at5 = 0;
     try {
-      while (_at3 < _seq2.length) {
-        const fragment = _seq2[_at3++];
-        const attestedEvent = [entityId, collectionId.clone(), fragment];
-        const _r0 = node.deref().value.policyAgent.validateReceivedEvent(node, fromPeerId, attestedEvent);
-        if (_r0.isErr()) return Result.Err(MutationError.fromAccessDenied(_r0.unwrapErr()));
-        _r0.drop();
-        const _r1 = await collection.deref().value.addEvent(attestedEvent);
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-        _r1.drop();
-        attestedEvents.push(attestedEvent);
+      while (_at5 < _seq4.length) {
+        const fragment = _seq4[_at5++];
+        let _moved0 = false;
+        try {
+          const _b1 = collectionId.clone();
+          _moved0 = true;
+          const attestedEvent = [entityId, _b1, fragment];
+          const _r2 = node.deref().value.policyAgent.validateReceivedEvent(node, fromPeerId, attestedEvent);
+          if (_r2.isErr()) return Result.Err(MutationError.fromAccessDenied(_r2.unwrapErr()));
+          _r2.drop();
+          const _r3 = await collection.deref().value.addEvent(attestedEvent);
+          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+          _r3.drop();
+          attestedEvents.push(attestedEvent);
+        } finally {
+          if (!_moved0) fragment.drop();
+        }
       }
     } finally {
-      dropOwned(_seq2.slice(_at3));
+      dropOwned(_seq4.slice(_at5));
     }
     return Result.Ok(attestedEvents);
   }
@@ -283,69 +298,77 @@ export class NodeApplier extends Struct {
             const state = v.state;
             let _moved1 = false;
             try {
+              const _b2 = delta.collection.clone();
               _moved1 = true;
-              const attestedState = [delta.entityId, delta.collection.clone(), state];
-              const _r2 = node.deref().value.policyAgent.validateReceivedState(node, fromPeerId, attestedState);
-              if (_r2.isErr()) return Result.Err(MutationError.fromAccessDenied(_r2.unwrapErr()));
-              _r2.drop();
-              const _r3 = await node.deref().value.entities.withState(retriever, delta.entityId, delta.takeField('collection'), attestedState.payload.state);
-              if (_r3.isErr()) return Result.Err(MutationError.fromRetrievalError(_r3.unwrapErr()));
-              const [, entity] = _r3.unwrap();
-              const _r4 = await NodeApplier.saveState(node, entity, collection);
-              if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-              _r4.drop();
-              const _r5 = EntityChange.new(entity, []);
+              const attestedState = [delta.entityId, _b2, state];
+              const _r3 = node.deref().value.policyAgent.validateReceivedState(node, fromPeerId, attestedState);
+              if (_r3.isErr()) return Result.Err(MutationError.fromAccessDenied(_r3.unwrapErr()));
+              _r3.drop();
+              const _r4 = await node.deref().value.entities.withState(retriever, delta.entityId, delta.takeField('collection'), attestedState.payload.state);
+              if (_r4.isErr()) return Result.Err(MutationError.fromRetrievalError(_r4.unwrapErr()));
+              const [, entity] = _r4.unwrap();
+              const _r5 = await NodeApplier.saveState(node, entity, collection);
               if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-              return Result.Ok(_r5.unwrap());
+              _r5.drop();
+              const _r6 = EntityChange.new(entity, []);
+              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+              return Result.Ok(_r6.unwrap());
             } finally {
               if (!_moved1) state.drop();
             }
           },
           EventBridge: async (v) => {
             const events = v.events;
-            let _moved6 = false;
+            let _moved7 = false;
             try {
-              _moved6 = true;
-              let _moved7 = false;
-              const attestedEvents = [...events].map((f) => [delta.entityId, delta.collection.clone(), f]);
+              _moved7 = true;
+              let _moved10 = false;
+              const attestedEvents = [...events].map((f) => {
+                try {
+                  const _b9 = delta.collection.clone();
+                  return [delta.entityId, _b9, f];
+                } finally {
+                  f.drop();
+                }
+              });
               try {
                 retriever.stageEvents(attestedEvents.map((e) => e.clone()));
-                const _r8 = await node.deref().value.entities.getRetrieveOrCreate(retriever, delta.collection, delta.entityId);
-                if (_r8.isErr()) return Result.Err(MutationError.fromRetrievalError(_r8.unwrapErr()));
-                let _moved9 = false;
-                const entity = _r8.unwrap();
+                const _r11 = await node.deref().value.entities.getRetrieveOrCreate(retriever, delta.collection, delta.entityId);
+                if (_r11.isErr()) return Result.Err(MutationError.fromRetrievalError(_r11.unwrapErr()));
+                let _moved12 = false;
+                const entity = _r11.unwrap();
                 try {
-                  _moved7 = true;
+                  _moved10 = true;
                   for (const event of [...attestedEvents].reverse()) {
                     try {
-                      const _r10 = await entity.applyEvent(retriever, event.payload);
-                      if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-                      _r10.drop();
-                      const _t11 = event.payload.id();
+                      const _r13 = await entity.applyEvent(retriever, event.payload);
+                      if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+                      _r13.drop();
+                      const _t14 = event.payload.id();
                       try {
-                        retriever.markEventUsed(_t11);
+                        retriever.markEventUsed(_t14);
                       } finally {
-                        _t11.drop();
+                        _t14.drop();
                       }
                     } finally {
                       event.drop();
                     }
                   }
-                  const _r12 = await NodeApplier.saveState(node, entity, collection);
-                  if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-                  _r12.drop();
-                  _moved9 = true;
-                  const _r13 = EntityChange.new(entity, []);
-                  if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
-                  return Result.Ok(_r13.unwrap());
+                  const _r15 = await NodeApplier.saveState(node, entity, collection);
+                  if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
+                  _r15.drop();
+                  _moved12 = true;
+                  const _r16 = EntityChange.new(entity, []);
+                  if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
+                  return Result.Ok(_r16.unwrap());
                 } finally {
-                  if (!_moved9) entity.drop();
+                  if (!_moved12) entity.drop();
                 }
               } finally {
-                if (!_moved7) dropOwned(attestedEvents);
+                if (!_moved10) dropOwned(attestedEvents);
               }
             } finally {
-              if (!_moved6) dropOwned(events);
+              if (!_moved7) dropOwned(events);
             }
           },
           StateAndRelation: async (v) => {

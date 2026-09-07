@@ -83,9 +83,15 @@ export class LWWBackend extends Struct implements PropertyBackend {
 
   fork(): Arc<PropertyBackend> {
     const values = this.values.read();
+    let _moved0 = false;
     const cloned = (values.value).clone();
-    values.drop();
-    return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
+    try {
+      values.drop();
+      _moved0 = true;
+      return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
+    } finally {
+      if (!_moved0) dropOwned(cloned);
+    }
   }
 
   properties(): PropertyName[] {

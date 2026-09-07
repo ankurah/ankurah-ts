@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { F64_isMaximum, F64_isMinimum, F64_predecessorBytes, F64_successorBytes, F64_toBytes, I64_isMaximum, I64_isMinimum, I64_predecessorBytes, I64_successorBytes, RangeBound, Str_isMaximum, Str_isMinimum, Str_predecessorBytes, Str_successorBytes, Str_toBytes } from './collation';
-import { unsupported } from '@ankurah/base';
+import { dropOwned, unsupported } from '@ankurah/base';
 import { Literal } from '@ankurah/ankql';
 import { EntityId } from '@ankurah/proto';
 
@@ -47,16 +47,96 @@ describe('collation unit tests', () => {
 
   test('test_range_bounds', () => {
     const n = 42n;
-    if (!(I64_isInRange(n, new RangeBound('Included', { _0: 40 }), new RangeBound('Included', { _0: 45 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Included', { _0: 42 }), new RangeBound('Included', { _0: 45 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Included', { _0: 40 }), new RangeBound('Included', { _0: 42 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Excluded', { _0: 40 }), new RangeBound('Excluded', { _0: 43 })))) throw new Error('assertion failed');
-    if (!(!I64_isInRange(n, new RangeBound('Excluded', { _0: 42 }), new RangeBound('Excluded', { _0: 43 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Included', { _0: 42 }), new RangeBound('Excluded', { _0: 43 })))) throw new Error('assertion failed');
-    if (!(!I64_isInRange(n, new RangeBound('Excluded', { _0: 41 }), new RangeBound('Excluded', { _0: 42 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Unbounded', {}), new RangeBound('Included', { _0: 45 })))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Included', { _0: 40 }), new RangeBound('Unbounded', {})))) throw new Error('assertion failed');
-    if (!(I64_isInRange(n, new RangeBound('Unbounded', {}), new RangeBound('Unbounded', {})))) throw new Error('assertion failed');
+    let _moved1 = false;
+    const _b0 = new RangeBound('Included', { _0: 40 });
+    try {
+      const _b2 = new RangeBound('Included', { _0: 45 });
+      _moved1 = true;
+      if (!(I64_isInRange(n, _b0, _b2))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
+    let _moved4 = false;
+    const _b3 = new RangeBound('Included', { _0: 42 });
+    try {
+      const _b5 = new RangeBound('Included', { _0: 45 });
+      _moved4 = true;
+      if (!(I64_isInRange(n, _b3, _b5))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved4) dropOwned(_b3);
+    }
+    let _moved7 = false;
+    const _b6 = new RangeBound('Included', { _0: 40 });
+    try {
+      const _b8 = new RangeBound('Included', { _0: 42 });
+      _moved7 = true;
+      if (!(I64_isInRange(n, _b6, _b8))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved7) dropOwned(_b6);
+    }
+    let _moved10 = false;
+    const _b9 = new RangeBound('Excluded', { _0: 40 });
+    try {
+      const _b11 = new RangeBound('Excluded', { _0: 43 });
+      _moved10 = true;
+      if (!(I64_isInRange(n, _b9, _b11))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved10) dropOwned(_b9);
+    }
+    let _moved13 = false;
+    const _b12 = new RangeBound('Excluded', { _0: 42 });
+    try {
+      const _b14 = new RangeBound('Excluded', { _0: 43 });
+      _moved13 = true;
+      if (!(!I64_isInRange(n, _b12, _b14))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved13) dropOwned(_b12);
+    }
+    let _moved16 = false;
+    const _b15 = new RangeBound('Included', { _0: 42 });
+    try {
+      const _b17 = new RangeBound('Excluded', { _0: 43 });
+      _moved16 = true;
+      if (!(I64_isInRange(n, _b15, _b17))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved16) dropOwned(_b15);
+    }
+    let _moved19 = false;
+    const _b18 = new RangeBound('Excluded', { _0: 41 });
+    try {
+      const _b20 = new RangeBound('Excluded', { _0: 42 });
+      _moved19 = true;
+      if (!(!I64_isInRange(n, _b18, _b20))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved19) dropOwned(_b18);
+    }
+    let _moved22 = false;
+    const _b21 = new RangeBound('Unbounded', {});
+    try {
+      const _b23 = new RangeBound('Included', { _0: 45 });
+      _moved22 = true;
+      if (!(I64_isInRange(n, _b21, _b23))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved22) dropOwned(_b21);
+    }
+    let _moved25 = false;
+    const _b24 = new RangeBound('Included', { _0: 40 });
+    try {
+      const _b26 = new RangeBound('Unbounded', {});
+      _moved25 = true;
+      if (!(I64_isInRange(n, _b24, _b26))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved25) dropOwned(_b24);
+    }
+    let _moved28 = false;
+    const _b27 = new RangeBound('Unbounded', {});
+    try {
+      const _b29 = new RangeBound('Unbounded', {});
+      _moved28 = true;
+      if (!(I64_isInRange(n, _b27, _b29))) throw new Error('assertion failed');
+    } finally {
+      if (!_moved28) dropOwned(_b27);
+    }
   });
 
   test('test_literal_i16_collation', () => {

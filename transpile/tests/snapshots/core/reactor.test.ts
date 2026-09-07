@@ -180,11 +180,19 @@ describe('reactor unit tests', () => {
                     _moved1 = true;
                     _moved2 = true;
                     (await reactor.addQueryAndNotify(_b3, queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
-                    const _t4 = [new ReactorUpdate([new ReactorUpdateItem(entity1.clone(), [], [[queryId, new MembershipChange('Initial', {})]])])];
+                    let _moved5 = false;
+                    const _b4 = entity1.clone();
                     try {
-                      expect(check()).toEqual(_t4);
+                      const _b6 = [[queryId, new MembershipChange('Initial', {})]];
+                      const _t7 = [new ReactorUpdate([new ReactorUpdateItem(_b4, [], _b6)])];
+                      try {
+                        _moved5 = true;
+                        expect(check()).toEqual(_t7);
+                      } finally {
+                        dropOwned(_t7);
+                      }
                     } finally {
-                      dropOwned(_t4);
+                      if (!_moved5) dropOwned(_b4);
                     }
                   } finally {
                     mockNode.drop();
