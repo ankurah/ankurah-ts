@@ -357,7 +357,10 @@ mod tests {
     /// `char` alike — `"a"` against `'a'`. N18 is the second erasure: the port
     /// writes `Option<T>` as `T | null`, so `Some(x)` and `x` are one value and
     /// `Held<Option<X>>` printed `payload: X` where Rust prints
-    /// `payload: Some(X)`. O11: and the walk goes DOWN, because `debugValue`
+    /// `payload: Some(X)`. U11 is the third: a `f32` or `f64` is the same
+    /// JavaScript `number` every integer width is, and `Held<f64>` holding
+    /// `1.0` printed `payload: 1` where Rust writes `payload: 1.0`. O11: and
+    /// the walk goes DOWN, because `debugValue`
     /// walks an array element by element — a `char` inside a `Vec`, an array, a
     /// slice or a tuple reaches that surface exactly as one at the top does.
     #[test]
@@ -371,6 +374,8 @@ mod tests {
                pub v: Held<Vec<char>>,\n\
                pub t: Held<(u32, char)>,\n\
                pub a: Held<[char; 2]>,\n\
+               pub f: Held<f64>,\n\
+               pub g: Held<Vec<f32>>,\n\
                pub s: Held<String>,\n\
                pub p: Held<Plain>,\n\
                pub w: Held<Vec<u32>>,\n\
@@ -381,7 +386,18 @@ mod tests {
         f.reg.mark_declares_debug(held);
 
         for (field, what) in
-            [("c", "a `char`"), ("o", "an `Option`"), ("v", "a `char`"), ("t", "a `char`"), ("a", "a `char`")]
+            [
+                ("c", "a `char`"),
+                ("o", "an `Option`"),
+                ("v", "a `char`"),
+                ("t", "a `char`"),
+                ("a", "a `char`"),
+                // U11: the port writes `f32` and `f64` as a JavaScript
+                // `number`, which is what it writes every integer width as, so
+                // the runtime prints `1.0` as `1` where Rust writes `1.0`.
+                ("f", "a float"),
+                ("g", "a float"),
+            ]
         {
             let refused = debug_expr(&f.reg, Some(&f.field("lib.rs", "S", field)), "this.x");
             let why = refused.expect_err(&format!("`{}` was rendered", field));
@@ -448,6 +464,14 @@ mod tests {
 /// `T | null`, so `Some(x)` and `x` are one value and `Attested<Option<X>>`
 /// printed `payload: X` where Rust prints `payload: Some(X)`.
 ///
+/// U11: and the third is a FLOAT. The port writes `f32` and `f64` as a
+/// JavaScript `number`, which is also what it writes every integer width as, so
+/// the runtime cannot tell `1.0` from `1` and prints the integer — where Rust's
+/// `Debug for f64` writes `1.0`. `-0.0`, an exponent, `inf` and `NaN` have
+/// spellings of their own for the same reason. The emitter writes the float
+/// rendering out wherever it has the resolved type; this is the position where
+/// it does not.
+///
 /// O11: and the walk goes DOWN. `debugValue` prints a string, a number and a
 /// boolean from the value's own surface, walks an array element by element, and
 /// hands anything with a `debug()` to it — so an erasure inside a `Vec`, an
@@ -457,6 +481,7 @@ mod tests {
 fn erased_at_run_time(reg: &TypeRegistry, ty: &Ty) -> Option<&'static str> {
     match ty.peel_refs() {
         Ty::Prim(Prim::Char) => Some("a `char`"),
+        Ty::Prim(Prim::F32 | Prim::F64) => Some("a float"),
         Ty::Tuple(elems) => elems.iter().find_map(|e| erased_at_run_time(reg, e)),
         Ty::Slice(elem) => erased_at_run_time(reg, elem),
         Ty::Array { elem, .. } => erased_at_run_time(reg, elem),

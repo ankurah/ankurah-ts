@@ -17,7 +17,33 @@ use super::quoted;
 /// stands wherever the expression it replaces stood.
 pub fn hole_text(what: &str) -> String {
     HOLES_WRITTEN.with(|n| n.set(n.get() + 1));
+    if INSIDE_A_CALLABLE.with(|d| d.get()) == 0 {
+        HOLES_IN_THE_OPEN.with(|n| n.set(n.get() + 1));
+    }
     format!("unsupported({})", quoted(what))
+}
+
+/// Lower a CALLABLE's body: every hole written inside it is a hole the
+/// statement's own evaluation did not reach.
+///
+/// W3/X6: which of the two a hole is decides what a refusing statement owes,
+/// and it was answered by looking for a `=>` before the first `unsupported(`
+/// in the rendered statement. That is a per-statement answer to a per-value
+/// question, and it is not even a reliable one: `'=>'.length` in a string
+/// suppressed the cleanup of a statement that really had refused, and a closure
+/// argument standing beside an unrelated hole hid it. The LOWERING knows which
+/// it is, because it knows when it is inside a callable's body.
+pub fn inside_a_callable<R>(lower: impl FnOnce() -> R) -> R {
+    INSIDE_A_CALLABLE.with(|d| d.set(d.get() + 1));
+    let answer = lower();
+    INSIDE_A_CALLABLE.with(|d| d.set(d.get() - 1));
+    answer
+}
+
+/// How many holes have been written where the statement's OWN evaluation would
+/// have reached them — the count a caller takes a delta of.
+pub fn holes_in_the_open() -> usize {
+    HOLES_IN_THE_OPEN.with(|n| n.get())
 }
 
 thread_local! {
@@ -30,6 +56,13 @@ thread_local! {
     /// emitter's own output an input: a body that mentions those characters for
     /// any other reason is not a body that refused a shape.
     static HOLES_WRITTEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// How deep inside a CALLABLE's body the lowering currently is.
+    static INSIDE_A_CALLABLE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Of the holes written, how many stood in the open — not inside any
+    /// callable's body.
+    static HOLES_IN_THE_OPEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The running count, for a caller taking a delta around a translation.

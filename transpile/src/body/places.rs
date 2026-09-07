@@ -459,10 +459,15 @@ impl BodyTranslator<'_> {
         }
     }
 
-    /// What a sequence type holds, where the port writes it as an array of
+    /// What a sequence type holds, where the port writes it as an ARRAY of
     /// something. `Vec<u8>` answers nothing: the port writes it as a
     /// `Uint8Array`, whose elements are numbers with no conversion to make.
-    pub(crate) fn element_of(&self, want: &crate::ty::Ty) -> Option<crate::ty::Ty> {
+    ///
+    /// Not `infer::expected::element_of`, which answers what a sequence
+    /// EXPECTATION names and does say `u8` for a `Vec<u8>`. Two questions, two
+    /// names, because one call site wants the conversion to write and the other
+    /// wants the type to expect.
+    pub(crate) fn array_element_of(&self, want: &crate::ty::Ty) -> Option<crate::ty::Ty> {
         let tc = self.types.as_ref()?;
         let tc = tc.borrow();
         match crate::name_map::shape::js_shape(tc.registry, want.peel_refs()) {

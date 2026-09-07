@@ -165,7 +165,9 @@ impl<'a> BodyTranslator<'a> {
         // the sentinel an enclosing lifted body is collecting stops here.
         let (statements, arrow) = match &*closure.body {
             syn::Expr::Block(block) => {
-                let body = self.inside_its_own_function(|| self.translate_block(&block.block));
+                let body = crate::body::holes::inside_a_callable(|| {
+                    self.inside_its_own_function(|| self.translate_block(&block.block))
+                });
                 let body = self.releasing_what_it_took(closure, body, &taken, reads_before);
                 (
                     body.clone(),
@@ -180,7 +182,9 @@ impl<'a> BodyTranslator<'a> {
                 // release this claim now writes for `h` cascaded into a field
                 // the caller had already been given.
                 let (body, lifted) = self.with_own_hoists(|| {
-                    self.inside_its_own_function(|| self.moved_value(&closure.body))
+                    crate::body::holes::inside_a_callable(|| {
+                        self.inside_its_own_function(|| self.moved_value(&closure.body))
+                    })
                 });
                 let inner = Self::arrow_body(&body, &lifted);
                 let inner = self.releasing_what_it_took(closure, inner, &taken, reads_before);

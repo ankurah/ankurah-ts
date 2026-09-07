@@ -46,6 +46,22 @@ pub(crate) fn hoist_a_try(
     // plain array or `Map` carrying no move mark — and releasing that from a
     // guard is S1's double drop. That half waits for the lexical flag.
     let wrapper = lowered.wrapper.is_some();
+    // W14: an `Option` `?` writes no wrapper, so the temporary IS the payload,
+    // and a payload with drop glue is released from a flag this frame declares
+    // — never from the runtime guard, which an array, a `Map` or a `Set`
+    // answers "nobody has taken it" to whatever happened (S1). Where the text
+    // cannot leave before reading it, `hoisted` writes neither the flag nor the
+    // release.
+    let payload = !wrapper && lowered.temp.is_some() && t.payload_owes_a_release(&try_expr.expr);
+    // Named from the temporary rather than from the shared counter, because the
+    // flag is written only where the text can leave before the payload is read
+    // — a decision `hoisted` makes later — and a number taken here and then not
+    // written renumbers every hoist below it in the emitted file.
+    let flag = payload.then(|| format!("{}_kept", lowered.temp.as_deref().unwrap_or("_r")));
+    let declaration = match &flag {
+        Some(flag) => format!("let {} = false;\n{}", flag, lowered.declaration),
+        None => lowered.declaration.clone(),
+    };
     // U3: a local this operand hands away has its move flag set here, right
     // above the call that hands it away, rather than above the statement's
     // whole prelude — which is above the arguments that were lifted so the flag
@@ -53,15 +69,16 @@ pub(crate) fn hoist_a_try(
     // claimed stays there: that hoist runs first and is nearer the transfer.
     let sets = claimed_here(t, &try_expr.expr);
     t.own.prelude.borrow_mut().push(ownership::Hoist {
-        declaration: lowered.declaration,
+        declaration,
         owned: None,
         temp: lowered.temp.clone(),
         refused: lowered.temp.is_none() && lowered.wrapper.is_none(),
         released_if_unreached: false,
         wrapper,
         sets,
+        payload,
         droppable: false,
-        flag: None,
+        flag,
     });
     lowered.value
 }
@@ -176,19 +193,34 @@ pub(crate) fn statement_that_refused(
 /// Did a call take this value before the hole threw?
 ///
 /// A refused statement owes a release for what it named and did not hand away,
-/// and the second half of that is decided by the emitted text. Everything
-/// textually complete before the first hole RAN, so a call that has both its
-/// name and its closing paren before the hole has taken what it takes:
-/// `r.unwrapErr()` standing above a refusing arm, and `o.intoMatch({ W: (v) =>
-/// <hole> })`, whose arrow the call itself invoked. A name that only stands as
-/// an ARGUMENT to a call the hole aborts — `take2(held, <hole>)` — has no `)`
-/// between it and the hole, and is still this frame's.
+/// and this is the second half of that. Everything that RAN before the throw
+/// has taken what it takes: `r.unwrapErr()` standing above a refusing arm, and
+/// `o.intoMatch({ W: (v) => <hole> })`, whose arrow the call itself invoked. A
+/// name that only stands as an ARGUMENT to a call the hole aborts —
+/// `take2(held, <hole>)` — is still this frame's.
+///
+/// W4, RECORDED AND NOT FIXED: this is read off the emitted TEXT — "is there a
+/// `)` after the name and before the first `unsupported(`" — and a call that
+/// merely BORROWED the name answers yes (`size(&held)` puts a `)` after
+/// `held`), as does an unrelated call standing beside it (`take2(held, side(),
+/// <hole>)`, where `side()`'s own paren supplies the evidence). A borrow is
+/// indistinguishable from a move in rendered text.
+///
+/// What replaces it has to know THREE things, and a log of "which calls were
+/// handed which names by value" only knows one. It must also know that the
+/// call's own text SURVIVED — `held.into_iter()` in
+/// `held.into_iter().map(..).collect()` is written and then thrown away when
+/// the `collect` refuses, so nothing took `held` — and it must include the
+/// consumptions the port writes OUTSIDE the call lowering, of which
+/// `expr.intoMatch({ .. })` is one: its subject is consumed by the match
+/// writer, and a log that misses it releases a value the arms already own.
 ///
 /// Answering yes wrongly leaks, which the collector reports; answering no
-/// wrongly drops a value the callee owns, which is fatal. This leans to the
-/// report.
+/// wrongly drops a value the callee owns, which is fatal. This still leans to
+/// the report: a call is recorded as having taken every name it was handed in a
+/// by-value position, whether or not the callee kept it.
 fn handed_over_before_the_hole(rendered: &str, name: &str) -> bool {
-    let Some(hole) = crate::body::hole_at(rendered) else { return false };
+    let Some(hole) = crate::body::holes::hole_at(rendered) else { return false };
     let before = &rendered[..hole];
     let mut from = 0;
     while let Some(at) = mentions_at(&before[from..], name) {
@@ -255,4 +287,19 @@ pub(crate) fn try_operand(
         wrapper: None,
         temp: None,
     })
+}
+
+impl BodyTranslator<'_> {
+    /// Does what a `?` on an `Option` hands back owe a release?
+    ///
+    /// The operand is an `Option<T>` and the payload is its `T`: `Option<Vec<
+    /// Token>>` hands back an array of values with drop glue, and a `?` that
+    /// leaves through a LATER one still holds it.
+    pub(crate) fn payload_owes_a_release(&self, operand: &syn::Expr) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(operand)) else { return false };
+        let crate::ty::Ty::Named { args, .. } = ty.peel_refs() else { return false };
+        let Some(payload) = args.first() else { return false };
+        crate::ownership::drops_of(&tc.borrow().probe(), payload).is_droppable()
+    }
 }

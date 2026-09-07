@@ -1314,6 +1314,57 @@ the iterator's", advances it as it disposes of them, and releases whatever is
 left in a `finally`. That is what Rust's own unwind does: a closure handed an
 element by value drops it, and the iterator drops what it had not yet produced.
 
+## A `SeqCursor` owns what its walk has not reached
+
+The owned helpers above all take the WHOLE sequence, which is right for every
+chain the port can see through. One shape it cannot: a generic body that takes
+`I: Iterator<Item = V>` and calls `next()` by hand. `Iterator::next` moves one
+element out and leaves the rest where they were, and an array has nowhere to
+record how far the walk has got — so such a value is held as a `SeqCursor<V>`,
+which remembers the position.
+
+Who releases what:
+
+- **The cursor owns every element it has not handed out.** `cursor.drop()`
+  releases them, in order, exactly as dropping a Rust iterator does.
+- **`next()` hands ONE element to the caller**, who owns it from then on. What
+  the cursor still holds is untouched.
+- **`takeRest()` hands the caller everything left, as an array, and CONSUMES the
+  cursor**: the cursor is marked moved, and dropping it afterwards releases
+  nothing, because it is holding nothing. This is what every method of
+  `Iterator` other than `next` is written through on a cursor taken BY VALUE, so
+  `walk.last()` is `iterLastOwned(walk.takeRest())` — the owned helper releases
+  what it walked past, and the cursor has nothing left to release.
+- **`drainRest()` hands the caller everything left and does NOT consume the
+  cursor.** `&mut I` is an `Iterator` by the blanket impl, so a body handed
+  `values: &mut I` may write `values.collect()`, and Rust drains what the
+  reference points at and leaves the iterator alive for its owner. This is what
+  `by_ref()` is written through too: the borrowed view of a cursor is the
+  cursor, and the reborrow empties it rather than taking it. Dropping the cursor
+  afterwards releases nothing, because it is holding nothing.
+- **A by-value cursor PARAMETER is the body's**, exactly as any other by-value
+  parameter is, and the body drops it at the end unless it handed it on. What
+  the walk never reached goes with it.
+- **A caller with a concrete sequence wraps it** — `new SeqCursor([...tokens])`
+  — and the cursor owns the array from then on. A caller that already holds a
+  cursor hands it over, and stops owning it.
+- **Every read of a cursor the frame has finished with is fatal.** `next`,
+  `remaining`, `takeRest` and `drainRest` each assert the cursor is neither
+  dropped nor moved. Without that, a second `takeRest()` answered `[]` and a
+  `next()` after one answered `null`, so a cursor used after it was moved read
+  as an exhausted one and the bug surfaced somewhere else as a plain
+  `TypeError`.
+
+| Rust | TypeScript |
+|---|---|
+| `walk.next()` | `walk.next()` — one element to the caller, the rest still the cursor's |
+| `walk.last()` | `iterLastOwned(walk.takeRest())` — the cursor is emptied, the losers dropped |
+| `walk.skip(n).collect()` | `skipOwned(walk.takeRest(), n)` — the prefix dropped |
+| `for v in walk` | the owned-array loop over `walk.takeRest()` — each element released per turn, the tail on an early exit |
+| `for v in walk.by_ref()` | the same over `walk.drainRest()` — and `walk` is still the caller's |
+| `drain(&mut walk)` | `drain(walk)`, whose body writes `values.drainRest()` |
+| `first(xs.into_iter())` | `first(new SeqCursor([...xs]))` — the callee owns the cursor |
+
 ## The arithmetic helpers own nothing, and the two that can refuse say so
 
 `@ankurah/base`'s `ops.ts` holds the integer arithmetic every emitted body goes

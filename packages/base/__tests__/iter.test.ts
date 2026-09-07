@@ -328,8 +328,44 @@ describe('rangeContains answers from the bounds', () => {
   test('and the comparison is the value’s own, not the number line’s', () => {
     expect(rangeContains('a', 'c', false, 'b')).toBe(true);
     expect(rangeContains(1n, 9n, false, 5n)).toBe(true);
+    // A type whose `PartialOrd` forwards to `Ord` is emitted with `compareTo`
+    // alone, and that is the total order this reads.
     const ordered = (n: number) => ({ n, compareTo: (o: { n: number }) => n - o.n });
     expect(rangeContains(ordered(1), ordered(9), false, ordered(5))).toBe(true);
     expect(rangeContains(ordered(1), ordered(9), false, ordered(9))).toBe(false);
+  });
+
+  // AA8: a user `PartialOrd` that does NOT forward to `Ord` is emitted as
+  // `partialCompareTo(): number | null`, a method `compareKeys` does not know —
+  // so every range over such a type threw "declares no order". The `null` is
+  // Rust's "these two are not ordered", which fails whichever of the four
+  // comparisons it was asked.
+  const partial = (n: number | null) => ({
+    n,
+    partialCompareTo: (o: { n: number | null }) =>
+      n === null || o.n === null ? null : n - o.n,
+  });
+
+  test('a value whose PartialOrd does not forward to Ord is compared by it', () => {
+    expect(rangeContains(partial(1), partial(9), false, partial(5))).toBe(true);
+    expect(rangeContains(partial(1), partial(9), false, partial(9))).toBe(false);
+    expect(rangeContains(partial(1), partial(9), true, partial(9))).toBe(true);
+    expect(rangeContains(partial(1), partial(9), false, partial(0))).toBe(false);
+  });
+
+  test('an UNORDERED pair is in no range that performs a comparison', () => {
+    expect(rangeContains(partial(1), partial(9), false, partial(null))).toBe(false);
+    expect(rangeContains(partial(null), partial(9), false, partial(5))).toBe(false);
+    expect(rangeContains(partial(1), partial(null), false, partial(5))).toBe(false);
+    expect(rangeContains(partial(1), partial(null), true, partial(5))).toBe(false);
+  });
+
+  test('and the unbounded range still contains one, because it compares nothing', () => {
+    expect(rangeContains(null, null, false, partial(null))).toBe(true);
+  });
+
+  test('a partial order that answers NaN is unordered too', () => {
+    const nany = { partialCompareTo: () => Number.NaN };
+    expect(rangeContains(nany, nany, false, nany)).toBe(false);
   });
 });

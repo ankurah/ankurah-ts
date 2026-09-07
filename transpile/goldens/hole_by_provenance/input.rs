@@ -15,6 +15,12 @@
 //! removes stands BELOW a throw and nothing can reach it; it is the unit tests
 //! in `src/body/holes.rs` that hold it. This golden holds the half a program
 //! can run.
+//!
+//! BB1: and the user's function is RENAMED, because `unsupported` is the one
+//! name the PORT writes into a body without the source asking for it. Left as
+//! it was, the declaration shadowed the helper — base's was not even imported,
+//! since the import list is written from what the emitted text names — so every
+//! hole in this file would have answered a value instead of throwing.
 
 /// A user function whose name is the port's own hole spelling. Rust allows it,
 /// so the port has to.

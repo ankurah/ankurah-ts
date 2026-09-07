@@ -269,3 +269,91 @@ fn a_question_marks_flag_still_stands_above_the_hoist_that_consumes() {
     let call = ts.find("= eat(held);").expect(&ts);
     assert!(flag < call, "the flag is set before the call that can leave:\n{}", ts);
 }
+
+/// X8 and W14: what a `?` leaves behind on the paths the statement can take out
+/// from under it.
+mod leaving_before_the_read {
+    use crate::testing::Fixture;
+
+    const SETUP: &str = "\
+pub struct Token { pub n: u32 }\n\
+impl Drop for Token { fn drop(&mut self) {} }\n\
+pub fn passr(t: Token) -> Result<Token, u32> { Ok(t) }\n\
+pub fn eat(v: Vec<Token>) -> u32 { v.len() as u32 }\n\
+pub fn maybe_vec(flag: bool) -> Option<Vec<Token>> { if flag { Some(Vec::new()) } else { None } }\n\
+";
+
+    fn emitted(rust: &str) -> String {
+        let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", SETUP, rust))]);
+        fixture.emitted("lib.rs")
+    }
+
+    /// X8: an `await` is a third way out of a statement. The `?` above it is
+    /// hoisted, so the text reaches the await holding the wrapper, and a
+    /// rejected promise leaves through it with nobody releasing what the
+    /// wrapper holds.
+    #[test]
+    fn an_await_that_has_run_leaves_the_wrapper_owed() {
+        let ts = emitted(
+            "pub async fn awaited(t: Token, f: impl std::future::Future<Output = u32>)\n\
+             -> Result<(u32, Token), u32> { Ok((f.await, passr(t)?)) }",
+        );
+        let at = ts.find("function awaited").expect("the function is emitted");
+        assert!(
+            ts[at..].contains("finally"),
+            "the wrapper is released however the text is left:\n{}",
+            ts
+        );
+    }
+
+    /// And an `await` the mention stands INSIDE has not run: it awaits what the
+    /// mention helps to build, so the mention is evaluated first.
+    #[test]
+    fn an_await_whose_operand_holds_the_mention_owes_nothing() {
+        let ts = emitted(
+            "pub fn passn(n: u32) -> Result<u32, u32> { Ok(n) }\n\
+             pub async fn step(n: u32) -> u32 { n }\n\
+             pub async fn awaited(n: u32) -> Result<u32, u32> { Ok(step(passn(n)?).await) }",
+        );
+        let at = ts.find("function awaited").expect("the function is emitted");
+        let awaited = &ts[at..];
+        assert!(awaited.contains("await step(_r0.unwrap())"), "the await is written:\n{}", ts);
+        assert!(!awaited.contains("finally"), "and nothing can leave before the read:\n{}", ts);
+    }
+
+    /// W14: a `?` on an `Option` writes no wrapper — the temporary IS the
+    /// payload — and a SECOND `?` in the same statement returns with the first
+    /// one's payload still in hand. Rust drops that temporary on the way out.
+    #[test]
+    fn an_option_payload_is_released_when_a_later_question_leaves() {
+        let ts = emitted(
+            "pub fn two(a: bool, b: bool) -> Option<u32> {\n\
+               Some(eat(maybe_vec(a)?) + eat(maybe_vec(b)?))\n\
+             }",
+        );
+        assert!(
+            ts.contains("if (!_r0_kept) dropOwned(_r0);"),
+            "the first payload is released from this frame's own flag:\n{}",
+            ts
+        );
+        assert!(
+            !ts.contains("isMoved"),
+            "and never from the runtime guard, which an array does not answer (S1):\n{}",
+            ts
+        );
+    }
+
+    /// And a `?` the text cannot leave before reading writes neither the flag
+    /// nor the release: wrapping those would put a `try` and a `finally` around
+    /// every `?` on an `Option` in the corpus.
+    #[test]
+    fn an_option_payload_the_text_reaches_is_not_wrapped() {
+        let ts = emitted(
+            "pub fn one(a: bool) -> Option<u32> {\n\
+               let v = maybe_vec(a)?;\n\
+               Some(eat(v))\n\
+             }",
+        );
+        assert!(!ts.contains("_kept"), "no flag is declared:\n{}", ts);
+    }
+}

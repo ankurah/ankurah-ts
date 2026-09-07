@@ -218,3 +218,51 @@ fn a_const_declared_inside_an_impl_is_reported() {
     );
     assert_eq!(said.len(), 1, "reported more than once: {said:?}");
 }
+
+/// Z10/Y1: two `From` impls that differ only by a `&` on a source the port gives
+/// no class to are ONE emitted method, and one of the two BODIES is lost —
+/// Rust's borrowed impl clones each element where the owned one moves it. The
+/// engine cannot decide the pair, because it cannot tell whether an open `T`
+/// owns anything; what it can do is stop losing the body in silence.
+///
+/// The corpus has exactly one such pair, `From<[T; N]>` and `From<&[T; N]>` for
+/// `ankql`'s `Expr` (`ankql/src/ast.rs:602` and `:614`), and nothing reaches
+/// it: the impl table performs no `[T; N] -> Expr` conversion. This pins the
+/// report so that a pair which IS reached cannot arrive unreported.
+#[test]
+fn two_from_impls_differing_only_by_a_reference_are_reported() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Held;\n\
+         impl Drop for Held { fn drop(&mut self) {} }\n\
+         pub struct Expr;\n\
+         impl From<[Held; 2]> for Expr { fn from(_v: [Held; 2]) -> Expr { Expr } }\n\
+         impl From<&[Held; 2]> for Expr { fn from(_v: &[Held; 2]) -> Expr { Expr } }",
+    )]);
+    let _ = fixture.emitted("lib.rs");
+    let messages = fixture.messages();
+    assert!(
+        messages.iter().any(|m| m.contains("one of the two bodies is lost")),
+        "the merge is said out loud:\n{:?}",
+        messages
+    );
+}
+
+/// And a pair whose source the port writes as ONE value really is one
+/// conversion, so reporting it would be noise: a `String` and a `&String` are
+/// both a JavaScript `string`, with nothing to release either way (spec 4.7).
+#[test]
+fn a_pair_over_a_source_that_owns_nothing_is_not_reported() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Expr;\n\
+         impl From<String> for Expr { fn from(_v: String) -> Expr { Expr } }\n\
+         impl From<&String> for Expr { fn from(_v: &String) -> Expr { Expr } }",
+    )]);
+    let _ = fixture.emitted("lib.rs");
+    assert!(
+        !fixture.messages().iter().any(|m| m.contains("one of the two bodies is lost")),
+        "nothing is lost:\n{:?}",
+        fixture.messages()
+    );
+}

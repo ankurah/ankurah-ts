@@ -467,3 +467,127 @@ fn a_reader_over_borrowed_options_is_refused_as_the_owned_one_is() {
     assert!(plain.contains("iterFind("), "{}", plain);
     assert!(!plain.contains(refusal), "{}", plain);
 }
+
+/// T6: `count` DRAINS the iterator to the end and drops every element, and it
+/// leaves nothing behind, so a receiver that names an iterator raises no
+/// question about it.
+mod counting_drains {
+    use crate::testing::Fixture;
+
+    fn emitted(rust: &str) -> String {
+        let mut fixture = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "pub struct Token {{ pub n: u32 }}\n\
+                 impl Drop for Token {{ fn drop(&mut self) {{}} }}\n{}",
+                rust
+            ),
+        )]);
+        fixture.emitted("lib.rs")
+    }
+
+    /// Written as `xs.length`, nothing released the elements the walk passed.
+    #[test]
+    fn count_over_owned_elements_releases_them() {
+        let ts = emitted("pub fn many(tokens: Vec<Token>) -> usize { tokens.into_iter().count() }");
+        assert!(ts.contains("countOwned([...tokens])"), "the helper releases them:\n{}", ts);
+    }
+
+    /// And the survivors an owning adaptor kept go with them.
+    #[test]
+    fn count_below_an_owning_adaptor_releases_what_it_kept() {
+        let ts = emitted(
+            "pub fn many(tokens: Vec<Token>) -> usize {\n\
+               tokens.into_iter().filter(|t| t.n > 1).count()\n\
+             }",
+        );
+        assert!(
+            ts.contains("countOwned(filterOwned("),
+            "the survivors are released too:\n{}",
+            ts
+        );
+    }
+
+    /// A count over elements nobody owns stays the array's own `length`.
+    #[test]
+    fn count_over_borrowed_elements_is_the_arrays_length() {
+        let ts = emitted("pub fn many(tokens: &Vec<Token>) -> usize { tokens.iter().count() }");
+        assert!(ts.contains(".length"), "nothing to release:\n{}", ts);
+        assert!(!ts.contains("countOwned"), "and no helper:\n{}", ts);
+    }
+}
+
+/// Z6 and Z8: which shapes the iterator rules refuse, and what the report about
+/// untypable elements is a report ABOUT.
+mod what_the_receiver_keeps {
+    use crate::testing::Fixture;
+
+    const TOKEN: &str = "\
+pub struct Token { pub n: u32 }\n\
+impl Drop for Token { fn drop(&mut self) {} }\n\
+";
+
+    fn emitted(rust: &str) -> (String, Vec<String>) {
+        let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", TOKEN, rust))]);
+        let ts = fixture.emitted("lib.rs");
+        (ts, fixture.messages())
+    }
+
+    /// Z6: an ADAPTOR takes the iterator by value whatever it was called on, so
+    /// a bare named iterator is moved into it and the frame stops owning it.
+    /// Refused with the terminal rule's place clause, this was a hole with
+    /// `finally { dropOwned(it); }` beside it.
+    #[test]
+    fn an_owning_adaptor_on_a_named_iterator_is_written() {
+        let (ts, _) = emitted(
+            "pub fn kept(xs: Vec<Token>) -> Vec<Token> {\n\
+               let it = xs.into_iter();\n\
+               it.filter(|t| t.n > 1).collect()\n\
+             }",
+        );
+        assert!(ts.contains("filterOwned(it,"), "the owned helper is written:\n{}", ts);
+        assert!(!ts.contains("unsupported("), "and nothing is refused:\n{}", ts);
+        assert!(!ts.contains("dropOwned(it)"), "and the frame stops owning it:\n{}", ts);
+    }
+
+    /// And the shape T3 found is the by_ref REBORROW, where the caller really
+    /// does keep the rest: that one stays refused.
+    #[test]
+    fn an_owning_adaptor_above_a_reborrow_is_still_refused() {
+        let (ts, messages) = emitted(
+            "pub fn kept(xs: Vec<Token>) -> Vec<Token> {\n\
+               let mut it = xs.into_iter();\n\
+               it.by_ref().filter(|t| t.n > 1).collect()\n\
+             }",
+        );
+        assert!(ts.contains("unsupported("), "the reborrow is a hole:\n{}\n{:?}", ts, messages);
+    }
+
+    /// Z8/AA12: the report speaks of the ELEMENTS, so it is asked of them. A
+    /// walk over BORROWED items has nothing to release whatever the receiver's
+    /// own glue is.
+    #[test]
+    fn a_walk_over_borrowed_items_is_not_reported() {
+        let (_, messages) = emitted(
+            "pub fn found(items: &Vec<Token>) -> Option<&Token> { items.iter().find(|t| t.n > 1) }",
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("drop glue the engine could not name")),
+            "borrowed items owe nothing:\n{:?}",
+            messages
+        );
+    }
+
+    /// And a walk over items the engine really cannot type still is.
+    #[test]
+    fn a_walk_over_untypable_items_is_reported() {
+        let (_, messages) = emitted(
+            "pub fn found<T>(items: Vec<T>) -> Option<T> { items.into_iter().find(|_| true) }",
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("drop glue the engine could not name")),
+            "an unnameable element is still said out loud:\n{:?}",
+            messages
+        );
+    }
+}

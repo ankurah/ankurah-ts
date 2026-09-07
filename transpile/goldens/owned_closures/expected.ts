@@ -67,11 +67,11 @@ export function throughABound(f: Invocable<[number], number>, n: number): number
 }
 
 export function handsAWrappedOne(entity: Entity): number {
-  return throughABound(new OwnedClosure([entity], (n) => n + entity.name.length), 1);
+  return throughABound(new OwnedClosure([entity], (n: number) => checkedAdd(n, entity.name.length, 'usize')), 1);
 }
 
 export function handsAPlainOne(n: number): number {
-  return throughABound((x) => x + 1, n);
+  return throughABound((x) => checkedAdd(x, 1, 'usize'), n);
 }
 
 export function twiceByValue(f: Invocable<[number], number>, n: number): number {

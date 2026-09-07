@@ -141,15 +141,9 @@ impl<'c> Scan<'c> {
         }
     }
 
-    /// Every move written in `stmts`, in source order.
-    pub fn block(&self, stmts: &[syn::Stmt]) -> Vec<Site> {
-        let mut out = Vec::new();
-        self.statements(stmts, Where::Straight, &mut out);
-        out
-    }
-
-    /// The same, with each site tagged by the statement that wrote it, so a
-    /// block can attribute a move to the declaration in scope where it stands.
+    /// Every move written in `stmts`, in source order, each tagged by the
+    /// statement that wrote it, so a block can attribute a move to the
+    /// declaration in scope where it stands.
     pub fn block_indexed(&self, stmts: &[syn::Stmt]) -> Vec<(usize, Site)> {
         let mut out = Vec::new();
         let mut reachable = Where::Straight;

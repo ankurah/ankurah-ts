@@ -367,13 +367,33 @@ impl TypeContext<'_> {
         }
         let (sig, subst) = self.call_sig(call, expected)?;
         let probe = self.probe();
+        // The callee's own bounds, with whatever this call fixed of them
+        // substituted in. They are what says what a CLOSURE at one of these
+        // positions has to be, and the bounds this body carries cannot: the
+        // bound belongs to the callee's generics.
+        let callee_bounds: Vec<(String, crate::ty::TraitRef)> =
+            crate::registry::method::param_bounds_of(&sig.bounds)
+                .into_iter()
+                .map(|(subject, bound)| (subject, bound.substitute(&subst)))
+                .collect();
+        let written: Vec<&syn::Expr> = call.args.iter().collect();
         Some(
             sig.params
                 .iter()
-                .map(|(_, ty)| {
+                .enumerate()
+                .map(|(index, (_, ty))| {
                     let filled = probe.normalize(&ty.substitute(&subst));
-                    (!expected::has_infer(&filled) && open_params(&filled).is_empty())
-                        .then_some(filled)
+                    if !expected::has_infer(&filled) && open_params(&filled).is_empty() {
+                        return Some(filled);
+                    }
+                    // A closure at a parameter the callee bounded by `Fn`
+                    // takes its parameter types from that bound.
+                    expected::callable_bound_for(
+                        self.registry,
+                        written.get(index).copied(),
+                        &filled,
+                        &callee_bounds,
+                    )
                 })
                 .collect(),
         )

@@ -134,6 +134,26 @@ export function iterFindMapOwned<T, U>(
 }
 
 /**
+ * Rust's `into_iter().count()`: how many elements there were, with every one of
+ * them dropped.
+ *
+ * `count` consumes the iterator and pulls it to the end, so each element is
+ * moved out and dropped as the walk passes it — and where an owning adaptor
+ * stands under it, the survivors it kept are dropped too. Written as
+ * `xs.length`, nothing released any of them: `tokens.into_iter().filter(p)
+ * .count()` was `filterOwned([...tokens], p).length`, and every token the
+ * predicate KEPT leaked (T6).
+ *
+ * `slice::len(&self)` is a different method and stays in the reading family: it
+ * borrows, and the sequence is somebody else's.
+ */
+export function countOwned<T>(xs: Seq<T>): number {
+  const many = xs.length;
+  dropFrom(xs, 0);
+  return many;
+}
+
+/**
  * Rust's `into_iter().last()`: the final element, with every earlier one
  * dropped as the walk passes it.
  *
@@ -399,8 +419,16 @@ export class SeqCursor<T> extends AkObject {
     this.#items = Array.from(items);
   }
 
-  /** Rust's `next()`: the element at the cursor, or `None`. */
+  /**
+   * Rust's `next()`: the element at the cursor, or `None`.
+   *
+   * The answer is `T | null`, which is how the port writes every `Option<T>`,
+   * so a cursor whose element type is itself an `Option` cannot tell a `None`
+   * element from exhaustion. No corpus body walks one; a slice that meets one
+   * has to give the cursor a two-answer form before it can.
+   */
   next(): T | null {
+    this.assertNotDropped();
     if (this.#at >= this.#items.length) return null;
     const held = this.#items[this.#at] as T;
     this.#at += 1;
@@ -409,6 +437,7 @@ export class SeqCursor<T> extends AkObject {
 
   /** How many elements the cursor has not handed out. */
   get remaining(): number {
+    this.assertNotDropped();
     return this.#items.length - this.#at;
   }
 
@@ -423,9 +452,29 @@ export class SeqCursor<T> extends AkObject {
    * registry — it holds nothing afterwards, and nobody may touch it again.
    */
   takeRest(): T[] {
+    this.assertNotDropped();
     const rest = this.#items.slice(this.#at);
     this.#at = this.#items.length;
     this.markMoved();
+    return rest;
+  }
+
+  /**
+   * The same elements, taken out of a cursor the caller KEEPS.
+   *
+   * `&mut I` is an `Iterator` by the blanket impl, so a body handed
+   * `values: &mut I` may write `values.collect()` — and Rust drains what the
+   * reference points at and leaves the iterator alive for its owner. Written as
+   * `takeRest()` the cursor was marked moved, and the owner's own `drop()` on
+   * it was then a use after move: fatal, on a program Rust runs.
+   *
+   * So the cursor is emptied and NOT consumed. Dropping it afterwards releases
+   * nothing, because it is holding nothing.
+   */
+  drainRest(): T[] {
+    this.assertNotDropped();
+    const rest = this.#items.slice(this.#at);
+    this.#at = this.#items.length;
     return rest;
   }
 

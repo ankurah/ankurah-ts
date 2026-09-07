@@ -290,7 +290,7 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
     };
 
     out.push_str(&format!("{}{}function {}{}({}): {} {{\n{}}}\n\n",
-        export, async_kw, f.ts_name, f.generics, params, ret, body));
+        export, async_kw, crate::name_map::map_free_fn_name(&f.name), f.generics, params, ret, body));
 }
 
 // ── Method emitters ─────────────────────────────────────────────────────

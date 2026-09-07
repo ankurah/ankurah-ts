@@ -60,6 +60,24 @@ const RESERVED: [&str; 51] = [
     "with", "yield", "as", "of",
 ];
 
+/// Names the PORT itself writes into a body without the source asking for them.
+///
+/// BB1: `unsupported` is the R12 hole's helper. The lowering emits a call to it
+/// wherever it has no answer, so it is the one name in an emitted file the
+/// source did not put there — and a crate that declares its own `unsupported`
+/// SHADOWED it. Base's was not even imported, because the import list is
+/// written from what the emitted text names and the file already had one, so
+/// every hole in that file answered a value instead of throwing, which is the
+/// one thing a hole exists not to do.
+///
+/// Only this one. `Ref` and `spawn` are names `@ankurah/base` exports and the
+/// corpus declares too (`signals/broadcast.rs`, `core/task.rs`), and those are
+/// harmless for the same reason the shadow was harmful: the import is written
+/// from what the text names, so a file that declares one never asks for base's.
+/// The hole is different because the PORT writes the call, and the port cannot
+/// see what the crate called its own functions.
+const WRITTEN_BY_THE_PORT: [&str; 1] = ["unsupported"];
+
 /// The identifier a bound name is written under.
 ///
 /// A Rust identifier can be written `r#type`, which is the name `type` with the
@@ -67,7 +85,7 @@ const RESERVED: [&str; 51] = [
 /// of the name, so it comes off before the word is looked up.
 pub fn escape_reserved(name: &str) -> String {
     let name = name.strip_prefix("r#").unwrap_or(name);
-    if RESERVED.contains(&name) {
+    if RESERVED.contains(&name) || WRITTEN_BY_THE_PORT.contains(&name) {
         format!("{}_", name)
     } else {
         name.to_string()
@@ -106,6 +124,19 @@ pub fn map_fn_name(rust_name: &str) -> String {
     } else {
         to_camel_case(rust_name)
     }
+}
+
+/// The same, for a function that stands at MODULE level.
+///
+/// BB2: a module-level function is a BINDING, and a binding is where JavaScript
+/// refuses a reserved word — `pub fn with(..)` emitted `export function with`,
+/// which TypeScript will not take, while its callers already wrote `with_`, and
+/// `pub fn r#in(..)` emitted `export function r#in`, which no engine parses at
+/// all. A METHOD is not this position: `obj.delete` and a `with` on a class are
+/// legal, and renaming those broke `core/property/backend/yjs.ts`'s `delete`
+/// and every `ThreadLocal::with` in `signals`.
+pub fn map_free_fn_name(rust_name: &str) -> String {
+    escape_reserved(&map_fn_name(rust_name))
 }
 
 /// Map a Rust type name to TS (types stay PascalCase, but some have TS equivalents)

@@ -71,6 +71,19 @@ const OWNED_TERMINALS: &[(&str, &str)] = &[
 /// answer, so they cannot disagree about who releases what. The arity is
 /// checked here exactly as `translate` checks it, because a same-named method
 /// of some other trait with some other arity is not this one.
+/// The terminals that DRAIN the iterator to its end, dropping every element and
+/// leaving nothing in it.
+///
+/// `count` is the one the port writes: it pulls the walk to exhaustion and
+/// answers how many there were. Unlike `find` or `last` it takes no part of the
+/// sequence out and leaves no part of it behind, so a receiver that NAMES an
+/// iterator raises no question — there is nothing left in it afterwards, which
+/// is why this is asked beside the named-iterator refusal rather than through
+/// it.
+pub fn is_draining_terminal(method: &str, arity: usize) -> bool {
+    matches!((method, arity), ("count", 0))
+}
+
 pub fn is_owned_terminal(method: &str, arity: usize) -> bool {
     OWNED_TERMINALS.iter().any(|(rust, _)| *rust == method)
         && OPTION_ADAPTORS.iter().any(|(rust, _, n, _)| *rust == method && *n == arity)
@@ -223,7 +236,15 @@ pub fn translate(
 
         // Aggregation
         "sum" => format!("{}.reduce((a, b) => a + b, 0)", receiver),
-        "count" => format!("{}.length", receiver),
+        // T6: `count` consumes the iterator and pulls it to the end, so every
+        // element is moved out and dropped as the walk passes it — including
+        // the survivors an owning adaptor below it kept.
+        // `tokens.into_iter().filter(p).count()` was
+        // `filterOwned([...tokens], p).length`, which released none of them.
+        "count" => match elements {
+            Elements::Owned => format!("countOwned({})", receiver),
+            Elements::Borrowed => format!("{}.length", receiver),
+        },
 
         // Identity / no-ops in JS array context
         "collect" => receiver.to_string(),

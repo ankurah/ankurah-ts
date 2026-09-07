@@ -78,6 +78,7 @@ export {
   iterFirstOwned,
   iterPositionOwned,
   iterRpositionOwned,
+  countOwned,
   iterLastOwned,
   iterReduceOwned,
   filterOwned,

@@ -1,6 +1,9 @@
 // Runs the emitted hole_by_provenance against the real runtime. What is under
 // test is whether the port can tell its own hole from a user function that
-// happens to be called `unsupported`.
+// happens to be called `unsupported` — and which the port RENAMES, because
+// `unsupported` is the one name it writes into a body without the source asking
+// for it (BB1). Left as it was, the declaration shadowed base's helper and every
+// hole in the file answered a value instead of throwing.
 //
 // `askedMissing()` takes the path the `?` exists for. The parent's engine read
 // the rendered characters — `unsupported('missing')`, which is what a call with
@@ -8,12 +11,12 @@
 // the emitted body ran `checkedAdd(null, 1, 'u32')` on a valid program.
 
 import { expect, test } from 'bun:test';
-import { askedMissing, askedPresent, unsupported } from './input.ts';
+import { askedMissing, askedPresent, unsupported_ } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
 test('the user function is the one that answers', () => {
-  expect(unsupported('anything')).toBe(3);
-  expect(unsupported('missing')).toBe(null);
+  expect(unsupported_('anything')).toBe(3);
+  expect(unsupported_('missing')).toBe(null);
 });
 
 test('the ? hands back the sum where the callee answered a value', () => {

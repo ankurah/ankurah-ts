@@ -23,6 +23,8 @@
 pub mod arm_takes;
 pub mod closures;
 pub mod glue;
+pub mod hoisting;
+pub use hoisting::{hoisted, hoisted_when_refused, wrap};
 pub mod iteration;
 pub mod locals;
 pub mod lowering;
@@ -46,7 +48,11 @@ mod lift_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod shadow_tests;
+#[cfg(test)]
 mod question_tests;
+#[cfg(test)]
+mod range_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
@@ -230,6 +236,17 @@ pub struct Hoist {
     /// refused `top_k`, so `const _b13 = orderBySpill.clone();` stands above a
     /// hole with no transfer below it and nobody to release the clone.
     pub droppable: bool,
+    /// Is this temporary the PAYLOAD of a `?` on an `Option`?
+    ///
+    /// W14: `Option<T>` is `T | null`, so such a `?` writes no wrapper — the
+    /// temporary IS the payload, and it is an arbitrary value that may be a
+    /// plain array, `Map` or `Set` carrying no move mark, which is why S1
+    /// forbids releasing it from the runtime guard a wrapper uses. It is
+    /// released from a flag this frame declares instead, and only where the
+    /// text can LEAVE before it is read: a second `?` in the same statement
+    /// returns with the first one's payload still in hand, and Rust drops that
+    /// temporary on the way out.
+    pub payload: bool,
     /// The flag that says whether the call this temporary was lifted FOR took
     /// it, for a lift that owes a release (N3).
     ///
@@ -239,270 +256,6 @@ pub struct Hoist {
     /// `Selection` had just taken. The flag is declared with the lift, set
     /// immediately above the statement's own text, and read in the wrap.
     pub flag: Option<String>,
-}
-
-/// `body`, with everything lifted out of it declared before it and released
-/// around it.
-///
-/// A hoist's declaration has to stand before the text that names it, and the
-/// value it declared has to be released however that text is left — which is
-/// the same `try`/`finally` a block writes for its own locals, scoped to
-/// whatever asked for the hoist.
-/// The same, for a statement one of whose HOISTS refused.
-///
-/// The `unwrap` that consumes a `?` wrapper stands in the statement's own text,
-/// and on this path that text is never reached: the hole in a later hoist's
-/// declaration throws first. So every temporary the statement lifted is left
-/// with no owner, along with whatever it holds — two Tokens and a Result in the
-/// shape the review found. Each is released however the statement is left, and
-/// each release ASKS the runtime whether the value still has an owner, because
-/// a hoist standing before the refusal may have been consumed by another that
-/// also ran (`f(g()?)?`): `isMoved` and `isDropped` are the runtime's own answer
-/// and are the only honest test the emitter has.
-///
-/// `after` is what the statement owes for the source values it named and did
-/// not consume; it goes in the outermost `finally`, below the temporaries,
-/// which is the order Rust unwinds in.
-pub fn hoisted_when_refused(body: &str, hoists: &[Hoist], after: &str) -> String {
-    let mut inner = body.to_string();
-    for hoist in hoists.iter().rev() {
-        let wrapped = match (&hoist.owned, &hoist.temp) {
-            (Some(owned), _) => wrap(&inner, owned),
-            // The hoist that REFUSED declared nothing that ran: its own
-            // declaration is where the throw stands.
-            (None, Some(temp)) if hoist.flag.is_some() && !hoist.refused => {
-                wrap_flagged(&inner, temp, hoist)
-            }
-            // S1: unguarded. The statement's own text never runs on this path,
-            // so the only thing that can have taken this temporary is another
-            // hoist that ran before the hole — and `statement_that_refused`
-            // has already cleared `temp` where the rendered text says one did.
-            // Asking the VALUE instead was asking something a plain array, a
-            // `Map` or a `Set` cannot answer.
-            (None, Some(temp)) if !hoist.refused => wrap_release(&inner, temp),
-            (None, _) => inner,
-        };
-        inner = format!("{}{}", hoist.declaration, wrapped);
-    }
-    if after.trim().is_empty() {
-        return inner;
-    }
-    format!(
-        "try {{\n{}}} finally {{\n{}}}\n",
-        crate::body::indent(&inner),
-        crate::body::indent(after)
-    )
-}
-
-/// Release `temp` however `body` is left.
-pub fn wrap_release(body: &str, temp: &str) -> String {
-    let release = format!("dropOwned({});\n", temp);
-    if body.trim().is_empty() {
-        return release;
-    }
-    format!(
-        "try {{\n{}}} finally {{\n{}}}\n",
-        crate::body::indent(body),
-        crate::body::indent(&release)
-    )
-}
-
-/// Release `temp` however `body` is left, unless the runtime says somebody else
-/// already owns it or has released it.
-pub fn wrap_guarded(body: &str, temp: &str) -> String {
-    let release = guarded_release(temp);
-    if body.trim().is_empty() {
-        return release;
-    }
-    format!(
-        "try {{\n{}}} finally {{\n{}}}\n",
-        crate::body::indent(body),
-        crate::body::indent(&release)
-    )
-}
-
-/// `dropOwned(x)`, asked of the runtime first.
-///
-/// The cast is load-bearing: a `?` on an `Option<T>` leaves the PAYLOAD in the
-/// temporary, and `T` is whatever the source said — a number has no `isMoved`.
-/// Reading it off an untyped view answers `undefined`, which is "nobody has
-/// taken it", and `dropOwned` lets a primitive go.
-///
-/// R13(a), the LIMIT this form has, stated rather than left to be rediscovered:
-/// `isMoved` is only ever true of a value the runtime marked, and `markMoved`
-/// is protected on `AkObject` — only base's own wrappers call it. A value moved
-/// into a plain array, a `Map`, or a field of a user struct is not marked, and
-/// the port writes `Vec`, `HashMap` and `HashSet` as exactly those. So this
-/// form answers "nobody has taken it" for every such value, and asking it about
-/// one is asking a question it cannot answer. S1 was that: a `Vec<Token>` handed
-/// to a consuming call by an earlier `?` was dropped a second time.
-///
-/// It is therefore kept to the case it was written for — a value the port knows
-/// is one of base's own wrappers, which is the `?`'s `Result` and nothing else.
-/// The two remaining callers that pass an arbitrary value are named where they
-/// stand: `hoisted`'s `released_if_unreached` (N3's lifted argument) and
-/// `hoisted_when_refused`'s `?` temporary on the `Option` side. Both owe the
-/// same move to a lexical flag that `released_after_a_refusal` has already
-/// made; neither has a reproduction on the corpus today.
-pub fn guarded_release(name: &str) -> String {
-    format!(
-        "if ({name} != null && !({name} as any).isMoved && !({name} as any).isDropped) dropOwned({name});\n"
-    )
-}
-
-/// Can the text this wrapper stands over LEAVE before it reads the wrapper?
-///
-/// R0(3): a `?`'s wrapper is consumed by the `unwrap` that stands in the
-/// statement's own text, and that is a complete answer only where the text
-/// reaches the `unwrap`. `Ok((make(a)?, make(b)?))` reaches the first wrapper's
-/// `unwrap` only if the second `?` succeeds; when it returns `Err`, or when the
-/// call three frames down throws, the first wrapper still holds its `Ok`
-/// payload and nobody releases it. Rust drops that temporary on both paths.
-///
-/// So the question is asked of the emitted text, which is the thing that
-/// actually decides it: what runs before the wrapper's first mention is
-/// whatever is textually COMPLETE before it, and the only complete thing in
-/// emitted output that can leave is a call that has already returned or a jump.
-/// A finished call shows a `)`; a `throw` shows itself. `f(g(), _r0.unwrap())`
-/// has `g()` before the mention and needs the release;
-/// `Result.Ok(checkedMul(_r0.unwrap(), 2))` has only two calls still waiting
-/// for their arguments, one of which IS the mention, so nothing has run yet and
-/// no release is written. Neither has `const t = _r0.unwrap();`, which is what
-/// a plain `let x = f()?;` becomes — writing one there wrapped every `?` in the
-/// corpus in a `try`/`finally` that provably does nothing (17,977 emitted
-/// lines, against 936 for this rule).
-///
-/// What this does NOT count is a property read that throws because the value
-/// under it is `undefined`. Rust has no such step: reading a field cannot
-/// panic, so an emitted read that throws is the port already being wrong about
-/// a type, and the release above it would not make that right.
-///
-/// A wrapper the text never mentions is never consumed, so it is released.
-fn may_leave_before_reading(body: &str, temp: &str) -> bool {
-    // W10: as a WHOLE identifier. A bare `find` made `_r1` a prefix of `_r12`,
-    // so the wrapper's own first mention could be somebody else's name.
-    let Some(at) = crate::body::refusal::mentions_at(body, temp) else { return true };
-    let before = &body[..at];
-    before.contains(')') || before.contains("throw")
-}
-
-pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
-    // W1/X1: a lift's flag says "the call this was lifted for took it", and
-    // that is a claim about text the port actually WROTE. Where the call is a
-    // hole — `top_k` in `storage-indexeddb/collection.ts`, which the port
-    // refused — nothing below the lift names the temporary at all, so the flag
-    // is a lie the `finally` believes and the clone is released by nobody.
-    // Asked of the temporary rather than of the hole, because a transfer that
-    // is not written is a transfer that does not happen however the text
-    // failed to be written.
-    let takes = |index: usize| -> bool {
-        let Some(temp) = hoists[index].temp.as_deref() else { return false };
-        let below: String = hoists[index + 1..]
-            .iter()
-            .map(|hoist| hoist.declaration.as_str())
-            .chain(std::iter::once(body))
-            .collect();
-        crate::body::refusal::mentions(&below, temp)
-    };
-    // Every lift that owes a release is consumed by the same call — the one the
-    // statement's own text writes — so all their flags are set in one place,
-    // immediately above that text and below every declaration the statement
-    // lifted. That is where O6 already puts a local's move flag, and for the
-    // same reason: an argument that throws must not leave a flag saying the
-    // callee has the value.
-    let sets: String = hoists
-        .iter()
-        .enumerate()
-        .filter(|(index, hoist)| hoist.flag.is_some() && takes(*index))
-        .filter_map(|(_, hoist)| hoist.flag.as_ref())
-        .map(|flag| format!("{} = true;\n", flag))
-        .collect();
-    let mut inner = format!("{}{}", sets, body);
-    for (index, hoist) in hoists.iter().enumerate().rev() {
-        let wrapped = match (&hoist.owned, &hoist.temp) {
-            (Some(owned), _) => wrap(&inner, owned),
-            (None, Some(temp)) if hoist.flag.is_some() && takes(index) => {
-                wrap_flagged(&inner, temp, hoist)
-            }
-            // W1/X2: nothing below takes it, so the release is unconditional
-            // and the flag — if this lift declared one — is a `let` nothing
-            // assigns, which E15 already strikes for a block's own locals.
-            (None, Some(temp)) if !takes(index) && (hoist.flag.is_some() || hoist.droppable) => {
-                wrap_release(&inner, temp)
-            }
-            (None, Some(temp)) if hoist.wrapper && may_leave_before_reading(&inner, temp) => {
-                wrap_guarded(&inner, temp)
-            }
-            (None, Some(temp)) if hoist.released_if_unreached => wrap_guarded(&inner, temp),
-            (None, _) => inner,
-        };
-        let declaration = match &hoist.flag {
-            Some(flag) if !takes(index) => without_declaration(&hoist.declaration, flag),
-            _ => hoist.declaration.clone(),
-        };
-        // U3: the flag stands immediately above the declaration whose call
-        // performs the transfer, which is below everything the statement
-        // lifted out of itself.
-        inner = format!("{}{}{}", hoist.sets, declaration, wrapped);
-    }
-    inner
-}
-
-/// Release `temp` however `body` is left, unless this frame's flag says the
-/// call it was lifted for took it.
-fn wrap_flagged(body: &str, temp: &str, hoist: &Hoist) -> String {
-    let flag = hoist.flag.as_ref().expect("the caller matched on it");
-    let release = format!("if (!{}) dropOwned({});\n", flag, temp);
-    if body.trim().is_empty() {
-        return release;
-    }
-    format!(
-        "try {{\n{}}} finally {{\n{}}}\n",
-        crate::body::indent(body),
-        crate::body::indent(&release)
-    )
-}
-
-/// Wrap `body` so that `owned` is released however the block is left.
-///
-/// The value's declaration stays outside: a `const` declared inside the `try`
-/// is not in scope in the `finally`, and hoisting it would cost the type
-/// annotation and the `const`.
-pub fn wrap(body: &str, owned: &Owned) -> String {
-    // E15: a flag says "somebody else owns this now", and a body that never
-    // sets it never hands the value away — so the flag is a `let` nothing
-    // assigns and a test that is always false. The disposition analysis reads
-    // the SOURCE, and a move it finds may be one the lowering did not write
-    // (an `if let Some(x) = value` binds a name out of the option without the
-    // emitted arm setting anything). What the block really did is what the
-    // block really wrote, so the flag is dropped where the body does not set
-    // it and the release stands unguarded. Live at
-    // `storage-indexeddb/collection.ts:686` and `core/value/cast_predicate.ts`.
-    let (owned, body) = match &owned.flag {
-        Some(flag) if !sets_the_flag(body, flag) => {
-            (Owned { flag: None, ..owned.clone() }, without_declaration(body, flag))
-        }
-        _ => (owned.clone(), body.to_string()),
-    };
-    let (owned, body) = (&owned, body.as_str());
-    let release = owned.release();
-    if release.is_empty() {
-        return body.to_string();
-    }
-    // K14: a `try` around NOTHING protects nothing. A method whose whole body
-    // is `drop(x)` — `MockLiveQuery::set_last_error` in core's
-    // `client_relay.rs`, and a `_` binding in signals' `broadcast.rs` — came
-    // out as `try { } finally { x.drop(); }`, which is the release and four
-    // lines of ceremony saying it cannot be skipped when there is nothing it
-    // could be skipped by.
-    if body.trim().is_empty() {
-        return release;
-    }
-    format!(
-        "try {{\n{}}} finally {{\n{}}}\n",
-        crate::body::indent(body),
-        crate::body::indent(&release)
-    )
 }
 
 #[cfg(test)]

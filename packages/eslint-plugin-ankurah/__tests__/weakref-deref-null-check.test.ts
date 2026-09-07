@@ -80,6 +80,29 @@ ruleTester.run('weakref-deref-null-check', rule, {
         const n = held.deref().length;
       `,
     },
+    // Z9: the rule has no types to ask, so a class FIELD is evidence only where
+    // the receiver is the instance the class body is about. Asked of the
+    // property NAME alone it walked up to the enclosing class and reported
+    // `other.ref.deref()` for a different object entirely.
+    `
+      class Holder {
+        private ref: WeakRef<Target>;
+        read(other: Other) {
+          return other.ref.deref().name;
+        }
+      }
+    `,
+    // And a chain through another object of this instance's stays unrecognised,
+    // which is the safe direction: a missed WeakRef is a warning nobody gets,
+    // and a wrong one is a warning about code that is right.
+    `
+      class Holder {
+        private ref: WeakRef<Target>;
+        read() {
+          return this.inner.ref.deref().name;
+        }
+      }
+    `,
   ],
   invalid: [
     // Direct property access on deref without null check
@@ -137,6 +160,32 @@ ruleTester.run('weakref-deref-null-check', rule, {
         type Held = WeakRef<Target>;
         const held: Held = made;
         const value = held.deref().name;
+      `,
+      errors: [{ messageId: 'directPropertyAccess' }],
+    },
+    // The field the class really does declare, read through `this` — and
+    // through a local the body assigned `this` to, which is how a closure keeps
+    // hold of the receiver.
+    {
+      code: `
+        class Holder {
+          private ref: WeakRef<Target>;
+          read() {
+            return this.ref.deref().name;
+          }
+        }
+      `,
+      errors: [{ messageId: 'directPropertyAccess' }],
+    },
+    {
+      code: `
+        class Holder {
+          private ref: WeakRef<Target>;
+          read() {
+            const self = this;
+            return self.ref.deref().name;
+          }
+        }
       `,
       errors: [{ messageId: 'directPropertyAccess' }],
     },

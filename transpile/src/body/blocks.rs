@@ -153,7 +153,7 @@ impl BodyTranslator<'_> {
 
         let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
         let previous_pending = std::mem::take(&mut *self.own.pending.borrow_mut());
-        let holes_before = crate::body::holes_written();
+        let open_before = crate::body::holes::holes_in_the_open();
         let text = if is_tail {
             let held;
             let expr = match stmt {
@@ -207,20 +207,17 @@ impl BodyTranslator<'_> {
         // callback ran, took what it takes, and invoked the callback — which
         // is a throw out of a call that already happened, not a statement that
         // never ran. `xs.iter().find_map(|x| … <hole> …)` and a match arm are
-        // both that shape. Reading the global counter alone put every one of
+        // both that shape. Reading the total counter alone put every one of
         // them on the refusal path, where the cleanup releases what the callee
-        // now owns. The rendered text is what says which: an arrow between the
-        // start of the statement and its first hole is the callback.
-        let rendered: String = self
-            .own
-            .prelude
-            .borrow()
-            .iter()
-            .map(|h| h.declaration.clone())
-            .chain(std::iter::once(text.clone()))
-            .collect();
-        let refused = crate::body::holes_written() > holes_before
-            && !hole_stands_inside_a_callable(&rendered);
+        // now owns.
+        //
+        // W3/X6: which of the two it is comes from the LOWERING, which knows
+        // when it is inside a callable's body. Read off the rendered text — an
+        // arrow before the first `unsupported(` — `'=>'.length` in a string
+        // suppressed the cleanup of a statement that had really refused, and an
+        // unrelated closure argument standing beside a hole in the statement's
+        // own evaluation hid it.
+        let refused = crate::body::holes::holes_in_the_open() > open_before;
         let (flags_above, flags) = match refused {
             true => (String::new(), String::new()),
             false => (flags_above, flags),
@@ -456,11 +453,3 @@ mod formatter_tests {
     }
 }
 
-/// Does the first hole in this rendered statement stand inside a callable the
-/// statement passes, rather than in the statement's own evaluation?
-fn hole_stands_inside_a_callable(text: &str) -> bool {
-    match crate::body::hole_at(text) {
-        Some(at) => text[..at].contains("=>"),
-        None => false,
-    }
-}

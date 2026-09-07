@@ -113,7 +113,8 @@ impl BodyTranslator<'_> {
             released_if_unreached: owes_a_release,
             wrapper: false,
             sets: String::new(),
-            droppable,
+            payload: false,
+        droppable,
             flag,
         });
         name

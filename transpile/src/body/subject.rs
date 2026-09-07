@@ -66,6 +66,15 @@ impl<'a> BodyTranslator<'a> {
     pub fn iteration_item(&self, iterated: &syn::Expr) -> Option<crate::ty::Ty> {
         let tc = self.types.as_ref()?;
         let ty = self.iterated_type(iterated)?;
+        // Leg A: a cursor's element is what its own `Iterator` bound writes.
+        // Read through `IntoIterator` instead, the `&mut I` that `by_ref()`
+        // answers — an `Iterator` by the blanket impl — settled to nothing, and
+        // the loop's binding was left untyped and released by nobody.
+        let cursor_item =
+            crate::body::cursors::cursor_of(&tc.borrow().probe(), &ty).and_then(|c| c.item);
+        if cursor_item.is_some() {
+            return cursor_item;
+        }
         // A sequence the engine cannot name the element of leaves the loop
         // variable untyped; the uses of that variable are what report it, so
         // that one gap is counted once per site rather than twice.

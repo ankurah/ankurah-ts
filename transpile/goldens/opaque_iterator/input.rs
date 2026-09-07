@@ -49,6 +49,11 @@ pub fn sum_first<I: IntoIterator<Item = Token>>(values: I, wanted: u32) -> Resul
 /// `walk.collect()` each consume the iterator and see exactly what it has not
 /// handed out. Written without that, the loop iterated a value with no
 /// `Symbol.iterator` and `collect` answered a cursor where an array stood.
+///
+/// The rest a cursor gives up is an ARRAY, so this is the owned-array loop: a
+/// `break` or a `return` out of it releases the elements it never reached, the
+/// way dropping Rust's iterator does. Read as an opaque sequence instead, the
+/// loop carried a report saying the runtime does not write it as an array.
 pub fn rest_of<I: IntoIterator<Item = Token>>(values: I, skip: u32) -> Result<Vec<Token>, Refused> {
     let mut walk = values.into_iter();
     take_some(&mut walk, skip)?;

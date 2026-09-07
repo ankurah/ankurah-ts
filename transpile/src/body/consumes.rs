@@ -161,7 +161,7 @@ impl BodyTranslator<'_> {
     /// elements are left, so that shape is refused where it is translated
     /// rather than answered here.
     pub(crate) fn terminal_owns_the_sequence(&self, call: &syn::ExprMethodCall) -> bool {
-        self.consuming_terminal(call) && !names_an_iterator_place(&call.receiver)
+        self.consuming_terminal(call) && !self.keeps_part_of_an_iterator(&call.receiver)
     }
 
     /// The shape that is neither: a consuming terminal called on a NAMED
@@ -177,7 +177,7 @@ impl BodyTranslator<'_> {
     /// refused (R12) rather than answered wrongly, and the block keeps the
     /// receiver, which is what a hole leaves it holding (J4).
     pub(crate) fn refuses_named_iterator_terminal(&self, call: &syn::ExprMethodCall) -> bool {
-        self.consuming_terminal(call) && names_an_iterator_place(&call.receiver)
+        self.consuming_terminal(call) && self.keeps_part_of_an_iterator(&call.receiver)
     }
 
     /// The same question without the place clause: is this a terminal that
@@ -204,7 +204,27 @@ impl BodyTranslator<'_> {
     /// which of its elements are still the caller's.
     pub(crate) fn adaptor_owns_its_elements(&self, call: &syn::ExprMethodCall) -> bool {
         self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_adaptor)
-            && !names_an_iterator_place(&call.receiver)
+            && !self.a_reborrow_keeps_the_rest(&call.receiver)
+    }
+
+    /// Does an ADAPTOR's receiver leave part of the sequence with the caller?
+    ///
+    /// Z6: only a `by_ref()` REBORROW does. An adaptor takes the iterator BY
+    /// VALUE, whatever it was called on, so `let it = xs.into_iter();
+    /// it.filter(p).map(f).collect()` moves `it` into `filter` and leaves
+    /// nothing in the name — the frame stops owning it, and the port writes
+    /// exactly that. Asked with the terminal rule's own place clause, that
+    /// became a hole with `finally { dropOwned(it); }` beside it, where the
+    /// engine had written `filterOwned(it, ..)` with `it` marked moved.
+    ///
+    /// The terminal rule keeps the wider clause, and rightly: `it.find(q)`
+    /// walks only as far as the answer and Rust leaves the rest in `it`.
+    fn a_reborrow_keeps_the_rest(&self, receiver: &syn::Expr) -> bool {
+        let reborrowed = matches!(
+            receiver,
+            syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty()
+        );
+        reborrowed && self.keeps_part_of_an_iterator(receiver)
     }
 
     /// The same, asked the other way round: is this an owning adaptor the port
@@ -217,7 +237,41 @@ impl BodyTranslator<'_> {
         // less.
         call.method != "next"
             && self.walks_droppable_elements(call, crate::native_types::iterator::is_owned_adaptor)
-            && names_an_iterator_place(&call.receiver)
+            && self.a_reborrow_keeps_the_rest(&call.receiver)
+    }
+
+    /// Does this receiver name an iterator the caller KEEPS part of?
+    ///
+    /// What the rule is about is an iterator the port wrote as the WHOLE array:
+    /// a terminal or an eager adaptor below one of those consumes elements the
+    /// place still holds, and the port cannot say afterwards which of them are
+    /// still the caller's.
+    ///
+    /// A CURSOR by value is not that, however plainly its receiver names a
+    /// local: the port writes the call on `walk.takeRest()`, which takes the
+    /// whole of what the walk has not handed out and leaves the cursor empty
+    /// and marked moved — there is no part left for the caller to keep. Refused
+    /// as though there were, `walk.last()` and `walk.find(p)` were holes on a
+    /// shape the port writes exactly.
+    ///
+    /// A cursor REBORROWED with `by_ref()` is the other way round: the caller
+    /// does keep the rest, and until the port has a borrowed view of a cursor
+    /// the owning shapes above one stay refused.
+    fn keeps_part_of_an_iterator(&self, receiver: &syn::Expr) -> bool {
+        let reborrowed = matches!(
+            receiver,
+            syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty()
+        );
+        if !reborrowed && self.is_a_cursor_by_value(receiver) {
+            return false;
+        }
+        names_an_iterator_place(receiver)
+    }
+
+    /// Is this expression a cursor the port holds by value?
+    fn is_a_cursor_by_value(&self, receiver: &syn::Expr) -> bool {
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(receiver)) else { return false };
+        !matches!(ty, crate::ty::Ty::Ref { .. }) && self.is_an_opaque_iterator(&ty)
     }
 
     /// The three questions both of those ask, in the order they are cheapest.
@@ -253,6 +307,29 @@ impl BodyTranslator<'_> {
 }
 
 impl BodyTranslator<'_> {
+    /// Would `Array(n).fill(v)` put ONE object in every slot?
+    ///
+    /// Rust's `vec![v; n]` clones the value into each, so the answer decides
+    /// whether the port can write the `fill` at all. A number, a string, a
+    /// boolean or a `bigint` has no identity to share and the `fill` IS the
+    /// clone; anything the port writes as a JavaScript reference is a different
+    /// program with one object in n slots.
+    ///
+    /// The SLOT's own type answers, where the position names one: that is what
+    /// every copy holds. The value's resolved type answers where it does not —
+    /// and a value the engine can type neither way is not called shared,
+    /// because nothing says it is a reference.
+    pub(crate) fn shares_one_object(
+        &self,
+        value: &syn::Expr,
+        element: Option<&crate::ty::Ty>,
+    ) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let resolved = self.quietly(|| self.resolve_expr_type(value)).ok();
+        let Some(ty) = element.or(resolved.as_ref()) else { return false };
+        crate::name_map::shape::writes_by_reference(tc.borrow().registry, ty)
+    }
+
     /// Whether a call's lowering owns the elements of the sequence it walks —
     /// the same question `terminal_owns_the_sequence` answers, in the shape the
     /// lowering takes it.
@@ -261,7 +338,15 @@ impl BodyTranslator<'_> {
         call: &syn::ExprMethodCall,
     ) -> crate::native_types::iterator::Elements {
         use crate::native_types::iterator::Elements;
-        let owned = self.terminal_owns_the_sequence(call) || self.adaptor_owns_its_elements(call);
+        let owned = self.terminal_owns_the_sequence(call)
+            || self.adaptor_owns_its_elements(call)
+            // T6: a terminal that DRAINS the whole sequence owns every element
+            // in it, whatever its receiver names, because it leaves nothing
+            // behind for the receiver to still hold.
+            || self.walks_droppable_elements(
+                call,
+                crate::native_types::iterator::is_draining_terminal,
+            );
         // T5: "not droppable" and "the engine cannot say" are two different
         // answers, and only one of them is a reason to write the reading
         // helper. `views.into_iter().next()` on an `R: View + Clone` takes
@@ -302,7 +387,23 @@ impl BodyTranslator<'_> {
         let receiver_ty = found.as_ref().ok().map(|f| f.receiver_type().clone());
         tc.sink.rewind(mark);
         let Some(ty) = receiver_ty else { return false };
-        matches!(crate::ownership::drops_of(&tc.probe(), &ty), crate::ownership::Drops::Unknown)
+        // Z8/AA12: of the ELEMENTS, which is what the report speaks of. Asked
+        // of the RECEIVER, three of ten sites were false alarms — `.iter()
+        // .find(..)` over `&Entity`, and two `impl Iterator<Item = (EntityId,
+        // &E)>` — where the receiver's own glue is unknown and the items are
+        // borrowed, so there is nothing for the walk to release either way.
+        let probe = tc.probe();
+        let Some(item) = tc.iteration_item(&ty).or_else(|| probe.written_as_sequence(&ty)) else {
+            return matches!(
+                crate::ownership::drops_of(&probe, &ty),
+                crate::ownership::Drops::Unknown
+            );
+        };
+        let item = match item {
+            crate::ty::Ty::Slice(elem) => *elem,
+            other => other,
+        };
+        matches!(crate::ownership::drops_of(&probe, &item), crate::ownership::Drops::Unknown)
     }
 
     /// Did this terminal take its CALLBACK by value, so that it is what

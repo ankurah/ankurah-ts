@@ -476,14 +476,23 @@ So the conversion travels as a value the caller supplies: dictionary passing.
 - **Who fills it in.** A caller whose own parameter stands at that position, and
   which carries the same bound, hands its own dictionary over. A caller that
   instantiated the parameter with a concrete type writes the conversion the impl
-  table gives for that type, wrapped as the `Result` the bound answers. A caller
-  that can name neither is REFUSED: an emitted call missing the conversion its
-  callee reads would be a `TypeError` three frames down, where nothing says what
-  went wrong.
+  table gives for that type: the corpus's own `TryFrom` for that pair where
+  there is one, whose emitted static already answers the `Result` the bound
+  reads, and otherwise a `From`, whose answer is wrapped to be that `Result`.
+  The `TryFrom` is looked for first, and the two cannot both be written for one
+  pair — `impl<T, U: Into<T>> TryFrom<U> for T` in the standard library makes a
+  second one incoherent. A caller that can name neither is REFUSED: an emitted
+  call missing the conversion its callee reads would be a `TypeError` three
+  frames down, where nothing says what went wrong.
 - **How the parameter is matched.** The callee's own type parameters are renamed
   apart, then unified against the written arguments — first as written, so a
   parameter standing for `&'static str` reaches the impl written for it, then
-  with both sides peeled, because emission erases a reference. A parameter named
+  with both sides peeled, because emission erases a reference. An argument the
+  engine cannot type binds nothing and HOLDS ITS OWN INDEX: dropped from the
+  list instead, every argument after it matched the parameter before its own,
+  and `pair(<a block the engine cannot type>, 7u32)` was handed the conversion
+  for `u32` at the FIRST parameter — a wrong dictionary at run time, silently.
+  A parameter nothing binds is refused where it is read. A parameter named
   only by a binding on another's bound (`I: Iterator<Item = V>`) is read off
   that other one: from the CALLER's own bound where the argument is one of the
   caller's parameters, and through the impl table where it is concrete. A
@@ -519,6 +528,86 @@ So the conversion travels as a value the caller supplies: dictionary passing.
 - **Ownership.** The synthetic parameter is borrowed by the callee and released
   by nobody: it carries no `rust_ty`, which is what keeps it out of the typed,
   owned and cell walks, and `port/ownership.md` says the same.
+
+### 4.4c An opaque iterator is a cursor
+
+For: the port writes an iterator as the array it walks, which is right for every
+chain it can see through — `xs.iter().filter(p).count()` has no iterator left in
+it once it is rewritten as array operations. It is wrong for the one shape an
+array cannot express: a generic body that takes `I: Iterator<Item = V>` and
+calls `next()` by hand. `Iterator::next` moves ONE element out and leaves the
+rest where it was, and an array has nowhere to record how far the walk has got,
+so `next` there was a hole and `ankql`'s `Predicate::populate` — which pulls one
+value per placeholder and then asks whether anything is left over — could not
+run at all.
+
+So such a value is held as a `SeqCursor<V>`: the runtime class that remembers
+the position, hands out one element at a time, and releases on `drop()`
+everything the walk never reached.
+
+- **Which values.** Two shapes and no others, because the port BUILDS a cursor
+  in exactly one place — `into_iter()` on a bounded type parameter — and every
+  other decision is that fact read back. A bare type parameter bounded by
+  `Iterator` and NOT by `IntoIterator`; and the unnormalised projection
+  `<I as IntoIterator>::IntoIter` that such an `into_iter()` answers, where the
+  projection carries an `Iterator` bound. A projection an impl SETTLES is a
+  concrete iterator the port writes as the array it is, and an associated type
+  that merely shares the name `IntoIter` walks nothing:
+  `trait Factory { type IntoIter: Measure; }` came out
+  `f.make().takeRest().amount()`, a method that value has not got. A parameter
+  bounded by `IntoIterator` is the caller's own SEQUENCE, written `Iterable<V>`
+  and spread; it becomes a cursor at the `into_iter()` inside the body.
+- **One question, four readers.** How a signature spells the parameter
+  (`SeqCursor<V>` where the item can be named where the signature is written,
+  and the plain mapping where it cannot); what a call site builds when it hands
+  a value over; what the emitter writes on a receiver of that type; and what the
+  scope releases. Asked four ways they disagreed, and each disagreement was a
+  `TypeError` or a leak: a projection the ownership walk called a cursor and the
+  emitter did not got a `finally { it.drop(); }` on a value nothing had wrapped.
+- **At a call boundary.** A caller whose own value is already a cursor hands it
+  over as it stands. A caller with a concrete sequence WRAPS it —
+  `new SeqCursor([...tokens])`, and `new SeqCursor(x)` where the port already
+  wrote `x` as a fresh array, because a cursor owns what it walks. Which
+  parameters want one is read off the CALLEE's own bounds: the substituted
+  parameter types the expectation machinery hands out drop everything still
+  open, and a cursor parameter is exactly an open one. A value the engine cannot
+  type at such a position is reported, not guessed at.
+- **What a cursor is asked.** `next` is asked of the cursor itself. Every other
+  method of `Iterator` consumes the iterator and sees exactly the elements it
+  has not yet handed out, which is what `takeRest()` answers: the tail, taken
+  OUT of the cursor, so that dropping the cursor afterwards releases nothing
+  twice. From that point the value is an ARRAY, and the array's own table is
+  what writes the call — including which of its helpers releases the elements a
+  terminal or an eager adaptor walks past. Dispatched on the unmodified type
+  parameter instead, `walk.takeRest().last()` and `.skip(1)` named methods no
+  array declares.
+- **A reborrow is not a consumption.** `Iterator::by_ref(&mut self) -> &mut Self`
+  hands back a reference, and the port has none, so the borrowed view IS the
+  cursor and `by_ref()` is written as the identity. What the chain above it sees
+  is therefore the cursor PLACE. And `&mut I` is itself an `Iterator` by the
+  blanket impl, so a body handed one may run the whole of `Iterator` on it:
+  there the rest is given up with `drainRest()`, which empties the cursor
+  without marking it moved, because Rust leaves the iterator alive for its
+  owner. Written as `takeRest()` the owner's own `drop()` was a use after move,
+  and a `for` loop over a `by_ref()` asked the question twice and wrote
+  `walk.takeRest().takeRest()`.
+- **And what a cursor is not.** The refusal that guards an iterator the caller
+  keeps PART of does not reach a cursor taken by value: `takeRest()` has already
+  taken the whole of what the walk had not handed out, and left the cursor empty
+  and marked moved, so there is no part left for the caller to keep. It does
+  reach a cursor reborrowed with `by_ref()`, where the caller keeps the rest and
+  the port has no borrowed view of a cursor to write: an owning adaptor or
+  terminal there stays a hole.
+- **A loop over a cursor's rest is the owned-ARRAY loop**, because the rest IS
+  an array: what a `break` or a `return` leaves behind is released, the way
+  dropping Rust's own iterator releases it, and the element type comes from the
+  cursor's `Iterator` bound rather than from a projection through `IntoIterator`
+  that a `&mut I` settles to nothing.
+- **Ownership.** A by-value cursor parameter is the body's, exactly as any other
+  by-value parameter is, and Rust drops it at the end of the body: what the walk
+  never reached goes with it. Read off the unmodified Rust type — a bare type
+  parameter, whose glue is unknown — such a parameter owned nothing, and the
+  cursor and every element still in it leaked. `port/ownership.md` says the same.
 
 ### 4.5 Closures
 

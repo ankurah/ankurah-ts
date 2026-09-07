@@ -392,7 +392,10 @@ impl<'a> BodyTranslator<'a> {
                             bind_eager: &bind_eager,
                             bind_closure: &bind_closure,
                         };
-                        let shape = calls::receiver_shape(&tc_ref, found.receiver_type());
+                        drop(tc_ref);
+                        let shape =
+                            self.receiver_shape_of(call, &rust_method, found.receiver_type());
+                        let tc_ref = tc.borrow();
                         let translated = native_types::translate_method_using(
                             tc_ref.registry,
                             &shape,
@@ -463,45 +466,7 @@ impl<'a> BodyTranslator<'a> {
                 // .await(8)` came out `await getFunction()(8)`, which calls the
                 // promise.
                 let func = parenthesise_receiver(&call.func, func);
-                // What the callee declares each argument to be, with the
-                // position the call stands in used to close whatever the
-                // signature left open. This is what types the closure in
-                // `Box::new(move |level| ..)`, whose parameter the signature
-                // alone says nothing about.
-                let want = match &self.types {
-                    Some(tc) => {
-                        self.quietly(|| tc.borrow().call_argument_types(call, expected.as_ref()))
-                    }
-                    None => Vec::new(),
-                };
-                let args: Vec<String> = call
-                    .args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, a)| {
-                        // C1: a `&mut T` parameter IS the reference, so handing
-                        // it to another one reborrows — Rust needs no `&mut` to
-                        // say so — and the CELL goes over. `.value` would hand
-                        // the callee a copy of the string, which is the defect
-                        // this is all about.
-                        if self.names_a_cell_param(a) {
-                            return Self::path_static(match a {
-                                syn::Expr::Path(path) => &path.path,
-                                _ => unreachable!("names_a_cell_param answered for a path"),
-                            });
-                        }
-                        // D11: a `&mut T` whose `T` the port writes as a VALUE
-                        // is a cell, and only a LOCAL is held in one.
-                        if let Some(hole) =
-                            self.cell_argument_gap(a, want.get(index).and_then(|t| t.as_ref()))
-                        {
-                            return hole;
-                        }
-                        self.expecting(a, want.get(index).and_then(|t| t.as_ref()), || {
-                            self.moved_value(a)
-                        })
-                    })
-                    .collect();
+                let args = self.call_arguments(call, expected.as_ref());
                 // Spec 4.4b: a free or associated function bounded by a
                 // conversion trait with a concrete target reads that conversion
                 // out of a trailing parameter.
@@ -1119,8 +1084,8 @@ impl<'a> BodyTranslator<'a> {
 
 }
 
-mod holes;
-pub use holes::{hole_at, hole_text, holds_a_hole, holes_written, lowered_a_hole, value_is_a_hole};
+pub(crate) mod holes;
+pub use holes::{hole_text, holds_a_hole, holes_written, lowered_a_hole, value_is_a_hole};
 mod consumes;
 mod defaults;
 #[cfg(test)]
@@ -1148,6 +1113,8 @@ pub(crate) mod calls;
 
 /// Methods the body translator answers before the native-type dispatch.
 pub(crate) mod cursors;
+#[cfg(test)]
+mod cursors_tests;
 mod pre_dispatch;
 
 /// Reading a field, and the places a value moves out of.

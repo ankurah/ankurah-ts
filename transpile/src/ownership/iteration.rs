@@ -74,6 +74,14 @@ pub fn iterate(probe: &Probe, sequence: Option<&Ty>, item: Option<&Ty>) -> Itera
 
 /// Is this a sequence the runtime writes as a JavaScript array?
 fn is_array(probe: &Probe, ty: &Ty) -> bool {
+    // Leg A: a cursor hands its rest over as an array — `walk.takeRest()` by
+    // value, `walk.drainRest()` through a reborrow — so the loop below one is
+    // the owned-ARRAY loop, which releases what a `break` or a `return` left.
+    // Read as an opaque sequence instead, every such loop carried the report
+    // that the runtime does not write it as an array, which is not true of it.
+    if crate::body::cursors::cursor_of(probe, ty).is_some() {
+        return true;
+    }
     match ty {
         Ty::Array { .. } | Ty::Slice(_) => true,
         Ty::Ref { .. } => false,

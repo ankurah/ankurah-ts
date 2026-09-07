@@ -42,11 +42,7 @@ impl<'a> BodyTranslator<'a> {
             if name == self.self_name { "this".to_string() } else { name.to_string() }
         };
         let names: Vec<String> = params.iter().map(|(name, _)| scan_name(name)).collect();
-        let scan = ownership::Scan::new(self);
-        // Every site in the body stands after the parameter list, so the
-        // parameters are the declaration each one is attributed to.
-        let sites = scan.block(&block.stmts).into_iter().map(|site| (1, site));
-        let dispositions = ownership::Dispositions::build(&[(0, names)], sites.collect());
+        let dispositions = self.what_the_body_did_with(&names, &block.stmts);
         let mut owned = Vec::new();
         for (name, ty) in params {
             self.own.by_value_params.borrow_mut().insert(name.clone());
@@ -74,6 +70,35 @@ impl<'a> BodyTranslator<'a> {
             });
         }
         owned
+    }
+
+    /// What a body did with each of a set of names DECLARED ABOVE IT — a
+    /// function's parameters, a closure's, or the names an arm's pattern bound.
+    ///
+    /// The body's own top-level `let`s are declarations too, so a name one of
+    /// them SHADOWS stops being the outer one from that statement on.
+    /// Attributed to the outer name whatever stood above them,
+    /// `|token| { let token = ..; drop(token); 1 }` read the SHADOW's move as
+    /// the parameter's, and the parameter was released by nobody; a `let` that
+    /// shadows an arm's binding and is then returned did the same to the
+    /// binding.
+    pub(crate) fn what_the_body_did_with(
+        &self,
+        names: &[String],
+        body: &[syn::Stmt],
+    ) -> ownership::Dispositions {
+        let scan = ownership::Scan::new(self);
+        // Every site is shifted one statement down, so that the names declared
+        // above the body count as standing before the first statement of it.
+        let sites: Vec<(usize, ownership::moves::Site)> =
+            scan.block_indexed(body).into_iter().map(|(at, site)| (at + 1, site)).collect();
+        let mut declarations: Vec<(usize, Vec<String>)> = vec![(0, names.to_vec())];
+        for (index, stmt) in body.iter().enumerate() {
+            if let syn::Stmt::Local(local) = stmt {
+                declarations.push((index + 1, crate::body::pattern_names(&local.pat)));
+            }
+        }
+        ownership::Dispositions::build(&declarations, sites)
     }
 
     /// Does a value of this type, taken BY VALUE, owe a release?

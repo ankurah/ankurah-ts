@@ -52,7 +52,7 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
                 // expected type here" and stood as the value it was, so the
                 // vector held a boolean and a number where `Expr`s were
                 // declared (`ankql`'s `test_populate_mixed_types`).
-                let element = want.as_ref().and_then(|want| t.element_of(want));
+                let element = want.as_ref().and_then(|want| t.array_element_of(want));
                 let translated: Vec<String> = args
                     .iter()
                     .map(|e| t.expecting(e, element.as_ref(), || t.moved_value(e)))
@@ -481,7 +481,13 @@ fn repeated(
     let (value, count) = text.split_once(';')?;
     let value: syn::Expr = syn::parse_str(value.trim()).ok()?;
     let count: syn::Expr = syn::parse_str(count.trim()).ok()?;
-    let element = t.moved_value(&value);
+    // AA11: the repeated value stands at the sequence's ELEMENT type, exactly
+    // as each value of the comma-list form does. Written without it,
+    // `vec![true.into(); 2]` under a `Vec<Held>` lost the conversion and put
+    // two `true`s in the array.
+    let element_type =
+        want.and_then(|w| crate::infer::expected::element_of(t.registry()?, w));
+    let element = t.expecting(&value, element_type.as_ref(), || t.moved_value(&value));
     let n = t.expr(&count);
     let bytes = matches!(&value, syn::Expr::Lit(l) if matches!(&l.lit, syn::Lit::Int(_)))
         && want.is_some_and(|w| t.expects_bytes(w));
@@ -493,12 +499,25 @@ fn repeated(
             format!("new Uint8Array({}).fill({})", n, element)
         });
     }
-    if !matches!(&value, syn::Expr::Lit(_) | syn::Expr::Path(_)) {
+    // Rust CLONES the value into every slot; `Array(n).fill(v)` puts the same
+    // one in each. Where the port writes the element as a JavaScript reference
+    // those are different programs — one object with n names, against n objects
+    // — so the shape is a hole rather than emitted code (R12). It was reported
+    // and written anyway, which is exactly what a hole exists to stop. A number,
+    // a string, a boolean or a `bigint` has no identity to share, and `fill` is
+    // the clone.
+    if t.shares_one_object(&value, element_type.as_ref()) {
         t.fallback(
             at,
-            "this `vec![v; n]` repeats a value the port would share rather than clone, \
-             so the copies would be one object",
+            "this `vec![v; n]` repeats a value the port writes as a reference, and Rust clones \
+             it into every slot; the port has no spelling for evaluate-once-then-clone, so the \
+             shape is refused rather than written as one object in all of them",
         );
+        return Some(crate::body::hole_text(
+            "this `vec![v; n]` repeats a value the port writes as a reference, and Rust clones \
+             it into every slot; `fill` would put ONE object in all of them, and the port has no \
+             spelling for evaluate-once-then-clone",
+        ));
     }
     Some(format!("Array({}).fill({})", n, element))
 }

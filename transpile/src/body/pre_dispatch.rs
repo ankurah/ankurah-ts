@@ -29,7 +29,8 @@ impl<'a> BodyTranslator<'a> {
         // declared.
         let held;
         let receiver = match rust_method {
-            "next" => receiver,
+            // `next` is asked of the cursor itself, and `by_ref` IS the cursor.
+            "next" | "by_ref" => receiver,
             _ => {
                 held = self.cursor_gives_up_its_rest(&call.receiver, receiver.to_string());
                 held.as_str()
@@ -44,6 +45,11 @@ impl<'a> BodyTranslator<'a> {
         // Leg A: an opaque iterator is a cursor, and `next` is the one method
         // the whole-sequence form cannot answer.
         if let Some(written) = self.cursor_next(call, rust_method, receiver) {
+            return Some(written);
+        }
+        // And a borrowed VIEW of a cursor is the cursor: the chain above it
+        // names the place, which is what keeps an owning shape there refused.
+        if let Some(written) = self.cursor_by_ref(call, rust_method, receiver) {
             return Some(written);
         }
         if let Some(written) = self.range_contains(call, args) {
@@ -83,18 +89,18 @@ impl<'a> BodyTranslator<'a> {
     fn range_contains(&self, call: &syn::ExprMethodCall, args: &[String]) -> Option<String> {
         let range = self.range_of_contains(call)?;
         let item = args.first()?;
+        // AA9: a bound the expression BUILDS is a temporary Rust drops with the
+        // range, so it is given a name of its own and released around the
+        // statement. In Rust's order — start, then end — because that is the
+        // order the range builds them in, and one of them may throw.
         let bound = |e: Option<&Box<syn::Expr>>| match e {
-            Some(e) => self.expr_value(e),
+            Some(e) => self.hoist_produced(e, self.expr_value(e)),
             None => "null".to_string(),
         };
+        let start = bound(range.start.as_ref());
+        let end = bound(range.end.as_ref());
         let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
-        Some(format!(
-            "rangeContains({}, {}, {}, {})",
-            bound(range.start.as_ref()),
-            bound(range.end.as_ref()),
-            inclusive,
-            item
-        ))
+        Some(format!("rangeContains({}, {}, {}, {})", start, end, inclusive, item))
     }
 
     /// Is this `range.contains(&x)`, and on which range? Asked by the lowering
@@ -196,6 +202,10 @@ impl<'a> BodyTranslator<'a> {
         rust_method: &str,
     ) -> Vec<String> {
         let want = self.argument_types(call);
+        // Leg A: which of those parameters the callee WALKS, read off its own
+        // bounds rather than off the substituted types above, which drop
+        // everything still open — and a cursor parameter is exactly an open one.
+        let walked = self.cursor_arguments(call);
         let invoked = self.own.argument_is_invoked.replace(
             crate::native_types::nullable::invokes_a_closure_argument(rust_method),
         );
@@ -216,7 +226,8 @@ impl<'a> BodyTranslator<'a> {
                         _ => unreachable!("names_a_cell answered for a path"),
                     });
                 }
-                self.expecting(a, wants, || self.moved_value(a))
+                let written = self.expecting(a, wants, || self.moved_value(a));
+                self.adapted_to_a_cursor(a, walked.get(index).copied().unwrap_or(false), written)
             })
             .collect();
         self.own.argument_is_invoked.set(invoked);
@@ -224,6 +235,56 @@ impl<'a> BodyTranslator<'a> {
         // evaluates, whatever the call's shape.
         let each = Self::each_argument(&call.args);
         self.lifted_above_the_flag(&syn::Expr::MethodCall(call.clone()), &each, args)
+    }
+
+    /// A free or associated call's arguments, translated for the types the
+    /// callee declares them to be — the sibling of `method_arguments`, and
+    /// written beside it rather than inside the expression walk.
+    ///
+    /// The callee's signature is what says what each argument has to be, with
+    /// the position the CALL stands in used to close whatever the signature
+    /// left open: that is what types the closure in `Box::new(move |level|
+    /// ..)`, whose parameter the signature alone says nothing about.
+    pub(crate) fn call_arguments(
+        &self,
+        call: &syn::ExprCall,
+        expected: Option<&crate::ty::Ty>,
+    ) -> Vec<String> {
+        let want = match &self.types {
+            Some(tc) => self.quietly(|| tc.borrow().call_argument_types(call, expected)),
+            None => Vec::new(),
+        };
+        // Leg A: which of those parameters the callee WALKS one element at a
+        // time, read off its own bounds rather than off the substituted types
+        // above, which drop everything still open — and a cursor parameter is
+        // exactly an open one.
+        let walked = self.cursor_parameters_of_call(call, expected);
+        let args: Vec<String> = call
+            .args
+            .iter()
+            .enumerate()
+            .map(|(index, a)| {
+                // C1: a `&mut T` parameter IS the reference, so handing it to
+                // another one reborrows — Rust needs no `&mut` to say so — and
+                // the CELL goes over. `.value` would hand the callee a copy of
+                // the string, which is the defect this is all about.
+                if self.names_a_cell_param(a) {
+                    return Self::path_static(match a {
+                        syn::Expr::Path(path) => &path.path,
+                        _ => unreachable!("names_a_cell_param answered for a path"),
+                    });
+                }
+                // D11: a `&mut T` whose `T` the port writes as a VALUE is a
+                // cell, and only a LOCAL is held in one.
+                let wants = want.get(index).and_then(|t| t.as_ref());
+                if let Some(hole) = self.cell_argument_gap(a, wants) {
+                    return hole;
+                }
+                let written = self.expecting(a, wants, || self.moved_value(a));
+                self.adapted_to_a_cursor(a, walked.get(index).copied().unwrap_or(false), written)
+            })
+            .collect();
+        args
     }
 
     /// `unwrap_or` and `unwrap_or_else` on a value the port writes as a

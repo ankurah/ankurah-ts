@@ -6,7 +6,7 @@
 //! means adding a runtime helper is a one-line edit to a list, not a line added
 //! to a file that is already long.
 
-pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 124] = [
+pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 125] = [
     // Rust's two byte-to-text answers: the fatal decode every reader goes
     // through, and the lossy one `String::from_utf8_lossy` asks for.
     "decodeUtf8Lossy",
@@ -62,6 +62,7 @@ pub(crate) const BASE_RUNTIME_SYMBOLS: [&str; 124] = [
     // F1: the same terminals over a sequence the expression OWNS, which release
     // every element they do not hand back.
     "iterPositionOwned", "iterRpositionOwned", "iterFindOwned", "iterFindMapOwned",
+    "countOwned",
     "iterLastOwned", "iterMaxByOwned", "iterMinByOwned", "iterMaxByKeyOwned",
     "iterMinByKeyOwned", "iterReduceOwned", "iterFirstOwned",
     // O3/O4: the eager adaptors that DISCARD elements, over a sequence the

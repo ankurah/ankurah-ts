@@ -7,6 +7,7 @@
 //! about the shape of the Rust that reached it.
 
 use super::BodyTranslator;
+use crate::name_map;
 
 /// Where an expression sits in the file, as the two ends of its span. Two
 /// expressions are the same one when they start and end in the same place,
@@ -22,19 +23,19 @@ pub fn span_position(span: proc_macro2::Span) -> Position {
     ((start.line, start.column), (end.line, end.column))
 }
 
-// ── Public entry points ─────────────────────────────────────────────────
+/// One expression, translated with no body around it: what `match_expr` and
+/// `control_flow` ask for when they need the text of a subexpression.
 pub fn translate_expr(expr: &syn::Expr) -> String {
     BodyTranslator::new("Self").expr(expr)
 }
 
-/// Translate a pattern (used by match_expr, control_flow modules)
+/// One pattern, the same way.
 pub fn translate_pat(pat: &syn::Pat) -> String {
     BodyTranslator::pat_static(pat)
 }
 
-
-
-
+/// Every line of `s` moved in by two spaces, with a blank line left blank and a
+/// trailing newline kept.
 pub fn indent(s: &str) -> String {
     s.lines()
         .map(|line| if line.is_empty() { String::new() } else { format!("  {}", line) })
@@ -42,9 +43,6 @@ pub fn indent(s: &str) -> String {
         .join("\n")
         + if s.ends_with('\n') { "\n" } else { "" }
 }
-
-
-use crate::name_map;
 
 /// The BASE of a postfix expression, parenthesised where JavaScript would read
 /// it differently from Rust.

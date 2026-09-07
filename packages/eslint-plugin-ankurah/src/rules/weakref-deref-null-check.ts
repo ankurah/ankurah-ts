@@ -138,15 +138,44 @@ interface Scope {
  */
 function namesAWeakRef(receiver: TSESTree.Node, context: RuleContext): boolean {
   if (buildsAWeakRef(receiver, context)) return true;
-  // `this.ref.deref()` and `holder.ref.deref()`: the evidence is the class
-  // field's own annotation, which is written where the class is.
+  // `this.ref.deref()`: the evidence is the class field's own annotation, which
+  // is written where the class is.
+  //
+  // Z9: only where the receiver's object is `this`. Asked of the property NAME
+  // alone, the rule walked up to the enclosing class and reported
+  // `other.ref.deref().name` for ANY `other` — a different object entirely —
+  // as soon as the class around it happened to declare a `ref: WeakRef<T>` of
+  // its own. A chain through another object (`this.inner.ref.deref()`) stays
+  // unrecognised, which is the safe direction for a rule with no types to ask:
+  // a missed `WeakRef` is a warning nobody gets, and a wrong one is a warning
+  // about code that is right.
   if (receiver.type === AST_NODE_TYPES.MemberExpression) {
     const key = receiver.property;
     if (key.type !== AST_NODE_TYPES.Identifier || receiver.computed) return false;
+    if (!readsThis(receiver.object, context)) return false;
     return fieldIsAWeakRef(receiver, key.name, context);
   }
   if (receiver.type !== AST_NODE_TYPES.Identifier) return false;
   return definitionsOf(receiver, context).some((node) => declaresAWeakRef(node, context));
+}
+
+/**
+ * Does this expression name the instance the class body is about?
+ *
+ * `this` does, and so does a local the body assigned it to — `const self =
+ * this;` is how a closure keeps hold of the receiver, and the field read
+ * through it is the same field.
+ */
+function readsThis(object: TSESTree.Node, context: RuleContext): boolean {
+  if (object.type === AST_NODE_TYPES.ThisExpression) return true;
+  if (object.type !== AST_NODE_TYPES.Identifier) return false;
+  return definitionsOf(object, context).some((node) => {
+    const declared = node.parent;
+    return (
+      declared?.type === AST_NODE_TYPES.VariableDeclarator
+      && declared.init?.type === AST_NODE_TYPES.ThisExpression
+    );
+  });
 }
 
 /** The declarations a name resolves to, innermost scope first. */

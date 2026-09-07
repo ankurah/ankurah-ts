@@ -121,6 +121,15 @@ impl<'a> BodyTranslator<'a> {
         if self.lowering_takes_the_whole_sequence(call) {
             return written;
         }
+        // AA9: a range that is the receiver of `contains` is never
+        // materialised, so `written` is the EMPTY STRING and there is nothing
+        // to give a name to. Hoisted anyway — the range's own type cascades
+        // into bounds with drop glue — it wrote `const _t0 = ;`, which a
+        // JavaScript engine will not parse. What the bounds owe is written
+        // where the bounds are, in `range_contains`.
+        if self.contains_on_a_range(call) {
+            return written;
+        }
         self.hoist_produced(&call.receiver, written)
     }
 
@@ -176,7 +185,8 @@ impl<'a> BodyTranslator<'a> {
             released_if_unreached: false,
             wrapper: false,
             sets: String::new(),
-            droppable: false,
+            payload: false,
+        droppable: false,
             flag: None,
         });
         name
@@ -201,7 +211,8 @@ impl<'a> BodyTranslator<'a> {
             released_if_unreached: false,
             wrapper: false,
             sets: String::new(),
-            droppable: false,
+            payload: false,
+        droppable: false,
             flag: None,
         });
         name

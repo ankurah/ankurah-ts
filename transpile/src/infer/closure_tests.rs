@@ -191,3 +191,45 @@ fn a_tuple_closure_parameter_types_each_name_it_binds() {
         f.messages()
     );
 }
+
+/// BB3: at a CALL, the bound that says what a closure has to be belongs to the
+/// CALLEE's generics — and `F` is still an open parameter there, which is
+/// exactly what the substituted parameter types drop. So the closure was typed
+/// by nothing: its parameter had no type, and what that parameter held was
+/// released by nobody.
+#[test]
+fn a_closure_argument_takes_its_parameters_from_the_callees_bound() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: i64 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn apply<F>(t: Token, f: F) -> i64 where F: Fn(Token) -> i64 { f(t) }\n\
+         pub fn used() -> i64 { apply(Token { n: 1 }, |held| held.n) }",
+    )]);
+    let ts = fixture.emitted("lib.rs");
+    assert!(
+        ts.contains("held.drop()"),
+        "the closure's parameter is typed, so what it holds is released:\n{}\n{:?}",
+        ts,
+        fixture.messages()
+    );
+    assert!(
+        !fixture.messages().iter().any(|m| m.contains("typed by nothing the engine can read")),
+        "and nothing says the position said nothing:\n{:?}",
+        fixture.messages()
+    );
+}
+
+/// The bound reaches only a CLOSURE. Written as the position's type for any
+/// argument, an `impl Fn(..)` would say something about a value the call did
+/// not fix.
+#[test]
+fn a_value_that_is_not_a_closure_gets_no_callable_expectation() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "pub fn apply<F>(f: F) -> i64 where F: Fn(i64) -> i64 { f(1) }\n\
+         pub fn twice<F>(f: F) -> i64 where F: Fn(i64) -> i64 { apply(f) }",
+    )]);
+    let ts = fixture.emitted("lib.rs");
+    assert!(ts.contains("apply(f)"), "handed on as it stands:\n{}", ts);
+}

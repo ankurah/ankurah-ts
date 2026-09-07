@@ -129,14 +129,7 @@ impl<'a> BodyTranslator<'a> {
         let Some(tc) = &self.types else {
             return Vec::new();
         };
-        let scan = ownership::Scan::new(self);
-        let sites: Vec<(usize, ownership::moves::Site)> = scan
-            .block(body)
-            .into_iter()
-            .map(|site| (1, site))
-            .collect();
-        let dispositions =
-            ownership::Dispositions::build(&[(0, names.to_vec())], sites);
+        let dispositions = self.what_the_body_did_with(names, body);
         let mut owned = Vec::new();
         for name in names {
             let drops = match type_of(name) {

@@ -19,7 +19,7 @@
 // doing the emitter's work by hand. O1.
 
 import { describe, expect, test } from 'bun:test';
-import { Drop, OwnedClosure } from '../src/index.ts';
+import { Drop, OwnedClosure, clearFatalLatch } from '../src/index.ts';
 import {
   iterFindMapOwned,
   iterFindOwned,
@@ -37,6 +37,7 @@ import {
   takeOwned,
   stepByOwned,
   SeqCursor,
+  countOwned,
 } from '../src/std/iter_owned.ts';
 import { iterMaxByKey } from '../src/std/iter.ts';
 
@@ -451,6 +452,31 @@ describe('an eager adaptor over owned elements releases what it discards', () =>
   });
 });
 
+// ── countOwned: the terminal that drains and drops everything (T6) ──
+
+describe('countOwned', () => {
+  test('counts every element and drops every one of them', () => {
+    Token.dropped = [];
+    expect(countOwned([new Token(1), new Token(2), new Token(3)])).toBe(3);
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('an empty sequence counts nothing and drops nothing', () => {
+    Token.dropped = [];
+    expect(countOwned([])).toBe(0);
+    expect(Token.dropped).toEqual([]);
+  });
+
+  test('the survivors an owning adaptor kept go with the rest', () => {
+    Token.dropped = [];
+    // `tokens.into_iter().filter(p).count()`: the predicate's losers are
+    // dropped by `filterOwned`, and the ones it KEPT by the count below it.
+    const kept = filterOwned([new Token(1), new Token(2), new Token(3)], (t) => t.n > 1);
+    expect(countOwned(kept)).toBe(2);
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+});
+
 // ── SeqCursor: an OPAQUE iterator, which is the one shape the array cannot be ──
 //
 // A generic body that takes `I: Iterator<Item = V>` and calls `next()` is doing
@@ -513,6 +539,53 @@ describe('SeqCursor', () => {
     expect(Token.dropped).toEqual([1]);
     for (const token of rest) token.drop();
     expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('drainRest empties a cursor the caller KEEPS', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    cursor.next()?.drop();
+    const rest = cursor.drainRest();
+    expect(rest.map((t) => t.n)).toEqual([2, 3]);
+    // `&mut I` is an `Iterator` by the blanket impl: the body that was handed
+    // the reference drains it, and the OWNER still holds the cursor and drops
+    // it. Marked moved here, that drop would be a use after move.
+    expect(cursor.isMoved).toBe(false);
+    expect(cursor.remaining).toBe(0);
+    for (const token of rest) token.drop();
+    // And the owner's drop releases nothing, because nothing is left.
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  // Every read of a cursor the frame has finished with is fatal. Without the
+  // guard a second `takeRest()` answered `[]` and a `next()` after one answered
+  // `null`, so a cursor used after it was moved read as an exhausted one — the
+  // silence that made a doubled `takeRest()` a plain `TypeError` somewhere else
+  // instead of naming the bug.
+  const expectFatal = (body: () => unknown): void => {
+    expect(body).toThrow();
+    clearFatalLatch();
+  };
+
+  test('every read of a dropped cursor is fatal', () => {
+    const cursor = new SeqCursor([new Token(1)]);
+    cursor.drop();
+    expectFatal(() => cursor.next());
+    expectFatal(() => cursor.remaining);
+    expectFatal(() => cursor.takeRest());
+    expectFatal(() => cursor.drainRest());
+  });
+
+  test('every read of a moved cursor is fatal', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2)]);
+    for (const token of cursor.takeRest()) token.drop();
+    // `takeRest` consumed it, so a second one is not an empty answer: it is the
+    // use after move `markMoved` promises to report.
+    expectFatal(() => cursor.takeRest());
+    expectFatal(() => cursor.next());
+    expectFatal(() => cursor.remaining);
   });
 
   test('a cursor over an empty sequence answers null and drops cleanly', () => {

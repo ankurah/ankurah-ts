@@ -81,13 +81,14 @@ function refuse(v: unknown): never {
  */
 export function debugString(s: string): string {
   let out = '"';
-  // Rust escapes a grapheme-extended character only where it is the FIRST of
-  // the string, because anywhere else it is part of the grapheme before it:
-  // `Debug for str` passes `escape_grapheme_extended: first` down.
-  let first = true;
+  // U10: `Debug for str` escapes a grapheme-extended character WHEREVER it
+  // stands, not only where it is the first of the string. Measured against
+  // rustc 1.95.0 over every Unicode scalar in three positions:
+  // `format!("{:?}", "a\u{301}")` is `"a\u{301}"`, and passing
+  // `escape_grapheme_extended: first` down printed `"á"` — 2,135 scalars
+  // differing in the middle position and the same 2,135 in the trailing one.
   for (const ch of s) {
-    out += escapeInto(ch, '"', first);
-    first = false;
+    out += escapeInto(ch, '"', true);
   }
   return `${out}"`;
 }

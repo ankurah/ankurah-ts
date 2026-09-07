@@ -131,6 +131,45 @@ fn from_ty(
     }
 }
 
+/// The callable a CALLEE's own bound says a value at one of its parameters has
+/// to be, written as the `impl Fn(..)` the position means.
+///
+/// `apply<F: Fn(Token) -> u32>(t: Token, f: F)` says what `f` is only through
+/// `F`'s bound, and `F` is still an open parameter at the call — which is
+/// exactly what the substituted parameter types drop. So a closure written
+/// there was typed by nothing: its parameter had no type, and what that
+/// parameter held was released by nobody. The bounds this body carries cannot
+/// answer it either, because the bound belongs to the CALLEE's generics.
+/// The same, asked of an argument as WRITTEN: only a closure gets it, because
+/// the `impl Fn(..)` is what a closure's position means and handing it to
+/// anything else would say something about a value the call did not fix.
+pub fn callable_bound_for(
+    reg: &TypeRegistry,
+    written: Option<&syn::Expr>,
+    declared: &Ty,
+    bounds: &[(String, TraitRef)],
+) -> Option<Ty> {
+    match written? {
+        syn::Expr::Closure(_) => callable_bound_of(reg, declared, bounds),
+        _ => None,
+    }
+}
+
+pub fn callable_bound_of(
+    reg: &TypeRegistry,
+    declared: &Ty,
+    bounds: &[(String, TraitRef)],
+) -> Option<Ty> {
+    let Ty::Param(param) = declared.peel_refs() else { return None };
+    let callable = fn_traits(reg);
+    let mine: Vec<TraitRef> = bounds
+        .iter()
+        .filter(|(subject, bound)| subject == param && callable.contains(&bound.id))
+        .map(|(_, bound)| bound.clone())
+        .collect();
+    (!mine.is_empty()).then_some(Ty::ImplTrait { bounds: mine })
+}
+
 /// The first `Fn`, `FnMut` or `FnOnce` in a bound list, read back into a
 /// parameter list and a return type.
 fn first_callable(bounds: &[TraitRef], callable: &[crate::ty::TypeId]) -> Option<FnShape> {

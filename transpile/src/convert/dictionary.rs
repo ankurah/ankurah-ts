@@ -54,23 +54,23 @@ impl Dictionary {
 
     /// `(v: V) => Result<Expr, E>` — what the synthetic parameter is declared
     /// as, in the caller's own spelling of the two types.
+    ///
+    /// One shape, because `wanted` admits one family: a `TryInto<C>` bound with
+    /// a concrete `C`. It takes the caller's parameter and answers a `Result`.
+    /// `Direction::In` and an infallible bound are classifications `direction_of`
+    /// makes and `wanted` then refuses — 4.4b's scope — so there is no second
+    /// shape here to be written and left untested.
     pub fn ts_type(&self, reg: &TypeRegistry) -> String {
-        let concrete = crate::name_map::map_ty(reg, &self.concrete);
-        let (takes, answers) = match self.direction {
-            Direction::Out => (self.param.clone(), concrete),
-            Direction::In => (concrete, self.param.clone()),
+        let error = match &self.error {
+            Some(error) => crate::name_map::map_ty(reg, error),
+            None => "unknown".to_string(),
         };
-        let answers = match self.fallible {
-            true => {
-                let error = match &self.error {
-                    Some(error) => crate::name_map::map_ty(reg, error),
-                    None => "unknown".to_string(),
-                };
-                format!("Result<{}, {}>", answers, error)
-            }
-            false => answers,
-        };
-        format!("(value: {}) => {}", takes, answers)
+        format!(
+            "(value: {}) => Result<{}, {}>",
+            self.param,
+            crate::name_map::map_ty(reg, &self.concrete),
+            error
+        )
     }
 
     /// Does this dictionary perform the same conversion as another, so that a
@@ -231,7 +231,7 @@ pub fn instantiation(
     sig_params: &[String],
     sig_value_types: &[Ty],
     sig_bounds: &[(String, TraitRef)],
-    actual: &[Ty],
+    actual: &[Option<Ty>],
     caller_bounds: &[(String, TraitRef)],
 ) -> Option<Ty> {
     // The callee's parameters are renamed apart before they are matched
@@ -254,6 +254,10 @@ pub fn instantiation(
     // is refused rather than overwritten.
     for peeled in [false, true] {
         for (declared, actual) in sig_value_types.iter().zip(actual) {
+            // An argument the engine could not type binds nothing. It still
+            // holds its place, so the arguments after it match the parameters
+            // they were written for.
+            let Some(actual) = actual else { continue };
             let declared = declared.substitute(&apart);
             let (declared, actual) = match peeled {
                 false => (&declared, actual),
@@ -353,13 +357,20 @@ impl crate::body::BodyTranslator<'_> {
     }
 
     /// What each written argument's type resolves to, for matching against what
-    /// the callee declared. An argument the engine cannot type is left out, and
-    /// the parameters it would have bound stay open.
+    /// the callee declared.
+    ///
+    /// An argument the engine cannot type stays in the list as `None`, AT ITS
+    /// OWN INDEX. Dropping it instead shifted every later argument one place
+    /// left before the positional match, so `pair(<a block the engine cannot
+    /// type>, 7u32)` unified the callee's FIRST parameter with `u32` and handed
+    /// the call the conversion for a type that stands somewhere else — a wrong
+    /// dictionary at run time, with no diagnostic. A hole in the list binds
+    /// nothing, and a parameter nothing binds is refused where it is read.
     fn written_argument_types<'e>(
         &self,
         args: impl Iterator<Item = &'e syn::Expr>,
-    ) -> Vec<Ty> {
-        args.filter_map(|a| self.quietly(|| self.resolve_expr_type(a)).ok()).collect()
+    ) -> Vec<Option<Ty>> {
+        args.map(|a| self.quietly(|| self.resolve_expr_type(a)).ok()).collect()
     }
 
     /// The conversion the caller handed in, where this receiver is a type
@@ -400,7 +411,7 @@ impl crate::body::BodyTranslator<'_> {
     pub(crate) fn dictionary_arguments(
         &self,
         found: &crate::registry::MethodResolution,
-        actual: &[Ty],
+        actual: &[Option<Ty>],
         span: proc_macro2::Span,
     ) -> Vec<String> {
         let Some(tc) = &self.types else { return Vec::new() };
@@ -416,7 +427,7 @@ impl crate::body::BodyTranslator<'_> {
         &self,
         call: &syn::ExprCall,
         expected: Option<&Ty>,
-        actual: &[Ty],
+        actual: &[Option<Ty>],
         span: proc_macro2::Span,
     ) -> Vec<String> {
         let Some(tc) = &self.types else { return Vec::new() };
@@ -430,7 +441,7 @@ impl crate::body::BodyTranslator<'_> {
     fn dictionaries_for(
         &self,
         sig: &crate::registry::MethodSig,
-        actual: &[Ty],
+        actual: &[Option<Ty>],
         span: proc_macro2::Span,
     ) -> Vec<String> {
         let Some(tc) = &self.types else { return Vec::new() };
@@ -507,20 +518,11 @@ impl crate::body::BodyTranslator<'_> {
         concrete: &Ty,
         span: proc_macro2::Span,
     ) -> String {
-        let (from, to) = match one.direction {
-            Direction::Out => (concrete.clone(), one.concrete.clone()),
-            Direction::In => (one.concrete.clone(), concrete.clone()),
-        };
+        // `wanted` admits only a `TryInto<C>` bound (4.4b's scope), so the
+        // conversion always runs FROM what the caller instantiated the
+        // parameter with TO the bound's concrete target.
+        let (from, to) = (concrete.clone(), one.concrete.clone());
         let what = format!("the conversion `{}`'s bound asks for", one.param);
-        let Some(text) = self.conversion_text(&from, &to, "value", span, &what) else {
-            return format!(
-                "(value) => {}",
-                crate::body::hole_text(&format!(
-                    "no impl converts what stands at `{}` here",
-                    one.param
-                ))
-            );
-        };
         // The parameter carries the type this site inferred. Written bare, the
         // arrow's `value` was `unknown` to TypeScript — the callee's `V` is
         // named only through `I extends Iterable<V>`, which an array literal
@@ -529,14 +531,47 @@ impl crate::body::BodyTranslator<'_> {
             Some(tc) => format!("value: {}", crate::name_map::map_ty(tc.borrow().registry, &from)),
             None => "value".to_string(),
         };
-        // A fallible bound answers a `Result`, and every conversion the impl
-        // table writes here is an infallible `From`: a genuine `TryFrom` whose
-        // call already answers a wrapper is not found by `conversion_text` at
-        // all, and takes the refusal above rather than being wrapped twice.
-        match one.fallible {
-            true => format!("({}) => Result.Ok({})", takes, text),
-            false => format!("({}) => {}", takes, text),
+        // The bound answers a `Result`, so the corpus's own `TryFrom` impl for
+        // this pair is what Rust calls, and its emitted static already answers
+        // that wrapper. Asked for a `From` instead, a site whose only impl is
+        // the `TryFrom` found nothing and wrote a hole that threw the moment
+        // the callee read the dictionary — `Args::nocache("a = 1")` over
+        // `impl TryFrom<&str> for Sel`. Looked for FIRST, because the two
+        // cannot both be written for one pair: `impl<T, U: Into<T>> TryFrom<U>
+        // for T` in the standard library makes a second one incoherent.
+        if one.fallible && from.peel_refs() != to.peel_refs() {
+            if let Some(text) = self.try_from_text(&from, &to, "value") {
+                return format!("({}) => {}", takes, text);
+            }
         }
+        let Some(text) = self.conversion_text(&from, &to, "value", span, &what) else {
+            return format!(
+                "({}) => {}",
+                takes,
+                crate::body::hole_text(&format!(
+                    "no impl converts what stands at `{}` here",
+                    one.param
+                ))
+            );
+        };
+        // Everything the `From` table writes is infallible, so what it answers
+        // is wrapped to be the `Result` the bound reads — and every dictionary
+        // `wanted` admits reads one.
+        format!("({}) => Result.Ok({})", takes, text)
+    }
+
+    /// The call the corpus's `TryFrom` impl for this pair was emitted as, where
+    /// there is one. Quiet: a site with no such impl asks for a `From` next,
+    /// and that is the path that reports what it could not find.
+    fn try_from_text(&self, from: &Ty, to: &Ty, value: &str) -> Option<String> {
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        if from.has_open_param() || to.has_open_param() {
+            return None;
+        }
+        let found = tc.probe().try_from_impl(from, to).ok()?;
+        let call = crate::emit_impls::conversion_call(tc.registry, found.impl_id, to).ok()?;
+        Some(format!("{}({})", call.callee, value))
     }
 }
 

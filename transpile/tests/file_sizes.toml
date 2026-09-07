@@ -13,7 +13,7 @@
 
 [over]
 "src/bincode_module.rs" = 913
-"src/body.rs" = 1187
+"src/body.rs" = 1154
 "src/cfg.rs" = 742
 "src/codegen.rs" = 1153
 "src/config.rs" = 890

@@ -294,3 +294,84 @@ fn a_refusal_inside_a_consuming_loop_releases_the_current_element() {
         ts
     );
 }
+
+/// W3/X6: which of the two a hole is — the statement's own evaluation, or a
+/// CALLABLE the statement passes — is the LOWERING's answer, because the
+/// lowering knows when it is inside a callable's body.
+///
+/// Read off the rendered text as "an arrow before the first `unsupported(`",
+/// the emitter's OWN spelling answered it: a block expression is written as an
+/// immediately-invoked `(() => { .. })()`, so every statement holding one had
+/// its cleanup suppressed. So did a statement with `"=>"` in a string, and one
+/// with an unrelated closure argument standing beside a hole in its own
+/// evaluation.
+mod refused_in_the_open {
+    use crate::testing::Fixture;
+
+    const SETUP: &str = "\
+use std::collections::BinaryHeap;\n\
+pub struct Token { pub n: u32 }\n\
+impl Drop for Token { fn drop(&mut self) {} }\n\
+pub fn take2(a: Token, b: u32) -> u32 { a.n + b }\n\
+pub fn apply<F>(f: F) -> u32 where F: Fn(u32) -> u32 { f(1) }\n\
+";
+
+    fn emitted(body: &str) -> String {
+        let mut fixture = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "{}pub fn refused(held: Token, rest: Vec<u32>) -> u32 {{\n{}\n}}",
+                SETUP, body
+            ),
+        )]);
+        fixture.emitted("lib.rs")
+    }
+
+    /// An arrow inside a STRING is not a callable.
+    #[test]
+    fn an_arrow_in_a_string_does_not_suppress_the_cleanup() {
+        let ts = emitted(
+            "  \"=>\".len() as u32\n\
+             \x20   + { let h: BinaryHeap<u32> = rest.into_iter().collect(); h.len() as u32 }\n\
+             \x20   + take2(held, 1)",
+        );
+        assert!(ts.contains("held.drop()"), "the refusal releases the parameter:\n{}", ts);
+    }
+
+    /// Nor is the emitter's own IIFE, which is how a block expression is
+    /// written: `(() => { .. })()` puts an arrow before every hole inside one.
+    #[test]
+    fn the_emitters_own_iife_does_not_suppress_the_cleanup() {
+        let ts = emitted(
+            "  ({ let h: BinaryHeap<u32> = rest.into_iter().collect(); h.len() as u32 })\n\
+             \x20   + take2(held, 1)",
+        );
+        assert!(ts.contains("(() =>"), "the block is written as an IIFE:\n{}", ts);
+        assert!(ts.contains("held.drop()"), "and the refusal still releases:\n{}", ts);
+    }
+
+    /// Nor does an unrelated closure argument standing beside a hole in the
+    /// statement's own evaluation.
+    #[test]
+    fn an_unrelated_closure_argument_does_not_suppress_the_cleanup() {
+        let ts = emitted(
+            "  apply(|x| x + 1)\n\
+             \x20   + { let h: BinaryHeap<u32> = rest.into_iter().collect(); h.len() as u32 }\n\
+             \x20   + take2(held, 1)",
+        );
+        assert!(ts.contains("held.drop()"), "the refusal releases the parameter:\n{}", ts);
+    }
+
+    /// And the rule the callable test exists for still holds: a hole INSIDE a
+    /// callable the statement passes did not stop the statement, so the call
+    /// that received the callback ran and took what it takes.
+    #[test]
+    fn a_hole_inside_a_passed_callable_still_suppresses_the_cleanup() {
+        let ts = emitted(
+            "  take2(held, 1)\n\
+             \x20   + apply(|x| { let h: BinaryHeap<u32> = vec![x].into_iter().collect(); h.len() as u32 })",
+        );
+        assert!(ts.contains("unsupported("), "the collect was expected to refuse:\n{}", ts);
+        assert!(!ts.contains("held.drop()"), "and nothing releases what `take2` took:\n{}", ts);
+    }
+}

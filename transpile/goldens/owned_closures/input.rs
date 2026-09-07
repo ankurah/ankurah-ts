@@ -66,6 +66,12 @@ where
     f(n)
 }
 
+/// And what each closure's parameter IS comes from that same bound: `F` is
+/// still an open parameter at the call, so the substituted parameter types say
+/// nothing, and a closure written here was typed by nothing at all — its
+/// parameter had no type, its arithmetic was JavaScript's `+` rather than the
+/// checked helper Rust's `usize` addition is, and anything the parameter held
+/// was released by nobody.
 pub fn hands_a_wrapped_one(entity: Entity) -> usize {
     through_a_bound(move |n| n + entity.name.len(), 1)
 }

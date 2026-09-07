@@ -92,7 +92,7 @@ total = 246
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1974
+total = 1971
 
 [core.by_cause]
 "X is bound here but the engine could not type it" = 582
@@ -146,7 +146,6 @@ total = 1974
 "X builds whatever its target type names, and the engine could not name the type this one is collected into" = 4
 "X converts from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 4
-"X walks elements whose drop glue the engine could not name, so it is written as the reading helper and the elements it does not hand back are released by nobody" = 4
 "X's X prints under Debug as whatever its X says, because XIX has no Debug rendering in the port" = 4
 "X's X prints under Debug as whatever its X says, because XIdX has no Debug rendering in the port" = 4
 "no declaration for trait X" = 4
@@ -201,6 +200,7 @@ total = 1974
 "X needs the value type's default, and X is not declared, so it has no default" = 1
 "X on X is ambiguous between <S as TryStreamExt>::map_err and <T as TryFutureExt>::map_err" = 1
 "X on X is ambiguous between <Vec<T> as Extend>::extend and <Vec<T> as Extend>::extend" = 1
+"X walks elements whose drop glue the engine could not name, so it is written as the reading helper and the elements it does not hand back are released by nobody" = 1
 "X's X prints under Debug as whatever its X says, because XCDX has no Debug rendering in the port" = 1
 "X's X prints under Debug as whatever its X says, because XEvX has no Debug rendering in the port" = 1
 "X's X prints under Debug as whatever its X says, because XEventX has no Debug rendering in the port" = 1

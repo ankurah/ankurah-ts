@@ -152,8 +152,33 @@ function partiallyBefore(a: unknown, b: unknown, orEqual: boolean): boolean {
   if (typeof a === 'number' && typeof b === 'number' && (Number.isNaN(a) || Number.isNaN(b))) {
     return false;
   }
+  // AA8: `RangeBounds::contains` is written over `PartialOrd`, and the port
+  // emits a user `PartialOrd` that does not forward to `Ord` as
+  // `partialCompareTo(): number | null` — a method `compareKeys` does not know,
+  // so every range over such a type threw "declares no order". Asked first, and
+  // its `null` is Rust's "these two are not ordered", which fails whichever of
+  // the four comparisons it was asked and so makes the range empty.
+  const partial = partialOrderOf(a, b);
+  if (partial !== undefined) {
+    return partial === null ? false : orEqual ? partial <= 0 : partial < 0;
+  }
   const at = compareKeys(a, b, 'contains');
   return orEqual ? at <= 0 : at < 0;
+}
+
+/**
+ * What a value's own `PartialOrd` says about the two, where it has one.
+ *
+ * `undefined` means the value declares no partial order at all, and the caller
+ * falls back to the total one — which is right for a type whose `PartialOrd`
+ * forwards to `Ord`, and for every primitive.
+ */
+function partialOrderOf(a: unknown, b: unknown): number | null | undefined {
+  if (a === null || typeof a !== 'object') return undefined;
+  const own = (a as { partialCompareTo?: unknown }).partialCompareTo;
+  if (typeof own !== 'function') return undefined;
+  const at = (own as (o: unknown) => number | null).call(a, b);
+  return at == null || Number.isNaN(at) ? null : at;
 }
 
 /** Rust's `a..=b`, which includes the last value. */

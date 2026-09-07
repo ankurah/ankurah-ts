@@ -98,6 +98,13 @@ pub fn drops_of(probe: &Probe, ty: &Ty) -> Drops {
             }
         }
 
+        // A by-value parameter the port writes as a `SeqCursor` owns the walk
+        // its caller built, and releases whatever the walk did not reach. Read
+        // off the unmodified Rust type instead, such a parameter was
+        // `Drops::Unknown` and nothing released it: `ignore(new SeqCursor([
+        // ...values]))` leaked the cursor and every element in it.
+        Ty::Param(_) if holds_an_opaque_iterator(probe, ty) => Drops::Own,
+
         Ty::Param(_) | Ty::ImplTrait { .. } | Ty::Infer => Drops::Unknown,
     }
 }
@@ -222,14 +229,15 @@ pub fn fresh_at_each_use(probe: &Probe, ty: &Ty, is_static: bool) -> bool {
     !is_static && drops_of(probe, ty).is_droppable()
 }
 
-/// Is this unnormalised projection an ITERATOR the port holds as a `SeqCursor`?
+/// Is a value of this type held as a `SeqCursor`, whose `drop()` releases
+/// everything the walk did not reach?
 ///
-/// The same question `body::cursors` asks when it writes the cursor, asked here
-/// so that what the emitter constructs and what the scope releases cannot
-/// disagree. `<I as IntoIterator>::IntoIter` where `I: IntoIterator<Item = V>`
-/// carries `Iterator<Item = V>` (spec 4.4a), and that bound is what says the
-/// value is a walk rather than an arbitrary associated type.
+/// Literally the question `body::cursors` asks when it writes the cursor, so
+/// that what the emitter constructs and what the scope releases cannot
+/// disagree. Asked as "any unnormalised projection carrying an `Iterator`
+/// bound" it was WIDER than what the emitter builds, and an associated
+/// `type Out: Iterator` — a value the port never wrapped — got a
+/// `finally { it.drop(); }` calling a method it has not got.
 fn holds_an_opaque_iterator(probe: &Probe, ty: &Ty) -> bool {
-    let Some(iterator) = probe.reg.system_type("std::iter::Iterator") else { return false };
-    probe.bounds_of(ty).into_iter().any(|bound| bound.id == iterator)
+    crate::body::cursors::cursor_of(probe, ty).is_some()
 }

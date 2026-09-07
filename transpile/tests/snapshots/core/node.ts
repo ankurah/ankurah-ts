@@ -544,13 +544,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
           let _moved1 = false;
           try {
             try {
-              const _r2 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => {
-                try {
-                  return AnyhowError.msg('Only one cdata is permitted for CommitTransaction');
-                } finally {
-                  dropOwned(_);
-                }
-              });
+              const _r2 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for CommitTransaction'));
               if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
               const cdata_1 = _r2.unwrap();
               const _b3 = id.clone();
@@ -804,13 +798,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                 if (_r37.isErr()) return Result.Err(_r37.unwrapErr());
                 const peerState = _r37.unwrap();
                 try {
-                  const _r38 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => {
-                    try {
-                      return AnyhowError.msg('Only one cdata is permitted for SubscribePredicate');
-                    } finally {
-                      dropOwned(_);
-                    }
-                  });
+                  const _r38 = Iterable_dispatch_iterable(cdata).exactlyOne().mapErr((_) => AnyhowError.msg('Only one cdata is permitted for SubscribePredicate'));
                   if (_r38.isErr()) return Result.Err(_r38.unwrapErr());
                   const cdata_1 = _r38.unwrap();
                   _moved33 = true;

@@ -66,8 +66,15 @@ export function restOf<I extends Iterable<Token>>(values: I, skip: number): Resu
     let kept = [];
     try {
       _moved0 = true;
-      for (const token of walk.takeRest()) {
-        kept.push(token);
+      const _seq3 = walk.takeRest();
+      let _at4 = 0;
+      try {
+        while (_at4 < _seq3.length) {
+          const token = _seq3[_at4++];
+          kept.push(token);
+        }
+      } finally {
+        dropOwned(_seq3.slice(_at4));
       }
       _moved2 = true;
       return Result.Ok(kept);

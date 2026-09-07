@@ -275,7 +275,7 @@ repeated = [
   "lineage.ts:369: TClock_dispatch_members() × 2",
   "lineage.ts:412: TClock_dispatch_members() × 2",
   "lineage.ts:415: TClock_dispatch_members() × 2",
-  "node.ts:944: entity.clone() × 2",
+  "node.ts:932: entity.clone() × 2",
   "peer_subscription/client_relay.test.ts:153: collectionId.clone() × 2",
   "peer_subscription/client_relay.test.ts:235: collectionId.clone() × 2",
   "peer_subscription/client_relay.test.ts:25: Arc.new() × 4",
