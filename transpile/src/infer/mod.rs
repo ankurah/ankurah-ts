@@ -12,9 +12,12 @@ mod shapes;
 mod context_tests;
 pub mod expected;
 mod literals;
+mod locals;
 mod macro_types;
 mod patterns;
+mod prepass;
 mod scope;
+mod vars;
 
 pub use closures::ClosureSig;
 pub use context::TypeContext;

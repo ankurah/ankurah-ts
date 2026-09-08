@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Reactor } from './reactor';
-import { AnyhowError, Arc, HashMap, Mutex, Result, Struct, debugString, dropOwned, unsupported, valueEquals } from '@ankurah/base';
+import { AnyhowError, Arc, HashMap, Mutex, OwnedClosure, Result, Struct, debugString, dropOwned, unsupported, valueEquals } from '@ankurah/base';
 import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './reactor/update';
 import { EntityResultSet } from './resultset';
 import { CollectionId, QueryId } from '@ankurah/proto';
@@ -144,11 +144,23 @@ describe('reactor unit tests', () => {
   function watcher(): [(arg0: T) => void, () => T[]] {
     const values = Arc.new(new Mutex([]));
     const accumulate = ((values) => {
-      return (value) => {
-        values.lock().push(value);
-      };
+      return new OwnedClosure([values], (value: T) => {
+        const _t0 = values.value.lock();
+        try {
+          _t0.value.push(value);
+        } finally {
+          _t0.drop();
+        }
+      });
     })(values.clone());
-    const check = () => unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+    const check = new OwnedClosure([values], () => {
+      const _t1 = values.value.lock();
+      try {
+        return unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+      } finally {
+        _t1.drop();
+      }
+    });
     return [accumulate, check];
   }
 
@@ -172,30 +184,36 @@ describe('reactor unit tests', () => {
                 let _moved2 = false;
                 const resultset = EntityResultSet.empty();
                 try {
+                  let _moved3 = false;
                   const mockGapFetcher = Arc.new(MockGapFetcher.new());
-                  const mockNode = new MockNode([entity1.clone()]);
                   try {
-                    const _b3 = rsub.id();
-                    _moved0 = true;
-                    _moved1 = true;
-                    _moved2 = true;
-                    (await reactor.addQueryAndNotify(_b3, queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
-                    let _moved5 = false;
-                    const _b4 = entity1.clone();
+                    const mockNode = new MockNode([entity1.clone()]);
                     try {
-                      const _b6 = [[queryId, new MembershipChange('Initial', {})]];
-                      const _t7 = [new ReactorUpdate([new ReactorUpdateItem(_b4, [], _b6)])];
+                      const _b4 = rsub.id();
+                      _moved0 = true;
+                      _moved1 = true;
+                      _moved2 = true;
+                      _moved3 = true;
+                      (await reactor.addQueryAndNotify(_b4, queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
+                      let _moved6 = false;
+                      const _b5 = entity1.clone();
                       try {
-                        _moved5 = true;
-                        expect(check()).toEqual(_t7);
+                        const _b7 = [[queryId, new MembershipChange('Initial', {})]];
+                        const _t8 = [new ReactorUpdate([new ReactorUpdateItem(_b5, [], _b7)])];
+                        try {
+                          _moved6 = true;
+                          expect(check()).toEqual(_t8);
+                        } finally {
+                          dropOwned(_t8);
+                        }
                       } finally {
-                        dropOwned(_t7);
+                        if (!_moved6) dropOwned(_b5);
                       }
                     } finally {
-                      if (!_moved5) dropOwned(_b4);
+                      mockNode.drop();
                     }
                   } finally {
-                    mockNode.drop();
+                    if (!_moved3) mockGapFetcher.drop();
                   }
                 } finally {
                   if (!_moved2) resultset.drop();

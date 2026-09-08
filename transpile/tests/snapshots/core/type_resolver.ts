@@ -161,12 +161,28 @@ export class TypeResolver extends Struct {
       And: (v) => {
         const left = v._0;
         const right = v._1;
-        return new Predicate('And', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
+        let _moved6 = false;
+        const _b5 = this.resolveTypes(left);
+        try {
+          const _b7 = this.resolveTypes(right);
+          _moved6 = true;
+          return new Predicate('And', { _0: _b5, _1: _b7 });
+        } finally {
+          if (!_moved6) dropOwned(_b5);
+        }
       },
       Or: (v) => {
         const left = v._0;
         const right = v._1;
-        return new Predicate('Or', { _0: this.resolveTypes(left), _1: this.resolveTypes(right) });
+        let _moved9 = false;
+        const _b8 = this.resolveTypes(left);
+        try {
+          const _b10 = this.resolveTypes(right);
+          _moved9 = true;
+          return new Predicate('Or', { _0: _b8, _1: _b10 });
+        } finally {
+          if (!_moved9) dropOwned(_b8);
+        }
       },
       Not: (v) => {
         const inner = v._0;

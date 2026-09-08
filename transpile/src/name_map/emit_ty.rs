@@ -51,6 +51,20 @@ fn has_a_top_level_union(written: &str) -> bool {
 
 /// Map a resolved Rust type to its TypeScript spelling.
 pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
+    // An unknown nothing solved has no spelling of its own. Choosing one would
+    // be a guess, so the site says so and writes the same `unknown` a type the
+    // engine never had writes.
+    if ty.mentions_any_var() {
+        crate::diag::pending::park_at(
+            0,
+            0,
+            format!(
+                "`{}` still names a type the engine did not work out, so it is written `unknown`",
+                reg.describe(ty)
+            ),
+        );
+        return "unknown".to_string();
+    }
     match js_shape(reg, ty) {
         JsShape::Bytes => "Uint8Array".to_string(),
         JsShape::Array(elem) => format!("{}[]", as_an_element(&map_ty(reg, &elem))),

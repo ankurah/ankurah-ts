@@ -51,6 +51,9 @@ impl TypeRegistry {
             Ty::Dyn { traits } => format!("dyn {}", self.describe_traits(traits)),
             Ty::Assoc { base, name, .. } => format!("{}::{}", self.describe(base), name),
             Ty::Infer => "_".to_string(),
+            // A variable is named by its own id, so one report can say which
+            // unknown two sites share.
+            Ty::Var(id) => id.to_string(),
         }
     }
 

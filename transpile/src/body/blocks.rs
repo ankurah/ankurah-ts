@@ -41,6 +41,12 @@ impl BodyTranslator<'_> {
         // callee's writes have nowhere else to go. Read before anything is
         // translated, so the `let` that introduces it declares the cell.
         *self.cell_candidates.borrow_mut() = super::cells::cells_wanted(block);
+        // The whole body is typed before any of it is written, so a local whose
+        // type only a later use decides is already known at the statement that
+        // binds it — and every ownership question below reads a settled type.
+        if let Some(tc) = &self.types {
+            tc.borrow_mut().collect_constraints(block);
+        }
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
         self.pop_scope();

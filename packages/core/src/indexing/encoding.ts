@@ -197,12 +197,12 @@ function encodeJsonValue(json: unknown, descending: boolean): Uint8Array {
   if (!descending) {
     let out = [];
     out.push(tag);
-    out.extend(payload);
+    out = new Uint8Array([...out, ...payload]);
     return out;
   } else {
     let out = [];
     out.push(wrappingSub((255), tag, 'u8'));
-    out.extend([...payload].map((b) => wrappingSub((255), b, 'u8')));
+    out = new Uint8Array([...out, ...[...payload].map((b) => wrappingSub((255), b, 'u8'))]);
     return out;
   }
 }

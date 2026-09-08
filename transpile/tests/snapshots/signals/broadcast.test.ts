@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Broadcast } from './broadcast';
-import { Arc, Mutex, OwnedClosure, tokio } from '@ankurah/base';
+import { Arc, Mutex, OwnedClosure, checkedAdd, tokio, wrappingAdd } from '@ankurah/base';
 import { Mut } from './signal/mutable';
 
 describe('broadcast unit tests', () => {
@@ -10,42 +10,64 @@ describe('broadcast unit tests', () => {
     const sender = Broadcast.new();
     try {
       const counter = Arc.new(new Mutex(0));
-      const _sub1 = ((counter) => {
-        const _t0 = sender.reference();
-        try {
-          return _t0.listen((_) => {
-            const _m1 = counter.lock();
-            return _m1.value += 1;
-          });
-        } finally {
-          _t0.drop();
-        }
-      })(counter.clone());
       try {
-        let _moved4 = false;
-        const sub2 = ((counter) => {
-          const _t2 = sender.reference();
+        const _sub1 = ((counter) => {
+          const _t0 = sender.reference();
           try {
-            return _t2.listen((_) => {
-              const _m3 = counter.lock();
-              return _m3.value += 10;
-            });
+            return _t0.listen(new OwnedClosure([counter], (_) => {
+              const _t1 = counter.value.lock();
+              try {
+                return _t1.value = checkedAdd(_t1.value, 1, 'i32');
+              } finally {
+                _t1.drop();
+              }
+            }));
           } finally {
-            _t2.drop();
+            _t0.drop();
           }
         })(counter.clone());
         try {
-          sender.send([]);
-          expect(counter.lock()).toEqual(11);
-          _moved4 = true;
-          sub2.drop();
-          sender.send([]);
-          expect(counter.lock()).toEqual(12);
+          let _moved4 = false;
+          const sub2 = ((counter) => {
+            const _t2 = sender.reference();
+            try {
+              return _t2.listen(new OwnedClosure([counter], (_) => {
+                const _t3 = counter.value.lock();
+                try {
+                  return _t3.value = checkedAdd(_t3.value, 10, 'i32');
+                } finally {
+                  _t3.drop();
+                }
+              }));
+            } finally {
+              _t2.drop();
+            }
+          })(counter.clone());
+          try {
+            sender.send([]);
+            const _t5 = counter.value.lock();
+            try {
+              expect(_t5.value).toEqual(11);
+            } finally {
+              _t5.drop();
+            }
+            _moved4 = true;
+            sub2.drop();
+            sender.send([]);
+            const _t6 = counter.value.lock();
+            try {
+              expect(_t6.value).toEqual(12);
+            } finally {
+              _t6.drop();
+            }
+          } finally {
+            if (!_moved4) sub2.drop();
+          }
         } finally {
-          if (!_moved4) sub2.drop();
+          _sub1.drop();
         }
       } finally {
-        _sub1.drop();
+        counter.drop();
       }
     } finally {
       sender.drop();
@@ -93,45 +115,75 @@ describe('broadcast unit tests', () => {
 
   test('test_subscribe_trait', () => {
     const signal = Mut.new(42);
-    const counter = Arc.new(0);
-    const counterClone = counter.clone();
-    const _subscription = signal.subscribe((_) => {
-      counterClone.fetchAdd(1, undefined /* atomic Ordering::SeqCst */);
-    });
-    signal.set(100);
-    expect(counter.load(undefined /* atomic Ordering::SeqCst */)).toEqual(1);
+    try {
+      const counter = Arc.new(0);
+      try {
+        const counterClone = counter.clone();
+        const _subscription = signal.subscribe(new OwnedClosure([counterClone], (_) => {
+          (() => { const _v = counterClone.value; counterClone.value = wrappingAdd(counterClone.value, 1, 'usize'); return _v; })();
+        }));
+        try {
+          signal.set(100);
+          expect(counter.value).toEqual(1);
+        } finally {
+          _subscription.drop();
+        }
+      } finally {
+        counter.drop();
+      }
+    } finally {
+      signal.drop();
+    }
   });
 
   test('test_reentrant_subscription_during_send', () => {
     const sender = Broadcast.new();
     try {
       const counter = Arc.new(new Mutex(0));
-      const senderClone = sender.clone();
-      const counterClone = counter.clone();
-      const _t0 = sender.reference();
       try {
-        const _sub = _t0.listen(new OwnedClosure([senderClone], (_) => {
-          const _m1 = counterClone.lock();
-          _m1.value += 1;
-          const _t2 = senderClone.reference();
-          try {
-            const _tempSub = _t2.listen((_) => {
-            });
-            _tempSub.drop();
-          } finally {
-            _t2.drop();
-          }
-        }));
+        const senderClone = sender.clone();
+        const counterClone = counter.clone();
+        const _t0 = sender.reference();
         try {
-          sender.send([]);
-          expect(counter.lock()).toEqual(1);
-          sender.send([]);
-          expect(counter.lock()).toEqual(2);
+          const _sub = _t0.listen(new OwnedClosure([counterClone, senderClone], (_) => {
+            const _t1 = counterClone.value.lock();
+            try {
+              _t1.value = checkedAdd(_t1.value, 1, 'i32');
+            } finally {
+              _t1.drop();
+            }
+            const _t2 = senderClone.reference();
+            try {
+              const _tempSub = _t2.listen((_) => {
+              });
+              _tempSub.drop();
+            } finally {
+              _t2.drop();
+            }
+          }));
+          try {
+            sender.send([]);
+            const _t3 = counter.value.lock();
+            try {
+              expect(_t3.value).toEqual(1);
+            } finally {
+              _t3.drop();
+            }
+            sender.send([]);
+            const _t4 = counter.value.lock();
+            try {
+              expect(_t4.value).toEqual(2);
+            } finally {
+              _t4.drop();
+            }
+          } finally {
+            _sub.drop();
+          }
         } finally {
-          _sub.drop();
+          _t0.drop();
         }
       } finally {
-        _t0.drop();
+        counter.drop();
       }
     } finally {
       sender.drop();

@@ -73,11 +73,19 @@ describe('ast unit tests', () => {
       const values = [Expr.fromI64((25n)), Expr.fromString('Bob')];
       const populated = selection.takeField('predicate').populate(values, (value: Expr) => Result.Ok(value)).unwrap();
       try {
-        const expected = new Predicate('And', { _0: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('age') }), operator: new ComparisonOperator('GreaterThan', {}), right: new Expr('Literal', { _0: new Literal('I64', { _0: 25n }) }) }), _1: new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Bob' }) }) }) });
+        let _moved1 = false;
+        const _b0 = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('age') }), operator: new ComparisonOperator('GreaterThan', {}), right: new Expr('Literal', { _0: new Literal('I64', { _0: 25n }) }) });
         try {
-          expect(populated).toEqual(expected);
+          const _b2 = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('name') }), operator: new ComparisonOperator('Equal', {}), right: new Expr('Literal', { _0: new Literal('String', { _0: 'Bob' }) }) });
+          _moved1 = true;
+          const expected = new Predicate('And', { _0: _b0, _1: _b2 });
+          try {
+            expect(populated).toEqual(expected);
+          } finally {
+            expected.drop();
+          }
         } finally {
-          expected.drop();
+          if (!_moved1) dropOwned(_b0);
         }
       } finally {
         populated.drop();

@@ -20,23 +20,47 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
     let index = new HashMap();
     let order = [];
     for (const [i, entity] of [...entities].entries()) {
-      index.insert(entity.id(), i);
+      index.set(entity.id(), i);
       order.push(new EntityEntry(entity, null, false));
     }
     const state = new State(order, index, null, null, false);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), loaded, Broadcast.new())));
+    let _moved1 = false;
+    const _b0 = new Mutex(state);
+    try {
+      const _b2 = Broadcast.new();
+      _moved1 = true;
+      return new EntityResultSet(Arc.new(new Inner(_b0, loaded, _b2)));
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   static empty<E>(): EntityResultSet<E> {
     const state = new State([], new HashMap(), null, null, false);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
+    let _moved1 = false;
+    const _b0 = new Mutex(state);
+    try {
+      const _b2 = Broadcast.new();
+      _moved1 = true;
+      return new EntityResultSet(Arc.new(new Inner(_b0, false, _b2)));
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   static single<E>(entity: E): EntityResultSet<E> {
     const entry = new EntityEntry(entity.clone(), null, false);
     let state = new State([entry], new HashMap(), null, null, false);
     state.index.insert(entity.id(), 0);
-    return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
+    let _moved1 = false;
+    const _b0 = new Mutex(state);
+    try {
+      const _b2 = Broadcast.new();
+      _moved1 = true;
+      return new EntityResultSet(Arc.new(new Inner(_b0, false, _b2)));
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   write(): ResultSetWrite<E> {

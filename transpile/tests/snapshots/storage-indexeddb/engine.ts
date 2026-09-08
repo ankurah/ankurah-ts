@@ -50,11 +50,17 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
       let _moved3 = false;
       const _b2 = collectionId.clone();
       try {
+        let _moved5 = false;
         const _b4 = tokio.sync.Mutex.new([]);
-        const _b5 = this.prefixGuardDisabled.clone();
-        _moved1 = true;
-        _moved3 = true;
-        return Result.Ok(Arc.new(new IndexedDBBucket(_b0, _b2, _b4, 0, _b5)));
+        try {
+          const _b6 = this.prefixGuardDisabled.clone();
+          _moved1 = true;
+          _moved3 = true;
+          _moved5 = true;
+          return Result.Ok(Arc.new(new IndexedDBBucket(_b0, _b2, _b4, 0, _b6)));
+        } finally {
+          if (!_moved5) dropOwned(_b4);
+        }
       } finally {
         if (!_moved3) dropOwned(_b2);
       }

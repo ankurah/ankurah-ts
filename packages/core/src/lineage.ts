@@ -426,16 +426,20 @@ export async function compare<G, C>(getter: G, subject: C, other: C, budget: num
     return Result.Ok(new Ordering('Equal', {}));
   }
   let comparison = Comparison.new(getter, subject, other, budget);
-  while (true) {
-    const _r0 = await comparison.step();
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-    {
-      const _v = _r0.unwrap();
-      if (_v != null) {
-        const ordering = _v;
-        return Result.Ok(ordering);
+  try {
+    while (true) {
+      const _r0 = await comparison.step();
+      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+      {
+        const _v = _r0.unwrap();
+        if (_v != null) {
+          const ordering = _v;
+          return Result.Ok(ordering);
+        }
       }
     }
+  } finally {
+    comparison.drop();
   }
 }
 

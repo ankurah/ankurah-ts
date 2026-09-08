@@ -4,9 +4,12 @@
 
 mod def;
 pub mod prim_consts;
+mod query;
 pub mod subst;
 mod unify;
+mod vars;
 
 pub use def::{ArrayLen, IdSpaceExhausted, Prim, TraitRef, Ty, TypeId};
 pub use subst::bind_params;
-pub use unify::unify;
+pub use unify::{unify, Mismatch};
+pub use vars::InferTable;

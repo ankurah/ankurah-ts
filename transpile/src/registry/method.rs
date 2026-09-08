@@ -12,7 +12,7 @@
 
 /// The method a BOUND declares, as a candidate in its own right.
 pub(crate) mod declared;
-mod signatures;
+pub(crate) mod signatures;
 
 use super::impls::{head_of, Bound, Head, ImplId};
 use super::{ModuleId, TypeRegistry};
@@ -807,36 +807,6 @@ pub(super) enum Holds {
     Undecided(Undecided),
 }
 
-impl Ty {
-    /// Does any type parameter survive inside this type? A bound on such a type
-    /// cannot be looked up, because there is no type yet to look it up for.
-    /// Does a hole a turbofish left — `Vec<_>` — appear anywhere in this type?
-    pub fn contains_infer(&self) -> bool {
-        match self {
-            Ty::Infer => true,
-            Ty::Named { args, .. } | Ty::Tuple(args) => args.iter().any(|a| a.contains_infer()),
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
-                inner.contains_infer()
-            }
-            Ty::Assoc { base, .. } => base.contains_infer(),
-            Ty::Param(_) | Ty::Dyn { .. } | Ty::ImplTrait { .. } => false,
-            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never => false,
-        }
-    }
-
-    pub fn has_open_param(&self) -> bool {
-        match self {
-            Ty::Param(_) | Ty::Infer => true,
-            Ty::Named { args, .. } | Ty::Tuple(args) => args.iter().any(|a| a.has_open_param()),
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
-                inner.has_open_param()
-            }
-            Ty::Assoc { .. } => true,
-            Ty::Dyn { .. } | Ty::ImplTrait { .. } => false,
-            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never => false,
-        }
-    }
-}
 
 impl TypeRegistry {
     /// The trait every deref step goes through. Declared with the other system
@@ -960,6 +930,6 @@ pub(super) fn collect_params(ty: &Ty, out: &mut Vec<String>) {
                 t.bindings.iter().for_each(|(_, b)| collect_params(b, out));
             }
         }
-        Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer => {}
+        Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer | Ty::Var(_) => {}
     }
 }

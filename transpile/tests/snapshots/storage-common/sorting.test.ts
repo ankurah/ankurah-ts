@@ -19,7 +19,7 @@ class TestItem extends Struct implements Filterable {
   static new(pairs: [string, Value][]): TestItem {
     let values = new HashMap();
     for (const [k, v] of pairs) {
-      values.insert(k, v.clone());
+      values.set(k, v.clone());
     }
     return new TestItem(values);
   }
@@ -27,7 +27,7 @@ class TestItem extends Struct implements Filterable {
   static int(pairs: [string, number][]): TestItem {
     let values = new HashMap();
     for (const [k, v] of pairs) {
-      values.insert(k, new Value('I32', { _0: v }));
+      values.set(k, new Value('I32', { _0: v }));
     }
     return new TestItem(values);
   }
@@ -35,30 +35,30 @@ class TestItem extends Struct implements Filterable {
   static str(pairs: [string, string][]): TestItem {
     let values = new HashMap();
     for (const [k, v] of pairs) {
-      values.insert(k, new Value('String', { _0: v }));
+      values.set(k, new Value('String', { _0: v }));
     }
     return new TestItem(values);
   }
 
   static mixed(cat: string, name: string): TestItem {
     let values = new HashMap();
-    values.insert('cat', new Value('String', { _0: cat }));
-    values.insert('name', new Value('String', { _0: name }));
+    values.set('cat', new Value('String', { _0: cat }));
+    values.set('name', new Value('String', { _0: name }));
     return new TestItem(values);
   }
 
   static catVal(cat: string, val: number): TestItem {
     let values = new HashMap();
-    values.insert('cat', new Value('String', { _0: cat }));
-    values.insert('val', new Value('I32', { _0: val }));
+    values.set('cat', new Value('String', { _0: cat }));
+    values.set('val', new Value('I32', { _0: val }));
     return new TestItem(values);
   }
 
   static catSubcatVal(cat: string, subcat: string, val: number): TestItem {
     let values = new HashMap();
-    values.insert('cat', new Value('String', { _0: cat }));
-    values.insert('subcat', new Value('String', { _0: subcat }));
-    values.insert('val', new Value('I32', { _0: val }));
+    values.set('cat', new Value('String', { _0: cat }));
+    values.set('subcat', new Value('String', { _0: subcat }));
+    values.set('val', new Value('I32', { _0: val }));
     return new TestItem(values);
   }
 
@@ -186,7 +186,7 @@ describe('sorting unit tests', () => {
 
   test('test_limited_stream_basic', () => {
     const items = [1, 2, 3, 4, 5];
-    const limited = collectStream(LimitedStream.new(streamFrom(items), 3));
+    const limited = collectStream(LimitedStream.new(streamFrom(items), 3n));
     expect(limited).toEqual([1, 2, 3]);
   });
 
@@ -198,19 +198,19 @@ describe('sorting unit tests', () => {
 
   test('test_limited_stream_limit_exceeds_items', () => {
     const items = [1, 2, 3];
-    const limited = collectStream(LimitedStream.new(streamFrom(items), 10));
+    const limited = collectStream(LimitedStream.new(streamFrom(items), 10n));
     expect(limited).toEqual([1, 2, 3]);
   });
 
   test('test_limited_stream_zero_limit', () => {
     const items = [1, 2, 3];
-    const limited = collectStream(LimitedStream.new(streamFrom(items), 0));
+    const limited = collectStream(LimitedStream.new(streamFrom(items), 0n));
     if (!(limited.length === 0)) throw new Error('assertion failed');
   });
 
   test('test_limited_stream_empty_input', () => {
     const items = [];
-    const limited = collectStream(LimitedStream.new(streamFrom(items), 5));
+    const limited = collectStream(LimitedStream.new(streamFrom(items), 5n));
     if (!(limited.length === 0)) throw new Error('assertion failed');
   });
 

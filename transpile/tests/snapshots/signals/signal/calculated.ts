@@ -44,18 +44,30 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
   static new<T>(compute: Invocable<[], T>): Calculated<T> {
     let _moved0 = false;
     try {
+      let _moved2 = false;
       const _b1 = ValueCell.new(null);
-      let _moved3 = false;
-      const _b2 = Broadcast.new();
       try {
-        const _b4 = new RwLock(new HashMap());
-        _moved3 = true;
-        _moved0 = true;
-        const inner = Arc.new(new Inner(compute, _b1, _b2, _b4));
-        trigger(inner);
-        return new Calculated(inner);
+        let _moved4 = false;
+        const _b3 = Broadcast.new();
+        try {
+          const _b5 = new RwLock(new HashMap());
+          _moved2 = true;
+          _moved4 = true;
+          _moved0 = true;
+          let _moved6 = false;
+          const inner = Arc.new(new Inner(compute, _b1, _b3, _b5));
+          try {
+            trigger(inner);
+            _moved6 = true;
+            return new Calculated(inner);
+          } finally {
+            if (!_moved6) inner.drop();
+          }
+        } finally {
+          if (!_moved4) dropOwned(_b3);
+        }
       } finally {
-        if (!_moved3) dropOwned(_b2);
+        if (!_moved2) dropOwned(_b1);
       }
     } finally {
       if (!_moved0) dropOwned(compute);
@@ -163,15 +175,19 @@ export function Arc_Inner_observe<T>(self: Arc<Inner<T>>, signal: Signal): void 
   (_m0 as any);
   const weak = self.downgrade();
   let _moved1 = false;
-  const guard = signal.listen(Arc.new((_) => {
+  const guard = signal.listen(Arc.new(new OwnedClosure([weak], (_) => {
     {
       const _v1 = weak.upgrade();
       if (_v1 != null) {
         const inner = _v1;
-        trigger(inner);
+        try {
+          trigger(inner);
+        } finally {
+          inner.drop();
+        }
       }
     }
-  }));
+  })));
   try {
     let entries = self.value.entries.write();
     try {

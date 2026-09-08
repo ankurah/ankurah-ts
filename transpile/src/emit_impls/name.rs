@@ -113,7 +113,9 @@ fn shape(reg: &TypeRegistry, ty: &Ty, generics: &[String]) -> String {
         Ty::Unit => "Unit".to_string(),
         Ty::Never => "Never".to_string(),
         Ty::Param(name) => name.clone(),
-        Ty::Infer => "Infer".to_string(),
+        // An impl's self type is written out, so neither a hole nor an
+        // inference variable reaches here; the arm keeps the match total.
+        Ty::Infer | Ty::Var(_) => "Infer".to_string(),
         Ty::Assoc { base, name, .. } => {
             format!("{}_{}", shape(reg, base, generics), name)
         }

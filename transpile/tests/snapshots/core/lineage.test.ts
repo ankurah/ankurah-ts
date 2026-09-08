@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Comparison, EventAccumulator, Ordering, compare, compareUnstoredEvent } from './lineage';
-import { HashMap, HashSet, Result, Struct, rangeIncl } from '@ankurah/base';
+import { HashMap, HashSet, Result, Struct, dropOwned, rangeIncl } from '@ankurah/base';
 
 class TestClock extends Struct implements TClock {
   members: TestId[];
@@ -74,17 +74,23 @@ class MockEventStore extends Struct implements GetEvents {
   }
 
   async retrieveEvent(eventIds: number[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
+    let _moved0 = false;
     let result = [];
-    for (const id of eventIds) {
-      {
-        const _v = this.events.get(id);
-        if (_v != null) {
-          const event = _v;
-          result.push(event.clone());
+    try {
+      for (const id of eventIds) {
+        {
+          const _v = this.events.get(id);
+          if (_v != null) {
+            const event = _v;
+            result.push(event.clone());
+          }
         }
       }
+      _moved0 = true;
+      return Result.Ok([1, result]);
+    } finally {
+      if (!_moved0) dropOwned(result);
     }
-    return Result.Ok([1, result]);
   }
 
   stageEvents(_events: Attested<TestEvent>[]): void {
@@ -670,19 +676,33 @@ describe('lineage unit tests', () => {
         const known = new TestClock([2]);
         try {
           const accumulator = EventAccumulator.new(null);
+          let _moved0 = false;
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
-          while (true) {
-            {
-              const _v = (await comparison.step());
-              if (_v != null) {
-                const ordering = _v;
-                expect(ordering).toEqual(new Ordering('Descends', {}));
-                break;
+          try {
+            while (true) {
+              {
+                const _v = (await comparison.step()).unwrap();
+                if (_v != null) {
+                  const ordering = _v;
+                  try {
+                    expect(ordering).toEqual(new Ordering('Descends', {}));
+                    break;
+                  } finally {
+                    ordering.drop();
+                  }
+                }
               }
             }
+            _moved0 = true;
+            const events = (comparison.takeAccumulatedEvents() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+            try {
+              expect([...events].map((e) => e.payload.id()).sorted()).toEqual([3, 4, 5]);
+            } finally {
+              dropOwned(events);
+            }
+          } finally {
+            if (!_moved0) comparison.drop();
           }
-          const events = comparison.takeAccumulatedEvents();
-          expect([...events].map((e) => e.payload.id()).sorted()).toEqual([3, 4, 5]);
         } finally {
           known.drop();
         }
@@ -709,27 +729,41 @@ describe('lineage unit tests', () => {
         const known = new TestClock([1]);
         try {
           const accumulator = EventAccumulator.new(null);
+          let _moved0 = false;
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
-          while (true) {
-            {
-              const _v = (await comparison.step());
-              if (_v != null) {
-                const ordering = _v;
-                expect(ordering).toEqual(new Ordering('Descends', {}));
-                break;
+          try {
+            while (true) {
+              {
+                const _v = (await comparison.step()).unwrap();
+                if (_v != null) {
+                  const ordering = _v;
+                  try {
+                    expect(ordering).toEqual(new Ordering('Descends', {}));
+                    break;
+                  } finally {
+                    ordering.drop();
+                  }
+                }
               }
             }
+            _moved0 = true;
+            const events = (comparison.takeAccumulatedEvents() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+            try {
+              const eventIds = [...events].map((e) => e.payload.id());
+              expect(eventIds.length).toEqual(6);
+              if (!(eventIds.includes(7))) throw new Error('assertion failed');
+              if (!(eventIds.includes(5))) throw new Error('assertion failed');
+              if (!(eventIds.includes(6))) throw new Error('assertion failed');
+              if (!(eventIds.includes(2))) throw new Error('assertion failed');
+              if (!(eventIds.includes(3))) throw new Error('assertion failed');
+              if (!(eventIds.includes(4))) throw new Error('assertion failed');
+              if (!(!eventIds.includes(1))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(events);
+            }
+          } finally {
+            if (!_moved0) comparison.drop();
           }
-          const events = comparison.takeAccumulatedEvents();
-          const eventIds = [...events].map((e) => e.payload.id());
-          expect(eventIds.length).toEqual(6);
-          if (!(eventIds.includes(7))) throw new Error('assertion failed');
-          if (!(eventIds.includes(5))) throw new Error('assertion failed');
-          if (!(eventIds.includes(6))) throw new Error('assertion failed');
-          if (!(eventIds.includes(2))) throw new Error('assertion failed');
-          if (!(eventIds.includes(3))) throw new Error('assertion failed');
-          if (!(eventIds.includes(4))) throw new Error('assertion failed');
-          if (!(!eventIds.includes(1))) throw new Error('assertion failed');
         } finally {
           known.drop();
         }
@@ -752,19 +786,33 @@ describe('lineage unit tests', () => {
         const known = new TestClock([3]);
         try {
           const accumulator = EventAccumulator.new(null);
+          let _moved0 = false;
           let comparison = Comparison.newWithAccumulator(store, current, known, 100, accumulator);
-          while (true) {
-            {
-              const _v = (await comparison.step());
-              if (_v != null) {
-                const ordering = _v;
-                expect(ordering).toEqual(new Ordering('Equal', {}));
-                break;
+          try {
+            while (true) {
+              {
+                const _v = (await comparison.step()).unwrap();
+                if (_v != null) {
+                  const ordering = _v;
+                  try {
+                    expect(ordering).toEqual(new Ordering('Equal', {}));
+                    break;
+                  } finally {
+                    ordering.drop();
+                  }
+                }
               }
             }
+            _moved0 = true;
+            const events = (comparison.takeAccumulatedEvents() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+            try {
+              expect(events.length).toEqual(0);
+            } finally {
+              dropOwned(events);
+            }
+          } finally {
+            if (!_moved0) comparison.drop();
           }
-          const events = comparison.takeAccumulatedEvents();
-          expect(events.length).toEqual(0);
         } finally {
           known.drop();
         }
@@ -789,23 +837,37 @@ describe('lineage unit tests', () => {
         const other = new TestClock([5]);
         try {
           const accumulator = EventAccumulator.new(null);
+          let _moved0 = false;
           let comparison = Comparison.newWithAccumulator(store, subject, other, 100, accumulator);
-          while (true) {
-            {
-              const _v = (await comparison.step());
-              if (_v != null) {
-                const ordering = _v;
-                if (!(ordering.is('NotDescends'))) throw new Error('assertion failed');
-                break;
+          try {
+            while (true) {
+              {
+                const _v = (await comparison.step()).unwrap();
+                if (_v != null) {
+                  const ordering = _v;
+                  try {
+                    if (!(ordering.is('NotDescends'))) throw new Error('assertion failed');
+                    break;
+                  } finally {
+                    ordering.drop();
+                  }
+                }
               }
             }
+            _moved0 = true;
+            const events = (comparison.takeAccumulatedEvents() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+            try {
+              const eventIds = [...events].map((e) => e.payload.id());
+              if (!(eventIds.includes(4))) throw new Error('assertion failed');
+              if (!(eventIds.includes(2))) throw new Error('assertion failed');
+              if (!(!eventIds.includes(5))) throw new Error('assertion failed');
+              if (!(!eventIds.includes(3))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(events);
+            }
+          } finally {
+            if (!_moved0) comparison.drop();
           }
-          const events = comparison.takeAccumulatedEvents();
-          const eventIds = [...events].map((e) => e.payload.id());
-          if (!(eventIds.includes(4))) throw new Error('assertion failed');
-          if (!(eventIds.includes(2))) throw new Error('assertion failed');
-          if (!(!eventIds.includes(5))) throw new Error('assertion failed');
-          if (!(!eventIds.includes(3))) throw new Error('assertion failed');
         } finally {
           other.drop();
         }

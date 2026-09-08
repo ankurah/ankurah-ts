@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
-import { Struct, dropOwned, unsupported, iterFind, iterFindMap, iterFirst, HashSet } from '@ankurah/base';
+import { Struct, dropOwned, unsupported, iterFind, iterFindMap, iterFirst, iterFirstOwned, skipOwned, HashSet } from '@ankurah/base';
 import { ComparisonOperator, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
 import { IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
@@ -57,96 +57,103 @@ export class Planner extends Struct {
         const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
         return [tableScan];
       }
+      let _moved0 = false;
       let plans = [];
-      {
-        const _v2 = selection.orderBy;
-        if (_v2 != null) {
-          const orderBy = _v2;
-          if (!(orderBy.length === 0)) {
-            {
-              const _v = this.buildOrderFirstPlan(equalities, inequalities, orderBy, conjuncts);
-              if (_v != null) {
-                const plan = _v;
-                plans.push(plan);
-              }
-            }
-            const coveredIneq = [...orderBy].some((item) => (item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false));
-            if (!coveredIneq) {
-              if (!inequalities.isEmpty()) {
-                {
-                  const _v1 = this.buildIneqFirstPlan(equalities, inequalities, orderBy, conjuncts);
-                  if (_v1 != null) {
-                    const plan = _v1;
-                    plans.push(plan);
-                  }
-                }}}
-            let _moved0 = false;
-            const deduplicatedPlans = this.deduplicatePlans(plans);
-            try {
-              const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
-              if (!hasEmptyScan) {
-                _moved0 = true;
-                let _moved1 = false;
-                let finalPlans = deduplicatedPlans;
-                try {
-                  const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-                  finalPlans.push(tableScan);
-                  _moved1 = true;
-                  return finalPlans;
-                } finally {
-                  if (!_moved1) dropOwned(finalPlans);
+      try {
+        {
+          const _v2 = selection.orderBy;
+          if (_v2 != null) {
+            const orderBy = _v2;
+            if (!(orderBy.length === 0)) {
+              {
+                const _v = this.buildOrderFirstPlan(equalities, inequalities, orderBy, conjuncts);
+                if (_v != null) {
+                  const plan = _v;
+                  plans.push(plan);
                 }
-              } else {
-                _moved0 = true;
-                return deduplicatedPlans;
               }
-            } finally {
-              if (!_moved0) dropOwned(deduplicatedPlans);
+              const coveredIneq = [...orderBy].some((item) => (item.path.isSimple() ? inequalities.containsKey(item.path.first()) : false));
+              if (!coveredIneq) {
+                if (!inequalities.isEmpty()) {
+                  {
+                    const _v1 = this.buildIneqFirstPlan(equalities, inequalities, orderBy, conjuncts);
+                    if (_v1 != null) {
+                      const plan = _v1;
+                      plans.push(plan);
+                    }
+                  }}}
+              _moved0 = true;
+              let _moved1 = false;
+              const deduplicatedPlans = this.deduplicatePlans(plans);
+              try {
+                const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
+                if (!hasEmptyScan) {
+                  _moved1 = true;
+                  let _moved2 = false;
+                  let finalPlans = deduplicatedPlans;
+                  try {
+                    const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+                    finalPlans.push(tableScan);
+                    _moved2 = true;
+                    return finalPlans;
+                  } finally {
+                    if (!_moved2) dropOwned(finalPlans);
+                  }
+                } else {
+                  _moved1 = true;
+                  return deduplicatedPlans;
+                }
+              } finally {
+                if (!_moved1) dropOwned(deduplicatedPlans);
+              }
             }
           }
         }
-      }
-      if (!inequalities.isEmpty()) {
-        for (const [field, ] of inequalities) {
+        if (!inequalities.isEmpty()) {
+          for (const [field, ] of inequalities) {
+            {
+              const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy);
+              if (_v3 != null) {
+                const plan = _v3;
+                plans.push(plan);
+              }
+            }
+          }
+        } else if (!(equalities.length === 0)) {
           {
-            const _v3 = this.generateInequalityPlanWithOrderBy(equalities, field, inequalities, conjuncts, selection.orderBy);
-            if (_v3 != null) {
-              const plan = _v3;
+            const _v4 = this.generateEqualityPlan(equalities, conjuncts);
+            if (_v4 != null) {
+              const plan = _v4;
               plans.push(plan);
             }
           }
         }
-      } else if (!(equalities.length === 0)) {
-        {
-          const _v4 = this.generateEqualityPlan(equalities, conjuncts);
-          if (_v4 != null) {
-            const plan = _v4;
-            plans.push(plan);
-          }
-        }
-      }
-      let _moved2 = false;
-      const deduplicatedPlans = this.deduplicatePlans(plans);
-      try {
-        const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
-        if (!hasEmptyScan) {
-          _moved2 = true;
-          let _moved3 = false;
-          let finalPlans = deduplicatedPlans;
-          try {
-            const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-            finalPlans.push(tableScan);
+        _moved0 = true;
+        let _moved3 = false;
+        const deduplicatedPlans = this.deduplicatePlans(plans);
+        try {
+          const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
+          if (!hasEmptyScan) {
             _moved3 = true;
-            return finalPlans;
-          } finally {
-            if (!_moved3) dropOwned(finalPlans);
+            let _moved4 = false;
+            let finalPlans = deduplicatedPlans;
+            try {
+              const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+              finalPlans.push(tableScan);
+              _moved4 = true;
+              return finalPlans;
+            } finally {
+              if (!_moved4) dropOwned(finalPlans);
+            }
+          } else {
+            _moved3 = true;
+            return deduplicatedPlans;
           }
-        } else {
-          _moved2 = true;
-          return deduplicatedPlans;
+        } finally {
+          if (!_moved3) dropOwned(deduplicatedPlans);
         }
       } finally {
-        if (!_moved2) dropOwned(deduplicatedPlans);
+        if (!_moved0) dropOwned(plans);
       }
     } finally {
       dropOwned(conjuncts);
@@ -222,25 +229,37 @@ export class Planner extends Struct {
             Desc: () => new ScanDirection('Reverse', {}),
             Asc: () => new ScanDirection('Forward', {}),
           }));
-          let _moved6 = false;
+          let _moved8 = false;
           const orderBy_1 = (() => {
             if (!this.config.supportsDescIndexes) {
               const firstDir = orderBy[0].direction.clone();
               try {
+                let _moved6 = false;
                 let presort = [];
-                let spill = [];
-                let broke = false;
-                for (const item of orderBy) {
-                  if (item.path.isSimple()) {
-                    if (!broke && item.direction.equals(firstDir)) {
-                      presort.push(item.clone());
-                    } else {
-                      broke = true;
-                      spill.push(item.clone());
+                try {
+                  let _moved7 = false;
+                  let spill = [];
+                  try {
+                    let broke = false;
+                    for (const item of orderBy) {
+                      if (item.path.isSimple()) {
+                        if (!broke && item.direction.equals(firstDir)) {
+                          presort.push(item.clone());
+                        } else {
+                          broke = true;
+                          spill.push(item.clone());
+                        }
+                      }
                     }
+                    _moved6 = true;
+                    _moved7 = true;
+                    return OrderByComponents.new(presort, spill);
+                  } finally {
+                    if (!_moved7) dropOwned(spill);
                   }
+                } finally {
+                  if (!_moved6) dropOwned(presort);
                 }
-                return OrderByComponents.new(presort, spill);
               } finally {
                 firstDir.drop();
               }
@@ -251,11 +270,11 @@ export class Planner extends Struct {
           try {
             _moved4 = true;
             _moved5 = true;
-            _moved6 = true;
+            _moved8 = true;
             _moved0 = true;
             return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
           } finally {
-            if (!_moved6) orderBy_1.drop();
+            if (!_moved8) orderBy_1.drop();
           }
         } finally {
           if (!_moved5) remainingPredicate.drop();
@@ -304,29 +323,41 @@ export class Planner extends Struct {
           }));
           let covered = new HashSet();
           covered.extend([...equalities].map(([f, ]) => f));
-          covered.insert(primary._0);
-          let presort = [];
-          let spill = [];
-          for (const item of orderBy) {
-            if (item.path.isSimple()) {
-              const name = item.path.first();
-              if (covered.includes(name)) {
-                presort.push(item.clone());
-              } else {
-                spill.push(item.clone());
-              }
-            }
-          }
+          covered.add(primary._0);
           let _moved6 = false;
-          const orderBy_1 = OrderByComponents.new(presort, spill);
+          let presort = [];
           try {
-            _moved4 = true;
-            _moved5 = true;
-            _moved6 = true;
-            _moved2 = true;
-            return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
+            let _moved7 = false;
+            let spill = [];
+            try {
+              for (const item of orderBy) {
+                if (item.path.isSimple()) {
+                  const name = item.path.first();
+                  if (covered.has(name)) {
+                    presort.push(item.clone());
+                  } else {
+                    spill.push(item.clone());
+                  }
+                }
+              }
+              _moved6 = true;
+              _moved7 = true;
+              let _moved8 = false;
+              const orderBy_1 = OrderByComponents.new(presort, spill);
+              try {
+                _moved4 = true;
+                _moved5 = true;
+                _moved8 = true;
+                _moved2 = true;
+                return new Plan('Index', { indexSpec: KeySpec.new(indexKeyparts), scanDirection: scanDirection, bounds: bounds, remainingPredicate: remainingPredicate, orderBySpill: orderBy_1 });
+              } finally {
+                if (!_moved8) orderBy_1.drop();
+              }
+            } finally {
+              if (!_moved7) dropOwned(spill);
+            }
           } finally {
-            if (!_moved6) orderBy_1.drop();
+            if (!_moved6) dropOwned(presort);
           }
         } finally {
           if (!_moved5) remainingPredicate.drop();
@@ -340,64 +371,70 @@ export class Planner extends Struct {
   }
 
   categorizeConjunctsExcludingPrimaryKey(conjuncts: Predicate[], primaryKey: string): [[string, Value][], IndexMap<string, [ComparisonOperator, Value][], RandomState>] {
-    let equalities = [];
     let _moved0 = false;
-    let inequalities = IndexMap.new();
+    let equalities: [string, Value][] = [];
     try {
-      for (const conjunct of conjuncts) {
-        {
-          const _v = this.extractComparison(conjunct);
-          if (_v != null) {
-            const [field, op, value] = _v;
-            let _moved1 = false;
-            let _moved2 = false;
-            try {
+      let _moved1 = false;
+      let inequalities = IndexMap.new();
+      try {
+        for (const conjunct of conjuncts) {
+          {
+            const _v = this.extractComparison(conjunct);
+            if (_v != null) {
+              const [field, op, value] = _v;
+              let _moved2 = false;
+              let _moved3 = false;
               try {
-                if (field === primaryKey) {
-                  continue;
+                try {
+                  if (field === primaryKey) {
+                    continue;
+                  }
+                  return op.match({
+                    Equal: () => {
+                      _moved3 = true;
+                      equalities.push([field, value]);
+                    },
+                    GreaterThan: () => {
+                      _moved2 = true;
+                      _moved3 = true;
+                      inequalities.entry(field).orDefault().push([op, value]);
+                    },
+                    GreaterThanOrEqual: () => {
+                      _moved2 = true;
+                      _moved3 = true;
+                      inequalities.entry(field).orDefault().push([op, value]);
+                    },
+                    LessThan: () => {
+                      _moved2 = true;
+                      _moved3 = true;
+                      inequalities.entry(field).orDefault().push([op, value]);
+                    },
+                    LessThanOrEqual: () => {
+                      _moved2 = true;
+                      _moved3 = true;
+                      inequalities.entry(field).orDefault().push([op, value]);
+                    },
+                    NotEqual: () => {},
+                    In: () => {},
+                    Between: () => {},
+                  });
+                } finally {
+                  if (!_moved3) value.drop();
                 }
-                return op.match({
-                  Equal: () => {
-                    _moved2 = true;
-                    equalities.push([field, value]);
-                  },
-                  GreaterThan: () => {
-                    _moved1 = true;
-                    _moved2 = true;
-                    inequalities.entry(field).orDefault().push([op, value]);
-                  },
-                  GreaterThanOrEqual: () => {
-                    _moved1 = true;
-                    _moved2 = true;
-                    inequalities.entry(field).orDefault().push([op, value]);
-                  },
-                  LessThan: () => {
-                    _moved1 = true;
-                    _moved2 = true;
-                    inequalities.entry(field).orDefault().push([op, value]);
-                  },
-                  LessThanOrEqual: () => {
-                    _moved1 = true;
-                    _moved2 = true;
-                    inequalities.entry(field).orDefault().push([op, value]);
-                  },
-                  NotEqual: () => {},
-                  In: () => {},
-                  Between: () => {},
-                });
               } finally {
-                if (!_moved2) value.drop();
+                if (!_moved2) op.drop();
               }
-            } finally {
-              if (!_moved1) op.drop();
             }
           }
         }
+        _moved0 = true;
+        _moved1 = true;
+        return [equalities, inequalities];
+      } finally {
+        if (!_moved1) dropOwned(inequalities);
       }
-      _moved0 = true;
-      return [equalities, inequalities];
     } finally {
-      if (!_moved0) dropOwned(inequalities);
+      if (!_moved0) dropOwned(equalities);
     }
   }
 
@@ -470,272 +507,302 @@ export class Planner extends Struct {
   }
 
   generateInequalityPlanWithOrderBy(equalities: [string, Value][], inequalityField: string, inequalities: IndexMap<string, [ComparisonOperator, Value][], RandomState>, conjuncts: Predicate[], orderBy: OrderByItem[] | null): Plan | null {
+    let _moved0 = false;
     let indexKeyparts = [];
-    for (const [field, value] of equalities) {
-      indexKeyparts.push(IndexKeyPart.ascPath(field, ValueType.of(value)));
-    }
-    const _r0 = inequalities.get(inequalityField);
-    if (_r0 == null) return null;
-    const inequalityValues = _r0;
-    let _moved1 = false;
-    const firstInequalityValue = inequalityValues[0][1];
     try {
-      _moved1 = true;
-      indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
+      for (const [field, value] of equalities) {
+        indexKeyparts.push(IndexKeyPart.ascPath(field, ValueType.of(value)));
+      }
+      const _r1 = inequalities.get(inequalityField);
+      if (_r1 == null) return null;
+      const inequalityValues = _r1;
       let _moved2 = false;
-      const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
+      const firstInequalityValue = inequalityValues[0][1];
       try {
-        const _m4 = (() => {
-          const _v = bounds;
-          if (_v != null) {
-            const bounds = _v;
-            let _moved3 = false;
-            try {
-              {
-                if (this.isEmptyBounds(bounds)) {
-                  return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-                }
-                _moved3 = true;
-                return bounds;
-              }
-            } finally {
-              if (!_moved3) bounds.drop();
-            }
-          } else {
-            return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-          }
-        })();
-        if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
         _moved2 = true;
-        let _moved5 = false;
-        const bounds_1 = (_m4 as any);
+        indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
+        let _moved3 = false;
+        const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
         try {
+          const _m5 = (() => {
+            const _v = bounds;
+            if (_v != null) {
+              const bounds = _v;
+              let _moved4 = false;
+              try {
+                {
+                  if (this.isEmptyBounds(bounds)) {
+                    return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+                  }
+                  _moved4 = true;
+                  return bounds;
+                }
+              } finally {
+                if (!_moved4) bounds.drop();
+              }
+            } else {
+              return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+            }
+          })();
+          if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
+          _moved3 = true;
           let _moved6 = false;
-          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
+          const bounds_1 = (_m5 as any);
           try {
             let _moved7 = false;
-            const orderBySpill = (() => {
-              {
-                const _v1 = orderBy;
-                if (_v1 != null) {
-                  const orderByItems = _v1;
-                  const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f), ...once(inequalityField)]);
-                  let presort = [];
-                  let spill = [];
-                  for (const item of orderByItems) {
-                    if (item.path.isSimple()) {
-                      const name = item.path.first();
-                      if (coveredFields.has(name)) {
-                        presort.push(item.clone());
-                      } else {
-                        spill.push(item.clone());
-                      }
-                    }
-                  }
-                  return OrderByComponents.new(presort, spill);
-                } else {
-                return OrderByComponents.default();
-              }
-              }
-            })();
+            const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
             try {
-              let _moved8 = false;
-              const indexSpec = KeySpec.new(indexKeyparts);
+              let _moved10 = false;
+              const orderBySpill = (() => {
+                {
+                  const _v1 = orderBy;
+                  if (_v1 != null) {
+                    const orderByItems = _v1;
+                    const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f), ...once(inequalityField)]);
+                    let _moved8 = false;
+                    let presort = [];
+                    try {
+                      let _moved9 = false;
+                      let spill = [];
+                      try {
+                        for (const item of orderByItems) {
+                          if (item.path.isSimple()) {
+                            const name = item.path.first();
+                            if (coveredFields.has(name)) {
+                              presort.push(item.clone());
+                            } else {
+                              spill.push(item.clone());
+                            }
+                          }
+                        }
+                        _moved8 = true;
+                        _moved9 = true;
+                        return OrderByComponents.new(presort, spill);
+                      } finally {
+                        if (!_moved9) dropOwned(spill);
+                      }
+                    } finally {
+                      if (!_moved8) dropOwned(presort);
+                    }
+                  } else {
+                  return OrderByComponents.default();
+                }
+                }
+              })();
               try {
-                _moved8 = true;
-                _moved5 = true;
-                _moved6 = true;
-                _moved7 = true;
-                return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+                _moved0 = true;
+                let _moved11 = false;
+                const indexSpec = KeySpec.new(indexKeyparts);
+                try {
+                  _moved11 = true;
+                  _moved6 = true;
+                  _moved7 = true;
+                  _moved10 = true;
+                  return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+                } finally {
+                  if (!_moved11) indexSpec.drop();
+                }
               } finally {
-                if (!_moved8) indexSpec.drop();
+                if (!_moved10) orderBySpill.drop();
               }
             } finally {
-              if (!_moved7) orderBySpill.drop();
+              if (!_moved7) remainingPredicate.drop();
             }
           } finally {
-            if (!_moved6) remainingPredicate.drop();
+            if (!_moved6) dropOwned(bounds_1);
           }
         } finally {
-          if (!_moved5) dropOwned(bounds_1);
+          if (!_moved3) dropOwned(bounds);
         }
       } finally {
-        if (!_moved2) dropOwned(bounds);
+        if (!_moved2) firstInequalityValue.drop();
       }
     } finally {
-      if (!_moved1) firstInequalityValue.drop();
+      if (!_moved0) dropOwned(indexKeyparts);
     }
   }
 
   generateEqualityPlan(equalities: [string, Value][], conjuncts: Predicate[]): Plan | null {
+    let _moved0 = false;
     let indexKeyparts = [];
-    for (const [field, value] of equalities) {
-      indexKeyparts.push(IndexKeyPart.ascPath(field, ValueType.of(value)));
-    }
-    const bounds = this.buildBounds(equalities, null, indexKeyparts);
-    const _m1 = (() => {
-      const _v = bounds;
-      if (_v != null) {
-        const bounds = _v;
-        let _moved0 = false;
-        try {
-          {
-            if (this.isEmptyBounds(bounds)) {
-              return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-            }
-            _moved0 = true;
-            return bounds;
-          }
-        } finally {
-          if (!_moved0) bounds.drop();
-        }
-      } else {
-        return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-      }
-    })();
-    if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;
-    let _moved2 = false;
-    const bounds_1 = (_m1 as any);
     try {
+      for (const [field, value] of equalities) {
+        indexKeyparts.push(IndexKeyPart.ascPath(field, ValueType.of(value)));
+      }
+      const bounds = this.buildBounds(equalities, null, indexKeyparts);
+      const _m2 = (() => {
+        const _v = bounds;
+        if (_v != null) {
+          const bounds = _v;
+          let _moved1 = false;
+          try {
+            {
+              if (this.isEmptyBounds(bounds)) {
+                return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+              }
+              _moved1 = true;
+              return bounds;
+            }
+          } finally {
+            if (!_moved1) bounds.drop();
+          }
+        } else {
+          return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+        }
+      })();
+      if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
       let _moved3 = false;
-      const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, null);
+      const bounds_1 = (_m2 as any);
       try {
         let _moved4 = false;
-        const indexSpec = KeySpec.new(indexKeyparts);
+        const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, null);
         try {
-          _moved4 = true;
-          _moved2 = true;
-          _moved3 = true;
-          return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: OrderByComponents.default() });
+          _moved0 = true;
+          let _moved5 = false;
+          const indexSpec = KeySpec.new(indexKeyparts);
+          try {
+            _moved5 = true;
+            _moved3 = true;
+            _moved4 = true;
+            return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: OrderByComponents.default() });
+          } finally {
+            if (!_moved5) indexSpec.drop();
+          }
         } finally {
-          if (!_moved4) indexSpec.drop();
+          if (!_moved4) remainingPredicate.drop();
         }
       } finally {
-        if (!_moved3) remainingPredicate.drop();
+        if (!_moved3) dropOwned(bounds_1);
       }
     } finally {
-      if (!_moved2) dropOwned(bounds_1);
+      if (!_moved0) dropOwned(indexKeyparts);
     }
   }
 
   buildBounds(equalities: [string, Value][], inequality: [string, [ComparisonOperator, Value][]] | null, indexKeyparts: IndexKeyPart[]): KeyBounds | null {
+    let _moved0 = false;
     let keypartBounds = [];
-    for (const keypart of indexKeyparts) {
-      const fullPath = keypart.fullPath();
-      const _m0 = iterFind([...equalities], ([field, ]) => field === fullPath);
-      const equalityValue = (_m0 != null ? (([, value]) => value)(_m0!) : null);
-      {
-        const _v1 = equalityValue;
-        if (_v1 != null) {
-          const value = _v1;
-          let _moved2 = false;
-          const _b1 = Endpoint.incl(value.clone());
-          try {
-            const _b3 = Endpoint.incl(value.clone());
-            _moved2 = true;
-            keypartBounds.push(new KeyBoundComponent(fullPath, _b1, _b3));
-          } finally {
-            if (!_moved2) dropOwned(_b1);
-          }
-        } else {
-        const _v = inequality;
-        if (_v != null) {
-          const [ineqField, inequalities] = _v;
-          if (ineqField === fullPath) {
-            let _moved4 = false;
-            let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0][1]) });
+    try {
+      for (const keypart of indexKeyparts) {
+        const fullPath = keypart.fullPath();
+        const _m1 = iterFind([...equalities], ([field, ]) => field === fullPath);
+        const equalityValue = (_m1 != null ? (([, value]) => value)(_m1!) : null);
+        {
+          const _v1 = equalityValue;
+          if (_v1 != null) {
+            const value = _v1;
+            let _moved3 = false;
+            const _b2 = Endpoint.incl(value.clone());
             try {
-              let _moved5 = false;
-              let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0][1]) });
-              try {
-                for (const [op, value] of inequalities) {
-                  op.match({
-                    GreaterThan: () => {
-                      let _moved6 = false;
-                      const candidate = Endpoint.excl(value.clone());
-                      try {
-                        if (this.isMoreRestrictiveLower(candidate, low)) {
-                          const _a7 = candidate;
-                          if (!_moved4) low.drop();
-                          _moved4 = false;
-                          _moved6 = true;
-                          low = _a7;
-                        }
-                      } finally {
-                        if (!_moved6) candidate.drop();
-                      }
-                    },
-                    GreaterThanOrEqual: () => {
-                      let _moved8 = false;
-                      const candidate = Endpoint.incl(value.clone());
-                      try {
-                        if (this.isMoreRestrictiveLower(candidate, low)) {
-                          const _a9 = candidate;
-                          if (!_moved4) low.drop();
-                          _moved4 = false;
-                          _moved8 = true;
-                          low = _a9;
-                        }
-                      } finally {
-                        if (!_moved8) candidate.drop();
-                      }
-                    },
-                    LessThan: () => {
-                      let _moved10 = false;
-                      const candidate = Endpoint.excl(value.clone());
-                      try {
-                        if (this.isMoreRestrictiveUpper(candidate, high)) {
-                          const _a11 = candidate;
-                          if (!_moved5) high.drop();
-                          _moved5 = false;
-                          _moved10 = true;
-                          high = _a11;
-                        }
-                      } finally {
-                        if (!_moved10) candidate.drop();
-                      }
-                    },
-                    LessThanOrEqual: () => {
-                      let _moved12 = false;
-                      const candidate = Endpoint.incl(value.clone());
-                      try {
-                        if (this.isMoreRestrictiveUpper(candidate, high)) {
-                          const _a13 = candidate;
-                          if (!_moved5) high.drop();
-                          _moved5 = false;
-                          _moved12 = true;
-                          high = _a13;
-                        }
-                      } finally {
-                        if (!_moved12) candidate.drop();
-                      }
-                    },
-                    Equal: () => {},
-                    NotEqual: () => {},
-                    In: () => {},
-                    Between: () => {},
-                  });
-                }
-                _moved4 = true;
-                _moved5 = true;
-                keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
-                break;
-              } finally {
-                if (!_moved5) high.drop();
-              }
+              const _b4 = Endpoint.incl(value.clone());
+              _moved3 = true;
+              keypartBounds.push(new KeyBoundComponent(fullPath, _b2, _b4));
             } finally {
-              if (!_moved4) low.drop();
+              if (!_moved3) dropOwned(_b2);
             }
           } else {
-            break;
-          }
-        } else {
-        break;
+          const _v = inequality;
+          if (_v != null) {
+            const [ineqField, inequalities] = _v;
+            if (ineqField === fullPath) {
+              let _moved5 = false;
+              let low = new Endpoint('UnboundedLow', { _0: ValueType.of(inequalities[0][1]) });
+              try {
+                let _moved6 = false;
+                let high = new Endpoint('UnboundedHigh', { _0: ValueType.of(inequalities[0][1]) });
+                try {
+                  for (const [op, value] of inequalities) {
+                    op.match({
+                      GreaterThan: () => {
+                        let _moved7 = false;
+                        const candidate = Endpoint.excl(value.clone());
+                        try {
+                          if (this.isMoreRestrictiveLower(candidate, low)) {
+                            const _a8 = candidate;
+                            if (!_moved5) low.drop();
+                            _moved5 = false;
+                            _moved7 = true;
+                            low = _a8;
+                          }
+                        } finally {
+                          if (!_moved7) candidate.drop();
+                        }
+                      },
+                      GreaterThanOrEqual: () => {
+                        let _moved9 = false;
+                        const candidate = Endpoint.incl(value.clone());
+                        try {
+                          if (this.isMoreRestrictiveLower(candidate, low)) {
+                            const _a10 = candidate;
+                            if (!_moved5) low.drop();
+                            _moved5 = false;
+                            _moved9 = true;
+                            low = _a10;
+                          }
+                        } finally {
+                          if (!_moved9) candidate.drop();
+                        }
+                      },
+                      LessThan: () => {
+                        let _moved11 = false;
+                        const candidate = Endpoint.excl(value.clone());
+                        try {
+                          if (this.isMoreRestrictiveUpper(candidate, high)) {
+                            const _a12 = candidate;
+                            if (!_moved6) high.drop();
+                            _moved6 = false;
+                            _moved11 = true;
+                            high = _a12;
+                          }
+                        } finally {
+                          if (!_moved11) candidate.drop();
+                        }
+                      },
+                      LessThanOrEqual: () => {
+                        let _moved13 = false;
+                        const candidate = Endpoint.incl(value.clone());
+                        try {
+                          if (this.isMoreRestrictiveUpper(candidate, high)) {
+                            const _a14 = candidate;
+                            if (!_moved6) high.drop();
+                            _moved6 = false;
+                            _moved13 = true;
+                            high = _a14;
+                          }
+                        } finally {
+                          if (!_moved13) candidate.drop();
+                        }
+                      },
+                      Equal: () => {},
+                      NotEqual: () => {},
+                      In: () => {},
+                      Between: () => {},
+                    });
+                  }
+                  _moved5 = true;
+                  _moved6 = true;
+                  keypartBounds.push(new KeyBoundComponent(fullPath, low, high));
+                  break;
+                } finally {
+                  if (!_moved6) high.drop();
+                }
+              } finally {
+                if (!_moved5) low.drop();
+              }
+            } else {
+              break;
+            }
+          } else {
+          break;
+        }
+        }
+        }
       }
-      }
-      }
+      _moved0 = true;
+      return KeyBounds.new(keypartBounds);
+    } finally {
+      if (!_moved0) dropOwned(keypartBounds);
     }
-    return KeyBounds.new(keypartBounds);
   }
 
   isMoreRestrictiveLower(candidate: Endpoint, current: Endpoint): boolean {
@@ -836,87 +903,110 @@ export class Planner extends Struct {
   }
 
   calculateRemainingPredicate(conjuncts: Predicate[], consumedEqualities: [string, Value][], consumedInequalityField: string | null): Predicate {
+    let _moved0 = false;
     let remainingConjuncts = [];
-    for (const conjunct of conjuncts) {
-      let consumed = false;
-      {
-        const _v1 = this.extractComparison(conjunct);
-        if (_v1 != null) {
-          const [field, , ] = _v1;
-          for (const [eqField, ] of consumedEqualities) {
-            if (field === eqField) {
-              consumed = true;
-              break;
+    try {
+      for (const conjunct of conjuncts) {
+        let consumed = false;
+        {
+          const _v1 = this.extractComparison(conjunct);
+          if (_v1 != null) {
+            const [field, , ] = _v1;
+            for (const [eqField, ] of consumedEqualities) {
+              if (field === eqField) {
+                consumed = true;
+                break;
+              }
             }
+            if (!consumed) {
+              {
+                const _v = consumedInequalityField;
+                if (_v != null) {
+                  const ineqField = _v;
+                  if (field === ineqField) {
+                    consumed = true;
+                  }  }
+              }}
           }
-          if (!consumed) {
-            {
-              const _v = consumedInequalityField;
-              if (_v != null) {
-                const ineqField = _v;
-                if (field === ineqField) {
-                  consumed = true;
-                }  }
-            }}
+        }
+        if (!consumed) {
+          remainingConjuncts.push(conjunct.clone());
         }
       }
-      if (!consumed) {
-        remainingConjuncts.push(conjunct.clone());
+      if (remainingConjuncts.length === 0) {
+        return new Predicate('True', {});
+      } else if (remainingConjuncts.length === 1) {
+        _moved0 = true;
+        return (iterFirstOwned([...remainingConjuncts]) ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      } else {
+        let _moved1 = false;
+        let result = remainingConjuncts[0].clone();
+        try {
+          _moved0 = true;
+          for (const conjunct of skipOwned([...remainingConjuncts], 1)) {
+            const _a2 = new Predicate('And', { _0: result, _1: conjunct });
+            if (!_moved1) result.drop();
+            _moved1 = false;
+            _moved1 = true;
+            result = _a2;
+          }
+          _moved1 = true;
+          return result;
+        } finally {
+          if (!_moved1) result.drop();
+        }
       }
-    }
-    if (remainingConjuncts.length === 0) {
-      return new Predicate('True', {});
-    } else if (remainingConjuncts.length === 1) {
-      return [...remainingConjuncts].next();
-    } else {
-      let result = remainingConjuncts[0].clone();
-      for (const conjunct of [...remainingConjuncts].slice(1)) {
-        result = new Predicate('And', { _0: result, _1: conjunct });
-      }
-      return result;
+    } finally {
+      if (!_moved0) dropOwned(remainingConjuncts);
     }
   }
 
   deduplicatePlans(plans: Plan[]): Plan[] {
     let _moved0 = false;
     try {
+      let _moved1 = false;
       let uniquePlans = [];
-      let seen = new HashSet();
-      _moved0 = true;
-      const _seq2 = plans;
-      let _at3 = 0;
       try {
-        while (_at3 < _seq2.length) {
-          const plan = _seq2[_at3++];
-          let _moved1 = false;
-          try {
-            plan.match({
-              Index: (v) => {
-                const indexSpec = v.indexSpec;
-                const scanDirection = v.scanDirection;
-                const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
-                if (seen.insert(key)) {
-                  _moved1 = true;
+        let seen = new HashSet();
+        _moved0 = true;
+        const _seq3 = plans;
+        let _at4 = 0;
+        try {
+          while (_at4 < _seq3.length) {
+            const plan = _seq3[_at4++];
+            let _moved2 = false;
+            try {
+              plan.match({
+                Index: (v) => {
+                  const indexSpec = v.indexSpec;
+                  const scanDirection = v.scanDirection;
+                  const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
+                  if (seen.insert(key)) {
+                    _moved2 = true;
+                    uniquePlans.push(plan);
+                  }
+                },
+                EmptyScan: () => {
+                  _moved2 = true;
                   uniquePlans.push(plan);
-                }
-              },
-              EmptyScan: () => {
-                _moved1 = true;
-                uniquePlans.push(plan);
-              },
-              TableScan: () => {
-                _moved1 = true;
-                uniquePlans.push(plan);
-              },
-            });
-          } finally {
-            if (!_moved1) plan.drop();
+                },
+                TableScan: () => {
+                  _moved2 = true;
+                  uniquePlans.push(plan);
+                },
+              });
+            } finally {
+              if (!_moved2) plan.drop();
+            }
           }
+        } finally {
+          dropOwned(_seq3.slice(_at4));
         }
+        _moved1 = true;
+        return uniquePlans;
       } finally {
-        dropOwned(_seq2.slice(_at3));
+        if (!_moved1) dropOwned(uniquePlans);
       }
-      return uniquePlans;
     } finally {
       if (!_moved0) dropOwned(plans);
     }
@@ -976,24 +1066,31 @@ export class Planner extends Struct {
   }
 
   extractEntityIdRange(conjuncts: Predicate[], primaryKey: string): KeyBounds {
+    let _moved0 = false;
     let primaryKeyBounds = [];
-    for (const predicate of conjuncts) {
-      {
-        const _v = this.extractPrimaryKeyBound(predicate, primaryKey);
-        if (_v != null) {
-          const bound = _v;
-          primaryKeyBounds.push(bound);
+    try {
+      for (const predicate of conjuncts) {
+        {
+          const _v = this.extractPrimaryKeyBound(predicate, primaryKey);
+          if (_v != null) {
+            const bound = _v;
+            primaryKeyBounds.push(bound);
+          }
         }
       }
-    }
-    if (primaryKeyBounds.length === 0) {
-      return KeyBounds.empty();
-    }
-    if (primaryKeyBounds.length === 1) {
-      return new KeyBounds(primaryKeyBounds);
-    } else {
-      const intersectedBound = this.intersectPrimaryKeyBounds(primaryKeyBounds, primaryKey);
-      return new KeyBounds([intersectedBound]);
+      if (primaryKeyBounds.length === 0) {
+        return KeyBounds.empty();
+      }
+      if (primaryKeyBounds.length === 1) {
+        _moved0 = true;
+        return new KeyBounds(primaryKeyBounds);
+      } else {
+        _moved0 = true;
+        const intersectedBound = this.intersectPrimaryKeyBounds(primaryKeyBounds, primaryKey);
+        return new KeyBounds([intersectedBound]);
+      }
+    } finally {
+      if (!_moved0) dropOwned(primaryKeyBounds);
     }
   }
 

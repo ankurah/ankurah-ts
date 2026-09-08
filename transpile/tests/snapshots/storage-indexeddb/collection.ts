@@ -753,7 +753,7 @@ function extractSortProperties(entityObj: Object, orderBy: OrderByComponents): H
       const _v = entityObj.getOpt(propertyName);
       if (_v.isOk()) {
         const _v1 = _v.unwrap();
-        map.insert(propertyName, idbVal.intoValue());
+        map.set(propertyName, idbVal.intoValue());
       } else {
       _v.drop();
     }
@@ -765,7 +765,7 @@ function extractSortProperties(entityObj: Object, orderBy: OrderByComponents): H
       const _v2 = entityObj.getOpt(propertyName);
       if (_v2.isOk()) {
         const _v3 = _v2.unwrap();
-        map.insert(propertyName, idbVal.intoValue());
+        map.set(propertyName, idbVal.intoValue());
       } else {
       _v2.drop();
     }

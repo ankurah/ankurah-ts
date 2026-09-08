@@ -10,6 +10,19 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(pub u32);
 
+/// One unknown type inside one function body, by the order it was minted.
+///
+/// Ids are local to the body being typed: two bodies both start at zero, and a
+/// variable never outlives the table that minted it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InferId(pub u32);
+
+impl std::fmt::Display for InferId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "?{}", self.0)
+    }
+}
+
 /// The id spaces are a partition of `u32`; running out of either is a bug in
 /// the corpus size, not something to paper over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +247,13 @@ pub enum Ty {
 
     /// A `_` written in an annotation or a turbofish.
     Infer,
+
+    /// An unknown the engine minted and the solver may still settle.
+    ///
+    /// It is a separate variant from `Infer` because the two are answered
+    /// differently: a `_` is a hole the source wrote and nothing here fills,
+    /// while a variable has a table behind it that a constraint can bind.
+    Var(InferId),
 }
 
 impl Ty {

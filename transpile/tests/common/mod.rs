@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+pub mod golden_debt;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;

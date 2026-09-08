@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/fetch_gap.rs
-import { Struct, Result, Weak, dropOwned, derivedClone } from '@ankurah/base';
+import { Struct, Result, Weak, dropOwned, derivedClone, iterReduceOwned } from '@ankurah/base';
 import { ComparisonOperator, Expr, Literal, PathExpr, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
 import { NodeAndContext } from '../context';
 import { Entity } from '../entity';
@@ -119,77 +119,88 @@ export interface GapFetcher<E extends AbstractEntity> {
 }
 
 export function buildContinuationPredicate<E extends AbstractEntity>(originalPredicate: Predicate, orderBy: OrderByItem[], lastEntity: E): Result<Predicate, string> {
+  let _moved0 = false;
   let gapConditions = [];
-  gapConditions.push(originalPredicate.clone());
-  for (const orderItem of orderBy) {
-    const fieldName = orderItem.path.property();
-    {
-      const _v = lastEntity.value(fieldName);
-      if (_v != null) {
-        const fieldValue = _v;
-        try {
-          const _m0 = (() => {
-            if (fieldValue.is('String')) {
-              const { _0: s } = fieldValue.value;
-              return new Literal('String', { _0: s });
-            } else if (fieldValue.is('I16')) {
-              const { _0: i } = fieldValue.value;
-              return new Literal('I16', { _0: i });
-            } else if (fieldValue.is('I32')) {
-              const { _0: i } = fieldValue.value;
-              return new Literal('I32', { _0: i });
-            } else if (fieldValue.is('I64')) {
-              const { _0: i } = fieldValue.value;
-              return new Literal('I64', { _0: i });
-            } else if (fieldValue.is('F64')) {
-              const { _0: f } = fieldValue.value;
-              return new Literal('F64', { _0: f });
-            } else if (fieldValue.is('Bool')) {
-              const { _0: b } = fieldValue.value;
-              return new Literal('Bool', { _0: b });
-            } else if (fieldValue.is('EntityId')) {
-              const { _0: id } = fieldValue.value;
-              return new Literal('EntityId', { _0: Ulid_fromEntityId(id) });
-            } else {
-              return { $jump: 'continue' };
-            }
-          })();
-          if ((_m0 as any)?.$jump === 'continue') continue;
-          let _moved1 = false;
-          const literal = (_m0 as any);
+  try {
+    gapConditions.push(originalPredicate.clone());
+    for (const orderItem of orderBy) {
+      const fieldName = orderItem.path.property();
+      {
+        const _v = lastEntity.value(fieldName);
+        if (_v != null) {
+          const fieldValue = _v;
           try {
+            const _m1 = (() => {
+              if (fieldValue.is('String')) {
+                const { _0: s } = fieldValue.value;
+                return new Literal('String', { _0: s });
+              } else if (fieldValue.is('I16')) {
+                const { _0: i } = fieldValue.value;
+                return new Literal('I16', { _0: i });
+              } else if (fieldValue.is('I32')) {
+                const { _0: i } = fieldValue.value;
+                return new Literal('I32', { _0: i });
+              } else if (fieldValue.is('I64')) {
+                const { _0: i } = fieldValue.value;
+                return new Literal('I64', { _0: i });
+              } else if (fieldValue.is('F64')) {
+                const { _0: f } = fieldValue.value;
+                return new Literal('F64', { _0: f });
+              } else if (fieldValue.is('Bool')) {
+                const { _0: b } = fieldValue.value;
+                return new Literal('Bool', { _0: b });
+              } else if (fieldValue.is('EntityId')) {
+                const { _0: id } = fieldValue.value;
+                return new Literal('EntityId', { _0: Ulid_fromEntityId(id) });
+              } else {
+                return { $jump: 'continue' };
+              }
+            })();
+            if ((_m1 as any)?.$jump === 'continue') continue;
             let _moved2 = false;
-            const operator = orderItem.direction.match({
-              Asc: () => new ComparisonOperator('GreaterThanOrEqual', {}),
-              Desc: () => new ComparisonOperator('LessThanOrEqual', {}),
-            });
+            const literal = (_m1 as any);
             try {
-              _moved2 = true;
-              _moved1 = true;
               let _moved3 = false;
-              const condition = new Predicate('Comparison', { left: new Expr('Path', { _0: orderItem.path.clone() }), operator: operator, right: new Expr('Literal', { _0: literal }) });
+              const operator = orderItem.direction.match({
+                Asc: () => new ComparisonOperator('GreaterThanOrEqual', {}),
+                Desc: () => new ComparisonOperator('LessThanOrEqual', {}),
+              });
               try {
                 _moved3 = true;
-                gapConditions.push(condition);
+                _moved2 = true;
+                let _moved4 = false;
+                const condition = new Predicate('Comparison', { left: new Expr('Path', { _0: orderItem.path.clone() }), operator: operator, right: new Expr('Literal', { _0: literal }) });
+                try {
+                  _moved4 = true;
+                  gapConditions.push(condition);
+                } finally {
+                  if (!_moved4) condition.drop();
+                }
               } finally {
-                if (!_moved3) condition.drop();
+                if (!_moved3) operator.drop();
               }
             } finally {
-              if (!_moved2) operator.drop();
+              if (!_moved2) literal.drop();
             }
           } finally {
-            if (!_moved1) literal.drop();
+            fieldValue.drop();
           }
-        } finally {
-          fieldValue.drop();
         }
       }
     }
+    const idExclusion = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('id') }), operator: new ComparisonOperator('NotEqual', {}), right: new Expr('Literal', { _0: new Literal('EntityId', { _0: Ulid_fromEntityId((lastEntity.id())) }) }) });
+    gapConditions.push(idExclusion);
+    const _b5 = new Predicate('True', {});
+    const _o6 = iterReduceOwned([...gapConditions], (acc, condition) => new Predicate('And', { _0: acc, _1: condition }));
+    const _d7 = _b5;
+    const _u8 = _o6 ?? _d7;
+    if (_u8 !== _d7) _d7.drop();
+    _moved0 = true;
+    const result = _u8;
+    return Result.Ok(result);
+  } finally {
+    if (!_moved0) dropOwned(gapConditions);
   }
-  const idExclusion = new Predicate('Comparison', { left: new Expr('Path', { _0: PathExpr.simple('id') }), operator: new ComparisonOperator('NotEqual', {}), right: new Expr('Literal', { _0: new Literal('EntityId', { _0: Ulid_fromEntityId((lastEntity.id())) }) }) });
-  gapConditions.push(idExclusion);
-  const result = [...gapConditions].reduce((acc, condition) => new Predicate('And', { _0: acc, _1: condition })).unwrapOr(new Predicate('True', {}));
-  return Result.Ok(result);
 }
 
 export function inferValueTypeForField<E extends AbstractEntity>(entities: E[], fieldName: string): ValueType {

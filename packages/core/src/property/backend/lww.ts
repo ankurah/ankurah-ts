@@ -37,7 +37,15 @@ export class LWWBackend extends Struct implements PropertyBackend {
   }
 
   static new(): LWWBackend {
-    return new LWWBackend(new RwLock(new HashMap<string, ValueEntry>()), new Mutex(new HashMap<string, Broadcast<void>>()));
+    let _moved1 = false;
+    const _b0 = new RwLock(new HashMap<string, ValueEntry>());
+    try {
+      const _b2 = new Mutex(new HashMap<string, Broadcast<void>>());
+      _moved1 = true;
+      return new LWWBackend(_b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   set(propertyName: PropertyName, value: Value | null): void {
@@ -149,7 +157,15 @@ export class LWWBackend extends Struct implements PropertyBackend {
     if (_r0.isErr()) return Result.Err(RetrievalError.fromBincodeError(_r0.unwrapErr()));
     const rawMap = _r0.unwrap();
     const map = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
-    return Result.Ok(new LWWBackend(new RwLock(map), new Mutex(new HashMap<string, Broadcast<void>>())));
+    let _moved2 = false;
+    const _b1 = new RwLock(map);
+    try {
+      const _b3 = new Mutex(new HashMap<string, Broadcast<void>>());
+      _moved2 = true;
+      return Result.Ok(new LWWBackend(_b1, _b3));
+    } finally {
+      if (!_moved2) dropOwned(_b1);
+    }
   }
 
   toOperations(): Result<Operation[] | null, MutationError> {
@@ -158,11 +174,11 @@ export class LWWBackend extends Struct implements PropertyBackend {
       let changedValues = new HashMap();
       for (const [name, entry] of [...values.value]) {
         if (!entry.committed) {
-          changedValues.insert(name, entry.value.clone());
+          changedValues.set(name, entry.value.clone());
           entry.committed = true;
         }
       }
-      if (changedValues.length === 0) {
+      if (changedValues.size === 0) {
         return Result.Ok(null);
       }
       const _r0 = (() => { const _w = new BincodeWriter(); changedValues.encode(_w); return _w.finish(); })();

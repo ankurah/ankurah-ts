@@ -20,6 +20,7 @@
 
 mod common;
 
+use common::golden_debt::{TEXT_ONLY, TYPECHECK_DEBT};
 use common::{TempDir, run_batch, transpile_dir};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -111,63 +112,6 @@ fn run_with_timeout(
     }
 }
 
-/// Which goldens are allowed to have no `run.test.ts`, and why each one has
-/// none.
-///
-/// A driver is what makes a golden's claim about ownership checkable, so a
-/// golden losing its driver has to fail rather than quietly stop being
-/// executed. Everything under `goldens/` owes one unless it is named here.
-///
-/// Each of these pins the shape of a declaration and its derived codec. Running
-/// one would prove nothing the text does not already say: the encode and decode
-/// pair means something only against bytes Rust produced, and those bytes are
-/// what the wire-protocol fixtures compare, not this runner.
-const TEXT_ONLY: [(&str, &str); 4] = [
-    (
-        "struct_bincode",
-        "a named-field struct and a byte newtype, with the encode/decode pair the derive writes",
-    ),
-    (
-        "enum_payload",
-        "an enum of one unit, one tuple and one named-field variant, with its variant-tagged codec",
-    ),
-    (
-        "option_result_fields",
-        "`Option<T>` fields and a method returning `Result<T, E>`; the README records its emitted \
-         error construction as unvetted, so a driver would pin output nobody has read yet",
-    ),
-    (
-        "question_mark",
-        "where the emitted `?` puts its early return. Nothing the golden constructs owns anything, \
-         so executing it exercises no release",
-    ),
-];
-
-/// The goldens whose emitted TypeScript does not compile yet, with the error
-/// codes each one produces and the defect behind them.
-///
-/// This is a ledger of debt, matched exactly in both directions: a golden that
-/// starts compiling has to come off the list, and a golden that starts
-/// producing a new kind of error fails even though it was already failing. Both
-/// halves matter — a fix that goes unrecorded here looks the same as no fix, and
-/// a new defect hiding behind an old one is how this check would rot.
-///
-/// Every entry is a defect in the transpiler or in a decision the goldens' own
-/// README already doubts. None of them is a reason to relax the check.
-/// What each golden still fails to compile with, as one entry per error:
-/// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-const TYPECHECK_DEBT: [(&str, &[&str], &str); 1] = [
-    (
-        "blanket_free_fn",
-        &["blanket_free_fn/run.test.ts:TS2345"],
-        "the driver hands `fromAny` a closure, and `fromAny` is emitted with the bound Rust \
-         wrote — `L extends IntoListener` — which a closure does not implement structurally \
-         in TypeScript, though the blanket impl makes it an `IntoListener` in Rust. The call \
-         inside the function now goes through the run-time dispatcher and reaches every impl; \
-         what is left is the signature, and what a bound with a blanket impl behind it should \
-         emit as is open",
-    ),
-];
 
 /// Every golden owes a driver, or a line in `TEXT_ONLY` saying why it does not.
 #[test]

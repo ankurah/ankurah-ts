@@ -173,7 +173,9 @@ impl TypeContext<'_> {
                         }
                     }
                 }
-                if let Some(ret) = self.assoc_fn_return(&ty, &name) {
+                if let Some((ret, params)) = self.assoc_fn(&ty, &name) {
+                    let args: Vec<&syn::Expr> = call.args.iter().collect();
+                    self.constrain_arguments(&params, &args);
                     return Ok(ret);
                 }
                 // `bincode::serialize` is a function in a module, and a module
@@ -261,15 +263,22 @@ impl TypeContext<'_> {
             qself: path.qself.clone(),
             path: prefix,
         });
-        self.resolve_written_type(&ty).ok()
+        // `Vec::new()` names its type with no element written; the element is
+        // an unknown this body's solver settles, not a reason to refuse.
+        self.resolve_written_type_open(&ty).ok()
     }
 
-    /// What an associated function on this type returns. Inherent impls first,
-    /// then trait impls; two answers is no answer.
-    pub(super) fn assoc_fn_return(&self, ty: &Ty, name: &str) -> Option<Ty> {
+    /// What an associated function on this type returns, and what it declares
+    /// at each parameter. Inherent impls first, then trait impls; two answers
+    /// is no answer.
+    ///
+    /// The parameters travel with the answer because they are what an unknown
+    /// in the receiver is settled by: `Arc::new(mutex)` says nothing about the
+    /// `Arc`'s element until the argument standing at `data: T` does.
+    pub(super) fn assoc_fn(&self, ty: &Ty, name: &str) -> Option<(Ty, Vec<Ty>)> {
         let probe = self.probe();
-        let mut inherent: Option<Ty> = None;
-        let mut from_trait: Option<Ty> = None;
+        let mut inherent: Option<(Ty, Vec<Ty>)> = None;
+        let mut from_trait: Option<(Ty, Vec<Ty>)> = None;
         let mut trait_count = 0;
         for id in self.registry.impls_for(ty) {
             let def = self.registry.impl_def(id);
@@ -283,14 +292,20 @@ impl TypeContext<'_> {
                 continue;
             };
             let ret = probe.normalize(&sig.ret.substitute(&subst));
+            // Through the bound, because a closure argument reads its
+            // parameters from it and answers back into it.
+            let params = crate::registry::method::signatures::param_types(sig, &subst)
+                .iter()
+                .map(|p| probe.normalize(p))
+                .collect();
             if def.is_inherent() {
                 if inherent.is_some() {
                     return None;
                 }
-                inherent = Some(ret);
+                inherent = Some((ret, params));
             } else {
                 trait_count += 1;
-                from_trait = Some(ret);
+                from_trait = Some((ret, params));
             }
         }
         inherent.or(if trait_count == 1 { from_trait } else { None })

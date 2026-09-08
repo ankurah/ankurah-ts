@@ -81,14 +81,21 @@ impl TypeRegistry {
             .entry("Self".to_string())
             .or_insert_with(|| found.adjusted.peel_refs().clone());
 
-        sig.map(|sig| {
-            sig.params
-                .iter()
-                .map(|(_, ty)| with_bounds(&sig, &ty.substitute(&subst), &subst))
-                .collect()
-        })
-        .unwrap_or_default()
+        sig.map(|sig| param_types(&sig, &subst)).unwrap_or_default()
     }
+}
+
+/// What a signature declares at each parameter, with `subst` applied and each of
+/// the signature's own parameters rewritten as the `impl Trait` its bounds say.
+///
+/// The bound is where a closure argument reads its parameter types and where the
+/// caller reads what the closure has to answer, so it has to travel with the
+/// parameter rather than stay in the `where` clause.
+pub fn param_types(sig: &MethodSig, subst: &Subst) -> Vec<Ty> {
+    sig.params
+        .iter()
+        .map(|(_, ty)| with_bounds(sig, &ty.substitute(subst), subst))
+        .collect()
 }
 
 /// A parameter whose type is one of the method's own type parameters, rewritten

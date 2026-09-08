@@ -132,27 +132,33 @@ export class SubscriptionHandler extends Struct {
                       k.drop();
                     }
                   }));
+                  let _moved16 = false;
                   let deltas = [];
-                  _moved15 = true;
-                  const _seq17 = expandedStates;
-                  let _at18 = 0;
                   try {
-                    while (_at18 < _seq17.length) {
-                      const state = _seq17[_at18++];
-                      const _r16 = await node.generateEntityDelta(knownMap, state, storageCollection);
-                      if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-                      {
-                        const _v = _r16.unwrap();
-                        if (_v != null) {
-                          const delta = _v;
-                          deltas.push(delta);
+                    _moved15 = true;
+                    const _seq18 = expandedStates;
+                    let _at19 = 0;
+                    try {
+                      while (_at19 < _seq18.length) {
+                        const state = _seq18[_at19++];
+                        const _r17 = await node.generateEntityDelta(knownMap, state, storageCollection);
+                        if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+                        {
+                          const _v = _r17.unwrap();
+                          if (_v != null) {
+                            const delta = _v;
+                            deltas.push(delta);
+                          }
                         }
                       }
+                    } finally {
+                      dropOwned(_seq18.slice(_at19));
                     }
+                    _moved16 = true;
+                    return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas }));
                   } finally {
-                    dropOwned(_seq17.slice(_at18));
+                    if (!_moved16) dropOwned(deltas);
                   }
-                  return Result.Ok(new NodeResponseBody('QuerySubscribed', { queryId: queryId, deltas: deltas }));
                 } finally {
                   if (!_moved15) dropOwned(expandedStates);
                 }
@@ -202,24 +208,30 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
     const attestation = node.deref().value.policyAgent.attestState(node, entityState);
     try {
       _moved1 = true;
-      const attestedState = Attested.opt(entityState, attestation);
       let _moved2 = false;
-      const attestedEvents = item.events;
+      const attestedState = Attested.opt(entityState, attestation);
       try {
-        _moved2 = true;
         let _moved3 = false;
-        const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
+        const attestedEvents = item.events;
         try {
-          const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
-          const _b4 = item.entity.id();
-          const _b5 = item.entity.collection().clone();
+          _moved2 = true;
           _moved3 = true;
-          return new SubscriptionUpdateItem(_b4, _b5, content, predicateRelevance);
+          let _moved4 = false;
+          const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
+          try {
+            const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+            const _b5 = item.entity.id();
+            const _b6 = item.entity.collection().clone();
+            _moved4 = true;
+            return new SubscriptionUpdateItem(_b5, _b6, content, predicateRelevance);
+          } finally {
+            if (!_moved4) content.drop();
+          }
         } finally {
-          if (!_moved3) content.drop();
+          if (!_moved3) dropOwned(attestedEvents);
         }
       } finally {
-        if (!_moved2) dropOwned(attestedEvents);
+        if (!_moved2) attestedState.drop();
       }
     } finally {
       if (!_moved1) dropOwned(attestation);

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/yrs.rs
-import { Struct, Result, Arc, Mutex, OwnedClosure, valueEquals, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, Arc, Mutex, OwnedClosure, dropOwned, valueEquals, HashMap, HashSet } from '@ankurah/base';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Transaction } from '../../transaction';
 import { Value } from '../../value/index';
@@ -22,7 +22,15 @@ export class YrsBackend extends Struct implements PropertyBackend {
   static new(): YrsBackend {
     const doc = yrs.Doc.new();
     const startingState = doc.transact().stateVector();
-    return new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap<string, Broadcast<void>>()));
+    let _moved1 = false;
+    const _b0 = new Mutex(startingState);
+    try {
+      const _b2 = new Mutex(new HashMap<string, Broadcast<void>>());
+      _moved1 = true;
+      return new YrsBackend(doc, _b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   getString(propertyName: string): string | null {
@@ -136,7 +144,7 @@ export class YrsBackend extends Struct implements PropertyBackend {
     const trx = Transact.transact(this.doc);
     for (const propertyName of properties) {
       const value = this.getPropertyString(trx, propertyName);
-      values.insert(propertyName, value);
+      values.set(propertyName, value);
     }
     return values;
   }
@@ -163,7 +171,15 @@ export class YrsBackend extends Struct implements PropertyBackend {
     txn.commit();
     void txn;
     const startingState = doc.transact().stateVector();
-    return Result.Ok(new YrsBackend(doc, new Mutex(startingState), new Mutex(new HashMap<string, Broadcast<void>>())));
+    let _moved3 = false;
+    const _b2 = new Mutex(startingState);
+    try {
+      const _b4 = new Mutex(new HashMap<string, Broadcast<void>>());
+      _moved3 = true;
+      return Result.Ok(new YrsBackend(doc, _b2, _b4));
+    } finally {
+      if (!_moved3) dropOwned(_b2);
+    }
   }
 
   toOperations(): Result<Operation[] | null, MutationError> {
@@ -184,25 +200,34 @@ export class YrsBackend extends Struct implements PropertyBackend {
 
   applyOperations(operations: Operation[]): Result<void, MutationError> {
     const changedFields = Arc.new(new Mutex(new HashSet()));
-    for (const operation of operations) {
-      const _r0 = this.applyUpdate(operation.diff, changedFields);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-      _r0.drop();
-    }
-    const fieldBroadcasts = this.fieldBroadcasts.lock();
     try {
-      for (const fieldName of [...changedFields.lock()]) {
-        {
-          const _v = fieldBroadcasts.value.get(fieldName);
-          if (_v != null) {
-            const broadcast = _v;
-            broadcast.send([]);
-          }
-        }
+      for (const operation of operations) {
+        const _r0 = this.applyUpdate(operation.diff, changedFields);
+        if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+        _r0.drop();
       }
-      return Result.Ok([]);
+      const fieldBroadcasts = this.fieldBroadcasts.lock();
+      try {
+        const _t1 = changedFields.value.lock();
+        try {
+          for (const fieldName of [..._t1.value]) {
+            {
+              const _v = fieldBroadcasts.value.get(fieldName);
+              if (_v != null) {
+                const broadcast = _v;
+                broadcast.send([]);
+              }
+            }
+          }
+        } finally {
+          _t1.drop();
+        }
+        return Result.Ok([]);
+      } finally {
+        fieldBroadcasts.drop();
+      }
     } finally {
-      fieldBroadcasts.drop();
+      changedFields.drop();
     }
   }
 

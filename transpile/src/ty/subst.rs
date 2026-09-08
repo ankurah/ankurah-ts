@@ -43,7 +43,9 @@ impl Ty {
                 trait_: trait_.as_ref().map(|t| Box::new(t.substitute(subst))),
                 name: name.clone(),
             },
-            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer => self.clone(),
+            // A parameter substitution says nothing about an inference
+            // variable; only the body's own table binds one.
+            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer | Ty::Var(_) => self.clone(),
         }
     }
 }

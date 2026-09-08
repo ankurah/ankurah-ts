@@ -15,7 +15,7 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 15
+"core" = 14
 "proto" = 0
 "signals" = 0
 "storage-common" = 8
@@ -33,12 +33,6 @@ crate = "core"
 file = "context.ts"
 calls = 1
 refusal = "`collect` builds whatever its target type names, and the engine could not name the type this one is collected into"
-
-[[hole]]
-crate = "core"
-file = "node.ts"
-calls = 1
-refusal = "`unwrap_or_default` answers the value or the type's `Default`, and the engine could not type this receiver, so it cannot say which default that is"
 
 [[hole]]
 crate = "core"

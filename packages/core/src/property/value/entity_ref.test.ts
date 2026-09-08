@@ -13,13 +13,17 @@ describe('entity_ref unit tests', () => {
   test('test_ref_roundtrip', () => {
     const id = EntityId.new();
     const r = new Ref(id.clone());
-    const value = (r.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
-    if (!(value.is('EntityId'))) throw new Error('assertion failed');
-    const recovered = Ref.fromValue(value);
     try {
-      expect(recovered.id()).toEqual(id);
+      const value = (r.intoValue().unwrap() ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
+      if (!(value.is('EntityId'))) throw new Error('assertion failed');
+      const recovered = Ref.fromValue(value).unwrap();
+      try {
+        expect(recovered.id()).toEqual(id);
+      } finally {
+        recovered.drop();
+      }
     } finally {
-      recovered.drop();
+      r.drop();
     }
   });
 
@@ -42,29 +46,41 @@ describe('entity_ref unit tests', () => {
 
   test('test_ref_missing', () => {
     const result = Ref.fromValue(null);
-    if (!(((result) => {
-      if (!(result.isErr())) return false;
-      const _v = result.unwrapErr();
-      return true;
-    })(result))) throw new Error('assertion failed');
+    try {
+      if (!(((result) => {
+        if (!(result.isErr())) return false;
+        const _v = result.unwrapErr();
+        return true;
+      })(result))) throw new Error('assertion failed');
+    } finally {
+      result.drop();
+    }
   });
 
   test('test_ref_invalid_string', () => {
     const result = Ref.fromValue(new Value('String', { _0: 'not an id' }));
-    if (!(((result) => {
-      if (!(result.isErr())) return false;
-      const _v = result.unwrapErr();
-      return true;
-    })(result))) throw new Error('assertion failed');
+    try {
+      if (!(((result) => {
+        if (!(result.isErr())) return false;
+        const _v = result.unwrapErr();
+        return true;
+      })(result))) throw new Error('assertion failed');
+    } finally {
+      result.drop();
+    }
   });
 
   test('test_ref_invalid_variant', () => {
     const result = Ref.fromValue(new Value('I64', { _0: 42n }));
-    if (!(((result) => {
-      if (!(result.isErr())) return false;
-      const _v = result.unwrapErr();
-      return true;
-    })(result))) throw new Error('assertion failed');
+    try {
+      if (!(((result) => {
+        if (!(result.isErr())) return false;
+        const _v = result.unwrapErr();
+        return true;
+      })(result))) throw new Error('assertion failed');
+    } finally {
+      result.drop();
+    }
   });
 
 });

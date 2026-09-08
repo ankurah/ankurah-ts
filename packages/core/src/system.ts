@@ -28,34 +28,58 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
     try {
       try {
         try {
+          let _moved4 = false;
           const _b3 = new RwLock([]);
-          const _b4 = new RwLock(null);
-          const _b5 = OnceLock.new();
-          let _moved7 = false;
-          const _b6 = Notify.new();
           try {
-            const _b8 = new RwLock(new HashMap());
-            const _b9 = new RwLock(false);
-            const _b10 = Notify.new();
-            _moved7 = true;
-            _moved0 = true;
-            _moved1 = true;
-            _moved2 = true;
-            const me = new SystemManager(Arc.new(new Inner(collections, _b8, entities, durable, _b4, _b3, _b5, _b6, _b9, _b10, reactor, undefined /* PhantomData */)));
-            ((me) => {
-              spawn((async () => {
-                {
-                  const _v = await me.loadSystemCatalog();
-                  if (_v.isErr()) {
-                    const e = _v.unwrapErr();
-                    tracing.error(`Failed to load system catalog: ${e}`);
+            let _moved6 = false;
+            const _b5 = new RwLock(null);
+            try {
+              const _b7 = OnceLock.new();
+              let _moved9 = false;
+              const _b8 = Notify.new();
+              try {
+                let _moved11 = false;
+                const _b10 = new RwLock(new HashMap());
+                try {
+                  let _moved13 = false;
+                  const _b12 = new RwLock(false);
+                  try {
+                    const _b14 = Notify.new();
+                    _moved4 = true;
+                    _moved6 = true;
+                    _moved9 = true;
+                    _moved11 = true;
+                    _moved13 = true;
+                    _moved0 = true;
+                    _moved1 = true;
+                    _moved2 = true;
+                    const me = new SystemManager(Arc.new(new Inner(collections, _b10, entities, durable, _b5, _b3, _b7, _b8, _b12, _b14, reactor, undefined /* PhantomData */)));
+                    ((me) => {
+                      spawn((async () => {
+                        {
+                          const _v = await me.loadSystemCatalog();
+                          if (_v.isErr()) {
+                            const e = _v.unwrapErr();
+                            tracing.error(`Failed to load system catalog: ${e}`);
+                          }
+                        }
+                      })());
+                    })(me.clone());
+                    return me;
+                  } finally {
+                    if (!_moved13) dropOwned(_b12);
                   }
+                } finally {
+                  if (!_moved11) dropOwned(_b10);
                 }
-              })());
-            })(me.clone());
-            return me;
+              } finally {
+                if (!_moved9) dropOwned(_b8);
+              }
+            } finally {
+              if (!_moved6) dropOwned(_b5);
+            }
           } finally {
-            if (!_moved7) dropOwned(_b6);
+            if (!_moved4) dropOwned(_b3);
           }
         } finally {
           if (!_moved2) reactor.drop();
@@ -355,97 +379,103 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const storage = _r0.unwrap();
       try {
+        let _moved1 = false;
         let entities = [];
-        let rootState = null;
-        const retriever = LocalRetriever.new(storage.clone());
         try {
-          const _t1 = new Selection(new Predicate('True', {}), null, null);
+          let rootState = null;
+          const retriever = LocalRetriever.new(storage.clone());
           try {
-            const _r2 = await storage.deref().value.fetchStates(_t1);
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-            const _seq8 = _r2.unwrap();
-            let _at9 = 0;
+            const _t2 = new Selection(new Predicate('True', {}), null, null);
             try {
-              while (_at9 < _seq8.length) {
-                const state = _seq8[_at9++];
-                let _moved3 = false;
-                try {
-                  let _moved5 = false;
-                  const _b4 = collectionId.clone();
+              const _r3 = await storage.deref().value.fetchStates(_t2);
+              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+              const _seq9 = _r3.unwrap();
+              let _at10 = 0;
+              try {
+                while (_at10 < _seq9.length) {
+                  const state = _seq9[_at10++];
+                  let _moved4 = false;
                   try {
-                    const _b6 = state.payload.state.clone();
-                    const _r7 = await this._0.value.entities.withState(retriever, state.payload.entityId, _b4, _b6);
-                    if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-                    _moved5 = true;
-                    const [_entityChanged, entity] = _r7.unwrap();
-                    const lwwBackend = entity.getBackend().expect('LWW Backend should exist');
+                    let _moved6 = false;
+                    const _b5 = collectionId.clone();
                     try {
-                      {
-                        const _v1 = lwwBackend.value.get('item');
-                        if (_v1 != null) {
-                          const value = _v1;
-                          const item = Item.fromValue(value).expect('Invalid sys item');
-                          try {
-                            {
-                              const _v = item;
-                              if (_v.is('SysRoot')) {
-                                _moved3 = true;
-                                rootState = state;
+                      const _b7 = state.payload.state.clone();
+                      const _r8 = await this._0.value.entities.withState(retriever, state.payload.entityId, _b5, _b7);
+                      if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+                      _moved6 = true;
+                      const [_entityChanged, entity] = _r8.unwrap();
+                      const lwwBackend = entity.getBackend().expect('LWW Backend should exist');
+                      try {
+                        {
+                          const _v1 = lwwBackend.value.get('item');
+                          if (_v1 != null) {
+                            const value = _v1;
+                            const item = Item.fromValue(value).expect('Invalid sys item');
+                            try {
+                              {
+                                const _v = item;
+                                if (_v.is('SysRoot')) {
+                                  _moved4 = true;
+                                  rootState = state;
+                                }
                               }
+                              entities.push(entity);
+                            } finally {
+                              item.drop();
                             }
-                            entities.push(entity);
-                          } finally {
-                            item.drop();
                           }
                         }
+                      } finally {
+                        lwwBackend.drop();
                       }
                     } finally {
-                      lwwBackend.drop();
+                      if (!_moved6) dropOwned(_b5);
                     }
                   } finally {
-                    if (!_moved5) dropOwned(_b4);
+                    if (!_moved4) state.drop();
                   }
-                } finally {
-                  if (!_moved3) state.drop();
                 }
+              } finally {
+                dropOwned(_seq9.slice(_at10));
               }
             } finally {
-              dropOwned(_seq8.slice(_at9));
+              _t2.drop();
             }
+            (() => {
+              let items = this._0.value.items.write();
+              try {
+                _moved1 = true;
+                items.value.push(...entities);
+              } finally {
+                items.drop();
+              }
+            })();
+            const hasRoot = rootState != null;
+            (() => {
+              let root = this._0.value.root.write();
+              try {
+                root.value = rootState;
+              } finally {
+                root.drop();
+              }
+            })();
+            if (hasRoot && this._0.value.durable) {
+              const _t11 = this._0.value.systemReady.write();
+              try {
+                _t11.value = true;
+              } finally {
+                _t11.drop();
+              }
+              this._0.value.systemReadyNotify.notifyWaiters();
+            }
+            this._0.value.loaded.set([]).expect('Loading flag already set');
+            this._0.value.loading.notifyWaiters();
+            return Result.Ok([]);
           } finally {
-            _t1.drop();
+            retriever.drop();
           }
-          (() => {
-            let items = this._0.value.items.write();
-            try {
-              items.value.push(...entities);
-            } finally {
-              items.drop();
-            }
-          })();
-          const hasRoot = rootState != null;
-          (() => {
-            let root = this._0.value.root.write();
-            try {
-              root.value = rootState;
-            } finally {
-              root.drop();
-            }
-          })();
-          if (hasRoot && this._0.value.durable) {
-            const _t10 = this._0.value.systemReady.write();
-            try {
-              _t10.value = true;
-            } finally {
-              _t10.drop();
-            }
-            this._0.value.systemReadyNotify.notifyWaiters();
-          }
-          this._0.value.loaded.set([]).expect('Loading flag already set');
-          this._0.value.loading.notifyWaiters();
-          return Result.Ok([]);
         } finally {
-          retriever.drop();
+          if (!_moved1) dropOwned(entities);
         }
       } finally {
         storage.drop();

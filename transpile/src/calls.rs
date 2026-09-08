@@ -19,6 +19,11 @@ impl BodyTranslator<'_> {
             _ => return written,
         };
         let Some(want) = self.expectation_at(span) else { return written };
+        // A position whose own type the solver did not settle says nothing
+        // about these arguments, exactly as no expectation says nothing.
+        if want.mentions_any_var() {
+            return written;
+        }
         let spelled = match &self.types {
             Some(tc) => crate::name_map::map_ty(tc.borrow().registry, &want),
             None => return written,

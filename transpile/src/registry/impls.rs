@@ -171,7 +171,9 @@ pub fn head_of(ty: &Ty, generics: &[String]) -> Head {
         Ty::Never => Head::Never,
         Ty::Dyn { .. } => Head::Dyn,
         Ty::Param(name) if generics.iter().any(|g| g == name) => Head::Open,
-        Ty::Param(_) | Ty::Assoc { .. } | Ty::ImplTrait { .. } | Ty::Infer => Head::Open,
+        Ty::Param(_) | Ty::Assoc { .. } | Ty::ImplTrait { .. } | Ty::Infer | Ty::Var(_) => {
+            Head::Open
+        }
     }
 }
 

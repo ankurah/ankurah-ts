@@ -703,7 +703,10 @@ calls have no type without an expected type.
   expected type: a `let` annotation, the parameter type at a call, the return
   type at a tail or `return`, a struct field at a struct literal, or a
   turbofish. Expected types propagate one level (bidirectional but shallow); an
-  `.into()` with no expected type is a diagnostic.
+  `.into()` with no expected type is a diagnostic. What travels further than one
+  level is a CONSTRAINT rather than an expectation: 4.8a's solver walks the whole
+  body and binds the unknowns it finds, and the expectation slot carries only the
+  one position it was always about.
 - `Infer` from `Vec<_>` in a turbofish resolves by unifying with the iterator's
   `Item` projection.
 
@@ -744,6 +747,58 @@ for `equals` versus `===`, `compareTo` versus `<`, and `Index` on a `Map`.
   depth limit that is a diagnostic when hit). No specialization, no negative
   reasoning, no coherence checking: the corpus compiles under rustc, so exactly
   one impl applies and the engine only has to find it.
+
+### 4.8a Inference variables and the body solver
+
+A type argument the source leaves off, and a local whose type only a later use
+decides, are not gaps in the source: Rust reads both off the rest of the body.
+The engine mints an unknown for each and lets the body bind it.
+
+- **`Ty::Var(InferId)` is a separate variant from `Ty::Infer`.** A written `_` is
+  a hole the source put there and nothing here fills; a variable is the engine's
+  own unknown, with a table behind it that a constraint can bind. Every
+  exhaustive match on `Ty` answers the two differently, and `Ty::Infer` keeps
+  every meaning it had.
+- **One table per function body.** `InferTable` (`transpile/src/ty/vars.rs`)
+  holds what each variable stands for. A binding is made once and never revised,
+  which is what makes the occurs check enough to keep the table acyclic and the
+  solve terminating. A constraint that cannot be met binds nothing: the part of
+  it that fitted is rolled back, so half an unsatisfiable constraint is never
+  left standing.
+- **A variable is keyed by where it is written.** The body is walked twice — once
+  for its constraints and once to write it — and both walks ask about the same
+  written sites. `at_site(line, column, index)` mints on the first ask and
+  answers with the same variable after, so the second walk reads what the first
+  bound instead of minting an unknown nothing has seen.
+- **Unification is symmetric for a variable and one-sided for an impl.** One
+  structural walk serves both (`transpile/src/ty/unify.rs`): impl matching binds
+  only the parameters the impl declared, into a `Subst`; the body solver may bind
+  a variable on either side, into the table. A declared parameter may stand for a
+  type carrying a variable — the solver may still settle it, and a tie between
+  impls is reported as an ambiguity rather than picked — but never for a written
+  `_`, which nothing here ever works out.
+- **Variables are minted where the source left an argument off**, and only in an
+  expression position: `Vec::new()` reads as `Vec<?0>`, while a declaration
+  written with the wrong arity is still refused. A parameter with a written
+  default keeps its default.
+- **Constraints come from the body, one source at a time.** A call's declared
+  parameter against what the argument actually is, for an associated function and
+  for a method alike; a `for` loop's pattern against the sequence's item; a
+  `let`'s annotation against its initialiser. A closure argument is skipped,
+  because its parameters come FROM the position it stands in.
+- **The solve runs to a fixed point.** Method resolution cannot start from a
+  receiver nothing has bound, so a constraint that binds one late lets a
+  constraint that could not run before it run now. The walk repeats until a round
+  binds nothing new; past one round per variable the table has stopped being
+  monotone, and that is a diagnostic rather than a spin (as 4.8's depth limit is).
+- **Nothing is ever defaulted.** A variable no constraint bound is reported, not
+  filled in. Where a type has to be SPELLED and still names a variable, the site
+  writes exactly what it writes when there is no type at all, and `map_ty`
+  refuses rather than inventing a spelling.
+- **Ownership reads types and does not take part.** `drops_of` answers
+  `Drops::Unknown` for an unresolved variable exactly as it does for `Ty::Infer`,
+  and every ownership question is asked in the second walk, where the table is
+  already solved.
 
 ### 4.9 Scopes and names
 
@@ -1029,12 +1084,14 @@ addressed by the step that found it.
   cast to `usize` for an identity. One of the two oracle sites the engine does
   not cover is `Weak::as_ptr` for this reason.
 - **A block's own `let`s are not in scope when the block is typed as an
-  expression.** `resolve_expr` on a `Expr::Block` reads its tail expression, and
-  the tail may name a local the same block introduced, which nothing has bound;
-  binding them needs `&mut self` where `resolve_expr` takes `&self`. This is why
-  `let subscribers = { let listeners = ..; listeners.values()..collect() };`
-  leaves `subscribers` untyped, and it is the second uncovered oracle site
-  (`<[T]>::split_last`).
+  expression, in the walk that WRITES it.** `resolve_expr` on an `Expr::Block`
+  reads its tail expression, and the tail may name a local the same block
+  introduced; binding them needs `&mut self` where `resolve_expr` takes `&self`.
+  The constraint walk (4.8a) does bind them — it takes `&mut self` and walks
+  statements in order — so what those locals settle is in the table before
+  anything is written, and `Calculated::new({ let a = a.read(); .. })` now types.
+  What stands is that a block asked for its type in isolation, with no walk
+  behind it, still answers from its tail alone.
 - **Ownership emission: what the model deliberately does not cover.** The
   releases the emitter writes are described in `port/ownership.md`; these are the
   places it knows it is not faithful, each reported at the site.
@@ -1235,7 +1292,12 @@ addressed by the step that found it.
   TUPLE STRUCT's field, including through `Self(..)` inside the type's own impl;
   a MATCH ARM and an `if` BRANCH in return position, each re-keyed onto its own
   span because whatever it produces is what the function answers; and a field of
-  an enum-VARIANT literal, whose fields live on the variant and not on the enum.
+  an enum-VARIANT literal, whose fields live on the variant and not on the enum. A
+  constraint is not an expectation and is not bounded this way: 4.8a's solver
+  carries what a later use says back to the binding it came from, which is what
+  types an empty collection from a `push` below it. The chain case above is still
+  open, because nothing yet constrains a closure's result against the bound the
+  callee declares for it.
 - **An impl written for a reference to its own parameter, whose methods really
   forward, is not emitted.** `impl<T: Signal> Signal for &T` exists because
   `&T` is a distinct type in Rust, and each of its methods forwards to the same

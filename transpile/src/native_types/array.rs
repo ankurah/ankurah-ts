@@ -53,6 +53,12 @@ impl Element {
 
     /// What the registry says this element is.
     pub fn of(reg: &crate::registry::TypeRegistry, ty: &crate::ty::Ty) -> Element {
+        // An element the solver did not settle is one nothing is known about.
+        // Spelling it would be a guess, and the copier has a path for not
+        // knowing.
+        if ty.mentions_any_var() {
+            return Element::unknown();
+        }
         let written = crate::name_map::map_ty(reg, ty);
         let copy_of_e = crate::derives::cloning::clone_within(reg, "e", Some(ty));
         // A copy the port writes out — a spread, a `new Uint8Array`, a `map` —

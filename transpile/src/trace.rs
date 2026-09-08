@@ -24,6 +24,19 @@ pub fn start() {
     RECORDING.with(|r| *r.borrow_mut() = true);
 }
 
+/// Ask something without recording what it answers, and put recording back the
+/// way it was.
+///
+/// The typing pre-pass asks every question the emission walk asks, with less in
+/// scope; recording both would file two answers for one site and the earlier,
+/// poorer one is the answer a reader meets first.
+pub fn without_recording<T>(ask: impl FnOnce() -> T) -> T {
+    let was = RECORDING.with(|r| std::mem::replace(&mut *r.borrow_mut(), false));
+    let answer = ask();
+    RECORDING.with(|r| *r.borrow_mut() = was);
+    answer
+}
+
 /// One resolved call, as a tab-separated row:
 /// `file, line, column, method, receiver, adjusted receiver, callee, result,
 /// deref steps`. The steps are `from>to` pairs, comma separated.

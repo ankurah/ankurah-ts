@@ -6,13 +6,17 @@
 //! parameters to whatever stands at its position, and refuses when the shapes
 //! disagree.
 //!
-//! Only the pattern carries unknowns. A `Param` the impl declared is a variable;
-//! every other `Param` — one the calling function declared, or `Self` inside a
-//! trait — is rigid and matches only itself. That is what an impl actually
-//! means: `impl<T> Foo for Vec<T>` applies to every `Vec`, while
-//! `impl Foo for Vec<T>` written inside `impl<T>`'s body applies to that `T`.
+//! For impl matching only the pattern carries unknowns. A `Param` the impl
+//! declared is a variable; every other `Param` — one the calling function
+//! declared, or `Self` inside a trait — is rigid and matches only itself. That
+//! is what an impl actually means: `impl<T> Foo for Vec<T>` applies to every
+//! `Vec`, while `impl Foo for Vec<T>` written inside `impl<T>`'s body applies
+//! to that `T`.
+//!
+//! The walk itself is shared with the body solver, which owns unknowns on both
+//! sides (`super::vars`), so each `Ty` variant is compared in one place.
 
-use super::def::{TraitRef, Ty};
+use super::def::{InferId, TraitRef, Ty};
 use super::subst::Subst;
 
 /// Why a pattern and a concrete type could not be matched.
@@ -35,6 +39,9 @@ pub enum Mismatch {
     /// solver here ever discharges that, so an impl chosen on the strength of it
     /// would have been chosen on no evidence.
     Unresolved { param: String },
+    /// Binding would make an inference variable contain itself, as `?0 =
+    /// Vec<?0>` does. There is no such type, so the constraint has no solution.
+    VarOccurs { var: InferId, ty: Ty },
 }
 
 impl std::fmt::Display for Mismatch {
@@ -48,6 +55,43 @@ impl std::fmt::Display for Mismatch {
             Mismatch::Unresolved { param } => {
                 write!(f, "`{}` would stand for a type that is not known yet", param)
             }
+            Mismatch::VarOccurs { .. } => {
+                write!(f, "an inferred type would contain itself")
+            }
+        }
+    }
+}
+
+/// What a unification walk treats as an unknown, and where it records the
+/// answer. The structural walk is shared, so a new `Ty` variant is answered in
+/// one place rather than once per unifier.
+pub trait Unknowns {
+    /// What this side stands for now, when a binding already made says so.
+    /// `None` means it stands for itself.
+    fn follow(&self, ty: &Ty) -> Option<Ty> {
+        let _ = ty;
+        None
+    }
+
+    /// Record an answer when either side is one of this walk's unknowns.
+    /// `None` means neither is, so the structural walk continues.
+    fn bind(&mut self, a: &Ty, b: &Ty) -> Option<Result<(), Mismatch>>;
+}
+
+/// The parameters an impl declared, recorded into a `Subst`. Only the pattern
+/// side carries unknowns; the receiver it is matched against is already fixed.
+struct ImplParams<'a> {
+    vars: &'a [String],
+    subst: &'a mut Subst,
+}
+
+impl Unknowns for ImplParams<'_> {
+    fn bind(&mut self, a: &Ty, b: &Ty) -> Option<Result<(), Mismatch>> {
+        match a {
+            Ty::Param(name) if self.vars.iter().any(|v| v == name) => {
+                Some(bind_param(name, b, self.subst))
+            }
+            _ => None,
         }
     }
 }
@@ -57,10 +101,33 @@ impl std::fmt::Display for Mismatch {
 /// `vars` names the parameters the pattern's owner declared. `subst` accumulates
 /// the bindings and is left partly filled when the match fails, so a caller that
 /// might retry hands in a fresh one.
-pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) -> Result<(), Mismatch> {
-    match (pattern, concrete) {
-        (Ty::Param(name), _) if vars.iter().any(|v| v == name) => bind(name, concrete, subst),
+pub fn unify(
+    vars: &[String],
+    pattern: &Ty,
+    concrete: &Ty,
+    subst: &mut Subst,
+) -> Result<(), Mismatch> {
+    unify_with(&mut ImplParams { vars, subst }, pattern, concrete)
+}
 
+/// Walk two types together, asking `unknowns` at every node before comparing
+/// shapes. Each side is first rewritten through whatever is already bound, so a
+/// variable is compared as the type it stands for.
+pub fn unify_with<U: Unknowns>(
+    unknowns: &mut U,
+    pattern: &Ty,
+    concrete: &Ty,
+) -> Result<(), Mismatch> {
+    if let Some(followed) = unknowns.follow(pattern) {
+        return unify_with(unknowns, &followed, concrete);
+    }
+    if let Some(followed) = unknowns.follow(concrete) {
+        return unify_with(unknowns, pattern, &followed);
+    }
+    if let Some(answer) = unknowns.bind(pattern, concrete) {
+        return answer;
+    }
+    match (pattern, concrete) {
         // A rigid parameter stands for one specific type, so only that same
         // parameter matches it.
         (Ty::Param(a), Ty::Param(b)) if a == b => Ok(()),
@@ -69,7 +136,7 @@ pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) ->
             if a == b && xs.len() == ys.len() =>
         {
             for (x, y) in xs.iter().zip(ys) {
-                unify(vars, x, y, subst)?;
+                unify_with(unknowns, x, y)?;
             }
             Ok(())
         }
@@ -83,31 +150,31 @@ pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) ->
                 mutable: b,
                 inner: y,
             },
-        ) if a == b => unify(vars, x, y, subst),
+        ) if a == b => unify_with(unknowns, x, y),
 
         (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
             for (x, y) in xs.iter().zip(ys) {
-                unify(vars, x, y, subst)?;
+                unify_with(unknowns, x, y)?;
             }
             Ok(())
         }
 
-        (Ty::Slice(x), Ty::Slice(y)) => unify(vars, x, y, subst),
+        (Ty::Slice(x), Ty::Slice(y)) => unify_with(unknowns, x, y),
 
         (Ty::Array { elem: x, len: n }, Ty::Array { elem: y, len: m }) if n == m => {
-            unify(vars, x, y, subst)
+            unify_with(unknowns, x, y)
         }
 
         (Ty::Dyn { traits: xs }, Ty::Dyn { traits: ys }) if xs.len() == ys.len() => {
             for (x, y) in xs.iter().zip(ys) {
-                unify_trait(vars, x, y, subst)?;
+                unify_trait(unknowns, x, y)?;
             }
             Ok(())
         }
 
         (Ty::ImplTrait { bounds: xs }, Ty::ImplTrait { bounds: ys }) if xs.len() == ys.len() => {
             for (x, y) in xs.iter().zip(ys) {
-                unify_trait(vars, x, y, subst)?;
+                unify_trait(unknowns, x, y)?;
             }
             Ok(())
         }
@@ -125,7 +192,7 @@ pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) ->
             },
         ) if xn == yn => {
             match (xt, yt) {
-                (Some(x), Some(y)) => unify_trait(vars, x, y, subst)?,
+                (Some(x), Some(y)) => unify_trait(unknowns, x, y)?,
                 (None, None) => {}
                 _ => {
                     return Err(Mismatch::Shape {
@@ -134,7 +201,7 @@ pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) ->
                     })
                 }
             }
-            unify(vars, xb, yb, subst)
+            unify_with(unknowns, xb, yb)
         }
 
         (Ty::Prim(a), Ty::Prim(b)) if a == b => Ok(()),
@@ -151,11 +218,10 @@ pub fn unify(vars: &[String], pattern: &Ty, concrete: &Ty, subst: &mut Subst) ->
     }
 }
 
-fn unify_trait(
-    vars: &[String],
+fn unify_trait<U: Unknowns>(
+    unknowns: &mut U,
     pattern: &TraitRef,
     concrete: &TraitRef,
-    subst: &mut Subst,
 ) -> Result<(), Mismatch> {
     if pattern.id != concrete.id || pattern.args.len() != concrete.args.len() {
         return Err(Mismatch::Shape {
@@ -168,11 +234,11 @@ fn unify_trait(
         });
     }
     for (x, y) in pattern.args.iter().zip(&concrete.args) {
-        unify(vars, x, y, subst)?;
+        unify_with(unknowns, x, y)?;
     }
     for (name, x) in &pattern.bindings {
         match concrete.bindings.iter().find(|(n, _)| n == name) {
-            Some((_, y)) => unify(vars, x, y, subst)?,
+            Some((_, y)) => unify_with(unknowns, x, y)?,
             None => {
                 return Err(Mismatch::Shape {
                     pattern: x.clone(),
@@ -184,7 +250,7 @@ fn unify_trait(
     Ok(())
 }
 
-fn bind(param: &str, ty: &Ty, subst: &mut Subst) -> Result<(), Mismatch> {
+fn bind_param(param: &str, ty: &Ty, subst: &mut Subst) -> Result<(), Mismatch> {
     if let Some(existing) = subst.get(param) {
         return if existing == ty {
             Ok(())
@@ -202,8 +268,10 @@ fn bind(param: &str, ty: &Ty, subst: &mut Subst) -> Result<(), Mismatch> {
             ty: ty.clone(),
         });
     }
-    // `_` is a hole the expected-type step fills (spec 4.6). Binding a parameter
-    // to one would let an impl be selected on a receiver nobody has typed yet.
+    // A written `_` has no solver behind it, so an impl selected on one would
+    // be selected on nothing. An inference variable is different: the body
+    // solver may still settle it, and a tie between impls is reported as an
+    // ambiguity rather than picked.
     if ty.mentions_infer() {
         return Err(Mismatch::Unresolved {
             param: param.to_string(),
@@ -211,59 +279,6 @@ fn bind(param: &str, ty: &Ty, subst: &mut Subst) -> Result<(), Mismatch> {
     }
     subst.insert(param.to_string(), ty.clone());
     Ok(())
-}
-
-impl Ty {
-    /// Does this type mention the parameter by that name anywhere inside it?
-    pub fn mentions_param(&self, name: &str) -> bool {
-        match self {
-            Ty::Param(p) => p == name,
-            Ty::Named { args, .. } | Ty::Tuple(args) => {
-                args.iter().any(|a| a.mentions_param(name))
-            }
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
-                inner.mentions_param(name)
-            }
-            Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => {
-                traits.iter().any(|t| t.mentions_param(name))
-            }
-            Ty::Assoc { base, trait_, .. } => {
-                base.mentions_param(name)
-                    || trait_.as_ref().is_some_and(|t| t.mentions_param(name))
-            }
-            Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer => false,
-        }
-    }
-}
-
-impl Ty {
-    /// Is there a `_` anywhere inside this type?
-    pub fn mentions_infer(&self) -> bool {
-        match self {
-            Ty::Infer => true,
-            Ty::Named { args, .. } | Ty::Tuple(args) => args.iter().any(|a| a.mentions_infer()),
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
-                inner.mentions_infer()
-            }
-            Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => {
-                traits.iter().any(|t| t.mentions_infer())
-            }
-            Ty::Assoc { base, .. } => base.mentions_infer(),
-            Ty::Param(_) | Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never => false,
-        }
-    }
-}
-
-impl TraitRef {
-    pub fn mentions_infer(&self) -> bool {
-        self.args.iter().any(|a| a.mentions_infer())
-            || self.bindings.iter().any(|(_, t)| t.mentions_infer())
-    }
-
-    pub fn mentions_param(&self, name: &str) -> bool {
-        self.args.iter().any(|a| a.mentions_param(name))
-            || self.bindings.iter().any(|(_, t)| t.mentions_param(name))
-    }
 }
 
 #[cfg(test)]

@@ -22,7 +22,29 @@ class MockMessageSender<CD extends ContextData> extends Struct implements TNode<
   }
 
   static new<CD>(): MockMessageSender<CD> {
-    return new MockMessageSender(Arc.new(new Mutex(null)), Arc.new(new Mutex([])), Arc.new(new Mutex(false)), Arc.new(new Mutex('')), undefined /* PhantomData */);
+    let _moved1 = false;
+    const _b0 = Arc.new(new Mutex([]));
+    try {
+      let _moved3 = false;
+      const _b2 = Arc.new(new Mutex(null));
+      try {
+        let _moved5 = false;
+        const _b4 = Arc.new(new Mutex(false));
+        try {
+          const _b6 = Arc.new(new Mutex(''));
+          _moved1 = true;
+          _moved3 = true;
+          _moved5 = true;
+          return new MockMessageSender(_b2, _b0, _b4, _b6, undefined /* PhantomData */);
+        } finally {
+          if (!_moved5) dropOwned(_b4);
+        }
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   setFailNext(error: RequestError): void {
@@ -149,483 +171,589 @@ describe('client_relay unit tests', () => {
 
   test('test_new_subscription_setup', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        relay.notifyPeerConnected(peerId);
-        let _moved1 = false;
-        const _b0 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved3 = false;
-          const _b2 = predicate.clone();
+          const predicate = createTestSelection();
           try {
-            let _moved5 = false;
-            const _b4 = collectionId.clone();
+            const peerId = EntityId.new();
+            relay.notifyPeerConnected(peerId);
+            let _moved1 = false;
+            const _b0 = collectionId.clone();
             try {
-              const _b6 = new MockLiveQuery();
-              _moved1 = true;
-              _moved3 = true;
-              _moved5 = true;
-              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+              let _moved3 = false;
+              const _b2 = predicate.clone();
+              try {
+                let _moved5 = false;
+                const _b4 = collectionId.clone();
+                try {
+                  const _b6 = new MockLiveQuery();
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved5 = true;
+                  relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+                } finally {
+                  if (!_moved5) dropOwned(_b4);
+                }
+              } finally {
+                if (!_moved3) dropOwned(_b2);
+              }
             } finally {
-              if (!_moved5) dropOwned(_b4);
+              if (!_moved1) dropOwned(_b0);
+            }
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('Requested')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(1);
+              expect(sentRequests[0][0]).toEqual(peerId);
+              expect(sentRequests[0][1]).toEqual(queryId);
+              expect(sentRequests[0][2]).toEqual(collectionId);
+              if (!(((_v1) => {
+                if (!(_v1 != null && (_v1.is('Established')))) return false;
+                const { _0: establishedPeerId } = _v1.value;
+                return valueEquals(establishedPeerId, peerId);
+              })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
             }
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            predicate.drop();
           }
         } finally {
-          if (!_moved1) dropOwned(_b0);
+          collectionId.drop();
         }
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('Requested')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(1);
-        expect(sentRequests[0]._0).toEqual(peerId);
-        expect(sentRequests[0]._1).toEqual(queryId);
-        expect(sentRequests[0]._2).toEqual(collectionId);
-        if (!(((_v1) => {
-          if (!(_v1 != null && (_v1.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v1.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_peer_disconnection_orphans_subscriptions', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      let _moved0 = false;
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        relay.notifyPeerConnected(peerId);
-        let _moved2 = false;
-        const _b1 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved4 = false;
-          const _b3 = collectionId.clone();
+          let _moved0 = false;
+          const predicate = createTestSelection();
           try {
-            const _b5 = new MockLiveQuery();
-            _moved2 = true;
-            _moved4 = true;
-            _moved0 = true;
-            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+            const peerId = EntityId.new();
+            relay.notifyPeerConnected(peerId);
+            let _moved2 = false;
+            const _b1 = collectionId.clone();
+            try {
+              let _moved4 = false;
+              const _b3 = collectionId.clone();
+              try {
+                const _b5 = new MockLiveQuery();
+                _moved2 = true;
+                _moved4 = true;
+                _moved0 = true;
+                relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+              } finally {
+                if (!_moved4) dropOwned(_b3);
+              }
+            } finally {
+              if (!_moved2) dropOwned(_b1);
+            }
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('Established')))) return false;
+              const { _0: establishedPeerId } = _v.value;
+              return valueEquals(establishedPeerId, peerId);
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            relay.notifyPeerDisconnected(peerId);
+            if (!(((_v1) => {
+              if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
           } finally {
-            if (!_moved4) dropOwned(_b3);
+            if (!_moved0) predicate.drop();
           }
         } finally {
-          if (!_moved2) dropOwned(_b1);
+          collectionId.drop();
         }
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        relay.notifyPeerDisconnected(peerId);
-        if (!(((_v1) => {
-          if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        if (!_moved0) predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_peer_connection_triggers_setup', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        let _moved1 = false;
-        const _b0 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved3 = false;
-          const _b2 = predicate.clone();
+          const predicate = createTestSelection();
           try {
-            let _moved5 = false;
-            const _b4 = collectionId.clone();
+            const peerId = EntityId.new();
+            let _moved1 = false;
+            const _b0 = collectionId.clone();
             try {
-              const _b6 = new MockLiveQuery();
-              _moved1 = true;
-              _moved3 = true;
-              _moved5 = true;
-              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+              let _moved3 = false;
+              const _b2 = predicate.clone();
+              try {
+                let _moved5 = false;
+                const _b4 = collectionId.clone();
+                try {
+                  const _b6 = new MockLiveQuery();
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved5 = true;
+                  relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+                } finally {
+                  if (!_moved5) dropOwned(_b4);
+                }
+              } finally {
+                if (!_moved3) dropOwned(_b2);
+              }
             } finally {
-              if (!_moved5) dropOwned(_b4);
+              if (!_moved1) dropOwned(_b0);
+            }
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            mockSender.value.clearSentRequests();
+            relay.notifyPeerConnected(peerId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(1);
+              expect(sentRequests[0][0]).toEqual(peerId);
+              expect(sentRequests[0][1]).toEqual(queryId);
+              if (!(((_v1) => {
+                if (!(_v1 != null && (_v1.is('Established')))) return false;
+                const { _0: establishedPeerId } = _v1.value;
+                return valueEquals(establishedPeerId, peerId);
+              })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
             }
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            predicate.drop();
           }
         } finally {
-          if (!_moved1) dropOwned(_b0);
+          collectionId.drop();
         }
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        mockSender.clearSentRequests();
-        relay.notifyPeerConnected(peerId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(1);
-        expect(sentRequests[0]._0).toEqual(peerId);
-        expect(sentRequests[0]._1).toEqual(queryId);
-        if (!(((_v1) => {
-          if (!(_v1 != null && (_v1.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v1.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_failed_subscription_retry', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        relay.notifyPeerConnected(peerId);
-        let _moved1 = false;
-        const _b0 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved3 = false;
-          const _b2 = predicate.clone();
+          const predicate = createTestSelection();
           try {
-            let _moved5 = false;
-            const _b4 = collectionId.clone();
+            const peerId = EntityId.new();
+            relay.notifyPeerConnected(peerId);
+            let _moved1 = false;
+            const _b0 = collectionId.clone();
             try {
-              const _b6 = new MockLiveQuery();
-              _moved1 = true;
-              _moved3 = true;
-              _moved5 = true;
-              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+              let _moved3 = false;
+              const _b2 = predicate.clone();
+              try {
+                let _moved5 = false;
+                const _b4 = collectionId.clone();
+                try {
+                  const _b6 = new MockLiveQuery();
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved5 = true;
+                  relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+                } finally {
+                  if (!_moved5) dropOwned(_b4);
+                }
+              } finally {
+                if (!_moved3) dropOwned(_b2);
+              }
             } finally {
-              if (!_moved5) dropOwned(_b4);
+              if (!_moved1) dropOwned(_b0);
+            }
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('Established')))) return false;
+              const { _0: establishedPeerId } = _v.value;
+              return valueEquals(establishedPeerId, peerId);
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            relay.notifyPeerDisconnected(peerId);
+            if (!(((_v1) => {
+              if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            mockSender.value.clearSentRequests();
+            mockSender.value.setFailNext(new RequestError('ServerError', { _0: 'Invalid predicate' }));
+            relay.notifyPeerConnected(peerId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(1);
+              if (!(((_v2) => {
+                if (!(_v2 != null && (_v2.is('Failed')))) return false;
+                return true;
+              })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
             }
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            predicate.drop();
           }
         } finally {
-          if (!_moved1) dropOwned(_b0);
+          collectionId.drop();
         }
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        relay.notifyPeerDisconnected(peerId);
-        if (!(((_v1) => {
-          if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        mockSender.clearSentRequests();
-        mockSender.setFailNext(new RequestError('ServerError', { _0: 'Invalid predicate' }));
-        relay.notifyPeerConnected(peerId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(1);
-        if (!(((_v2) => {
-          if (!(_v2 != null && (_v2.is('Failed')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_retryable_vs_non_retryable_failures', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const retryableQueryId = proto.QueryId.new();
-    const nonRetryableQueryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        let _moved1 = false;
-        const _b0 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const retryableQueryId = proto.QueryId.new();
+        const nonRetryableQueryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved3 = false;
-          const _b2 = predicate.clone();
+          const predicate = createTestSelection();
           try {
-            let _moved5 = false;
-            const _b4 = collectionId.clone();
+            const peerId = EntityId.new();
+            let _moved1 = false;
+            const _b0 = collectionId.clone();
             try {
-              const _b6 = new MockLiveQuery();
-              _moved1 = true;
-              _moved3 = true;
-              _moved5 = true;
-              relay.subscribeQuery(retryableQueryId, _b0, _b2, _b4, 0, _b6);
+              let _moved3 = false;
+              const _b2 = predicate.clone();
+              try {
+                let _moved5 = false;
+                const _b4 = collectionId.clone();
+                try {
+                  const _b6 = new MockLiveQuery();
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved5 = true;
+                  relay.subscribeQuery(retryableQueryId, _b0, _b2, _b4, 0, _b6);
+                } finally {
+                  if (!_moved5) dropOwned(_b4);
+                }
+              } finally {
+                if (!_moved3) dropOwned(_b2);
+              }
             } finally {
-              if (!_moved5) dropOwned(_b4);
+              if (!_moved1) dropOwned(_b0);
+            }
+            let _moved8 = false;
+            const _b7 = collectionId.clone();
+            try {
+              let _moved10 = false;
+              const _b9 = predicate.clone();
+              try {
+                let _moved12 = false;
+                const _b11 = collectionId.clone();
+                try {
+                  const _b13 = new MockLiveQuery();
+                  _moved8 = true;
+                  _moved10 = true;
+                  _moved12 = true;
+                  relay.subscribeQuery(nonRetryableQueryId, _b7, _b9, _b11, 0, _b13);
+                } finally {
+                  if (!_moved12) dropOwned(_b11);
+                }
+              } finally {
+                if (!_moved10) dropOwned(_b9);
+              }
+            } finally {
+              if (!_moved8) dropOwned(_b7);
+            }
+            (() => {
+              let subscriptions = relay.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
+              try {
+                {
+                  const _v = subscriptions.value.get(retryableQueryId);
+                  if (_v != null) {
+                    const info = _v;
+                    const _a14 = new Status('PendingRemote', {});
+                    info.status.drop();
+                    info.status = _a14;
+                  }
+                }
+                {
+                  const _v1 = subscriptions.value.get(nonRetryableQueryId);
+                  if (_v1 != null) {
+                    const info = _v1;
+                    const _a15 = new Status('Failed', {});
+                    info.status.drop();
+                    info.status = _a15;
+                  }
+                }
+              } finally {
+                subscriptions.drop();
+              }
+            })();
+            relay.notifyPeerConnected(peerId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(1);
+              expect(sentRequests[0][1]).toEqual(retryableQueryId);
+              if (!(((_v2) => {
+                if (!(_v2 != null && (_v2.is('Established')))) return false;
+                const { _0: establishedPeerId } = _v2.value;
+                return valueEquals(establishedPeerId, peerId);
+              })(relay.getStatus(retryableQueryId)))) throw new Error('assertion failed');
+              if (!(((_v3) => {
+                if (!(_v3 != null && (_v3.is('Failed')))) return false;
+                return true;
+              })(relay.getStatus(nonRetryableQueryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
             }
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            predicate.drop();
           }
         } finally {
-          if (!_moved1) dropOwned(_b0);
+          collectionId.drop();
         }
-        let _moved8 = false;
-        const _b7 = collectionId.clone();
-        try {
-          let _moved10 = false;
-          const _b9 = predicate.clone();
-          try {
-            let _moved12 = false;
-            const _b11 = collectionId.clone();
-            try {
-              const _b13 = new MockLiveQuery();
-              _moved8 = true;
-              _moved10 = true;
-              _moved12 = true;
-              relay.subscribeQuery(nonRetryableQueryId, _b7, _b9, _b11, 0, _b13);
-            } finally {
-              if (!_moved12) dropOwned(_b11);
-            }
-          } finally {
-            if (!_moved10) dropOwned(_b9);
-          }
-        } finally {
-          if (!_moved8) dropOwned(_b7);
-        }
-        (() => {
-          let subscriptions = relay.inner.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
-          {
-            const _v = subscriptions.get(retryableQueryId);
-            if (_v != null) {
-              const info = _v;
-              info.status = new Status('PendingRemote', {});
-            }
-          }
-          {
-            const _v1 = subscriptions.get(nonRetryableQueryId);
-            if (_v1 != null) {
-              const info = _v1;
-              info.status = new Status('Failed', {});
-            }
-          }
-        })();
-        relay.notifyPeerConnected(peerId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(1);
-        expect(sentRequests[0]._1).toEqual(retryableQueryId);
-        if (!(((_v2) => {
-          if (!(_v2 != null && (_v2.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v2.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(retryableQueryId)))) throw new Error('assertion failed');
-        if (!(((_v3) => {
-          if (!(_v3 != null && (_v3.is('Failed')))) return false;
-          return true;
-        })(relay.getStatus(nonRetryableQueryId)))) throw new Error('assertion failed');
       } finally {
-        predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_subscription_removal', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      let _moved0 = false;
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        relay.notifyPeerConnected(peerId);
-        let _moved2 = false;
-        const _b1 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved4 = false;
-          const _b3 = collectionId.clone();
+          let _moved0 = false;
+          const predicate = createTestSelection();
           try {
-            const _b5 = new MockLiveQuery();
-            _moved2 = true;
-            _moved4 = true;
-            _moved0 = true;
-            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+            const peerId = EntityId.new();
+            relay.notifyPeerConnected(peerId);
+            let _moved2 = false;
+            const _b1 = collectionId.clone();
+            try {
+              let _moved4 = false;
+              const _b3 = collectionId.clone();
+              try {
+                const _b5 = new MockLiveQuery();
+                _moved2 = true;
+                _moved4 = true;
+                _moved0 = true;
+                relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+              } finally {
+                if (!_moved4) dropOwned(_b3);
+              }
+            } finally {
+              if (!_moved2) dropOwned(_b1);
+            }
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('Established')))) return false;
+              const { _0: establishedPeerId } = _v.value;
+              return valueEquals(establishedPeerId, peerId);
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            mockSender.value.clearSentRequests();
+            relay.unsubscribePredicate(queryId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(1);
+              expect(sentRequests[0][0]).toEqual(peerId);
+              expect(sentRequests[0][1]).toEqual(queryId);
+              if (!(((_v1) => {
+                if (!(_v1 == null)) return false;
+                return true;
+              })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
+            }
           } finally {
-            if (!_moved4) dropOwned(_b3);
+            if (!_moved0) predicate.drop();
           }
         } finally {
-          if (!_moved2) dropOwned(_b1);
+          collectionId.drop();
         }
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        mockSender.clearSentRequests();
-        relay.unsubscribePredicate(queryId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(1);
-        expect(sentRequests[0]._0).toEqual(peerId);
-        expect(sentRequests[0]._1).toEqual(queryId);
-        if (!(((_v1) => {
-          if (!(_v1 == null)) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        if (!_moved0) predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_edge_cases', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        const peerId = EntityId.new();
-        let _moved1 = false;
-        const _b0 = collectionId.clone();
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved3 = false;
-          const _b2 = predicate.clone();
+          const predicate = createTestSelection();
           try {
-            let _moved5 = false;
-            const _b4 = collectionId.clone();
+            const peerId = EntityId.new();
+            let _moved1 = false;
+            const _b0 = collectionId.clone();
             try {
-              const _b6 = new MockLiveQuery();
-              _moved1 = true;
-              _moved3 = true;
-              _moved5 = true;
-              relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+              let _moved3 = false;
+              const _b2 = predicate.clone();
+              try {
+                let _moved5 = false;
+                const _b4 = collectionId.clone();
+                try {
+                  const _b6 = new MockLiveQuery();
+                  _moved1 = true;
+                  _moved3 = true;
+                  _moved5 = true;
+                  relay.subscribeQuery(queryId, _b0, _b2, _b4, 0, _b6);
+                } finally {
+                  if (!_moved5) dropOwned(_b4);
+                }
+              } finally {
+                if (!_moved3) dropOwned(_b2);
+              }
             } finally {
-              if (!_moved5) dropOwned(_b4);
+              if (!_moved1) dropOwned(_b0);
+            }
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            relay.setNode(mockSender.clone());
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v1) => {
+              if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            const _t7 = mockSender.value.getSentRequests();
+            try {
+              expect(_t7.length).toEqual(0);
+            } finally {
+              dropOwned(_t7);
+            }
+            relay.notifyPeerConnected(peerId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            if (!(((_v2) => {
+              if (!(_v2 != null && (_v2.is('Established')))) return false;
+              const { _0: establishedPeerId } = _v2.value;
+              return valueEquals(establishedPeerId, peerId);
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            const _t8 = mockSender.value.getSentRequests();
+            try {
+              expect(_t8.length).toEqual(1);
+            } finally {
+              dropOwned(_t8);
             }
           } finally {
-            if (!_moved3) dropOwned(_b2);
+            predicate.drop();
           }
         } finally {
-          if (!_moved1) dropOwned(_b0);
+          collectionId.drop();
         }
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        relay.setNode(mockSender.clone());
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v1) => {
-          if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        expect(mockSender.getSentRequests().length).toEqual(0);
-        relay.notifyPeerConnected(peerId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        if (!(((_v2) => {
-          if (!(_v2 != null && (_v2.is('Established')))) return false;
-          const { _0: establishedPeerId } = _v2.value;
-          return valueEquals(establishedPeerId, peerId);
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        expect(mockSender.getSentRequests().length).toEqual(1);
       } finally {
-        predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 
   test('test_notify_unsubscribe_with_no_established_subscription', async () => {
     const relay = SubscriptionRelay.new();
-    const mockSender = Arc.new(MockMessageSender.new());
-    relay.setNode(mockSender.clone());
-    const queryId = proto.QueryId.new();
-    const collectionId = createTestCollectionId();
     try {
-      let _moved0 = false;
-      const predicate = createTestSelection();
+      const mockSender = Arc.new(MockMessageSender.new());
       try {
-        let _moved2 = false;
-        const _b1 = collectionId.clone();
+        relay.setNode(mockSender.clone());
+        const queryId = proto.QueryId.new();
+        const collectionId = createTestCollectionId();
         try {
-          let _moved4 = false;
-          const _b3 = collectionId.clone();
+          let _moved0 = false;
+          const predicate = createTestSelection();
           try {
-            const _b5 = new MockLiveQuery();
-            _moved2 = true;
-            _moved4 = true;
-            _moved0 = true;
-            relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+            let _moved2 = false;
+            const _b1 = collectionId.clone();
+            try {
+              let _moved4 = false;
+              const _b3 = collectionId.clone();
+              try {
+                const _b5 = new MockLiveQuery();
+                _moved2 = true;
+                _moved4 = true;
+                _moved0 = true;
+                relay.subscribeQuery(queryId, _b1, predicate, _b3, 0, _b5);
+              } finally {
+                if (!_moved4) dropOwned(_b3);
+              }
+            } finally {
+              if (!_moved2) dropOwned(_b1);
+            }
+            if (!(((_v) => {
+              if (!(_v != null && (_v.is('PendingRemote')))) return false;
+              return true;
+            })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            relay.unsubscribePredicate(queryId);
+            await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
+            const sentRequests = mockSender.value.getSentRequests();
+            try {
+              expect(sentRequests.length).toEqual(0);
+              if (!(((_v1) => {
+                if (!(_v1 == null)) return false;
+                return true;
+              })(relay.getStatus(queryId)))) throw new Error('assertion failed');
+            } finally {
+              dropOwned(sentRequests);
+            }
           } finally {
-            if (!_moved4) dropOwned(_b3);
+            if (!_moved0) predicate.drop();
           }
         } finally {
-          if (!_moved2) dropOwned(_b1);
+          collectionId.drop();
         }
-        if (!(((_v) => {
-          if (!(_v != null && (_v.is('PendingRemote')))) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-        relay.unsubscribePredicate(queryId);
-        await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
-        const sentRequests = mockSender.getSentRequests();
-        expect(sentRequests.length).toEqual(0);
-        if (!(((_v1) => {
-          if (!(_v1 == null)) return false;
-          return true;
-        })(relay.getStatus(queryId)))) throw new Error('assertion failed');
       } finally {
-        if (!_moved0) predicate.drop();
+        mockSender.drop();
       }
     } finally {
-      collectionId.drop();
+      relay.drop();
     }
   });
 

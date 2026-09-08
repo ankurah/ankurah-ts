@@ -19,6 +19,21 @@ impl BodyTranslator<'_> {
             return format!("let {};\n", pat);
         };
 
+        // A name the enclosing block-as-expression already threaded in as a
+        // parameter IS this value: the parameter carries the initialiser,
+        // resolved and translated outside the block. Nothing here is written,
+        // and asking what the initialiser is a second time asks it in a scope
+        // where the name already stands for the answer.
+        if self.threaded.borrow().iter().any(|n| *n == pat) {
+            let rust_name = match &local.pat {
+                syn::Pat::Ident(ident) => ident.ident.to_string(),
+                _ => pat.clone(),
+            };
+            if references_var(&init.expr, &rust_name) {
+                return String::new();
+            }
+        }
+
         // Read before the initialiser is translated. An initialiser that is a
         // block of its own — `let sub = { let c = c.clone(); f(c) }` — runs the
         // whole block machinery again and leaves its own statement's answers
@@ -123,9 +138,12 @@ impl BodyTranslator<'_> {
         // writes as a JavaScript VALUE lives in a cell, because a number, a
         // string and a boolean are copied at the call and the callee's writes
         // would go nowhere. Decided here, where the type is known.
+        // A type the solver did not settle answers this the way no type at
+        // all answers it: the local keeps its plain binding.
         let wants_a_cell = self.cell_candidates.borrow().iter().any(|c| *c == pat)
             && ty
                 .as_ref()
+                .filter(|ty| !ty.mentions_any_var())
                 .is_some_and(|ty| match &self.types {
                     Some(tc) => crate::is_value_spelling(&crate::name_map::map_ty(
                         tc.borrow().registry,
@@ -153,19 +171,6 @@ impl BodyTranslator<'_> {
             return format!("const {} = {};\n", name, held);
         }
 
-        // A name the enclosing block-as-expression already threaded in as a
-        // parameter is already this value; declaring it again would shadow
-        // what was threaded.
-        if self.threaded.borrow().iter().any(|n| *n == pat) {
-            let rust_name = if let syn::Pat::Ident(ident) = &local.pat {
-                ident.ident.to_string()
-            } else {
-                pat.clone()
-            };
-            if references_var(&init.expr, &rust_name) {
-                return String::new();
-            }
-        }
         let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
         // A Rust shadow introduces a *new* variable. Assigning to the old
         // one instead changed a value other code — a closure that captured
@@ -182,7 +187,41 @@ impl BodyTranslator<'_> {
         }
         let drops = bound_closure.map(|_| ownership::Drops::Own);
         let flag = self.claim_local(&pat, &emitted, ty.as_ref(), drops, &local.pat, disposition);
-        format!("{}{} {} = {};\n", flag, keyword, emitted, expr)
+        let written = self.annotation_for_an_empty_container(&expr, ty.as_ref());
+        format!("{}{} {}{} = {};\n", flag, keyword, emitted, written, expr)
+    }
+
+    /// The `: T` an empty array of PAIRS needs.
+    ///
+    /// `const xs = []` grows by what is pushed into it, and TypeScript reads a
+    /// pushed `[a, b]` as an array of `a | b` rather than the pair Rust wrote —
+    /// so the array it infers is not the one the engine says, and a call that
+    /// takes the pair refuses it. Every other element type it reads correctly,
+    /// and writing the annotation there would only repeat the pushes.
+    fn annotation_for_an_empty_container(
+        &self,
+        initialiser: &str,
+        ty: Option<&crate::ty::Ty>,
+    ) -> String {
+        if initialiser != "[]" {
+            return String::new();
+        }
+        let Some(ty) = ty.filter(|ty| !ty.mentions_any_var()) else {
+            return String::new();
+        };
+        let holds_a_pair = match ty.peel_refs() {
+            crate::ty::Ty::Named { args, .. } => {
+                matches!(args.first(), Some(crate::ty::Ty::Tuple(_)))
+            }
+            _ => false,
+        };
+        if !holds_a_pair {
+            return String::new();
+        }
+        match &self.types {
+            Some(tc) => format!(": {}", crate::name_map::map_ty(tc.borrow().registry, ty)),
+            None => String::new(),
+        }
     }
 
 }

@@ -105,7 +105,9 @@ pub fn drops_of(probe: &Probe, ty: &Ty) -> Drops {
         // ...values]))` leaked the cursor and every element in it.
         Ty::Param(_) if holds_an_opaque_iterator(probe, ty) => Drops::Own,
 
-        Ty::Param(_) | Ty::ImplTrait { .. } | Ty::Infer => Drops::Unknown,
+        // An unknown the solver did not settle owns nothing the engine can
+        // name, which is the same answer a written `_` gets.
+        Ty::Param(_) | Ty::ImplTrait { .. } | Ty::Infer | Ty::Var(_) => Drops::Unknown,
     }
 }
 

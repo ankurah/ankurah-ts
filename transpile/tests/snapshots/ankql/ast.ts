@@ -337,21 +337,27 @@ export class Expr extends Enum<ExprV> {
         const exprs = v._0;
         let _moved7 = false;
         try {
+          let _moved8 = false;
           let populatedExprs = [];
-          _moved7 = true;
-          const _seq9 = exprs;
-          let _at10 = 0;
           try {
-            while (_at10 < _seq9.length) {
-              const expr = _seq9[_at10++];
-              const _r8 = expr.populateRecursive(values, _convV);
-              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-              populatedExprs.push(_r8.unwrap());
+            _moved7 = true;
+            const _seq10 = exprs;
+            let _at11 = 0;
+            try {
+              while (_at11 < _seq10.length) {
+                const expr = _seq10[_at11++];
+                const _r9 = expr.populateRecursive(values, _convV);
+                if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                populatedExprs.push(_r9.unwrap());
+              }
+            } finally {
+              dropOwned(_seq10.slice(_at11));
             }
+            _moved8 = true;
+            return Result.Ok(new Expr('ExprList', { _0: populatedExprs }));
           } finally {
-            dropOwned(_seq9.slice(_at10));
+            if (!_moved8) dropOwned(populatedExprs);
           }
-          return Result.Ok(new Expr('ExprList', { _0: populatedExprs }));
         } finally {
           if (!_moved7) dropOwned(exprs);
         }

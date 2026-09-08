@@ -25,7 +25,22 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
   }
 
   static new<E, Ev>(): Reactor<E, Ev> {
-    return new Reactor(Arc.new(new ReactorInner(new Mutex(new HashMap()), Arc.new(new Mutex(WatcherSet.new())), tokio.sync.Mutex.new([]))));
+    let _moved1 = false;
+    const _b0 = new Mutex(new HashMap());
+    try {
+      let _moved3 = false;
+      const _b2 = Arc.new(new Mutex(WatcherSet.new()));
+      try {
+        const _b4 = tokio.sync.Mutex.new([]);
+        _moved1 = true;
+        _moved3 = true;
+        return new Reactor(Arc.new(new ReactorInner(_b0, _b2, _b4)));
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   subscribe(): ReactorSubscription<E, Ev> {
@@ -37,17 +52,23 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       try {
         const _b3 = this._0.value.watcherSet.clone();
         _moved2 = true;
+        let _moved4 = false;
         const subscription = Subscription.new(_b1, _b3);
-        const subscriptionId = subscription.id();
-        const _t4 = this._0.value.subscriptions.lock();
         try {
-          _t4.value.set(subscriptionId, subscription);
+          const subscriptionId = subscription.id();
+          const _t5 = this._0.value.subscriptions.lock();
+          try {
+            _moved4 = true;
+            _t5.value.set(subscriptionId, subscription);
+          } finally {
+            _t5.drop();
+          }
+          const _b6 = this.clone();
+          _moved0 = true;
+          return new ReactorSubscription(Arc.new(new ReactorSubInner(subscriptionId, _b6, broadcast)));
         } finally {
-          _t4.drop();
+          if (!_moved4) subscription.drop();
         }
-        const _b5 = this.clone();
-        _moved0 = true;
-        return new ReactorSubscription(Arc.new(new ReactorSubInner(subscriptionId, _b5, broadcast)));
       } finally {
         if (!_moved2) dropOwned(_b1);
       }
@@ -485,30 +506,36 @@ export interface PreNotifyHook {
 }
 
 function buildKeySpecFromSelection<E extends AbstractEntity>(orderBy: OrderByItem[], resultset: EntityResultSet<E>): Result<KeySpec, Error> {
+  let _moved0 = false;
   let keyparts = [];
-  const read = resultset.read();
   try {
-    for (const item of orderBy) {
-      const column = item.path.property();
-      const valueType = iterFindMap(read.iterEntities(), ([, e]) => {
-        const _m0 = e.value(column);
-        return (_m0 != null ? ((v) => {
-          try {
-            return ValueType.of(v);
-          } finally {
-            v.drop();
-          }
-        })(_m0!) : null);
-      }) ?? new ValueType('String', {});
-      const direction = item.direction.match({
-        Asc: () => new IndexDirection('Asc', {}),
-        Desc: () => new IndexDirection('Desc', {}),
-      });
-      keyparts.push(new IndexKeyPart(column, null, direction, valueType, new NullsOrder('Last', {}), null));
+    const read = resultset.read();
+    try {
+      for (const item of orderBy) {
+        const column = item.path.property();
+        const valueType = iterFindMap(read.iterEntities(), ([, e]) => {
+          const _m1 = e.value(column);
+          return (_m1 != null ? ((v) => {
+            try {
+              return ValueType.of(v);
+            } finally {
+              v.drop();
+            }
+          })(_m1!) : null);
+        }) ?? new ValueType('String', {});
+        const direction = item.direction.match({
+          Asc: () => new IndexDirection('Asc', {}),
+          Desc: () => new IndexDirection('Desc', {}),
+        });
+        keyparts.push(new IndexKeyPart(column, null, direction, valueType, new NullsOrder('Last', {}), null));
+      }
+      _moved0 = true;
+      return Result.Ok(new KeySpec(keyparts));
+    } finally {
+      read.drop();
     }
-    return Result.Ok(new KeySpec(keyparts));
   } finally {
-    read.drop();
+    if (!_moved0) dropOwned(keyparts);
   }
 }
 

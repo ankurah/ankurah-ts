@@ -47,64 +47,82 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
             let _moved5 = false;
             const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
             try {
+              let _moved7 = false;
               const _b6 = node.clone();
-              let _moved8 = false;
-              const _b7 = resultset.clone();
               try {
-                const _b9 = Mut.new(null);
-                let _moved11 = false;
-                const _b10 = tokio.sync.Notify.new();
+                let _moved9 = false;
+                const _b8 = resultset.clone();
                 try {
-                  const _b12 = Mut.new([args.selection.clone(), 1]);
-                  const _b13 = collectionId.clone();
-                  _moved8 = true;
-                  _moved11 = true;
-                  _moved4 = true;
-                  _moved5 = true;
-                  const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b7, _b9, _b10, 0, 1, _b12, _b13, gapFetcher)));
-                  const hasRelay = (node.deref().value.subscriptionRelay != null);
-                  if (args.cached || !hasRelay) {
-                    const me2 = me.clone();
-                    tracing.debug(`LiveQuery::new() spawning initialization task for durable node predicate ${queryId}`);
-                    spawn((async () => {
-                      tracing.debug(`LiveQuery initialization task starting for predicate ${queryId}`);
-                      {
-                        const _v = await me2.activate(1);
-                        if (_v.isErr()) {
-                          const e = _v.unwrapErr();
-                          tracing.debug(`LiveQuery initialization failed for predicate ${queryId}: ${e}`);
-                          me2._0.error.set(e);
-                        } else {
-                        tracing.debug(`LiveQuery initialization completed for predicate ${queryId}`);
-                      }
-                      }
-                    })());
-                  }
-                  if (hasRelay) {
-                    let _moved15 = false;
-                    const _b14 = collectionId.clone();
+                  let _moved11 = false;
+                  const _b10 = Mut.new(null);
+                  try {
+                    let _moved13 = false;
+                    const _b12 = tokio.sync.Notify.new();
                     try {
-                      let _moved17 = false;
-                      const _b16 = args.selection.clone();
+                      let _moved15 = false;
+                      const _b14 = Mut.new([args.selection.clone(), 1]);
                       try {
-                        const _b18 = cdata.clone();
-                        const _b19 = me.weak();
+                        const _b16 = collectionId.clone();
+                        _moved7 = true;
+                        _moved9 = true;
+                        _moved11 = true;
+                        _moved13 = true;
                         _moved15 = true;
-                        _moved17 = true;
-                        node.subscribeRemoteQuery(queryId, _b14, _b16, _b18, 1, _b19);
+                        _moved4 = true;
+                        _moved5 = true;
+                        const me = new EntityLiveQuery(Arc.new(new Inner(queryId, _b6, subscription, _b8, _b10, _b12, 0, 1, _b14, _b16, gapFetcher)));
+                        const hasRelay = (node.deref().value.subscriptionRelay != null);
+                        if (args.cached || !hasRelay) {
+                          const me2 = me.clone();
+                          tracing.debug(`LiveQuery::new() spawning initialization task for durable node predicate ${queryId}`);
+                          spawn((async () => {
+                            tracing.debug(`LiveQuery initialization task starting for predicate ${queryId}`);
+                            {
+                              const _v = await me2.activate(1);
+                              if (_v.isErr()) {
+                                const e = _v.unwrapErr();
+                                tracing.debug(`LiveQuery initialization failed for predicate ${queryId}: ${e}`);
+                                me2._0.error.set(e);
+                              } else {
+                              tracing.debug(`LiveQuery initialization completed for predicate ${queryId}`);
+                            }
+                            }
+                          })());
+                        }
+                        if (hasRelay) {
+                          let _moved18 = false;
+                          const _b17 = collectionId.clone();
+                          try {
+                            let _moved20 = false;
+                            const _b19 = args.selection.clone();
+                            try {
+                              const _b21 = cdata.clone();
+                              const _b22 = me.weak();
+                              _moved18 = true;
+                              _moved20 = true;
+                              node.subscribeRemoteQuery(queryId, _b17, _b19, _b21, 1, _b22);
+                            } finally {
+                              if (!_moved20) dropOwned(_b19);
+                            }
+                          } finally {
+                            if (!_moved18) dropOwned(_b17);
+                          }
+                        }
+                        return Result.Ok(me);
                       } finally {
-                        if (!_moved17) dropOwned(_b16);
+                        if (!_moved15) dropOwned(_b14);
                       }
                     } finally {
-                      if (!_moved15) dropOwned(_b14);
+                      if (!_moved13) dropOwned(_b12);
                     }
+                  } finally {
+                    if (!_moved11) dropOwned(_b10);
                   }
-                  return Result.Ok(me);
                 } finally {
-                  if (!_moved11) dropOwned(_b10);
+                  if (!_moved9) dropOwned(_b8);
                 }
               } finally {
-                if (!_moved8) dropOwned(_b7);
+                if (!_moved7) dropOwned(_b6);
               }
             } finally {
               if (!_moved5) gapFetcher.drop();
@@ -428,42 +446,48 @@ function livequeryChangeSetFrom<R extends View>(resultset: ResultSet<R>, reactor
   let _moved0 = false;
   try {
     try {
+      let _moved1 = false;
       let changes = [];
-      const _seq1 = reactorUpdate.items;
-      let _at2 = 0;
       try {
-        while (_at2 < _seq1.length) {
-          const item = _seq1[_at2++];
-          try {
-            const view = R.fromEntity(item.takeField('entity'));
-            {
-              const _v = iterFirst(item.predicateRelevance);
-              if (_v != null) {
-                const [, membershipChange] = _v;
-                return membershipChange.match({
-                  Initial: () => {
-                    changes.push(new ItemChange('Initial', { item: view }));
-                  },
-                  Add: () => {
-                    changes.push(new ItemChange('Add', { item: view, events: item.events }));
-                  },
-                  Remove: () => {
-                    changes.push(new ItemChange('Remove', { item: view, events: item.events }));
-                  },
-                });
-              } else {
-              changes.push(new ItemChange('Update', { item: view, events: item.events }));
+        const _seq2 = reactorUpdate.items;
+        let _at3 = 0;
+        try {
+          while (_at3 < _seq2.length) {
+            const item = _seq2[_at3++];
+            try {
+              const view = R.fromEntity(item.takeField('entity'));
+              {
+                const _v = iterFirst(item.predicateRelevance);
+                if (_v != null) {
+                  const [, membershipChange] = _v;
+                  return membershipChange.match({
+                    Initial: () => {
+                      changes.push(new ItemChange('Initial', { item: view }));
+                    },
+                    Add: () => {
+                      changes.push(new ItemChange('Add', { item: view, events: item.events }));
+                    },
+                    Remove: () => {
+                      changes.push(new ItemChange('Remove', { item: view, events: item.events }));
+                    },
+                  });
+                } else {
+                changes.push(new ItemChange('Update', { item: view, events: item.events }));
+              }
+              }
+            } finally {
+              item.drop();
             }
-            }
-          } finally {
-            item.drop();
           }
+        } finally {
+          dropOwned(_seq2.slice(_at3));
         }
+        _moved1 = true;
+        _moved0 = true;
+        return new ChangeSet(resultset, changes);
       } finally {
-        dropOwned(_seq1.slice(_at2));
+        if (!_moved1) dropOwned(changes);
       }
-      _moved0 = true;
-      return new ChangeSet(resultset, changes);
     } finally {
       reactorUpdate.drop();
     }

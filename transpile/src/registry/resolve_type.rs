@@ -10,7 +10,7 @@ use syn::spanned::Spanned;
 use super::module::{Def, ModuleId};
 use super::TypeRegistry;
 use crate::diag::{Diag, DiagSink};
-use crate::ty::{bind_params, ArrayLen, Prim, TraitRef, Ty, TypeId};
+use crate::ty::{bind_params, ArrayLen, InferTable, Prim, TraitRef, Ty, TypeId};
 
 /// What a type is being read in: which module wrote it, which generic
 /// parameters are in scope, and what `Self` means.
@@ -19,6 +19,10 @@ pub struct TypeEnv<'a> {
     pub module: ModuleId,
     pub params: &'a [String],
     pub self_ty: Option<&'a Ty>,
+    /// Where a type argument the source left off becomes an unknown instead of
+    /// a refusal. An expression position has a solver behind it; a declaration
+    /// does not, so only the caller decides.
+    pub vars: Option<&'a std::cell::RefCell<InferTable>>,
     pub sink: &'a DiagSink,
 }
 
@@ -29,8 +33,16 @@ impl<'a> TypeEnv<'a> {
             module,
             params: &[],
             self_ty: None,
+            vars: None,
             sink,
         }
+    }
+
+    /// Let this resolution mint an unknown for each argument the source left
+    /// off, rather than refusing the path.
+    pub fn with_vars(mut self, vars: &'a std::cell::RefCell<InferTable>) -> Self {
+        self.vars = Some(vars);
+        self
     }
 
     pub fn with_params(mut self, params: &'a [String]) -> Self {
@@ -305,6 +317,25 @@ fn fill_defaults(
         if missing.iter().all(|d| d.is_some()) {
             for (param, default) in def.type_params[args.len()..].iter().zip(missing) {
                 let filled = default.expect("just checked").substitute(&subst);
+                subst.insert(param.clone(), filled.clone());
+                args.push(filled);
+            }
+            return Ok(args);
+        }
+        // `Vec::new()` writes no element type because the uses below it decide
+        // one. Where the caller has a solver, each argument left off becomes an
+        // unknown for it to settle; where it has none, the path is refused.
+        if let Some(vars) = env.vars {
+            let at = span.start();
+            for (index, (param, default)) in
+                def.type_params[args.len()..].iter().zip(missing).enumerate()
+            {
+                let filled = match default {
+                    Some(written) => written.substitute(&subst),
+                    // Keyed by where it is written, so the same site asked
+                    // twice answers with the same unknown.
+                    None => Ty::Var(vars.borrow_mut().at_site(at.line, at.column, index)),
+                };
                 subst.insert(param.clone(), filled.clone());
                 args.push(filled);
             }

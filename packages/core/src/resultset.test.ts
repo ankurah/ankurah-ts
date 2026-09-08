@@ -106,15 +106,15 @@ describe('resultset unit tests', () => {
     const resultset = EntityResultSet.empty();
     try {
       let props1 = new HashMap();
-      props1.insert('name', new Value('String', { _0: 'Alice' }));
+      props1.set('name', new Value('String', { _0: 'Alice' }));
       const entity1 = TestEntity.new(1, props1);
       try {
         let props2 = new HashMap();
-        props2.insert('name', new Value('String', { _0: 'Alice' }));
+        props2.set('name', new Value('String', { _0: 'Alice' }));
         const entity2 = TestEntity.new(2, props2);
         try {
           let props3 = new HashMap();
-          props3.insert('name', new Value('String', { _0: 'Bob' }));
+          props3.set('name', new Value('String', { _0: 'Bob' }));
           const entity3 = TestEntity.new(3, props3);
           try {
             const keySpec = new KeySpec([new IndexKeyPart('name', null, new IndexDirection('Asc', {}), new ValueType('String', {}), new NullsOrder('Last', {}), null)]);
@@ -162,7 +162,7 @@ describe('resultset unit tests', () => {
       try {
         for (const i of range(0, 5)) {
           let props = new HashMap();
-          props.insert('value', new Value('I32', { _0: (i | 0) }));
+          props.set('value', new Value('I32', { _0: (i | 0) }));
           const entity = TestEntity.new(i, props);
           write.add(entity);
         }
@@ -185,11 +185,11 @@ describe('resultset unit tests', () => {
     const resultset = EntityResultSet.empty();
     try {
       let props = new HashMap();
-      props.insert('active', new Value('Bool', { _0: true }));
+      props.set('active', new Value('Bool', { _0: true }));
       const entity1 = TestEntity.new(1, props);
       try {
         let props_1 = new HashMap();
-        props_1.insert('active', new Value('Bool', { _0: false }));
+        props_1.set('active', new Value('Bool', { _0: false }));
         const entity2 = TestEntity.new(2, props_1);
         try {
           let _moved0 = false;

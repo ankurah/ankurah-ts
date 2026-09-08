@@ -48,32 +48,38 @@ export abstract class StorageCollection {
     return Result.Ok([]);
   }
   async getStates(ids: EntityId[]): Promise<Result<Attested<EntityState>[], RetrievalError>> {
+    let _moved0 = false;
     let states = [];
-    for (const id of ids) {
-      const _v = await this.getState(id);
-      if (_v.isOk()) {
-        const state = _v.unwrap();
-        states.push(state)
-      } else {
-        const _v1 = _v.unwrapErr();
-        _arm0: {
-          if (_v1.is('EntityNotFound')) {
-            const _v2 = _v1;
-            try {
-              tracing.warn(`Entity not found: ${id}`);
-            } finally {
-              _v2.drop();
+    try {
+      for (const id of ids) {
+        const _v = await this.getState(id);
+        if (_v.isOk()) {
+          const state = _v.unwrap();
+          states.push(state)
+        } else {
+          const _v1 = _v.unwrapErr();
+          _arm1: {
+            if (_v1.is('EntityNotFound')) {
+              const _v2 = _v1;
+              try {
+                tracing.warn(`Entity not found: ${id}`);
+              } finally {
+                _v2.drop();
+              }
+              break _arm1;
             }
-            break _arm0;
-          }
-          {
-            const e = _v1;
-            return Result.Err(e)
+            {
+              const e = _v1;
+              return Result.Err(e)
+            }
           }
         }
       }
+      _moved0 = true;
+      return Result.Ok(states);
+    } finally {
+      if (!_moved0) dropOwned(states);
     }
-    return Result.Ok(states);
   }
   abstract addEvent(entityEvent: Attested<Event>): Promise<Result<boolean, MutationError>>;
   abstract getEvents(eventIds: EventId[]): Promise<Result<Attested<Event>[], RetrievalError>>;

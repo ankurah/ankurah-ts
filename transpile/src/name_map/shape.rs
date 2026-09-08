@@ -98,7 +98,9 @@ pub fn js_shape(reg: &TypeRegistry, ty: &Ty) -> JsShape {
         Ty::Str => JsShape::Str,
         Ty::Unit => JsShape::Void,
         Ty::Never => JsShape::Never,
-        Ty::Infer => JsShape::Unknown,
+        // A variable nothing solved has no spelling of its own; `map_ty`
+        // reports before it writes this one.
+        Ty::Infer | Ty::Var(_) => JsShape::Unknown,
         Ty::Param(_) | Ty::Assoc { .. } => JsShape::Plain,
         Ty::Tuple(elems) => JsShape::Tuple(elems.clone()),
         Ty::Prim(p) => prim_shape(*p),

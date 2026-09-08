@@ -5,6 +5,7 @@ import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, E
 import { PooledConnection, SqliteConnectionManager } from './connection';
 import { SqliteError } from './error';
 import { SqlBuilder, splitPredicateForSqlite } from './sql_builder';
+import { SqliteValue } from './value';
 import { Predicate, Selection } from '@ankurah/ankql';
 
 export class SqliteStorageEngine extends Struct implements StorageEngine {
@@ -189,11 +190,17 @@ export class SqliteBucket extends Struct implements StorageCollection {
       try {
         const stateTableName = collectionId.asStr();
         const eventTableName = `${collectionId.asStr()}_event`;
+        let _moved3 = false;
         const _b2 = Arc.new(new RwLock([]));
-        const _b3 = Arc.new(tokio.sync.Mutex.new([]));
-        _moved0 = true;
-        _moved1 = true;
-        return new SqliteBucket(pool, collectionId, stateTableName, eventTableName, _b2, _b3);
+        try {
+          const _b4 = Arc.new(tokio.sync.Mutex.new([]));
+          _moved3 = true;
+          _moved0 = true;
+          _moved1 = true;
+          return new SqliteBucket(pool, collectionId, stateTableName, eventTableName, _b2, _b4);
+        } finally {
+          if (!_moved3) dropOwned(_b2);
+        }
       } finally {
         if (!_moved1) collectionId.drop();
       }
@@ -330,7 +337,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
         const attestationsBlob = _r3.unwrap();
         const id = state.payload.entityId.toBase64();
         const idClone = id;
-        let materialized = [];
+        let materialized: [string, SqliteValue | null, boolean][] = [];
         try {
           let seenProperties = new HashSet();
           for (const [name, stateBuffer] of [...state.payload.state.stateBuffers.deref()]) {

@@ -17,16 +17,40 @@ export class WebsocketClient extends Struct {
     let _moved0 = false;
     try {
       undefined /* notice_info!("Created new websocket client") */;
+      let _moved2 = false;
       const _b1 = new RefCell(null);
-      const _b2 = Mut.new(new ConnectionState('None', {}));
-      const _b3 = new RefCell(0n);
-      const _b4 = new RefCell([]);
-      _moved0 = true;
-      const inner = Arc.new(new ClientInner(serverUrl, _b1, _b2, node, _b3, _b4));
-      const _r5 = inner.connect();
-      if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-      _r5.drop();
-      return Result.Ok(new WebsocketClient(inner));
+      try {
+        let _moved4 = false;
+        const _b3 = Mut.new(new ConnectionState('None', {}));
+        try {
+          let _moved6 = false;
+          const _b5 = new RefCell(0n);
+          try {
+            const _b7 = new RefCell([]);
+            _moved2 = true;
+            _moved4 = true;
+            _moved6 = true;
+            _moved0 = true;
+            let _moved8 = false;
+            const inner = Arc.new(new ClientInner(serverUrl, _b1, _b3, node, _b5, _b7));
+            try {
+              const _r9 = inner.value.connect();
+              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              _r9.drop();
+              _moved8 = true;
+              return Result.Ok(new WebsocketClient(inner));
+            } finally {
+              if (!_moved8) inner.drop();
+            }
+          } finally {
+            if (!_moved6) dropOwned(_b5);
+          }
+        } finally {
+          if (!_moved4) dropOwned(_b3);
+        }
+      } finally {
+        if (!_moved2) dropOwned(_b1);
+      }
     } finally {
       if (!_moved0) node.drop();
     }
@@ -43,8 +67,14 @@ export class WebsocketClient extends Struct {
   jsConnectionState(): ConnectionStateEnumSignal {
     const _t0 = this.inner.value.state.read();
     try {
+      let _moved1 = false;
       const sig = _t0.map((state) => state);
-      return new ConnectionStateEnumSignal(sig, []);
+      try {
+        _moved1 = true;
+        return new ConnectionStateEnumSignal(sig, []);
+      } finally {
+        if (!_moved1) dropOwned(sig);
+      }
     } finally {
       _t0.drop();
     }

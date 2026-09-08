@@ -11,12 +11,10 @@ use super::expected;
 use super::scope::ScopeStack;
 use crate::diag::{Diag, DiagSink};
 use crate::name_map;
-use crate::registry::{
-    resolve_type, Def, ModuleId, Ns, Probe, TypeEnv, TypeRegistry,
-};
+use crate::registry::{Def, ModuleId, Ns, Probe, TypeRegistry};
 use super::shapes::{break_value, expr_form, is_unsuffixed_int, member_name};
 use crate::ty::subst::Subst;
-use crate::ty::{unify, Prim, TraitRef, Ty};
+use crate::ty::{unify, InferTable, Prim, TraitRef, Ty};
 
 pub struct TypeContext<'a> {
     pub registry: &'a TypeRegistry,
@@ -44,6 +42,10 @@ pub struct TypeContext<'a> {
     /// rather than translating. This is that one scope, opened for the length
     /// of the question and closed after it.
     closure_params: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
+    /// The unknowns of the body being typed. A variable stands where the source
+    /// left a type for a later use to decide, and what nothing decides is
+    /// reported rather than filled in.
+    pub(super) vars: std::cell::RefCell<InferTable>,
     pub sink: &'a DiagSink,
 }
 
@@ -70,6 +72,7 @@ impl<'a> TypeContext<'a> {
             dictionaries: Vec::new(),
             self_ty,
             closure_params: std::cell::RefCell::new(Vec::new()),
+            vars: std::cell::RefCell::new(InferTable::new()),
             sink,
         }
     }
@@ -293,14 +296,6 @@ impl<'a> TypeContext<'a> {
         Diag::at(&self.sink.file(), span, message)
     }
 
-    /// Resolve a written type in this module, with the generics in scope.
-    pub fn resolve_written_type(&self, ty: &syn::Type) -> Result<Ty, Diag> {
-        let env = TypeEnv::new(self.registry, self.module, self.sink)
-            .with_params(&self.params)
-            .with_self(self.self_ty.as_ref());
-        resolve_type(ty, &env)
-    }
-
     /// The type of an expression, or the reason the engine cannot say.
     pub fn resolve_expr(&self, expr: &syn::Expr) -> Result<Ty, Diag> {
         self.resolve_expr_expecting(expr, None)
@@ -319,6 +314,13 @@ impl<'a> TypeContext<'a> {
         expr: &syn::Expr,
         expected: Option<&Ty>,
     ) -> Result<Ty, Diag> {
+        // Through the table on the way out, so a caller reads what the solver
+        // has settled rather than the variable that stood there when the
+        // answer was computed.
+        self.expr_type(expr, expected).map(|ty| self.solved(&ty))
+    }
+
+    fn expr_type(&self, expr: &syn::Expr, expected: Option<&Ty>) -> Result<Ty, Diag> {
         match expr {
             syn::Expr::Path(path) if path.path.is_ident("self") => self
                 .scopes
@@ -337,7 +339,14 @@ impl<'a> TypeContext<'a> {
             syn::Expr::MethodCall(call) => {
                 let method = call.method.to_string();
                 self.resolve_method_call_with(&call.receiver, &method, call.turbofish.as_ref())
-                    .map(|found| self.close_with_expectation(found.ret, expected))
+                    .map(|found| {
+                        // What the arguments are is what settles an unknown the
+                        // receiver still carries: `entities.push(entity)` over
+                        // an empty `Vec` is where its element is decided.
+                        let args: Vec<&syn::Expr> = call.args.iter().collect();
+                        self.constrain_arguments(&self.registry.method_param_types(&found), &args);
+                        self.close_with_expectation(found.ret, expected)
+                    })
             }
 
             syn::Expr::Call(call) => self
@@ -960,35 +969,6 @@ impl<'a> TypeContext<'a> {
                 path.span(),
                 format!("`{}` does not name a value here", written),
             )),
-        }
-    }
-
-    /// The type of a `let` binding: its annotation if it has one, otherwise
-    /// the type of what initialises it.
-    pub fn resolve_local_type(&self, local: &syn::Local) -> Result<Ty, Diag> {
-        let annotated = self.local_annotation(local);
-        match (annotated, &local.init) {
-            // A `let x: Vec<_> = ..` says most of the type and leaves a hole
-            // for the initialiser to close.
-            (Some(written), Some(init)) if expected::has_infer(&written) => {
-                let filled = self.resolve_expr_expecting(&init.expr, Some(&written))?;
-                Ok(expected::fill_infer(&written, &filled))
-            }
-            (Some(written), _) => Ok(written),
-            (None, Some(init)) => self.resolve_expr(&init.expr),
-            (None, None) => Err(self.refuse(
-                local.span(),
-                "binding has neither a type nor an initialiser",
-            )),
-        }
-    }
-
-    /// The type a `let` writes for itself, which is what its initialiser is
-    /// expected to produce.
-    pub fn local_annotation(&self, local: &syn::Local) -> Option<Ty> {
-        match &local.pat {
-            syn::Pat::Type(pat_type) => self.resolve_written_type(&pat_type.ty).ok(),
-            _ => None,
         }
     }
 

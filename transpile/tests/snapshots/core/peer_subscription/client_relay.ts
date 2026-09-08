@@ -68,14 +68,29 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
 
   static new<CD, Q>(): SubscriptionRelay<CD, Q> {
     const [shutdownTx, shutdownRx] = tokio.sync.mpsc.channel(1);
-    let _moved0 = false;
-    const relay = new SubscriptionRelay(Arc.new(new SubscriptionRelayInner(new Mutex(new HashMap()), SafeSet.new(), OnceLock.new(), shutdownTx)));
+    let _moved1 = false;
+    const _b0 = new Mutex(new HashMap());
     try {
-      relay.startRetryTask(shutdownRx);
-      _moved0 = true;
-      return relay;
+      let _moved3 = false;
+      const _b2 = SafeSet.new();
+      try {
+        const _b4 = OnceLock.new();
+        _moved1 = true;
+        _moved3 = true;
+        let _moved5 = false;
+        const relay = new SubscriptionRelay(Arc.new(new SubscriptionRelayInner(_b0, _b2, _b4, shutdownTx)));
+        try {
+          relay.startRetryTask(shutdownRx);
+          _moved5 = true;
+          return relay;
+        } finally {
+          if (!_moved5) relay.drop();
+        }
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
     } finally {
-      if (!_moved0) relay.drop();
+      if (!_moved1) dropOwned(_b0);
     }
   }
 
@@ -387,13 +402,13 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           Established: (v) => {
             const establishedPeer = v._0;
             if (establishedPeer.equals(peerId)) {
-              contexts.insert(state.content.value.contextData.clone());
+              contexts.add(state.content.value.contextData.clone());
             }
           },
           Requested: (v) => {
             const establishedPeer = v._0;
             if (establishedPeer.equals(peerId)) {
-              contexts.insert(state.content.value.contextData.clone());
+              contexts.add(state.content.value.contextData.clone());
             }
           },
           PendingRemote: () => {},
@@ -747,18 +762,26 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
             tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
             _moved0 = true;
             const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
-            const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
             try {
-              const eventStoreResult = await retriever.storeUsedEvents();
-              const _r7 = applyResult;
-              if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
-              _r7.drop();
-              const _r8 = eventStoreResult;
-              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-              _r8.drop();
-              return Result.Ok([]);
+              const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
+              try {
+                const eventStoreResult = await retriever.storeUsedEvents();
+                try {
+                  const _r7 = applyResult;
+                  if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
+                  _r7.drop();
+                  const _r8 = eventStoreResult;
+                  if (_r8.isErr()) return Result.Err(RetrievalError.fromMutationError(_r8.unwrapErr()));
+                  _r8.drop();
+                  return Result.Ok([]);
+                } finally {
+                  eventStoreResult.drop();
+                }
+              } finally {
+                applyResult.drop();
+              }
             } finally {
-              applyResult.drop();
+              retriever.drop();
             }
           } finally {
             if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);

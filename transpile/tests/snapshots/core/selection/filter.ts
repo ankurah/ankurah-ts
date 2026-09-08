@@ -235,13 +235,19 @@ function evaluateExpr<I extends Filterable>(item: I, expr: Expr): Result<ExprOut
     },
     ExprList: (v) => {
       const exprs = v._0;
+      let _moved4 = false;
       let result = [];
-      for (const expr of exprs) {
-        const _r4 = evaluateExpr(item, expr);
-        if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-        result.push(_r4.unwrap());
+      try {
+        for (const expr of exprs) {
+          const _r5 = evaluateExpr(item, expr);
+          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+          result.push(_r5.unwrap());
+        }
+        _moved4 = true;
+        return Result.Ok(new ExprOutput('List', { _0: result }));
+      } finally {
+        if (!_moved4) dropOwned(result);
       }
-      return Result.Ok(new ExprOutput('List', { _0: result }));
     },
     Predicate: () => Result.Err(new Error('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })),
     InfixExpr: () => Result.Err(new Error('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })),

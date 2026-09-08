@@ -53,102 +53,150 @@ function nextUpperBound(value: Value): [Value, boolean] | null {
 }
 
 export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] {
+  let _moved0 = false;
   let lowerTuple = [];
-  let upperTuple = [];
-  let lowerOpen = false;
-  let upperOpen = false;
-  let eqPrefixLen = 0;
-  let eqPrefixValues = [];
-  for (const bound of bounds.keyparts) {
-    {
-      const _v1 = [bound.low, bound.high];
-      if ((_v1[0].is('Value')) && (_v1[1].is('Value'))) {
-        const { datum: lowDatum, inclusive: lowIncl } = _v1[0].value;
-        const { datum: highDatum, inclusive: highIncl } = _v1[1].value;
-        {
-          const _v = [lowDatum, highDatum];
-          if ((_v[0].is('Val')) && (_v[1].is('Val'))) {
-            const { _0: lowVal } = _v[0].value;
-            const { _0: highVal } = _v[1].value;
-            if (lowVal.equals(highVal) && lowIncl && highIncl) {
-              lowerTuple.push(lowVal.clone());
-              upperTuple.push(highVal.clone());
-              eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
-              eqPrefixValues.push(lowVal.clone());
-              continue;
-            }
-          }
-        }
-      }
-    }
-    if (bound.low.is('UnboundedLow')) {
-
-    } else if (bound.low.is('Value') && (bound.low.value.datum.is('Val'))) {
-      const { inclusive } = bound.low.value;
-      const { _0: val } = bound.low.value.datum.value;
-      lowerTuple.push(val.clone());
-      lowerOpen = !inclusive;
-    } else {
-      break
-    }
-    const _m0 = bound.high.match<any>({
-      UnboundedHigh: (v) => {
-        return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
-      },
-      Value: (v) => {
-        if (v.datum.is('Val')) {
-          const { _0: val } = v.datum.value;
-          const inclusive = v.inclusive;
-          upperTuple.push(val.clone());
-          upperOpen = !inclusive;
-        } else {
-          return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
-        }
-      },
-      UnboundedLow: () => {
-        return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
-      },
-    });
-    if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-    break;
-  }
-  if (eqPrefixLen === bounds.keyparts.length && eqPrefixLen > 0) {
-    {
-      const _v4 = lowerTuple.last();
-      if (_v4 != null) {
-        const lastValue = _v4;
-        {
-          const _v3 = nextUpperBound(lastValue);
-          if (_v3 != null) {
-            const [nextValue, upperOpen] = _v3;
-            let _moved1 = false;
-            try {
-              let upperWithBump = lowerTuple.clone();
+  try {
+    let _moved1 = false;
+    let upperTuple = [];
+    try {
+      let lowerOpen = false;
+      let upperOpen = false;
+      let eqPrefixLen = 0;
+      let _moved2 = false;
+      let eqPrefixValues = [];
+      try {
+        for (const bound of bounds.keyparts) {
+          {
+            const _v1 = [bound.low, bound.high];
+            if ((_v1[0].is('Value')) && (_v1[1].is('Value'))) {
+              const { datum: lowDatum, inclusive: lowIncl } = _v1[0].value;
+              const { datum: highDatum, inclusive: highIncl } = _v1[1].value;
               {
-                const _v2 = upperWithBump.lastMut();
-                if (_v2 != null) {
-                  const slot = _v2;
-                  _moved1 = true;
-                  slot.value = nextValue;
-                  return [new CanonicalRange([lowerTuple, lowerOpen], [upperWithBump, upperOpen]), eqPrefixLen, eqPrefixValues];
+                const _v = [lowDatum, highDatum];
+                if ((_v[0].is('Val')) && (_v[1].is('Val'))) {
+                  const { _0: lowVal } = _v[0].value;
+                  const { _0: highVal } = _v[1].value;
+                  if (lowVal.equals(highVal) && lowIncl && highIncl) {
+                    lowerTuple.push(lowVal.clone());
+                    upperTuple.push(highVal.clone());
+                    eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
+                    eqPrefixValues.push(lowVal.clone());
+                    continue;
+                  }
                 }
               }
-            } finally {
-              if (!_moved1) nextValue.drop();
             }
           }
+          if (bound.low.is('UnboundedLow')) {
+
+          } else if (bound.low.is('Value') && (bound.low.value.datum.is('Val'))) {
+            const { inclusive } = bound.low.value;
+            const { _0: val } = bound.low.value.datum.value;
+            lowerTuple.push(val.clone());
+            lowerOpen = !inclusive;
+          } else {
+            break
+          }
+          const _m3 = bound.high.match<any>({
+            UnboundedHigh: (v) => {
+              _moved2 = true;
+              _moved0 = true;
+              return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+            },
+            Value: (v) => {
+              if (v.datum.is('Val')) {
+                const { _0: val } = v.datum.value;
+                const inclusive = v.inclusive;
+                upperTuple.push(val.clone());
+                upperOpen = !inclusive;
+              } else {
+                _moved2 = true;
+                _moved0 = true;
+                return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+              }
+            },
+            UnboundedLow: () => {
+              _moved2 = true;
+              _moved0 = true;
+              return { $jump: 'return', $value: [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues] };
+            },
+          });
+          if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+          break;
         }
+        if (eqPrefixLen === bounds.keyparts.length && eqPrefixLen > 0) {
+          {
+            const _v4 = iterLast(lowerTuple);
+            if (_v4 != null) {
+              const lastValue = _v4;
+              {
+                const _v3 = nextUpperBound(lastValue);
+                if (_v3 != null) {
+                  const [nextValue, upperOpen] = _v3;
+                  let _moved4 = false;
+                  try {
+                    let _moved5 = false;
+                    let upperWithBump = lowerTuple.map((e) => e.clone());
+                    try {
+                      {
+                        const _v2 = upperWithBump.lastMut();
+                        if (_v2 != null) {
+                          const slot = _v2;
+                          const _a6 = nextValue;
+                          slot.value.drop();
+                          _moved4 = true;
+                          slot.value = _a6;
+                          _moved2 = true;
+                          _moved0 = true;
+                          _moved5 = true;
+                          return [new CanonicalRange([lowerTuple, lowerOpen], [upperWithBump, upperOpen]), eqPrefixLen, eqPrefixValues];
+                        }
+                      }
+                    } finally {
+                      if (!_moved5) dropOwned(upperWithBump);
+                    }
+                  } finally {
+                    if (!_moved4) nextValue.drop();
+                  }
+                }
+              }
+            }
+          }
+          _moved2 = true;
+          _moved0 = true;
+          return [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues];
+        }
+        let _moved7 = false;
+        const canonicalRange = new CanonicalRange((() => {
+          if (lowerTuple.length === 0) {
+            return null;
+          } else {
+            _moved0 = true;
+            return [lowerTuple, lowerOpen];
+          }
+        })(), (() => {
+          if (upperTuple.length === 0) {
+            return null;
+          } else {
+            _moved1 = true;
+            return [upperTuple, upperOpen];
+          }
+        })());
+        try {
+          _moved7 = true;
+          _moved2 = true;
+          return [canonicalRange, eqPrefixLen, eqPrefixValues];
+        } finally {
+          if (!_moved7) canonicalRange.drop();
+        }
+      } finally {
+        if (!_moved2) dropOwned(eqPrefixValues);
       }
+    } finally {
+      if (!_moved1) dropOwned(upperTuple);
     }
-    return [new CanonicalRange([lowerTuple, lowerOpen], null), eqPrefixLen, eqPrefixValues];
-  }
-  let _moved2 = false;
-  const canonicalRange = new CanonicalRange((lowerTuple.length === 0 ? null : [lowerTuple, lowerOpen]), (upperTuple.length === 0 ? null : [upperTuple, upperOpen]));
-  try {
-    _moved2 = true;
-    return [canonicalRange, eqPrefixLen, eqPrefixValues];
   } finally {
-    if (!_moved2) canonicalRange.drop();
+    if (!_moved0) dropOwned(lowerTuple);
   }
 }
 

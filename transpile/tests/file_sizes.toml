@@ -20,13 +20,13 @@
 "src/convert.rs" = 655
 "src/emit.rs" = 1327
 "src/extract.rs" = 788
-"src/infer/context.rs" = 1261
+"src/infer/context.rs" = 1241
 "src/main.rs" = 1230
 "src/match_expr.rs" = 726
 "src/ownership/tests.rs" = 1203
 "src/registry/build.rs" = 1077
 "src/registry/engine_tests.rs" = 1289
-"src/registry/method.rs" = 965
+"src/registry/method.rs" = 935
 "src/registry/method_tests.rs" = 726
 "src/registry/mod.rs" = 715
 "tests/oracle.rs" = 879
