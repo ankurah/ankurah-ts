@@ -151,6 +151,13 @@ impl BodyTranslator<'_> {
         let (flags_above, flags) = self.flag_sets_split(stmt);
         let mut out = String::new();
 
+        // GG5/FF8: whether anything in THIS statement suspends while a `?`'s
+        // wrapper is still in hand. Read from the syntax, once, before the
+        // statement is lowered.
+        let previous_awaits = std::mem::replace(
+            &mut *self.own.statement_awaits.borrow_mut(),
+            crate::ownership::hoisting::suspensions_in(stmt),
+        );
         let previous_prelude = std::mem::take(&mut *self.own.prelude.borrow_mut());
         let previous_pending = std::mem::take(&mut *self.own.pending.borrow_mut());
         let open_before = crate::body::holes::holes_in_the_open();
@@ -222,6 +229,7 @@ impl BodyTranslator<'_> {
             true => (String::new(), String::new()),
             false => (flags_above, flags),
         };
+        *self.own.statement_awaits.borrow_mut() = previous_awaits;
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
         // U3: a flag whose transfer is inside a `?` operand travels with that
         // operand's own hoist and stands immediately above it. What is left

@@ -118,7 +118,23 @@ pub(crate) fn translate_fn_body(
         if let Some(written) = func.rust_return.as_ref() {
             if !names_an_alias(registry, module, written) {
                 if let Ok(resolved) = quiet_type(&tc, written) {
-                    func.return_type = name_map::map_ty(registry, &resolved);
+                    // GG3: a function that RETURNS an opaque iterator hands
+                    // back the CURSOR its caller was holding, and the return
+                    // position has to say so — the parameter position already
+                    // does. Written as the bare parameter, `identity<I>(walk:
+                    // I) -> I` declared `I extends Iterable<Token>` for a value
+                    // that is a `SeqCursor`, so the caller's local was a type
+                    // the engine could say nothing about: nothing released the
+                    // cursor, and `walk.next()` on it resolved through whatever
+                    // trait happened to declare a `next`.
+                    func.return_type = match body::cursors::written_as_a_cursor(
+                        &tc,
+                        &resolved,
+                        &func.type_params,
+                    ) {
+                        Some(spelling) => spelling,
+                        None => name_map::map_ty(registry, &resolved),
+                    };
                 }
             }
         }

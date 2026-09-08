@@ -50,118 +50,110 @@ class TestItem extends Struct implements Filterable {
 
 describe('filter unit tests', () => {
   test('test_simple_equality', () => {
+    let _moved0 = false;
     const items = [TestItem.new('Alice', '30'), TestItem.new('Bob', '25'), TestItem.new('Charlie', '35')];
-    const selection = parseSelection('name = \'Alice\'').unwrap();
     try {
-      let _moved1 = false;
-      const _b0 = [...items];
+      const selection = parseSelection('name = \'Alice\'').unwrap();
       try {
-        const _b2 = selection.takeField('predicate');
-        _moved1 = true;
-        const results = FilterIterator.new(_b0, _b2);
-        const _t3 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '30') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Skip', { _0: TestItem.new('Charlie', '35') })];
+        _moved0 = true;
+        const results = FilterIterator.new([...items], selection.takeField('predicate'));
+        const _t1 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '30') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Skip', { _0: TestItem.new('Charlie', '35') })];
         try {
-          expect(results).toEqual(_t3);
+          expect(results).toEqual(_t1);
         } finally {
-          dropOwned(_t3);
+          dropOwned(_t1);
         }
       } finally {
-        if (!_moved1) dropOwned(_b0);
+        selection.drop();
       }
     } finally {
-      selection.drop();
+      if (!_moved0) dropOwned(items);
     }
   });
 
   test('test_and_condition', () => {
+    let _moved0 = false;
     const items = [TestItem.new('Alice', '30'), TestItem.new('Bob', '30'), TestItem.new('Charlie', '35')];
-    const selection = parseSelection('name = \'Alice\' AND age = \'30\'').unwrap();
     try {
-      let _moved1 = false;
-      const _b0 = [...items];
+      const selection = parseSelection('name = \'Alice\' AND age = \'30\'').unwrap();
       try {
-        const _b2 = selection.takeField('predicate');
-        _moved1 = true;
-        const results = FilterIterator.new(_b0, _b2);
-        const _t3 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '30') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '30') }), new FilterResult('Skip', { _0: TestItem.new('Charlie', '35') })];
+        _moved0 = true;
+        const results = FilterIterator.new([...items], selection.takeField('predicate'));
+        const _t1 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '30') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '30') }), new FilterResult('Skip', { _0: TestItem.new('Charlie', '35') })];
         try {
-          expect(results).toEqual(_t3);
+          expect(results).toEqual(_t1);
         } finally {
-          dropOwned(_t3);
+          dropOwned(_t1);
         }
       } finally {
-        if (!_moved1) dropOwned(_b0);
+        selection.drop();
       }
     } finally {
-      selection.drop();
+      if (!_moved0) dropOwned(items);
     }
   });
 
   test('test_complex_condition', () => {
+    let _moved0 = false;
     const items = [TestItem.new('Alice', '20'), TestItem.new('Bob', '25'), TestItem.new('Charlie', '30'), TestItem.new('David', '35'), TestItem.new('Eve', '40')];
-    const selection = parseSelection('(name = \'Alice\' OR name = \'Charlie\') AND age >= \'30\' AND age <= \'40\'').unwrap();
     try {
-      let _moved1 = false;
-      const _b0 = [...items];
+      const selection = parseSelection('(name = \'Alice\' OR name = \'Charlie\') AND age >= \'30\' AND age <= \'40\'').unwrap();
       try {
-        const _b2 = selection.takeField('predicate');
-        _moved1 = true;
-        const results = FilterIterator.new(_b0, _b2);
-        const _t3 = [new FilterResult('Skip', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Skip', { _0: TestItem.new('Eve', '40') })];
+        _moved0 = true;
+        const results = FilterIterator.new([...items], selection.takeField('predicate'));
+        const _t1 = [new FilterResult('Skip', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Skip', { _0: TestItem.new('Eve', '40') })];
         try {
-          expect(results).toEqual(_t3);
+          expect(results).toEqual(_t1);
         } finally {
-          dropOwned(_t3);
+          dropOwned(_t1);
         }
       } finally {
-        if (!_moved1) dropOwned(_b0);
+        selection.drop();
       }
     } finally {
-      selection.drop();
+      if (!_moved0) dropOwned(items);
     }
   });
 
   test('test_in_operator', () => {
+    let _moved0 = false;
     const items = [TestItem.new('Alice', '20'), TestItem.new('Bob', '25'), TestItem.new('Charlie', '30'), TestItem.new('David', '35'), TestItem.new('Eve', '40')];
-    const selection = parseSelection('name IN (\'Alice\', \'Charlie\', \'Eve\')').unwrap();
     try {
-      let _moved1 = false;
-      const _b0 = [...items.map((e) => e.clone())];
+      const selection = parseSelection('name IN (\'Alice\', \'Charlie\', \'Eve\')').unwrap();
       try {
-        const _b2 = selection.takeField('predicate');
-        _moved1 = true;
-        const results = FilterIterator.new(_b0, _b2);
-        const _t3 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Pass', { _0: TestItem.new('Eve', '40') })];
+        let _moved2 = false;
+        const _b1 = [...items.map((e) => e.clone())];
         try {
-          expect(results).toEqual(_t3);
-        } finally {
-          dropOwned(_t3);
-        }
-        const selection_1 = parseSelection('age IN (\'20\', \'30\', \'40\')').unwrap();
-        try {
-          let _moved5 = false;
-          const _b4 = [...items];
+          const _b3 = selection.takeField('predicate');
+          _moved2 = true;
+          const results = FilterIterator.new(_b1, _b3);
+          const _t4 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Pass', { _0: TestItem.new('Eve', '40') })];
           try {
-            const _b6 = selection_1.takeField('predicate');
-            _moved5 = true;
-            const results_1 = FilterIterator.new(_b4, _b6);
-            const _t7 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Pass', { _0: TestItem.new('Eve', '40') })];
+            expect(results).toEqual(_t4);
+          } finally {
+            dropOwned(_t4);
+          }
+          const selection_1 = parseSelection('age IN (\'20\', \'30\', \'40\')').unwrap();
+          try {
+            _moved0 = true;
+            const results_1 = FilterIterator.new([...items], selection_1.takeField('predicate'));
+            const _t5 = [new FilterResult('Pass', { _0: TestItem.new('Alice', '20') }), new FilterResult('Skip', { _0: TestItem.new('Bob', '25') }), new FilterResult('Pass', { _0: TestItem.new('Charlie', '30') }), new FilterResult('Skip', { _0: TestItem.new('David', '35') }), new FilterResult('Pass', { _0: TestItem.new('Eve', '40') })];
             try {
-              expect(results_1).toEqual(_t7);
+              expect(results_1).toEqual(_t5);
             } finally {
-              dropOwned(_t7);
+              dropOwned(_t5);
             }
           } finally {
-            if (!_moved5) dropOwned(_b4);
+            selection_1.drop();
           }
         } finally {
-          selection_1.drop();
+          if (!_moved2) dropOwned(_b1);
         }
       } finally {
-        if (!_moved1) dropOwned(_b0);
+        selection.drop();
       }
     } finally {
-      selection.drop();
+      if (!_moved0) dropOwned(items);
     }
   });
 

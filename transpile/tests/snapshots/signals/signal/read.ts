@@ -65,8 +65,14 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   }
 
   with<R>(f: (arg0: T) => R): R {
-    CurrentObserver.track(this);
-    return this.value.with(f);
+    let _moved0 = false;
+    try {
+      CurrentObserver.track(this);
+      _moved0 = true;
+      return this.value.with(f);
+    } finally {
+      if (!_moved0) dropOwned(f);
+    }
   }
 
   getReadcell(): ReadValueCell<T> {

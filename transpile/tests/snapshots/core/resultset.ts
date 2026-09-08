@@ -60,11 +60,17 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
   }
 
   clear(): void {
+    let _moved0 = false;
     let st = this._0.value.state.lock();
-    st.value.order.length = 0;
-    st.value.index.clear();
-    st.drop();
-    this._0.value.broadcast.send([]);
+    try {
+      st.value.order.length = 0;
+      st.value.index.clear();
+      _moved0 = true;
+      st.drop();
+      this._0.value.broadcast.send([]);
+    } finally {
+      if (!_moved0) st.drop();
+    }
   }
 
   keys(): EntityResultSetKeyIterator {

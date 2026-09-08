@@ -174,32 +174,38 @@ export class NodeApplier extends Struct {
   }
 
   static async saveEvents<SE, PA>(node: Node<SE, PA>, fromPeerId: EntityId, entityId: EntityId, collectionId: CollectionId, fragments: EventFragment[], collection: StorageCollectionWrapper): Promise<Result<Attested<Event>[], MutationError>> {
-    let attestedEvents = [];
-    const _seq4 = fragments;
-    let _at5 = 0;
+    let _moved0 = false;
     try {
-      while (_at5 < _seq4.length) {
-        const fragment = _seq4[_at5++];
-        let _moved0 = false;
-        try {
-          const _b1 = collectionId.clone();
-          _moved0 = true;
-          const attestedEvent = [entityId, _b1, fragment];
-          const _r2 = node.deref().value.policyAgent.validateReceivedEvent(node, fromPeerId, attestedEvent);
-          if (_r2.isErr()) return Result.Err(MutationError.fromAccessDenied(_r2.unwrapErr()));
-          _r2.drop();
-          const _r3 = await collection.deref().value.addEvent(attestedEvent);
-          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-          _r3.drop();
-          attestedEvents.push(attestedEvent);
-        } finally {
-          if (!_moved0) fragment.drop();
+      let attestedEvents = [];
+      _moved0 = true;
+      const _seq5 = fragments;
+      let _at6 = 0;
+      try {
+        while (_at6 < _seq5.length) {
+          const fragment = _seq5[_at6++];
+          let _moved1 = false;
+          try {
+            const _b2 = collectionId.clone();
+            _moved1 = true;
+            const attestedEvent = [entityId, _b2, fragment];
+            const _r3 = node.deref().value.policyAgent.validateReceivedEvent(node, fromPeerId, attestedEvent);
+            if (_r3.isErr()) return Result.Err(MutationError.fromAccessDenied(_r3.unwrapErr()));
+            _r3.drop();
+            const _r4 = await collection.deref().value.addEvent(attestedEvent);
+            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+            _r4.drop();
+            attestedEvents.push(attestedEvent);
+          } finally {
+            if (!_moved1) fragment.drop();
+          }
         }
+      } finally {
+        dropOwned(_seq5.slice(_at6));
       }
+      return Result.Ok(attestedEvents);
     } finally {
-      dropOwned(_seq4.slice(_at5));
+      if (!_moved0) dropOwned(fragments);
     }
-    return Result.Ok(attestedEvents);
   }
 
   static async saveState<SE, PA>(node: Node<SE, PA>, entity: Entity, collectionWrapper: StorageCollectionWrapper): Promise<Result<void, MutationError>> {
@@ -281,10 +287,16 @@ export class NodeApplier extends Struct {
   }
 
   static async applyDelta<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, delta: EntityDelta, retriever: R): Promise<Result<EntityChange | null, ApplyErrorItem>> {
-    const entityId = delta.entityId;
-    const collection = delta.collection.clone();
-    const result = await NodeApplier.applyDeltaInner(node, fromPeerId, delta, retriever);
-    return result.mapErr(new OwnedClosure([collection], (cause: MutationError) => new ApplyErrorItem(entityId, collection, cause), undefined, true));
+    let _moved0 = false;
+    try {
+      const entityId = delta.entityId;
+      const collection = delta.collection.clone();
+      _moved0 = true;
+      const result = await NodeApplier.applyDeltaInner(node, fromPeerId, delta, retriever);
+      return result.mapErr(new OwnedClosure([collection], (cause: MutationError) => new ApplyErrorItem(entityId, collection, cause), undefined, true));
+    } finally {
+      if (!_moved0) delta.drop();
+    }
   }
 
   static async applyDeltaInner<SE, PA, R>(node: Node<SE, PA>, fromPeerId: EntityId, delta: EntityDelta, retriever: R): Promise<Result<EntityChange | null, MutationError>> {

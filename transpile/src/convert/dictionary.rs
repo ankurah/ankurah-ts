@@ -19,6 +19,9 @@
 //! for it would be a parameter no call site can name. `e.into()` on such a
 //! parameter keeps the diagnostic it has.
 
+#[path = "synthetic.rs"]
+mod synthetic;
+
 use crate::registry::{Probe, TypeRegistry};
 use crate::ty::{TraitRef, Ty};
 
@@ -345,7 +348,7 @@ impl crate::body::BodyTranslator<'_> {
         call: &syn::ExprCall,
         expected: Option<&Ty>,
     ) -> Vec<String> {
-        let mut args = args;
+        let mut args = self.with_to_value_mode(args, call);
         let actual = self.written_argument_types(call.args.iter());
         args.extend(self.call_dictionary_arguments(
             call,

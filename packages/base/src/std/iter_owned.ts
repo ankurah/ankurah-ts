@@ -413,10 +413,27 @@ export function stepByOwned<T>(xs: Seq<T>, step: number): T[] {
 export class SeqCursor<T> extends AkObject {
   #items: T[];
   #at = 0;
+  #owns: boolean;
 
-  constructor(items: Seq<T>) {
+  /**
+   * @param items what the walk hands out, in order.
+   * @param mode whether the cursor OWNS those elements or points at somebody
+   * else's. `I: Iterator<Item = &Token>` walks tokens the CALLER still holds,
+   * so such a cursor releases none of them: `ownedFields()` is empty, and the
+   * elements a walk discards are left alone. Given the owning mode for a
+   * borrowed walk, `countRefs(new SeqCursor([...tokens]))` released the
+   * caller's tokens and the caller's own `token.drop()` aborted the run as a
+   * double drop.
+   */
+  constructor(items: Seq<T>, mode: 'own' | 'borrow' = 'own') {
     super();
     this.#items = Array.from(items);
+    this.#owns = mode === 'own';
+  }
+
+  /** Release one element the walk discarded — nothing, on a borrowed walk. */
+  #discard(held: T): void {
+    if (this.#owns) dropOwned(held);
   }
 
   /**
@@ -478,8 +495,128 @@ export class SeqCursor<T> extends AkObject {
     return rest;
   }
 
-  /** What the cursor still held: everything from the index on. */
+  /**
+   * Rust's `any(&mut self, f)`: pulls elements out one at a time, hands each to
+   * the predicate BY VALUE, and stops at the first `true`.
+   *
+   * The cursor is NOT consumed and what the walk did not reach stays in it, for
+   * its owner to drop. Written through the rest — `walk.drainRest().some(f)` —
+   * the whole tail left the cursor and everything after the match was owned by
+   * nobody. The predicate is handed the element by value, so the predicate is
+   * what releases it (O1); the cursor releases nothing here.
+   */
+  any(f: (held: T) => boolean): boolean {
+    this.assertNotDropped();
+    while (this.#at < this.#items.length) {
+      const held = this.#items[this.#at] as T;
+      this.#at += 1;
+      if (f(held)) return true;
+    }
+    return false;
+  }
+
+  /** Rust's `all(&mut self, f)`: stops at the first `false`, same ownership. */
+  all(f: (held: T) => boolean): boolean {
+    this.assertNotDropped();
+    while (this.#at < this.#items.length) {
+      const held = this.#items[this.#at] as T;
+      this.#at += 1;
+      if (!f(held)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Rust's `find(&mut self, p)`: the first element the predicate accepts.
+   *
+   * The predicate is handed a REFERENCE, so the element stays the walk's until
+   * it is answered — and Rust DROPS each one the predicate rejects. The rest
+   * stays in the cursor.
+   */
+  find(p: (held: T) => boolean): T | null {
+    this.assertNotDropped();
+    while (this.#at < this.#items.length) {
+      const held = this.#items[this.#at] as T;
+      this.#at += 1;
+      if (p(held)) return held;
+      this.#discard(held);
+    }
+    return null;
+  }
+
+  /**
+   * Rust's `find_map(&mut self, f)`: the first answer the function gives.
+   *
+   * The function takes the element BY VALUE, so it owns every element it is
+   * handed, answered or not.
+   */
+  findMap<U>(f: (held: T) => U | null): U | null {
+    this.assertNotDropped();
+    while (this.#at < this.#items.length) {
+      const held = this.#items[this.#at] as T;
+      this.#at += 1;
+      const answer = f(held);
+      if (answer != null) return answer;
+    }
+    return null;
+  }
+
+  /**
+   * Rust's `position(&mut self, p)`: how many elements the walk passed before
+   * the predicate accepted one, counted from where the cursor stands.
+   *
+   * The predicate takes the element BY VALUE and is its owner, the accepted one
+   * included — `position` answers an index, not a value.
+   */
+  position(p: (held: T) => boolean): number | null {
+    this.assertNotDropped();
+    let index = 0;
+    while (this.#at < this.#items.length) {
+      const held = this.#items[this.#at] as T;
+      this.#at += 1;
+      if (p(held)) return index;
+      index += 1;
+    }
+    return null;
+  }
+
+  /**
+   * Rust's `nth(&mut self, n)`: the element `n` steps on, with the `n` before
+   * it DROPPED and everything after it left in the cursor.
+   */
+  nth(n: number | bigint): T | null {
+    this.assertNotDropped();
+    let skip = typeof n === 'bigint' ? Number(n) : n;
+    while (skip > 0 && this.#at < this.#items.length) {
+      this.#discard(this.#items[this.#at] as T);
+      this.#at += 1;
+      skip -= 1;
+    }
+    if (this.#at >= this.#items.length) return null;
+    const held = this.#items[this.#at] as T;
+    this.#at += 1;
+    return held;
+  }
+
+  /**
+   * Rust's `size_hint(&self)`: how many elements are left, as an exact pair.
+   *
+   * `&self` — it reads the cursor and consumes nothing. A `SeqCursor` knows its
+   * length exactly, so the lower and upper bounds are the same number, and the
+   * upper is `Some(n)`, which the port writes as the number itself.
+   */
+  sizeHint(): [number, number | null] {
+    this.assertNotDropped();
+    const left = this.#items.length - this.#at;
+    return [left, left];
+  }
+
+  /**
+   * What the cursor still held: everything from the index on — and NOTHING when
+   * the walk is over the caller's elements.
+   */
   protected override ownedFields(): unknown[] {
+    if (!this.#owns) return [];
     return this.#items.slice(this.#at);
   }
 }

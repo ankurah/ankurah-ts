@@ -149,7 +149,11 @@ pub fn callable_bound_for(
     declared: &Ty,
     bounds: &[(String, TraitRef)],
 ) -> Option<Ty> {
-    match written? {
+    // GG6: parentheses are punctuation. Matched as a literal `Expr::Closure`,
+    // `apply((|held| held.n))` missed the callee's `Fn` bound entirely, so the
+    // parameter was typed by nothing and the value it was handed by value was
+    // released by nobody.
+    match crate::infer::calls::unparenthesise(written?) {
         syn::Expr::Closure(_) => callable_bound_of(reg, declared, bounds),
         _ => None,
     }

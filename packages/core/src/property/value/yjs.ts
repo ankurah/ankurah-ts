@@ -79,9 +79,15 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
   }
 
   static initializeWith<Projected>(entity: Entity, propertyName: PropertyName, value: string): YrsString<Projected> {
+    let _moved0 = false;
     const newString = YrsString.fromEntity(propertyName, entity);
-    newString.insert(0, value).unwrap();
-    return newString;
+    try {
+      newString.insert(0, value).unwrap();
+      _moved0 = true;
+      return newString;
+    } finally {
+      if (!_moved0) newString.drop();
+    }
   }
 
   listen(listener: Listener): ListenerGuard {

@@ -540,11 +540,17 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
   }
 
   createEntity(collection: CollectionId, trxAlive: Arc<boolean>): Entity {
-    const primaryEntity = this.node.deref().value.entities.create(collection);
+    let _moved0 = false;
     try {
-      return primaryEntity.snapshot(trxAlive);
+      const primaryEntity = this.node.deref().value.entities.create(collection);
+      try {
+        _moved0 = true;
+        return primaryEntity.snapshot(trxAlive);
+      } finally {
+        primaryEntity.drop();
+      }
     } finally {
-      primaryEntity.drop();
+      if (!_moved0) trxAlive.drop();
     }
   }
 

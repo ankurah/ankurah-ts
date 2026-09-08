@@ -177,8 +177,14 @@ export function borrowedSum(a: Left, b: Right): bigint {
 }
 
 export function laterLocal(parcel: Parcel): bigint {
-  const right = new Right(2n);
-  return parcel.add(right);
+  let _moved0 = false;
+  try {
+    const right = new Right(2n);
+    _moved0 = true;
+    return parcel.add(right);
+  } finally {
+    if (!_moved0) parcel.drop();
+  }
 }
 
 export function genericSum(a: Boxed<bigint>, b: Boxed<bigint>): bigint {

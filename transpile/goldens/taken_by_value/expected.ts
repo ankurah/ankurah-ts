@@ -50,8 +50,14 @@ export function positionOrFail(tokens: Token[], bad: number): number | null {
 
 export function firstKept(tokens: Token[]): Token | null {
   return iterReduceOwned([...tokens], (a, b) => {
-    b.drop();
-    return a;
+    let _moved0 = false;
+    try {
+      b.drop();
+      _moved0 = true;
+      return a;
+    } finally {
+      if (!_moved0) a.drop();
+    }
   });
 }
 

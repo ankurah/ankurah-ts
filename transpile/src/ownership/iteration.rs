@@ -162,6 +162,10 @@ impl<'a> BodyTranslator<'a> {
         // it has not handed out, and takes them out of it.
         let sequence = self.cursor_gives_up_its_rest(
             &for_loop.expr,
+            // `for x in walk` is `IntoIterator::into_iter(walk)`, which takes
+            // the iterator BY VALUE: the loop consumes the cursor.
+            "into_iter",
+            0,
             self.expr(&for_loop.expr),
         );
         let item = self.iteration_item(&for_loop.expr);

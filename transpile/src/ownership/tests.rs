@@ -429,14 +429,13 @@ fn an_unwrap_or_default_is_released_when_it_is_not_chosen() {
         "pub fn f(o: Option<Owned>) -> u32 { let d = Owned { n: 9 }; look(&o.unwrap_or(d)) }",
         "f",
     );
-    assert!(ts.contains("?? _d1"), "the default is still the fallback:\n{}", ts);
-    assert!(
-        ts.contains("!== _d1") && ts.contains("_d1.drop();"),
-        "and it is released on the path that did not take it:\n{}",
-        ts
-    );
-    let receiver = ts.find("const _o0 = o;").expect("the receiver is named first");
-    let default = ts.find("const _d1 = d;").expect("the default is built second");
+    assert!(ts.contains("?? _d2"), "the default is still the fallback:\n{}", ts);
+    // The temporaries are numbered one higher than at `ccedae7`: HH2 gives the
+    // block a `_moved0` flag, because `let d = ..` can throw and `o` is a
+    // parameter the frame already owned when it did.
+    assert!(ts.contains("!== _d2") && ts.contains("_d2.drop();"), "released:\n{}", ts);
+    let receiver = ts.find("const _o1 = o;").expect("the receiver is named first");
+    let default = ts.find("const _d2 = d;").expect("the default is built second");
     assert!(
         receiver < default,
         "Rust evaluates the receiver before the argument, so the emitted code has to \

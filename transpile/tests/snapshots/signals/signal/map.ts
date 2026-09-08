@@ -1,11 +1,11 @@
 // MIRRORS: ankurah/signals/src/signal/map.rs
-import { Struct, Arc, OwnedClosure, invoke, invokeRef } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, invoke, invokeRef, Invocable } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, ListenerGuard, Peek, Signal, With } from '../signal';
 
-export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
+export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Invocable<[Input], Output> & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
   source: Upstream;
   transform: Transform;
 

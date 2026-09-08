@@ -424,3 +424,84 @@ fn a_parameter_moved_below_a_refusal_is_still_the_frames() {
     let ts = f.translated_method("lib.rs", "f");
     assert!(ts.contains("t.drop();"), "the frame still owns the parameter:\n{}", ts);
 }
+
+// ── HH2/HH1: the frame's-until-invoked rule ACROSS statements ──
+
+/// HH2: a statement that THROWS leaves the block, so a move below it is
+/// conditional. `let _n = o.unwrap(); [a, b]` moved `a` and `b` on every path
+/// the source has, so the block wrote no release at all — and a `None` left
+/// both of them handed to nobody, which Rust drops while it unwinds.
+#[test]
+fn a_throw_above_a_move_makes_the_move_conditional() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn f(a: Token, b: Token, o: Option<u32>) -> [Token; 2] {\n\
+             let _n = o.unwrap();\n\
+             [a, b]\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("if (!_moved0) a.drop();"), "`a` is released on the throw path:\n{}", ts);
+    assert!(ts.contains("if (!_moved1) b.drop();"), "and so is `b`:\n{}", ts);
+}
+
+/// And a value the throwing statement itself BINDS is not the frame's on that
+/// path: there is no `t` yet when the constructor throws, so a flag and a
+/// `finally` there would guard nothing.
+#[test]
+fn the_binding_of_the_throwing_statement_is_not_released_by_it() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take(t: Token) -> u32 { t.n }\n\
+         pub fn f(n: u32) -> u32 { let t = Token { n }; take(t) }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(!ts.contains("_moved"), "no flag, and no scope:\n{}", ts);
+    assert!(!ts.contains("t.drop()"), "and nothing releases it:\n{}", ts);
+}
+
+/// HH1: a move nested inside a tuple or array ELEMENT is performed by that
+/// element's own evaluation, so an element BEFORE it that can throw makes it
+/// conditional too. Read as straight-line, `Ok([fallible()?, take(a)])` left
+/// `a` with nobody on the early-return path.
+#[test]
+fn a_throwing_element_before_a_nested_move_makes_it_conditional() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn take(t: Token) -> u32 { t.n }\n\
+         pub fn fallible() -> Result<u32, String> { Ok(1) }\n\
+         pub fn f(a: Token) -> Result<[u32; 2], String> { Ok([fallible()?, take(a)]) }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    assert!(ts.contains("if (!_moved0) a.drop();"), "released on the early return:\n{}", ts);
+}
+
+/// HH1's other half: where the statement is one the port REFUSED, the flag has
+/// to be set AT the transfer — the refusal path never reaches the ordinary flag
+/// placement. Set nowhere, the frame's guard was dropped as a flag nothing sets
+/// and `dropOwned(rest)` ran on top of the call that had taken it.
+#[test]
+fn a_refusal_sets_the_flag_at_the_transfer_that_ran() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Token { pub n: u32 }\n\
+         impl Drop for Token { fn drop(&mut self) {} }\n\
+         pub fn pass(t: Token) -> Result<Token, String> { Ok(t) }\n\
+         pub fn count(xs: Vec<Token>) -> Result<u32, String> { Ok(xs.len() as u32) }\n\
+         pub fn f(rest: Vec<Token>, more: Vec<Token>) -> Result<u32, String> {\n\
+             let _pair = (count(rest)?, more.into_iter().map(pass).collect::<Result<Vec<_>, _>>()?);\n\
+             Ok(0)\n\
+         }\n",
+    )]);
+    let ts = f.translated_method("lib.rs", "f");
+    let call = ts.find("count(rest)").expect("the consuming call is written");
+    let set = ts.find("= true;").expect("a flag is set somewhere");
+    assert!(call < set, "the flag stands below the call that performs the transfer:\n{}", ts);
+    assert!(ts.contains(") dropOwned(rest);"), "and the release is under it:\n{}", ts);
+}

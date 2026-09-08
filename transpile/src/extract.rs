@@ -4,13 +4,15 @@
 //! impl blocks, mod and use statements into the intermediate data structures.
 
 mod attrs;
-mod bounds;
+pub(crate) mod bounds;
 mod generics;
-use generics::{extract_generics, extract_generics_without, type_param_defaults, type_param_names};
-pub(crate) use generics::{callable_only_params, callable_only_params_of, peel_written_refs};
+use generics::{extract_generics, type_param_defaults, type_param_names};
+pub(crate) use generics::{callable_only_params_of, peel_written_refs};
 mod inline;
 use inline::inline_module_path;
 use attrs::{has_from_attr, has_source_attr, serde_with_attr};
+mod functions;
+use functions::{extract_fn, extract_fn_with_body, extract_fn_with_body_and_self};
 mod structs;
 use structs::extract_struct;
 mod uses;
@@ -20,7 +22,7 @@ pub(crate) use uses::UseInfo;
 use anyhow::{Context, Result};
 use std::path::Path;
 use quote::ToTokens;
-use syn::{self, Visibility, FnArg, ReturnType, Fields};
+use syn::{self, Visibility, Fields};
 
 use crate::name_map;
 use crate::types::*;
@@ -62,6 +64,7 @@ pub fn extract_source(path: &str, content: &str, cfg: ExtractCfg) -> Result<Rust
 
     let mut file = RustFile::empty(path.to_string());
     extract_items(&syntax.items, cfg, &mut file);
+    functions::report_binding_collisions(&file);
     Ok(file)
 }
 
@@ -144,7 +147,20 @@ fn extract_items(items: &[syn::Item], cfg: ExtractCfg, file: &mut RustFile) {
             }
             syn::Item::Fn(f) => {
                 if is_skipped_cfg_with(&f.attrs, features) { continue; }
-                file.functions.push(extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block), features));
+                let mut info = extract_fn_with_body(&f.sig, is_public(&f.vis), visibility(&f.vis), &f.attrs, Some(&f.block), features);
+                // GG2/FF3: a function at MODULE level is a BINDING, and its
+                // emitted name is the escaped one — `with` is `with_`, because
+                // JavaScript refuses a reserved word there. Held unescaped,
+                // `ts_name` was the answer three OTHER readers took: the
+                // cross-file map that says which module a name comes from, the
+                // inline-module import list, and the test-module hoist. So the
+                // declaration said `with_`, every call said `with_`, and the
+                // import said `with` — which matched nothing, so nothing was
+                // imported and the call named an undeclared binding, in
+                // silence. One binding per module-level function, allocated
+                // here, read everywhere.
+                info.ts_name = name_map::map_free_fn_name(&info.name);
+                file.functions.push(info);
             }
             syn::Item::Impl(i) => {
                 if is_skipped_cfg_with(&i.attrs, features) { continue; }
@@ -612,126 +628,6 @@ fn extract_thread_local(mac: &syn::Macro) -> Option<(String, String, String, Opt
     }
 }
 
-fn extract_fn_with_body(
-    sig: &syn::Signature,
-    is_pub: bool,
-    vis: VisInfo,
-    attrs: &[syn::Attribute],
-    body: Option<&syn::Block>,
-    features: Option<&crate::cfg::CfgFeatures>,
-) -> FnInfo {
-    let mut info = extract_fn_vis(sig, is_pub, vis, attrs);
-    if let Some(block) = body {
-        let mut block = block.clone();
-        // A `#[cfg]` inside a body decides whether the statement is in this
-        // build, exactly as it does for an item. Pruning here means nothing
-        // downstream has to ask again.
-        if let Some(features) = features {
-            crate::cfg::prune_block(&mut block, features);
-        }
-        info.body_ast = Some(block);
-    }
-    info
-}
-
-/// Extract function with body, recording the self type for later translation.
-/// The self_type is stored on the ImplInfo, not the FnInfo — the translation phase
-/// uses ImplInfo.target_type to create the ImplScope.
-fn extract_fn_with_body_and_self(
-    sig: &syn::Signature,
-    is_pub: bool,
-    attrs: &[syn::Attribute],
-    body: Option<&syn::Block>,
-    _self_type: &str,
-    features: Option<&crate::cfg::CfgFeatures>,
-) -> FnInfo {
-    // self_type is no longer used during extraction — it's resolved from ImplInfo during Phase 3
-    let vis = if is_pub { VisInfo::Public } else { VisInfo::Private };
-    extract_fn_with_body(sig, is_pub, vis, attrs, body, features)
-}
-
-fn extract_fn(sig: &syn::Signature, is_pub: bool, attrs: &[syn::Attribute]) -> FnInfo {
-    extract_fn_vis(sig, is_pub, if is_pub { VisInfo::Public } else { VisInfo::Private }, attrs)
-}
-
-fn extract_fn_vis(sig: &syn::Signature, is_pub: bool, vis: VisInfo, attrs: &[syn::Attribute]) -> FnInfo {
-    let rust_name = sig.ident.to_string();
-    let ts_name = name_map::map_fn_name(&rust_name);
-    let is_async = sig.asyncness.is_some();
-
-    let mut is_static = true;
-    let mut self_kind = None;
-    let mut self_receiver = None;
-    let params: Vec<ParamInfo> = sig.inputs.iter().filter_map(|arg| {
-        match arg {
-            FnArg::Receiver(r) => {
-                is_static = false;
-                self_kind = Some(receiver_kind(r));
-                if self_kind == Some(SelfKind::Arbitrary) {
-                    self_receiver = Some((*r.ty).clone());
-                }
-                None
-            }
-            FnArg::Typed(pat) => {
-                let name = if let syn::Pat::Ident(ident) = &*pat.pat {
-                    name_map::escape_reserved(&name_map::to_camel_case(&ident.ident.to_string()))
-                } else {
-                    "arg".to_string()
-                };
-                Some(ParamInfo {
-                    name,
-                    ty: name_map::map_type(&pat.ty),
-                    rust_ty: Some((*pat.ty).clone()),
-                })
-            }
-        }
-    }).collect();
-
-    let (return_type, rust_return) = match &sig.output {
-        ReturnType::Default => ("void".to_string(), None),
-        ReturnType::Type(_, ty) => (name_map::map_type(ty), Some((**ty).clone())),
-    };
-
-    // A type parameter whose only bound is a CALLABLE one, and whose only use is
-    // a parameter's type, is written as the callable itself. TypeScript infers
-    // nothing through a type parameter constrained by a union, so
-    // `<F extends Invocable<[number], number>>(f: F)` made `invoke(f, n)`
-    // answer `unknown` and every use of that answer a type error; the parameter
-    // spelled `f: Invocable<[number], number>` says the same thing and infers.
-    let callables = callable_only_params(sig);
-
-    let params: Vec<ParamInfo> = params
-        .into_iter()
-        .map(|mut p| {
-            if let Some(spelling) = callables.get(&p.ty) {
-                p.ty = spelling.clone();
-            }
-            p
-        })
-        .collect();
-
-    FnInfo {
-        name: rust_name,
-        ts_name,
-        is_pub,
-        vis,
-        is_async,
-        is_static,
-        self_kind,
-        self_receiver,
-        has_default_body: false,
-        params,
-        return_type,
-        rust_return,
-        generics: extract_generics_without(&sig.generics, &callables),
-        type_params: type_param_names(&sig.generics),
-        syn_generics: sig.generics.clone(),
-        is_test: is_test_fn(attrs),
-        body_ast: None,
-        body_ts: None,
-        body_has_hole: false,
-    }
-}
 
 fn extract_impl(i: &syn::ItemImpl, cfg: ExtractCfg) -> ImplInfo {
     // An impl written for a reference — `impl Add<&R> for &L` — is an impl of

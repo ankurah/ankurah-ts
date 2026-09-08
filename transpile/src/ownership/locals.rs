@@ -237,6 +237,11 @@ impl<'a> BodyTranslator<'a> {
     /// that reads a value an earlier turn handed away — which is a use after
     /// move, and rustc refuses to compile it, so no crate that builds can hand
     /// the emitter that shape.
+    /// The flag this frame declares for a name, where it declares one.
+    pub(crate) fn flag_for(&self, name: &str) -> Option<String> {
+        self.own.flags.borrow().get(name).cloned()
+    }
+
     pub(crate) fn flag_sets(&self, stmt: &syn::Stmt) -> String {
         if self.own.flags.borrow().is_empty() {
             return String::new();

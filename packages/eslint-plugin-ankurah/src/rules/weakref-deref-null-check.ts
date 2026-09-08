@@ -165,17 +165,54 @@ function namesAWeakRef(receiver: TSESTree.Node, context: RuleContext): boolean {
  * `this` does, and so does a local the body assigned it to — `const self =
  * this;` is how a closure keeps hold of the receiver, and the field read
  * through it is the same field.
+ *
+ * GG10: only a `const`, and only one nothing writes to afterwards. Asked of any
+ * declarator initialised with `this`, `let self = this; self = other;
+ * self.ref.deref()` was reported for a receiver that is no longer the instance
+ * at all. And the alias is followed THROUGH: `const first = this; const second
+ * = first;` reads the same instance, and asking only about the initialiser
+ * being a literal `this` missed it. A visited set stops `const a = b; const b =
+ * a;` — which is not valid in a body, but is a shape a rule must not hang on.
  */
-function readsThis(object: TSESTree.Node, context: RuleContext): boolean {
+function readsThis(
+  object: TSESTree.Node,
+  context: RuleContext,
+  seen: Set<string> = new Set(),
+): boolean {
   if (object.type === AST_NODE_TYPES.ThisExpression) return true;
   if (object.type !== AST_NODE_TYPES.Identifier) return false;
+  if (seen.has(object.name)) return false;
+  seen.add(object.name);
+  if (isWrittenTo(object, context)) return false;
   return definitionsOf(object, context).some((node) => {
     const declared = node.parent;
-    return (
-      declared?.type === AST_NODE_TYPES.VariableDeclarator
-      && declared.init?.type === AST_NODE_TYPES.ThisExpression
-    );
+    if (declared?.type !== AST_NODE_TYPES.VariableDeclarator) return false;
+    const kind = declared.parent?.type === AST_NODE_TYPES.VariableDeclaration
+      ? declared.parent.kind
+      : undefined;
+    if (kind !== 'const') return false;
+    return declared.init != null && readsThis(declared.init, context, seen);
   });
+}
+
+/** Does anything ASSIGN to this name after it was declared? */
+function isWrittenTo(name: TSESTree.Identifier, context: RuleContext): boolean {
+  const source = (context as { sourceCode?: unknown }).sourceCode
+    ?? (context as { getSourceCode?: () => unknown }).getSourceCode?.();
+  const scoped = source as { getScope?: (node: TSESTree.Node) => Scope } | undefined;
+  let scope: Scope | null = scoped?.getScope?.(name) ?? null;
+  while (scope) {
+    const found = scope.variables.find((v) => v.name === name.name);
+    // The declaration's own initialiser is a write in eslint's scope model, and
+    // it is the one write a `const` alias is allowed: `const self = this;`.
+    if (found) {
+      return found.references.some(
+        (reference) => reference.isWrite() && (reference as { init?: boolean }).init !== true,
+      );
+    }
+    scope = scope.upper;
+  }
+  return false;
 }
 
 /** The declarations a name resolves to, innermost scope first. */

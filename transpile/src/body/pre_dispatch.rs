@@ -27,12 +27,23 @@ impl<'a> BodyTranslator<'a> {
         // well as below the dispatch: `collect` is written as the receiver
         // itself, so a cursor reached it and was answered where an array was
         // declared.
+        // FF1: and the `&mut self` methods that stop as soon as they can are
+        // answered by the cursor ITSELF, so that what they did not visit stays
+        // in it.
+        if let Some(written) = self.cursor_walks_in_place(call, rust_method, receiver, args) {
+            return Some(written);
+        }
         let held;
         let receiver = match rust_method {
             // `next` is asked of the cursor itself, and `by_ref` IS the cursor.
             "next" | "by_ref" => receiver,
             _ => {
-                held = self.cursor_gives_up_its_rest(&call.receiver, receiver.to_string());
+                held = self.cursor_gives_up_its_rest(
+                    &call.receiver,
+                    rust_method,
+                    call.args.len(),
+                    receiver.to_string(),
+                );
                 held.as_str()
             }
         };
@@ -89,18 +100,39 @@ impl<'a> BodyTranslator<'a> {
     fn range_contains(&self, call: &syn::ExprMethodCall, args: &[String]) -> Option<String> {
         let range = self.range_of_contains(call)?;
         let item = args.first()?;
-        // AA9: a bound the expression BUILDS is a temporary Rust drops with the
-        // range, so it is given a name of its own and released around the
-        // statement. In Rust's order — start, then end — because that is the
-        // order the range builds them in, and one of them may throw.
+        // The bounds were hoisted before the argument was lowered, which is
+        // Rust's order; taken again here they would be hoisted twice.
+        let (start, end) = match self.own.range_bounds.borrow_mut().take() {
+            Some(bounds) => bounds,
+            None => self.hoist_the_bounds(range),
+        };
+        let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+        Some(format!("rangeContains({}, {}, {}, {})", start, end, inclusive, item))
+    }
+
+    /// The two bounds of a `range.contains(&x)`, each given a name of its own,
+    /// in the order the range BUILDS them.
+    ///
+    /// AA9: a bound the expression builds is a temporary Rust drops with the
+    /// range, so it is released around the statement. GG8: and start, then end,
+    /// then the item, because that is the order Rust evaluates them in and each
+    /// of the three may have a side effect the next one can see.
+    fn hoist_the_bounds(&self, range: &syn::ExprRange) -> (String, String) {
         let bound = |e: Option<&Box<syn::Expr>>| match e {
             Some(e) => self.hoist_produced(e, self.expr_value(e)),
             None => "null".to_string(),
         };
         let start = bound(range.start.as_ref());
         let end = bound(range.end.as_ref());
-        let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
-        Some(format!("rangeContains({}, {}, {}, {})", start, end, inclusive, item))
+        (start, end)
+    }
+
+    /// Hoist those bounds ABOVE the argument lowering, and keep them for the
+    /// call that is about to be written.
+    fn hoisted_range_bounds(&self, call: &syn::ExprMethodCall) {
+        let Some(range) = self.range_of_contains(call) else { return };
+        let bounds = self.hoist_the_bounds(range);
+        *self.own.range_bounds.borrow_mut() = Some(bounds);
     }
 
     /// Is this `range.contains(&x)`, and on which range? Asked by the lowering
@@ -175,6 +207,20 @@ impl<'a> BodyTranslator<'a> {
         if tc.registry.system_type("std::iter::IntoIterator") != Some(trait_id) {
             return None;
         }
+        // GG1: what the walk hands out is the bound's `Item`, and a REFERENCE
+        // there means the caller keeps every element.
+        let borrowed_walk = receiver_ty
+            .as_ref()
+            .map(|ty| tc.probe().bounds_of(ty))
+            .into_iter()
+            .flatten()
+            .filter(|bound| Some(bound.id) == tc.registry.system_type("std::iter::IntoIterator"))
+            .any(|bound| {
+                bound
+                    .bindings
+                    .iter()
+                    .any(|(name, ty)| name == "Item" && matches!(ty, crate::ty::Ty::Ref { .. }))
+            });
         // The call resolved and this is the port's whole answer for it, so it
         // is recorded before the answer is written — the way `collect` is.
         drop(tc);
@@ -183,7 +229,12 @@ impl<'a> BodyTranslator<'a> {
         // OPAQUE iterator — nothing in this body says which one — so it is held
         // as a cursor, whose `drop()` releases whatever the walk did not reach.
         // A chain the port can see through never comes here.
-        Some(format!("new SeqCursor([...{}])", receiver))
+        match borrowed_walk {
+            // GG1: and over the caller's OWN elements — `I: IntoIterator<Item =
+            // &Token>` — it releases none of them.
+            true => Some(format!("new SeqCursor([...{}], 'borrow')", receiver)),
+            false => Some(format!("new SeqCursor([...{}])", receiver)),
+        }
     }
 
     /// A method call's arguments, each translated for the type the callee
@@ -202,6 +253,11 @@ impl<'a> BodyTranslator<'a> {
         rust_method: &str,
     ) -> Vec<String> {
         let want = self.argument_types(call);
+        // GG8: a `range.contains(&x)` evaluates the RANGE first. The bounds are
+        // hoisted here, above the item's own lowering, because Rust builds the
+        // range before it evaluates the argument — and the port lowers a
+        // method's arguments before it ever reaches the receiver.
+        self.hoisted_range_bounds(call);
         // Leg A: which of those parameters the callee WALKS, read off its own
         // bounds rather than off the substituted types above, which drop
         // everything still open — and a cursor parameter is exactly an open one.
@@ -227,7 +283,7 @@ impl<'a> BodyTranslator<'a> {
                     });
                 }
                 let written = self.expecting(a, wants, || self.moved_value(a));
-                self.adapted_to_a_cursor(a, walked.get(index).copied().unwrap_or(false), written)
+                self.adapted_to_a_cursor(a, walked.get(index).copied().flatten(), written)
             })
             .collect();
         self.own.argument_is_invoked.set(invoked);
@@ -281,7 +337,7 @@ impl<'a> BodyTranslator<'a> {
                     return hole;
                 }
                 let written = self.expecting(a, wants, || self.moved_value(a));
-                self.adapted_to_a_cursor(a, walked.get(index).copied().unwrap_or(false), written)
+                self.adapted_to_a_cursor(a, walked.get(index).copied().flatten(), written)
             })
             .collect();
         args

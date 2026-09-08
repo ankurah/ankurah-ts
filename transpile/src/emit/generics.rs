@@ -102,3 +102,17 @@ pub(super) fn strip_generic_defaults(generics: &str) -> String {
     }).collect();
     format!("<{}>", stripped.join(", "))
 }
+
+/// The type parameters a declaration writes for itself.
+///
+/// FF9: what a bound merged into a class's generics from an `impl` block has to
+/// be nameable in. `impl<I: Iterator<Item = R>, R> FilterIterator<I>` names the
+/// element through the IMPL's `R`, which the class does not declare, so a
+/// spelling mentioning it would name nothing where it is written.
+pub(crate) fn declared_params<'a>(file: &'a crate::types::RustFile, target: &str) -> &'a [String] {
+    file.structs
+        .iter()
+        .find(|s| s.name == target)
+        .map(|s| s.type_params.as_slice())
+        .unwrap_or_default()
+}

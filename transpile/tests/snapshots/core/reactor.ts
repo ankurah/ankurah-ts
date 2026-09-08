@@ -327,21 +327,27 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
               subscriptions.drop();
             }
           })();
+          let _moved3 = false;
           const allWatcherChanges = (await joinAll(evaluations)).intoIter().flatten();
-          let watcherSet = this._0.value.watcherSet.value.lock();
           try {
-            const _seq3 = allWatcherChanges;
-            let _at4 = 0;
+            let watcherSet = this._0.value.watcherSet.value.lock();
             try {
-              while (_at4 < _seq3.length) {
-                const change = _seq3[_at4++];
-                watcherSet.value.applyWatcherChange(change);
+              _moved3 = true;
+              const _seq4 = allWatcherChanges;
+              let _at5 = 0;
+              try {
+                while (_at5 < _seq4.length) {
+                  const change = _seq4[_at5++];
+                  watcherSet.value.applyWatcherChange(change);
+                }
+              } finally {
+                dropOwned(_seq4.slice(_at5));
               }
             } finally {
-              dropOwned(_seq3.slice(_at4));
+              watcherSet.drop();
             }
           } finally {
-            watcherSet.drop();
+            if (!_moved3) dropOwned(allWatcherChanges);
           }
         } finally {
           if (!_moved0) dropOwned(candidatesBySub);

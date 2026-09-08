@@ -1315,12 +1315,17 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
             if (_v != null) {
               const relay = _v;
               _moved1 = true;
+              let _moved3 = false;
               const selection_1 = this.deref().value.typeResolver.resolveSelectionTypes(selection);
-              this.deref().value.predicateContext.insert(queryId, cdata.clone());
-              _moved0 = true;
-              _moved1 = true;
-              _moved2 = true;
-              relay.subscribeQuery(queryId, collectionId, selection_1, cdata, version, livequery);
+              try {
+                this.deref().value.predicateContext.insert(queryId, cdata.clone());
+                _moved0 = true;
+                _moved3 = true;
+                _moved2 = true;
+                relay.subscribeQuery(queryId, collectionId, selection_1, cdata, version, livequery);
+              } finally {
+                if (!_moved3) selection_1.drop();
+              }
             }
           }
         } finally {

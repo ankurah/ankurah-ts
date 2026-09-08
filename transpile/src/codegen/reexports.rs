@@ -131,7 +131,11 @@ pub(super) fn public_reexports(
                     }
                     // `pub use proto::EntityId;` — one name out of it.
                     (Some(local), [_, ..]) => {
-                        format!("export {{ {} }} from '{}';\n", local, package)
+                        format!(
+                            "export {{ {} }} from '{}';\n",
+                            crate::name_map::escape_reserved(local),
+                            package
+                        )
                     }
                     // `pub use ankurah_derive::*;`
                     (None, _) => format!("export * from '{}';\n", package),
@@ -162,7 +166,16 @@ pub(super) fn public_reexports(
                     if whole_modules.contains(&target) {
                         continue;
                     }
-                    format!("export {{ {} }} from '{}';\n", local, target)
+                    // GG2: the re-export prints a BINDING, so it prints the
+                    // escaped one. `pub use words::r#in;` printed
+                    // `export { r#in } from './words'`, which no engine parses,
+                    // and `pub use words::with;` printed a name the declaring
+                    // module does not export.
+                    format!(
+                        "export {{ {} }} from '{}';\n",
+                        crate::name_map::escape_reserved(local),
+                        target
+                    )
                 }
                 _ => continue,
             };

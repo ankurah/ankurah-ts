@@ -113,6 +113,24 @@ pub struct Lowering {
     /// cannot see the call site of; these are call sites it writes itself, so
     /// the report there was false.
     pub argument_is_invoked: std::cell::Cell<bool>,
+    /// GG8: the two bounds of a `range.contains(&x)`, already hoisted, waiting
+    /// for the lowering that writes the call. Rust evaluates the RANGE first
+    /// and the item after it, and the port lowers a method's arguments before
+    /// it reaches the receiver at all — so the item's own temporary stood above
+    /// both bounds and the side effects ran in the wrong order.
+    pub range_bounds: std::cell::RefCell<Option<(String, String)>>,
+    /// GG5/FF8: does the statement now being lowered SUSPEND while a `?`'s
+    /// wrapper is still in hand?
+    ///
+    /// A `?` is hoisted above the statement, so its wrapper is live for the
+    /// whole of it; an `await` that runs while it is live can reject and leave
+    /// with nobody releasing what the wrapper holds. Which awaits those are is
+    /// a fact about the LOWERING — an `await` whose own operand holds the `?`
+    /// runs after it and is not one — and it was answered by counting brackets
+    /// in the rendered text instead, so a call around the wrapper's first
+    /// mention (`Result.Ok(await future + eat(_r0.unwrap()))`) read as "the
+    /// mention is inside the awaited operand" and no guard was written.
+    pub statement_awaits: std::cell::RefCell<Vec<(usize, usize)>>,
 }
 
 impl<'a> BodyTranslator<'a> {

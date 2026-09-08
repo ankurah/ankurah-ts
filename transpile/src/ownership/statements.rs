@@ -68,6 +68,7 @@ impl<'a> BodyTranslator<'a> {
                 wrapper: false,
                 sets: String::new(),
                 payload: false,
+            suspends: false,
                 droppable: false,
                 flag: None,
             });
@@ -82,7 +83,8 @@ impl<'a> BodyTranslator<'a> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         format!("{} = {}", left, held)
@@ -167,7 +169,8 @@ impl<'a> BodyTranslator<'a> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         Some(chosen)

@@ -13,6 +13,7 @@ pub(super) fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::
         fields: extract_fields(&s.fields, features),
         generics: extract_generics(&s.generics),
         type_params: type_param_names(&s.generics),
+        syn_generics: s.generics.clone(),
         param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&attrs),
         serde_transparent: has_serde_flag(&attrs, "transparent"),

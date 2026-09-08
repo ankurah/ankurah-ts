@@ -1,6 +1,7 @@
 //! Answering "what is the type of this expression?" for the body translator.
 
 /// What a call resolves to, and what it wants of its arguments.
+pub(crate) mod arguments;
 pub(crate) mod calls;
 pub mod closures;
 #[cfg(test)]

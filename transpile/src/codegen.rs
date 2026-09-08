@@ -613,7 +613,7 @@ fn generate_declarations(
     // Merges inline bounds + where clause bounds across all impls.
     let mut impl_bounds: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for imp in &file.impls {
-        let bounds = imp.generic_bounds();
+        let bounds = imp.generic_bounds(emit::declared_params(file, &imp.target_type));
         if !bounds.is_empty() {
             let type_bounds = impl_bounds.entry(imp.target_type.clone()).or_default();
             for (param, bounds) in &bounds {

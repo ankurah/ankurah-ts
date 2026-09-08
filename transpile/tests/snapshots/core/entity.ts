@@ -804,14 +804,26 @@ export class WeakEntitySet extends Struct {
   }
 
   create(collection: CollectionId): Entity {
-    let entities = this._0.value.write();
+    let _moved0 = false;
     try {
-      const id = EntityId.new();
-      const entity = Entity.create(id, collection);
-      entities.value.set(id, entity.weak());
-      return entity;
+      let entities = this._0.value.write();
+      try {
+        const id = EntityId.new();
+        _moved0 = true;
+        let _moved1 = false;
+        const entity = Entity.create(id, collection);
+        try {
+          entities.value.set(id, entity.weak());
+          _moved1 = true;
+          return entity;
+        } finally {
+          if (!_moved1) entity.drop();
+        }
+      } finally {
+        entities.drop();
+      }
     } finally {
-      entities.drop();
+      if (!_moved0) collection.drop();
     }
   }
 
@@ -866,11 +878,15 @@ export class WeakEntitySet extends Struct {
                 try {
                   const _r1 = this.privateGetOrCreate(id, collectionId, storedState.payload.state);
                   if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
-                  const _t2 = _r1.unwrap();
                   try {
-                    return _t2[1];
+                    const _t2 = _r1.unwrap();
+                    try {
+                      return _t2[1];
+                    } finally {
+                      dropOwned(_t2);
+                    }
                   } finally {
-                    dropOwned(_t2);
+                    if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
                   }
                 } finally {
                   storedState.drop();
@@ -878,15 +894,19 @@ export class WeakEntitySet extends Struct {
               } else {
               const _r3 = this.privateGetOrCreate(id, collectionId, state);
               if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
-              const _v1 = _r3.unwrap();
-              if ((_v1[0] === true)) {
-                const entity = _v1[1];
-                return entity;
-              } else {
-                const entity = _v1[1];
-                {
-                  return { $jump: 'return', $value: Result.Ok([null, entity]) };
+              try {
+                const _v1 = _r3.unwrap();
+                if ((_v1[0] === true)) {
+                  const entity = _v1[1];
+                  return entity;
+                } else {
+                  const entity = _v1[1];
+                  {
+                    return { $jump: 'return', $value: Result.Ok([null, entity]) };
+                  }
                 }
+              } finally {
+                if (_r3 != null && !(_r3 as any).isMoved && !(_r3 as any).isDropped) dropOwned(_r3);
               }
             }
             }

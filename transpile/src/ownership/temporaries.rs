@@ -147,6 +147,16 @@ impl<'a> BodyTranslator<'a> {
         if crate::body::is_place(expr) {
             return written;
         }
+        // FF2: and text that is ALREADY a hoisted name is not hoisted again.
+        // `(lo..&version(9)).contains(&v)` sends its built bound through here
+        // after `range_contains` has already given it one, so `_t0 =
+        // version(9)` was followed by `_t1 = _t0` — a name aliasing a name,
+        // with two releases for one value: `BUG: Version was dropped twice`.
+        // The predicate is CC6's, one place earlier than CC6 needs it: reading
+        // a name cannot throw and builds nothing, whatever the Rust said.
+        if crate::body::flags::writes_a_literal(&written) {
+            return written;
+        }
         let Some(tc) = &self.types else { return written };
         let drops = {
             let tc = tc.borrow();
@@ -186,7 +196,8 @@ impl<'a> BodyTranslator<'a> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         name
@@ -212,7 +223,8 @@ impl<'a> BodyTranslator<'a> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         name

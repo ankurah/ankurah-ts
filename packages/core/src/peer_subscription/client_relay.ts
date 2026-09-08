@@ -68,9 +68,15 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
 
   static new<CD, Q>(): SubscriptionRelay<CD, Q> {
     const [shutdownTx, shutdownRx] = tokio.sync.mpsc.channel(1);
+    let _moved0 = false;
     const relay = new SubscriptionRelay(Arc.new(new SubscriptionRelayInner(new Mutex(new HashMap()), SafeSet.new(), OnceLock.new(), shutdownTx)));
-    relay.startRetryTask(shutdownRx);
-    return relay;
+    try {
+      relay.startRetryTask(shutdownRx);
+      _moved0 = true;
+      return relay;
+    } finally {
+      if (!_moved0) relay.drop();
+    }
   }
 
   setNode(node: Arc<TNode>): Result<void, void> {

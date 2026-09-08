@@ -321,6 +321,23 @@ pub fn maybe_vec(flag: bool) -> Option<Vec<Token>> { if flag { Some(Vec::new()) 
         assert!(!awaited.contains("finally"), "and nothing can leave before the read:\n{}", ts);
     }
 
+    /// GG5: the wrapper's first mention inside a LATER CALL. The rule counted
+    /// brackets in the rendered text, and the call around the mention leaves an
+    /// opening `(` — so `Result.Ok(await f + eat(_r0.unwrap()))` read as "the
+    /// mention stands inside the awaited operand" and no guard was written,
+    /// leaving one `Result` and two `Token`s with nobody under a rejection.
+    #[test]
+    fn an_await_that_suspends_before_a_later_call_owes_the_wrapper() {
+        let ts = emitted(
+            "pub fn eat(t: Token) -> u32 { t.n }\n\
+             pub async fn step(n: u32) -> u32 { n }\n\
+             pub async fn after(t: Token, n: u32) -> Result<u32, u32> \
+             { Ok(step(n).await + eat(passr(t)?)) }",
+        );
+        let at = ts.find("function after").expect("the function is emitted");
+        assert!(ts[at..].contains("finally"), "the wrapper is released:\n{}", ts);
+    }
+
     /// W14: a `?` on an `Option` writes no wrapper — the temporary IS the
     /// payload — and a SECOND `?` in the same statement returns with the first
     /// one's payload still in hand. Rust drops that temporary on the way out.

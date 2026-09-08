@@ -23,11 +23,17 @@ export class ValueCell<T extends Clone> extends Struct {
   }
 
   with<R>(f: (arg0: T) => R): R {
-    const guard = this._0.value.read();
+    let _moved0 = false;
     try {
-      return invoke(f, guard.value);
+      const guard = this._0.value.read();
+      try {
+        _moved0 = true;
+        return invoke(f, guard.value);
+      } finally {
+        guard.drop();
+      }
     } finally {
-      guard.drop();
+      if (!_moved0) dropOwned(f);
     }
   }
 
@@ -72,11 +78,17 @@ export class ReadValueCell<T extends Clone> extends Struct {
   }
 
   with<R>(f: (arg0: T) => R): R {
-    const guard = this._0.value.read();
+    let _moved0 = false;
     try {
-      return invoke(f, guard.value);
+      const guard = this._0.value.read();
+      try {
+        _moved0 = true;
+        return invoke(f, guard.value);
+      } finally {
+        guard.drop();
+      }
     } finally {
-      guard.drop();
+      if (!_moved0) dropOwned(f);
     }
   }
 

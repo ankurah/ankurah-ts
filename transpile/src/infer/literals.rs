@@ -53,6 +53,24 @@ impl TypeContext<'_> {
     /// the ORDER of the fields does not depend on the arguments, and the order
     /// is what the constructor call needs.
     pub fn struct_literal_field_order(&self, lit: &syn::ExprStruct) -> Vec<String> {
+        let Some(id) = self.struct_literal_declaration(lit) else { return Vec::new() };
+        match self.registry.def(id) {
+            Some(def) => def.field_order.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The DECLARATION a struct literal names, found by its PATH.
+    ///
+    /// Asked where the literal's type ARGUMENTS cannot be resolved, which is
+    /// most of them: `Attested { payload, attestations }` writes no `T`, and
+    /// neither the field order nor what the declaration requires of its
+    /// parameters depends on one (§3.3 of slice 12's report is the same rule
+    /// for a pattern).
+    pub(crate) fn struct_literal_declaration(
+        &self,
+        lit: &syn::ExprStruct,
+    ) -> Option<crate::ty::TypeId> {
         let segments: Vec<String> = lit
             .path
             .segments
@@ -71,10 +89,6 @@ impl TypeContext<'_> {
                 }
             }
         }
-        let Some(id) = id else { return Vec::new() };
-        let Some(def) = self.registry.def(id) else {
-            return Vec::new();
-        };
-        def.field_order.clone()
+        id
     }
 }

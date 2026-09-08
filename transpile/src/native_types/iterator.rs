@@ -84,6 +84,51 @@ pub fn is_draining_terminal(method: &str, arity: usize) -> bool {
     matches!((method, arity), ("count", 0))
 }
 
+/// The `Iterator` methods that take `self` BY REFERENCE — `&mut self` or
+/// `&self` — so the caller still holds the iterator afterwards.
+///
+/// FF1: a cursor is consumed by `takeRest()` and merely emptied by
+/// `drainRest()`, and which of the two is right is a fact about the METHOD, not
+/// about the receiver expression. `walk.any(p)`, `walk.nth(2)` and
+/// `walk.size_hint()` each leave `walk` alive for its owner in Rust, and each
+/// was written as a consumption — the owner's own `walk.drop()` below it then
+/// aborted the run with a use after move.
+///
+/// The short-circuiting ones are answered by the cursor ITSELF
+/// (`cursor_answers_in_place`), because they leave what they did not visit; the
+/// ones here walk the iterator to exhaustion, so emptying it is what Rust does.
+const BY_REFERENCE: &[(&str, usize)] =
+    &[("rposition", 1), ("try_fold", 2), ("try_for_each", 1)];
+
+pub fn takes_self_by_reference(method: &str, arity: usize) -> bool {
+    BY_REFERENCE.iter().any(|(rust, n)| *rust == method && *n == arity)
+        || cursor_answers_in_place(method, arity).is_some()
+}
+
+/// The `&mut self` methods that stop as soon as they can, and the `SeqCursor`
+/// method each is written as.
+///
+/// FF1: `Iterator::any` walks only as far as the first match and leaves
+/// everything after it in the iterator. Written through the rest — `walk
+/// .drainRest().some(p)` — the tail was pulled out of the cursor and handed to
+/// an array method that stops early, so every element after the match was owned
+/// by nobody and reported garbage collected. So the cursor answers these
+/// itself, advancing exactly as far as Rust does; what it did not visit stays
+/// in it, and its own `drop()` releases it.
+const IN_PLACE: &[(&str, usize, &str)] = &[
+    ("any", 1, "any"),
+    ("all", 1, "all"),
+    ("find", 1, "find"),
+    ("find_map", 1, "findMap"),
+    ("position", 1, "position"),
+    ("nth", 1, "nth"),
+    ("size_hint", 0, "sizeHint"),
+];
+
+pub fn cursor_answers_in_place(method: &str, arity: usize) -> Option<&'static str> {
+    IN_PLACE.iter().find(|(rust, n, _)| *rust == method && *n == arity).map(|(_, _, ts)| *ts)
+}
+
 pub fn is_owned_terminal(method: &str, arity: usize) -> bool {
     OWNED_TERMINALS.iter().any(|(rust, _)| *rust == method)
         && OPTION_ADAPTORS.iter().any(|(rust, _, n, _)| *rust == method && *n == arity)

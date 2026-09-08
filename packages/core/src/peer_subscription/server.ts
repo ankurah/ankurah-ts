@@ -23,24 +23,30 @@ export class SubscriptionHandler extends Struct {
   }
 
   static new<SE, PA>(peerId: EntityId, node: Node<SE, PA>): SubscriptionHandler {
+    let _moved0 = false;
     const subscription = node.deref().value.reactor.subscribe();
-    const weakNode = node.weak();
-    const guard = subscription.subscribe(new OwnedClosure([weakNode], (update: ReactorUpdate<Entity, Attested<Event>>) => {
-      tracing.info(`SubscriptionHandler[${peerId}] received reactor update with ${update.items.length} items`);
-      {
-        const _v = weakNode.upgrade();
-        if (_v != null) {
-          const node = _v;
-          try {
-            tracing.debug(`SubscriptionHandler[${peerId}] sending update to peer ${peerId}`);
-            node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: iterFilterMap([...update.items], (item) => convertItem(node, peerId, item)) }));
-          } finally {
-            node.drop();
+    try {
+      const weakNode = node.weak();
+      const guard = subscription.subscribe(new OwnedClosure([weakNode], (update: ReactorUpdate<Entity, Attested<Event>>) => {
+        tracing.info(`SubscriptionHandler[${peerId}] received reactor update with ${update.items.length} items`);
+        {
+          const _v = weakNode.upgrade();
+          if (_v != null) {
+            const node = _v;
+            try {
+              tracing.debug(`SubscriptionHandler[${peerId}] sending update to peer ${peerId}`);
+              node.sendUpdate(peerId, new NodeUpdateBody('SubscriptionUpdate', { items: iterFilterMap([...update.items], (item) => convertItem(node, peerId, item)) }));
+            } finally {
+              node.drop();
+            }
           }
         }
-      }
-    }, undefined, true));
-    return new SubscriptionHandler(peerId, subscription, guard);
+      }, undefined, true));
+      _moved0 = true;
+      return new SubscriptionHandler(peerId, subscription, guard);
+    } finally {
+      if (!_moved0) subscription.drop();
+    }
   }
 
   subscriptionId(): ReactorSubscriptionId {

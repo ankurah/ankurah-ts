@@ -48,7 +48,8 @@ impl BodyTranslator<'_> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         // The value's type is the union of what the arms produced and the
@@ -91,7 +92,8 @@ impl BodyTranslator<'_> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable: false,
+            suspends: false,
+            droppable: false,
             flag: None,
         });
         held

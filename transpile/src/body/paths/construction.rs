@@ -38,8 +38,17 @@ impl BodyTranslator<'_> {
                 (name, ty)
             })
             .collect();
+        // FF4: a field the declaration walks as a CURSOR is wrapped where the
+        // value crosses into it, exactly as a cursor parameter is at a call.
+        // Handed the sequence as it stood, `Holder { walk: t.into_iter() }`
+        // emitted `new Holder([...tokens])` and `pull()`'s own
+        // `this.walk.next()` named a method an array has not got.
+        let walked = self.cursor_fields(s);
         let written = |f: &syn::FieldValue, ty: Option<&crate::ty::Ty>| {
-            self.expecting(&f.expr, ty, || self.moved_value(&f.expr))
+            let value = self.expecting(&f.expr, ty, || self.moved_value(&f.expr));
+            let member = crate::infer::member_name(&f.member);
+            let wants = walked.iter().find(|(name, _)| *name == member).map(|(_, e)| *e);
+            self.adapted_to_a_cursor(&f.expr, wants, value)
         };
         if declared.is_empty() {
             // The engine could not name the struct, so it cannot say what order

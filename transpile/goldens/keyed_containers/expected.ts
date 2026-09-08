@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/keyed_containers/src/input.rs
-import { Struct, checkedAdd, HashMap, HashSet, keyHash } from '@ankurah/base';
+import { Struct, dropOwned, checkedAdd, HashMap, HashSet, keyHash } from '@ankurah/base';
 
 export class Key extends Struct {
   readonly name: string;
@@ -102,20 +102,32 @@ export function ordered(): HashMap<Key, number> {
 }
 
 export function counted(words: Key[]): HashMap<Key, number> {
+  let _moved0 = false;
   let counts = new HashMap<Key, number>();
-  for (const w of words) {
-    const _m0 = counts.entry(w.clone()).orInsert(0);
-    _m0.value = checkedAdd(_m0.value, 1, 'u32');
+  try {
+    for (const w of words) {
+      const _m1 = counts.entry(w.clone()).orInsert(0);
+      _m1.value = checkedAdd(_m1.value, 1, 'u32');
+    }
+    _moved0 = true;
+    return counts;
+  } finally {
+    if (!_moved0) dropOwned(counts);
   }
-  return counts;
 }
 
 export function countedByName(words: Key[]): HashMap<Key, number> {
+  let _moved0 = false;
   let counts = new HashMap<Key, number>();
-  for (const w of words) {
-    const slot = counts.entry(w.clone()).orInsert(0);
-    slot.value = checkedAdd(slot.value, 1, 'u32');
+  try {
+    for (const w of words) {
+      const slot = counts.entry(w.clone()).orInsert(0);
+      slot.value = checkedAdd(slot.value, 1, 'u32');
+    }
+    _moved0 = true;
+    return counts;
+  } finally {
+    if (!_moved0) dropOwned(counts);
   }
-  return counts;
 }
 

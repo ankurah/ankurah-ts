@@ -22,6 +22,7 @@ describe('broadcast unit tests', () => {
         }
       })(counter.clone());
       try {
+        let _moved4 = false;
         const sub2 = ((counter) => {
           const _t2 = sender.reference();
           try {
@@ -33,11 +34,16 @@ describe('broadcast unit tests', () => {
             _t2.drop();
           }
         })(counter.clone());
-        sender.send([]);
-        expect(counter.lock()).toEqual(11);
-        sub2.drop();
-        sender.send([]);
-        expect(counter.lock()).toEqual(12);
+        try {
+          sender.send([]);
+          expect(counter.lock()).toEqual(11);
+          _moved4 = true;
+          sub2.drop();
+          sender.send([]);
+          expect(counter.lock()).toEqual(12);
+        } finally {
+          if (!_moved4) sub2.drop();
+        }
       } finally {
         _sub1.drop();
       }

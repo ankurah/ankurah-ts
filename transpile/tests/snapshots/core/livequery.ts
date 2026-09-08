@@ -425,44 +425,50 @@ export class LiveQuery<R extends View & Clone> extends Struct implements Signal,
 }
 
 function livequeryChangeSetFrom<R extends View>(resultset: ResultSet<R>, reactorUpdate: ReactorUpdate<Entity, Attested<Event>>): ChangeSet<R> {
+  let _moved0 = false;
   try {
-    let changes = [];
-    const _seq0 = reactorUpdate.items;
-    let _at1 = 0;
     try {
-      while (_at1 < _seq0.length) {
-        const item = _seq0[_at1++];
-        try {
-          const view = R.fromEntity(item.takeField('entity'));
-          {
-            const _v = iterFirst(item.predicateRelevance);
-            if (_v != null) {
-              const [, membershipChange] = _v;
-              return membershipChange.match({
-                Initial: () => {
-                  changes.push(new ItemChange('Initial', { item: view }));
-                },
-                Add: () => {
-                  changes.push(new ItemChange('Add', { item: view, events: item.events }));
-                },
-                Remove: () => {
-                  changes.push(new ItemChange('Remove', { item: view, events: item.events }));
-                },
-              });
-            } else {
-            changes.push(new ItemChange('Update', { item: view, events: item.events }));
+      let changes = [];
+      const _seq1 = reactorUpdate.items;
+      let _at2 = 0;
+      try {
+        while (_at2 < _seq1.length) {
+          const item = _seq1[_at2++];
+          try {
+            const view = R.fromEntity(item.takeField('entity'));
+            {
+              const _v = iterFirst(item.predicateRelevance);
+              if (_v != null) {
+                const [, membershipChange] = _v;
+                return membershipChange.match({
+                  Initial: () => {
+                    changes.push(new ItemChange('Initial', { item: view }));
+                  },
+                  Add: () => {
+                    changes.push(new ItemChange('Add', { item: view, events: item.events }));
+                  },
+                  Remove: () => {
+                    changes.push(new ItemChange('Remove', { item: view, events: item.events }));
+                  },
+                });
+              } else {
+              changes.push(new ItemChange('Update', { item: view, events: item.events }));
+            }
+            }
+          } finally {
+            item.drop();
           }
-          }
-        } finally {
-          item.drop();
         }
+      } finally {
+        dropOwned(_seq1.slice(_at2));
       }
+      _moved0 = true;
+      return new ChangeSet(resultset, changes);
     } finally {
-      dropOwned(_seq0.slice(_at1));
+      reactorUpdate.drop();
     }
-    return new ChangeSet(resultset, changes);
   } finally {
-    reactorUpdate.drop();
+    if (!_moved0) resultset.drop();
   }
 }
 

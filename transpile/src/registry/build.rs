@@ -40,6 +40,8 @@ pub struct ExtractedFile {
 
 /// What pass two learned, applied to the registry once pass two is done
 /// borrowing it.
+pub use super::declared_bounds::resolve_bounds;
+
 pub(super) enum Update {
     Fields {
         id: TypeId,
@@ -54,6 +56,11 @@ pub(super) enum Update {
     ParamDefaults {
         id: TypeId,
         defaults: Vec<Option<Ty>>,
+    },
+    /// What a DECLARATION requires of its own type parameters (FF4).
+    Bounds {
+        id: TypeId,
+        bounds: Vec<Bound>,
     },
     Impl(ImplDef),
     /// This type's serde derive writes it a `static fromJson`.
@@ -283,6 +290,11 @@ pub(super) fn apply(reg: &mut TypeRegistry, updates: Vec<Update>) {
                     def.param_defaults = defaults;
                 }
             }
+            Update::Bounds { id, bounds } => {
+                if let Some(def) = reg.def_mut(id) {
+                    def.bounds = bounds;
+                }
+            }
             Update::Impl(def) => {
                 reg.add_impl(def);
             }
@@ -438,6 +450,13 @@ pub(super) fn resolve_file(
             .collect();
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
+            // FF4: what the declaration requires of its own parameters, so a
+            // field that IS one can be asked what the bound makes it.
+            let env = TypeEnv::new(reg, module, sink).with_params(&s.type_params);
+            let bounds = resolve_bounds(&s.syn_generics, &env, sink);
+            if !bounds.is_empty() {
+                updates.push(Update::Bounds { id, bounds });
+            }
             derived_impls(reg, module, id, &s.type_params, &s.derives, updates);
             if derives_json_read(&s.derives) {
                 updates.push(Update::ReadsJson(id));
@@ -905,85 +924,6 @@ fn resolve_impl(
     })
 }
 
-/// The `T: Trait` requirements an impl or trait writes, inline and in its
-/// `where` clause alike.
-pub fn resolve_bounds(generics: &syn::Generics, env: &TypeEnv, sink: &DiagSink) -> Vec<Bound> {
-    let mut out = Vec::new();
-    for param in &generics.params {
-        let syn::GenericParam::Type(t) = param else {
-            continue;
-        };
-        let subject = Ty::Param(t.ident.to_string());
-        for bound in &t.bounds {
-            push_bound(&subject, bound, env, sink, &mut out);
-        }
-    }
-    let Some(where_clause) = &generics.where_clause else {
-        return out;
-    };
-    for pred in &where_clause.predicates {
-        let syn::WherePredicate::Type(pt) = pred else {
-            continue;
-        };
-        let subject = match resolve_type(&pt.bounded_ty, env) {
-            Ok(ty) => ty,
-            Err(diag) => {
-                sink.push(diag);
-                continue;
-            }
-        };
-        for bound in &pt.bounds {
-            push_bound(&subject, bound, env, sink, &mut out);
-        }
-    }
-    out
-}
-
-fn push_bound(
-    subject: &Ty,
-    bound: &syn::TypeParamBound,
-    env: &TypeEnv,
-    sink: &DiagSink,
-    out: &mut Vec<Bound>,
-) {
-    let syn::TypeParamBound::Trait(t) = bound else {
-        return;
-    };
-    // `T: ?Sized` lifts the implicit `Sized` requirement; it does not add one.
-    // Reading it as a requirement made `impl<T: ?Sized> Deref for Arc<T>` — the
-    // shape half the std surface is written in — demand a proof of the opposite
-    // of what it says.
-    if matches!(t.modifier, syn::TraitBoundModifier::Maybe(_)) {
-        return;
-    }
-    match super::resolve_type::trait_ref(t, env) {
-        Ok(trait_ref) => out.push(Bound {
-            subject: subject.clone(),
-            trait_ref,
-        }),
-        Err(diag) => {
-            sink.push(diag);
-            // A bound the engine could not read is still a bound. Dropping it
-            // turned `impl<T: Display> ToString for T` into an impl with no
-            // requirement at all, which then answered `to_string` on every type
-            // there is. Standing it up against the written name — which nothing
-            // declares, as far as this run could tell — makes it an obligation
-            // nobody could decide, reported at each call.
-            let segments: Vec<String> = t.path.segments.iter().map(|s| s.ident.to_string()).collect();
-            let canonical = env.reg.canonical_path(env.module, &segments);
-            if let Ok(id) = env.reg.foreign(&canonical) {
-                out.push(Bound {
-                    subject: subject.clone(),
-                    trait_ref: crate::ty::TraitRef {
-                        id,
-                        args: Vec::new(),
-                        bindings: Vec::new(),
-                    },
-                });
-            }
-        }
-    }
-}
 
 /// A method's signature, or nothing when the engine could not name a type in
 /// it. A method whose return type the engine cannot read stays out of the

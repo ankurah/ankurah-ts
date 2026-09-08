@@ -555,8 +555,27 @@ everything the walk never reached.
   that merely shares the name `IntoIter` walks nothing:
   `trait Factory { type IntoIter: Measure; }` came out
   `f.make().takeRest().amount()`, a method that value has not got. A parameter
-  bounded by `IntoIterator` is the caller's own SEQUENCE, written `Iterable<V>`
-  and spread; it becomes a cursor at the `into_iter()` inside the body.
+  bounded ONLY by `IntoIterator` is the caller's own SEQUENCE, written
+  `Iterable<V>` and spread; it becomes a cursor at the `into_iter()` inside the
+  body. An EXPLICIT `Iterator` bound wins over an `IntoIterator` beside it
+  (GG4): `I: Iterator<Item = V> + IntoIterator` is what makes `next()` legal on
+  the parameter, and rejecting it for the bound beside that one wrote it as an
+  array — `walk.next is not a function`, one frame down.
+- **A cursor owns two different things, and each has its own question**: the
+  ELEMENTS it hands out, and the REST it has not handed out yet. Asked as one,
+  each answer was wrong for the other axis.
+
+  The elements: `I: Iterator<Item = V>` walks values the cursor owns and
+  releases; `I: Iterator<Item = &V>` walks the CALLER's, and releases none of
+  them. The axis is read off the bound's `Item` and carried into the
+  construction as a mode — `new SeqCursor([...tokens], 'borrow')` — because the
+  port's `SeqCursor<V>` spelling drops the `&` and by then the answer is gone.
+  Given the owning mode for a borrowed walk (GG1), `countRefs(tokens.iter())`
+  released the caller's tokens and the caller's own `token.drop()` aborted the
+  run as a double drop; what the walk discards is left alone for the same
+  reason, and so is what a consuming terminal walks past.
+
+  The rest: see "What a cursor is asked".
 - **One question, four readers.** How a signature spells the parameter
   (`SeqCursor<V>` where the item can be named where the signature is written,
   and the plain mapping where it cannot); what a call site builds when it hands
@@ -572,15 +591,35 @@ everything the walk never reached.
   parameter types the expectation machinery hands out drop everything still
   open, and a cursor parameter is exactly an open one. A value the engine cannot
   type at such a position is reported, not guessed at.
-- **What a cursor is asked.** `next` is asked of the cursor itself. Every other
-  method of `Iterator` consumes the iterator and sees exactly the elements it
-  has not yet handed out, which is what `takeRest()` answers: the tail, taken
-  OUT of the cursor, so that dropping the cursor afterwards releases nothing
-  twice. From that point the value is an ARRAY, and the array's own table is
-  what writes the call — including which of its helpers releases the elements a
-  terminal or an eager adaptor walks past. Dispatched on the unmodified type
-  parameter instead, `walk.takeRest().last()` and `.skip(1)` named methods no
-  array declares.
+- **What a cursor is asked**, decided by the METHOD's own `self` kind and never
+  by the receiver expression (FF1). Three answers, and the `Iterator` table is
+  where the split is written down.
+
+  `next` and `by_ref` are asked of the cursor itself.
+
+  A method that takes `self` BY VALUE consumes the iterator and sees exactly the
+  elements it has not yet handed out, which is what `takeRest()` answers: the
+  tail, taken OUT of the cursor, so that dropping the cursor afterwards releases
+  nothing twice. From that point the value is an ARRAY, and the array's own
+  table is what writes the call — including which of its helpers releases the
+  elements a terminal or an eager adaptor walks past. Dispatched on the
+  unmodified type parameter instead, `walk.takeRest().last()` and `.skip(1)`
+  named methods no array declares.
+
+  A method that takes `&mut self` or `&self` leaves the iterator with its owner.
+  The ones that walk to exhaustion — `rposition`, `try_fold`, `try_for_each` —
+  give up the rest with `drainRest()`, which empties the cursor without marking
+  it moved. The ones that STOP as soon as they can — `any`, `all`, `find`,
+  `find_map`, `position`, `nth`, and `size_hint`, which walks nowhere — are
+  answered by the cursor ITSELF, one `SeqCursor` method per name, advancing
+  exactly as far as Rust does and releasing exactly what Rust drops: the
+  elements `find` and `nth` reject, and nothing where the closure was handed the
+  element by value and is its owner. Read off the receiver expression instead,
+  `walk.any(p)` was `walk.takeRest().some(p)` — the cursor marked moved with the
+  owner's own `walk.drop()` still below it, which is a use after move, and every
+  element after the match owned by nobody. Because such a call consumes neither
+  the cursor nor its elements, the consuming-terminal rules do not reach it at
+  all.
 - **A reborrow is not a consumption.** `Iterator::by_ref(&mut self) -> &mut Self`
   hands back a reference, and the port has none, so the borrowed view IS the
   cursor and `by_ref()` is written as the identity. What the chain above it sees

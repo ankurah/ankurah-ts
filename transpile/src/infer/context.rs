@@ -841,7 +841,7 @@ impl<'a> TypeContext<'a> {
 
 
 
-    pub(super) fn resolve_struct_literal(&self, lit: &syn::ExprStruct) -> Result<Ty, Diag> {
+    pub(crate) fn resolve_struct_literal(&self, lit: &syn::ExprStruct) -> Result<Ty, Diag> {
         let ty = syn::Type::Path(syn::TypePath {
             qself: lit.qself.clone(),
             path: lit.path.clone(),

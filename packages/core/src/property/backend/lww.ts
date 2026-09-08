@@ -41,11 +41,17 @@ export class LWWBackend extends Struct implements PropertyBackend {
   }
 
   set(propertyName: PropertyName, value: Value | null): void {
-    let values = this.values.write();
+    let _moved0 = false;
     try {
-      values.value.set(propertyName, new ValueEntry(value, false));
+      let values = this.values.write();
+      try {
+        _moved0 = true;
+        values.value.set(propertyName, new ValueEntry(value, false));
+      } finally {
+        values.drop();
+      }
     } finally {
-      values.drop();
+      if (!_moved0) dropOwned(value);
     }
   }
 
@@ -82,15 +88,21 @@ export class LWWBackend extends Struct implements PropertyBackend {
   }
 
   fork(): Arc<PropertyBackend> {
-    const values = this.values.read();
     let _moved0 = false;
-    const cloned = (values.value).clone();
+    const values = this.values.read();
     try {
-      values.drop();
-      _moved0 = true;
-      return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
+      let _moved1 = false;
+      const cloned = (values.value).clone();
+      try {
+        _moved0 = true;
+        values.drop();
+        _moved1 = true;
+        return Arc.new(new LWWBackend(new RwLock(cloned), new Mutex(new HashMap<string, Broadcast<void>>())));
+      } finally {
+        if (!_moved1) dropOwned(cloned);
+      }
     } finally {
-      if (!_moved0) dropOwned(cloned);
+      if (!_moved0) values.drop();
     }
   }
 
@@ -224,17 +236,23 @@ export class LWWBackend extends Struct implements PropertyBackend {
   }
 
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard {
-    let fieldBroadcasts = this.fieldBroadcasts.lock();
+    let _moved0 = false;
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
-      const _t0 = broadcast.value.reference();
+      let fieldBroadcasts = this.fieldBroadcasts.lock();
       try {
-        return ListenerGuard.from(_t0.listen(listener));
+        const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+        const _t1 = broadcast.value.reference();
+        try {
+          _moved0 = true;
+          return ListenerGuard.from(_t1.listen(listener));
+        } finally {
+          _t1.drop();
+        }
       } finally {
-        _t0.drop();
+        fieldBroadcasts.drop();
       }
     } finally {
-      fieldBroadcasts.drop();
+      if (!_moved0) listener.drop();
     }
   }
 

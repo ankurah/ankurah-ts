@@ -37,10 +37,16 @@ fn a_by_value_closure_parameter_is_released_at_the_end_of_the_invocation() {
 }
 
 /// A closure that hands its parameter on — to a callee, or as its own answer —
-/// releases nothing, exactly as a function's parameter is not released where
-/// every path hands it on.
+/// owes it nothing on the path that reaches the hand-over.
+///
+/// HH2 changed what stands ABOVE that path. `|a, b| { drop(b); a }` runs
+/// `drop(b)` first, and a `Drop` impl that panics is a path Rust unwinds `a`
+/// on — so the closure keeps a flag, hands `a` on under it, and releases `a`
+/// only where the statement above never returned. This test read
+/// "`a.drop()` appears nowhere", which was the same claim while no statement
+/// above the hand-over could throw; it now reads the guard.
 #[test]
-fn a_by_value_parameter_the_closure_hands_on_is_released_by_nothing() {
+fn a_by_value_parameter_the_closure_hands_on_is_released_only_if_it_never_got_there() {
     let ts = body(
         "pub fn first_kept(tokens: Vec<Token>) -> Option<Token> {\n\
            tokens.into_iter().reduce(|a, b| { drop(b); a })\n\
@@ -49,8 +55,16 @@ fn a_by_value_parameter_the_closure_hands_on_is_released_by_nothing() {
     );
     assert!(ts.contains("iterReduceOwned("), "{}", ts);
     assert!(ts.contains("b.drop();"), "the body's own `drop(b)` stands:\n{}", ts);
-    assert!(!ts.contains("a.drop();"), "`a` is the closure's answer:\n{}", ts);
-    assert!(!ts.contains("finally"), "nothing is owed, so no scope is opened:\n{}", ts);
+    assert!(
+        ts.contains("if (!_moved0) a.drop();"),
+        "`a` is released only where `drop(b)` threw before it was handed on:\n{}",
+        ts
+    );
+    assert!(
+        ts.contains("_moved0 = true;\n    return a;"),
+        "and the flag stands immediately above the hand-over:\n{}",
+        ts
+    );
 }
 
 /// A parameter written `&T` is somebody else's, and Rust's match ergonomics

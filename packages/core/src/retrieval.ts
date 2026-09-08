@@ -53,51 +53,57 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
   }
 
   async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
-    let events = [];
     let _moved0 = false;
-    let eventIds_1 = HashSet.from([...eventIds]);
     try {
-      const _t1 = this._0.value.stagedEvents.lock();
+      let events = [];
+      _moved0 = true;
+      let _moved1 = false;
+      let eventIds_1 = HashSet.from([...eventIds]);
       try {
-        {
-          const _v1 = _t1.value;
-          if (_v1 != null) {
-            const staged = _v1;
-            eventIds_1.retain((id) => {
-              {
-                const _v = staged.get(id);
-                if (_v != null) {
-                  const [event, used] = _v;
-                  events.push(event.clone());
-                  used.value = true;
-                  return false;
-                } else {
-                return true;
-              }
-              }
-            });
+        const _t2 = this._0.value.stagedEvents.lock();
+        try {
+          {
+            const _v1 = _t2.value;
+            if (_v1 != null) {
+              const staged = _v1;
+              eventIds_1.retain((id) => {
+                {
+                  const _v = staged.get(id);
+                  if (_v != null) {
+                    const [event, used] = _v;
+                    events.push(event.clone());
+                    used.value = true;
+                    return false;
+                  } else {
+                  return true;
+                }
+                }
+              });
+            }
           }
+        } finally {
+          _t2.drop();
+        }
+        if (eventIds_1.size === 0) {
+          return Result.Ok([0, events]);
+        }
+        _moved1 = true;
+        const _r3 = await this._0.value.collection.deref().value.getEvents([...eventIds_1]);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        let _moved4 = false;
+        const storedEvents = _r3.unwrap();
+        try {
+          _moved4 = true;
+          events.extend(storedEvents);
+          return Result.Ok([1, events]);
+        } finally {
+          if (!_moved4) dropOwned(storedEvents);
         }
       } finally {
-        _t1.drop();
-      }
-      if (eventIds_1.size === 0) {
-        return Result.Ok([0, events]);
-      }
-      _moved0 = true;
-      const _r2 = await this._0.value.collection.deref().value.getEvents([...eventIds_1]);
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-      let _moved3 = false;
-      const storedEvents = _r2.unwrap();
-      try {
-        _moved3 = true;
-        events.extend(storedEvents);
-        return Result.Ok([1, events]);
-      } finally {
-        if (!_moved3) dropOwned(storedEvents);
+        if (!_moved1) dropOwned(eventIds_1);
       }
     } finally {
-      if (!_moved0) dropOwned(eventIds_1);
+      if (!_moved0) dropOwned(eventIds);
     }
   }
 
@@ -239,129 +245,141 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
   }
 
   async retrieveEvent(eventIds: EventId[]): Promise<Result<[number, Attested<Event>[]], RetrievalError>> {
-    let events = [];
     let _moved0 = false;
-    let eventIds_1 = HashSet.from([...eventIds]);
     try {
-      const _t1 = this.stagedEvents.lock();
+      let events = [];
+      _moved0 = true;
+      let _moved1 = false;
+      let eventIds_1 = HashSet.from([...eventIds]);
       try {
-        {
-          const _v1 = _t1.value;
-          if (_v1 != null) {
-            const staged = _v1;
-            eventIds_1.retain((id) => {
-              {
-                const _v = staged.get(id);
-                if (_v != null) {
-                  const [event, used] = _v;
-                  events.push(event.clone());
-                  used.value = true;
-                  return false;
-                } else {
-                return true;
-              }
-              }
-            });
-          }
-        }
-      } finally {
-        _t1.drop();
-      }
-      if (eventIds_1.size === 0) {
-        return Result.Ok([0, events]);
-      }
-      const _r2 = await this.node.deref().value.system.collection(this.collection);
-      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-      const collection = _r2.unwrap();
-      try {
-        const _r3 = await collection.deref().value.getEvents([...[...eventIds_1]]);
-        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-        const _seq5 = _r3.unwrap();
-        let _at6 = 0;
+        const _t2 = this.stagedEvents.lock();
         try {
-          while (_at6 < _seq5.length) {
-            const event = _seq5[_at6++];
-            const _t4 = event.payload.id();
-            try {
-              eventIds_1.delete(_t4);
-            } finally {
-              _t4.drop();
+          {
+            const _v1 = _t2.value;
+            if (_v1 != null) {
+              const staged = _v1;
+              eventIds_1.retain((id) => {
+                {
+                  const _v = staged.get(id);
+                  if (_v != null) {
+                    const [event, used] = _v;
+                    events.push(event.clone());
+                    used.value = true;
+                    return false;
+                  } else {
+                  return true;
+                }
+                }
+              });
             }
-            events.push(event);
           }
         } finally {
-          dropOwned(_seq5.slice(_at6));
+          _t2.drop();
         }
         if (eventIds_1.size === 0) {
-          return Result.Ok([1, events]);
+          return Result.Ok([0, events]);
         }
-        const _v2 = this.node.getDurablePeerRandom();
-        if (!(_v2 != null)) {
-          return Result.Ok([1, events]);
-        }
-        const peerId = _v2;
-        _moved0 = true;
-        const _r7 = await this.node.request(peerId, this.cdata, new NodeRequestBody('GetEvents', { collection: this.collection.clone(), eventIds: [...eventIds_1] }));
-        if (_r7.isErr()) return Result.Err(RetrievalError.fromRequestError(_r7.unwrapErr()));
-        const _m10 = await (_r7.unwrap().intoMatch<any>({
-          GetEvents: async (v) => {
-            const peerEvents = v._0;
-            let _moved8 = false;
-            try {
-              for (const event of [...peerEvents]) {
-                const _r9 = await collection.deref().value.addEvent(event);
-                if (_r9.isErr()) return { $jump: 'return', $value: Result.Err(RetrievalError.fromMutationError(_r9.unwrapErr())) };
-                _r9.drop();
+        const _r3 = await this.node.deref().value.system.collection(this.collection);
+        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+        const collection = _r3.unwrap();
+        try {
+          const _r4 = await collection.deref().value.getEvents([...[...eventIds_1]]);
+          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+          const _seq7 = _r4.unwrap();
+          let _at8 = 0;
+          try {
+            while (_at8 < _seq7.length) {
+              const event = _seq7[_at8++];
+              let _moved5 = false;
+              try {
+                const _t6 = event.payload.id();
+                try {
+                  eventIds_1.delete(_t6);
+                } finally {
+                  _t6.drop();
+                }
+                _moved5 = true;
+                events.push(event);
+              } finally {
+                if (!_moved5) event.drop();
               }
-              _moved8 = true;
-              events.extend(peerEvents);
-            } finally {
-              if (!_moved8) dropOwned(peerEvents);
             }
-          },
-          Error: async (v) => {
-            const e = v._0;
-            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: `Error from peer: ${e}` })) };
-          },
-          CommitComplete: (v) => {
-            try {
+          } finally {
+            dropOwned(_seq7.slice(_at8));
+          }
+          if (eventIds_1.size === 0) {
+            return Result.Ok([1, events]);
+          }
+          const _v2 = this.node.getDurablePeerRandom();
+          if (!(_v2 != null)) {
+            return Result.Ok([1, events]);
+          }
+          const peerId = _v2;
+          _moved1 = true;
+          const _r9 = await this.node.request(peerId, this.cdata, new NodeRequestBody('GetEvents', { collection: this.collection.clone(), eventIds: [...eventIds_1] }));
+          if (_r9.isErr()) return Result.Err(RetrievalError.fromRequestError(_r9.unwrapErr()));
+          const _m12 = await (_r9.unwrap().intoMatch<any>({
+            GetEvents: async (v) => {
+              const peerEvents = v._0;
+              let _moved10 = false;
+              try {
+                for (const event of [...peerEvents]) {
+                  const _r11 = await collection.deref().value.addEvent(event);
+                  if (_r11.isErr()) return { $jump: 'return', $value: Result.Err(RetrievalError.fromMutationError(_r11.unwrapErr())) };
+                  _r11.drop();
+                }
+                _moved10 = true;
+                events.extend(peerEvents);
+              } finally {
+                if (!_moved10) dropOwned(peerEvents);
+              }
+            },
+            Error: async (v) => {
+              const e = v._0;
+              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: `Error from peer: ${e}` })) };
+            },
+            CommitComplete: (v) => {
+              try {
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+              } finally {
+                dropUnbound(v, []);
+              }
+            },
+            Fetch: (v) => {
+              try {
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+              } finally {
+                dropUnbound(v, []);
+              }
+            },
+            Get: (v) => {
+              try {
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+              } finally {
+                dropUnbound(v, []);
+              }
+            },
+            QuerySubscribed: (v) => {
+              try {
+                return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
+              } finally {
+                dropUnbound(v, []);
+              }
+            },
+            Success: () => {
               return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
-            } finally {
-              dropUnbound(v, []);
-            }
-          },
-          Fetch: (v) => {
-            try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
-            } finally {
-              dropUnbound(v, []);
-            }
-          },
-          Get: (v) => {
-            try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
-            } finally {
-              dropUnbound(v, []);
-            }
-          },
-          QuerySubscribed: (v) => {
-            try {
-              return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
-            } finally {
-              dropUnbound(v, []);
-            }
-          },
-          Success: () => {
-            return { $jump: 'return', $value: Result.Err(new RetrievalError('StorageError', { _0: 'Unexpected response type from peer' })) };
-          },
-        }));
-        if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
-        return Result.Ok([5, events]);
+            },
+          }));
+          if ((_m12 as any)?.$jump === 'return') return (_m12 as any).$value;
+          return Result.Ok([5, events]);
+        } finally {
+          collection.drop();
+        }
       } finally {
-        collection.drop();
+        if (!_moved1) dropOwned(eventIds_1);
       }
     } finally {
-      if (!_moved0) dropOwned(eventIds_1);
+      if (!_moved0) dropOwned(eventIds);
     }
   }
 

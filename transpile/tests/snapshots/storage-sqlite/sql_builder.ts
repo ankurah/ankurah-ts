@@ -412,6 +412,7 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
       const right = v._1;
       const [leftSql, leftRemaining] = splitPredicateRecursive(left);
       const [rightSql, rightRemaining] = splitPredicateRecursive(right);
+      let _moved6 = false;
       const sqlPred = (() => {
         const _v1 = [leftSql, rightSql];
         if ((_v1[0].is('True')) && (_v1[1].is('True'))) {
@@ -424,19 +425,24 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
           return new Predicate('And', { _0: leftSql, _1: rightSql });
         }
       })();
-      const remainingPred = (() => {
-        const _v3 = [leftRemaining, rightRemaining];
-        if ((_v3[0].is('True')) && (_v3[1].is('True'))) {
-          return new Predicate('True', {});
-        } else if ((_v3[0].is('True'))) {
-          return rightRemaining;
-        } else if ((_v3[1].is('True'))) {
-          return leftRemaining;
-        } else {
-          return new Predicate('And', { _0: leftRemaining, _1: rightRemaining });
-        }
-      })();
-      return [sqlPred, remainingPred];
+      try {
+        const remainingPred = (() => {
+          const _v3 = [leftRemaining, rightRemaining];
+          if ((_v3[0].is('True')) && (_v3[1].is('True'))) {
+            return new Predicate('True', {});
+          } else if ((_v3[0].is('True'))) {
+            return rightRemaining;
+          } else if ((_v3[1].is('True'))) {
+            return leftRemaining;
+          } else {
+            return new Predicate('And', { _0: leftRemaining, _1: rightRemaining });
+          }
+        })();
+        _moved6 = true;
+        return [sqlPred, remainingPred];
+      } finally {
+        if (!_moved6) sqlPred.drop();
+      }
     },
     Or: (v) => {
       const left = v._0;
@@ -444,17 +450,17 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
       const [leftSql, leftRemaining] = splitPredicateRecursive(left);
       const [rightSql, rightRemaining] = splitPredicateRecursive(right);
       if (leftRemaining.is('True') && rightRemaining.is('True')) {
-        let _moved7 = false;
-        const _b6 = predicate.clone();
+        let _moved8 = false;
+        const _b7 = predicate.clone();
         try {
-          const _b8 = new Predicate('True', {});
-          _moved7 = true;
-          return [_b6, _b8];
+          const _b9 = new Predicate('True', {});
+          _moved8 = true;
+          return [_b7, _b9];
         } finally {
-          if (!_moved7) dropOwned(_b6);
+          if (!_moved8) dropOwned(_b7);
         }
       } else {
-        let _moved9 = false;
+        let _moved10 = false;
         const sqlPred = (() => {
           const _v5 = [leftSql, rightSql];
           if ((_v5[0].is('True')) && (_v5[1].is('True'))) {
@@ -468,11 +474,11 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
           }
         })();
         try {
-          const _b10 = predicate.clone();
-          _moved9 = true;
-          return [sqlPred, _b10];
+          const _b11 = predicate.clone();
+          _moved10 = true;
+          return [sqlPred, _b11];
         } finally {
-          if (!_moved9) sqlPred.drop();
+          if (!_moved10) sqlPred.drop();
         }
       }
     },
@@ -480,82 +486,82 @@ function splitPredicateRecursive(predicate: Predicate): [Predicate, Predicate] {
       const inner = v._0;
       const [innerSql, innerRemaining] = splitPredicateRecursive(inner);
       if (innerRemaining.is('True')) {
-        let _moved12 = false;
-        const _b11 = new Predicate('Not', { _0: innerSql });
+        let _moved13 = false;
+        const _b12 = new Predicate('Not', { _0: innerSql });
         try {
-          const _b13 = new Predicate('True', {});
-          _moved12 = true;
-          return [_b11, _b13];
+          const _b14 = new Predicate('True', {});
+          _moved13 = true;
+          return [_b12, _b14];
         } finally {
-          if (!_moved12) dropOwned(_b11);
+          if (!_moved13) dropOwned(_b12);
         }
       } else {
-        let _moved15 = false;
-        const _b14 = new Predicate('True', {});
+        let _moved16 = false;
+        const _b15 = new Predicate('True', {});
         try {
-          const _b16 = predicate.clone();
-          _moved15 = true;
-          return [_b14, _b16];
+          const _b17 = predicate.clone();
+          _moved16 = true;
+          return [_b15, _b17];
         } finally {
-          if (!_moved15) dropOwned(_b14);
+          if (!_moved16) dropOwned(_b15);
         }
       }
     },
     IsNull: (v) => {
       const expr = v._0;
       if (canPushdownExpr(expr)) {
-        let _moved18 = false;
-        const _b17 = predicate.clone();
+        let _moved19 = false;
+        const _b18 = predicate.clone();
         try {
-          const _b19 = new Predicate('True', {});
-          _moved18 = true;
-          return [_b17, _b19];
+          const _b20 = new Predicate('True', {});
+          _moved19 = true;
+          return [_b18, _b20];
         } finally {
-          if (!_moved18) dropOwned(_b17);
+          if (!_moved19) dropOwned(_b18);
         }
       } else {
-        let _moved21 = false;
-        const _b20 = new Predicate('True', {});
+        let _moved22 = false;
+        const _b21 = new Predicate('True', {});
         try {
-          const _b22 = predicate.clone();
-          _moved21 = true;
-          return [_b20, _b22];
+          const _b23 = predicate.clone();
+          _moved22 = true;
+          return [_b21, _b23];
         } finally {
-          if (!_moved21) dropOwned(_b20);
+          if (!_moved22) dropOwned(_b21);
         }
       }
     },
     True: () => {
-      let _moved24 = false;
-      const _b23 = new Predicate('True', {});
+      let _moved25 = false;
+      const _b24 = new Predicate('True', {});
       try {
-        const _b25 = new Predicate('True', {});
-        _moved24 = true;
-        return [_b23, _b25];
+        const _b26 = new Predicate('True', {});
+        _moved25 = true;
+        return [_b24, _b26];
       } finally {
-        if (!_moved24) dropOwned(_b23);
+        if (!_moved25) dropOwned(_b24);
       }
     },
     False: () => {
-      let _moved27 = false;
-      const _b26 = new Predicate('False', {});
+      let _moved28 = false;
+      const _b27 = new Predicate('False', {});
       try {
-        const _b28 = new Predicate('True', {});
-        _moved27 = true;
-        return [_b26, _b28];
+        const _b29 = new Predicate('True', {});
+        _moved28 = true;
+        return [_b27, _b29];
       } finally {
-        if (!_moved27) dropOwned(_b26);
+        if (!_moved28) dropOwned(_b27);
       }
     },
     Placeholder: () => {
-      let _moved30 = false;
-      const _b29 = new Predicate('True', {});
+      let _moved31 = false;
+      const _b30 = new Predicate('True', {});
       try {
-        const _b31 = predicate.clone();
-        _moved30 = true;
-        return [_b29, _b31];
+        const _b32 = predicate.clone();
+        _moved31 = true;
+        return [_b30, _b32];
       } finally {
-        if (!_moved30) dropOwned(_b29);
+        if (!_moved31) dropOwned(_b30);
       }
     },
   });

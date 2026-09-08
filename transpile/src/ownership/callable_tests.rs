@@ -116,3 +116,58 @@ fn an_fn_once_parameter_not_called_on_every_path_is_still_released() {
         "the branch that does not call leaks:\n{sometimes}"
     );
 }
+
+// ── GG6/FF7/HH4: what the CALLEE's bound says, and what the call site says ──
+
+const HELD: &str = "\
+pub struct Token { pub n: u32 }\n\
+impl Drop for Token { fn drop(&mut self) {} }\n\
+pub fn apply<F>(f: F) -> u32 where F: Fn(Token) -> u32 { f(Token { n: 1 }) }\n\
+pub fn generic_apply<T, F>(v: T, f: F) -> u32 where F: Fn(T) -> u32 { f(v) }\n\
+";
+
+fn emitted(rust: &str) -> (String, Vec<String>) {
+    let mut fixture = Fixture::build(&[("lib.rs", &format!("{}{}", HELD, rust))]);
+    let ts = fixture.emitted("lib.rs");
+    (ts, fixture.messages())
+}
+
+/// GG6: parentheses are punctuation. Matched as a literal `Expr::Closure`,
+/// `apply((|held| held.n))` missed the callee's `Fn` bound entirely — the
+/// parameter was typed by nothing and the value it was handed BY VALUE was
+/// released by nobody.
+#[test]
+fn a_parenthesised_closure_is_still_typed_from_the_callee_bound() {
+    let (ts, messages) = emitted("pub fn wrapped() -> u32 { apply((|held| held.n)) }");
+    assert!(ts.contains("held.drop();"), "the closure releases what it was handed:\n{}", ts);
+    assert!(messages.is_empty(), "and nothing is reported:\n{:?}", messages);
+}
+
+/// FF7: the closure's parameter comes from the callee's `Fn` bound, and that
+/// bound has to be read with what the SIBLING actuals fixed. Read with the
+/// callee's `T` still open, `generic_apply(t, |x| x.n)` typed `x` as `T` — "no
+/// field `n` on `T`" — and released nothing.
+#[test]
+fn a_sibling_actual_fixes_the_callee_parameter_before_the_bound_is_read() {
+    let (ts, messages) = emitted("pub fn open(t: Token) -> u32 { generic_apply(t, |x| x.n) }");
+    assert!(ts.contains("x.drop();"), "the closure releases what it was handed:\n{}", ts);
+    assert!(messages.is_empty(), "and nothing is reported:\n{:?}", messages);
+}
+
+/// HH4: `serde_json::to_value` takes its argument BY VALUE, and only the call
+/// site knows whether the caller handed it over. The TYPE decides, because
+/// `to_value(h)` on an `h: &Held` writes no `&` at the site.
+#[test]
+fn to_value_is_told_whether_the_caller_handed_the_value_over() {
+    let mut fixture = Fixture::build(&[(
+        "lib.rs",
+        "use serde::Serialize;\n\
+         #[derive(Serialize)]\n\
+         pub struct Held { pub n: u32 }\n\
+         pub fn borrowed(h: &Held) -> serde_json::Value { serde_json::to_value(h).unwrap() }\n\
+         pub fn owned(h: Held) -> serde_json::Value { serde_json::to_value(h).unwrap() }\n",
+    )]);
+    let ts = fixture.emitted("lib.rs");
+    assert!(ts.contains("toValue(h).unwrap()"), "a reference keeps the borrowing mode:\n{}", ts);
+    assert!(ts.contains("toValue(h, 'own')"), "and a value handed over is owned:\n{}", ts);
+}

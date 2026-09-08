@@ -246,11 +246,7 @@ impl BodyTranslator<'_> {
     /// The terminal rule keeps the wider clause, and rightly: `it.find(q)`
     /// walks only as far as the answer and Rust leaves the rest in `it`.
     fn a_reborrow_keeps_the_rest(&self, receiver: &syn::Expr) -> bool {
-        let reborrowed = matches!(
-            receiver,
-            syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty()
-        );
-        reborrowed && self.keeps_part_of_an_iterator(receiver)
+        reborrows(receiver) && self.keeps_part_of_an_iterator(receiver)
     }
 
     /// The same, asked the other way round: is this an owning adaptor the port
@@ -284,11 +280,7 @@ impl BodyTranslator<'_> {
     /// does keep the rest, and until the port has a borrowed view of a cursor
     /// the owning shapes above one stay refused.
     fn keeps_part_of_an_iterator(&self, receiver: &syn::Expr) -> bool {
-        let reborrowed = matches!(
-            receiver,
-            syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty()
-        );
-        if !reborrowed && self.is_a_cursor_by_value(receiver) {
+        if !reborrows(receiver) && self.is_a_cursor_by_value(receiver) {
             return false;
         }
         names_an_iterator_place(receiver)
@@ -328,6 +320,27 @@ impl BodyTranslator<'_> {
             return false;
         }
         let Some(ty) = receiver_ty else { return false };
+        // GG1: a CURSOR is always droppable — it is a class with a `drop()` —
+        // and that says nothing about its elements. `I: Iterator<Item = &T>`
+        // walks the caller's tokens, and asking the receiver instead of the
+        // `Item` gave the terminal the owned spelling, which released elements
+        // the caller still holds.
+        if let Some(cursor) = crate::body::cursors::cursor_of(&tc.probe(), &ty) {
+            // FF1: a method the CURSOR answers takes the iterator by `&mut
+            // self`, releases exactly what Rust drops as it walks, and leaves
+            // the cursor with its owner. Counted as a consuming terminal, its
+            // receiver was marked moved and the frame's own `walk.drop()`
+            // vanished, so everything the walk had not reached leaked.
+            if crate::native_types::iterator::cursor_answers_in_place(&method, call.args.len())
+                .is_some()
+            {
+                return false;
+            }
+            return match cursor.item {
+                Some(item) => crate::ownership::drops_of(&tc.probe(), &item).is_droppable(),
+                None => true,
+            };
+        }
         crate::ownership::drops_of(&tc.probe(), &ty).is_droppable()
     }
 }
@@ -497,9 +510,28 @@ impl BodyTranslator<'_> {
 /// `dropOwned(it)` released it a second time (O5).
 fn names_an_iterator_place(receiver: &syn::Expr) -> bool {
     match receiver {
+        syn::Expr::Paren(p) => names_an_iterator_place(&p.expr),
+        syn::Expr::Group(g) => names_an_iterator_place(&g.expr),
         syn::Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty() => {
             names_an_iterator_place(&call.receiver)
         }
         other => crate::body::is_place(other),
+    }
+}
+
+/// Does this expression REBORROW an iterator — `it.by_ref()`, however it is
+/// written?
+///
+/// GG7: asked as a bare `Expr::MethodCall` pattern, a parenthesised reborrow
+/// answered no, and the three rules that read it each turned into their owning
+/// form: `(walk.by_ref()).find(..)` drained the whole cursor and `walk.count()`
+/// below it answered 0 where Rust answers 1. Parentheses are punctuation and
+/// change no ownership, so every by_ref test unparenthesises first.
+fn reborrows(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Paren(p) => reborrows(&p.expr),
+        syn::Expr::Group(g) => reborrows(&g.expr),
+        syn::Expr::MethodCall(call) => call.method == "by_ref" && call.args.is_empty(),
+        _ => false,
     }
 }

@@ -86,10 +86,16 @@ export class Planner extends Struct {
               const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
               if (!hasEmptyScan) {
                 _moved0 = true;
+                let _moved1 = false;
                 let finalPlans = deduplicatedPlans;
-                const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-                finalPlans.push(tableScan);
-                return finalPlans;
+                try {
+                  const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+                  finalPlans.push(tableScan);
+                  _moved1 = true;
+                  return finalPlans;
+                } finally {
+                  if (!_moved1) dropOwned(finalPlans);
+                }
               } else {
                 _moved0 = true;
                 return deduplicatedPlans;
@@ -119,22 +125,28 @@ export class Planner extends Struct {
           }
         }
       }
-      let _moved1 = false;
+      let _moved2 = false;
       const deduplicatedPlans = this.deduplicatePlans(plans);
       try {
         const hasEmptyScan = [...deduplicatedPlans].some((plan) => plan.is('EmptyScan'));
         if (!hasEmptyScan) {
-          _moved1 = true;
+          _moved2 = true;
+          let _moved3 = false;
           let finalPlans = deduplicatedPlans;
-          const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
-          finalPlans.push(tableScan);
-          return finalPlans;
+          try {
+            const tableScan = this.buildTableScanPlan(conjuncts, primaryKey, selection.orderBy);
+            finalPlans.push(tableScan);
+            _moved3 = true;
+            return finalPlans;
+          } finally {
+            if (!_moved3) dropOwned(finalPlans);
+          }
         } else {
-          _moved1 = true;
+          _moved2 = true;
           return deduplicatedPlans;
         }
       } finally {
-        if (!_moved1) dropOwned(deduplicatedPlans);
+        if (!_moved2) dropOwned(deduplicatedPlans);
       }
     } finally {
       dropOwned(conjuncts);
@@ -329,58 +341,64 @@ export class Planner extends Struct {
 
   categorizeConjunctsExcludingPrimaryKey(conjuncts: Predicate[], primaryKey: string): [[string, Value][], IndexMap<string, [ComparisonOperator, Value][], RandomState>] {
     let equalities = [];
+    let _moved0 = false;
     let inequalities = IndexMap.new();
-    for (const conjunct of conjuncts) {
-      {
-        const _v = this.extractComparison(conjunct);
-        if (_v != null) {
-          const [field, op, value] = _v;
-          let _moved0 = false;
-          let _moved1 = false;
-          try {
+    try {
+      for (const conjunct of conjuncts) {
+        {
+          const _v = this.extractComparison(conjunct);
+          if (_v != null) {
+            const [field, op, value] = _v;
+            let _moved1 = false;
+            let _moved2 = false;
             try {
-              if (field === primaryKey) {
-                continue;
+              try {
+                if (field === primaryKey) {
+                  continue;
+                }
+                return op.match({
+                  Equal: () => {
+                    _moved2 = true;
+                    equalities.push([field, value]);
+                  },
+                  GreaterThan: () => {
+                    _moved1 = true;
+                    _moved2 = true;
+                    inequalities.entry(field).orDefault().push([op, value]);
+                  },
+                  GreaterThanOrEqual: () => {
+                    _moved1 = true;
+                    _moved2 = true;
+                    inequalities.entry(field).orDefault().push([op, value]);
+                  },
+                  LessThan: () => {
+                    _moved1 = true;
+                    _moved2 = true;
+                    inequalities.entry(field).orDefault().push([op, value]);
+                  },
+                  LessThanOrEqual: () => {
+                    _moved1 = true;
+                    _moved2 = true;
+                    inequalities.entry(field).orDefault().push([op, value]);
+                  },
+                  NotEqual: () => {},
+                  In: () => {},
+                  Between: () => {},
+                });
+              } finally {
+                if (!_moved2) value.drop();
               }
-              return op.match({
-                Equal: () => {
-                  _moved1 = true;
-                  equalities.push([field, value]);
-                },
-                GreaterThan: () => {
-                  _moved0 = true;
-                  _moved1 = true;
-                  inequalities.entry(field).orDefault().push([op, value]);
-                },
-                GreaterThanOrEqual: () => {
-                  _moved0 = true;
-                  _moved1 = true;
-                  inequalities.entry(field).orDefault().push([op, value]);
-                },
-                LessThan: () => {
-                  _moved0 = true;
-                  _moved1 = true;
-                  inequalities.entry(field).orDefault().push([op, value]);
-                },
-                LessThanOrEqual: () => {
-                  _moved0 = true;
-                  _moved1 = true;
-                  inequalities.entry(field).orDefault().push([op, value]);
-                },
-                NotEqual: () => {},
-                In: () => {},
-                Between: () => {},
-              });
             } finally {
-              if (!_moved1) value.drop();
+              if (!_moved1) op.drop();
             }
-          } finally {
-            if (!_moved0) op.drop();
           }
         }
       }
+      _moved0 = true;
+      return [equalities, inequalities];
+    } finally {
+      if (!_moved0) dropOwned(inequalities);
     }
-    return [equalities, inequalities];
   }
 
   extractComparison(predicate: Predicate): [string, ComparisonOperator, Value] | null {
@@ -860,83 +878,101 @@ export class Planner extends Struct {
   }
 
   deduplicatePlans(plans: Plan[]): Plan[] {
-    let uniquePlans = [];
-    let seen = new HashSet();
-    const _seq1 = plans;
-    let _at2 = 0;
+    let _moved0 = false;
     try {
-      while (_at2 < _seq1.length) {
-        const plan = _seq1[_at2++];
-        let _moved0 = false;
-        try {
-          plan.match({
-            Index: (v) => {
-              const indexSpec = v.indexSpec;
-              const scanDirection = v.scanDirection;
-              const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
-              if (seen.insert(key)) {
-                _moved0 = true;
+      let uniquePlans = [];
+      let seen = new HashSet();
+      _moved0 = true;
+      const _seq2 = plans;
+      let _at3 = 0;
+      try {
+        while (_at3 < _seq2.length) {
+          const plan = _seq2[_at3++];
+          let _moved1 = false;
+          try {
+            plan.match({
+              Index: (v) => {
+                const indexSpec = v.indexSpec;
+                const scanDirection = v.scanDirection;
+                const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
+                if (seen.insert(key)) {
+                  _moved1 = true;
+                  uniquePlans.push(plan);
+                }
+              },
+              EmptyScan: () => {
+                _moved1 = true;
                 uniquePlans.push(plan);
-              }
-            },
-            EmptyScan: () => {
-              _moved0 = true;
-              uniquePlans.push(plan);
-            },
-            TableScan: () => {
-              _moved0 = true;
-              uniquePlans.push(plan);
-            },
-          });
-        } finally {
-          if (!_moved0) plan.drop();
+              },
+              TableScan: () => {
+                _moved1 = true;
+                uniquePlans.push(plan);
+              },
+            });
+          } finally {
+            if (!_moved1) plan.drop();
+          }
         }
+      } finally {
+        dropOwned(_seq2.slice(_at3));
       }
+      return uniquePlans;
     } finally {
-      dropOwned(_seq1.slice(_at2));
+      if (!_moved0) dropOwned(plans);
     }
-    return uniquePlans;
   }
 
   buildTableScanPlan(conjuncts: Predicate[], primaryKey: string, orderBy: OrderByItem[] | null): Plan {
+    let _moved0 = false;
     const bounds = this.extractEntityIdRange(conjuncts, primaryKey);
-    const remainingPredicate = [...conjuncts].fold(new Predicate('True', {}), (acc, pred) => {
-      if (acc.is('True')) {
-        return pred.clone();
-      } else {
-        return new Predicate('And', { _0: acc, _1: pred.clone() });
-      }
-    });
-    const [scanDirection, orderBySpill] = (() => {
-      {
-        const _v1 = orderBy;
-        if (_v1 != null) {
-          const orderItems = _v1;
-          {
-            const _v = iterFirst(orderItems);
-            if (_v != null) {
-              const firstItem = _v;
-              if (firstItem.path.isSimple() && firstItem.path.first() === primaryKey) {
-                const direction = firstItem.direction.match({
-                  Asc: () => new ScanDirection('Forward', {}),
-                  Desc: () => new ScanDirection('Reverse', {}),
-                });
-                const presort = [firstItem.clone()];
-                const spill = orderItems.slice(1).map((e) => e.clone());
-                return [direction, OrderByComponents.new(presort, spill)];
-              } else {
-                return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.map((e) => e.clone()))];
-              }
-            } else {
-            return [new ScanDirection('Forward', {}), OrderByComponents.default()];
-          }
-          }
+    try {
+      const remainingPredicate = [...conjuncts].fold(new Predicate('True', {}), (acc, pred) => {
+        if (acc.is('True')) {
+          return pred.clone();
         } else {
-        return [new ScanDirection('Forward', {}), OrderByComponents.default()];
-      }
-      }
-    })();
-    return new Plan('TableScan', { bounds: bounds, scanDirection: scanDirection, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+          return new Predicate('And', { _0: acc, _1: pred.clone() });
+        }
+      });
+      const [scanDirection, orderBySpill] = (() => {
+        {
+          const _v1 = orderBy;
+          if (_v1 != null) {
+            const orderItems = _v1;
+            {
+              const _v = iterFirst(orderItems);
+              if (_v != null) {
+                const firstItem = _v;
+                if (firstItem.path.isSimple() && firstItem.path.first() === primaryKey) {
+                  const direction = firstItem.direction.match({
+                    Asc: () => new ScanDirection('Forward', {}),
+                    Desc: () => new ScanDirection('Reverse', {}),
+                  });
+                  let _moved1 = false;
+                  const presort = [firstItem.clone()];
+                  try {
+                    const spill = orderItems.slice(1).map((e) => e.clone());
+                    _moved1 = true;
+                    return [direction, OrderByComponents.new(presort, spill)];
+                  } finally {
+                    if (!_moved1) dropOwned(presort);
+                  }
+                } else {
+                  return [new ScanDirection('Forward', {}), OrderByComponents.new([], orderItems.map((e) => e.clone()))];
+                }
+              } else {
+              return [new ScanDirection('Forward', {}), OrderByComponents.default()];
+            }
+            }
+          } else {
+          return [new ScanDirection('Forward', {}), OrderByComponents.default()];
+        }
+        }
+      })();
+      _moved0 = true;
+      return new Plan('TableScan', { bounds: bounds, scanDirection: scanDirection, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+    } finally {
+      if (!_moved0) bounds.drop();
+    }
   }
 
   extractEntityIdRange(conjuncts: Predicate[], primaryKey: string): KeyBounds {
@@ -1067,40 +1103,46 @@ export class Planner extends Struct {
 
   intersectPrimaryKeyBounds(bounds: KeyBoundComponent[], primaryKey: string): KeyBoundComponent {
     let _moved0 = false;
-    let resultLow = new Endpoint('UnboundedLow', { _0: new ValueType('String', {}) });
     try {
       let _moved1 = false;
-      let resultHigh = new Endpoint('UnboundedHigh', { _0: new ValueType('String', {}) });
+      let resultLow = new Endpoint('UnboundedLow', { _0: new ValueType('String', {}) });
       try {
-        const _seq4 = bounds;
-        let _at5 = 0;
+        let _moved2 = false;
+        let resultHigh = new Endpoint('UnboundedHigh', { _0: new ValueType('String', {}) });
         try {
-          while (_at5 < _seq4.length) {
-            const bound = _seq4[_at5++];
-            try {
-              const _a2 = this.intersectLowerBounds(resultLow, bound.low);
-              if (!_moved0) resultLow.drop();
-              _moved0 = false;
-              resultLow = _a2;
-              const _a3 = this.intersectUpperBounds(resultHigh, bound.high);
-              if (!_moved1) resultHigh.drop();
-              _moved1 = false;
-              resultHigh = _a3;
-            } finally {
-              bound.drop();
+          _moved0 = true;
+          const _seq5 = bounds;
+          let _at6 = 0;
+          try {
+            while (_at6 < _seq5.length) {
+              const bound = _seq5[_at6++];
+              try {
+                const _a3 = this.intersectLowerBounds(resultLow, bound.low);
+                if (!_moved1) resultLow.drop();
+                _moved1 = false;
+                resultLow = _a3;
+                const _a4 = this.intersectUpperBounds(resultHigh, bound.high);
+                if (!_moved2) resultHigh.drop();
+                _moved2 = false;
+                resultHigh = _a4;
+              } finally {
+                bound.drop();
+              }
             }
+          } finally {
+            dropOwned(_seq5.slice(_at6));
           }
+          _moved1 = true;
+          _moved2 = true;
+          return new KeyBoundComponent(primaryKey, resultLow, resultHigh);
         } finally {
-          dropOwned(_seq4.slice(_at5));
+          if (!_moved2) resultHigh.drop();
         }
-        _moved0 = true;
-        _moved1 = true;
-        return new KeyBoundComponent(primaryKey, resultLow, resultHigh);
       } finally {
-        if (!_moved1) resultHigh.drop();
+        if (!_moved1) resultLow.drop();
       }
     } finally {
-      if (!_moved0) resultLow.drop();
+      if (!_moved0) dropOwned(bounds);
     }
   }
 

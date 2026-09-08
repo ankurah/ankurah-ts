@@ -83,11 +83,23 @@ export function both(pair: [Token, Token]): number {
   {
     const a = pair[0];
     const b = pair[1];
-    {
-      const n = checkedAdd(a.n, b.n, 'u32');
-      a.drop();
-      b.drop();
-      return n;
+    let _moved0 = false;
+    let _moved1 = false;
+    try {
+      try {
+        {
+          const n = checkedAdd(a.n, b.n, 'u32');
+          _moved0 = true;
+          a.drop();
+          _moved1 = true;
+          b.drop();
+          return n;
+        }
+      } finally {
+        if (!_moved1) b.drop();
+      }
+    } finally {
+      if (!_moved0) a.drop();
     }
   }
 }

@@ -61,35 +61,41 @@ describe('resultset unit tests', () => {
   test('test_entity_id_ordering', () => {
     const resultset = EntityResultSet.empty();
     try {
+      let _moved0 = false;
       let write = resultset.write();
-      const entity1 = TestEntity.new(1, new HashMap<string, Value>());
       try {
-        const entity2 = TestEntity.new(2, new HashMap<string, Value>());
+        const entity1 = TestEntity.new(1, new HashMap<string, Value>());
         try {
-          const entity3 = TestEntity.new(3, new HashMap<string, Value>());
+          const entity2 = TestEntity.new(2, new HashMap<string, Value>());
           try {
-            write.add(entity3.clone());
-            write.add(entity1.clone());
-            write.add(entity2.clone());
-            write.drop();
-            const readGuard = resultset.read();
+            const entity3 = TestEntity.new(3, new HashMap<string, Value>());
             try {
-              const entities = readGuard.iterEntities();
-              expect(entities.length).toEqual(3);
-              expect(entities[0]._0).toEqual(entity1.id);
-              expect(entities[1]._0).toEqual(entity2.id);
-              expect(entities[2]._0).toEqual(entity3.id);
+              write.add(entity3.clone());
+              write.add(entity1.clone());
+              write.add(entity2.clone());
+              _moved0 = true;
+              write.drop();
+              const readGuard = resultset.read();
+              try {
+                const entities = readGuard.iterEntities();
+                expect(entities.length).toEqual(3);
+                expect(entities[0]._0).toEqual(entity1.id);
+                expect(entities[1]._0).toEqual(entity2.id);
+                expect(entities[2]._0).toEqual(entity3.id);
+              } finally {
+                readGuard.drop();
+              }
             } finally {
-              readGuard.drop();
+              entity3.drop();
             }
           } finally {
-            entity3.drop();
+            entity2.drop();
           }
         } finally {
-          entity2.drop();
+          entity1.drop();
         }
       } finally {
-        entity1.drop();
+        if (!_moved0) write.drop();
       }
     } finally {
       resultset.drop();
@@ -113,20 +119,26 @@ describe('resultset unit tests', () => {
           try {
             const keySpec = new KeySpec([new IndexKeyPart('name', null, new IndexDirection('Asc', {}), new ValueType('String', {}), new NullsOrder('Last', {}), null)]);
             resultset.orderBy(keySpec);
+            let _moved0 = false;
             let write = resultset.write();
-            write.add(entity2.clone());
-            write.add(entity3.clone());
-            write.add(entity1.clone());
-            write.drop();
-            const readGuard = resultset.read();
             try {
-              const entities = readGuard.iterEntities();
-              expect(entities.length).toEqual(3);
-              expect(entities[0]._0).toEqual(entity1.id);
-              expect(entities[1]._0).toEqual(entity2.id);
-              expect(entities[2]._0).toEqual(entity3.id);
+              write.add(entity2.clone());
+              write.add(entity3.clone());
+              write.add(entity1.clone());
+              _moved0 = true;
+              write.drop();
+              const readGuard = resultset.read();
+              try {
+                const entities = readGuard.iterEntities();
+                expect(entities.length).toEqual(3);
+                expect(entities[0]._0).toEqual(entity1.id);
+                expect(entities[1]._0).toEqual(entity2.id);
+                expect(entities[2]._0).toEqual(entity3.id);
+              } finally {
+                readGuard.drop();
+              }
             } finally {
-              readGuard.drop();
+              if (!_moved0) write.drop();
             }
           } finally {
             entity3.drop();
@@ -145,19 +157,25 @@ describe('resultset unit tests', () => {
   test('test_limit_functionality', () => {
     const resultset = EntityResultSet.empty();
     try {
+      let _moved0 = false;
       let write = resultset.write();
-      for (const i of range(0, 5)) {
-        let props = new HashMap();
-        props.insert('value', new Value('I32', { _0: (i | 0) }));
-        const entity = TestEntity.new(i, props);
-        write.add(entity);
+      try {
+        for (const i of range(0, 5)) {
+          let props = new HashMap();
+          props.insert('value', new Value('I32', { _0: (i | 0) }));
+          const entity = TestEntity.new(i, props);
+          write.add(entity);
+        }
+        _moved0 = true;
+        write.drop();
+        expect(resultset.len()).toEqual(5);
+        resultset.limit(3);
+        expect(resultset.len()).toEqual(3);
+        resultset.limit(null);
+        expect(resultset.len()).toEqual(3);
+      } finally {
+        if (!_moved0) write.drop();
       }
-      write.drop();
-      expect(resultset.len()).toEqual(5);
-      resultset.limit(3);
-      expect(resultset.len()).toEqual(3);
-      resultset.limit(null);
-      expect(resultset.len()).toEqual(3);
     } finally {
       resultset.drop();
     }
@@ -174,20 +192,26 @@ describe('resultset unit tests', () => {
         props_1.insert('active', new Value('Bool', { _0: false }));
         const entity2 = TestEntity.new(2, props_1);
         try {
+          let _moved0 = false;
           let write = resultset.write();
-          write.add(entity1.clone());
-          write.add(entity2.clone());
-          write.markAllDirty();
-          const removed = write.retainDirty((entity) => valueEquals(entity.value('active'), new Value('Bool', { _0: true })));
-          write.drop();
-          expect(removed.length).toEqual(1);
-          expect(removed[0]).toEqual(entity2.id);
-          expect(resultset.len()).toEqual(1);
-          const _t0 = resultset.read();
           try {
-            expect((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
+            write.add(entity1.clone());
+            write.add(entity2.clone());
+            write.markAllDirty();
+            const removed = write.retainDirty((entity) => valueEquals(entity.value('active'), new Value('Bool', { _0: true })));
+            _moved0 = true;
+            write.drop();
+            expect(removed.length).toEqual(1);
+            expect(removed[0]).toEqual(entity2.id);
+            expect(resultset.len()).toEqual(1);
+            const _t1 = resultset.read();
+            try {
+              expect((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
+            } finally {
+              _t1.drop();
+            }
           } finally {
-            _t0.drop();
+            if (!_moved0) write.drop();
           }
         } finally {
           entity2.drop();
@@ -206,11 +230,23 @@ describe('resultset unit tests', () => {
       (() => {
         let write = resultset.write();
         try {
+          let _moved0 = false;
           const entity1 = TestEntity.new(1, new HashMap<string, Value>());
-          const entity2 = TestEntity.new(2, new HashMap<string, Value>());
-          write.add(entity1);
-          write.add(entity2);
-          expect(write.iterEntities().length).toEqual(2);
+          try {
+            let _moved1 = false;
+            const entity2 = TestEntity.new(2, new HashMap<string, Value>());
+            try {
+              _moved0 = true;
+              write.add(entity1);
+              _moved1 = true;
+              write.add(entity2);
+              expect(write.iterEntities().length).toEqual(2);
+            } finally {
+              if (!_moved1) entity2.drop();
+            }
+          } finally {
+            if (!_moved0) entity1.drop();
+          }
         } finally {
           write.drop();
         }

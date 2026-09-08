@@ -15,61 +15,73 @@ export function look(t: Token): number {
 }
 
 export function shadowed(xs: Token[], replacement: Token[]): number {
-  const xs_1 = xs;
-  let total = 0;
-  const _seq0 = xs_1;
-  let _at1 = 0;
+  let _moved0 = false;
   try {
-    while (_at1 < _seq0.length) {
-      const item = _seq0[_at1++];
-      try {
-        total = checkedAdd(total, look(item), 'i32');
-      } finally {
-        item.drop();
+    const xs_1 = xs;
+    let total = 0;
+    const _seq1 = xs_1;
+    let _at2 = 0;
+    try {
+      while (_at2 < _seq1.length) {
+        const item = _seq1[_at2++];
+        try {
+          total = checkedAdd(total, look(item), 'i32');
+        } finally {
+          item.drop();
+        }
       }
+    } finally {
+      dropOwned(_seq1.slice(_at2));
+    }
+    _moved0 = true;
+    const xs_2 = replacement;
+    try {
+      const _built = unsupported('`collect` into `BinaryHeap<number>` is a `FromIterator` the port has no construction for');
+      return total;
+    } finally {
+      dropOwned(xs_2);
     }
   } finally {
-    dropOwned(_seq0.slice(_at1));
-  }
-  const xs_2 = replacement;
-  try {
-    const _built = unsupported('`collect` into `BinaryHeap<number>` is a `FromIterator` the port has no construction for');
-    return total;
-  } finally {
-    dropOwned(xs_2);
+    if (!_moved0) dropOwned(replacement);
   }
 }
 
 export function twice(a: Token[], b: Token[]): number {
-  let total = 0;
-  const _seq0 = a;
-  let _at1 = 0;
+  let _moved0 = false;
   try {
-    while (_at1 < _seq0.length) {
-      const rest = _seq0[_at1++];
-      try {
-        total = checkedAdd(total, look(rest), 'i32');
-      } finally {
-        rest.drop();
+    let total = 0;
+    const _seq1 = a;
+    let _at2 = 0;
+    try {
+      while (_at2 < _seq1.length) {
+        const rest = _seq1[_at2++];
+        try {
+          total = checkedAdd(total, look(rest), 'i32');
+        } finally {
+          rest.drop();
+        }
       }
+    } finally {
+      dropOwned(_seq1.slice(_at2));
     }
-  } finally {
-    dropOwned(_seq0.slice(_at1));
-  }
-  const _seq2 = b;
-  let _at3 = 0;
-  try {
-    while (_at3 < _seq2.length) {
-      const rest = _seq2[_at3++];
-      try {
-        total = checkedAdd(total, look(rest), 'i32');
-      } finally {
-        rest.drop();
+    _moved0 = true;
+    const _seq3 = b;
+    let _at4 = 0;
+    try {
+      while (_at4 < _seq3.length) {
+        const rest = _seq3[_at4++];
+        try {
+          total = checkedAdd(total, look(rest), 'i32');
+        } finally {
+          rest.drop();
+        }
       }
+    } finally {
+      dropOwned(_seq3.slice(_at4));
     }
+    return total;
   } finally {
-    dropOwned(_seq2.slice(_at3));
+    if (!_moved0) dropOwned(b);
   }
-  return total;
 }
 

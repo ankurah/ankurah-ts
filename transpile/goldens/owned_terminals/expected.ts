@@ -16,9 +16,15 @@ export class Token extends Drop {
 
 export function positionOf(tokens: Token[], want: number): number | null {
   return iterPositionOwned([...tokens], (token) => {
-    const hit = token._0 === want;
-    token.drop();
-    return hit;
+    let _moved0 = false;
+    try {
+      const hit = token._0 === want;
+      _moved0 = true;
+      token.drop();
+      return hit;
+    } finally {
+      if (!_moved0) token.drop();
+    }
   });
 }
 
@@ -36,8 +42,14 @@ export function smallest(tokens: Token[]): Token | null {
 
 export function firstKept(tokens: Token[]): Token | null {
   return iterReduceOwned([...tokens], (a, b) => {
-    b.drop();
-    return a;
+    let _moved0 = false;
+    try {
+      b.drop();
+      _moved0 = true;
+      return a;
+    } finally {
+      if (!_moved0) a.drop();
+    }
   });
 }
 

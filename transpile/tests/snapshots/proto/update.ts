@@ -394,7 +394,19 @@ export class UpdateContent extends Enum<UpdateContentV> {
       StateAndEvent: (v) => {
         const state = v._0;
         const events = v._1;
-        return [state, events] as any;
+        let _moved0 = false;
+        let _moved1 = false;
+        try {
+          try {
+            _moved0 = true;
+            _moved1 = true;
+            return [state, events];
+          } finally {
+            if (!_moved1) dropOwned(events);
+          }
+        } finally {
+          if (!_moved0) state.drop();
+        }
       },
     });
   }

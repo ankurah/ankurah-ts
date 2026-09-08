@@ -1335,9 +1335,9 @@ Who releases what:
 - **`takeRest()` hands the caller everything left, as an array, and CONSUMES the
   cursor**: the cursor is marked moved, and dropping it afterwards releases
   nothing, because it is holding nothing. This is what every method of
-  `Iterator` other than `next` is written through on a cursor taken BY VALUE, so
-  `walk.last()` is `iterLastOwned(walk.takeRest())` — the owned helper releases
-  what it walked past, and the cursor has nothing left to release.
+  `Iterator` that takes `self` BY VALUE is written through, so `walk.last()` is
+  `iterLastOwned(walk.takeRest())` — the owned helper releases what it walked
+  past, and the cursor has nothing left to release.
 - **`drainRest()` hands the caller everything left and does NOT consume the
   cursor.** `&mut I` is an `Iterator` by the blanket impl, so a body handed
   `values: &mut I` may write `values.collect()`, and Rust drains what the
@@ -1348,9 +1348,26 @@ Who releases what:
 - **A by-value cursor PARAMETER is the body's**, exactly as any other by-value
   parameter is, and the body drops it at the end unless it handed it on. What
   the walk never reached goes with it.
+- **The `&mut self` methods that stop early are the cursor's own**, one per
+  Rust name: `any`, `all`, `find`, `findMap`, `position`, `nth`, and `sizeHint`,
+  which reads and walks nowhere. Each advances exactly as far as Rust does and
+  leaves what it did not visit in the cursor, for the cursor's owner to drop.
+  Each also releases exactly what Rust drops as it walks: `find` and `nth` drop
+  the elements they step over, and `any`, `all`, `position` and `findMap` drop
+  nothing, because the closure is handed the element BY VALUE and is its owner.
+  The cursor is neither moved nor emptied, so the frame that owns it still drops
+  it. Written through the rest instead — `walk.takeRest().some(p)` — the cursor
+  was marked moved under the frame's own `walk.drop()` and everything after the
+  match was owned by nobody.
 - **A caller with a concrete sequence wraps it** — `new SeqCursor([...tokens])`
   — and the cursor owns the array from then on. A caller that already holds a
   cursor hands it over, and stops owning it.
+- **A cursor over BORROWED elements owns none of them.**
+  `I: Iterator<Item = &V>` walks values the caller still holds, so the cursor is
+  built in the borrowing mode — `new SeqCursor([...tokens], 'borrow')` — and its
+  `drop()` releases nothing, and neither does anything the walk discards. Built
+  in the owning mode, such a cursor released the caller's values and the
+  caller's own `drop()` on them aborted the run as a double drop.
 - **Every read of a cursor the frame has finished with is fatal.** `next`,
   `remaining`, `takeRest` and `drainRest` each assert the cursor is neither
   dropped nor moved. Without that, a second `takeRest()` answered `[]` and a
@@ -1367,6 +1384,8 @@ Who releases what:
 | `for v in walk.by_ref()` | the same over `walk.drainRest()` — and `walk` is still the caller's |
 | `drain(&mut walk)` | `drain(walk)`, whose body writes `values.drainRest()` |
 | `first(xs.into_iter())` | `first(new SeqCursor([...xs]))` — the callee owns the cursor |
+| `walk.any(p)` | `walk.any(p)` — the cursor stops at the match, keeps the tail, and is still the frame's |
+| `count_refs(xs.iter())` | `countRefs(new SeqCursor([...xs], 'borrow'))` — the walk points at the caller's values |
 
 ## The arithmetic helpers own nothing, and the two that can refuse say so
 

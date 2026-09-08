@@ -29,12 +29,14 @@ export function inALoop(b: Token[]): bigint {
   try {
     while (_at2 < _seq1.length) {
       const rest = _seq1[_at2++];
+      let _moved0 = false;
       try {
         const h = unsupported('`collect` into `BinaryHeap<bigint>` is a `FromIterator` the port has no construction for');
         const _ = h;
+        _moved0 = true;
         total = checkedAdd(total, take(rest), 'i64');
       } finally {
-        rest.drop();
+        if (!_moved0) rest.drop();
       }
     }
   } finally {
@@ -44,12 +46,14 @@ export function inALoop(b: Token[]): bigint {
 }
 
 export function aParameter(t: Token): bigint {
+  let _moved0 = false;
   try {
     const h = unsupported('`collect` into `BinaryHeap<bigint>` is a `FromIterator` the port has no construction for');
     const _ = h;
+    _moved0 = true;
     return take(t);
   } finally {
-    t.drop();
+    if (!_moved0) t.drop();
   }
 }
 

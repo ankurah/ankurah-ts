@@ -8,11 +8,17 @@ describe('sql_builder unit tests', () => {
   test('test_simple_equality', () => {
     const selection = parseSelection('name = \'Alice\'').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.new();
-      sql.selection(selection).unwrap();
-      const [sqlString, params] = sql.buildWhereClause();
-      expect(sqlString).toEqual('"name" = ?');
-      expect(params.length).toEqual(1);
+      try {
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, params] = sql.buildWhereClause();
+        expect(sqlString).toEqual('"name" = ?');
+        expect(params.length).toEqual(1);
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }
@@ -21,12 +27,18 @@ describe('sql_builder unit tests', () => {
   test('test_and_condition', () => {
     const selection = parseSelection('name = \'Alice\' AND age = 30').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.withFields(['id', 'name', 'age']);
-      sql.tableName('users');
-      sql.selection(selection).unwrap();
-      const [sqlString, params] = sql.build().unwrap();
-      expect(sqlString).toEqual('SELECT "id", "name", "age" FROM "users" WHERE "name" = ? AND "age" = ?');
-      expect(params.length).toEqual(2);
+      try {
+        sql.tableName('users');
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, params] = sql.build().unwrap();
+        expect(sqlString).toEqual('SELECT "id", "name", "age" FROM "users" WHERE "name" = ? AND "age" = ?');
+        expect(params.length).toEqual(2);
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }
@@ -35,10 +47,16 @@ describe('sql_builder unit tests', () => {
   test('test_json_path', () => {
     const selection = parseSelection('data.status = \'active\'').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.new();
-      sql.selection(selection).unwrap();
-      const [sqlString, ] = sql.buildWhereClause();
-      expect(sqlString).toEqual('json_extract("data", \'$.status\') = ?');
+      try {
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, ] = sql.buildWhereClause();
+        expect(sqlString).toEqual('json_extract("data", \'$.status\') = ?');
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }
@@ -47,10 +65,16 @@ describe('sql_builder unit tests', () => {
   test('test_json_nested_path', () => {
     const selection = parseSelection('data.user.name = \'Alice\'').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.new();
-      sql.selection(selection).unwrap();
-      const [sqlString, ] = sql.buildWhereClause();
-      expect(sqlString).toEqual('json_extract("data", \'$.user.name\') = ?');
+      try {
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, ] = sql.buildWhereClause();
+        expect(sqlString).toEqual('json_extract("data", \'$.user.name\') = ?');
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }
@@ -59,10 +83,16 @@ describe('sql_builder unit tests', () => {
   test('test_json_numeric_comparison', () => {
     const selection = parseSelection('data.count > 10').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.new();
-      sql.selection(selection).unwrap();
-      const [sqlString, ] = sql.buildWhereClause();
-      expect(sqlString).toEqual('json_extract("data", \'$.count\') > ?');
+      try {
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, ] = sql.buildWhereClause();
+        expect(sqlString).toEqual('json_extract("data", \'$.count\') > ?');
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }
@@ -71,11 +101,17 @@ describe('sql_builder unit tests', () => {
   test('test_in_operator', () => {
     const selection = parseSelection('name IN (\'Alice\', \'Bob\')').unwrap();
     try {
+      let _moved0 = false;
       let sql = SqlBuilder.new();
-      sql.selection(selection).unwrap();
-      const [sqlString, params] = sql.buildWhereClause();
-      expect(sqlString).toEqual('"name" IN (?, ?)');
-      expect(params.length).toEqual(2);
+      try {
+        sql.selection(selection).unwrap();
+        _moved0 = true;
+        const [sqlString, params] = sql.buildWhereClause();
+        expect(sqlString).toEqual('"name" IN (?, ?)');
+        expect(params.length).toEqual(2);
+      } finally {
+        if (!_moved0) sql.drop();
+      }
     } finally {
       selection.drop();
     }

@@ -120,16 +120,18 @@ impl Scan<'_> {
             syn::Expr::Tuple(tuple) => {
                 let elems: Vec<&syn::Expr> = tuple.elems.iter().collect();
                 for (index, elem) in elems.iter().enumerate() {
-                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
-                    self.walk(elem, at, out);
+                    let position = self.evaluating(at, &elems, index + 1);
+                    self.moved(elem, position, out);
+                    self.walk(elem, position, out);
                 }
             }
 
             syn::Expr::Array(array) => {
                 let elems: Vec<&syn::Expr> = array.elems.iter().collect();
                 for (index, elem) in elems.iter().enumerate() {
-                    self.moved(elem, self.evaluating(at, &elems, index + 1), out);
-                    self.walk(elem, at, out);
+                    let position = self.evaluating(at, &elems, index + 1);
+                    self.moved(elem, position, out);
+                    self.walk(elem, position, out);
                 }
             }
 

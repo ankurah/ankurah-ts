@@ -114,7 +114,8 @@ impl BodyTranslator<'_> {
             wrapper: false,
             sets: String::new(),
             payload: false,
-        droppable,
+            suspends: false,
+            droppable,
             flag,
         });
         name

@@ -35,12 +35,18 @@ export function maybeTokens(flag: boolean): Token[] | null {
 }
 
 export async function awaited(t: Token, f: Promise<number>): Promise<Result<[number, Token], number>> {
-  const _r0 = passr(t);
-  if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+  let _moved0 = false;
   try {
-    return Result.Ok([await f, _r0.unwrap()]);
+    _moved0 = true;
+    const _r1 = passr(t);
+    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+    try {
+      return Result.Ok([await f, _r1.unwrap()]);
+    } finally {
+      if (_r1 != null && !(_r1 as any).isMoved && !(_r1 as any).isDropped) dropOwned(_r1);
+    }
   } finally {
-    if (_r0 != null && !(_r0 as any).isMoved && !(_r0 as any).isDropped) dropOwned(_r0);
+    if (!_moved0) t.drop();
   }
 }
 

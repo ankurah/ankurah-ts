@@ -1,11 +1,11 @@
 // MIRRORS: ankurah/signals/src/signal/memo.rs
-import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, dropOwned } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, Invocable, dropOwned } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, ListenerGuard, Peek, Signal, With } from '../signal';
 
-export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Fn & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
+export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output extends Clone, Transform extends Invocable<[Input], Output> & Clone> extends Struct implements Signal, With<Output>, Get<Output>, Peek<Output>, Subscribe<Output> {
   source: Upstream;
   transform: Transform;
   cached: Arc<RwLock<Output | null>>;
@@ -20,17 +20,29 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   static new<Upstream, Input, Output, Transform>(source: Upstream, transform: Transform): Memo<Upstream, Input, Output, Transform> {
-    const cached = Arc.new(new RwLock(null));
-    const cachedRef = cached.clone();
-    const subscription = source.listen(Arc.new(new OwnedClosure([cachedRef], (_) => {
-      const _t0 = cachedRef.value.write();
+    let _moved0 = false;
+    try {
+      let _moved1 = false;
+      const cached = Arc.new(new RwLock(null));
       try {
-        _t0.value = null;
+        const cachedRef = cached.clone();
+        const subscription = source.listen(Arc.new(new OwnedClosure([cachedRef], (_) => {
+          const _t2 = cachedRef.value.write();
+          try {
+            _t2.value = null;
+          } finally {
+            _t2.drop();
+          }
+        })));
+        _moved0 = true;
+        _moved1 = true;
+        return new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
       } finally {
-        _t0.drop();
+        if (!_moved1) cached.drop();
       }
-    })));
-    return new Memo(source, transform, cached, subscription, undefined /* PhantomData */);
+    } finally {
+      if (!_moved0) dropOwned(transform);
+    }
   }
 
   withCached<R>(f: (arg0: Output) => R): R {
@@ -85,8 +97,14 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   with<R>(f: (arg0: Output) => R): R {
-    CurrentObserver.track(this.source);
-    return this.withCached(f);
+    let _moved0 = false;
+    try {
+      CurrentObserver.track(this.source);
+      _moved0 = true;
+      return this.withCached(f);
+    } finally {
+      if (!_moved0) dropOwned(f);
+    }
   }
 
   get(): Output {

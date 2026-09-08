@@ -56,9 +56,15 @@ export function borrow(entity: Entity): number {
 
 export function takeOne(pair: Pair): number {
   try {
+    let _moved0 = false;
     const one = pair.takeField('one');
-    const seen = borrow(pair.two);
-    return checkedAdd(consume(one), seen, 'usize');
+    try {
+      const seen = borrow(pair.two);
+      _moved0 = true;
+      return checkedAdd(consume(one), seen, 'usize');
+    } finally {
+      if (!_moved0) one.drop();
+    }
   } finally {
     pair.drop();
   }

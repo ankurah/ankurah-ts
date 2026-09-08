@@ -1,6 +1,8 @@
 //! TS code emission — emit structs, enums, traits, functions as TS text
 
+mod fields;
 mod generics;
+pub(crate) use generics::declared_params;
 use generics::{merge_bounds_into_generics, strip_generic_defaults};
 
 use std::collections::{HashMap, HashSet};
@@ -41,39 +43,9 @@ pub fn emit_struct(
 
     out.push_str(&format!("{}class {}{}{}{} {{\n", export, s.name, generics_decl, base, implements));
 
-    // Fields — Rust's "private" means module-private (same file), not class-private.
-    // Since types within the same Rust module routinely access each other's fields,
-    // we don't emit TS `private` — all fields are accessible (default public in TS classes).
-    // A public Rust field is `readonly` for external consumers, unless one of
-    // this type's own methods writes it: `fn drop(&mut self)` and every other
-    // `&mut self` body assigns through the receiver, and TypeScript refuses
-    // that on a `readonly` property.
-    for f in &s.fields {
-        if is_phantom_field(reg, f) { continue; }
-        if let Some(name) = &f.name {
-            if f.is_pub && !assigned.contains(name.as_str()) {
-                out.push_str(&format!("  readonly {}: {};\n", name, f.ts_ty(reg)));
-            } else {
-                out.push_str(&format!("  {}: {};\n", name, f.ts_ty(reg)));
-            }
-        }
-    }
-
-    // Constructor with field assignments (skip PhantomData fields)
-    let real_fields: Vec<&FieldInfo> = s.fields.iter().filter(|f| !is_phantom_field(reg, f)).collect();
-    if !real_fields.is_empty() {
-        out.push('\n');
-        let params: Vec<String> = real_fields.iter()
-            .filter_map(|f| f.name.as_ref().map(|n| format!("{}: {}", n, f.ts_ty(reg))))
-            .collect();
-        out.push_str(&format!("  constructor({}) {{\n    super();\n", params.join(", ")));
-        for f in &real_fields {
-            if let Some(name) = &f.name {
-                out.push_str(&format!("    this.{} = {};\n", name, name));
-            }
-        }
-        out.push_str("  }\n");
-    }
+    // The properties and the constructor, which agree about how each field
+    // is spelled because one function answers it (`emit/fields.rs`).
+    let real_fields = fields::emit_properties_and_constructor(out, reg, s, self_id, assigned);
 
     emit_owned_fields(out, reg, &real_fields);
 
@@ -290,7 +262,7 @@ pub fn emit_function(out: &mut String, f: &FnInfo) {
     };
 
     out.push_str(&format!("{}{}function {}{}({}): {} {{\n{}}}\n\n",
-        export, async_kw, crate::name_map::map_free_fn_name(&f.name), f.generics, params, ret, body));
+        export, async_kw, f.ts_name, f.generics, params, ret, body));
 }
 
 // ── Method emitters ─────────────────────────────────────────────────────

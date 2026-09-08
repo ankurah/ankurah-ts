@@ -156,48 +156,20 @@ pub fn guarded_release(name: &str) -> String {
 /// All three are looked for OUTSIDE string literals, because the emitted text
 /// carries the corpus's own strings and a `)` inside one is not a call that
 /// returned.
-fn may_leave_before_reading(body: &str, temp: &str) -> bool {
+fn may_leave_before_reading(body: &str, temp: &str, suspends: bool) -> bool {
     // W10: as a WHOLE identifier. A bare `find` made `_r1` a prefix of `_r12`,
     // so the wrapper's own first mention could be somebody else's name.
     let Some(at) = crate::body::refusal::mentions_at(body, temp) else { return true };
     let before = outside_strings(&body[..at]);
-    before.contains(')') || before.contains("throw") || an_await_has_run(&before)
+    // GG5: the SUSPENSION comes from the lowering, which knows which awaits run
+    // while the wrapper is in hand. Counted by bracket depth in the rendered
+    // text, `Result.Ok(await future + eat(_r0.unwrap()))` read as "the mention
+    // stands inside the awaited operand" — the call around the mention leaves
+    // an opening `(` — and a rejected promise left one `Result` and two
+    // `Token`s with nobody.
+    suspends || before.contains(')') || before.contains("throw")
 }
 
-/// Has an `await` in this text already SUSPENDED, so that a rejection leaves
-/// through it?
-///
-/// Not every `await` before the mention has: `return await (_r6.unwrap()
-/// .intoMatch(..))` awaits what the mention helps to build, so the mention is
-/// evaluated first and the await runs after it. What tells the two apart is
-/// whether the text between the `await` and the mention leaves any bracket
-/// open: an open one means the mention stands INSIDE the awaited operand.
-/// `[await future, _r0]` opens none, so that await has run and its rejection
-/// leaves the statement holding `_r0`.
-fn an_await_has_run(before: &str) -> bool {
-    let mut from = 0;
-    while let Some(at) = before[from..].find("await ") {
-        let after = from + at + "await ".len();
-        if open_brackets(&before[after..]) == 0 {
-            return true;
-        }
-        from = after;
-    }
-    false
-}
-
-/// How many brackets this text opens and does not close.
-fn open_brackets(text: &str) -> i32 {
-    let mut depth = 0i32;
-    for c in text.chars() {
-        match c {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-    }
-    depth.max(0)
-}
 
 /// The emitted text with every string literal's CONTENT taken out, so that a
 /// rule about what the code does is not answered by what the code prints.
@@ -232,6 +204,51 @@ fn outside_strings(text: &str) -> String {
     out
 }
 
+/// Where every `await` this statement writes finishes SUSPENDING — the end of
+/// its own operand — outside any closure.
+///
+/// X8/GG5/FF8: a `?` is hoisted ABOVE the statement, so its wrapper is live
+/// from the top of it; an `await` that suspends after the hoist and before the
+/// wrapper's first mention can reject and leave with nobody releasing what the
+/// wrapper holds. What tells those apart is where the await's OPERAND ends
+/// against where the `?` stands: `f.await + eat(pass(t)?)` finishes awaiting
+/// before the `?`, and `step(pass(n)?).await` finishes after it, because its
+/// operand is what the `?` helped to build. Counted as brackets in the rendered
+/// text instead, a call around the wrapper's first mention read as "the mention
+/// stands inside the awaited operand" and no guard was written at all (GG5).
+///
+/// A closure has its own prelude and its own hoists, so an `await` inside one
+/// suspends while nothing of this statement is in hand.
+pub fn suspensions_in(stmt: &syn::Stmt) -> Vec<(usize, usize)> {
+    let mut walk = Awaits::default();
+    syn::visit::Visit::visit_stmt(&mut walk, stmt);
+    walk.found
+}
+
+/// Does one of those suspensions happen BEFORE this `?` stands?
+pub fn suspends_before(at: &[(usize, usize)], question: &syn::Expr) -> bool {
+    let start = syn::spanned::Spanned::span(question).start();
+    at.iter().any(|end| *end < (start.line, start.column))
+}
+
+#[derive(Default)]
+struct Awaits {
+    found: Vec<(usize, usize)>,
+}
+
+impl syn::visit::Visit<'_> for Awaits {
+    fn visit_expr(&mut self, expr: &syn::Expr) {
+        if matches!(expr, syn::Expr::Closure(_)) {
+            return;
+        }
+        if let syn::Expr::Await(await_) = expr {
+            let end = syn::spanned::Spanned::span(&*await_.base).end();
+            self.found.push((end.line, end.column));
+        }
+        syn::visit::visit_expr(self, expr);
+    }
+}
+
 pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
     // W1/X1: a lift's flag says "the call this was lifted for took it", and
     // that is a claim about text the port actually WROTE. Where the call is a
@@ -262,7 +279,7 @@ pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
         let Some(temp) = hoist.temp.as_deref() else { return false };
         hoist.flag.is_some()
             && takes(index)
-            && (!hoist.payload || may_leave_before_reading(&below_of(index), temp))
+            && (!hoist.payload || may_leave_before_reading(&below_of(index), temp, hoist.suspends))
     };
     // Every lift that owes a release is consumed by the same call — the one the
     // statement's own text writes — so all their flags are set in one place,
@@ -288,7 +305,7 @@ pub fn hoisted(body: &str, hoists: &[Hoist]) -> String {
             (None, Some(temp)) if !takes(index) && (hoist.flag.is_some() || hoist.droppable) => {
                 wrap_release(&inner, temp)
             }
-            (None, Some(temp)) if hoist.wrapper && may_leave_before_reading(&inner, temp) => {
+            (None, Some(temp)) if hoist.wrapper && may_leave_before_reading(&inner, temp, hoist.suspends) => {
                 wrap_guarded(&inner, temp)
             }
             (None, Some(temp)) if hoist.released_if_unreached => wrap_guarded(&inner, temp),

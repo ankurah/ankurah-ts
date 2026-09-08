@@ -14,7 +14,7 @@ use crate::name_map;
 /// `FnOnce(A) -> R` as the port's `Invocable<[A], R>`, which is what a bound
 /// closure parameter really accepts: a plain function, or the `OwnedClosure`
 /// the emitter writes when the closure captured values with drop glue.
-pub(super) fn invocable_bound(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
+pub(crate) fn invocable_bound(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
     if !matches!(trait_name, "Fn" | "FnMut" | "FnOnce") {
         return None;
     }
@@ -28,6 +28,17 @@ pub(super) fn invocable_bound(trait_name: &str, bound: &syn::TraitBound) -> Opti
         syn::ReturnType::Default => "void".to_string(),
     };
     Some(format!("Invocable<[{}], {}>", inputs.join(", "), output))
+}
+
+/// The port's TypeScript for a bound it has one for, and nothing for the rest.
+///
+/// FF9: the ONE spelling, so that the same Rust bound reads the same whether it
+/// is written on a function's generics or merged into a class's from the impl
+/// blocks. Asked in two places it gave two answers, and the class's was a bare
+/// `Iterator` — a name TypeScript's own lib declares with two required
+/// arguments, so every use of the class was a type error.
+pub(crate) fn bound_spelling(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
+    invocable_bound(trait_name, bound).or_else(|| iterable_bound(trait_name, bound))
 }
 
 /// Is this bound one the port has a TypeScript spelling for, so that a `where`
@@ -58,7 +69,7 @@ pub(super) fn is_callable_bound(bound: &syn::TypeParamBound) -> bool {
 /// has to promise is that it can be spread. `Item` is written as an associated
 /// binding — `IntoIterator<Item = V>` — and where the source does not write one
 /// the element is unknown, which `Iterable<unknown>` says exactly.
-pub(super) fn iterable_bound(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
+pub(crate) fn iterable_bound(trait_name: &str, bound: &syn::TraitBound) -> Option<String> {
     if !matches!(trait_name, "IntoIterator" | "Iterator") {
         return None;
     }

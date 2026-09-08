@@ -5,6 +5,9 @@
 //! emission's business and are produced by `name_map`, never parsed back.
 
 use crate::ty::Ty;
+
+mod impl_info;
+pub use impl_info::ImplInfo;
 // A `use` item's shape lives beside the extraction that reads it.
 pub(crate) use crate::extract::UseInfo;
 
@@ -114,6 +117,13 @@ pub struct StructInfo {
     pub generics: String,
     /// Generic parameter names in declaration order, from syn.
     pub type_params: Vec<String>,
+    /// The generics as WRITTEN, kept whole so that the declaration's bounds can
+    /// be resolved in pass two the way an impl's are. `generics` above is the
+    /// rendered TypeScript and answers nothing about what a bound requires:
+    /// `Holder<I: Iterator<Item = Token>>` stores a CURSOR in its field, and
+    /// without the bound neither the field's spelling nor a construction site
+    /// could say so (FF4).
+    pub syn_generics: syn::Generics,
     /// `HashMap<K, V, S = RandomState>` — what a parameter falls back to when
     /// the use site leaves it unwritten, positionally alongside `type_params`.
     pub param_defaults: Vec<Option<syn::Type>>,
@@ -310,214 +320,6 @@ pub struct ParamInfo {
     pub rust_ty: Option<syn::Type>,
 }
 
-/// An `impl` block as written.
-///
-/// The trait it implements is kept as the `syn::Path` the source wrote and the
-/// generics as `syn::Generics`, so that the engine resolves both against the
-/// registry. The TypeScript spellings emission needs are derived from those
-/// below; nothing goes out as a string and comes back as a type.
-#[derive(Debug)]
-pub struct ImplInfo {
-    /// The class the emitted methods are written onto. Emission's business:
-    /// the engine reads `self_ty`.
-    pub target_type: String,
-    /// The type the impl is written for, as written.
-    pub self_ty: Option<syn::Type>,
-    /// Generic parameter names declared by the impl block.
-    pub type_params: Vec<String>,
-    /// `impl Deref for X` — the trait's path as written, with its arguments.
-    pub trait_path: Option<syn::Path>,
-    /// The impl block's generics, carrying both the inline bounds and the
-    /// `where` clause.
-    pub generics: syn::Generics,
-    /// `type Target = T;` — what this impl supplies for the trait's associated
-    /// types.
-    pub assoc_types: Vec<(String, syn::Type)>,
-    /// `const LIMIT: u32 = 5;` written INSIDE the impl, by name and span.
-    ///
-    /// G5: the port emits nothing for one, and `Self::LIMIT` then reads a
-    /// member no class declares — `undefined`, silently, wherever it is used.
-    /// Recorded here so the module that owns the file can say so.
-    pub const_items: Vec<(String, proc_macro2::Span)>,
-    pub methods: Vec<FnInfo>,
-}
-
-impl ImplInfo {
-    /// The trait's name as TypeScript writes it: the path's last segment.
-    pub fn trait_name(&self) -> Option<String> {
-        let path = self.trait_path.as_ref()?;
-        Some(path.segments.last()?.ident.to_string())
-    }
-
-    /// The trait's type arguments, in the TypeScript spelling emission puts in
-    /// an `implements` clause and in a disambiguated method name.
-    /// The trait's type arguments as WRITTEN PATHS: `From<bincode::Error>` is
-    /// `["bincode::Error"]`. `trait_type_args` gives the leaf alone, which is
-    /// what names the emitted method most of the time and is not enough where
-    /// two impls of one type convert from two `Error`s.
-    pub fn trait_type_arg_paths(&self) -> Vec<String> {
-        // Shares its spelling with `rust_source_path` below, because the
-        // conversion names are looked up by it from two places.
-        let Some(path) = &self.trait_path else {
-            return Vec::new();
-        };
-        let Some(segment) = path.segments.last() else {
-            return Vec::new();
-        };
-        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-            return Vec::new();
-        };
-        args.args
-            .iter()
-            .filter_map(|a| match a {
-                // The TypeScript spelling, with the module segments the source
-                // wrote in front of it. The spelling is what every other
-                // question about the type is asked of — is it a primitive, does
-                // it carry arguments — and the qualifier is the one thing that
-                // tells `bincode::Error` from `anyhow::Error`.
-                syn::GenericArgument::Type(ty) => {
-                    // A reference keeps its `&`. TypeScript erases it, so
-                    // `From<Literal>` and `From<&Literal>` spell one signature
-                    // — but they do NOT do the same thing with what they are
-                    // given, and reading them as one string made the owned
-                    // body run for a borrowed value and drop something its
-                    // caller still owned.
-                    let (inner, borrowed) = match ty {
-                        syn::Type::Reference(r) => (&*r.elem, "&"),
-                        other => (other, ""),
-                    };
-                    // The RUST leaf, not the TypeScript spelling. R8: a
-                    // contested conversion is qualified by the source type as
-                    // Rust wrote it, and `i64`, `i32` and `f64` are all
-                    // `number` — read through TypeScript, three impls looked
-                    // like one and two of them were never emitted. A leaf that
-                    // carries arguments has no name to give either way, so it
-                    // keeps the spelling that shows what they are.
-                    let spelled = match inner {
-                        syn::Type::Path(p)
-                            if p.path
-                                .segments
-                                .last()
-                                .is_some_and(|s| matches!(s.arguments, syn::PathArguments::None)) =>
-                        {
-                            p.path
-                                .segments
-                                .last()
-                                .map(|s| s.ident.to_string())
-                                .unwrap_or_default()
-                        }
-                        // A leaf that carries ARGUMENTS keeps its Rust spelling
-                        // too. Written in TypeScript, `Vec<u32>` and `Vec<i32>`
-                        // are both `number[]` — so two impls with two different
-                        // bodies were one identity, and the second was dropped
-                        // with no diagnostic. R8's rule is the Rust source, and
-                        // it reaches all the way down.
-                        other => rust_spelling(other),
-                    };
-                    let qualifier = match inner {
-                        syn::Type::Path(p) if p.path.segments.len() > 1 => p
-                            .path
-                            .segments
-                            .iter()
-                            .take(p.path.segments.len() - 1)
-                            .map(|s| s.ident.to_string())
-                            .collect::<Vec<_>>()
-                            .join("::"),
-                        _ => String::new(),
-                    };
-                    Some(if qualifier.is_empty() {
-                        format!("{}{}", borrowed, spelled)
-                    } else {
-                        format!("{}{}::{}", borrowed, qualifier, spelled)
-                    })
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn trait_type_args(&self) -> Vec<String> {
-        let Some(path) = &self.trait_path else {
-            return Vec::new();
-        };
-        let Some(segment) = path.segments.last() else {
-            return Vec::new();
-        };
-        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-            return Vec::new();
-        };
-        args.args
-            .iter()
-            .filter_map(|a| match a {
-                syn::GenericArgument::Type(ty) => Some(crate::name_map::map_type(ty)),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// The bounds on each generic parameter, inline and `where` alike, in the
-    /// TypeScript spelling emission writes into a class's type parameter list.
-    /// Marker traits carry no shape and are left out.
-    pub fn generic_bounds(&self) -> std::collections::HashMap<String, Vec<String>> {
-        let mut out: std::collections::HashMap<String, Vec<String>> = Default::default();
-        let mut add = |name: String, bound: &syn::TypeParamBound| {
-            let syn::TypeParamBound::Trait(trait_bound) = bound else {
-                return;
-            };
-            let Some(seg) = trait_bound.path.segments.last() else {
-                return;
-            };
-            let trait_name = seg.ident.to_string();
-            if matches!(trait_name.as_str(), "Send" | "Sync" | "Sized" | "") {
-                return;
-            }
-            let written = match &seg.arguments {
-                syn::PathArguments::AngleBracketed(args) => {
-                    let type_args: Vec<String> = args
-                        .args
-                        .iter()
-                        .filter_map(|a| match a {
-                            syn::GenericArgument::Type(ty) => Some(crate::name_map::map_type(ty)),
-                            _ => None,
-                        })
-                        .collect();
-                    if type_args.is_empty() {
-                        trait_name
-                    } else {
-                        format!("{}<{}>", trait_name, type_args.join(", "))
-                    }
-                }
-                _ => trait_name,
-            };
-            out.entry(name).or_default().push(written);
-        };
-
-        for param in &self.generics.params {
-            if let syn::GenericParam::Type(t) = param {
-                for bound in &t.bounds {
-                    add(t.ident.to_string(), bound);
-                }
-            }
-        }
-        if let Some(where_clause) = &self.generics.where_clause {
-            for pred in &where_clause.predicates {
-                let syn::WherePredicate::Type(pt) = pred else {
-                    continue;
-                };
-                let syn::Type::Path(p) = &pt.bounded_ty else {
-                    continue;
-                };
-                let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) else {
-                    continue;
-                };
-                for bound in &pt.bounds {
-                    add(name.clone(), bound);
-                }
-            }
-        }
-        out
-    }
-}
 
 
 #[derive(Debug)]
@@ -596,4 +398,4 @@ impl FieldInfo {
     }
 }
 
-pub use crate::name_map::rust_spelling::{rust_source_path, rust_spelling};
+pub use crate::name_map::rust_spelling::rust_source_path;

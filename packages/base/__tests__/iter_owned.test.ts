@@ -596,4 +596,135 @@ describe('SeqCursor', () => {
     cursor.drop();
     expect(Token.dropped).toEqual([]);
   });
+
+  // ── the ELEMENTS axis: whose values the walk hands out ──
+  //
+  // GG1: `I: Iterator<Item = &Token>` walks tokens the CALLER still holds, and
+  // a cursor built for one owns none of them. Given the owning mode, dropping
+  // such a cursor released the caller's tokens and the caller's own drop was
+  // then a double drop.
+
+  test('a borrowed cursor releases nothing when it is dropped', () => {
+    Token.dropped = [];
+    const held = [new Token(1), new Token(2)];
+    const cursor = new SeqCursor(held, 'borrow');
+    expect(cursor.next()?.n).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([]);
+    for (const token of held) token.drop();
+    expect(Token.dropped).toEqual([1, 2]);
+  });
+
+  test('a borrowed cursor drops nothing the walk discards', () => {
+    Token.dropped = [];
+    const held = [new Token(1), new Token(2), new Token(3)];
+    const cursor = new SeqCursor(held, 'borrow');
+    expect(cursor.find((t) => t.n === 3)?.n).toBe(3);
+    expect(Token.dropped).toEqual([]);
+    cursor.drop();
+    for (const token of held) token.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  // ── the REST axis: how far a `&mut self` method walks ──
+  //
+  // FF1: `any`, `all`, `find`, `find_map`, `position` and `nth` each take the
+  // iterator by REFERENCE and stop as soon as they can, so the caller still
+  // holds the cursor and everything the walk did not reach is still in it.
+
+  test('any stops at the first match and leaves the rest in the cursor', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    // The predicate is handed the element BY VALUE, so it is its owner.
+    expect(cursor.any((t) => { const hit = t.n === 2; t.drop(); return hit; })).toBe(true);
+    expect(Token.dropped).toEqual([1, 2]);
+    expect(cursor.remaining).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('all stops at the first failure and leaves the rest in the cursor', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    expect(cursor.all((t) => { const ok = t.n < 2; t.drop(); return ok; })).toBe(false);
+    expect(Token.dropped).toEqual([1, 2]);
+    expect(cursor.remaining).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('find drops what it rejected, hands back the match and keeps the tail', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    const found = cursor.find((t) => t.n === 2);
+    expect(found?.n).toBe(2);
+    // Rust's `find` drops each element its predicate rejects.
+    expect(Token.dropped).toEqual([1]);
+    expect(cursor.remaining).toBe(1);
+    found?.drop();
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('find_map owns every element it is handed', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    const answer = cursor.findMap((t) => { const n = t.n; t.drop(); return n === 2 ? n : null; });
+    expect(answer).toBe(2);
+    expect(Token.dropped).toEqual([1, 2]);
+    expect(cursor.remaining).toBe(1);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('position counts from where the cursor stands and answers null at the end', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    expect(cursor.next()?.drop()).toBe(undefined);
+    expect(cursor.position((t) => { const hit = t.n === 3; t.drop(); return hit; })).toBe(1);
+    expect(Token.dropped).toEqual([1, 2, 3]);
+    expect(cursor.remaining).toBe(0);
+    cursor.drop();
+  });
+
+  test('nth drops the elements it steps over and keeps what follows', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3), new Token(4)]);
+    const held = cursor.nth(2n);
+    expect(held?.n).toBe(3);
+    expect(Token.dropped).toEqual([1, 2]);
+    expect(cursor.remaining).toBe(1);
+    held?.drop();
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3, 4]);
+  });
+
+  test('nth past the end drops everything and answers null', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2)]);
+    expect(cursor.nth(5n)).toBe(null);
+    expect(Token.dropped).toEqual([1, 2]);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2]);
+  });
+
+  test('size_hint reads the cursor and consumes nothing', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    expect(cursor.sizeHint()).toEqual([3, 3]);
+    cursor.next()?.drop();
+    expect(cursor.sizeHint()).toEqual([2, 2]);
+    cursor.drop();
+    expect(Token.dropped).toEqual([1, 2, 3]);
+  });
+
+  test('a by-reference method leaves the cursor usable, and dropped once', () => {
+    Token.dropped = [];
+    const cursor = new SeqCursor([new Token(1), new Token(2), new Token(3)]);
+    expect(cursor.any((t) => { const hit = t.n === 1; t.drop(); return hit; })).toBe(true);
+    // Not moved: the owner still reads it, which `takeRest()` made fatal.
+    expect(cursor.next()?.n).toBe(2);
+    expect(cursor.remaining).toBe(1);
+    cursor.drop();
+  });
 });

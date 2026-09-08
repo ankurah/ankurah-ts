@@ -479,8 +479,26 @@ fn repeated(
 ) -> Option<String> {
     let text = tokens.to_string();
     let (value, count) = text.split_once(';')?;
-    let value: syn::Expr = syn::parse_str(value.trim()).ok()?;
-    let count: syn::Expr = syn::parse_str(count.trim()).ok()?;
+    // FF5: a NESTED `vec![v; n]` writes a `;` of its own, and splitting on the
+    // first one cuts the inner macro in half — `vec![vec![1i64; 2]; 3]` gave
+    // `vec ! [1i64` and `2] ; 3`, neither of which parses. Written through
+    // unchanged, the invocation left `[vec ! [1i64 ; 2] ; 3]` in the emitted
+    // file, which no JavaScript engine reads; the parse gate would catch a
+    // corpus site. Refused (R12) rather than emitted.
+    let (Ok(value), Ok(count)) =
+        (syn::parse_str::<syn::Expr>(value.trim()), syn::parse_str::<syn::Expr>(count.trim()))
+    else {
+        t.fallback(
+            at,
+            "this `vec![v; n]` writes a `;` inside its own value — a nested `vec!`, or a block \
+             — and the port reads the repeat form by splitting on the first one, so neither \
+             half is an expression it can translate",
+        );
+        return Some(crate::body::hole_text(
+            "this `vec![v; n]` writes a `;` inside its own value, and the port reads the repeat \
+             form by splitting on the first one",
+        ));
+    };
     // AA11: the repeated value stands at the sequence's ELEMENT type, exactly
     // as each value of the comma-list form does. Written without it,
     // `vec![true.into(); 2]` under a `Vec<Held>` lost the conversion and put
@@ -519,5 +537,15 @@ fn repeated(
              spelling for evaluate-once-then-clone",
         ));
     }
+    // GG9: Rust evaluates `vec![v; n]` as v, then n; `Array(n).fill(v)`
+    // evaluates n first, so `vec![value(); count()]` printed N where rustc
+    // prints VN. The value gets a name that stands above the statement, which
+    // both restores the order and evaluates it once.
+    let quiet = crate::body::flags::evaluates_quietly(&value)
+        || crate::body::flags::writes_a_literal(&element);
+    let element = match quiet {
+        true => element,
+        false => t.hoist_name(element),
+    };
     Some(format!("Array({}).fill({})", n, element))
 }

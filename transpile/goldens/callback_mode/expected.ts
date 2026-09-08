@@ -19,23 +19,41 @@ export function findOwning(tokens: Token[], want: Token): Token | null {
 }
 
 export function findBorrowing(tokens: Token[], want: Token): Token | null {
+  let _moved0 = false;
   let p = new OwnedClosure([want], (t: Token) => t._0 === want._0);
-  const found = iterFindOwned([...tokens], p, 'borrow');
-  p.drop();
-  return found;
+  try {
+    let _moved1 = false;
+    const found = iterFindOwned([...tokens], p, 'borrow');
+    try {
+      _moved0 = true;
+      p.drop();
+      _moved1 = true;
+      return found;
+    } finally {
+      if (!_moved1) dropOwned(found);
+    }
+  } finally {
+    if (!_moved0) p.drop();
+  }
 }
 
 export function readBorrowing(tokens: Token[], want: Token): number {
+  let _moved0 = false;
   const p = new OwnedClosure([want], (t: Token) => t._0 === want._0);
-  let hits = 0;
-  if ((iterFind([...tokens], p, 'borrow') != null)) {
-    hits = checkedAdd(hits, 1, 'i32');
+  try {
+    let hits = 0;
+    if ((iterFind([...tokens], p, 'borrow') != null)) {
+      hits = checkedAdd(hits, 1, 'i32');
+    }
+    if ((iterFind([...tokens], p, 'borrow') != null)) {
+      hits = checkedAdd(hits, 1, 'i32');
+    }
+    _moved0 = true;
+    p.drop();
+    return hits;
+  } finally {
+    if (!_moved0) p.drop();
   }
-  if ((iterFind([...tokens], p, 'borrow') != null)) {
-    hits = checkedAdd(hits, 1, 'i32');
-  }
-  p.drop();
-  return hits;
 }
 
 export function throughByRef(tokens: Token[]): Token | null {

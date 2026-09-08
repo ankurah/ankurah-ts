@@ -77,6 +77,13 @@ pub(crate) fn hoist_a_try(
         wrapper,
         sets,
         payload,
+        // GG5/FF8: every `await` this statement writes BELOW the hoist runs
+        // while the wrapper is in hand; one written inside the `?`'s own
+        // operand runs in the hoist's declaration, before the wrapper exists.
+        suspends: crate::ownership::hoisting::suspends_before(
+            &t.own.statement_awaits.borrow(),
+            &try_expr.expr,
+        ),
         droppable: false,
         flag,
     });
@@ -152,6 +159,33 @@ pub(crate) fn statement_that_refused(
     // hole()?)` sets it, because that hoist ran. Reading the value's own
     // `isMoved` answered "nobody has taken it" for every array, `Map` and `Set`
     // in the port and dropped the contents twice.
+    // HH1: a name the FRAME already carries a flag for is not in `owed` — its
+    // release is written by the frame, under that flag — but the flag still has
+    // to be SET where the transfer is, and a refused statement never reaches
+    // the ordinary `flag_sets`. `(count(rest)?, hole()?)` declared a flag for
+    // `rest`, set it nowhere, and the frame's guard was then dropped as a flag
+    // nothing sets: `dropOwned(rest)` ran on top of the `count` that had taken
+    // it.
+    for site in ownership::Scan::new(t).shallow(stmt) {
+        let Some(flag) = t.flag_for(&site.name) else { continue };
+        if owed.iter().any(|release| release.name == site.name) {
+            continue;
+        }
+        let Some(hoist) = prelude
+            .iter_mut()
+            .find(|hoist| mentions(&hoist.declaration, &site.name))
+        else {
+            continue;
+        };
+        if crate::body::holds_a_hole(&hoist.declaration) {
+            continue;
+        }
+        let at = hoist.declaration.find('\n').map_or(hoist.declaration.len(), |i| i + 1);
+        let set = format!("{} = true;\n", flag);
+        if !hoist.declaration.contains(&set) {
+            hoist.declaration.insert_str(at, &set);
+        }
+    }
     let mut declarations = String::new();
     let mut after = String::new();
     for release in &owed {

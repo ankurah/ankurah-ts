@@ -103,6 +103,19 @@ ruleTester.run('weakref-deref-null-check', rule, {
         }
       }
     `,
+    // GG10: a `let` the body assigns to afterwards is not the instance any
+    // more, so the field it reads is not this class's `WeakRef` field and the
+    // report was about a receiver nothing here can see.
+    `
+      class Holder {
+        private ref: WeakRef<Target>;
+        read(other: Other) {
+          let self = this;
+          self = other;
+          return self.ref.deref().name;
+        }
+      }
+    `,
   ],
   invalid: [
     // Direct property access on deref without null check
@@ -195,6 +208,21 @@ ruleTester.run('weakref-deref-null-check', rule, {
         import { WeakRef as Ref } from './shim';
         const held = new Ref(target);
         const value = held.deref().name;
+      `,
+      errors: [{ messageId: 'directPropertyAccess' }],
+    },
+    // GG10: an alias of an alias reads the same instance, and asking only
+    // whether the initialiser is a literal `this` missed it.
+    {
+      code: `
+        class Holder {
+          private ref: WeakRef<Target>;
+          read() {
+            const first = this;
+            const second = first;
+            return second.ref.deref().name;
+          }
+        }
       `,
       errors: [{ messageId: 'directPropertyAccess' }],
     },

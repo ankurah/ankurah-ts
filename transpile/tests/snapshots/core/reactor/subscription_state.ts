@@ -322,11 +322,17 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
   }
 
   sendUpdate(items: ReactorUpdateItem<E, Ev>[]): void {
-    const state = this.deref().state.lock();
+    let _moved0 = false;
     try {
-      state.value.broadcast.send(new ReactorUpdate(items));
+      const state = this.deref().state.lock();
+      try {
+        _moved0 = true;
+        state.value.broadcast.send(new ReactorUpdate(items));
+      } finally {
+        state.drop();
+      }
     } finally {
-      state.drop();
+      if (!_moved0) dropOwned(items);
     }
   }
 
@@ -352,112 +358,124 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     try {
       try {
         let watcherChanges = [];
+        let _moved0 = false;
         let items = IndexMap.new();
-        let stateGuard = this.deref().state.lock();
-        const state = stateGuard.value;
         try {
-          for (const queryCandidate of candidates.queryIter()) {
+          let _moved1 = false;
+          let stateGuard = this.deref().state.lock();
+          try {
+            const state = stateGuard.value;
             try {
-              const queryId = queryCandidate.queryId;
-              const _m1 = (() => {
-                const _v1 = state.queries.get(queryId);
-                if (_v1 != null) {
-                  const qs = _v1;
-                  if (!qs.paused) {
-                    return qs;
+              for (const queryCandidate of candidates.queryIter()) {
+                try {
+                  const queryId = queryCandidate.queryId;
+                  const _m3 = (() => {
+                    const _v1 = state.queries.get(queryId);
+                    if (_v1 != null) {
+                      const qs = _v1;
+                      if (!qs.paused) {
+                        return qs;
+                      }
+                    }
+                    {
+                      return { $jump: 'continue' };
+                    }
+                  })();
+                  if ((_m3 as any)?.$jump === 'continue') continue;
+                  const queryState = (_m3 as any);
+                  const selection = queryState.selection.asRef();
+                  tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
+                  for (const change of queryCandidate.iter()) {
+                    const entity = change.entity();
+                    const entityId = AbstractEntity.id(entity);
+                    tracing.debug(`Subscription ${this.id()} evaluating entity ${entityId} for query ${queryId}`);
+                    const matches = evaluatePredicate(entity, selection.predicate).unwrapOr(false);
+                    const didMatch = queryState.resultset.containsKey(entityId);
+                    const membershipChange = (() => {
+                      const _v3 = [didMatch, matches];
+                      if ((_v3[0] === false) && (_v3[1] === true)) {
+                        {
+                          const entityClone = entity.clone();
+                          queryState.resultset.write().add(entityClone.clone());
+                          state.entities.set(entityId, entityClone);
+                          watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
+                          return new MembershipChange('Add', {});
+                        }
+                      } else if ((_v3[0] === true) && (_v3[1] === false)) {
+                        {
+                          queryState.resultset.write().remove(entityId);
+                          watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
+                          return new MembershipChange('Remove', {});
+                        }
+                      } else {
+                        {
+                          watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
+                          return null;
+                        }
+                      }
+                    })();
+                    const entitySubscribed = state.entitySubscriptions.has(entityId);
+                    if (matches || didMatch || entitySubscribed) {
+                      const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                      {
+                        const _v4 = membershipChange;
+                        if (_v4 != null) {
+                          const mc = _v4;
+                          item.predicateRelevance.push([queryId, mc]);
+                        }
+                      }
+                    }
                   }
+                } finally {
+                  queryCandidate.drop();
                 }
-                {
-                  return { $jump: 'continue' };
-                }
-              })();
-              if ((_m1 as any)?.$jump === 'continue') continue;
-              const queryState = (_m1 as any);
-              const selection = queryState.selection.asRef();
-              tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
-              for (const change of queryCandidate.iter()) {
+              }
+              for (const change of candidates.entityIter()) {
                 const entity = change.entity();
                 const entityId = AbstractEntity.id(entity);
-                tracing.debug(`Subscription ${this.id()} evaluating entity ${entityId} for query ${queryId}`);
-                const matches = evaluatePredicate(entity, selection.predicate).unwrapOr(false);
-                const didMatch = queryState.resultset.containsKey(entityId);
-                const membershipChange = (() => {
-                  const _v3 = [didMatch, matches];
-                  if ((_v3[0] === false) && (_v3[1] === true)) {
-                    {
-                      const entityClone = entity.clone();
-                      queryState.resultset.write().add(entityClone.clone());
-                      state.entities.set(entityId, entityClone);
-                      watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
-                      return new MembershipChange('Add', {});
-                    }
-                  } else if ((_v3[0] === true) && (_v3[1] === false)) {
-                    {
-                      queryState.resultset.write().remove(entityId);
-                      watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
-                      return new MembershipChange('Remove', {});
-                    }
-                  } else {
-                    {
-                      watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
-                      return null;
-                    }
-                  }
-                })();
-                const entitySubscribed = state.entitySubscriptions.has(entityId);
-                if (matches || didMatch || entitySubscribed) {
-                  const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
-                  {
-                    const _v4 = membershipChange;
-                    if (_v4 != null) {
-                      const mc = _v4;
-                      item.predicateRelevance.push([queryId, mc]);
-                    }
-                  }
+                if (state.entitySubscriptions.has(entityId)) {
+                  items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
                 }
               }
-            } finally {
-              queryCandidate.drop();
-            }
-          }
-          for (const change of candidates.entityIter()) {
-            const entity = change.entity();
-            const entityId = AbstractEntity.id(entity);
-            if (state.entitySubscriptions.has(entityId)) {
-              items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
-            }
-          }
-          let _moved2 = false;
-          const gapsToFill = this.collectGapsToFillInternal(state);
-          try {
-            let _moved3 = false;
-            const broadcast = state.broadcast.clone();
-            try {
-              stateGuard.drop();
               let _moved4 = false;
-              const updateItems = items.intoValues();
+              const gapsToFill = this.collectGapsToFillInternal(state);
               try {
-                if (!(gapsToFill.length === 0)) {
-                  _moved4 = true;
-                  _moved2 = true;
-                  _moved3 = true;
-                  spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
-                } else if (!(updateItems.length === 0)) {
-                  _moved4 = true;
-                  broadcast.send(new ReactorUpdate(updateItems));
+                let _moved5 = false;
+                const broadcast = state.broadcast.clone();
+                try {
+                  _moved1 = true;
+                  stateGuard.drop();
+                  _moved0 = true;
+                  let _moved6 = false;
+                  const updateItems = items.intoValues();
+                  try {
+                    if (!(gapsToFill.length === 0)) {
+                      _moved6 = true;
+                      _moved4 = true;
+                      _moved5 = true;
+                      spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
+                    } else if (!(updateItems.length === 0)) {
+                      _moved6 = true;
+                      broadcast.send(new ReactorUpdate(updateItems));
+                    }
+                    return watcherChanges;
+                  } finally {
+                    if (!_moved6) dropOwned(updateItems);
+                  }
+                } finally {
+                  if (!_moved5) broadcast.drop();
                 }
-                return watcherChanges;
               } finally {
-                if (!_moved4) dropOwned(updateItems);
+                if (!_moved4) dropOwned(gapsToFill);
               }
             } finally {
-              if (!_moved3) broadcast.drop();
+              state.drop();
             }
           } finally {
-            if (!_moved2) dropOwned(gapsToFill);
+            if (!_moved1) stateGuard.drop();
           }
         } finally {
-          state.drop();
+          if (!_moved0) dropOwned(items);
         }
       } finally {
         candidates.drop();
@@ -573,42 +591,48 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
 
   async fillGapsAndNotify(items: ReactorUpdateItem<E, Ev>[], gapsToFill: GapFillData<E>[], broadcast: Broadcast<ReactorUpdate<E, Ev>>): Promise<void> {
     let _moved0 = false;
+    let _moved1 = false;
     try {
       try {
         try {
-          for (const [, , , , resultset, , ] of gapsToFill) {
-            resultset.clearGapDirty();
-          }
-          const gapFillFutures = [...gapsToFill].map(([queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize]) => {
-            return Subscription.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
-          });
-          const gapResults = await future.joinAll(gapFillFutures);
-          const _seq2 = gapResults;
-          let _at3 = 0;
           try {
-            while (_at3 < _seq2.length) {
-              const [queryId, gapItems] = _seq2[_at3++];
-              let _moved1 = false;
-              try {
-                if (!(gapItems.length === 0)) {
-                  const entityIds = [...gapItems].map((item) => AbstractEntity.id(item.entity));
-                  this.addEntityWatchers(queryId, [...entityIds]);
-                  _moved1 = true;
-                  items.push(...gapItems);
+            for (const [, , , , resultset, , ] of gapsToFill) {
+              resultset.clearGapDirty();
+            }
+            _moved1 = true;
+            const gapFillFutures = [...gapsToFill].map(([queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize]) => {
+              return Subscription.processGapFill(queryId, gapFetcher, collectionId, selection, resultset, lastEntity, gapSize);
+            });
+            const gapResults = await future.joinAll(gapFillFutures);
+            const _seq3 = gapResults;
+            let _at4 = 0;
+            try {
+              while (_at4 < _seq3.length) {
+                const [queryId, gapItems] = _seq3[_at4++];
+                let _moved2 = false;
+                try {
+                  if (!(gapItems.length === 0)) {
+                    const entityIds = [...gapItems].map((item) => AbstractEntity.id(item.entity));
+                    this.addEntityWatchers(queryId, [...entityIds]);
+                    _moved2 = true;
+                    items.push(...gapItems);
+                  }
+                } finally {
+                  if (!_moved2) dropOwned(gapItems);
                 }
-              } finally {
-                if (!_moved1) dropOwned(gapItems);
               }
+            } finally {
+              dropOwned(_seq3.slice(_at4));
+            }
+            if (!(items.length === 0)) {
+              _moved0 = true;
+              broadcast.send(new ReactorUpdate(items));
             }
           } finally {
-            dropOwned(_seq2.slice(_at3));
-          }
-          if (!(items.length === 0)) {
-            _moved0 = true;
-            broadcast.send(new ReactorUpdate(items));
+            broadcast.drop();
           }
         } finally {
-          broadcast.drop();
+          if (!_moved1) dropOwned(gapsToFill);
         }
       } finally {
         if (!_moved0) dropOwned(items);
@@ -724,12 +748,18 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         return state.value.queries.entry(queryId).match({
           Vacant: (_v) => {
             const v = _v._0;
+            let _moved1 = false;
             const resultset = EntityResultSet.empty();
-            const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
-            const _b1 = resultset.clone();
-            _moved0 = true;
-            v.insert(new QueryState(collectionId, null, gapFetcher, false, _b1, 0));
-            return resultset;
+            try {
+              const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+              const _b2 = resultset.clone();
+              _moved0 = true;
+              v.insert(new QueryState(collectionId, null, gapFetcher, false, _b2, 0));
+              _moved1 = true;
+              return resultset;
+            } finally {
+              if (!_moved1) resultset.drop();
+            }
           },
           Occupied: (v) => {
             const o = v._0;

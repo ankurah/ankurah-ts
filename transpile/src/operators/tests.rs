@@ -163,7 +163,11 @@ fn the_operands_are_taken_even_when_the_right_one_is_a_later_local() {
          }",
         "twice",
     );
-    assert!(!ts.contains("a.drop()"), "{}", ts);
+    // HH2: `let b = Weight { label: String::from("x"), .. }` can throw, and `a`
+    // is a parameter the frame already owned when it did — so `a` is released
+    // on that path and on no other. `b` is bound BY the throwing statement and
+    // has no such path, so nothing releases it.
+    assert!(ts.contains("if (!_moved0) a.drop();"), "{}", ts);
     assert!(!ts.contains("b.drop()"), "{}", ts);
     // What the operator answered is the block's, and the block releases it.
     assert!(ts.contains("total.drop()"), "{}", ts);
@@ -293,7 +297,12 @@ fn a_heterogeneous_operator_moves_its_left_operand_even_from_a_later_local() {
     )]);
     let ts = f.translated_method("lib.rs", "local");
     assert!(ts.contains("left.add(right)"), "{}", ts);
-    assert!(!ts.contains("left.drop()"), "{}", ts);
+    // HH2: the `let` above the operator builds a value, and building one is
+    // what `evaluates_quietly` calls a path that can leave — the same answer
+    // the within-a-statement rule has always given for an operand. So `left`,
+    // which the frame owned before that statement, is released on that path
+    // and on no other.
+    assert!(ts.contains("if (!_moved0) left.drop();"), "{}", ts);
 }
 
 /// A generic impl says what it answers in terms of its own parameters, and the

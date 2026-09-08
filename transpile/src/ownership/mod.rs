@@ -247,6 +247,11 @@ pub struct Hoist {
     /// returns with the first one's payload still in hand, and Rust drops that
     /// temporary on the way out.
     pub payload: bool,
+    /// GG5/FF8: does the statement this hoist stands above SUSPEND while the
+    /// wrapper is still in hand? Read from the LOWERING when the hoist is
+    /// built, because which awaits those are is a fact about the syntax and was
+    /// being counted in brackets of rendered text.
+    pub suspends: bool,
     /// The flag that says whether the call this temporary was lifted FOR took
     /// it, for a lift that owes a release (N3).
     ///

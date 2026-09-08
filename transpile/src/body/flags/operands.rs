@@ -64,7 +64,25 @@ pub(crate) fn writes_a_literal(text: &str) -> bool {
     let text = text.trim();
     matches!(text, "[]" | "null" | "undefined" | "true" | "false" | "{}")
         || text.parse::<f64>().is_ok()
+        || quotes_a_string(text)
         || names_a_value(text)
+}
+
+/// Is this text a single quoted STRING — characters, and nothing that runs?
+///
+/// GG9's shape needed it: `String::new()` is a call in Rust and `''` in the
+/// port, so `vec![String::new(); 2]` was given a name it had no use for. The
+/// quotes have to enclose the WHOLE text and hold no quote of their own, so
+/// `'a' + f()` and `f('x')` are not one.
+fn quotes_a_string(text: &str) -> bool {
+    let mut chars = text.chars();
+    let (Some(open), Some(close)) = (chars.next(), text.chars().last()) else {
+        return false;
+    };
+    matches!(open, '\'' | '"')
+        && close == open
+        && text.len() >= 2
+        && !text[1..text.len() - 1].contains(open)
 }
 
 /// Is this text a bare JavaScript identifier — a name and nothing else?

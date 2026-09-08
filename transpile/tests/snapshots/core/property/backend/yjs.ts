@@ -207,17 +207,23 @@ export class YrsBackend extends Struct implements PropertyBackend {
   }
 
   listenField(fieldName: PropertyName, listener: Listener): ListenerGuard {
-    let fieldBroadcasts = this.fieldBroadcasts.lock();
+    let _moved0 = false;
     try {
-      const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
-      const _t0 = broadcast.value.reference();
+      let fieldBroadcasts = this.fieldBroadcasts.lock();
       try {
-        return ListenerGuard.from(_t0.listen(listener));
+        const broadcast = fieldBroadcasts.value.entry(fieldName).orDefault(() => Broadcast.default());
+        const _t1 = broadcast.value.reference();
+        try {
+          _moved0 = true;
+          return ListenerGuard.from(_t1.listen(listener));
+        } finally {
+          _t1.drop();
+        }
       } finally {
-        _t0.drop();
+        fieldBroadcasts.drop();
       }
     } finally {
-      fieldBroadcasts.drop();
+      if (!_moved0) listener.drop();
     }
   }
 

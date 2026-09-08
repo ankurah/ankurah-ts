@@ -157,14 +157,12 @@ impl<'c> Scan<'c> {
     /// declaration in scope where it stands.
     pub fn block_indexed(&self, stmts: &[syn::Stmt]) -> Vec<(usize, Site)> {
         let mut out = Vec::new();
-        let mut reachable = Where::Straight;
+        let mut walk = Throws::new(Where::Straight);
         for (index, stmt) in stmts.iter().enumerate() {
             let mut sites = Vec::new();
-            self.stmt(stmt, reachable, &mut sites);
-            out.extend(sites.into_iter().map(|site| (index, site)));
-            if reachable == Where::Straight && leaves_the_block(stmt) {
-                reachable = Where::Branch;
-            }
+            self.stmt(stmt, walk.reachable, &mut sites);
+            out.extend(sites.into_iter().map(|site| (index, walk.conditional(index, site))));
+            walk.after(index, stmt);
         }
         out
     }
@@ -185,12 +183,12 @@ impl<'c> Scan<'c> {
     /// flag a branch would get — otherwise the early exit leaves the value with
     /// nothing to release it.
     pub(super) fn statements(&self, stmts: &[syn::Stmt], at: Where, out: &mut Vec<Site>) {
-        let mut reachable = at;
-        for stmt in stmts {
-            self.stmt(stmt, reachable, out);
-            if reachable == Where::Straight && leaves_the_block(stmt) {
-                reachable = Where::Branch;
-            }
+        let mut walk = Throws::new(at);
+        for (index, stmt) in stmts.iter().enumerate() {
+            let mut sites = Vec::new();
+            self.stmt(stmt, walk.reachable, &mut sites);
+            out.extend(sites.into_iter().map(|site| walk.conditional(index, site)));
+            walk.after(index, stmt);
         }
     }
 
@@ -454,13 +452,100 @@ pub(crate) fn local_name(path: &syn::ExprPath) -> Option<String> {
 }
 
 
+/// What a run of statements has learned about the ones above the current
+/// statement: where the block still is, which statements can THROW, and where
+/// each name was bound.
+///
+/// HH2: a statement that throws leaves the block, so a move below it is
+/// conditional — but only for a value the block ALREADY owned when it threw.
+/// `let a = Owned::new(1); return take(a);` throws in the statement that BINDS
+/// `a`, and on that path there is no `a` to release: written as conditional it
+/// grew a flag and a `finally` that guard nothing. So the promotion asks both
+/// questions, the throw's position and the binding's.
+struct Throws {
+    reachable: Where,
+    /// The statements above this one that can throw, by index.
+    throwing: Vec<usize>,
+    /// Where each name this block binds was bound. A name that is not here was
+    /// bound above the block — a parameter, or an outer local — and is owned
+    /// before any statement of it runs.
+    bound: std::collections::HashMap<String, usize>,
+}
+
+impl Throws {
+    fn new(at: Where) -> Self {
+        Throws { reachable: at, throwing: Vec::new(), bound: std::collections::HashMap::new() }
+    }
+
+    /// The site as it stands, or under a BRANCH because something above it that
+    /// the block had already given a value to can throw.
+    fn conditional(&self, index: usize, site: Site) -> Site {
+        if site.at != Where::Straight {
+            return site;
+        }
+        let owned_before = |throw: &usize| match self.bound.get(&site.name) {
+            Some(bound) => bound < throw,
+            None => true,
+        };
+        match self.throwing.iter().any(|k| *k < index && owned_before(k)) {
+            true => Site { at: Where::Branch, ..site },
+            false => site,
+        }
+    }
+
+    /// What this statement leaves behind for the ones below it.
+    fn after(&mut self, index: usize, stmt: &syn::Stmt) {
+        if let syn::Stmt::Local(local) = stmt {
+            for name in crate::body::pattern_names(&local.pat) {
+                self.bound.insert(name, index);
+            }
+        }
+        if throws(stmt) {
+            self.throwing.push(index);
+        }
+        if self.reachable == Where::Straight && exits_the_block(stmt) {
+            self.reachable = Where::Branch;
+        }
+    }
+}
+
 /// Can this statement leave the block it stands in, before the statements below
 /// it run?
 ///
 /// A `return` and a `?` leave the function; a `break` and a `continue` leave the
 /// enclosing loop, which is only this block when the loop is not inside the
 /// statement itself. A closure's `return` leaves the closure and is not one.
-fn leaves_the_block(stmt: &syn::Stmt) -> bool {
+///
+/// HH2: and a statement that THROWS leaves the block too. `let _n =
+/// o.unwrap(); [a, b]` moves `a` and `b` on every path the source has, so the
+/// disposition was `Moved` and the block wrote no release at all — and a `None`
+/// left both of them handed to nobody, which Rust drops while it unwinds. It is
+/// the same rule DD4 already keeps INSIDE one statement (a move with something
+/// before it that can throw is under a branch), asked across the statements of
+/// a block: the move below becomes conditional, so the block declares a flag
+/// for it, releases it in the `finally` it already writes for its owned locals,
+/// and the flag says the move happened.
+/// Can EVALUATING this statement throw, so that the statements below it do not
+/// run?
+///
+/// Asked of what the statement evaluates in Rust — the same `evaluates_quietly`
+/// the within-a-statement rule asks of an operand — because the two halves have
+/// to agree about what "can throw" means. A `let` with no initialiser, an item,
+/// and a statement built only out of names and literals are quiet; everything
+/// else can leave.
+fn throws(stmt: &syn::Stmt) -> bool {
+    let expr = match stmt {
+        syn::Stmt::Expr(expr, _) => expr,
+        syn::Stmt::Local(local) => match local.init.as_ref() {
+            Some(init) => &init.expr,
+            None => return false,
+        },
+        syn::Stmt::Item(_) | syn::Stmt::Macro(_) => return false,
+    };
+    !crate::body::flags::evaluates_quietly(expr)
+}
+
+fn exits_the_block(stmt: &syn::Stmt) -> bool {
     struct Exits {
         found: bool,
     }

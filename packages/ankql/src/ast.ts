@@ -992,23 +992,29 @@ export class Predicate extends Enum<PredicateV> {
   }
 
   populate<I extends Iterable<V>, V, E>(values: I, _convV: (value: V) => Result<Expr, E>): Result<Predicate, ParseError> {
-    let valuesIter = new SeqCursor([...values]);
+    let _moved0 = false;
     try {
-      const _r0 = this.populateRecursive(valuesIter, _convV);
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-      let _moved1 = false;
-      const result = _r0.unwrap();
+      let valuesIter = new SeqCursor([...values]);
       try {
-        if ((valuesIter.next() != null)) {
-          return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
+        _moved0 = true;
+        const _r1 = this.populateRecursive(valuesIter, _convV);
+        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
+        let _moved2 = false;
+        const result = _r1.unwrap();
+        try {
+          if ((valuesIter.next() != null)) {
+            return Result.Err(new ParseError('InvalidPredicate', { _0: 'Too many values provided for placeholders' }));
+          }
+          _moved2 = true;
+          return Result.Ok(result);
+        } finally {
+          if (!_moved2) result.drop();
         }
-        _moved1 = true;
-        return Result.Ok(result);
       } finally {
-        if (!_moved1) result.drop();
+        valuesIter.drop();
       }
     } finally {
-      valuesIter.drop();
+      if (!_moved0) this.drop();
     }
   }
 

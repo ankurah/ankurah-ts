@@ -139,29 +139,35 @@ export function weigh(input: Weight, floor: number): number {
 }
 
 export function tally(input: Source, token: Token, floor: number | null): number {
+  let _moved0 = false;
   try {
-    const answer = (() => {
-      if (input.is('Given')) {
-        const { _0: n } = input.value;
-        if (n > 0) {
-          return n;
+    try {
+      const answer = (() => {
+        if (input.is('Given')) {
+          const { _0: n } = input.value;
+          if (n > 0) {
+            return n;
+          }
         }
-      }
-      if (input.is('Given')) {
-        if (floor != null) {
-          const n = floor;
-          return n;
-        } else {
+        if (input.is('Given')) {
+          if (floor != null) {
+            const n = floor;
+            return n;
+          } else {
+            return 0;
+          }
+        }
+        {
           return 0;
         }
-      }
-      {
-        return 0;
-      }
-    })();
-    const total = checkedAdd(answer, token.n, 'i32');
-    token.drop();
-    return total;
+      })();
+      const total = checkedAdd(answer, token.n, 'i32');
+      _moved0 = true;
+      token.drop();
+      return total;
+    } finally {
+      if (!_moved0) token.drop();
+    }
   } finally {
     input.drop();
   }

@@ -236,64 +236,70 @@ class HeapItem<T extends Filterable> extends Struct {
   compareTo(other: HeapItem<T>): number {
     for (const orderItem of this.orderBy) {
       const propertyName = orderItem.path.property();
+      let _moved0 = false;
       const selfVal = this.item.value(propertyName);
-      const otherVal = other.item.value(propertyName);
-      const cmp = (() => {
-        const _v1 = [selfVal, otherVal, orderItem.direction];
-        if ((_v1[0] == null) && (_v1[1] == null)) {
-          return 0;
-        } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
-          try {
-            return -1;
-          } finally {
-            dropOwned(_v1[1]);
-          }
-        } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Asc'))) {
-          try {
-            return 1;
-          } finally {
-            dropOwned(_v1[0]);
-          }
-        } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Desc'))) {
-          try {
-            return 1;
-          } finally {
-            dropOwned(_v1[1]);
-          }
-        } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Desc'))) {
-          try {
-            return -1;
-          } finally {
-            dropOwned(_v1[0]);
-          }
-        } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
-          const s = _v1[0];
-          const o = _v1[1];
-          try {
+      try {
+        const otherVal = other.item.value(propertyName);
+        _moved0 = true;
+        const cmp = (() => {
+          const _v1 = [selfVal, otherVal, orderItem.direction];
+          if ((_v1[0] == null) && (_v1[1] == null)) {
+            return 0;
+          } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
             try {
-              return s.partialCompareTo(o) ?? 0;
+              return -1;
             } finally {
-              o.drop();
+              dropOwned(_v1[1]);
             }
-          } finally {
-            s.drop();
-          }
-        } else {
-          const s = _v1[0];
-          const o = _v1[1];
-          try {
+          } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Asc'))) {
             try {
-              return o.partialCompareTo(s) ?? 0;
+              return 1;
             } finally {
-              o.drop();
+              dropOwned(_v1[0]);
             }
-          } finally {
-            s.drop();
+          } else if ((_v1[0] == null) && (_v1[1] != null) && (_v1[2].is('Desc'))) {
+            try {
+              return 1;
+            } finally {
+              dropOwned(_v1[1]);
+            }
+          } else if ((_v1[0] != null) && (_v1[1] == null) && (_v1[2].is('Desc'))) {
+            try {
+              return -1;
+            } finally {
+              dropOwned(_v1[0]);
+            }
+          } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
+            const s = _v1[0];
+            const o = _v1[1];
+            try {
+              try {
+                return s.partialCompareTo(o) ?? 0;
+              } finally {
+                o.drop();
+              }
+            } finally {
+              s.drop();
+            }
+          } else {
+            const s = _v1[0];
+            const o = _v1[1];
+            try {
+              try {
+                return o.partialCompareTo(s) ?? 0;
+              } finally {
+                o.drop();
+              }
+            } finally {
+              s.drop();
+            }
           }
+        })();
+        if (cmp !== 0) {
+          return cmp;
         }
-      })();
-      if (cmp !== 0) {
-        return cmp;
+      } finally {
+        if (!_moved0) dropOwned(selfVal);
       }
     }
     return 0;
@@ -521,52 +527,58 @@ function sortItemsByOrder<T extends Filterable>(items: T[], orderBy: OrderByItem
   items.sort((a, b) => {
     for (const orderItem of orderBy) {
       const propertyName = orderItem.path.property();
+      let _moved0 = false;
       const aVal = a.value(propertyName);
-      const bVal = b.value(propertyName);
-      const cmp = (() => {
-        const _v1 = [aVal, bVal, orderItem.direction];
-        if ((_v1[0] == null) && (_v1[1] == null)) {
-          return 0;
-        } else if ((_v1[0] == null) && (_v1[1] != null)) {
-          try {
-            return -1;
-          } finally {
-            dropOwned(_v1[1]);
-          }
-        } else if ((_v1[0] != null) && (_v1[1] == null)) {
-          try {
-            return 1;
-          } finally {
-            dropOwned(_v1[0]);
-          }
-        } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
-          const a = _v1[0];
-          const b = _v1[1];
-          try {
+      try {
+        const bVal = b.value(propertyName);
+        _moved0 = true;
+        const cmp = (() => {
+          const _v1 = [aVal, bVal, orderItem.direction];
+          if ((_v1[0] == null) && (_v1[1] == null)) {
+            return 0;
+          } else if ((_v1[0] == null) && (_v1[1] != null)) {
             try {
-              return a.partialCompareTo(b) ?? 0;
+              return -1;
             } finally {
-              b.drop();
+              dropOwned(_v1[1]);
             }
-          } finally {
-            a.drop();
-          }
-        } else {
-          const a = _v1[0];
-          const b = _v1[1];
-          try {
+          } else if ((_v1[0] != null) && (_v1[1] == null)) {
             try {
-              return b.partialCompareTo(a) ?? 0;
+              return 1;
             } finally {
-              b.drop();
+              dropOwned(_v1[0]);
             }
-          } finally {
-            a.drop();
+          } else if ((_v1[0] != null) && (_v1[1] != null) && (_v1[2].is('Asc'))) {
+            const a = _v1[0];
+            const b = _v1[1];
+            try {
+              try {
+                return a.partialCompareTo(b) ?? 0;
+              } finally {
+                b.drop();
+              }
+            } finally {
+              a.drop();
+            }
+          } else {
+            const a = _v1[0];
+            const b = _v1[1];
+            try {
+              try {
+                return b.partialCompareTo(a) ?? 0;
+              } finally {
+                b.drop();
+              }
+            } finally {
+              a.drop();
+            }
           }
+        })();
+        if (cmp !== 0) {
+          return cmp;
         }
-      })();
-      if (cmp !== 0) {
-        return cmp;
+      } finally {
+        if (!_moved0) dropOwned(aVal);
       }
     }
     return 0;

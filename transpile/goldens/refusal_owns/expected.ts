@@ -23,21 +23,24 @@ export function pass(t: Token): Result<Token, string> {
 }
 
 export function nested(first: Token, rest: Token[]): Result<number, string> {
-  let _moved2 = false;
+  let _moved0 = false;
   try {
-    const _r0 = pass(first);
-    _moved2 = true;
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     try {
-      const _r1 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-      const _pair = [_r0.unwrap(), _r1];
-      return Result.Ok(_pair[0].n);
+      const _r2 = pass(first);
+      _moved0 = true;
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      try {
+        const _r3 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+        const _pair = [_r2.unwrap(), _r3];
+        return Result.Ok(_pair[0].n);
+      } finally {
+        dropOwned(_r2);
+      }
     } finally {
-      dropOwned(_r0);
+      dropOwned(rest);
     }
   } finally {
-    if (!_moved2) first.drop();
-    dropOwned(rest);
+    if (!_moved0) first.drop();
   }
 }
 
@@ -53,12 +56,15 @@ export function onlyRefused(rest: Token[]): Result<number, string> {
 
 export function movedThenRefused(held: Token, rest: Token[]): Result<number, string> {
   try {
-    const _r0 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-    const _v = [take(held), _r0];
-    return Result.Ok(0);
+    try {
+      const _r2 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+      const _v = [take(held), _r2];
+      return Result.Ok(0);
+    } finally {
+      dropOwned(rest);
+    }
   } finally {
     held.drop();
-    dropOwned(rest);
   }
 }
 
@@ -131,40 +137,46 @@ export function count(xs: Token[]): Result<number, string> {
 }
 
 export function vecHandedOverFirst(rest: Token[], more: Token[]): Result<number, string> {
-  let _moved2 = false;
+  let _moved0 = false;
   try {
-    const _r0 = count(rest);
-    _moved2 = true;
-    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     try {
-      const _r1 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-      const _pair = [_r0.unwrap(), _r1];
-      return Result.Ok(0);
+      const _r2 = count(rest);
+      _moved0 = true;
+      if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+      try {
+        const _r3 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+        const _pair = [_r2.unwrap(), _r3];
+        return Result.Ok(0);
+      } finally {
+        dropOwned(_r2);
+      }
     } finally {
-      dropOwned(_r0);
+      dropOwned(more);
     }
   } finally {
-    if (!_moved2) dropOwned(rest);
-    dropOwned(more);
+    if (!_moved0) dropOwned(rest);
   }
 }
 
 export function vecNeverHandedOver(rest: Token[], more: Token[]): Result<number, string> {
-  let _moved3 = false;
+  let _moved0 = false;
   try {
-    const _r0 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-    const _r1 = count(rest);
-    _moved3 = true;
-    if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
     try {
-      const _pair = [_r0, _r1.unwrap()];
-      return Result.Ok(0);
+      const _r2 = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
+      const _r3 = count(rest);
+      _moved0 = true;
+      if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+      try {
+        const _pair = [_r2, _r3.unwrap()];
+        return Result.Ok(0);
+      } finally {
+        dropOwned(_r3);
+      }
     } finally {
-      dropOwned(_r1);
+      dropOwned(more);
     }
   } finally {
-    dropOwned(more);
-    if (!_moved3) dropOwned(rest);
+    if (!_moved0) dropOwned(rest);
   }
 }
 
