@@ -7,7 +7,9 @@
 //! them in declaration order.
 
 use super::context::TypeContext;
-use crate::ty::Ty;
+use crate::diag::Diag;
+use crate::ty::{Prim, Ty};
+use super::expected;
 
 impl TypeContext<'_> {
     /// What each field of the struct a literal builds is declared to hold.
@@ -90,5 +92,46 @@ impl TypeContext<'_> {
             }
         }
         id
+    }
+}
+
+impl TypeContext<'_> {
+    pub(super) fn literal_type(&self, lit: &syn::Lit, expected: Option<&Ty>) -> Result<Ty, Diag> {
+        Ok(match lit {
+            syn::Lit::Str(_) => Ty::Ref {
+                mutable: false,
+                inner: Box::new(Ty::Str),
+            },
+            syn::Lit::ByteStr(_) => Ty::Ref {
+                mutable: false,
+                inner: Box::new(Ty::Slice(Box::new(Ty::Prim(Prim::U8)))),
+            },
+            syn::Lit::Byte(_) => Ty::Prim(Prim::U8),
+            syn::Lit::Char(_) => Ty::Prim(Prim::Char),
+            syn::Lit::Bool(_) => Ty::Prim(Prim::Bool),
+            // An unsuffixed literal is an inference variable with an INTEGRAL
+            // kind and the table has no kinds, so the width comes from the
+            // position and `i32`/`f64` stands where nothing wants one.
+            syn::Lit::Int(int) => match Prim::from_rust_name(int.suffix()) {
+                Some(prim) => Ty::Prim(prim),
+                None => Ty::Prim(
+                    expected
+                        .and_then(expected::integer_width)
+                        .unwrap_or(Prim::I32),
+                ),
+            },
+            syn::Lit::Float(float) => match Prim::from_rust_name(float.suffix()) {
+                Some(prim) => Ty::Prim(prim),
+                None => {
+                    Ty::Prim(expected.and_then(expected::float_width).unwrap_or(Prim::F64))
+                }
+            },
+            other => {
+                return Err(self.refuse(
+                    syn::spanned::Spanned::span(other),
+                    "literal form is not typed yet",
+                ))
+            }
+        })
     }
 }

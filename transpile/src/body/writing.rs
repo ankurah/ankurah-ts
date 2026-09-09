@@ -502,3 +502,29 @@ pub struct LoopFrame {
     /// only for a loop whose own value the code around it wanted.
     pub value: Option<(String, String)>,
 }
+
+/// One pair of parentheses that wraps the whole expression, taken off.
+///
+/// A call written `(self.f)(x)` in Rust needs them; the same callee handed to a
+/// helper as an argument is already delimited by the call it stands in.
+pub(crate) fn unwrapped(written: &str) -> String {
+    let inner = match written.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+        Some(inner) => inner,
+        None => return written.to_string(),
+    };
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return written.to_string();
+        }
+    }
+    match depth == 0 {
+        true => inner.to_string(),
+        false => written.to_string(),
+    }
+}

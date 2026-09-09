@@ -536,3 +536,63 @@ mod declares_tests {
         assert!(ts.contains("export function filterOwned"), "{}", ts);
     }
 }
+
+/// Everything a test module's own file says: the tests, the helpers' bodies AND
+/// their signatures, and the fixtures.
+///
+/// A helper's parameter and return types name what the file has to import as
+/// surely as its body does, and the bodies alone left `Invocable` undeclared in
+/// a file whose helper returned one.
+pub(crate) fn what_a_test_file_writes(file: &crate::types::RustFile, fixtures: &str) -> String {
+    let signatures = file.test_helpers.iter().flat_map(|f| {
+        f.params
+            .iter()
+            .map(|p| p.ty.clone())
+            .chain(std::iter::once(f.return_type.clone()))
+    });
+    file.test_functions
+        .iter()
+        .chain(&file.test_helpers)
+        .filter_map(|f| f.body_ts.clone())
+        .chain(std::iter::once(fixtures.to_string()))
+        .chain(signatures)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The helper functions a test module declares, each written whole.
+///
+/// A helper carries its OWN type parameters: written without them, every `T` in
+/// its signature and its body names nothing.
+pub(crate) fn test_helpers(helpers: &[crate::types::FnInfo]) -> String {
+    let mut out = String::new();
+    for f in helpers {
+        let params: Vec<String> = f
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", crate::name_map::to_camel_case(&p.name), p.ty))
+            .collect();
+        let ret = match f.return_type.is_empty() {
+            true => "void".to_string(),
+            false => f.return_type.clone(),
+        };
+        let body = match &f.body_ts {
+            Some(body) => body
+                .lines()
+                .map(|line| if line.is_empty() { String::new() } else { format!("    {}", line) })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            None => "    throw new Error('TODO');".to_string(),
+        };
+        out.push_str(&format!(
+            "  {}function {}{}({}): {} {{\n{}\n  }}\n\n",
+            if f.is_async { "async " } else { "" },
+            f.ts_name,
+            f.generics,
+            params.join(", "),
+            if f.is_async { format!("Promise<{}>", ret) } else { ret },
+            body
+        ));
+    }
+    out
+}

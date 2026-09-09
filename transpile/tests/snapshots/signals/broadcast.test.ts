@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Broadcast } from './broadcast';
-import { Arc, Mutex, OwnedClosure, checkedAdd, tokio, wrappingAdd } from '@ankurah/base';
+import { Arc, Mutex, OwnedClosure, checkedAdd, tokio, unsupported } from '@ankurah/base';
 import { Mut } from './signal/mutable';
 
 describe('broadcast unit tests', () => {
@@ -120,7 +120,7 @@ describe('broadcast unit tests', () => {
       try {
         const counterClone = counter.clone();
         const _subscription = signal.subscribe(new OwnedClosure([counterClone], (_) => {
-          (() => { const _v = counterClone.value; counterClone.value = wrappingAdd(counterClone.value, 1, 'usize'); return _v; })();
+          unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place');
         }));
         try {
           signal.set(100);

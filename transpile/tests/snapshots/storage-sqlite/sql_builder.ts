@@ -89,7 +89,7 @@ export class SqlBuilder extends Struct {
   expr(expr: Expr): Result<void, SqlGenerationError> {
     const _m1 = expr.match<any>({
       Placeholder: () => {
-        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('PlaceholderFound', {})) }
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('PlaceholderFound', {})) };
       },
       Literal: (v) => {
         const lit = v._0;
@@ -120,10 +120,10 @@ export class SqlBuilder extends Struct {
         this.pushSql(')');
       },
       Predicate: () => {
-        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })) }
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })) };
       },
       InfixExpr: () => {
-        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })) }
+        return { $jump: 'return', $value: Result.Err(new SqlGenerationError('UnsupportedExpression', { _0: 'Only literal, path, and list expressions are supported' })) };
       },
     });
     if ((_m1 as any)?.$jump === 'return') return (_m1 as any).$value;

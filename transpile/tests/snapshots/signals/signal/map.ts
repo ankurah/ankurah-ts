@@ -34,18 +34,18 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
   with<R>(f: (arg0: Output) => R): R {
     CurrentObserver.track(this.source);
     return this.source.with((input) => {
-      const output = (this.transform)(input);
+      const output = invokeRef(this.transform, input);
       return invoke(f, output);
     });
   }
 
   get(): Output {
     CurrentObserver.track(this.source);
-    return this.source.with((input) => (this.transform)(input));
+    return this.source.with((input) => invokeRef(this.transform, input));
   }
 
   peek(): Output {
-    return this.source.with((input) => (this.transform)(input));
+    return this.source.with((input) => invokeRef(this.transform, input));
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
@@ -54,7 +54,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
     const transform = this.transform.clone();
     const subscription = this.source.listen(Arc.new(new OwnedClosure([listener_1], (_) => {
       source.with((input) => {
-        listener_1(invokeRef(transform, input));
+        invokeRef(listener_1, invokeRef(transform, input));
       });
     })));
     return SubscriptionGuard.new(subscription);

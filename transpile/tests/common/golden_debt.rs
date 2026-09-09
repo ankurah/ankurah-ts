@@ -50,7 +50,19 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 3] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 4] = [
+    (
+        "an_unknown_nothing_settles",
+        &[
+            "an_unknown_nothing_settles/input.ts:TS7005",
+            "an_unknown_nothing_settles/input.ts:TS7034",
+        ],
+        "the golden's whole subject: nothing in `counted` says what its local holds, and the \
+         engine will not guess one. It writes the local with no annotation, because it has \
+         none to write, and TypeScript's own `any[]` is what that gap costs. The entry comes \
+         off this list when a constraint settles the local, not when an annotation is \
+         invented for it",
+    ),
     (
         "blanket_free_fn",
         &["blanket_free_fn/run.test.ts:TS2345"],

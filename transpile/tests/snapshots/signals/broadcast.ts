@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Invocable, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -191,8 +191,8 @@ export class ListenerGuard<T = void> extends Drop implements TListenerGuard {
 }
 
 export type BroadcastListenerV<T = void> = {
-  Payload: { _0: Arc<(arg0: T) => void> };
-  NotifyOnly: { _0: Arc<() => void> };
+  Payload: { _0: Arc<Invocable<[T], void>> };
+  NotifyOnly: { _0: Arc<Invocable<[], void>> };
 };
 
 export class BroadcastListener<T = void> extends Enum<BroadcastListenerV<T>> {
@@ -221,11 +221,11 @@ export function intoBroadcastListener<F extends (arg0: T) => void, T>(self: F): 
   return new BroadcastListener('Payload', { _0: Arc.new(self) });
 }
 
-export function Arc_Fn1_intoBroadcastListener<T>(self: Arc<(arg0: T) => void>): BroadcastListener<T> {
+export function Arc_Fn1_intoBroadcastListener<T>(self: Arc<Invocable<[T], void>>): BroadcastListener<T> {
   return new BroadcastListener('Payload', { _0: self });
 }
 
-export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<() => void>): BroadcastListener<T> {
+export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<Invocable<[], void>>): BroadcastListener<T> {
   return new BroadcastListener('NotifyOnly', { _0: self });
 }
 

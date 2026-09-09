@@ -116,10 +116,10 @@ class SubscriptionEntry extends Struct {
 }
 
 class Inner extends Struct {
-  callback: () => void;
+  callback: Invocable<[], void>;
   entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>;
 
-  constructor(callback: () => void, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
+  constructor(callback: Invocable<[], void>, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
     super();
     this.callback = callback;
     this.entries = entries;

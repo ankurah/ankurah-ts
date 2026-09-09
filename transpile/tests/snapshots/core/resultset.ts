@@ -376,7 +376,7 @@ export class ResultSet<R extends View> extends Struct implements Signal, Get<E[]
         try {
           const entities = [..._t1.value.order].map((e) => E.fromEntity(e.entity.clone()));
           _t1.drop();
-          listener_1(entities);
+          invokeRef(listener_1, entities);
         } finally {
           _t1.drop();
         }
@@ -665,20 +665,24 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
 
   static computeSortKey<E>(entity: E, keySpec: KeySpec): IVec {
     let values = [];
-    for (const keypart of keySpec.keyparts) {
-      const value = AbstractEntity.value(entity, keypart.column);
-      {
-        const _v = value;
-        if (_v != null) {
-          const v = _v;
-          values.push(v);
-        } else {
-        return IVec.fromSlice([]);
+    try {
+      for (const keypart of keySpec.keyparts) {
+        const value = AbstractEntity.value(entity, keypart.column);
+        {
+          const _v = value;
+          if (_v != null) {
+            const v = _v;
+            values.push(v);
+          } else {
+          return IVec.fromSlice([]);
+        }
+        }
       }
-      }
+      const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOr(new Uint8Array());
+      return IVec.from(encoded);
+    } finally {
+      dropOwned(values);
     }
-    const encoded = encodeTupleValuesWithKeySpec(values, keySpec).unwrapOr(new Uint8Array());
-    return IVec.from(encoded);
   }
 
   setLoaded(loaded: boolean): void {

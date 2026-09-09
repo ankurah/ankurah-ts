@@ -779,12 +779,39 @@ The engine mints an unknown for each and lets the body bind it.
   `_`, which nothing here ever works out.
 - **Variables are minted where the source left an argument off**, and only in an
   expression position: `Vec::new()` reads as `Vec<?0>`, while a declaration
-  written with the wrong arity is still refused. A parameter with a written
-  default keeps its default.
+  written with the wrong arity is still refused. A parameter with a WRITTEN
+  DEFAULT gets a variable too, and the default is unified into it as the last
+  step of the solve: `Slot<A, B = ()>` built as `Slot::new(1u8, thing)` reads
+  `B` off the argument, as Rust does, and the default is what stands where the
+  body said nothing. Where the body says something else, the site says both
+  types and neither is chosen. Once a default has fallen into place a method
+  that could not resolve through an open unknown can, so the walk runs to a
+  fixed point again after.
 - **Constraints come from the body, one source at a time.** A call's declared
-  parameter against what the argument actually is, for an associated function and
-  for a method alike; a `for` loop's pattern against the sequence's item; a
-  `let`'s annotation against its initialiser.
+  parameter against what the argument actually is, for an associated function,
+  for a method and for a FREE function alike; a `for` loop's pattern against the
+  sequence's item; a place and the value written into it; each `return`'s value
+  and the function's tail; a struct literal's fields; a pattern against its
+  scrutinee; `.await` projecting `Future::Output` where the impl table read it
+  through. A `let`'s annotation against its initialiser is NOT one of them: that
+  is still `fill_infer`'s one-position path and never reaches the table.
+- **A constraint runs when EITHER side carries an unknown.** `let mut found =
+  Vec::new(); fill(&mut found, n)` decides `found`'s element at a parameter
+  whose own type is written out in full.
+- **A declared parameter is read through the receiver first.** An adaptor writes
+  its bound in its own terms — `FnMut(Self::Item) -> B` — and a projection left
+  standing types nothing inside the closure, so each parameter is normalised
+  before the position is read.
+- **The value keeps every `&` it carries.** A borrow bound to a by-value
+  parameter is what that parameter holds: `picked.push(t)` over a `&Thing` makes
+  `picked` a `Vec<&Thing>`, and a collection of borrows releases nothing. A `&`
+  the DECLARED side has over a value carrying none is the borrow the engine
+  reads that value through — `self` inside `impl .. for Arc<Inner<T>>` is read
+  as the `Arc` itself — and is discounted; nothing is hidden by that, because
+  two types that disagree under the reference still refuse.
+- **A slice and a sequence that derefs to it agree about their ELEMENT.**
+  `&Vec<T>` stands where `&[T]` is declared, and the port writes both as one
+  array. Only where the structural walk has already refused.
 - **A bound is a capability, not a type.** `impl Fn() -> T` and a closure are
   never the same type, and `impl IntoIterator<Item = F>` and a `Vec<Tag>` are
   never the same type; unifying the two says something false about both. A
@@ -798,8 +825,12 @@ The engine mints an unknown for each and lets the body bind it.
   the constraint walk meets the closure again on its way into the body, after the
   call carrying it has read the bound. What the position requires is kept by the
   span the closure is written at, so the walk into the body types the parameters
-  rather than leaving them standing for nothing. A free call reads its own
-  parameters only for this: what it resolves to is its declared return type.
+  rather than leaving them standing for nothing.
+- **The constraint walk is QUIET.** It runs several times over one body, so
+  every report it makes it would make again; the sink is rewound when it ends
+  and the walk that WRITES the body says what it could not do, where it stands.
+  A contradiction is the exception in neither direction: it is reported by the
+  writing walk, at the site, exactly as every other refusal is.
 - **A bound whose subject is an unsettled unknown is undecided, not refused.**
   `SubscriptionRelay::new()` reads as `SubscriptionRelay<?0, ?1>`, and the impl
   that carries its methods is written `impl<CD: ContextData, ..>`. No impl is
@@ -818,14 +849,31 @@ The engine mints an unknown for each and lets the body bind it.
   constraint that could not run before it run now. The walk repeats until a round
   binds nothing new; past one round per variable the table has stopped being
   monotone, and that is a diagnostic rather than a spin (as 4.8's depth limit is).
-- **Nothing is ever defaulted.** A variable no constraint bound is reported, not
-  filled in. Where a type has to be SPELLED and still names a variable, the site
-  writes exactly what it writes when there is no type at all, and `map_ty`
-  refuses rather than inventing a spelling.
+- **Nothing is ever defaulted, except a default the DECLARATION wrote.** A
+  variable nothing bound is reported, not filled in. Where a type has to be
+  SPELLED and still names a variable, the site writes exactly what it writes
+  when there is no type at all, and `map_ty` refuses rather than inventing a
+  spelling. A written parameter default is the one exception, and it is Rust's
+  own: it is unified in last, and it loses to whatever the body said.
+- **The walk that WRITES a body reads the table and never binds it.** A binding
+  made while the body is written reaches the statements below it and not the
+  ones above, which is one local with two answers — a `let` reported as holding
+  nothing the engine can name, and three statements below a release for what it
+  holds. The writing walk asks the same questions of a SCRATCH copy, so a site
+  whose two types cannot meet is still said where it stands while the table
+  stays as the solve left it, and `translate_fn_block` asserts the bound count
+  is unchanged when the last line is written.
+- **A tuple-element annotation is written where TypeScript's own inference
+  disagrees.** `let xs = []` grows by what is pushed into it, and TypeScript
+  reads a pushed `[a, b]` as an array of `a | b` rather than as the pair; it
+  also grows a local only from a `push` it can SEE in the same function, and a
+  closure is its own function. Those two are where the annotation is written and
+  nowhere else — a sequence of BYTES excepted, because it is a `Uint8Array` and
+  `[]` is not one.
 - **Ownership reads types and does not take part.** `drops_of` answers
   `Drops::Unknown` for an unresolved variable exactly as it does for `Ty::Infer`,
   and every ownership question is asked in the second walk, where the table is
-  already solved.
+  already solved — which the assertion above is what makes true.
 
 ### 4.9 Scopes and names
 

@@ -11,6 +11,7 @@ pub mod shape;
 pub mod system_shapes;
 
 pub use emit_ty::map_ty;
+pub(crate) use emit_ty::holds_a_dyn_callable;
 
 /// Convert snake_case to camelCase
 pub fn to_camel_case(s: &str) -> String {

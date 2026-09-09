@@ -63,7 +63,7 @@ impl TypeContext<'_> {
             let declared = declared.substitute(&subst);
             let Some(actual) = self.actual_of(&field.expr) else { continue };
             // Emission erases `&`, so a field stands for what it refers to.
-            self.constrain_here(Spanned::span(field), declared.peel_refs(), actual.peel_refs());
+            self.constrain_here(Spanned::span(field), &declared, &actual);
         }
         Ok(resolved)
     }

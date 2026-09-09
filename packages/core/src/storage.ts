@@ -70,7 +70,7 @@ export abstract class StorageCollection {
             }
             {
               const e = _v1;
-              return Result.Err(e)
+              return Result.Err(e);
             }
           }
         }

@@ -19,12 +19,12 @@ class SubscriptionEntry extends Struct {
 }
 
 class Inner<T> extends Struct {
-  compute: () => T;
+  compute: Invocable<[], T>;
   value: ValueCell<T | null>;
   broadcast: Broadcast<void>;
   entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>;
 
-  constructor(compute: () => T, value: ValueCell<T | null>, broadcast: Broadcast<void>, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
+  constructor(compute: Invocable<[], T>, value: ValueCell<T | null>, broadcast: Broadcast<void>, entries: RwLock<HashMap<BroadcastId, SubscriptionEntry>>) {
     super();
     this.compute = compute;
     this.value = value;
@@ -114,7 +114,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
     const roValue = this._0.value.value.readvalue();
     const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
       const current = roValue.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
-      listener_1(current);
+      invokeRef(listener_1, current);
     })));
     return SubscriptionGuard.new(subscription);
   }
@@ -132,7 +132,7 @@ function trigger<T>(inner: Arc<Inner<T>>): void {
     }
   })();
   CurrentObserver.set(inner.clone());
-  const newValue = (inner.value.compute)();
+  const newValue = invokeRef(inner.value.compute);
   inner.value.value.set(newValue);
   CurrentObserver.remove(inner);
   (() => {

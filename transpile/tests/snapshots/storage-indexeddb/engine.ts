@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/indexeddb-wasm/src/engine.rs
-import { Struct, Result, Arc, dropOwned, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, unsupported, tokio } from '@ankurah/base';
 import { MutationError, RetrievalError, StorageCollection, StorageEngine } from '@ankurah/core';
 import { IndexedDBBucket } from './collection';
 import { Database } from './database';
@@ -40,7 +40,7 @@ export class IndexedDBStorageEngine extends Struct implements StorageEngine {
   }
 
   setPrefixGuardDisabled(disabled: boolean): void {
-    this.prefixGuardDisabled.value = disabled;
+    unsupported('`store` WRITES what the `Arc<AtomicBool>` holds, and it is reached through an accessor that hands out the value rather than the place');
   }
 
   async collection(collectionId: CollectionId): Promise<Result<Arc<StorageCollection>, RetrievalError>> {

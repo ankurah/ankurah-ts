@@ -69,7 +69,7 @@ undefined = [
   "no-undef BincodeWriter × 2",
   "no-undef BuildHasher × 1",
   "no-undef C × 5",
-  "no-undef Clone × 24",
+  "no-undef Clone × 25",
   "no-undef CollectionId × 8",
   "no-undef CollectionSchema × 1",
   "no-undef ContextData × 2",
@@ -142,7 +142,7 @@ undefined = [
   "no-undef StateError × 2",
   "no-undef StateVector × 2",
   "no-undef StorageEngine × 15",
-  "no-undef T × 6",
+  "no-undef T × 3",
   "no-undef TClock × 1",
   "no-undef TEvent × 1",
   "no-undef TNode × 1",
@@ -354,7 +354,9 @@ undefined = [
   "no-undef f × 1",
   "no-undef ptr × 1",
 ]
-repeated = []
+repeated = [
+  "signal/map.ts:57: invokeRef() × 2",
+]
 
 [storage-common]
 undefined = [
@@ -372,13 +374,11 @@ undefined = [
   "no-undef Poll × 38",
   "no-undef Predicate × 1",
   "no-undef RandomState × 4",
-  "no-undef S × 1",
   "no-undef Self × 9",
   "no-undef SortedStream × 3",
-  "no-undef Stream × 2",
-  "no-undef T × 2",
+  "no-undef Stream × 3",
   "no-undef TopKStream × 3",
-  "no-undef Unpin × 2",
+  "no-undef Unpin × 3",
   "no-undef Value × 15",
   "no-undef futures × 2",
   "no-undef mem × 5",

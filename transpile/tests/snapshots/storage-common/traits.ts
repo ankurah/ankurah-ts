@@ -25,7 +25,7 @@ export abstract class EntityStateStream {
           results.push(state)
         } else {
           const e = item.unwrapErr();
-          return Result.Err(e)
+          return Result.Err(e);
         }
       }
       return Result.Ok(results);

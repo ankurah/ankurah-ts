@@ -55,6 +55,34 @@ pub enum MethodTranslation {
     },
 }
 
+/// `std::sync::atomic`'s writing methods, which are the ones that WRITE the
+/// place they are called on rather than answer about it.
+pub(crate) const ATOMIC_WRITES: [&str; 13] = [
+    "store",
+    "swap",
+    "compare_exchange",
+    "compare_exchange_weak",
+    "fetch_add",
+    "fetch_sub",
+    "fetch_and",
+    "fetch_nand",
+    "fetch_or",
+    "fetch_xor",
+    "fetch_max",
+    "fetch_min",
+    "fetch_update",
+];
+
+/// Does this call write a place the runtime hands out only as a VALUE?
+///
+/// An atomic is a number or a boolean here, and an accessor that reaches one
+/// inside a holder hands out a copy: the write lands on the copy and is lost.
+/// Until the runtime has a cell a holder can carry, such a call is a hole.
+pub(crate) fn writes_through_the_holder(reg: &TypeRegistry, method: &str, target: &Ty) -> bool {
+    ATOMIC_WRITES.contains(&method)
+        && crate::is_value_spelling(&crate::name_map::map_ty(reg, target))
+}
+
 /// Translate a method call based on the resolved receiver type.
 pub fn translate_method(
     reg: &TypeRegistry,

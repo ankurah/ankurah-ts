@@ -54,10 +54,8 @@ pub struct BodyTranslator<'a> {
     /// buffer the callee filled was a copy. Such a parameter is a
     /// `BorrowMut<T>` here, and every read of the name is `name.value`.
     pub boxed: std::cell::RefCell<Vec<String>>,
-    /// Locals this body hands out as `&mut`. Whether each really needs a cell
-    /// is settled at its `let`, which is the only place its type is known: a
-    /// `&mut` to a class is already a reference in JavaScript.
-    pub cell_candidates: std::cell::RefCell<Vec<String>>,
+    /// What reading this body's block said before any of it was written.
+    pub prescan: std::cell::RefCell<crate::body::cells::Prescan>,
     /// Of the cells, the ones that are PARAMETERS.
     ///
     /// The difference matters in argument position only. A `&mut T` parameter
@@ -179,7 +177,7 @@ impl<'a> BodyTranslator<'a> {
             loops_in_lift: std::cell::RefCell::new(Vec::new()),
             loop_frames: std::cell::RefCell::new(Vec::new()),
             boxed: std::cell::RefCell::new(Vec::new()),
-            cell_candidates: std::cell::RefCell::new(Vec::new()),
+            prescan: std::cell::RefCell::new(Default::default()),
             cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
             last_match_wrote_statements: std::cell::Cell::new(false),
@@ -206,7 +204,7 @@ impl<'a> BodyTranslator<'a> {
             loops_in_lift: std::cell::RefCell::new(Vec::new()),
             loop_frames: std::cell::RefCell::new(Vec::new()),
             boxed: std::cell::RefCell::new(Vec::new()),
-            cell_candidates: std::cell::RefCell::new(Vec::new()),
+            prescan: std::cell::RefCell::new(Default::default()),
             cell_params: std::cell::RefCell::new(Vec::new()),
             wrote_result: std::cell::Cell::new(false),
             last_match_wrote_statements: std::cell::Cell::new(false),
@@ -358,6 +356,15 @@ impl<'a> BodyTranslator<'a> {
                     if let Some(found) = self.or_fallback(found, &instead) {
                         let mut recv =
                             self.receiver_of(call, &rust_method, receiver.clone());
+                        if let Some(refused) = self.lost_write_through_a_holder(call, &found, &rust_method) {
+                            return self.render_translation(
+                                refused,
+                                &recv,
+                                &ts_method,
+                                &args,
+                                syn::spanned::Spanned::span(&call.receiver),
+                            );
+                        }
                         for accessor in found.accessors() {
                             recv = format!("{}.{}", recv, accessor);
                         }
@@ -492,7 +499,7 @@ impl<'a> BodyTranslator<'a> {
                 // the callee cannot see which. `invoke` is the one place that
                 // tells them apart.
                 if let Some(helper) = self.bound_closure_helper(&call.func) {
-                    let mut through = vec![func.clone()];
+                    let mut through = vec![crate::body::unwrapped(&func)];
                     through.extend(args.iter().cloned());
                     return format!("{}({})", helper, through.join(", "));
                 }
@@ -1069,18 +1076,6 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-    /// Where the diagnostics record stands, for a form the translator may
-    /// abandon.
-    pub(crate) fn mark(&self) -> usize {
-        self.types.as_ref().map(|tc| tc.borrow().sink.mark()).unwrap_or(0)
-    }
-
-    pub(crate) fn rewind(&self, mark: usize) {
-        if let Some(tc) = &self.types {
-            tc.borrow().sink.rewind(mark);
-        }
-    }
-
 }
 
 pub(crate) mod holes;
@@ -1090,7 +1085,7 @@ mod defaults;
 #[cfg(test)]
 mod expectation_tests;
 /// A block, and the statements in it.
-mod blocks;
+pub(crate) mod blocks;
 mod deref_place;
 pub(crate) mod refusal;
 

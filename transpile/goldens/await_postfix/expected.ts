@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/await_postfix/src/input.rs
-import { Struct, checkedMul } from '@ankurah/base';
+import { Struct, invokeRef, Invocable, checkedMul } from '@ankurah/base';
 
 export class Holder extends Struct {
   readonly items: number[];
@@ -14,7 +14,7 @@ export async function getVec(): Promise<number[]> {
   return [1, 2, 3];
 }
 
-export async function getFunction(): Promise<(arg0: number) => number> {
+export async function getFunction(): Promise<Invocable<[number], number>> {
   return double;
 }
 
@@ -35,7 +35,7 @@ export async function tail(): Promise<number[]> {
 }
 
 export async function through(): Promise<number> {
-  return (await getFunction())(8);
+  return invokeRef(await getFunction(), 8);
 }
 
 export async function width(): Promise<number> {

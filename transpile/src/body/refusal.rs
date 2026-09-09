@@ -338,3 +338,44 @@ impl BodyTranslator<'_> {
         crate::ownership::drops_of(&tc.borrow().probe(), payload).is_droppable()
     }
 }
+
+impl BodyTranslator<'_> {
+    /// A write to a place the runtime hands out only as a VALUE, refused.
+    ///
+    /// A holder reaches what it carries through an accessor that READS it, so
+    /// an atomic's `store` or `fetch_add` through one would land on a copy and
+    /// be lost. The hole says so where the call stands.
+    pub(crate) fn lost_write_through_a_holder(
+        &self,
+        call: &syn::ExprMethodCall,
+        found: &crate::registry::MethodResolution,
+        rust_method: &str,
+    ) -> Option<crate::native_types::MethodTranslation> {
+        let tc = self.types.as_ref()?;
+        if found.accessors().is_empty() {
+            return None;
+        }
+        if !crate::native_types::writes_through_the_holder(
+            tc.borrow().registry,
+            rust_method,
+            found.receiver_type(),
+        ) {
+            return None;
+        }
+        let holder = self
+            .quietly(|| self.resolve_expr_type(&call.receiver))
+            .unwrap_or(crate::ty::Ty::Infer);
+        let message = format!(
+            "`{}` WRITES what the `{}` holds, and it is reached through an accessor that hands \
+             out the value rather than the place",
+            rust_method,
+            tc.borrow().registry.describe(&holder)
+        );
+        Some(crate::native_types::MethodTranslation::Refused {
+            fallback: Box::new(crate::native_types::MethodTranslation::Expr(
+                crate::body::hole_text(&message),
+            )),
+            message,
+        })
+    }
+}

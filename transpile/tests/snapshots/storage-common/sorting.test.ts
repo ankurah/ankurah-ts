@@ -121,11 +121,11 @@ class TestItem extends Struct implements Filterable {
 }
 
 describe('sorting unit tests', () => {
-  function collectStream(stream: S): Item[] {
+  function collectStream<S extends Stream & Unpin>(stream: S): Item[] {
     return futures.executor.blockOn(unsupported('`collect` into `Collect<S, C>` is a `FromIterator` the port has no construction for'));
   }
 
-  function streamFrom(items: T[]): Iter<T[]> {
+  function streamFrom<T>(items: T[]): Iter<T[]> {
     return futures.stream(items);
   }
 
@@ -245,7 +245,7 @@ describe('sorting unit tests', () => {
   });
 
   test('test_limited_stream_empty_input', () => {
-    const items = [];
+    const items: number[] = [];
     const limited = collectStream(LimitedStream.new(streamFrom(items), 5n));
     if (!(limited.length === 0)) throw new Error('assertion failed');
   });
@@ -312,7 +312,7 @@ describe('sorting unit tests', () => {
 
   test('test_sorted_stream_empty_input', () => {
     let _moved0 = false;
-    const items = [];
+    const items: TestItem[] = [];
     try {
       let _moved1 = false;
       const orderBy = OrderByComponents.new([], [obyAsc('x')]);
@@ -561,7 +561,7 @@ describe('sorting unit tests', () => {
 
   test('test_topk_stream_global_empty_input', () => {
     let _moved0 = false;
-    const items = [];
+    const items: TestItem[] = [];
     try {
       let _moved1 = false;
       const orderBy = OrderByComponents.new([], [obyAsc('x')]);

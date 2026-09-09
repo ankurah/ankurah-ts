@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/livequery.rs
-import { Struct, Drop, Result, Arc, Weak, OwnedClosure, dropOwned, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, OwnedClosure, invokeRef, dropOwned, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
 import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
 import { BroadcastId, CurrentObserver, Get, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
@@ -430,7 +430,7 @@ export class LiveQuery<R extends View & Clone> extends Struct implements Signal,
         const _b1 = me._0._0.value.resultset.wrap();
         _moved0 = true;
         const changeset = livequeryChangeSetFrom(_b1, reactorUpdate);
-        listener_1(changeset);
+        invokeRef(listener_1, changeset);
       } finally {
         if (!_moved0) reactorUpdate.drop();
       }

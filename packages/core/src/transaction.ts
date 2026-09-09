@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/transaction.rs
-import { Struct, Drop, Result, Arc, RwLock, dropOwned, HashSet } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, RwLock, dropOwned, unsupported, HashSet } from '@ankurah/base';
 import { EntityId, TransactionId } from '@ankurah/proto';
 import { TContext } from './context';
 import { Entity } from './entity';
@@ -137,14 +137,14 @@ export class Transaction extends Drop {
 
   rollback(): void {
     try {
-      this.alive.value = false;
+      unsupported('`store` WRITES what the `Arc<AtomicBool>` holds, and it is reached through an accessor that hands out the value rather than the place');
     } finally {
       this.drop();
     }
   }
 
   protected override onDrop(): void {
-    this.alive.value = false;
+    unsupported('`store` WRITES what the `Arc<AtomicBool>` holds, and it is reached through an accessor that hands out the value rather than the place');
   }
 }
 

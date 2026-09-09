@@ -256,7 +256,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                     }
                   }
                 }
-                let removedEntities = [];
+                let removedEntities: EntityId[] = [];
                 rwResultset.retainDirty((entity) => {
                   {
                     const _v = evaluatePredicate(entity, selection.predicate);

@@ -70,7 +70,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
       let guard = this.cached.value.write();
       try {
         if ((guard.value == null)) {
-          const output = this.source.with((input) => (this.transform)(input));
+          const output = this.source.with((input) => invokeRef(this.transform, input));
           guard.value = output;
         }
         const _b2 = (guard.value ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })());
@@ -129,7 +129,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
       } finally {
         _t0.drop();
       }
-      listener_1(output);
+      invokeRef(listener_1, output);
     })));
     return SubscriptionGuard.new(subscription);
   }

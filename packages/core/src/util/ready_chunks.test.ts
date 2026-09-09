@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { ReadyChunks } from './ready_chunks';
-import { oneshot, tokio } from '@ankurah/base';
+import { Receiver, oneshot, tokio } from '@ankurah/base';
 
 describe('ready_chunks unit tests', () => {
   test('drains_all_simultaneously_ready', async () => {
@@ -53,7 +53,7 @@ describe('ready_chunks unit tests', () => {
   });
 
   test('empty_stream_yields_none', async () => {
-    const futs = [];
+    const futs: Receiver<number>[] = [];
     let stream = ReadyChunks.new(futs);
     try {
       if (!((await stream.next()) == null)) throw new Error('assertion failed');

@@ -40,7 +40,7 @@ impl BodyTranslator<'_> {
         // writes as a JavaScript VALUE has to live in a cell, because the
         // callee's writes have nowhere else to go. Read before anything is
         // translated, so the `let` that introduces it declares the cell.
-        *self.cell_candidates.borrow_mut() = super::cells::cells_wanted(block);
+        *self.prescan.borrow_mut() = super::cells::Prescan::of(block);
         // The whole body is typed before any of it is written, so a local whose
         // type only a later use decides is already known at the statement that
         // binds it — and every ownership question below reads a settled type.
@@ -48,8 +48,17 @@ impl BodyTranslator<'_> {
             tc.borrow_mut()
                 .collect_constraints(block, self.fn_return.as_ref());
         }
+        let solved = self.bound_unknowns();
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
+        // The table this walk read is the table the solve left. A binding made
+        // while the body is written reaches the statements below it and not the
+        // ones above, which is one local with two answers.
+        assert_eq!(
+            self.bound_unknowns(),
+            solved,
+            "writing this body bound an unknown the solve had not"
+        );
         self.pop_scope();
         for owned in &owned {
             if let Some(source) = &owned.source {
@@ -61,6 +70,15 @@ impl BodyTranslator<'_> {
             out = ownership::wrap(&out, param);
         }
         format!("{}{}", self.block_declarations(&owned, &out), out)
+    }
+
+    /// How many of this body's unknowns stand for something. Nothing but the
+    /// solve may move it.
+    fn bound_unknowns(&self) -> usize {
+        match &self.types {
+            Some(tc) => tc.borrow().bound_unknowns(),
+            None => 0,
+        }
     }
 
     pub fn translate_block(&self, block: &syn::Block) -> String {
@@ -398,7 +416,12 @@ impl BodyTranslator<'_> {
                 };
                 if semi.is_some() {
                     format!("{};\n", self.discard(expr, ts))
-                } else if ts.trim_end().ends_with('}') || ts.trim_end().ends_with(';') {
+                // A jump ENDS with `}` when it carries an object — `return {
+                // $jump: 'return', $value: .. }` — and a jump is a statement
+                // whatever it carries, so the brace does not terminate it.
+                } else if !jumps(&ts)
+                    && (ts.trim_end().ends_with('}') || ts.trim_end().ends_with(';'))
+                {
                     format!("{}\n", ts)
                 } else {
                     // A tail with no semicolon in Rust is still a STATEMENT
@@ -468,3 +491,14 @@ mod formatter_tests {
     }
 }
 
+
+/// Does this emitted statement leave the block it stands in?
+///
+/// A jump carrying an object ends with a brace, and a brace is what the
+/// terminator rule reads as "already finished".
+pub(crate) fn jumps(written: &str) -> bool {
+    let head = written.trim_start();
+    ["return ", "return{", "break ", "break;", "continue "]
+        .iter()
+        .any(|word| head.starts_with(word))
+}

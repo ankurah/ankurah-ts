@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/lww.rs
-import { Struct, Result, Arc, OwnedClosure, dropOwned } from '@ankurah/base';
+import { Struct, Result, Arc, OwnedClosure, invokeRef, dropOwned } from '@ankurah/base';
 import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
 import { Value } from '../../value/index';
@@ -87,7 +87,7 @@ export class LWW<T extends Property & Clone> extends Struct implements FromEntit
         const _v = lww.get();
         if (_v.isOk()) {
           const currentValue = _v.unwrap();
-          listener_1(currentValue);
+          invokeRef(listener_1, currentValue);
         }
       }
     }, undefined, true)));

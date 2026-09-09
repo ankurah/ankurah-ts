@@ -803,18 +803,9 @@ pub fn generate_test_ts_with_imports(
         .filter(|t| available_types.contains(*t))
         .cloned()
         .collect();
-    let fixture_text = fixtures.clone();
-    let bodies_and_fixtures: String = file
-        .test_functions
-        .iter()
-        .chain(&file.test_helpers)
-        .filter_map(|f| f.body_ts.as_deref())
-        .chain(std::iter::once(fixture_text.as_str()))
-        .collect::<Vec<_>>()
-        .join(" ");
     // What the suite WRITES, lexed: a name a fixture only holds inside a
     // string literal is not a name the test file imports (K1).
-    let writes = written_names(&bodies_and_fixtures);
+    let writes = written_names(&written::what_a_test_file_writes(file, &fixtures));
     for f in &file.functions {
         if f.is_test || declared_here.contains(&f.ts_name) {
             continue;
@@ -944,30 +935,7 @@ pub fn generate_test_ts_with_imports(
     out.push_str(&format!("describe('{} unit tests', () => {{\n", module_name));
 
     // The helpers first: every test that calls one is written below it.
-    for f in &file.test_helpers {
-        let params: Vec<String> = f
-            .params
-            .iter()
-            .map(|p| format!("{}: {}", crate::name_map::to_camel_case(&p.name), p.ty))
-            .collect();
-        let ret = if f.return_type.is_empty() { "void".to_string() } else { f.return_type.clone() };
-        let body = match &f.body_ts {
-            Some(body) => body
-                .lines()
-                .map(|line| if line.is_empty() { String::new() } else { format!("    {}", line) })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            None => "    throw new Error('TODO');".to_string(),
-        };
-        out.push_str(&format!(
-            "  {}function {}({}): {} {{\n{}\n  }}\n\n",
-            if f.is_async { "async " } else { "" },
-            f.ts_name,
-            params.join(", "),
-            if f.is_async { format!("Promise<{}>", ret) } else { ret },
-            body
-        ));
-    }
+    out.push_str(&written::test_helpers(&file.test_helpers));
 
     for f in &file.test_functions {
         let test_name = &f.name;

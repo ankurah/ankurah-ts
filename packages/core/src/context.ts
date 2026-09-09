@@ -311,7 +311,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
 
   async commitLocalTrx(trx: Transaction): Promise<Result<void, MutationError>> {
     let _c1;
-    const _t0 = (() => { if (trx.alive.value === true) { trx.alive.value = false; return true; } return false; })();
+    const _t0 = unsupported('`compare_exchange` WRITES what the `Arc<AtomicBool>` holds, and it is reached through an accessor that hands out the value rather than the place');
     try {
       _c1 = _t0.isErr();
     } finally {

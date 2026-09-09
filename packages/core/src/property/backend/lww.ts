@@ -235,7 +235,7 @@ export class LWWBackend extends Struct implements PropertyBackend {
         }
       } else {
         const version = _v;
-        return Result.Err(new MutationError('UpdateFailed', { _0: AnyhowError.msg(`Unknown LWW operation version: ${version}`) }))
+        return Result.Err(new MutationError('UpdateFailed', { _0: AnyhowError.msg(`Unknown LWW operation version: ${version}`) }));
       }
     }
     const fieldBroadcasts = this.fieldBroadcasts.lock();

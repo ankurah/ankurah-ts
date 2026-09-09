@@ -65,6 +65,13 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
         );
         return "unknown".to_string();
     }
+    // A `dyn Fn` holds a plain arrow or an `OwnedClosure` — the two shapes
+    // `Invocable` covers and `invoke` tells apart — so an arrow alone is a type
+    // half the values at that position do not have.
+    if let (true, JsShape::Fn { params, ret }) = (holds_a_dyn_callable(reg, ty), js_shape(reg, ty)) {
+        let params: Vec<String> = params.iter().map(|ty| map_ty(reg, ty)).collect();
+        return format!("Invocable<[{}], {}>", params.join(", "), map_ty(reg, &ret));
+    }
     match js_shape(reg, ty) {
         JsShape::Bytes => "Uint8Array".to_string(),
         JsShape::Array(elem) => format!("{}[]", as_an_element(&map_ty(reg, &elem))),
@@ -178,5 +185,19 @@ fn named(reg: &TypeRegistry, ty: &Ty) -> String {
         Ty::Unit => "void".to_string(),
         Ty::Never => "never".to_string(),
         other => format!("{:?}", other),
+    }
+}
+
+/// Is this a `dyn Fn`, however it is held?
+///
+/// The port writes `Box<dyn Fn()>`, `Arc<dyn Fn()>` and a bare `dyn Fn()` as the
+/// callable itself, and any of them may hold an `OwnedClosure`.
+pub(crate) fn holds_a_dyn_callable(reg: &TypeRegistry, ty: &Ty) -> bool {
+    match ty.peel_refs() {
+        Ty::Dyn { traits } => traits
+            .iter()
+            .any(|t| matches!(reg.name_of(t.id).as_str(), "Fn" | "FnMut" | "FnOnce")),
+        Ty::Named { args, .. } => args.first().is_some_and(|inner| holds_a_dyn_callable(reg, inner)),
+        _ => false,
     }
 }

@@ -21,8 +21,40 @@ impl TypeContext<'_> {
 
     /// Constrain two types to be the same. A shape the walk cannot reconcile is
     /// handed back for the caller to report at the site that asked.
+    ///
+    /// Only the constraint walk binds. The walk that WRITES the body asks the
+    /// same question of a scratch copy, so it still says where two types cannot
+    /// meet while the table it reads stays as the solve left it.
     pub fn constrain(&self, a: &Ty, b: &Ty) -> Result<(), Mismatch> {
+        if !self.vars.borrow().solving() {
+            return self.vars.borrow().clone().unify(a, b);
+        }
         self.vars.borrow_mut().unify(a, b)
+    }
+
+    /// Fall back to the written default of every argument the source left off,
+    /// LAST: what the body says about such an argument is Rust's answer, and
+    /// the declaration's default is what stands where the body said nothing.
+    pub(super) fn settle_defaults(&self) {
+        let deferred = self.vars.borrow().deferred_defaults();
+        for (var, default, span) in deferred {
+            let unknown = Ty::Var(var);
+            let solved = self.solved(&unknown);
+            if solved == unknown {
+                let _ = self.constrain(&unknown, &default);
+                continue;
+            }
+            // The body decided it, and the declaration says otherwise: neither
+            // is chosen and the site says both.
+            if let Err(mismatch) = self.vars.borrow().clone().unify(&solved, &default) {
+                self.report_mismatch(span, &default, &solved, &mismatch);
+            }
+        }
+    }
+
+    /// How many of this body's unknowns stand for something.
+    pub fn bound_unknowns(&self) -> usize {
+        self.vars.borrow().bound_count()
     }
 
     /// Resolve a written type in this module, with the generics in scope.
@@ -47,37 +79,36 @@ impl TypeContext<'_> {
 impl TypeContext<'_> {
     /// Constrain each declared parameter against what the argument actually is,
     /// which is what settles an unknown the callee's own type carries.
-    ///
-    /// A closure argument is skipped: its parameters come FROM the bound at
-    /// that position, so reading its type here would ask the question
-    /// backwards.
     pub(super) fn constrain_arguments(&self, declared: &[Ty], args: &[&syn::Expr]) {
+        // An adaptor writes its bound in its own terms — `FnMut(Self::Item)` —
+        // and a projection left standing types nothing inside the closure, so
+        // the receiver settles it before the position is read.
+        let probe = self.probe();
         for (want, arg) in declared.iter().zip(args) {
+            let want = &probe.normalize(want);
             // A callable position and a bound carrying an associated type are
             // read even when they carry no unknown of their own: what they
             // require is what types the closure standing there, and what they
             // project is what settles an unknown inside the ARGUMENT.
             let closure = matches!(super::calls::unparenthesise(arg), syn::Expr::Closure(_));
             let bound = matches!(want.peel_refs(), Ty::ImplTrait { .. } | Ty::Dyn { .. });
-            if !closure && !bound && !want.mentions_any_var() {
-                continue;
+            if closure || bound || want.mentions_any_var() {
+                if self.constrain_callable(arg, want) {
+                    continue;
+                }
+                // A bound that is not callable says what the argument can DO,
+                // not what it is: `impl IntoIterator` and a `Vec` are never the
+                // same type. What the two agree on is what the bound PROJECTS.
+                if bound {
+                    self.constrain_through_bound(arg, want.peel_refs());
+                    continue;
+                }
             }
-            if self.constrain_callable(arg, want) {
-                continue;
-            }
-            // A bound that is not callable says what the argument can DO, not
-            // what it is: `impl IntoIterator` and a `Vec` are never the same
-            // type. What the two agree on is what the bound PROJECTS.
-            if bound {
-                self.constrain_through_bound(arg, want.peel_refs());
-                continue;
-            }
-            if !want.mentions_any_var() {
-                continue;
-            }
-            let Some(actual) = self.actual_of(arg) else { continue };
-            // Emission erases `&`, so an argument stands for what it refers to.
-            self.constrain_here(Spanned::span(*arg), want.peel_refs(), actual.peel_refs());
+            // An unknown on EITHER side is one this call settles: `let mut v =
+            // Vec::new(); Filler::fill(&mut v)` decides `v`'s element at a
+            // parameter whose own type is written out in full.
+            let Some(actual) = self.argument_type(arg) else { continue };
+            self.constrain_here(Spanned::span(*arg), want, &actual);
         }
     }
 
@@ -113,7 +144,12 @@ impl TypeContext<'_> {
 
     /// Constrain two types at one written site, saying so where they cannot be
     /// reconciled.
+    ///
+    /// The value KEEPS every `&` it carries — a borrow bound to a by-value
+    /// parameter is what that parameter holds. A `&` the declared side has over
+    /// a value carrying none is the borrow the engine reads that value through.
     pub(super) fn constrain_here(&self, span: proc_macro2::Span, want: &Ty, actual: &Ty) {
+        let want = if matches!(actual, Ty::Ref { .. }) { want } else { want.peel_refs() };
         if !want.mentions_any_var() && !actual.mentions_any_var() {
             return;
         }
@@ -131,7 +167,33 @@ impl TypeContext<'_> {
             {
                 return;
             }
+            // `&Vec<T>` stands where `&[T]` is declared: Rust derefs one into
+            // the other and the port writes both as one array, so what the two
+            // say about each other is their ELEMENT.
+            if let (Some(a), Some(b)) = (self.sequence_element(want), self.sequence_element(actual))
+            {
+                self.constrain_here(span, &a, &b);
+                return;
+            }
             self.report_mismatch(span, want, actual, &mismatch);
+        }
+    }
+
+    /// What a sequence holds: a slice's, an array's, a `Vec`'s or a boxed
+    /// slice's element, all of which the port writes as one array.
+    fn sequence_element(&self, ty: &Ty) -> Option<Ty> {
+        match self.solved(ty).peel_refs() {
+            Ty::Slice(elem) | Ty::Array { elem, .. } => Some((**elem).clone()),
+            Ty::Named { id, args } => {
+                let holder = ["std::vec::Vec", "std::boxed::Box"]
+                    .iter()
+                    .any(|path| self.registry.system_type(path) == Some(*id));
+                match holder.then(|| args.first()).flatten()? {
+                    Ty::Slice(elem) => Some((**elem).clone()),
+                    other => Some(other.clone()),
+                }
+            }
+            _ => None,
         }
     }
 
@@ -141,6 +203,19 @@ impl TypeContext<'_> {
     pub(super) fn var_at(&self, span: proc_macro2::Span, index: usize) -> Ty {
         let at = span.start();
         Ty::Var(self.vars.borrow_mut().at_site(at.line, at.column, index))
+    }
+
+    /// What an argument is, with the reference the expression itself writes: a
+    /// borrow handed to a by-value parameter is what that parameter holds, so
+    /// `picked.push(t)` over a `&Thing` makes `picked` a `Vec<&Thing>`.
+    fn argument_type(&self, arg: &syn::Expr) -> Option<Ty> {
+        match super::calls::unparenthesise(arg) {
+            syn::Expr::Reference(taken) => Some(Ty::Ref {
+                mutable: taken.mutability.is_some(),
+                inner: Box::new(self.argument_type(&taken.expr)?),
+            }),
+            other => self.actual_of(other),
+        }
     }
 
     /// What an argument is, asked for what it says about the callee. What it
@@ -194,34 +269,28 @@ impl TypeContext<'_> {
         };
         self.sink.rewind(mark);
         let Some(answered) = answered else { return true };
-        self.constrain_here(Spanned::span(arg), &shape.output, answered.peel_refs());
+        self.constrain_here(Spanned::span(arg), &shape.output, &answered);
         true
     }
 
-    /// Record what each argument position of a free call requires, so that a
-    /// closure standing at one is typed by the bound rather than by nothing.
-    ///
-    /// A free call answers with its declared return type and never reads its
-    /// parameters, so this is the only place that asks them.
-    pub(super) fn note_closure_positions(&self, call: &syn::ExprCall) {
-        let closures = call
-            .args
-            .iter()
-            .any(|arg| matches!(super::calls::unparenthesise(arg), syn::Expr::Closure(_)));
-        if !closures {
-            return;
-        }
+    /// Constrain each argument of a FREE call against what its parameter is
+    /// declared to be. A free call answers with its declared return type, so
+    /// this is the only place its parameters are read.
+    pub(super) fn constrain_free_arguments(&self, call: &syn::ExprCall) {
         // Speculative: a callee this body cannot read is not this site's
         // failure, and the call itself reports what it could not resolve.
         let mark = self.sink.mark();
         let declared = self.call_argument_types_of(call, None).unwrap_or_default();
         self.sink.rewind(mark);
-        for (want, arg) in declared.iter().zip(call.args.iter()) {
-            let Some(want) = want else { continue };
-            if matches!(super::calls::unparenthesise(arg), syn::Expr::Closure(_)) {
-                self.constrain_callable(arg, want);
-            }
+        if declared.iter().all(Option::is_none) {
+            return;
         }
+        let args: Vec<&syn::Expr> = call.args.iter().collect();
+        let want: Vec<Ty> = declared
+            .iter()
+            .map(|ty| ty.clone().unwrap_or(Ty::Infer))
+            .collect();
+        self.constrain_arguments(&want, &args);
     }
 
     /// What the position this closure stands in requires of it, if a call has

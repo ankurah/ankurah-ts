@@ -140,7 +140,7 @@ impl BodyTranslator<'_> {
         // would go nowhere. Decided here, where the type is known.
         // A type the solver did not settle answers this the way no type at
         // all answers it: the local keeps its plain binding.
-        let wants_a_cell = self.cell_candidates.borrow().iter().any(|c| *c == pat)
+        let wants_a_cell = self.prescan.borrow().cells.iter().any(|c| *c == pat)
             && ty
                 .as_ref()
                 .filter(|ty| !ty.mentions_any_var())
@@ -187,19 +187,22 @@ impl BodyTranslator<'_> {
         }
         let drops = bound_closure.map(|_| ownership::Drops::Own);
         let flag = self.claim_local(&pat, &emitted, ty.as_ref(), drops, &local.pat, disposition);
-        let written = self.annotation_for_an_empty_container(&expr, ty.as_ref());
+        let written = self.annotation_for_an_empty_container(&emitted, &expr, ty.as_ref());
         format!("{}{} {}{} = {};\n", flag, keyword, emitted, written, expr)
     }
 
-    /// The `: T` an empty array of PAIRS needs.
+    /// The `: T` an empty array needs where TypeScript's own inference
+    /// disagrees with the engine, and nowhere else.
     ///
     /// `const xs = []` grows by what is pushed into it, and TypeScript reads a
-    /// pushed `[a, b]` as an array of `a | b` rather than the pair Rust wrote —
-    /// so the array it infers is not the one the engine says, and a call that
-    /// takes the pair refuses it. Every other element type it reads correctly,
+    /// pushed `[a, b]` as an array of `a | b` rather than the pair Rust wrote.
+    /// It also grows a local only from the element writes it can SEE in the
+    /// same function, so one filled from inside a callback or through a callee
+    /// stays an evolving `any`. Every other element type it reads correctly,
     /// and writing the annotation there would only repeat the pushes.
     fn annotation_for_an_empty_container(
         &self,
+        emitted: &str,
         initialiser: &str,
         ty: Option<&crate::ty::Ty>,
     ) -> String {
@@ -215,10 +218,21 @@ impl BodyTranslator<'_> {
             }
             _ => false,
         };
-        if !holds_a_pair {
+        let grown_out_of_sight = !self
+            .prescan
+            .borrow()
+            .grown_in_sight
+            .iter()
+            .any(|name| name == emitted);
+        if !holds_a_pair && !grown_out_of_sight {
             return String::new();
         }
         match &self.types {
+            // A sequence of bytes is a `Uint8Array` here, and `[]` is not one:
+            // the annotation would name a type the initialiser does not have.
+            Some(tc) if crate::infer::expected::expects_bytes(tc.borrow().registry, ty) => {
+                String::new()
+            }
             Some(tc) => format!(": {}", crate::name_map::map_ty(tc.borrow().registry, ty)),
             None => String::new(),
         }

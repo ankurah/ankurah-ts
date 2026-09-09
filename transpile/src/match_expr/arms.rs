@@ -491,6 +491,16 @@ pub(super) fn translate_link(
 /// already provides. Everything else goes to the position that wants the
 /// value, which is what puts a `return` on each branch of a nested match
 /// instead of leaving it standing as a statement (K2).
+/// A jump written as an arm's whole body, with the semicolon a statement owes.
+/// `return { $jump: .., $value: .. }` ends with a brace and every rule that
+/// reads the last character takes that for a finished statement.
+fn terminated(written: String) -> String {
+    match crate::body::blocks::jumps(&written) && !written.trim_end().ends_with(';') {
+        true => format!("{};", written.trim_end()),
+        false => written,
+    }
+}
+
 pub(super) fn body_of_an_arm(body: &syn::Expr, produces: bool, t: &BodyTranslator) -> (String, bool) {
     use crate::control_flow::Wrote;
     if let syn::Expr::Block(block) = body {
@@ -500,9 +510,12 @@ pub(super) fn body_of_an_arm(body: &syn::Expr, produces: bool, t: &BodyTranslato
     }
     if produces {
         let (text, wrote) = crate::control_flow::in_value_position(body, t);
-        return (text, wrote == Wrote::Value);
+        return (terminated(text), wrote == Wrote::Value);
     }
-    (t.statements(body), !crate::control_flow::form::writes_statements(body, t))
+    (
+        terminated(t.statements(body)),
+        !crate::control_flow::form::writes_statements(body, t),
+    )
 }
 
 
@@ -527,7 +540,7 @@ pub(super) fn arm_body(body: &syn::Expr, t: &BodyTranslator, position: Position)
             syn::Expr::Block(block) if block.label.is_none() => {
                 leaves(t.translate_block(&block.block).trim_end().to_string())
             }
-            other => leaves(t.expr(other)),
+            other => leaves(terminated(t.expr(other))),
         },
         // Whatever this arm produces IS what the function answers, so the
         // function's return type is the arm's expectation — re-keyed onto the

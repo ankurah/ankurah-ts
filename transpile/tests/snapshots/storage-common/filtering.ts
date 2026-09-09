@@ -27,7 +27,7 @@ export class FilteredStream<I> extends Struct {
         if (_v1.isOk()) {
           const _v2 = _v1.unwrap();
           if (_v2 === true) {
-            return new Poll('Ready', { _0: item })
+            return new Poll('Ready', { _0: item });
           }
           {
             continue
@@ -41,9 +41,9 @@ export class FilteredStream<I> extends Struct {
           }
         }
       } else if (_v.is('Ready') && (_v.value._0 == null)) {
-        return new Poll('Ready', { _0: null })
+        return new Poll('Ready', { _0: null });
       } else {
-        return Poll.Pending
+        return Poll.Pending;
       }
     }
   }

@@ -24,36 +24,42 @@ export class NodeApplier extends Struct {
       if (cdata.size === 0) {
         return Result.Err(new MutationError('InvalidUpdate', { _0: 'Should not be receiving updates without at least predicate context' }));
       }
-      let changes = [];
-      _moved0 = true;
-      const _seq4 = items;
-      let _at5 = 0;
+      let _moved1 = false;
+      let changes: EntityChange[] = [];
       try {
-        while (_at5 < _seq4.length) {
-          const update = _seq4[_at5++];
-          let _moved1 = false;
-          try {
-            const retriever = EphemeralNodeRetriever.new(update.collection.clone(), node, cdata);
+        _moved0 = true;
+        const _seq5 = items;
+        let _at6 = 0;
+        try {
+          while (_at6 < _seq5.length) {
+            const update = _seq5[_at6++];
+            let _moved2 = false;
             try {
-              _moved1 = true;
-              const _r2 = await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, []);
-              if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-              _r2.drop();
-              const _r3 = await retriever.storeUsedEvents();
-              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-              _r3.drop();
+              const retriever = EphemeralNodeRetriever.new(update.collection.clone(), node, cdata);
+              try {
+                _moved2 = true;
+                const _r3 = await NodeApplier.applyUpdate(node, fromPeerId, update, retriever, changes, []);
+                if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+                _r3.drop();
+                const _r4 = await retriever.storeUsedEvents();
+                if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+                _r4.drop();
+              } finally {
+                retriever.drop();
+              }
             } finally {
-              retriever.drop();
+              if (!_moved2) update.drop();
             }
-          } finally {
-            if (!_moved1) update.drop();
           }
+        } finally {
+          dropOwned(_seq5.slice(_at6));
         }
+        _moved1 = true;
+        await node.deref().value.reactor.notifyChange(changes);
+        return Result.Ok([]);
       } finally {
-        dropOwned(_seq4.slice(_at5));
+        if (!_moved1) dropOwned(changes);
       }
-      await node.deref().value.reactor.notifyChange(changes);
-      return Result.Ok([]);
     } finally {
       if (!_moved0) dropOwned(items);
     }

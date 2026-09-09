@@ -170,7 +170,7 @@ export class SortedStream<S extends Unpin & Stream> extends Struct {
           }
         },
         Pending: () => {
-          return { $jump: 'return', $value: Poll.Pending }
+          return { $jump: 'return', $value: Poll.Pending };
         },
       });
       if ((_m8 as any)?.$jump === 'return') return (_m8 as any).$value;
@@ -390,7 +390,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     const _v3 = heap.peek();
                     if (_v3 != null) {
                       const worst = _v3;
-                      if (heapItem < worst) {
+                      if (heapItem.compareTo(worst) < 0) {
                         dropOwned(heap.pop());
                         _moved2 = true;
                         heap.push(heapItem);
@@ -424,7 +424,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
               }
             },
             Pending: () => {
-              return { $jump: 'return', $value: Poll.Pending }
+              return { $jump: 'return', $value: Poll.Pending };
             },
           });
           if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
@@ -522,7 +522,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
           }
         },
         Pending: () => {
-          return { $jump: 'return', $value: Poll.Pending }
+          return { $jump: 'return', $value: Poll.Pending };
         },
       });
       if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;

@@ -820,7 +820,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                           {
                             const e = _v5;
                             try {
-                              return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`))
+                              return Result.Err(AnyhowError.msg(`Error from peer get: ${e}`));
                             } finally {
                               e.drop();
                             }
@@ -888,7 +888,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                             {
                               const e = _v9;
                               try {
-                                return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`))
+                                return Result.Err(AnyhowError.msg(`Error from peer subscription: ${e}`));
                               } finally {
                                 e.drop();
                               }

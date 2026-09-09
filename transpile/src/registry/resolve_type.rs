@@ -314,28 +314,28 @@ fn fill_defaults(
             subst.insert(param.clone(), arg.clone());
         }
         let missing: Vec<Option<Ty>> = def.param_defaults[args.len()..].to_vec();
-        if missing.iter().all(|d| d.is_some()) {
-            for (param, default) in def.type_params[args.len()..].iter().zip(missing) {
-                let filled = default.expect("just checked").substitute(&subst);
+        // Where the caller has a solver, EVERY argument left off becomes an
+        // unknown for it to settle and a written default is what that unknown
+        // falls back to; where it has none, a default stands as written.
+        if let Some(vars) = env.vars {
+            let at = span.start();
+            for (index, (param, default)) in
+                def.type_params[args.len()..].iter().zip(&missing).enumerate()
+            {
+                let var = vars.borrow_mut().at_site(at.line, at.column, index);
+                if let Some(written) = default {
+                    let falls_back = written.substitute(&subst);
+                    vars.borrow_mut().defer_default(var, falls_back, span);
+                }
+                let filled = Ty::Var(var);
                 subst.insert(param.clone(), filled.clone());
                 args.push(filled);
             }
             return Ok(args);
         }
-        // `Vec::new()` writes no element type because the uses below it decide
-        // one. Where the caller has a solver, each argument left off becomes an
-        // unknown for it to settle; where it has none, the path is refused.
-        if let Some(vars) = env.vars {
-            let at = span.start();
-            for (index, (param, default)) in
-                def.type_params[args.len()..].iter().zip(missing).enumerate()
-            {
-                let filled = match default {
-                    Some(written) => written.substitute(&subst),
-                    // Keyed by where it is written, so the same site asked
-                    // twice answers with the same unknown.
-                    None => Ty::Var(vars.borrow_mut().at_site(at.line, at.column, index)),
-                };
+        if missing.iter().all(|d| d.is_some()) {
+            for (param, default) in def.type_params[args.len()..].iter().zip(missing) {
+                let filled = default.expect("just checked").substitute(&subst);
                 subst.insert(param.clone(), filled.clone());
                 args.push(filled);
             }

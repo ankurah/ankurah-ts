@@ -63,7 +63,7 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
           break _match0;
         }
         {
-          return false
+          return false;
         }
       }
     }

@@ -14,7 +14,7 @@ use super::unify::{unify_with, Mismatch, Unknowns};
 ///
 /// A binding is made once and never revised, which is what makes the occurs
 /// check enough to keep the table acyclic and the solve terminating.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct InferTable {
     bound: Vec<Option<Ty>>,
     /// The variable standing at each written site. Two passes over one body ask
@@ -24,11 +24,42 @@ pub struct InferTable {
     /// Bindings in the order they were made, so a constraint that cannot be met
     /// leaves the table as it found it.
     journal: Vec<InferId>,
+    /// Is the constraint walk running? Only it binds: the walk that WRITES the
+    /// body reads a table already solved, so every ownership question it asks
+    /// gets the answer the statements above it got.
+    solving: bool,
+    /// The written default standing behind an argument the source left off, and
+    /// where it was left off. Rust prefers what the body says to what the
+    /// declaration defaults to, so these are unified LAST.
+    defaults: Vec<(InferId, Ty, proc_macro2::Span)>,
 }
 
 impl InferTable {
     pub fn new() -> InferTable {
         InferTable::default()
+    }
+
+    /// Remember the default an omitted argument falls back to. The same site
+    /// asked twice records it once.
+    pub fn defer_default(&mut self, var: InferId, default: Ty, span: proc_macro2::Span) {
+        if !self.defaults.iter().any(|(id, ..)| *id == var) {
+            self.defaults.push((var, default, span));
+        }
+    }
+
+    /// Those defaults, in the order they were met.
+    pub fn deferred_defaults(&self) -> Vec<(InferId, Ty, proc_macro2::Span)> {
+        self.defaults.clone()
+    }
+
+    /// Say whether the constraint walk is running.
+    pub fn set_solving(&mut self, running: bool) {
+        self.solving = running;
+    }
+
+    /// Is it?
+    pub fn solving(&self) -> bool {
+        self.solving
     }
 
     /// A new unknown, standing for nothing yet.

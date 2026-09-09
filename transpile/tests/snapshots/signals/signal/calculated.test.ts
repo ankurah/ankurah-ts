@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Calculated, trigger } from './calculated';
-import { Arc, OwnedClosure, checkedAdd, checkedMul, wrappingAdd } from '@ankurah/base';
+import { Arc, OwnedClosure, checkedAdd, checkedMul, unsupported } from '@ankurah/base';
 import { Mut } from './mutable';
 
 describe('calculated unit tests', () => {
@@ -76,7 +76,7 @@ describe('calculated unit tests', () => {
         const count = Arc.new(0);
         return new OwnedClosure([trigger, count], () => {
           const _ = trigger.get();
-          return checkedAdd((() => { const _v = count.value; count.value = wrappingAdd(count.value, 1, 'usize'); return _v; })(), 1, 'usize');
+          return checkedAdd(unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place'), 1, 'usize');
         });
       })(trigger.read()));
       try {
@@ -105,7 +105,7 @@ describe('calculated unit tests', () => {
           const callCountRef = callCount.clone();
           const _sub = doubled.subscribe(new OwnedClosure([callCountRef], (value: number) => {
             expect(value).toEqual(20);
-            (() => { const _v = callCountRef.value; callCountRef.value = wrappingAdd(callCountRef.value, 1, 'usize'); return _v; })();
+            unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place');
           }));
           try {
             source.set(10);
@@ -153,7 +153,7 @@ describe('calculated unit tests', () => {
           const computeCountRef = computeCount.clone();
           const doubled = Calculated.new(((source) => {
             return new OwnedClosure([computeCountRef, source], () => {
-              (() => { const _v = computeCountRef.value; computeCountRef.value = wrappingAdd(computeCountRef.value, 1, 'usize'); return _v; })();
+              unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place');
               return checkedMul(source.get(), 2, 'i32');
             });
           })(source.read()));

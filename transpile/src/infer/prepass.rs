@@ -20,13 +20,37 @@ impl TypeContext<'_> {
     /// stands, and reporting here would say all of it twice.
     pub fn collect_constraints(&mut self, block: &syn::Block, returns: Option<&Ty>) {
         let mark = self.sink.mark();
-        // A constraint that binds an unknown late lets one that could not run
-        // before it run now — method resolution cannot start from a receiver
-        // nothing has bound — so the walk repeats until a round binds nothing
-        // new. It ends because a binding is never revised: every round but the
-        // last binds at least one more variable.
+        self.vars.borrow_mut().set_solving(true);
+        // What the BODY says about an argument the source left off is Rust's
+        // answer, so it is collected before the default falls back into place —
+        // and a method that could not resolve through an open unknown now can.
+        let limit = self.to_a_fixed_point(block, returns);
+        self.settle_defaults();
+        let after = self.to_a_fixed_point(block, returns);
+        self.settle_defaults();
+        self.vars.borrow_mut().set_solving(false);
+        let limit = limit.or(after);
+        self.sink.rewind(mark);
+        // Past one round per variable the table has stopped being monotone,
+        // which is a defect in the solver rather than a gap in the body.
+        if let Some(rounds) = limit {
+            self.sink.report(
+                syn::spanned::Spanned::span(block),
+                format!("the types of this body did not settle in {} rounds", rounds),
+            );
+        }
+    }
+
+    /// Walk the body until a round binds nothing new, saying how many rounds it
+    /// took where that is more than one per variable.
+    ///
+    /// A constraint that binds an unknown late lets one that could not run
+    /// before it run now — method resolution cannot start from a receiver
+    /// nothing has bound. It ends because a binding is never revised: every
+    /// round but the last binds at least one more variable.
+    fn to_a_fixed_point(&mut self, block: &syn::Block, returns: Option<&Ty>) -> Option<usize> {
         let mut rounds = 0usize;
-        let limit = loop {
+        loop {
             let before = self.vars.borrow().bound_count();
             crate::trace::without_recording(|| {
                 Prepass {
@@ -38,20 +62,11 @@ impl TypeContext<'_> {
             });
             rounds += 1;
             if self.vars.borrow().bound_count() == before {
-                break None;
+                return None;
             }
             if rounds > self.vars.borrow().len() {
-                break Some(rounds);
+                return Some(rounds);
             }
-        };
-        self.sink.rewind(mark);
-        // Past one round per variable the table has stopped being monotone,
-        // which is a defect in the solver rather than a gap in the body.
-        if let Some(rounds) = limit {
-            self.sink.report(
-                syn::spanned::Spanned::span(block),
-                format!("the types of this body did not settle in {} rounds", rounds),
-            );
         }
     }
 }
@@ -78,7 +93,7 @@ impl Prepass<'_, '_> {
             return;
         };
         self.tc
-            .constrain_here(syn::spanned::Spanned::span(expr), returns.peel_refs(), found.peel_refs());
+            .constrain_here(syn::spanned::Spanned::span(expr), &returns, &found);
     }
 
     /// Constrain what is being matched against what the pattern can only be
@@ -87,11 +102,8 @@ impl Prepass<'_, '_> {
         let (Some(ty), Some(shape)) = (ty, self.tc.pattern_shape(pat)) else {
             return;
         };
-        self.tc.constrain_here(
-            syn::spanned::Spanned::span(scrutinee),
-            ty.peel_refs(),
-            shape.peel_refs(),
-        );
+        self.tc
+            .constrain_here(syn::spanned::Spanned::span(scrutinee), ty, &shape);
     }
 
     /// A scope that holds only what a pattern binds, for the arm or the branch
@@ -170,8 +182,8 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 };
                 self.tc.constrain_here(
                     syn::spanned::Spanned::span(&assign.right),
-                    place.peel_refs(),
-                    value.peel_refs(),
+                    &place,
+                    &value,
                 );
             }
             syn::Expr::Let(let_expr) => {

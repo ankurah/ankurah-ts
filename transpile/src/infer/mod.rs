@@ -19,6 +19,8 @@ mod patterns;
 mod prepass;
 mod scope;
 mod vars;
+#[cfg(test)]
+mod vars_tests;
 
 pub use closures::ClosureSig;
 pub use context::TypeContext;

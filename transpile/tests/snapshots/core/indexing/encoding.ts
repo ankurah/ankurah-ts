@@ -218,7 +218,7 @@ export function encodeTupleValuesWithKeySpec(values: Value[], keySpec: KeySpec):
       const _r0 = encodeComponentTyped(v, keypart.valueType, keypart.direction.isDesc());
       if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
       const bytes = _r0.unwrap();
-      out.extendFromSlice(bytes);
+      out = new Uint8Array([...out, ...bytes]);
     } finally {
       keypart.drop();
     }

@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Reactor } from './reactor';
-import { AnyhowError, Arc, HashMap, Mutex, OwnedClosure, Result, Struct, debugString, dropOwned, unsupported, valueEquals } from '@ankurah/base';
+import { AnyhowError, Arc, HashMap, Invocable, Mutex, OwnedClosure, Result, Struct, debugString, dropOwned, invokeRef, unsupported, valueEquals } from '@ankurah/base';
 import { MembershipChange, ReactorUpdate, ReactorUpdateItem } from './reactor/update';
 import { EntityResultSet } from './resultset';
 import { CollectionId, QueryId } from '@ankurah/proto';
@@ -141,7 +141,7 @@ class MockNode extends Struct implements TNodeErased<TestEntity> {
 }
 
 describe('reactor unit tests', () => {
-  function watcher(): [(arg0: T) => void, () => T[]] {
+  function watcher<T extends Clone>(): [Invocable<[T], void>, Invocable<[], T[]>] {
     const values = Arc.new(new Mutex([]));
     const accumulate = ((values) => {
       return new OwnedClosure([values], (value: T) => {
@@ -202,7 +202,7 @@ describe('reactor unit tests', () => {
                         const _t8 = [new ReactorUpdate([new ReactorUpdateItem(_b5, [], _b7)])];
                         try {
                           _moved6 = true;
-                          expect(check()).toEqual(_t8);
+                          expect(invokeRef(check)).toEqual(_t8);
                         } finally {
                           dropOwned(_t8);
                         }

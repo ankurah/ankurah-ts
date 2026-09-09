@@ -605,41 +605,6 @@ impl<'a> TypeContext<'a> {
     /// A literal's type. An integer or float written without a suffix takes the
     /// width the position wants, and Rust's own default — `i32` and `f64` —
     /// only where the position wants nothing.
-    fn literal_type(&self, lit: &syn::Lit, expected: Option<&Ty>) -> Result<Ty, Diag> {
-        Ok(match lit {
-            syn::Lit::Str(_) => Ty::Ref {
-                mutable: false,
-                inner: Box::new(Ty::Str),
-            },
-            syn::Lit::ByteStr(_) => Ty::Ref {
-                mutable: false,
-                inner: Box::new(Ty::Slice(Box::new(Ty::Prim(Prim::U8)))),
-            },
-            syn::Lit::Byte(_) => Ty::Prim(Prim::U8),
-            syn::Lit::Char(_) => Ty::Prim(Prim::Char),
-            syn::Lit::Bool(_) => Ty::Prim(Prim::Bool),
-            syn::Lit::Int(int) => match Prim::from_rust_name(int.suffix()) {
-                Some(prim) => Ty::Prim(prim),
-                None => Ty::Prim(
-                    expected
-                        .and_then(expected::integer_width)
-                        .unwrap_or(Prim::I32),
-                ),
-            },
-            syn::Lit::Float(float) => match Prim::from_rust_name(float.suffix()) {
-                Some(prim) => Ty::Prim(prim),
-                None => {
-                    Ty::Prim(expected.and_then(expected::float_width).unwrap_or(Prim::F64))
-                }
-            },
-            other => {
-                return Err(self.refuse(
-                    syn::spanned::Spanned::span(other),
-                    "literal form is not typed yet",
-                ))
-            }
-        })
-    }
 
     /// A binary operator's result. Comparison and logical operators are `bool`
     /// whatever they are applied to; arithmetic on primitives is the primitive.

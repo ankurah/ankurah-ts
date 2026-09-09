@@ -201,10 +201,10 @@ impl TypeContext<'_> {
             }
         }
 
-        // A free function declared in reach. Its own parameters are read only
-        // where a closure stands at one: what a free call resolves to is its
-        // declared return type, and nothing else about it constrains this body.
-        self.note_closure_positions(call);
+        // A free function declared in reach. What it resolves to is its
+        // declared return type; what its parameters say about the arguments is
+        // read here, because nothing else reads them.
+        self.constrain_free_arguments(call);
         match self.registry.lookup(self.module, Ns::Value, &segments) {
             Ok(Some(Def::Value(id))) => match self.registry.value(id).and_then(|v| v.ty.clone()) {
                 Some(ty) => Ok(ty),
@@ -281,6 +281,10 @@ impl TypeContext<'_> {
     /// in the receiver is settled by: `Arc::new(mutex)` says nothing about the
     /// `Arc`'s element until the argument standing at `data: T` does.
     pub(super) fn assoc_fn(&self, ty: &Ty, name: &str) -> Option<(Ty, Vec<Ty>)> {
+        // Through the table first: an impl is matched by a walk with its own
+        // unknowns, which cannot follow this body's, so a variable the solve
+        // has settled has to arrive as what it stands for.
+        let ty = &self.solved(ty);
         let probe = self.probe();
         let mut inherent: Option<(Ty, Vec<Ty>)> = None;
         let mut from_trait: Option<(Ty, Vec<Ty>)> = None;

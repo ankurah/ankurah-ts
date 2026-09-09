@@ -60,9 +60,26 @@ impl TypeRegistry {
     fn describe_traits(&self, traits: &[TraitRef]) -> String {
         traits
             .iter()
-            .map(|t| self.name_of(t.id))
+            .map(|t| self.describe_trait(t))
             .collect::<Vec<_>>()
             .join(" + ")
+    }
+
+    /// A trait with its OWN arguments, which are what tell two impls of one
+    /// trait apart: `Extend<T>` and `Extend<&'a T>` for `Vec<T>` are the two an
+    /// `extend` is ambiguous between, and both printed as `Extend`.
+    pub(crate) fn describe_trait(&self, trait_: &TraitRef) -> String {
+        let mut parts: Vec<String> = trait_.args.iter().map(|a| self.describe(a)).collect();
+        parts.extend(
+            trait_
+                .bindings
+                .iter()
+                .map(|(name, ty)| format!("{} = {}", name, self.describe(ty))),
+        );
+        match parts.is_empty() {
+            true => self.name_of(trait_.id),
+            false => format!("{}<{}>", self.name_of(trait_.id), parts.join(", ")),
+        }
     }
 
     /// The callee in words: which impl, and which trait it came through.
@@ -76,7 +93,7 @@ impl TypeRegistry {
                 let trait_name = def
                     .trait_ref
                     .as_ref()
-                    .map(|t| self.name_of(t.id))
+                    .map(|t| self.describe_trait(t))
                     .unwrap_or_default();
                 format!("<{} as {}>::{}", self.describe(&def.self_ty), trait_name, m)
             }

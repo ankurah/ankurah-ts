@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/subscription.rs
-import { Struct, Drop, Result, Arc, OwnedClosure } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, OwnedClosure, invokeRef } from '@ankurah/base';
 import { Broadcast, BroadcastListener, ListenerGuard, Signal, Subscribe, SubscriptionGuard, BroadcastId } from '@ankurah/signals';
 import { SubscriptionError } from '../error';
 import { Reactor } from '../reactor';
@@ -115,7 +115,7 @@ export class ReactorSubscription<E extends AbstractEntity & Filterable = Entity,
   listen(listener: Listener): ListenerGuard {
     const _t0 = this._0.value.broadcast.reference();
     try {
-      return _t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => listener([]))) }));
+      return _t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => invokeRef(listener, []))) }));
     } finally {
       _t0.drop();
     }

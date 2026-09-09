@@ -6,6 +6,7 @@
 // or throw here.
 
 import { expect, test } from 'bun:test';
+import { invokeRef } from '@ankurah/base';
 import { Reading, counted, eachDoubled, scaled, threshold } from './input.ts';
 import { expectNoOwnershipReports } from './leaks.ts';
 
@@ -30,9 +31,11 @@ test('the closure own annotation types the parameter', () => {
 });
 
 test('a boxed callable at the return position types the closure it holds', () => {
+  // A `Box<dyn Fn>` is an `Invocable` here: it holds a plain arrow or the
+  // `OwnedClosure` the emitter writes, and `invokeRef` is what tells them apart.
   const over = threshold(3);
-  expect(over(4)).toBe(true);
-  expect(over(2)).toBe(false);
+  expect(invokeRef(over, 4)).toBe(true);
+  expect(invokeRef(over, 2)).toBe(false);
 });
 
 test('a closure taking a reference reads through it', () => {

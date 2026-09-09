@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/closure_typing/src/input.rs
-import { Struct, checkedMul } from '@ankurah/base';
+import { Struct, Invocable, checkedMul } from '@ankurah/base';
 
 export class Reading extends Struct {
   readonly level: number;
@@ -22,7 +22,7 @@ export function scaled(readings: Reading[]): number[] {
   return [...readings].map((reading) => reading.level);
 }
 
-export function threshold(limit: number): (arg0: number) => boolean {
+export function threshold(limit: number): Invocable<[number], boolean> {
   return (level) => level > limit;
 }
 

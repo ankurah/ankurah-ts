@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/value/yrs.rs
-import { Struct, Result, Arc, OwnedClosure, dropOwned, debugString } from '@ankurah/base';
+import { Struct, Result, Arc, OwnedClosure, invokeRef, dropOwned, debugString } from '@ankurah/base';
 import { Listener, ListenerGuard, Signal, BroadcastId, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../../entity';
 import { MutationError } from '../../error';
@@ -106,7 +106,7 @@ export class YrsString<Projected extends Clone> extends Struct implements FromEn
         const _v = yrsString.value();
         if (_v != null) {
           const currentValue = _v;
-          listener_1(currentValue);
+          invokeRef(listener_1, currentValue);
         }
       }
     }, undefined, true)));

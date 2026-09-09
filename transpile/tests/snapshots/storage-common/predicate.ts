@@ -6,7 +6,7 @@ export class ConjunctFinder extends Struct {
 
   static find(predicate: Predicate): Predicate[] {
     let _moved0 = false;
-    let conjuncts = [];
+    let conjuncts: Predicate[] = [];
     try {
       ConjunctFinder.extractConjuncts(predicate, conjuncts);
       _moved0 = true;

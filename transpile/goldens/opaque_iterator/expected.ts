@@ -27,7 +27,7 @@ export function takeSome<I extends Iterable<Token>>(values: SeqCursor<Token>, wa
         token.drop();
       }
     } else {
-      return Result.Err(new Refused())
+      return Result.Err(new Refused());
     }
   }
   return Result.Ok(total);

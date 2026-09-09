@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/porcelain/subscribe.rs
-import { Struct, OwnedClosure, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, OwnedClosure, Invocable, Sender, UnboundedSender } from '@ankurah/base';
 import { Get, ListenerGuard, Peek } from '../signal';
 
 export class SubscriptionGuard extends Struct {
@@ -32,7 +32,7 @@ export interface GetAndDynSubscribe<T> extends Get<T>, Peek<T>, DynSubscribe<T> 
 
 export type SubscribeListener = (arg0: T) => void;
 
-export function dynSubscribe<S extends Subscribe, T>(self: S, listener: (arg0: T) => void): SubscriptionGuard {
+export function dynSubscribe<S extends Subscribe, T>(self: S, listener: Invocable<[T], void>): SubscriptionGuard {
   return Subscribe.subscribe(self, listener);
 }
 
@@ -52,7 +52,7 @@ export function intoSubscribeListener<F extends (arg0: T) => void, T>(self: F): 
   return self;
 }
 
-export function IntoSubscribeListener_dispatch_intoSubscribeListener<T>(self: unknown): (arg0: T) => void {
+export function IntoSubscribeListener_dispatch_intoSubscribeListener<T>(self: unknown): Invocable<[T], void> {
   if (self instanceof Sender) return Sender_intoSubscribeListener(self as any);
   if (self instanceof UnboundedSender) return UnboundedSender_intoSubscribeListener(self as any);
   if (typeof self === 'function' || self instanceof OwnedClosure) return intoSubscribeListener(self as any);

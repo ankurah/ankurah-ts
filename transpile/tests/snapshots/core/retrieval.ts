@@ -56,7 +56,7 @@ export class LocalRetriever extends Struct implements GetEvents, Retrieve {
     let _moved0 = false;
     try {
       let _moved1 = false;
-      let events = [];
+      let events: Attested<Event>[] = [];
       try {
         _moved0 = true;
         let _moved2 = false;

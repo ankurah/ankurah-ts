@@ -145,6 +145,18 @@ impl<'a> BodyTranslator<'a> {
     }
 
     /// Take a resolved answer, or record the fallback taken instead of it.
+    /// Where the diagnostics record stands, for a form the translator may
+    /// abandon.
+    pub(crate) fn mark(&self) -> usize {
+        self.types.as_ref().map(|tc| tc.borrow().sink.mark()).unwrap_or(0)
+    }
+
+    pub(crate) fn rewind(&self, mark: usize) {
+        if let Some(tc) = &self.types {
+            tc.borrow().sink.rewind(mark);
+        }
+    }
+
     pub(crate) fn or_fallback<T>(&self, result: Result<T, crate::diag::Diag>, instead: &str) -> Option<T> {
         match result {
             Ok(value) => Some(value),
@@ -358,11 +370,17 @@ impl<'a> BodyTranslator<'a> {
     /// drops it at the end — and that release is the parameter's, not the
     /// call's: `claim_params` writes it.
     pub(crate) fn bound_closure_helper(&self, callee: &syn::Expr) -> Option<&'static str> {
-        let syn::Expr::Path(path) = callee else { return None };
-        if path.path.segments.len() != 1 {
-            return None;
-        }
+        // A field, a local, and the value a call answers with hold whatever was
+        // put in them, which may be a closure that owns its captures. A path
+        // naming a FUNCTION is not one of those: its own name is what it is.
         let tc = self.types.as_ref()?;
+        let holds_a_value = match crate::infer::calls::unparenthesise(callee) {
+            syn::Expr::Path(path) => match path.path.get_ident() {
+                Some(name) => tc.borrow().lookup(&name.to_string()).is_some(),
+                None => return None,
+            },
+            _ => true,
+        };
         let ty = self.quietly(|| self.resolve_expr_type(callee)).ok()?;
         // A BOUND, not a concrete closure. A local the emitter wrote as a plain
         // arrow is called as one; what a caller may have wrapped is a value
@@ -370,7 +388,8 @@ impl<'a> BodyTranslator<'a> {
         if !matches!(
             ty.peel_refs(),
             crate::ty::Ty::Param(_) | crate::ty::Ty::ImplTrait { .. } | crate::ty::Ty::Dyn { .. }
-        ) {
+        ) && !(holds_a_value && crate::name_map::holds_a_dyn_callable(tc.borrow().registry, &ty))
+        {
             return None;
         }
         let tc = tc.borrow();
